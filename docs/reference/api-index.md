@@ -51,6 +51,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/ai-eval/agent-stack-release-gate/runs` | List Agent Stack Gate Runs | [AI Evaluation](api/ai-evaluation.md) |
 | GET | `/api/v1/ai-eval/baselines` | List Baselines | [AI Evaluation](api/ai-evaluation.md) |
 | POST | `/api/v1/ai-eval/baselines` | Set Baseline | [AI Evaluation](api/ai-evaluation.md) |
+| GET | `/api/v1/ai-eval/candidate-options` | Get Candidate Options | [AI Evaluation](api/ai-evaluation.md) |
 | GET | `/api/v1/ai-eval/dashboard` | Get Quality Dashboard | [AI Evaluation](api/ai-evaluation.md) |
 | GET | `/api/v1/ai-eval/datasets` | List Datasets | [AI Evaluation](api/ai-evaluation.md) |
 | POST | `/api/v1/ai-eval/datasets` | Create Dataset | [AI Evaluation](api/ai-evaluation.md) |
@@ -65,9 +66,15 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/ai-eval/report-cycles` | Create Report Eval Cycle | [AI Evaluation](api/ai-evaluation.md) |
 | GET | `/api/v1/ai-eval/report-cycles/readiness` | Get Report Eval Readiness | [AI Evaluation](api/ai-evaluation.md) |
 | POST | `/api/v1/ai-eval/reviewer-quality` | Run Reviewer Quality | [AI Evaluation](api/ai-evaluation.md) |
+| GET | `/api/v1/ai-eval/reviewer-quality/runs` | List Reviewer Quality Runs | [AI Evaluation](api/ai-evaluation.md) |
 | GET | `/api/v1/ai-eval/runs` | List Eval Runs | [AI Evaluation](api/ai-evaluation.md) |
 | POST | `/api/v1/ai-eval/runs/evaluate/{dataset_id}` | Run Evaluation | [AI Evaluation](api/ai-evaluation.md) |
+| GET | `/api/v1/ai-eval/runs/{eval_run_id}` | Get Eval Run | [AI Evaluation](api/ai-evaluation.md) |
+| GET | `/api/v1/ai-eval/runs/{eval_run_id}/items` | List Eval Run Items | [AI Evaluation](api/ai-evaluation.md) |
+| GET | `/api/v1/ai-eval/shadow-pairs` | List Shadow Pairs | [AI Evaluation](api/ai-evaluation.md) |
+| POST | `/api/v1/ai-eval/shadow-pairs/{shadow_pair_id}/label` | Label Shadow Pair | [AI Evaluation](api/ai-evaluation.md) |
 | POST | `/api/v1/ai-eval/tier-comparison` | Run Tier Comparison | [AI Evaluation](api/ai-evaluation.md) |
+| GET | `/api/v1/ai-eval/tier-comparison/runs` | List Tier Comparison Runs | [AI Evaluation](api/ai-evaluation.md) |
 | GET | `/api/v1/analytics/ai-summary` | Ai Analysis Summary | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/chart-data` | Chart Data | [Analytics](api/analytics.md) |
 | GET | `/api/v1/analytics/chart-data/rows` | Chart Data Rows | [Analytics](api/analytics.md) |
@@ -650,4 +657,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **641 HTTP operations**, **542 paths**, **86 domain pages**.
+Total: **648 HTTP operations**, **549 paths**, **86 domain pages**.

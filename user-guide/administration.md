@@ -365,7 +365,9 @@ Every purge — scheduled or manual — writes a **purge-audit record** (`settin
 
 **Search usage rows** (`search_query_events`: one row per search run on the Search page, with a keyed hash of the query and no query text, no user) are on a fixed 30-day window that no policy changes: a nightly task (02:40 UTC) deletes older rows in every project, and for rows with no project (searches in All Projects). A project's preview also lists its own rows past 30 days as **Search usage rows (kept 30 days)** (`search_usage_rows`), and its purge deletes them.
 
-**What is never purged:** `settings_audit_log` itself; compliance packs before their own `retention_expires_at` (default ~7 years); anything in a project whose policy is disabled (except search usage rows past 30 days, above).
+**Unlabelled shadow pairs** (`ai_eval_shadow_pairs` still `pending`: the incumbent and candidate outputs a shadow-mode agent recorded for labelling on **AI evaluation › Tiers**) are also on a fixed 30-day window: a nightly task (02:50 UTC) deletes older pending pairs in every project. A labelled pair is G2 evidence and is never deleted by this rule. A project's preview lists its own as **Unlabelled shadow pairs (kept 30 days)** (`shadow_pairs_unlabelled`), and its purge deletes them.
+
+**What is never purged:** `settings_audit_log` itself; compliance packs before their own `retention_expires_at` (default ~7 years); labelled shadow pairs; anything in a project whose policy is disabled (except search usage rows and unlabelled shadow pairs past 30 days, above).
 
 The purge is re-entrant — an interrupted sweep is completed by the next run. Setting the raw-events window below 15 days strips live-run event archives that the live-run recovery safety net could otherwise still replay. For a full, immediate wipe of a project use **Project data** instead — retention is for steady-state ageing, not resets.
 

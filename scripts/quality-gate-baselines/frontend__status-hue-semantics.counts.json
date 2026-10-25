@@ -123,7 +123,7 @@
     "frontend/src/pages/run/RunTestsTab.tsx": 4,
     "frontend/src/pages/run/RunTimingTab.tsx": 2,
     "frontend/src/pages/settings/AIConfigPage.tsx": 7,
-    "frontend/src/pages/settings/AIEvalDashboardPage.tsx": 16,
+    "frontend/src/pages/settings/AIEvalDashboardPage.tsx": 13,
     "frontend/src/pages/settings/ApiKeysPage.tsx": 4,
     "frontend/src/pages/settings/AuditDashboardPage.tsx": 3,
     "frontend/src/pages/settings/BillingPage.tsx": 4,

@@ -69,7 +69,7 @@
     "frontend/src/pages/dev/PrimitivesPage.tsx": 1,
     "frontend/src/pages/dev/UxPrimitivesPage.tsx": 1,
     "frontend/src/pages/settings/AIConfigPage.tsx": 12,
-    "frontend/src/pages/settings/AIEvalDashboardPage.tsx": 4,
+    "frontend/src/pages/settings/AIEvalDashboardPage.tsx": 3,
     "frontend/src/pages/settings/AuditDashboardPage.tsx": 5,
     "frontend/src/pages/settings/BillingPage.tsx": 1,
     "frontend/src/pages/settings/DigestsPage.tsx": 4,

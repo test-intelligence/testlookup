@@ -159,6 +159,10 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     # harness running, and each passed in CI run 35549887616 on the same code.
     "tests/test_root_cause_tier_routing.py::"
     "test_react_explanation_uses_endpoint_and_bypasses_classifier_and_caches": _LANGCHAIN,
+    # W16 AGT-09: the candidate runner's LLM tier replays an item through the
+    # real classify_test -> create_react_agent path behind BudgetedLLM with a
+    # fake chat model; it passes under the repo-root .venv311 (CI's pin).
+    "tests/test_ai_eval_runner.py::test_llm_tier_replays_through_the_budgeted_wrapper": _LANGCHAIN,
     # The ReAct triage regression tests (2026-10-09) drive create_react_agent
     # for real; they pass under the repo-root .venv311 (langchain 0.3.30, CI's
     # pin). The file's adapter and Runnable tests need no agent and stay

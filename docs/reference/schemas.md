@@ -1182,6 +1182,33 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## AIEvalGateRunListResponse
+
+```json
+{
+  "description": "Agent-stack history (``gate_type IS NULL``) and the G2 history (W16).",
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/AIEvalGateRunResponse"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total"
+  ],
+  "title": "AIEvalGateRunListResponse",
+  "type": "object"
+}
+```
+
 ## AIEvalGateRunResponse
 
 ```json
@@ -1334,6 +1361,157 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## AIEvalItemListResponse
+
+```json
+{
+  "properties": {
+    "counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Counts",
+      "type": "object"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/AIEvalItemOutputRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total",
+    "counts"
+  ],
+  "title": "AIEvalItemListResponse",
+  "type": "object"
+}
+```
+
+## AIEvalItemOutputRead
+
+```json
+{
+  "properties": {
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Error Code"
+    },
+    "error_text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Error Text"
+    },
+    "expected": {
+      "additionalProperties": true,
+      "title": "Expected",
+      "type": "object"
+    },
+    "input": {
+      "additionalProperties": true,
+      "title": "Input",
+      "type": "object"
+    },
+    "item_index": {
+      "title": "Item Index",
+      "type": "integer"
+    },
+    "item_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Item Key"
+    },
+    "latency_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Latency Ms"
+    },
+    "mode_used": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Mode Used"
+    },
+    "output": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Output"
+    },
+    "score": {
+      "additionalProperties": true,
+      "title": "Score",
+      "type": "object"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "tokens": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Tokens"
+    }
+  },
+  "required": [
+    "item_index",
+    "status",
+    "expected"
+  ],
+  "title": "AIEvalItemOutputRead",
+  "type": "object"
+}
+```
+
 ## AIEvalManifestResponse
 
 ```json
@@ -1392,6 +1570,33 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## AIEvalRunListResponse
+
+```json
+{
+  "description": "GET /ai-eval/runs (was a bare list; no client read it).",
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/AIEvalRunResponse"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total"
+  ],
+  "title": "AIEvalRunListResponse",
+  "type": "object"
+}
+```
+
 ## AIEvalRunResponse
 
 ```json
@@ -1419,6 +1624,28 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Agreement Rate"
     },
+    "candidate": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/EvalCandidateResolved"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "completed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Completed At"
+    },
     "correct_items": {
       "default": 0,
       "title": "Correct Items",
@@ -1439,6 +1666,40 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Duration Ms"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Error Code"
+    },
+    "error_items": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": 0,
+      "title": "Error Items"
+    },
+    "error_text": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Error Text"
     },
     "evaluated_at": {
       "format": "date-time",
@@ -1461,10 +1722,70 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Fallback Used",
       "type": "boolean"
     },
+    "heartbeat_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Heartbeat At"
+    },
     "id": {
       "format": "uuid",
       "title": "Id",
       "type": "string"
+    },
+    "items_capped": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": false,
+      "title": "Items Capped"
+    },
+    "measured": {
+      "default": true,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "metric_kind": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "label_agreement",
+      "title": "Metric Kind"
+    },
+    "metric_label": {
+      "default": "",
+      "title": "Metric Label",
+      "type": "string"
+    },
+    "metrics": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/components/schemas/EvalMetric"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Metrics"
     },
     "model_name": {
       "title": "Model Name",
@@ -1493,6 +1814,18 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Precision"
     },
+    "project_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Id"
+    },
     "recall": {
       "anyOf": [
         {
@@ -1504,6 +1837,54 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Recall"
     },
+    "requested_by": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Requested By"
+    },
+    "scored_items": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": 0,
+      "title": "Scored Items"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "completed",
+      "title": "Status"
+    },
     "task_type": {
       "title": "Task Type",
       "type": "string"
@@ -1512,6 +1893,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "default": 0,
       "title": "Total Items",
       "type": "integer"
+    },
+    "unscored_items": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": 0,
+      "title": "Unscored Items"
     }
   },
   "required": [
@@ -8136,6 +8529,175 @@ These are the full generated JSON Schema definitions, including required fields,
     "workflow_type"
   ],
   "title": "BulkTriggerResponse",
+  "type": "object"
+}
+```
+
+## CandidateEvaluationAccepted
+
+```json
+{
+  "properties": {
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "status"
+  ],
+  "title": "CandidateEvaluationAccepted",
+  "type": "object"
+}
+```
+
+## CandidateEvaluationRequest
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "candidate": {
+      "$ref": "#/components/schemas/EvalCandidateIn"
+    },
+    "limit": {
+      "anyOf": [
+        {
+          "maximum": 200.0,
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Limit"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "candidate",
+    "project_id"
+  ],
+  "title": "CandidateEvaluationRequest",
+  "type": "object"
+}
+```
+
+## CandidateOptionsResponse
+
+```json
+{
+  "properties": {
+    "max_items": {
+      "title": "Max Items",
+      "type": "integer"
+    },
+    "offline_mode": {
+      "title": "Offline Mode",
+      "type": "boolean"
+    },
+    "prompt_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Prompt Version"
+    },
+    "supported_tiers_by_task": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "title": "Supported Tiers By Task",
+      "type": "object"
+    },
+    "tiers": {
+      "items": {
+        "$ref": "#/components/schemas/CandidateTierOption"
+      },
+      "title": "Tiers",
+      "type": "array"
+    }
+  },
+  "required": [
+    "tiers",
+    "offline_mode",
+    "max_items",
+    "supported_tiers_by_task"
+  ],
+  "title": "CandidateOptionsResponse",
+  "type": "object"
+}
+```
+
+## CandidateTierOption
+
+```json
+{
+  "properties": {
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Model"
+    },
+    "provider": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Provider"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "tier": {
+      "title": "Tier",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tier",
+    "available"
+  ],
+  "title": "CandidateTierOption",
   "type": "object"
 }
 ```
@@ -14820,6 +15382,156 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "EscalationConfig",
+  "type": "object"
+}
+```
+
+## EvalCandidateIn
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "model": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Model"
+    },
+    "prompt_version": {
+      "anyOf": [
+        {
+          "maxLength": 400,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Prompt Version"
+    },
+    "tier": {
+      "maxLength": 20,
+      "minLength": 2,
+      "title": "Tier",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tier"
+  ],
+  "title": "EvalCandidateIn",
+  "type": "object"
+}
+```
+
+## EvalCandidateResolved
+
+```json
+{
+  "description": "What the run ACTUALLY replays (stored in ``ai_eval_runs.candidate``).",
+  "properties": {
+    "model": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Model"
+    },
+    "offline_mode": {
+      "title": "Offline Mode",
+      "type": "boolean"
+    },
+    "prompt_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Prompt Version"
+    },
+    "provider": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Provider"
+    },
+    "requested": {
+      "$ref": "#/components/schemas/EvalCandidateIn"
+    },
+    "tier": {
+      "title": "Tier",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tier",
+    "offline_mode",
+    "requested"
+  ],
+  "title": "EvalCandidateResolved",
+  "type": "object"
+}
+```
+
+## EvalMetric
+
+```json
+{
+  "properties": {
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "measured": {
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "n": {
+      "default": 0,
+      "title": "N",
+      "type": "integer"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "value": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Value"
+    }
+  },
+  "required": [
+    "name",
+    "measured",
+    "kind"
+  ],
+  "title": "EvalMetric",
   "type": "object"
 }
 ```
@@ -28126,6 +28838,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Agent Name",
       "type": "string"
     },
+    "candidate_run_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Candidate Run Id"
+    },
     "dataset_id": {
       "anyOf": [
         {
@@ -32487,6 +33211,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Search Usage Rows",
       "type": "integer"
     },
+    "shadow_pairs_unlabelled": {
+      "default": 0,
+      "title": "Shadow Pairs Unlabelled",
+      "type": "integer"
+    },
     "test_cases": {
       "title": "Test Cases",
       "type": "integer"
@@ -33231,6 +33960,190 @@ These are the full generated JSON Schema definitions, including required fields,
     "project_id"
   ],
   "title": "ReviewerQualityRequest",
+  "type": "object"
+}
+```
+
+## ReviewerQualityRunListResponse
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/ReviewerQualityRunRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total"
+  ],
+  "title": "ReviewerQualityRunListResponse",
+  "type": "object"
+}
+```
+
+## ReviewerQualityRunRead
+
+```json
+{
+  "description": "An ``AIEvalReviewerQuality`` row WITHOUT its observation arrays (W16).",
+  "properties": {
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "auto_disable_applied": {
+      "title": "Auto Disable Applied",
+      "type": "boolean"
+    },
+    "auto_disable_eligible": {
+      "title": "Auto Disable Eligible",
+      "type": "boolean"
+    },
+    "clean_sample_count": {
+      "title": "Clean Sample Count",
+      "type": "integer"
+    },
+    "deterministic_recall": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Deterministic Recall"
+    },
+    "evaluated_at": {
+      "format": "date-time",
+      "title": "Evaluated At",
+      "type": "string"
+    },
+    "false_flag_rate": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "False Flag Rate"
+    },
+    "false_omission_rate": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "False Omission Rate"
+    },
+    "human_outcome_count": {
+      "title": "Human Outcome Count",
+      "type": "integer"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "metrics": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Metrics",
+      "type": "array"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "recall_delta": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Recall Delta"
+    },
+    "regressions": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Regressions",
+      "type": "array"
+    },
+    "second_model_recall": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Second Model Recall"
+    },
+    "semantic_sample_counts": {
+      "additionalProperties": true,
+      "title": "Semantic Sample Counts",
+      "type": "object"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "window_ended_at": {
+      "format": "date-time",
+      "title": "Window Ended At",
+      "type": "string"
+    },
+    "window_started_at": {
+      "format": "date-time",
+      "title": "Window Started At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "project_id",
+    "agent_id",
+    "source",
+    "status",
+    "window_started_at",
+    "window_ended_at",
+    "evaluated_at",
+    "metrics",
+    "regressions",
+    "semantic_sample_counts",
+    "clean_sample_count",
+    "human_outcome_count",
+    "auto_disable_eligible",
+    "auto_disable_applied"
+  ],
+  "title": "ReviewerQualityRunRead",
   "type": "object"
 }
 ```
@@ -37009,6 +37922,18 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Dataset Id"
     },
+    "eval_run_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Eval Run Id"
+    },
     "max_regression_pct": {
       "default": 5.0,
       "title": "Max Regression Pct",
@@ -37072,6 +37997,295 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "ShadowConfig",
+  "type": "object"
+}
+```
+
+## ShadowPairLabelRequest
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "failure_category": {
+      "anyOf": [
+        {
+          "maxLength": 40,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Failure Category"
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Notes"
+    },
+    "verdict": {
+      "maxLength": 20,
+      "minLength": 3,
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "required": [
+    "verdict"
+  ],
+  "title": "ShadowPairLabelRequest",
+  "type": "object"
+}
+```
+
+## ShadowPairListResponse
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/ShadowPairRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "live_tier_pairs_seen": {
+      "title": "Live Tier Pairs Seen",
+      "type": "boolean"
+    },
+    "pending_total": {
+      "title": "Pending Total",
+      "type": "integer"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total",
+    "pending_total",
+    "live_tier_pairs_seen"
+  ],
+  "title": "ShadowPairListResponse",
+  "type": "object"
+}
+```
+
+## ShadowPairRead
+
+```json
+{
+  "properties": {
+    "agent_id": {
+      "title": "Agent Id",
+      "type": "string"
+    },
+    "agent_label": {
+      "title": "Agent Label",
+      "type": "string"
+    },
+    "candidate_output": {
+      "additionalProperties": true,
+      "title": "Candidate Output",
+      "type": "object"
+    },
+    "candidate_tier": {
+      "title": "Candidate Tier",
+      "type": "string"
+    },
+    "candidate_tokens": {
+      "title": "Candidate Tokens",
+      "type": "integer"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expires At"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "incumbent_output": {
+      "additionalProperties": true,
+      "title": "Incumbent Output",
+      "type": "object"
+    },
+    "incumbent_tier": {
+      "title": "Incumbent Tier",
+      "type": "string"
+    },
+    "incumbent_tokens": {
+      "title": "Incumbent Tokens",
+      "type": "integer"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Label"
+    },
+    "label_status": {
+      "title": "Label Status",
+      "type": "string"
+    },
+    "labelled_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Labelled At"
+    },
+    "labelled_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Labelled By Name"
+    },
+    "project_id": {
+      "title": "Project Id",
+      "type": "string"
+    },
+    "sample_key": {
+      "title": "Sample Key",
+      "type": "string"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ShadowPairSource"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "project_id",
+    "agent_id",
+    "agent_label",
+    "sample_key",
+    "incumbent_tier",
+    "candidate_tier",
+    "incumbent_output",
+    "candidate_output",
+    "incumbent_tokens",
+    "candidate_tokens",
+    "label_status"
+  ],
+  "title": "ShadowPairRead",
+  "type": "object"
+}
+```
+
+## ShadowPairSource
+
+```json
+{
+  "properties": {
+    "build_number": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Build Number"
+    },
+    "href": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Href"
+    },
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Label"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Run Id"
+    }
+  },
+  "required": [
+    "kind",
+    "id"
+  ],
+  "title": "ShadowPairSource",
   "type": "object"
 }
 ```
@@ -44550,6 +45764,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "minimum": 0.0,
       "title": "Delta",
       "type": "number"
+    },
+    "include_live_labels": {
+      "default": false,
+      "title": "Include Live Labels",
+      "type": "boolean"
     },
     "incumbent_tier": {
       "pattern": "^(deterministic|slm|llm|auto)$",

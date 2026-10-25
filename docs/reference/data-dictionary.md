@@ -21,11 +21,12 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [agent_stage_results](#agent_stage_results) | AgentStageResult | 36 |
 | [ai_analysis](#ai_analysis) | AIAnalysis | 17 |
 | [ai_analysis_versions](#ai_analysis_versions) | AIAnalysisVersion | 26 |
-| [ai_eval_baselines](#ai_eval_baselines) | AIEvalBaseline | 18 |
+| [ai_eval_baselines](#ai_eval_baselines) | AIEvalBaseline | 19 |
 | [ai_eval_datasets](#ai_eval_datasets) | AIEvalDataset | 10 |
 | [ai_eval_gate_runs](#ai_eval_gate_runs) | AIEvalGateRun | 16 |
+| [ai_eval_item_outputs](#ai_eval_item_outputs) | AIEvalItemOutput | 13 |
 | [ai_eval_reviewer_quality](#ai_eval_reviewer_quality) | AIEvalReviewerQuality | 25 |
-| [ai_eval_runs](#ai_eval_runs) | AIEvalRun | 16 |
+| [ai_eval_runs](#ai_eval_runs) | AIEvalRun | 30 |
 | [ai_eval_shadow_pairs](#ai_eval_shadow_pairs) | AIEvalShadowPair | 16 |
 | [ai_feedback](#ai_feedback) | AIFeedback | 12 |
 | [ai_provenance_records](#ai_provenance_records) | AIProvenanceRecord | 13 |
@@ -204,7 +205,7 @@ Constraints and indexes:
 
 ## agent_action_dispatch_outbox
 
-[backend/app/models/postgres.py:6155](../../backend/app/models/postgres.py#L6155)
+[backend/app/models/postgres.py:6231](../../backend/app/models/postgres.py#L6231)
 
 Durable delivery intent for approved actions; never contains prompts.
 
@@ -236,7 +237,7 @@ Constraints and indexes:
 
 ## agent_action_ledger
 
-[backend/app/models/postgres.py:5713](../../backend/app/models/postgres.py#L5713)
+[backend/app/models/postgres.py:5789](../../backend/app/models/postgres.py#L5789)
 
 Append-only proposal/execution ledger for agent-originated actions.
 
@@ -323,7 +324,7 @@ Constraints and indexes:
 
 ## agent_configs
 
-[backend/app/models/postgres.py:5942](../../backend/app/models/postgres.py#L5942)
+[backend/app/models/postgres.py:6018](../../backend/app/models/postgres.py#L6018)
 
 A project's configuration of one agent (architecture E4.1, section 4.2).
 
@@ -424,7 +425,7 @@ Constraints and indexes:
 
 ## agent_invocations
 
-[backend/app/models/postgres.py:5879](../../backend/app/models/postgres.py#L5879)
+[backend/app/models/postgres.py:5955](../../backend/app/models/postgres.py#L5955)
 
 One call of a single agent through the public API (architecture E1.2).
 
@@ -465,7 +466,7 @@ Constraints and indexes:
 
 ## agent_memory_entries
 
-[backend/app/models/postgres.py:5658](../../backend/app/models/postgres.py#L5658)
+[backend/app/models/postgres.py:5734](../../backend/app/models/postgres.py#L5734)
 
 Unified memory linking a run/snapshot to related entities (clusters, defects,
 release decisions, ownership) for project-scoped historical recall.
@@ -771,7 +772,7 @@ Constraints and indexes:
 
 ## ai_eval_baselines
 
-[backend/app/models/postgres.py:5381](../../backend/app/models/postgres.py#L5381)
+[backend/app/models/postgres.py:5451](../../backend/app/models/postgres.py#L5451)
 
 Baseline metrics per agent/task_type for comparison gating.
 
@@ -795,9 +796,11 @@ Baseline metrics per agent/task_type for comparison gating.
 | `created_by` | `UUID` | True | False | `—` | users.id / SET NULL |
 | `created_at` | `DATETIME` | False | False | `server=now()` |  |
 | `updated_at` | `DATETIME` | False | False | `server=now(); onupdate=now()` |  |
+| `metric_kind` | `VARCHAR(20)` | False | False | `server='label_agreement'; application=label_agreement` |  |
 
 Constraints and indexes:
 
+- `CheckConstraint` `ck_aeb_metric_kind`: `metric_kind IN ('label_agreement','replay')`
 - `ForeignKeyConstraint` `unnamed`: `created_by`
 - `ForeignKeyConstraint` `unnamed`: `dataset_id`
 - `ForeignKeyConstraint` `unnamed`: `eval_run_id`
@@ -832,7 +835,7 @@ Constraints and indexes:
 
 ## ai_eval_gate_runs
 
-[backend/app/models/postgres.py:5412](../../backend/app/models/postgres.py#L5412)
+[backend/app/models/postgres.py:5488](../../backend/app/models/postgres.py#L5488)
 
 Historical record of an agent-stack release gate decision.
 
@@ -866,9 +869,44 @@ Constraints and indexes:
 - Index `ix_aeg_status` (unique=False): `ai_eval_gate_runs.status`; options `{}`
 - Index `ix_aeg_tier_comparison_lookup` (unique=False): `ai_eval_gate_runs.project_id, ai_eval_gate_runs.agent_id, ai_eval_gate_runs.candidate_tier, ai_eval_gate_runs.evaluated_at`; options `{"postgresql_where": "gate_type = 'tier_comparison'"}`
 
+## ai_eval_item_outputs
+
+[backend/app/models/postgres.py:5412](../../backend/app/models/postgres.py#L5412)
+
+One replayed item of a candidate evaluation run (W16 AGT-09, 0231).
+
+Written one at a time by the worker (``INSERT … ON CONFLICT (eval_run_id,
+item_index) DO NOTHING``); deleting the run (or its dataset) deletes them.
+``expected`` / ``output`` are stored sanitized and re-sanitized on read.
+
+| Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
+|---|---|---|---|---|---|
+| `id` | `UUID` | False | True | `application=uuid4` |  |
+| `eval_run_id` | `UUID` | False | False | `—` | ai_eval_runs.id / CASCADE |
+| `item_index` | `INTEGER` | False | False | `—` |  |
+| `item_key` | `VARCHAR(160)` | True | False | `—` |  |
+| `status` | `VARCHAR(20)` | False | False | `—` |  |
+| `error_code` | `VARCHAR(100)` | True | False | `—` |  |
+| `expected` | `JSONB` | False | False | `—` |  |
+| `output` | `JSONB` | True | False | `—` |  |
+| `score` | `JSONB` | False | False | `server='{}'::jsonb; application=dict` |  |
+| `latency_ms` | `INTEGER` | True | False | `—` |  |
+| `tokens` | `INTEGER` | True | False | `—` |  |
+| `mode_used` | `VARCHAR(20)` | True | False | `—` |  |
+| `created_at` | `DATETIME` | False | False | `server=now()` |  |
+
+Constraints and indexes:
+
+- `CheckConstraint` `ck_aeio_item_index_nonnegative`: `item_index >= 0`
+- `CheckConstraint` `ck_aeio_status`: `status IN ('correct','incorrect','unscored','error')`
+- `ForeignKeyConstraint` `unnamed`: `eval_run_id`
+- `PrimaryKeyConstraint` `unnamed`: `id`
+- `UniqueConstraint` `uq_aeio_run_item`: `eval_run_id, item_index`
+- Index `ix_aeio_run_status` (unique=False): `ai_eval_item_outputs.eval_run_id, ai_eval_item_outputs.status`; options `{}`
+
 ## ai_eval_reviewer_quality
 
-[backend/app/models/postgres.py:5479](../../backend/app/models/postgres.py#L5479)
+[backend/app/models/postgres.py:5555](../../backend/app/models/postgres.py#L5555)
 
 A G3 reviewer-quality observation batch or scheduled 30-day rollup.
 
@@ -935,18 +973,36 @@ Record of running an evaluation dataset against a model version.
 | `fallback_used` | `BOOLEAN` | False | False | `application=False` |  |
 | `evaluated_at` | `DATETIME` | False | False | `server=now()` |  |
 | `duration_ms` | `INTEGER` | True | False | `—` |  |
+| `metric_kind` | `VARCHAR(20)` | False | False | `server='label_agreement'; application=label_agreement` |  |
+| `status` | `VARCHAR(20)` | False | False | `server='completed'; application=completed` |  |
+| `candidate` | `JSONB` | True | False | `—` |  |
+| `project_id` | `UUID` | True | False | `—` | projects.id / SET NULL |
+| `requested_by` | `UUID` | True | False | `—` | users.id / SET NULL |
+| `started_at` | `DATETIME` | True | False | `—` |  |
+| `completed_at` | `DATETIME` | True | False | `—` |  |
+| `heartbeat_at` | `DATETIME` | True | False | `—` |  |
+| `scored_items` | `INTEGER` | False | False | `server=0; application=0` |  |
+| `unscored_items` | `INTEGER` | False | False | `server=0; application=0` |  |
+| `error_items` | `INTEGER` | False | False | `server=0; application=0` |  |
+| `items_capped` | `BOOLEAN` | False | False | `server=false; application=False` |  |
+| `error_code` | `VARCHAR(100)` | True | False | `—` |  |
+| `metrics` | `JSONB` | True | False | `—` |  |
 
 Constraints and indexes:
 
+- `CheckConstraint` `ck_aer_metric_kind`: `metric_kind IN ('label_agreement','replay')`
+- `CheckConstraint` `ck_aer_status`: `status IN ('queued','running','completed','partial','failed')`
 - `ForeignKeyConstraint` `unnamed`: `dataset_id`
 - `ForeignKeyConstraint` `unnamed`: `model_version_id`
+- `ForeignKeyConstraint` `fk_aer_project_id`: `project_id`
+- `ForeignKeyConstraint` `fk_aer_requested_by`: `requested_by`
 - `PrimaryKeyConstraint` `unnamed`: `id`
 - Index `ix_aer_dataset` (unique=False): `ai_eval_runs.dataset_id`; options `{}`
 - Index `ix_aer_time` (unique=False): `ai_eval_runs.evaluated_at`; options `{}`
 
 ## ai_eval_shadow_pairs
 
-[backend/app/models/postgres.py:5449](../../backend/app/models/postgres.py#L5449)
+[backend/app/models/postgres.py:5525](../../backend/app/models/postgres.py#L5525)
 
 A bounded live tier pair awaiting a human or golden-input label.
 
@@ -1273,7 +1329,7 @@ Constraints and indexes:
 
 ## compliance_packs
 
-[backend/app/models/postgres.py:6945](../../backend/app/models/postgres.py#L6945)
+[backend/app/models/postgres.py:7021](../../backend/app/models/postgres.py#L7021)
 
 Generated compliance export pack (ZIP) for a release decision.
 
@@ -1307,7 +1363,7 @@ Constraints and indexes:
 
 ## compliance_signing_keys
 
-[backend/app/models/postgres.py:7022](../../backend/app/models/postgres.py#L7022)
+[backend/app/models/postgres.py:7098](../../backend/app/models/postgres.py#L7098)
 
 The deployment's Ed25519 compliance-pack signing keys (migration 0225, W11 REL-11, D14).
 
@@ -1400,7 +1456,7 @@ Constraints and indexes:
 
 ## decision_report_eval_cycles
 
-[backend/app/models/postgres.py:5541](../../backend/app/models/postgres.py#L5541)
+[backend/app/models/postgres.py:5617](../../backend/app/models/postgres.py#L5617)
 
 Durable evidence for a report-level evaluation corpus cycle.
 
@@ -1492,7 +1548,7 @@ Constraints and indexes:
 
 ## decision_report_supersession_requests
 
-[backend/app/models/postgres.py:5603](../../backend/app/models/postgres.py#L5603)
+[backend/app/models/postgres.py:5679](../../backend/app/models/postgres.py#L5679)
 
 Durable, idempotent request to publish a child-enriched report version.
 
@@ -1670,7 +1726,7 @@ approver: Mapped[Optional['User']] = relationship('User', foreign_keys=[approved
 
 ## deletion_jobs
 
-[backend/app/models/postgres.py:7318](../../backend/app/models/postgres.py#L7318)
+[backend/app/models/postgres.py:7394](../../backend/app/models/postgres.py#L7394)
 
 One record of a deletion actually happening (migration 0147, S2b).
 
@@ -1886,7 +1942,7 @@ Constraints and indexes:
 
 ## failure_attribution
 
-[backend/app/models/postgres.py:6395](../../backend/app/models/postgres.py#L6395)
+[backend/app/models/postgres.py:6471](../../backend/app/models/postgres.py#L6471)
 
 
 
@@ -1943,7 +1999,7 @@ Constraints and indexes:
 
 ## feature_flags
 
-[backend/app/models/postgres.py:6203](../../backend/app/models/postgres.py#L6203)
+[backend/app/models/postgres.py:6279](../../backend/app/models/postgres.py#L6279)
 
 Named capability toggle gated by project, role, and rollout percent.
 
@@ -2049,7 +2105,7 @@ Constraints and indexes:
 
 ## flaky_classifier_calibration
 
-[backend/app/models/postgres.py:6532](../../backend/app/models/postgres.py#L6532)
+[backend/app/models/postgres.py:6608](../../backend/app/models/postgres.py#L6608)
 
 
 
@@ -2110,7 +2166,7 @@ Constraints and indexes:
 
 ## flaky_detection_state
 
-[backend/app/models/postgres.py:6568](../../backend/app/models/postgres.py#L6568)
+[backend/app/models/postgres.py:6644](../../backend/app/models/postgres.py#L6644)
 
 
 
@@ -2140,7 +2196,7 @@ Constraints and indexes:
 
 ## flaky_quarantine_requests
 
-[backend/app/models/postgres.py:7065](../../backend/app/models/postgres.py#L7065)
+[backend/app/models/postgres.py:7141](../../backend/app/models/postgres.py#L7141)
 
 Workflow record for proposing, approving, and enforcing quarantine
 of a flaky test.
@@ -2202,7 +2258,7 @@ Constraints and indexes:
 
 ## flaky_score
 
-[backend/app/models/postgres.py:6498](../../backend/app/models/postgres.py#L6498)
+[backend/app/models/postgres.py:6574](../../backend/app/models/postgres.py#L6574)
 
 
 
@@ -2296,7 +2352,7 @@ Constraints and indexes:
 
 ## github_integrations
 
-[backend/app/models/postgres.py:6803](../../backend/app/models/postgres.py#L6803)
+[backend/app/models/postgres.py:6879](../../backend/app/models/postgres.py#L6879)
 
 Per-project GitHub Checks API integration config.
 
@@ -2327,7 +2383,7 @@ Constraints and indexes:
 
 ## gitlab_integrations
 
-[backend/app/models/postgres.py:6862](../../backend/app/models/postgres.py#L6862)
+[backend/app/models/postgres.py:6938](../../backend/app/models/postgres.py#L6938)
 
 Per-project GitLab integration config (PMF Epic 3 US-3.1).
 
@@ -2961,7 +3017,7 @@ Constraints and indexes:
 
 ## perf_baselines
 
-[backend/app/models/postgres.py:6618](../../backend/app/models/postgres.py#L6618)
+[backend/app/models/postgres.py:6694](../../backend/app/models/postgres.py#L6694)
 
 Per-test running duration statistics.
 
@@ -3015,7 +3071,7 @@ Constraints and indexes:
 
 ## project_activity_events
 
-[backend/app/models/postgres.py:7565](../../backend/app/models/postgres.py#L7565)
+[backend/app/models/postgres.py:7641](../../backend/app/models/postgres.py#L7641)
 
 Append-only, project-scoped product feed of everything that happens.
 
@@ -3092,7 +3148,7 @@ Constraints and indexes:
 
 ## project_llm_quota
 
-[backend/app/models/postgres.py:6272](../../backend/app/models/postgres.py#L6272)
+[backend/app/models/postgres.py:6348](../../backend/app/models/postgres.py#L6348)
 
 Per-project LLM spend config used by the usage-based billing gate.
 
@@ -3120,7 +3176,7 @@ Constraints and indexes:
 
 ## project_llm_usage
 
-[backend/app/models/postgres.py:7525](../../backend/app/models/postgres.py#L7525)
+[backend/app/models/postgres.py:7601](../../backend/app/models/postgres.py#L7601)
 
 Running per-period LLM cost meter for a project.
 
@@ -3172,7 +3228,7 @@ Constraints and indexes:
 
 ## project_retention_policies
 
-[backend/app/models/postgres.py:7451](../../backend/app/models/postgres.py#L7451)
+[backend/app/models/postgres.py:7527](../../backend/app/models/postgres.py#L7527)
 
 Per-project data retention policy (PMF US-11.4, migration 0113).
 
@@ -3229,7 +3285,7 @@ Constraints and indexes:
 
 ## project_workflow_defaults
 
-[backend/app/models/postgres.py:6069](../../backend/app/models/postgres.py#L6069)
+[backend/app/models/postgres.py:6145](../../backend/app/models/postgres.py#L6145)
 
 A project's default workflow for one base (W14 AGT-08, migration 0230).
 
@@ -3336,7 +3392,7 @@ project: Mapped['Project'] = relationship('Project', back_populates='quality_gat
 
 ## quarantine_lifecycle_policies
 
-[backend/app/models/postgres.py:7195](../../backend/app/models/postgres.py#L7195)
+[backend/app/models/postgres.py:7271](../../backend/app/models/postgres.py#L7271)
 
 Per-project quarantine lifecycle configuration (PMF US-5.4/5.5/5.6).
 
@@ -3733,7 +3789,7 @@ test_run_links: Mapped[list['ReleaseTestRunLink']] = relationship('ReleaseTestRu
 
 ## report_exports
 
-[backend/app/models/postgres.py:7400](../../backend/app/models/postgres.py#L7400)
+[backend/app/models/postgres.py:7476](../../backend/app/models/postgres.py#L7476)
 
 VIZ-607: one background export of a report (migration 0194).
 
@@ -3836,7 +3892,7 @@ Constraints and indexes:
 
 ## review_requests
 
-[backend/app/models/postgres.py:5781](../../backend/app/models/postgres.py#L5781)
+[backend/app/models/postgres.py:5857](../../backend/app/models/postgres.py#L5857)
 
 One human review for one AI report-producing run (architecture section 8.1).
 
@@ -4100,7 +4156,7 @@ Constraints and indexes:
 
 ## run_tombstones
 
-[backend/app/models/postgres.py:7277](../../backend/app/models/postgres.py#L7277)
+[backend/app/models/postgres.py:7353](../../backend/app/models/postgres.py#L7353)
 
 A run that was deliberately deleted, and must not come back (0148, S2c).
 
@@ -4560,7 +4616,7 @@ Constraints and indexes:
 
 ## systemic_flake_cluster
 
-[backend/app/models/postgres.py:6433](../../backend/app/models/postgres.py#L6433)
+[backend/app/models/postgres.py:6509](../../backend/app/models/postgres.py#L6509)
 
 
 
@@ -4587,7 +4643,7 @@ Constraints and indexes:
 
 ## systemic_flake_cluster_member
 
-[backend/app/models/postgres.py:6468](../../backend/app/models/postgres.py#L6468)
+[backend/app/models/postgres.py:6544](../../backend/app/models/postgres.py#L6544)
 
 
 
@@ -5604,7 +5660,7 @@ Constraints and indexes:
 
 ## value_metric_assumptions
 
-[backend/app/models/postgres.py:7236](../../backend/app/models/postgres.py#L7236)
+[backend/app/models/postgres.py:7312](../../backend/app/models/postgres.py#L7312)
 
 Per-project tunable assumptions for the engineer-hours-saved model
 (PMF US-12.1, migration 0112).
@@ -5637,7 +5693,7 @@ Constraints and indexes:
 
 ## webhook_deliveries
 
-[backend/app/models/postgres.py:6727](../../backend/app/models/postgres.py#L6727)
+[backend/app/models/postgres.py:6803](../../backend/app/models/postgres.py#L6803)
 
 Audit trail for every webhook delivery attempt.
 
@@ -5680,7 +5736,7 @@ Constraints and indexes:
 
 ## webhook_subscriptions
 
-[backend/app/models/postgres.py:6668](../../backend/app/models/postgres.py#L6668)
+[backend/app/models/postgres.py:6744](../../backend/app/models/postgres.py#L6744)
 
 Customer-managed outbound webhook subscription.
 
@@ -5717,7 +5773,7 @@ Constraints and indexes:
 
 ## workflow_definitions
 
-[backend/app/models/postgres.py:5975](../../backend/app/models/postgres.py#L5975)
+[backend/app/models/postgres.py:6051](../../backend/app/models/postgres.py#L6051)
 
 One immutable-on-publish version of a project workflow (E3.1).
 
@@ -5767,7 +5823,7 @@ Constraints and indexes:
 
 ## workflow_replay_corpus
 
-[backend/app/models/postgres.py:6107](../../backend/app/models/postgres.py#L6107)
+[backend/app/models/postgres.py:6183](../../backend/app/models/postgres.py#L6183)
 
 A project run output cached for deterministic workflow evaluation (E9.5).
 

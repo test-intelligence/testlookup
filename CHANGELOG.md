@@ -52,6 +52,37 @@ locally by default.
 
 ### Added
 
+- **AI evaluation you can act on: candidate replays with per-item diffs, real
+  gate verdicts, the agent-stack gate history, and a labelling queue for live
+  tier pairs** (wave W16, AGT-09 and AGT-13; branch
+  `feat/df-ai-eval-20261025`). Settings › AI evaluation now has six tabs:
+  Overview, Datasets, Gate, Agent stack, Tiers and Reviewer. On **Datasets**,
+  an administrator evaluates a candidate tier (Rules, ML when a model is
+  trained, or the configured local model; a tier that cannot run says why) on
+  a dataset: the run is replayed through the real engine in the background
+  (queued, running with progress, then completed, or partial with its scored
+  items kept when a worker is lost), and **Items** lists each item as correct,
+  incorrect, unscored or error, with the expected and candidate outputs side by
+  side as text (administrators only: a feedback-built dataset carries text from
+  every project). A replay run can be **set as the baseline**, and **Gate**
+  compares any completed run with the active baseline and shows the server's
+  verdict and rules: PASS, FAIL or Not enough evidence (the tab no longer
+  answers "No baseline configured" for every task, and the duplicate-detection
+  gate now asks the agent that does the work). **Agent stack** runs every
+  required gate at once and keeps a history whose rows open their manifest
+  (checksum, prompt / model / routing versions); the history no longer includes
+  other projects' tier comparisons. **Reviewer** shows the nightly
+  reviewer-quality measurements read-only. **Tiers** (QA leads, one project)
+  adds a labelling queue for live shadow pairs: the incumbent and candidate
+  outputs side by side with a link to the run, labelled Incumbent / Candidate /
+  Both / Neither (plus the failure category on a root-cause pair); a label is
+  final, a root-cause pair whose test case has a person's verdict is labelled
+  from it nightly, an unlabelled pair is deleted after 30 days (a new
+  Retention › Preview purge row), and a tier comparison can include the live
+  labels. Labels and comparisons are recorded in the activity log. One
+  migration (`0231`): replay columns on `ai_eval_runs` and `ai_eval_baselines`
+  with constant defaults (existing rows read as legacy label agreement) and a
+  new `ai_eval_item_outputs` table.
 - **Agent actions you approve: an Inbox queue, typed proposals in Suggest,
   and an Act mode whose approved actions run, are audited and can be undone**
   (wave W15, AGT-01, AGT-02, AGT-03 under owner decision D16; branch
