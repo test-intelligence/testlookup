@@ -2,11 +2,12 @@
  * `/suites`: the project's test suites. New suite opens IN THE PAGE (W27b
  * PAN-05), under the page header; a suite's Delete asks in a strip in a
  * full-width row right under that suite's row (it was the browser's native
- * confirmation prompt).
+ * confirmation prompt). Edit (W13 TCL-07) opens the suite's form in that same
+ * row: opening one closes the other.
  */
 import { Fragment, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { ChevronRight, FolderTree, Plus, Star, Trash2 } from 'lucide-react'
+import { ChevronRight, FolderTree, Pencil, Plus, Star, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
@@ -14,6 +15,8 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { InlineConfirm } from '@/components/ui/inPage/InlineConfirm'
 import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
+import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { SuiteEditForm } from '@/components/suites/SuiteEditForm'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -38,21 +41,41 @@ function NoValue({ title }: { title: string }) {
  * suite no run has carried by name (a new or a default catch-all suite) has
  * no row there: every cell is a dash, never a 0 %.
  */
+function OwnerCell({ aggregate }: { aggregate: SuiteAggregate }) {
+  const owner = aggregate.owner_full_name || aggregate.owner_email
+  return (
+    <td className="px-4 py-3 whitespace-nowrap text-[var(--color-text-muted)]" data-col="owner">
+      {owner ? (
+        <span
+          className={aggregate.owner_is_fallback ? 'italic' : undefined}
+          title={aggregate.owner_is_fallback ? "No owner set on this suite: the project's default QA lead" : undefined}
+        >
+          {owner}
+          {aggregate.owner_is_fallback && ' (project default)'}
+        </span>
+      ) : (
+        <NoValue title="No owner resolved" />
+      )}
+    </td>
+  )
+}
+
 function AggregateCells({ aggregate }: { aggregate: SuiteAggregate | undefined }) {
   const none = 'No run has reported this suite'
-  if (!aggregate) {
+  if (!aggregate || aggregate.empty) {
+    // No row, or an `empty` one (W13 TCL-07: a suite no result reports yet):
+    // the four run cells say "no run"; an empty row still names its owner.
     return (
       <>
         <td className="px-4 py-3 text-right"><NoValue title={none} /></td>
         <td className="px-4 py-3"><NoValue title={none} /></td>
         <td className="px-4 py-3 text-right"><NoValue title={none} /></td>
         <td className="px-4 py-3 text-right"><NoValue title={none} /></td>
-        <td className="px-4 py-3"><NoValue title="No owner resolved" /></td>
+        {aggregate ? <OwnerCell aggregate={aggregate} /> : <td className="px-4 py-3"><NoValue title="No owner resolved" /></td>}
       </>
     )
   }
   const failing = aggregate.failed_count ?? 0
-  const owner = aggregate.owner_full_name || aggregate.owner_email
   return (
     <>
       <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text)]" data-col="pass-rate">
@@ -85,19 +108,7 @@ function AggregateCells({ aggregate }: { aggregate: SuiteAggregate | undefined }
       >
         {failing}
       </td>
-      <td className="px-4 py-3 whitespace-nowrap text-[var(--color-text-muted)]" data-col="owner">
-        {owner ? (
-          <span
-            className={aggregate.owner_is_fallback ? 'italic' : undefined}
-            title={aggregate.owner_is_fallback ? "No owner set on this suite: the project's default QA lead" : undefined}
-          >
-            {owner}
-            {aggregate.owner_is_fallback && ' (project default)'}
-          </span>
-        ) : (
-          <NoValue title="No owner resolved" />
-        )}
-      </td>
+      <OwnerCell aggregate={aggregate} />
     </>
   )
 }
@@ -265,6 +276,19 @@ export default function SuitesPage() {
   const [showCreate, setShowCreate] = useState(false)
   // The suite whose Delete is being asked about (the strip under its row).
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
+  // The suite whose Edit form is open under its row (W13 TCL-07), `edit:<id>`.
+  // It shares the row's place with the Delete strip: opening one closes the
+  // other (a half-typed edit asks first).
+  const rowSlot = useInlineSlot()
+  const openEdit = (suiteId: string) => {
+    setConfirmingDelete(null)
+    rowSlot.open(`edit:${suiteId}`)
+  }
+  const askDelete = (suiteId: string) =>
+    rowSlot.guard(() => {
+      rowSlot.close()
+      setConfirmingDelete(suiteId)
+    })
   // Create is allowed when the user has the role AND either a specific
   // project is active OR they have at least one accessible project to
   // pick from in All-Projects mode. The second condition saves a
@@ -400,7 +424,8 @@ export default function SuitesPage() {
                           (a truncated cell still sized it to the whole text: the list ran
                           21 px past its card at 1280 px on CI's font). */}
                       <div data-suite-description="" className="w-0 min-w-full max-w-[280px] truncate">
-                        {s.description ?? <span className="italic">—</span>}
+                        {/* An emptied description is stored as "" (TCL-07): a dash too. */}
+                        {s.description || <span className="italic">—</span>}
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">
@@ -409,6 +434,17 @@ export default function SuitesPage() {
                     {showRunColumns && <AggregateCells aggregate={aggregates.byName.get(s.name.trim())} />}
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
+                        {canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => openEdit(s.id)}
+                            className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]"
+                            title="Edit"
+                            aria-label={`Edit ${s.name}`}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
                         {canSetDefault && !s.is_default && (
                           <button
                             onClick={() => handleSetDefault(s)}
@@ -420,7 +456,7 @@ export default function SuitesPage() {
                         )}
                         {canDelete && !s.is_default && (
                           <button
-                            onClick={() => setConfirmingDelete(s.id)}
+                            onClick={() => askDelete(s.id)}
                             className="rounded p-1 text-[var(--color-text-muted)] hover:bg-[var(--status-failed-bg)]/10 hover:text-[var(--status-failed)]"
                             title="Delete"
                           >
@@ -431,6 +467,16 @@ export default function SuitesPage() {
                       </div>
                     </td>
                   </tr>
+                  {canEdit && rowSlot.openKey === `edit:${s.id}` && (
+                    <InlineRowSection colSpan={showRunColumns ? 9 : 4} dataAttributes={{ 'data-suite-edit-row': s.id }}>
+                      <SuiteEditForm
+                        suite={s}
+                        slot={rowSlot}
+                        onClose={() => rowSlot.close()}
+                        onSaved={() => rowSlot.close()}
+                      />
+                    </InlineRowSection>
+                  )}
                   {confirmingDelete === s.id && (
                     <InlineRowSection colSpan={showRunColumns ? 9 : 4}>
                       <InlineConfirm

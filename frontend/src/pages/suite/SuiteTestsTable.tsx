@@ -17,8 +17,15 @@ import { Link, useNavigate } from 'react-router-dom'
 import { ArrowRightLeft, ExternalLink } from 'lucide-react'
 import type { CanonicalTestCase } from '@/types/suites'
 import type { SuiteDetailTestCase } from '@/types/analytics'
+import { formatCompactDateTime } from '@/utils/formatters'
 import { FlakyPill, LastStatusBadge, PassRateBar } from './SuiteParts'
 import { formatSuiteDuration } from './format'
+
+/** The latest run's full instant for the date line's `title` (the cell itself is compact). */
+function lastSeenIso(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toISOString()
+}
 
 const STATUS_COLOR: Record<string, string> = {
   active: 'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)] ring-[var(--status-passed)]/30',
@@ -191,17 +198,29 @@ export default function SuiteTestsTable({
                 </td>
                 <td className="px-3 py-2 text-right">
                   <div className="inline-flex items-center gap-1">
-                    {/* The latest run, named by its id (the row carries the run's id,
-                        not a timestamp, so it names the run rather than claim a date). */}
+                    {/* The latest run, named by its id; under it (W13 TCL-07) the
+                        run's own creation time when the server knows it — read by
+                        run id in the suite's project, never guessed. */}
                     {runHref && c.last_seen_run_id && (
-                      <Link
-                        to={runHref}
-                        onClick={e => e.stopPropagation()}
-                        title={`Open this test's result in its latest run, ${c.last_seen_run_id}`}
-                        className="inline-flex items-center gap-1 whitespace-nowrap rounded px-2 py-1 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
-                      >
-                        <ExternalLink className="h-3 w-3" aria-hidden="true" /> run <span className="font-mono">{c.last_seen_run_id.slice(0, 8)}</span>
-                      </Link>
+                      <span className="inline-flex flex-col items-end">
+                        <Link
+                          to={runHref}
+                          onClick={e => e.stopPropagation()}
+                          title={`Open this test's result in its latest run, ${c.last_seen_run_id}`}
+                          className="inline-flex items-center gap-1 whitespace-nowrap rounded px-2 py-1 text-xs text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+                        >
+                          <ExternalLink className="h-3 w-3" aria-hidden="true" /> run <span className="font-mono">{c.last_seen_run_id.slice(0, 8)}</span>
+                        </Link>
+                        {c.last_seen_at && (
+                          <span
+                            data-last-seen-at={c.last_seen_at}
+                            title={`Latest run ${lastSeenIso(c.last_seen_at)} · run ${c.last_seen_run_id}`}
+                            className="whitespace-nowrap px-2 text-xs text-[var(--color-text-muted)]"
+                          >
+                            {formatCompactDateTime(c.last_seen_at)}
+                          </span>
+                        )}
+                      </span>
                     )}
                     {canEdit && (
                       <button

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 import structlog
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Optional, cast
 
@@ -82,16 +83,45 @@ async def get_test_case_or_404(
     )
 
 
-def managed_case_search_clause(search: str):
+def requirement_search_clause(search: str):
+    """W13 TCL-06: the case carries a requirement key CONTAINING the search.
+
+    ``EXISTS`` over the case's own links, compared on the normalised key
+    (``normalize_requirement_key``: ``[req-pay-07]`` and ``REQ-PAY-07`` are one
+    key) and always through the link's own ``project_id`` = the case's, so the
+    subquery stays on ``ix_tcrl_project_key``'s project. ``None`` when the
+    search normalises to nothing.
+    """
+    from sqlalchemy import exists
+
+    from app.core.test_library_vocab import normalize_requirement_key
+    from app.models.postgres import TestCaseRequirementLink
+    from app.services.sql_utils import like_contains
+
+    norm = normalize_requirement_key(search)
+    if not norm:
+        return None
+    return exists().where(
+        TestCaseRequirementLink.test_case_id == ManagedTestCase.id,
+        TestCaseRequirementLink.project_id == ManagedTestCase.project_id,
+        TestCaseRequirementLink.requirement_key_norm.like(like_contains(norm), escape="\\"),
+    )
+
+
+def managed_case_search_clause(search: str, *, requirements: bool = False):
     """HON-07: the authored-case search, as wide as the Cases box promises.
 
     The placeholder said "ID, title, tags, owner, or requirement" while this
     matched the title alone. It now matches the title, the description, any
     tag (the JSON list cast to text; the list holds strings, so a key name
     cannot match by accident), and the case id by PREFIX, with or without the
-    ``TC-`` the page prints before the id's first six characters. Owner and
-    requirement are not searched, and the placeholder no longer names them.
-    A full scan per project, which is acceptable at library sizes.
+    ``TC-`` the page prints before the id's first six characters. Owner is
+    not searched. A full scan per project, which is acceptable at library sizes.
+
+    ``requirements=True`` (W13 TCL-06: the list and export routes ask for it)
+    adds one more term, a requirement key on the case containing the search
+    (``requirement_search_clause``). Off by default, so a direct caller builds
+    exactly the four terms it always did.
     """
     from sqlalchemy import Text
 
@@ -108,7 +138,243 @@ def managed_case_search_clause(search: str):
         id_term = id_term[3:]
     if id_term:
         clauses.append(ManagedTestCase.id.cast(Text).ilike(f"{escape_like(id_term)}%", escape="\\"))
+    if requirements:
+        requirement_term = requirement_search_clause(search)
+        if requirement_term is not None:
+            clauses.append(requirement_term)
     return or_(*clauses)
+
+
+@dataclass(frozen=True, slots=True)
+class CaseListFilters:
+    """W13 TCL-01: the case list's filters beyond today's single values.
+
+    Built by the router from the QUERY (validated there); every list holds
+    validated values, de-duplicated, at most ``CASE_FILTER_MAX_VALUES``.
+    An empty instance adds NOTHING to a statement.
+    """
+
+    statuses: tuple[str, ...] = ()
+    test_types: tuple[str, ...] = ()
+    priorities: tuple[str, ...] = ()
+    owner_id: uuid.UUID | None = None          # resolved: "me" -> current_user.id
+    automation: str | None = None              # CASE_AUTOMATION_FILTERS
+    requirement_key: str | None = None         # normalize_requirement_key(...) of the QUERY value
+
+    @property
+    def authored_only(self) -> bool:
+        """Only authored cases can answer: an owner, an automation state, a
+        requirement, or several values of one list (the automation union
+        filters by none of them)."""
+        return bool(
+            self.owner_id is not None
+            or self.automation is not None
+            or self.requirement_key
+            or len(self.statuses) > 1
+            or len(self.test_types) > 1
+            or len(self.priorities) > 1
+        )
+
+
+def apply_case_list_filters(query, filters: CaseListFilters):
+    """AND the filters onto an authored-case statement. Pure.
+
+    ``status IN``, ``test_type IN``, ``priority IN``; the owner is the
+    assignee, else the author (the Owner column's rule); ``automated`` is
+    ``is_automated IS TRUE`` and ``not_automated`` counts a NULL as not
+    automated; a requirement is an exact match on the normalised key of a
+    link in the case's own project. Each term sits on ``managed_test_cases``
+    itself (no OR across tables). An empty ``CaseListFilters`` adds nothing.
+    """
+    from sqlalchemy import exists, false
+
+    if filters.statuses:
+        query = query.where(ManagedTestCase.status.in_(list(filters.statuses)))
+    if filters.test_types:
+        query = query.where(ManagedTestCase.test_type.in_(list(filters.test_types)))
+    if filters.priorities:
+        query = query.where(ManagedTestCase.priority.in_(list(filters.priorities)))
+    if filters.owner_id is not None:
+        query = query.where(
+            func.coalesce(ManagedTestCase.assignee_id, ManagedTestCase.author_id) == filters.owner_id
+        )
+    if filters.automation == "automated":
+        query = query.where(ManagedTestCase.is_automated.is_(True))
+    elif filters.automation == "not_automated":
+        query = query.where(func.coalesce(ManagedTestCase.is_automated, false()) == false())
+    if filters.requirement_key:
+        from app.models.postgres import TestCaseRequirementLink
+
+        query = query.where(
+            exists().where(
+                TestCaseRequirementLink.test_case_id == ManagedTestCase.id,
+                TestCaseRequirementLink.project_id == ManagedTestCase.project_id,
+                TestCaseRequirementLink.requirement_key_norm == filters.requirement_key,
+            )
+        )
+    return query
+
+
+async def resolve_owner_filter(
+    db: AsyncSession,
+    owner: Optional[str],
+    *,
+    project_id: Optional[uuid.UUID],
+    current_user,
+) -> Optional[uuid.UUID]:
+    """The QUERY ``owner`` as a user id, checked against the scoped project.
+
+    ``None`` / ``""`` -> no filter; ``me`` -> the reader (no statement, every
+    scope); a user id -> someone a case of THAT project may be assigned to
+    (``require_assignable``: an active member, or an admin), else 422 with the
+    filter's own sentence; a user id with no project -> 422; anything else ->
+    422. The caller has already resolved the project scope.
+    """
+    from app.core.test_library_vocab import (
+        OWNER_INVALID_SENTENCE,
+        OWNER_ME,
+        OWNER_NEEDS_PROJECT_SENTENCE,
+        OWNER_NOT_MEMBER_SENTENCE,
+    )
+
+    value = (owner or "").strip()
+    if not value:
+        return None
+    if value.lower() == OWNER_ME:
+        return cast(uuid.UUID, current_user.id)
+    try:
+        user_id = uuid.UUID(value)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=OWNER_INVALID_SENTENCE) from None
+    if project_id is None:
+        raise HTTPException(status_code=422, detail=OWNER_NEEDS_PROJECT_SENTENCE)
+    try:
+        await require_assignable(db, project_id, user_id)
+    except HTTPException as exc:
+        if exc.status_code != 422:
+            raise
+        raise HTTPException(status_code=422, detail=OWNER_NOT_MEMBER_SENTENCE) from None
+    return user_id
+
+
+def _filter_values(raw: object) -> list:
+    """A repeatable QUERY list: stripped, empties dropped, de-duplicated (order
+    kept), at most ``CASE_FILTER_MAX_VALUES`` (else 422). A non-list (``None``,
+    or the ``Query(None)`` default a direct Python call leaves) is no filter."""
+    from app.core.test_library_vocab import CASE_FILTER_MAX_VALUES, TOO_MANY_VALUES_SENTENCE
+
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    values: list = []
+    for item in raw:
+        text = (item.value if isinstance(item, TestCaseLifecycleState) else str(item)).strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        values.append(item if isinstance(item, TestCaseLifecycleState) else text)
+    if len(values) > CASE_FILTER_MAX_VALUES:
+        raise HTTPException(status_code=422, detail=TOO_MANY_VALUES_SENTENCE)
+    return values
+
+
+def _priority_values(values: list) -> list[str]:
+    """Priorities as stored: any case, ``P0``-``P3`` aliased (``PRIORITY_ALIASES``),
+    then de-duplicated again (``P0`` and ``critical`` are one value). Anything
+    outside ``CASE_PRIORITIES`` is a 422: an unknown value used to match
+    nothing and answer an empty page that looked like a real result."""
+    from app.core.test_library_vocab import CASE_PRIORITIES, PRIORITY_ALIASES, PRIORITY_INVALID_SENTENCE
+
+    normalised: list[str] = []
+    for value in values:
+        lowered = str(value).lower()
+        priority = PRIORITY_ALIASES.get(lowered, lowered)
+        if priority not in CASE_PRIORITIES:
+            raise HTTPException(status_code=422, detail=PRIORITY_INVALID_SENTENCE)
+        if priority not in normalised:
+            normalised.append(priority)
+    return normalised
+
+
+def _status_values(values: list) -> list:
+    """Lifecycle states only (the list route's enum already refuses others; the
+    export takes plain strings, so it is judged here the same way)."""
+    from app.core.test_library_vocab import LIFECYCLE_STATES, STATUS_INVALID_SENTENCE
+
+    for value in values:
+        if not isinstance(value, TestCaseLifecycleState) and value not in LIFECYCLE_STATES:
+            raise HTTPException(status_code=422, detail=STATUS_INVALID_SENTENCE)
+    return values
+
+
+def _type_values(values: list) -> list[str]:
+    """Types stay free text (cases carry types beyond the chip's nine, and the
+    combined path reads ``automation``), bounded by the column's 50 characters."""
+    from app.core.test_library_vocab import CASE_VIEW_TYPE_MAX, TYPE_INVALID_SENTENCE
+
+    for value in values:
+        if len(value) > CASE_VIEW_TYPE_MAX:
+            raise HTTPException(status_code=422, detail=TYPE_INVALID_SENTENCE)
+    return values
+
+
+async def parse_case_list_filters(
+    db: AsyncSession,
+    current_user,
+    *,
+    project_id: Optional[uuid.UUID],
+    status: object = None,
+    test_type: object = None,
+    priority: object = None,
+    owner: object = None,
+    automation: object = None,
+    requirement: object = None,
+) -> tuple[CaseListFilters, dict]:
+    """W13 TCL-01: the case list's QUERY filters, judged ONE way for the list and the export.
+
+    Returns the ``CaseListFilters`` and today's single-value meaning (``status``
+    / ``test_type`` / ``priority`` when exactly one value was sent; a status
+    stays the enum member the list route parsed), so a one-value request keeps
+    today's call shape. The router calls it AFTER ``resolve_project_scope``:
+    ``owner=<id>`` is checked against that project. A non-str / non-list value
+    (a direct Python call's ``Query`` default) is no filter. A priority is
+    aliased (``P0``-``P3``, any case) and must be one of ``CASE_PRIORITIES``,
+    a status one of ``LIFECYCLE_STATES``, a type at most 50 characters (422 otherwise).
+    """
+    from app.core.test_library_vocab import (
+        AUTOMATION_INVALID_SENTENCE,
+        CASE_AUTOMATION_FILTERS,
+        normalize_requirement_key,
+    )
+
+    statuses = _status_values(_filter_values(status))
+    types = _type_values(_filter_values(test_type))
+    priorities = _priority_values(_filter_values(priority))
+    automation_value = automation.strip() if isinstance(automation, str) else None
+    if automation_value is not None and automation_value not in CASE_AUTOMATION_FILTERS:
+        raise HTTPException(status_code=422, detail=AUTOMATION_INVALID_SENTENCE)
+    owner_id = await resolve_owner_filter(
+        db, owner if isinstance(owner, str) else None, project_id=project_id, current_user=current_user,
+    )
+    requirement_key = (
+        normalize_requirement_key(requirement) or None
+        if isinstance(requirement, str) and requirement
+        else None
+    )
+    filters = CaseListFilters(
+        statuses=tuple(s.value if isinstance(s, TestCaseLifecycleState) else s for s in statuses),
+        test_types=tuple(types),
+        priorities=tuple(priorities),
+        owner_id=owner_id,
+        automation=automation_value,
+        requirement_key=requirement_key,
+    )
+    single = {
+        "status": statuses[0] if len(statuses) == 1 else None,
+        "test_type": types[0] if len(types) == 1 else None,
+        "priority": priorities[0] if len(priorities) == 1 else None,
+    }
+    return filters, single
 
 
 async def list_managed_test_cases(
@@ -124,11 +390,45 @@ async def list_managed_test_cases(
     ai_generated: Optional[bool] = None,
     search: Optional[str] = None,
     suite_name: Optional[str] = None,
+    *,
+    filters: Optional[CaseListFilters] = None,
+    search_requirements: bool = False,
 ):
+    """One page of authored cases.
+
+    ``filters`` None builds today's statement exactly. With ``filters`` (W13
+    TCL-01, the list and export routes), the single ``status`` / ``test_type``
+    / ``priority`` fold into it (its own lists win), ``apply_case_list_filters``
+    replaces those three predicates, and a status list (like one ``status``
+    today) drops the default retired exclusion. ``search_requirements`` adds
+    the requirement term to the search (``managed_case_search_clause``).
+    """
     query = select(ManagedTestCase)
     if project_id:
         query = query.where(ManagedTestCase.project_id == project_id)
-    if status:
+    if filters is not None:
+        status_value = status.value if isinstance(status, TestCaseLifecycleState) else status
+        effective = replace(
+            filters,
+            statuses=filters.statuses or ((status_value,) if status_value else ()),
+            test_types=filters.test_types or ((test_type,) if test_type else ()),
+            priorities=filters.priorities or ((priority,) if priority else ()),
+        )
+        if not effective.statuses and include_archived:
+            query = query.where(ManagedTestCase.status != TestCaseLifecycleState.DEPRECATED.value)
+        elif not effective.statuses:
+            query = query.where(
+                ManagedTestCase.status.notin_(
+                    [
+                        TestCaseLifecycleState.DEPRECATED.value,
+                        TestCaseLifecycleState.ARCHIVED.value,
+                    ]
+                )
+            )
+        query = apply_case_list_filters(query, effective)
+        # Folded: today's single-value predicates below must not apply twice.
+        test_type = priority = None
+    elif status:
         status_value = status.value if isinstance(status, TestCaseLifecycleState) else status
         query = query.where(ManagedTestCase.status == status_value)
     elif include_archived:
@@ -161,7 +461,7 @@ async def list_managed_test_cases(
             == normalize_suite_name(suite_name)
         )
     if search:
-        query = query.where(managed_case_search_clause(search))
+        query = query.where(managed_case_search_clause(search, requirements=search_requirements))
     return await paginate_scalars(db, query.order_by(ManagedTestCase.created_at.desc()), page, size)
 
 
@@ -193,8 +493,13 @@ async def list_combined_test_case_identities(
     suite_name: Optional[str],
     page: int,
     size: int,
+    search_requirements: bool = False,
 ) -> tuple[list[tuple[str, uuid.UUID]], int, int]:
-    """Page managed and latest automation identities in one bounded SQL query."""
+    """Page managed and latest automation identities in one bounded SQL query.
+
+    ``search_requirements`` (W13 TCL-06) adds the requirement term to the
+    authored half's search; the automation half has no requirement keys.
+    """
     managed = select(
         literal("managed").label("source"),
         ManagedTestCase.id.label("entity_id"),
@@ -217,7 +522,7 @@ async def list_combined_test_case_identities(
             == normalize_suite_name(suite_name)
         )
     if search:
-        managed = managed.where(managed_case_search_clause(search))
+        managed = managed.where(managed_case_search_clause(search, requirements=search_requirements))
 
     sources = [managed]
     if not test_type or test_type.lower() == "automation":

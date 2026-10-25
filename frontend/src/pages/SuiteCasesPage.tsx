@@ -32,6 +32,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
 import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
+import { SuiteEditForm } from '@/components/suites/SuiteEditForm'
 import KpiStrip from '@/components/ui/KpiStrip'
 import MetricCard from '@/components/ui/MetricCard'
 import Tabs, { type TabItem } from '@/components/ui/Tabs'
@@ -367,6 +368,8 @@ export default function SuiteCasesPage() {
   // the tests table; one of them at a time (the table's slot asks before a
   // changed target is replaced).
   const moveSlot = useInlineSlot()
+  // W13 TCL-07: Edit suite opens right under the page header (its own slot).
+  const headerSlot = useInlineSlot()
 
   const siblingSuites = useMemo(() => {
     if (!suite || !allSuites?.items) return []
@@ -448,11 +451,25 @@ export default function SuiteCasesPage() {
       <PageHeader
         compact
         title={suite.is_default ? `${suite.name} (default)` : suite.name}
-        subtitle={suite.description ?? undefined}
+        subtitle={suite.description || undefined}
         helpTopic={helpTopicParam('/suites')}
         overflow={[{ label: 'All suites', href: '/suites', icon: <ArrowLeft className="h-4 w-4" /> }]}
         tabs={<Tabs items={tabs} value={tab} onChange={setTab} ariaLabel="Suite sections" />}
+        actions={canEdit ? (
+          <button type="button" onClick={() => headerSlot.open('edit')} className="btn-secondary btn-sm">
+            Edit suite
+          </button>
+        ) : undefined}
       />
+
+      {canEdit && headerSlot.openKey === 'edit' && (
+        <SuiteEditForm
+          suite={suite}
+          slot={headerSlot}
+          onClose={() => headerSlot.close()}
+          onSaved={() => headerSlot.close()}
+        />
+      )}
 
       {/* One toolbar row: the window every tab reads (the page is one suite, so no suite filter). */}
       <div data-toolbar="" className="flex flex-wrap items-center gap-3">
