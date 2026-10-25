@@ -6501,6 +6501,20 @@
         "title": "Body_draft_release_phases_api_v1_releases__release_id__phases_generate_post",
         "type": "object"
       },
+      "Body_import_test_cases_api_v1_test_management_cases_import_post": {
+        "properties": {
+          "file": {
+            "format": "binary",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_test_cases_api_v1_test_management_cases_import_post",
+        "type": "object"
+      },
       "Body_ingest_file_api_v1_ingest_file_post": {
         "properties": {
           "branch": {
@@ -6986,6 +7000,18 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
           },
           "last_seen_run_id": {
             "anyOf": [
@@ -12502,6 +12528,28 @@
             ],
             "title": "Deleted Observed At"
           },
+          "flaky_confidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flaky Confidence"
+          },
+          "flaky_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flaky Score"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -12518,6 +12566,17 @@
               }
             ],
             "title": "Last Executed At"
+          },
+          "owner_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner State"
           },
           "project_id": {
             "format": "uuid",
@@ -15601,6 +15660,176 @@
         "title": "IdentitySyncStatus",
         "type": "object"
       },
+      "ImportDuplicateOf": {
+        "properties": {
+          "case_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "row": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "ImportDuplicateOf",
+        "type": "object"
+      },
+      "ImportHeaderReport": {
+        "properties": {
+          "ignored": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ignored",
+            "type": "array"
+          },
+          "recognised": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recognised",
+            "type": "array"
+          },
+          "unknown": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unknown",
+            "type": "array"
+          }
+        },
+        "required": [
+          "recognised",
+          "ignored",
+          "unknown"
+        ],
+        "title": "ImportHeaderReport",
+        "type": "object"
+      },
+      "ImportRowResult": {
+        "properties": {
+          "case_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "duplicate_of": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ImportDuplicateOf"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "row": {
+            "title": "Row",
+            "type": "integer"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "row",
+          "outcome"
+        ],
+        "title": "ImportRowResult",
+        "type": "object"
+      },
+      "ImportSummary": {
+        "properties": {
+          "create": {
+            "title": "Create",
+            "type": "integer"
+          },
+          "created": {
+            "default": 0,
+            "title": "Created",
+            "type": "integer"
+          },
+          "duplicate": {
+            "title": "Duplicate",
+            "type": "integer"
+          },
+          "invalid": {
+            "title": "Invalid",
+            "type": "integer"
+          },
+          "rows": {
+            "title": "Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows",
+          "create",
+          "duplicate",
+          "invalid"
+        ],
+        "title": "ImportSummary",
+        "type": "object"
+      },
       "IngestPayload": {
         "description": "JSON batch ingest request body for POST /api/v1/ingest.",
         "properties": {
@@ -17803,6 +18032,326 @@
         "title": "KnowledgeSyncEventResponse",
         "type": "object"
       },
+      "LibraryCaseList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryCaseRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "measured": {
+            "default": true,
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "LibraryCaseList",
+        "type": "object"
+      },
+      "LibraryCaseRow": {
+        "properties": {
+          "age_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Days"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "status"
+        ],
+        "title": "LibraryCaseRow",
+        "type": "object"
+      },
+      "LibraryHealthComponent": {
+        "properties": {
+          "denominator": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Denominator"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "measured": {
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "numerator": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Numerator"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "weight": {
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "weight",
+          "measured",
+          "detail"
+        ],
+        "title": "LibraryHealthComponent",
+        "type": "object"
+      },
+      "LibraryHealthResponse": {
+        "properties": {
+          "active_cases": {
+            "title": "Active Cases",
+            "type": "integer"
+          },
+          "automated_cases": {
+            "title": "Automated Cases",
+            "type": "integer"
+          },
+          "automation_target_pct": {
+            "title": "Automation Target Pct",
+            "type": "integer"
+          },
+          "avg_age_days": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Age Days"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryHealthComponent"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "computed_at": {
+            "format": "date-time",
+            "title": "Computed At",
+            "type": "string"
+          },
+          "flaky_active": {
+            "$ref": "#/components/schemas/LibraryCaseList"
+          },
+          "measured": {
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "no_owner": {
+            "$ref": "#/components/schemas/LibraryCaseList"
+          },
+          "older_than_180_days": {
+            "default": 0,
+            "title": "Older Than 180 Days",
+            "type": "integer"
+          },
+          "older_than_180_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Older Than 180 Pct"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "requirements": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RequirementCoverageSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retired_cases": {
+            "title": "Retired Cases",
+            "type": "integer"
+          },
+          "retired_in_open_plans": {
+            "title": "Retired In Open Plans",
+            "type": "integer"
+          },
+          "review_queue": {
+            "$ref": "#/components/schemas/ReviewQueueSummary"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
+          },
+          "stale_drafts": {
+            "title": "Stale Drafts",
+            "type": "integer"
+          },
+          "strategy_gaps": {
+            "items": {
+              "$ref": "#/components/schemas/StrategyGapRead"
+            },
+            "title": "Strategy Gaps",
+            "type": "array"
+          },
+          "suite_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Suite Names",
+            "type": "array"
+          },
+          "suite_names_total": {
+            "title": "Suite Names Total",
+            "type": "integer"
+          },
+          "tag": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag"
+          },
+          "total_cases": {
+            "title": "Total Cases",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "computed_at",
+          "measured",
+          "total_cases",
+          "active_cases",
+          "retired_cases",
+          "automated_cases",
+          "automation_target_pct",
+          "stale_drafts",
+          "retired_in_open_plans",
+          "components",
+          "review_queue",
+          "strategy_gaps",
+          "flaky_active",
+          "no_owner",
+          "suite_names",
+          "suite_names_total"
+        ],
+        "title": "LibraryHealthResponse",
+        "type": "object"
+      },
       "LinkRunRequest": {
         "properties": {
           "phase_id": {
@@ -19559,6 +20108,11 @@
       },
       "ManagedTestCaseListResponse": {
         "properties": {
+          "automation_rows_excluded": {
+            "default": false,
+            "title": "Automation Rows Excluded",
+            "type": "boolean"
+          },
           "items": {
             "items": {
               "$ref": "#/components/schemas/ManagedTestCaseResponse"
@@ -24072,6 +24626,11 @@
       },
       "ProjectResponse": {
         "properties": {
+          "automation_target_pct": {
+            "default": 60,
+            "title": "Automation Target Pct",
+            "type": "integer"
+          },
           "component_owner_map": {
             "anyOf": [
               {
@@ -24316,6 +24875,19 @@
       "ProjectUpdate": {
         "description": "Partial update for project attributes. None = keep existing.",
         "properties": {
+          "automation_target_pct": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Automation Target Pct"
+          },
           "component_owner_map": {
             "anyOf": [
               {
@@ -27205,6 +27777,220 @@
         "title": "RequirementCoverageSchema",
         "type": "object"
       },
+      "RequirementCoverageSummary": {
+        "properties": {
+          "gaps": {
+            "title": "Gaps",
+            "type": "integer"
+          },
+          "known": {
+            "title": "Known",
+            "type": "integer"
+          },
+          "measured": {
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "partly_verified": {
+            "title": "Partly Verified",
+            "type": "integer"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "top_gaps": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementGapRead"
+            },
+            "title": "Top Gaps",
+            "type": "array"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "verified": {
+            "title": "Verified",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "measured",
+          "known",
+          "verified",
+          "partly_verified",
+          "gaps"
+        ],
+        "title": "RequirementCoverageSummary",
+        "type": "object"
+      },
+      "RequirementGapRead": {
+        "properties": {
+          "batch_claimed_cases": {
+            "default": 0,
+            "title": "Batch Claimed Cases",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "linked_cases": {
+            "default": 0,
+            "title": "Linked Cases",
+            "type": "integer"
+          },
+          "normalized_key": {
+            "title": "Normalized Key",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "normalized_key",
+          "reason",
+          "sources"
+        ],
+        "title": "RequirementGapRead",
+        "type": "object"
+      },
+      "RequirementLinkCreate": {
+        "properties": {
+          "link_type": {
+            "default": "verifies",
+            "maxLength": 20,
+            "title": "Link Type",
+            "type": "string"
+          },
+          "requirement_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Requirement Key",
+            "type": "string"
+          },
+          "requirement_title": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement Title"
+          }
+        },
+        "required": [
+          "requirement_key"
+        ],
+        "title": "RequirementLinkCreate",
+        "type": "object"
+      },
+      "RequirementLinkListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementLinkRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "RequirementLinkListResponse",
+        "type": "object"
+      },
+      "RequirementLinkRead": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By Name"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "link_type": {
+            "title": "Link Type",
+            "type": "string"
+          },
+          "normalized_key": {
+            "title": "Normalized Key",
+            "type": "string"
+          },
+          "requirement_key": {
+            "title": "Requirement Key",
+            "type": "string"
+          },
+          "requirement_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requirement Title"
+          },
+          "test_case_id": {
+            "format": "uuid",
+            "title": "Test Case Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "test_case_id",
+          "requirement_key",
+          "normalized_key",
+          "link_type",
+          "created_at"
+        ],
+        "title": "RequirementLinkRead",
+        "type": "object"
+      },
       "RetentionCriteria": {
         "additionalProperties": false,
         "description": "What to delete. Every field is optional; at least one must be given.\n\n``suite_match`` decides what \"in this suite\" means for a run that contains\nseveral. ``only`` — the default — matches the run's own suite label and is\nthe conservative reading: it will not delete a multi-suite run because one\nof its suites was selected. ``any`` matches a run with any test case in the\nsuite, and is the destructive reading, so it is opt-in.",
@@ -27896,6 +28682,54 @@
           }
         },
         "title": "ReviewConfig",
+        "type": "object"
+      },
+      "ReviewQueueSummary": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryCaseRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "measured": {
+            "default": true,
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "oldest_age_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Age Days"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "ReviewQueueSummary",
         "type": "object"
       },
       "ReviewResponse": {
@@ -31182,7 +32016,8 @@
                   "failures",
                   "summary_report",
                   "explore",
-                  "search"
+                  "search",
+                  "test_management"
                 ],
                 "type": "string"
               },
@@ -31420,7 +32255,8 @@
                   "failures",
                   "summary_report",
                   "explore",
-                  "search"
+                  "search",
+                  "test_management"
                 ],
                 "type": "string"
               },
@@ -32679,6 +33515,44 @@
           "exact"
         ],
         "title": "StoreFootprintResponse",
+        "type": "object"
+      },
+      "StrategyGapRead": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "pill": {
+            "title": "Pill",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "severity",
+          "title",
+          "detail",
+          "count",
+          "pill"
+        ],
+        "title": "StrategyGapRead",
         "type": "object"
       },
       "StreamMessageRequest": {
@@ -35547,6 +36421,51 @@
         "title": "TestCaseIdentitySection",
         "type": "object"
       },
+      "TestCaseImportResponse": {
+        "properties": {
+          "dry_run": {
+            "title": "Dry Run",
+            "type": "boolean"
+          },
+          "file_name": {
+            "title": "File Name",
+            "type": "string"
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          },
+          "headers": {
+            "$ref": "#/components/schemas/ImportHeaderReport"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/ImportRowResult"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/ImportSummary"
+          }
+        },
+        "required": [
+          "project_id",
+          "dry_run",
+          "file_name",
+          "format",
+          "headers",
+          "summary",
+          "rows"
+        ],
+        "title": "TestCaseImportResponse",
+        "type": "object"
+      },
       "TestCaseLifecycleState": {
         "description": "Stored lifecycle vocabulary for authored ``ManagedTestCase`` rows.",
         "enum": [
@@ -36217,6 +37136,52 @@
           "failure_kind"
         ],
         "title": "TestCaseSummary",
+        "type": "object"
+      },
+      "TestCaseTimelineResponse": {
+        "properties": {
+          "automation_linked": {
+            "default": false,
+            "title": "Automation Linked",
+            "type": "boolean"
+          },
+          "case_id": {
+            "format": "uuid",
+            "title": "Case Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineEntry"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "kinds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Kinds",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "case_id",
+          "kinds",
+          "items"
+        ],
+        "title": "TestCaseTimelineResponse",
         "type": "object"
       },
       "TestCaseTransitionRequest": {
@@ -38751,6 +39716,184 @@
         "title": "TierOutputPairRequest",
         "type": "object"
       },
+      "TimelineEntry": {
+        "properties": {
+          "actor_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Id"
+          },
+          "actor_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Name"
+          },
+          "actor_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Source"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "link": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TimelineLink"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "occurred_at",
+          "title"
+        ],
+        "title": "TimelineEntry",
+        "type": "object"
+      },
+      "TimelineLink": {
+        "properties": {
+          "defect_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defect Id"
+          },
+          "jira_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Jira Key"
+          },
+          "plan_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan Id"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "test_case_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Case Id"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "TimelineLink",
+        "type": "object"
+      },
       "TimelineNoteCreate": {
         "additionalProperties": false,
         "properties": {
@@ -39015,6 +40158,60 @@
           }
         },
         "title": "ToolsConfig",
+        "type": "object"
+      },
+      "TraceabilityGapsResponse": {
+        "properties": {
+          "cases_without_requirements": {
+            "items": {
+              "$ref": "#/components/schemas/LibraryCaseRow"
+            },
+            "title": "Cases Without Requirements",
+            "type": "array"
+          },
+          "cases_without_requirements_total": {
+            "title": "Cases Without Requirements Total",
+            "type": "integer"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementGapRead"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
+          "gaps_total": {
+            "title": "Gaps Total",
+            "type": "integer"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/RequirementCoverageSummary"
+          }
+        },
+        "required": [
+          "project_id",
+          "summary",
+          "gaps",
+          "gaps_total",
+          "page",
+          "size",
+          "cases_without_requirements_total",
+          "cases_without_requirements"
+        ],
+        "title": "TraceabilityGapsResponse",
         "type": "object"
       },
       "TrackEventRequest": {
@@ -75616,7 +76813,8 @@
                     "failures",
                     "summary_report",
                     "explore",
-                    "search"
+                    "search",
+                    "test_management"
                   ],
                   "type": "string"
                 },
@@ -81444,7 +82642,10 @@
             "schema": {
               "anyOf": [
                 {
-                  "$ref": "#/components/schemas/TestCaseLifecycleState"
+                  "items": {
+                    "$ref": "#/components/schemas/TestCaseLifecycleState"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
@@ -81460,7 +82661,10 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
@@ -81476,7 +82680,10 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
@@ -81547,6 +82754,55 @@
                 }
               ],
               "title": "Suite Name"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Owner"
+            }
+          },
+          {
+            "in": "query",
+            "name": "automation",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Automation"
+            }
+          },
+          {
+            "in": "query",
+            "name": "requirement",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Requirement"
             }
           },
           {
@@ -82037,7 +83293,7 @@
             "name": "kind",
             "required": true,
             "schema": {
-              "pattern": "^(never_executed|automation_vanished)$",
+              "pattern": "^(never_executed|automation_vanished|flaky_active|no_owner)$",
               "title": "Kind",
               "type": "string"
             }
@@ -82134,7 +83390,7 @@
     },
     "/api/v1/test-management/cases/export/excel": {
       "get": {
-        "description": "Export test cases to an Excel (.xlsx) file.",
+        "description": "Export test cases to an Excel (.xlsx) file.\n\nHonours the case list's filters (``status`` / ``test_type`` / ``priority``\nrepeatable, ``owner``, ``automation``, ``requirement``, the list's search)\nand keeps its own default of every status. Columns 1-18 are unchanged;\n``ID``, ``Suite`` and ``Description`` are appended as 19-21 (an import\nreads them back; prepending would renumber the pinned columns).",
         "operationId": "export_test_cases_excel_api_v1_test_management_cases_export_excel_get",
         "parameters": [
           {
@@ -82161,7 +83417,10 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
@@ -82177,7 +83436,10 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
@@ -82193,7 +83455,10 @@
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
                 },
                 {
                   "type": "null"
@@ -82216,6 +83481,54 @@
                 }
               ],
               "title": "Search"
+            }
+          },
+          {
+            "in": "query",
+            "name": "owner",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Owner"
+            }
+          },
+          {
+            "in": "query",
+            "name": "automation",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Automation"
+            }
+          },
+          {
+            "in": "query",
+            "name": "requirement",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Requirement"
             }
           },
           {
@@ -82261,6 +83574,91 @@
           }
         ],
         "summary": "Export Test Cases Excel",
+        "tags": [
+          "Test Management"
+        ]
+      }
+    },
+    "/api/v1/test-management/cases/import": {
+      "post": {
+        "description": "A dry run by default (nothing written); ``dry_run=false`` creates every valid row as a Draft.",
+        "operationId": "import_test_cases_api_v1_test_management_cases_import_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dry_run",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Dry Run",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_test_cases_api_v1_test_management_cases_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseImportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Import Test Cases",
         "tags": [
           "Test Management"
         ]
@@ -83286,6 +84684,212 @@
         ]
       }
     },
+    "/api/v1/test-management/cases/{case_id}/requirements": {
+      "get": {
+        "description": "The case's manual requirement links, oldest first.",
+        "operationId": "list_case_requirements_api_v1_test_management_cases__case_id__requirements_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequirementLinkListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Case Requirements",
+        "tags": [
+          "Test Management"
+        ]
+      },
+      "post": {
+        "description": "Link a requirement key to the case (TESTER+); records ``test_case.requirement_linked``.",
+        "operationId": "add_case_requirement_api_v1_test_management_cases__case_id__requirements_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequirementLinkCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequirementLinkRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Add Case Requirement",
+        "tags": [
+          "Test Management"
+        ]
+      }
+    },
+    "/api/v1/test-management/cases/{case_id}/requirements/{requirement_link_id}": {
+      "delete": {
+        "description": "Unlink one of THIS case's requirement links (TESTER+); records ``test_case.requirement_unlinked``.",
+        "operationId": "remove_case_requirement_api_v1_test_management_cases__case_id__requirements__requirement_link_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "requirement_link_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Requirement Link Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Remove Case Requirement",
+        "tags": [
+          "Test Management"
+        ]
+      }
+    },
     "/api/v1/test-management/cases/{case_id}/restore": {
       "post": {
         "description": "Save an older version's content as a new version; status and owner are kept.\n\nAnswers the case unchanged (same version) when that version's content is\nalready the current one.",
@@ -83503,6 +85107,119 @@
         ]
       }
     },
+    "/api/v1/test-management/cases/{case_id}/timeline": {
+      "get": {
+        "description": "The case's timeline (TCL-05): newest first, keyset-paged by ``cursor``.",
+        "operationId": "get_test_case_timeline_api_v1_test_management_cases__case_id__timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "case_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kinds",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kinds"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestCaseTimelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Test Case Timeline",
+        "tags": [
+          "Test Management"
+        ]
+      }
+    },
     "/api/v1/test-management/cases/{case_id}/transition": {
       "post": {
         "operationId": "transition_test_case_api_v1_test_management_cases__case_id__transition_post",
@@ -83572,6 +85289,78 @@
           }
         ],
         "summary": "Transition Test Case",
+        "tags": [
+          "Test Management"
+        ]
+      }
+    },
+    "/api/v1/test-management/health": {
+      "get": {
+        "description": "Library health for ONE project (All Projects has none: 422 with the sentence).",
+        "operationId": "get_library_health_api_v1_test_management_health_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryHealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Library Health",
         "tags": [
           "Test Management"
         ]
@@ -86064,6 +87853,101 @@
           }
         ],
         "summary": "Get Suite Trend In Scope",
+        "tags": [
+          "Test Management"
+        ]
+      }
+    },
+    "/api/v1/test-management/traceability/gaps": {
+      "get": {
+        "description": "The project's uncovered requirements, paged, and the cases linking none.",
+        "operationId": "get_traceability_gaps_api_v1_test_management_traceability_gaps_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TraceabilityGapsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Traceability Gaps",
         "tags": [
           "Test Management"
         ]

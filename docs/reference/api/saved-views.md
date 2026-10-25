@@ -60,7 +60,8 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
               "failures",
               "summary_report",
               "explore",
-              "search"
+              "search",
+              "test_management"
             ],
             "type": "string"
           },

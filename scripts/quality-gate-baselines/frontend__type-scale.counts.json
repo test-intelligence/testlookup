@@ -85,7 +85,7 @@
     "frontend/src/pages/SettingsPage.tsx": 3,
     "frontend/src/pages/SuitesPage.tsx": 1,
     "frontend/src/pages/SummaryReportPage.tsx": 14,
-    "frontend/src/pages/TestManagementPage.tsx": 52,
+    "frontend/src/pages/TestManagementPage.tsx": 46,
     "frontend/src/pages/ValueMetricsPage.tsx": 7,
     "frontend/src/pages/WorkflowEditorPage.tsx": 5,
     "frontend/src/pages/dev/ChartGalleryPage.tsx": 1,
@@ -112,7 +112,7 @@
     "frontend/src/pages/test-management/CaseEditForm.tsx": 3,
     "frontend/src/pages/test-management/CaseHistoryPanel.tsx": 5,
     "frontend/src/pages/test-management/DuplicatesTab.tsx": 2,
-    "frontend/src/pages/test-management/InsightsPanel.tsx": 30,
+    "frontend/src/pages/test-management/InsightsPanel.tsx": 11,
     "frontend/src/pages/test-management/PlanItemVersion.tsx": 1,
     "frontend/src/pages/test-management/TestCasesTabBar.tsx": 1,
     "frontend/src/pages/testCase/TestCaseBody.tsx": 3

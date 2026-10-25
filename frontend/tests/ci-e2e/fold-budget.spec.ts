@@ -226,8 +226,9 @@ const ROUTES: FoldRoute[] = [
     path: '/test-management',
     handlers: () => TEST_CASES,
     ready: (p) => p.getByRole('heading', { name: 'Test Case Management', level: 1 }),
-    // 1,020 / 1,039.
-    budget: 1_050,
+    // 1,020 / 1,039; W13: 1,035 / 1,053 with the saved case views row inside the
+    // Cases card (contract §4.1), still under the list-page target.
+    budget: 1_100,
     target: 1_100,
     table: true,
   },
