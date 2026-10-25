@@ -1,17 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getData, postData, putData } from './http'
+import { deleteData, getData, postData, putData } from './http'
 import {
+  clearWorkflowDefault,
+  deleteWorkflow,
   evaluateWorkflow,
   forkWorkflow,
+  getWorkflowDefaults,
   listWorkflows,
   publishWorkflow,
+  setWorkflowDefault,
   updateWorkflow,
   validateWorkflow,
 } from './workflowService'
+import { readSourceFile } from '@/test/readSourceFile'
 import type { WorkflowBody } from '@/types/workflowDefinition'
 
 vi.mock('./http', () => ({
+  deleteData: vi.fn(),
   getData: vi.fn(),
   postData: vi.fn(),
   putData: vi.fn(),
@@ -74,5 +80,43 @@ describe('workflowService', () => {
         eval_manifest_checksum: 'b'.repeat(64),
       },
     )
+  })
+
+  it('W14 AGT-08: the defaults and Delete draft call their full paths, the writes without a global toast', async () => {
+    vi.mocked(getData).mockResolvedValue({ project_id: 'p1', defaults: [] })
+    vi.mocked(putData).mockResolvedValue({})
+    vi.mocked(deleteData).mockResolvedValue(undefined)
+
+    await getWorkflowDefaults('p1')
+    await setWorkflowDefault('p1', 'offline', { workflow_id: 'wf.fast' })
+    await setWorkflowDefault('p1', 'deep', { workflow_id: 'wf.deep', workflow_version: 3 })
+    await clearWorkflowDefault('p1', 'offline')
+    await deleteWorkflow('p1', 'wf.fast')
+
+    expect(getData).toHaveBeenCalledWith('/api/v1/projects/p1/workflows/defaults')
+    expect(putData).toHaveBeenCalledWith(
+      '/api/v1/projects/p1/workflows/defaults/offline', { workflow_id: 'wf.fast' }, { suppressToast: true },
+    )
+    expect(putData).toHaveBeenCalledWith(
+      '/api/v1/projects/p1/workflows/defaults/deep',
+      { workflow_id: 'wf.deep', workflow_version: 3 },
+      { suppressToast: true },
+    )
+    expect(deleteData).toHaveBeenCalledWith('/api/v1/projects/p1/workflows/defaults/offline', { suppressToast: true })
+    expect(deleteData).toHaveBeenCalledWith('/api/v1/projects/p1/workflows/wf.fast', { suppressToast: true })
+    expect(deleteData).toHaveBeenCalledTimes(2)
+  })
+
+  it('W14: every new path is written out in full, never through the base() helper', async () => {
+    const source = await readSourceFile('src/services/workflowService.ts')
+    const tail = source.slice(source.indexOf('// ── W14 AGT-08'))
+    expect(tail).not.toContain('base(projectId)')
+    for (const path of [
+      '`/api/v1/projects/${projectId}/workflows/defaults`',
+      '`/api/v1/projects/${projectId}/workflows/defaults/${base}`',
+      '`/api/v1/projects/${projectId}/workflows/${encodeURIComponent(workflowId)}`',
+    ]) {
+      expect(tail).toContain(path)
+    }
   })
 })

@@ -207,6 +207,68 @@ const TIMELINE = {
   events: [],
 }
 
+/**
+ * W14 AGT-06: the pipeline's task graph (`GET /agents/pipelines/{id}/agentic-runtime`, `AgenticRunV1`): the
+ * root task plus its four stages as tasks, chained in their order (ingestion → anomaly → rca → summary). The
+ * stage names `anomaly` / `rca` are not the hand canvas's, so the Graph tab draws the generic DAG from this.
+ */
+const runtimeTaskId = (stage: string) => `${PIPELINE_ID}:${stage}`
+
+const AGENTIC_RUNTIME = {
+  schema_version: 1,
+  agentic_run_id: `agentic:${PIPELINE_ID}`,
+  source_pipeline_run_id: PIPELINE_ID,
+  test_run_id: RUN_ID,
+  workflow_type: 'offline',
+  status: 'completed',
+  public_status: 'completed',
+  root_task_id: runtimeTaskId('pipeline'),
+  plan_id: `plan:${PIPELINE_ID}`,
+  plan_sha256: null,
+  plan_integrity_status: 'legacy_unhashed',
+  planner_version: 'workflow-1',
+  run_budget: {},
+  tasks: [
+    { stage_name: 'pipeline', dependencies: [] as string[] },
+    ...STAGES.map((stage, i) => ({ stage_name: stage.stage_name, dependencies: i === 0 ? [] : [STAGES[i - 1].stage_name] })),
+  ].map(({ stage_name, dependencies }, i) => ({
+    schema_version: 1,
+    task_id: runtimeTaskId(stage_name),
+    parent_task_id: i === 0 ? null : runtimeTaskId('pipeline'),
+    source_pipeline_run_id: PIPELINE_ID,
+    failure_cluster_id: null,
+    capability_id: i === 0 ? 'agent.workflow.v1' : `agent.${stage_name}.v1`,
+    stage_name,
+    status: 'completed',
+    selected: true,
+    required: i <= 1,
+    selection_reason: i === 0 ? 'root' : 'planned',
+    dependencies,
+    attempt: 1,
+    budget: {},
+    usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0, llm_calls: 0, cost_usd: 0, duration_ms: 600 },
+    stop_reason: 'completed',
+    enrichment_stop_reason: null,
+    evidence_ids: [],
+    finding_ids: [],
+    started_at: i === 0 ? isoAgo(0, 1.4) : STAGES[i - 1].started_at,
+    completed_at: i === 0 ? isoAgo(0, 1.3) : STAGES[i - 1].completed_at,
+    error: null,
+  })),
+  findings: [],
+  evidence: [],
+  child_agentic_run_ids: [],
+  observed_child_runs: 0,
+  children_truncated: false,
+  selected_capability_ids: STAGES.map((stage) => `agent.${stage.stage_name}.v1`),
+  skipped_capability_ids: [],
+  observed_task_rows: STAGES.length,
+  tasks_truncated: false,
+  terminal_outcome: { status: 'completed', error: null, budget_exhausted: false, budget_stop_reasons: [] },
+  started_at: isoAgo(0, 1.4),
+  completed_at: isoAgo(0, 1.3),
+}
+
 /** The AI report of the run (`GET /agents/runs/{id}/summary`). */
 export const AI_REPORT_SUMMARY = '15 failures in the Auth suite, all after the session token TTL change.'
 
@@ -309,6 +371,8 @@ export const RUN_PAGE: ApiHandlers = [
   ['/api/v1/agents/pipelines', () => PIPELINES],
   [`/api/v1/agents/pipelines/${PIPELINE_ID}/stages`, () => STAGES],
   [`/api/v1/agents/pipelines/${PIPELINE_ID}/timeline`, () => TIMELINE],
+  // W14 AGT-06: read while the Graph tab of Agent stages shows the generic DAG (the stage names don't map).
+  [`/api/v1/agents/pipelines/${PIPELINE_ID}/agentic-runtime`, () => AGENTIC_RUNTIME],
   [`/api/v1/agents/runs/${RUN_ID}/summary`, () => RUN_SUMMARY],
   // Analysis (+ Evidence, + the ⋯ menu's previous run): the AI history, quiet (W03).
   ...AI_HISTORY_QUIET,

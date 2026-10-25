@@ -1865,6 +1865,19 @@ _Constraints:_ Index(`ix_evidence_run_id`, `run_id`); Index(`ix_evidence_cluster
 
 One live row per report-producing run (partial unique index on `kind, subject_type, subject_id WHERE state <> 'superseded'`); superseded rows are kept as history. `state` is `pending_review | accepted | rejected | superseded`; a rejection must carry `reason_code`. `eval_manifest_checksum` is NULL for legacy rows or the 64-character lowercase SHA-256 of the manifest that produced the reviewed subject. Added by migration 0175 (architecture E8.1); label provenance added by migration 0186 (E9.10).
 
+#### `project_workflow_defaults`  <sub>(model `ProjectWorkflowDefault`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `project_id` | `UUID` | PK | NN | `projects.id` |
+| `base` | `String(20)` | PK | NN |  |
+| `workflow_id` | `String(80)` |  | NN |  |
+| `workflow_version` | `Integer` |  |  |  |
+| `updated_by` | `UUID` | FK |  | `users.id` |
+| `updated_at` | `DateTime` |  | NN def |  |
+
+_Constraints:_ PRIMARY KEY `pk_project_workflow_defaults` (`project_id`, `base`); CHECK `ck_pwd_base` (`base IN ('offline','deep')`); CHECK `ck_pwd_workflow_is_fork` (`workflow_id LIKE 'wf.%'`); CHECK `ck_pwd_version_positive` (`workflow_version IS NULL OR workflow_version >= 1`); `project_id` ON DELETE CASCADE, `updated_by` ON DELETE SET NULL; no other index (the key is every read). Migration 0230 (W14 AGT-08): a project's default workflow per base — the published fork a trigger that names no workflow (the automatic post-ingest analysis, **Trigger pipeline**, bulk, the deep page) runs instead of the built-in `base`, resolved at task start by `services/workflow_default_service.resolve_run_workflow`. `workflow_version` NULL = the latest PUBLISHED version at each run's start. Deliberately NO foreign key to `workflow_definitions`: a NULL version has no single target row, and a default that no longer resolves is recorded on the pipeline (`execution_metadata.workflow_default_source = "default_unavailable"` + the reason) while the built-in runs instead. Set / cleared by a QA lead through `PUT` / `DELETE /api/v1/projects/{project_id}/workflows/defaults/{base}` (ledger `workflow.default_set` / `workflow.default_cleared`).
+
 ### AI Evaluation & Models
 
 #### `model_versions`  <sub>(model `ModelVersion`)</sub>

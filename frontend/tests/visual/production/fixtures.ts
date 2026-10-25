@@ -94,6 +94,20 @@ const AI_SETTINGS = {
   analysis_mode: 'rules',
 }
 
+/**
+ * W14 AGT-08: the project's default workflow per base (`GET /projects/<P>/workflows/defaults`), none set: both
+ * bases run their built-in (`WorkflowDefaultsResponse`; `model_stages` as a project with default agent configs
+ * reads them — the built-ins' Root Cause / Summary / Triage call a model, Defect Commander starts disabled).
+ */
+export function workflowDefaultsBody(projectId: string = PROJECT_ID) {
+  const builtin = (base: 'offline' | 'deep') => ({
+    base, source: 'builtin', workflow_id: base, workflow_version: null, resolved_ref: `${base}@1`,
+    resolved_name: `${base[0].toUpperCase()}${base.slice(1)} workflow`, state: 'ok', reason: null,
+    model_stages: ['root_cause_analysis', 'summary', 'triage'], updated_by: null, updated_at: null,
+  })
+  return { project_id: projectId, defaults: [builtin('offline'), builtin('deep')] }
+}
+
 /** What every page's chrome asks for, whatever the page. */
 export const LAYOUT: ApiHandlers = [
   ['/api/v1/projects', () => PROJECTS],
@@ -104,6 +118,8 @@ export const LAYOUT: ApiHandlers = [
   ['/api/v1/notifications/history/unread-count', () => ({ unread: 0 })],
   ['/api/v1/notifications/history', () => []],
   ['/api/v1/saved-views', () => []],
+  // W14 AGT-08: `/agents/workflows` reads the project's defaults on load (the "Use for new runs" switch).
+  [`/api/v1/projects/${PROJECT_ID}/workflows/defaults`, () => workflowDefaultsBody()],
 ]
 
 // ── The shared day series (metrics/trends) ─────────────────────────────────
@@ -1548,12 +1564,137 @@ const DECISION_TRAIL = {
   fallback_count: 0,
 }
 
+/**
+ * W14 AGT-07: the run's error-signature pre-scan (`GET /deep-investigate/<run>/pre-scan`): its 15 failing
+ * results (12 failed + 3 broken) in THREE signature groups of 7, 5 and 3, each refined by one of the world's
+ * three clusters (`refinement: "clusters"`). Shape of `DeepPreScanResponse` (`types/agentOps.ts`).
+ */
+const PRESCAN_GROUP_SPECS = [
+  { signature: 'sig-gateway-timeout', members: 7, suites: ['Auth', 'Payments'] },
+  { signature: 'sig-tax-rounding', members: 5, suites: ['Checkout'] },
+  { signature: 'sig-session-cookie', members: 3, suites: ['Auth'] },
+]
+
+export function deepPreScanBody(runId: string = RUN_ID) {
+  let next = 0
+  const groups = PRESCAN_GROUP_SPECS.map((g, i) => ({
+    signature_id: g.signature,
+    representative_error: `${CLUSTER_SPECS[i].label}: expected success, got error`,
+    members: g.members,
+    member_result_ids: Array.from({ length: g.members }, () => `55555555-5555-4555-8555-${String(next++).padStart(12, '0')}`),
+    members_truncated: false,
+    suites: g.suites,
+    cluster_id: `cluster-${i + 1}`,
+    cluster_label: CLUSTER_SPECS[i].label,
+  }))
+  return {
+    run_id: runId,
+    measured: true,
+    failing_results: next,
+    groups_total: groups.length,
+    groups,
+    grouped_by: 'error_signature',
+    refinement: 'clusters',
+    refinement_note: "Grouped by error signature; the last deep analysis's clusters are shown beside each group.",
+  }
+}
+
+/**
+ * W14 AGT-07: the project's deep-investigated runs (`GET /deep-investigate/history`): FOUR of the recent
+ * runs (the ones with failures: builds 240, 239, 237 and 235), newest first, one page. Shape of
+ * `DeepHistoryResponse`. A page past the first answers no rows with the same `total`.
+ */
+export function deepHistoryBody(request?: ApiRequest) {
+  const size = request ? intParam(request, 'size', 10) : 10
+  const pageNo = request ? intParam(request, 'page', 1) : 1
+  const investigated = [0, 1, 3, 5].map((index, k) => {
+    const run = runs()[index]
+    const started = Date.parse(run.end_time) + 60_000
+    return {
+      run_id: run.id,
+      run_seq: run.run_seq,
+      build_number: String(run.build_number),
+      suite_name: run.primary_suite_name,
+      run_created_at: run.created_at,
+      failures: run.failed_tests + run.broken_tests,
+      pipeline_run_id: index === 0 ? PIPELINE_STATUS.pipeline_run_id : `99999999-9999-4999-8999-${String(100000000000 + k)}`,
+      status: k === 2 ? 'failed' : 'completed',
+      public_status: k === 2 ? 'failed' : 'completed',
+      started_at: new Date(started).toISOString(),
+      completed_at: new Date(started + (210 + k * 30) * 1000).toISOString(),
+      duration_seconds: 210 + k * 30,
+      clusters: k === 2 ? null : CLUSTER_SPECS.length - (k % 2),
+      findings: k === 2 ? 0 : 3 + k,
+      avg_confidence: k === 2 ? null : [0.71, 0.84, null, 0.66][k],
+      cost_usd: k === 3 ? null : 0,
+    }
+  })
+  return {
+    project_id: PROJECT_ID,
+    total: investigated.length,
+    page: pageNo,
+    size,
+    items: pageNo === 1 ? investigated.slice(0, size) : [],
+  }
+}
+
+/**
+ * W14 AGT-07: the measured estimate (`GET /deep-investigate/<run>/estimate`): 12 past deep runs of the
+ * project, about 4 minutes at the median, on a LOCAL Ollama model (so `$0.00`, `local model — no charge`), the
+ * server's own deep gate ALLOWING the run. `overrides` lets a world refuse the gate or unmeasure the estimate.
+ * The query's `selected_failures` / `max_failures_analyzed` / `model_tier` are echoed in `configuration`.
+ */
+export function deepEstimateBody(request?: ApiRequest, overrides: Record<string, unknown> = {}) {
+  const params = request?.url.searchParams
+  const runId = request ? request.path.split('/')[4] : RUN_ID
+  const failing = 15
+  const cap = Number(params?.get('max_failures_analyzed') ?? 50)
+  const selected = params?.get('selected_failures') ? Number(params.get('selected_failures')) : null
+  const tier = params?.get('model_tier') ?? 'slm'
+  return {
+    run_id: runId,
+    gate: { allowed: true, reason_code: null, message: null, analysis_mode: 'llm', deep_investigation_enabled: true },
+    configuration: {
+      selected_failures: selected,
+      failures_analysed: Math.min(selected ?? failing, cap),
+      max_failures_analyzed: cap,
+      project_max_failures_analyzed: 50,
+      model_tier: tier,
+      project_model_tier: 'slm',
+      allowed_tiers: ['deterministic', 'slm'],
+      evidence_sources: params?.getAll('evidence_sources').length ? params.getAll('evidence_sources') : ['logs', 'history', 'code_changes'],
+      project_evidence_sources: ['logs', 'history', 'code_changes'],
+      tool_narrowing_allowed: true,
+    },
+    measured: true,
+    reason: null,
+    sample_pipelines: 12,
+    minutes_p50: 4,
+    tokens_p50: 18_400,
+    cost: {
+      priced: true, local_model: true, usd: 0, provider: 'ollama', model: 'llama3.1',
+      note: 'local model — no charge', price_table_updated: '2026-08-09',
+    },
+    stages: [
+      { stage_name: 'root_cause_analysis', samples: 12, duration_seconds_p50: 118, input_tokens_p50: 9_200, output_tokens_p50: 3_100, per_failure: true },
+      { stage_name: 'triage', samples: 12, duration_seconds_p50: 46, input_tokens_p50: 3_000, output_tokens_p50: 900, per_failure: false },
+      { stage_name: 'summary', samples: 12, duration_seconds_p50: 31, input_tokens_p50: 1_600, output_tokens_p50: 600, per_failure: false },
+      { stage_name: 'failure_clustering', samples: 12, duration_seconds_p50: 22, input_tokens_p50: null, output_tokens_p50: null, per_failure: false },
+    ],
+    ...overrides,
+  }
+}
+
 export const DEEP_INVESTIGATION: ApiHandlers = [
   ...LAYOUT,
   ...RUNS,
   [/^\/api\/v1\/runs\/[0-9a-f-]{36}$/, ({ path }) => runs().find((r) => r.id === path.split('/')[4]) ?? respond(404, { detail: 'Run not found' })],
   [/^\/api\/v1\/deep-investigate\/[^/]+\/clusters$/, clusters],
   [/^\/api\/v1\/deep-investigate\/[^/]+\/findings$/, findings],
+  // W14 AGT-07: the three offline reads the page makes on load (pre-scan, history, estimate).
+  [/^\/api\/v1\/deep-investigate\/[^/]+\/pre-scan$/, ({ path }) => deepPreScanBody(path.split('/')[4])],
+  ['/api/v1/deep-investigate/history', (request) => deepHistoryBody(request)],
+  [/^\/api\/v1\/deep-investigate\/[^/]+\/estimate$/, (request) => deepEstimateBody(request)],
   [/^\/api\/v1\/agents\/runs\/[^/]+\/pipeline-status$/, () => PIPELINE_STATUS],
   [/^\/api\/v1\/runs\/[^/]+\/decision-trail$/, () => DECISION_TRAIL],
   ['/api/v1/integration-health/status', () => INTEGRATION_STATUS],

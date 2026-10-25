@@ -1,4 +1,5 @@
 import type { ReviewEnvelopeFields } from '@/types/review'
+import type { PipelineReplayIntegrity } from '@/types/agentOps'
 // Internal vocabulary of agent_pipeline_runs.status (E7.1, migration 0173).
 // `partial` is retired: a finished run with failed stages is `completed` with
 // execution_metadata.stage_quality === 'degraded' (see isDegradedPipeline).
@@ -250,6 +251,12 @@ export interface PipelineTimeline {
       recommended_action: string
     }
   }>
+  /** The replay-integrity summary the timeline already carries (W14 AGT-05: the Audit tab's badge). */
+  replay_integrity?: PipelineReplayIntegrity
+  /** W14: the run's frozen workflow (`offline@1`, `wf.my-fork@1`); absent / null for a legacy row. */
+  workflow_ref?: string | null
+  /** W14: how the workflow was chosen (WORKFLOW_SOURCES); absent / null for a legacy row. */
+  workflow_source?: string | null
 }
 
 export interface AgentPipelineRun {

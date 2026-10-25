@@ -1,4 +1,5 @@
-import { getData, postData, putData } from './http'
+import { deleteData, getData, postData, putData } from './http'
+import type { WorkflowDefault, WorkflowDefaults } from '@/types/agentOps'
 import type {
   WorkflowBody,
   WorkflowEvaluation,
@@ -65,4 +66,33 @@ export function publishWorkflow(
   },
 ): Promise<WorkflowItem> {
   return postData(`${base(projectId)}/${workflowId}/publish`, body)
+}
+
+// ── W14 AGT-08: the project's default workflow per base, and Delete draft ──
+// Every path below is written out in full (the SPA wire-contract guard reads
+// quoted literals), so none of them goes through the base() helper above.
+
+export function getWorkflowDefaults(projectId: string): Promise<WorkflowDefaults> {
+  return getData<WorkflowDefaults>(`/api/v1/projects/${projectId}/workflows/defaults`)
+}
+
+export function setWorkflowDefault(
+  projectId: string,
+  base: string,
+  body: { workflow_id: string; workflow_version?: number | null },
+): Promise<WorkflowDefault> {
+  return putData<WorkflowDefault>(`/api/v1/projects/${projectId}/workflows/defaults/${base}`, body, {
+    suppressToast: true,
+  })
+}
+
+export function clearWorkflowDefault(projectId: string, base: string): Promise<void> {
+  return deleteData<void>(`/api/v1/projects/${projectId}/workflows/defaults/${base}`, { suppressToast: true })
+}
+
+/** Delete the LATEST version of a fork when it is a draft (published versions are kept; a 409 otherwise). */
+export function deleteWorkflow(projectId: string, workflowId: string): Promise<void> {
+  return deleteData<void>(`/api/v1/projects/${projectId}/workflows/${encodeURIComponent(workflowId)}`, {
+    suppressToast: true,
+  })
 }
