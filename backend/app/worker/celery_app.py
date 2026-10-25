@@ -283,6 +283,12 @@ celery_app.conf.update(
             "task": "app.worker.tasks.relay_agent_action_dispatch_outbox",
             "schedule": crontab(minute="*"),
         },
+        # W15 AGT-03 (D-13): an agent action left ``executing`` past its
+        # 10-minute lease → failed / outcome_unknown, never retried.
+        "reap-stuck-agent-actions": {
+            "task": "app.worker.tasks.reap_stuck_agent_actions",
+            "schedule": crontab(minute="*/5"),
+        },
         "relay-run-downstream-outbox": {
             "task": "app.worker.tasks.relay_run_downstream_outbox",
             "schedule": crontab(minute="*"),

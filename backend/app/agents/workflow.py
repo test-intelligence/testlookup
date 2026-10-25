@@ -4159,6 +4159,15 @@ async def _mark_pipeline_done(
                         if isinstance(decision, dict)
                         else []
                     )
+                    # W15 §0.5: the decision report's FROZEN mode, hashed into
+                    # each proposal; anything but a known mode string → None
+                    # (today's payload byte-for-byte).
+                    from app.services.agent_config_service import MODE_ORDER
+
+                    _meta = getattr(run, "execution_metadata", None)
+                    _configs = _meta.get("workflow_agent_configs") if isinstance(_meta, dict) else None
+                    _report = _configs.get("agent.decision_report.v1") if isinstance(_configs, dict) else None
+                    _mode = _report.get("mode") if isinstance(_report, dict) else None
                     await persist_report_action_proposals(
                         db,
                         project_id=uuid.UUID(str(run_project_id))
@@ -4167,6 +4176,7 @@ async def _mark_pipeline_done(
                         test_run_id=uuid.UUID(str(final_state["test_run_id"])),
                         pipeline_run_id=uuid.UUID(str(pipeline_run_id)),
                         proposed_actions=proposed_actions,
+                        proposing_agent_mode=_mode if isinstance(_mode, str) and _mode in MODE_ORDER else None,
                     )
                 except Exception as action_exc:  # noqa: BLE001
                     logger.warning(

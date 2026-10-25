@@ -3007,6 +3007,47 @@ def execute_agent_action(self, project_id: str, action_id: str):
 
 
 @celery_app.task(
+    name="app.worker.tasks.reap_stuck_agent_actions",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=120,
+)
+def reap_stuck_agent_actions(self):
+    """Settle agent actions whose executor died after its claim (W15 AGT-03, D-13).
+
+    ``execute_agent_action`` commits ``approved → executing`` BEFORE an effect;
+    a worker killed after that leaves the row ``executing``. Past the lease
+    (``EXECUTION_LEASE_SECONDS``, 10 min; the executor's time limit is 2) the
+    row becomes ``failed`` / ``outcome_unknown`` -- never a retry, since the
+    effect may have happened. The sweep is stage-only; this task owns its one
+    commit.
+    """
+    _bind_task_context(self)
+    from datetime import datetime, timezone
+
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.agent_action_ledger_service import reap_stuck_actions
+
+    async def _sweep() -> dict:
+        async with AsyncSessionLocal() as db:
+            reaped = await reap_stuck_actions(db, now=datetime.now(timezone.utc))
+            await db.commit()
+        return {"reaped": reaped}
+
+    try:
+        return _run_async(_sweep())
+    except Exception as exc:
+        _slog.error(
+            "agent_action_reaper_failed",
+            error_type=type(exc).__name__,
+        )
+        raise RuntimeError(
+            f"{type(exc).__name__}: agent action reaper failed"
+        ) from None
+
+
+@celery_app.task(
     name="app.worker.tasks.run_fixer_run_task",
     bind=True,
     max_retries=0,
