@@ -44,7 +44,7 @@ from sqlalchemy import select
 
 from app.core.metrics import review_requests_total
 from app.models.postgres import AgentActionLedger, AgentPipelineRun, ReviewRequest, TestRun
-from app.services.agent_capability_registry import get_capability, is_report_producing
+from app.services.agent_capability_registry import is_report_producing
 from app.services.eval_label_provenance import checksum_from_execution_metadata
 
 logger = structlog.get_logger("services.review_request")
@@ -476,10 +476,15 @@ async def _run_proposes_act_actions(db: Any, review: ReviewRequest) -> bool:
 
     The action ledger is the durable record that a report proposed a mutation.
     Its hashed payload carries the proposing agent id (T4). The proposing mode
-    comes from the pipeline's frozen execution metadata, never the mutable live
-    project config. An unidentifiable legacy proposal fails closed for
-    self-review.
+    is ``agent_action_types.proposing_mode_of`` (W15 §0.5, D-4): the payload's
+    own ``proposing_agent_mode`` (hashed into the row at proposal time) wins;
+    else the pipeline's frozen execution metadata, looked up by the agent id as
+    a capability id (``agent.decision_report.v1``, what the decision report
+    writes) OR a stage name -- never the mutable live project config. An
+    unidentifiable proposal still fails closed for self-review.
     """
+    from app.services.agent_action_types import proposing_mode_of  # noqa: PLC0415
+
     if review.pipeline_run_id is None:
         return False
     result = await db.execute(
@@ -501,35 +506,16 @@ async def _run_proposes_act_actions(db: Any, review: ReviewRequest) -> bool:
     invocation_configs = metadata.get("resolved_agent_configs")
 
     for payload in payloads:
-        agent_id = (
-            payload.get("proposing_agent_id")
-            if isinstance(payload, dict)
-            else None
-        )
-        if not isinstance(agent_id, str) or not agent_id:
-            return True
-        try:
-            capability_id = get_capability(agent_id).capability_id
-        except ValueError:
-            return True
-
         # Invocation authority was accepted at the API boundary, before a
-        # worker could observe a later project config. Prefer that durable
-        # snapshot when present. Ordinary workflows have no invocation entry
-        # and use their proposal-time workflow snapshot instead. Both maps are
-        # keyed by canonical capability id, while the action ledger stores the
-        # stage name.
-        frozen = None
-        if isinstance(invocation_configs, dict):
-            snapshot = invocation_configs.get(capability_id)
-            frozen = snapshot.get("config") if isinstance(snapshot, dict) else None
-        if not isinstance(frozen, dict) and isinstance(workflow_configs, dict):
-            frozen = workflow_configs.get(capability_id)
-        if not isinstance(frozen, dict):
-            return True
-        mode = frozen.get("mode")
-        if mode == "act":
-            return True
+        # worker could observe a later project config, so ``proposing_mode_of``
+        # prefers that durable snapshot (``resolved_agent_configs``) and falls
+        # back to the proposal-time workflow snapshot. Anything but a known
+        # non-acting mode -- act, an unknown value, no answer -- refuses.
+        mode = proposing_mode_of(
+            payload if isinstance(payload, dict) else {},
+            workflow_configs=workflow_configs,
+            invocation_configs=invocation_configs,
+        )
         if mode not in {"shadow", "suggest"}:
             return True
     return False

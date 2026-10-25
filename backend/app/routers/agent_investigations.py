@@ -222,7 +222,13 @@ async def get_investigation(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_investigation_access()),
 ) -> dict[str, Any]:
-    """InvestigationDetail (pinned wire shape). The UI polls this."""
+    """InvestigationDetail (pinned wire shape). The UI polls this.
+
+    ``proposals`` (W15 AGT-02): the agent-action ledger rows the investigation
+    filed, read by its pipeline id AND the investigation's own project (a row of
+    another project under the same pipeline id is never returned). Read-only."""
+    from app.models.postgres import AgentActionLedger  # noqa: PLC0415
+
     investigation = (
         await db.execute(
             select(AgentInvestigation).where(AgentInvestigation.id == investigation_id)
@@ -230,7 +236,19 @@ async def get_investigation(
     ).scalar_one_or_none()
     if investigation is None:
         raise HTTPException(status_code=404, detail="Investigation not found")
-    return svc.serialize_investigation_detail(investigation)
+    pipeline_run_id = uuid.uuid5(uuid.NAMESPACE_URL, f"testlookup:investigation:{investigation.id}")
+    proposals = (
+        await db.execute(
+            select(AgentActionLedger)
+            .where(
+                AgentActionLedger.pipeline_run_id == pipeline_run_id,
+                AgentActionLedger.project_id == investigation.project_id,
+            )
+            .order_by(AgentActionLedger.created_at.desc(), AgentActionLedger.id.desc())
+            .limit(20)
+        )
+    ).scalars().all()
+    return svc.serialize_investigation_detail(investigation, proposals=list(proposals))
 
 
 @router.post(

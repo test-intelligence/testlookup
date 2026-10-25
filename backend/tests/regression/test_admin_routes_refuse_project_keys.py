@@ -220,8 +220,6 @@ REVIEWED_OPT_INS: dict[tuple[str, str], tuple[str, str]] = {
         "_enforce_project_access", "called on the canonical case's own project"),
     ("app/routers/agent_actions.py", "list_agent_actions"): (
         "require_project_access", "path {project_id}"),
-    ("app/routers/agent_actions.py", "transition_agent_action"): (
-        "require_project_access", "path {project_id}; the action is filtered by it"),
     # W07 FAIL-10: classification hints (a key bound to project Q: 403 on P, 201 on Q --
     # tests/integration/test_classification_hints_postgres.py).
     ("app/routers/classification_hints.py", "create_classification_hint"): (

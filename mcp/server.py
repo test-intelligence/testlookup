@@ -83,6 +83,7 @@ from tools import assignments, feedback, notifications
 # Investigator over MCP.
 from tools import investigations
 from tools import reviews
+from tools import agent_actions
 from tools import agents
 from resources import registry
 from prompts import templates
@@ -154,6 +155,10 @@ mcp = FastMCP(
         "the user and never present a `pending_review` or `unknown` report as settled. "
         "`list_pending_reviews` shows a project's open queue. Accepting or rejecting "
         "a review is deliberately not available through MCP.\n\n"
+        "Agent actions (W15): `list_agent_actions` lists the typed proposals AI agents filed "
+        "(`view` pending or decided) with each one's status and outcome. A QA lead approves, "
+        "rejects or undoes each action in TestLookup; deciding an agent action is deliberately "
+        "not available through MCP.\n\n"
         "Charts (VIZ-211): `get_chart_data` returns a metric over one or two dimensions "
         "exactly as the REST API and the UI's charts draw it, `meta` included. Unlike "
         "the other analytics tools it takes `release_id` and `suite_name`, so use it "
@@ -203,6 +208,7 @@ notifications.register(mcp)    # transition-notification policy get/set
 # Investigator agent over MCP (shadow mode).
 investigations.register(mcp)   # start/poll/list investigations
 reviews.register(mcp)          # E8.4 review queue (read-only)
+agent_actions.register(mcp)    # W15 agent-action queue (read-only)
 agents.register(mcp)           # E1.5 agent catalog + single-agent invocations
 
 # ── Register Resources ────────────────────────────────────────────────────────

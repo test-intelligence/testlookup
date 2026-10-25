@@ -588,3 +588,49 @@ def test_accept_and_reject_require_qa_lead_and_the_review_guard():
         src = inspect.getsource(getattr(reviews, name))
         assert "require_role(UserRole.QA_LEAD)" in src, name
         assert "require_review_access()" in src, name
+
+
+# ── W15 §0.5 / D-4: the proposing mode through agent_action_types.proposing_mode_of ──
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode, refused", [("suggest", False), ("shadow", False), ("act", True)])
+async def test_an_investigators_own_proposing_mode_decides_self_review(transitions, mode, refused):
+    """The investigator is not a registry capability: its payload carries the mode it ran in."""
+    reviewer = _user()
+    review = _review(requested_by=reviewer.id)
+    db = _DB(action_payloads=[{"proposing_agent_id": "investigator", "proposing_agent_mode": mode}])
+    if refused:
+        with pytest.raises(svc.ReviewDecisionRefused) as exc:
+            await svc.settle_review(db, review=review, reviewer=reviewer, decision="accepted")
+        assert (exc.value.status_code, exc.value.code) == (403, "separation_of_duties")
+    else:
+        await svc.settle_review(db, review=review, reviewer=reviewer, decision="accepted")
+        assert review.state == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_the_decision_reports_capability_id_resolves_its_frozen_mode(transitions):
+    """``agent.decision_report.v1`` is what the decision report writes; it used to fail closed."""
+    reviewer = _user()
+    review = _review(requested_by=reviewer.id)
+    db = _DB(
+        action_payloads=[{"proposing_agent_id": DECISION_REPORT}],
+        pipeline_metadata={"workflow_agent_configs": {DECISION_REPORT: {"mode": "suggest"}}},
+    )
+    await svc.settle_review(db, review=review, reviewer=reviewer, decision="accepted")
+    assert review.state == "accepted"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("payload", [
+    {"proposing_agent_id": "investigator"},                                    # no mode, not a capability
+    {"proposing_agent_id": "investigator", "proposing_agent_mode": "turbo"},   # an unknown mode
+    {"proposing_agent_id": DECISION_REPORT},                                   # no frozen config
+])
+async def test_an_unprovable_proposing_mode_still_fails_closed(transitions, payload):
+    reviewer = _user()
+    with pytest.raises(svc.ReviewDecisionRefused) as exc:
+        await svc.settle_review(_DB(action_payloads=[payload]), review=_review(requested_by=reviewer.id),
+                                reviewer=reviewer, decision="accepted")
+    assert exc.value.code == "separation_of_duties"
