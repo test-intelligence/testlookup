@@ -7076,6 +7076,202 @@ def run_weekly_agent_quality_drift(self) -> dict:
 
     return cast(dict, _run_async(_run()))
 
+
+# ── W16 AGT-09 / AGT-13: candidate replays and the shadow-pair jobs ──────────
+# The services stage; every commit is here (the services' allow-list is at its
+# bound). Times are taken once per run / sweep and passed down, so a test
+# drives the bodies with a ``now`` it builds itself.
+
+_EVAL_RECONCILE_BATCH = 100
+_EVAL_RECONCILE_MAX_BATCHES = 10
+_GOLDEN_MATCH_MAX_BATCHES = 20
+_SHADOW_EXPIRY_MAX_BATCHES = 100
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+async def _run_candidate_evaluation_async(run_id: uuid.UUID) -> dict:
+    """Claim, replay item by item (one commit each, no session across a model
+    call), then settle from the STORED rows. A redelivery finds the run not
+    ``queued`` and replays nothing; items already stored are skipped."""
+    from app.db.postgres import AsyncSessionLocal
+    from app.services import ai_eval_runner as runner
+
+    async with AsyncSessionLocal() as db:
+        if not await runner.claim_run(db, run_id=run_id, now=_utcnow()):
+            return {"skipped": "not_queued", "run_id": str(run_id)}
+        plan = await runner.load_plan(db, run_id=run_id)
+        if isinstance(plan, str):
+            await runner.fail_run(db, run=run_id, now=_utcnow(), error_code=plan)
+            await db.commit()
+            return {"status": "failed", "error_code": plan, "run_id": str(run_id)}
+        await db.commit()
+
+    pending = [(index, item) for index, item in plan.items if index not in plan.stored]
+    replayed = 0
+    try:
+        for position, (index, item) in enumerate(pending):
+            outcome = await runner.replay_item(
+                task_type=plan.task_type, item=item, index=index, candidate=plan.candidate,
+                project_id=plan.project_id, policy_context=plan.policy_context, budget=plan.budget,
+                timeout_s=plan.timeout_s, run_id=plan.run_id, ai_scope=plan.ai_scope,
+            )
+            exhausted = outcome.error_code == "budget_exhausted"
+            async with AsyncSessionLocal() as db:
+                await runner.stage_item_output(db, run=run_id, index=index, item=item, outcome=outcome, now=_utcnow())
+                if exhausted:
+                    await runner.stage_budget_exhausted(db, run=run_id, items=pending[position + 1:], now=_utcnow())
+                await db.commit()
+            replayed += 1
+            if exhausted:
+                break
+    except runner.RunSettled:
+        # Reconciled (or its dataset deleted) while this worker ran: the sweep's
+        # settlement stands and nothing more is written.
+        return {"stopped": "settled", "run_id": str(run_id), "replayed": replayed}
+
+    async with AsyncSessionLocal() as db:
+        status = await runner.finish_run(db, run=run_id, now=_utcnow(), task_type=plan.task_type)
+        await db.commit()
+    return {"status": status or "settled", "run_id": str(run_id), "replayed": replayed}
+
+
+async def _fail_candidate_evaluation(run_id: uuid.UUID) -> None:
+    from app.db.postgres import AsyncSessionLocal
+    from app.services import ai_eval_runner as runner
+
+    async with AsyncSessionLocal() as db:
+        await runner.fail_run(db, run=run_id, now=_utcnow(), error_code=runner.RUN_ERROR_CODE)
+        await db.commit()
+
+
+@celery_app.task(
+    name="app.worker.tasks.run_candidate_evaluation",
+    queue="ai_analysis",
+    bind=True,
+    max_retries=0,
+)
+def run_candidate_evaluation(self, run_id: str) -> dict:
+    """Replay one queued candidate evaluation (W16 AGT-09 b).
+
+    Dispatched by ``POST /ai-eval/runs/evaluate/{dataset_id}`` AFTER its commit.
+    Never retried and never re-dispatched: a worker that dies leaves the run
+    ``running`` and ``reconcile_stale_eval_runs`` settles it ``partial``. A
+    run-level failure marks the run ``failed`` (its stored items kept).
+    """
+    _bind_task_context(self, eval_run_id=str(run_id))
+    try:
+        rid = uuid.UUID(str(run_id))
+        return cast(dict, _run_async(_run_candidate_evaluation_async(rid)))
+    except Exception as exc:  # noqa: BLE001
+        _slog.error("candidate_evaluation_failed", eval_run_id=str(run_id)[:64], error_type=type(exc).__name__)
+        try:
+            _run_async(_fail_candidate_evaluation(uuid.UUID(str(run_id))))
+        except Exception as mark_exc:  # noqa: BLE001 — the reconcile sweep settles it instead
+            _slog.error("candidate_evaluation_fail_not_recorded", error_type=type(mark_exc).__name__)
+        raise RuntimeError(f"{type(exc).__name__}: candidate evaluation failed") from None
+
+
+async def _reconcile_stale_eval_runs_async(now: datetime | None = None) -> dict:
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.ai_eval_runner import reconcile_stale_runs
+
+    moment = now or _utcnow()
+    settled = 0
+    batches = 0
+    async with AsyncSessionLocal() as db:
+        while batches < _EVAL_RECONCILE_MAX_BATCHES:
+            count = await reconcile_stale_runs(db, now=moment, limit=_EVAL_RECONCILE_BATCH)
+            await db.commit()
+            batches += 1
+            settled += count
+            if count < _EVAL_RECONCILE_BATCH:
+                break
+    return {"settled": settled, "batches": batches}
+
+
+@celery_app.task(name="app.worker.tasks.reconcile_stale_eval_runs", queue="default", bind=True, max_retries=0)
+def reconcile_stale_eval_runs(self) -> dict:
+    """Every 10 min: a replay silent for 15 min -> ``partial`` / ``worker_lost``;
+    a ``queued`` one never delivered -> ``failed``. Never re-dispatched."""
+    _bind_task_context(self)
+    try:
+        outcome = cast(dict, _run_async(_reconcile_stale_eval_runs_async()))
+    except Exception as exc:  # noqa: BLE001
+        _slog.error("stale_eval_runs_reconcile_failed", error_type=type(exc).__name__)
+        raise RuntimeError(f"{type(exc).__name__}: eval run reconcile failed") from None
+    if outcome["settled"]:
+        _slog.info("stale_eval_runs_reconciled", settled=outcome["settled"], batches=outcome["batches"])
+    return outcome
+
+
+async def _golden_match_shadow_pairs_async(now: datetime | None = None) -> dict:
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.shadow_pair_service import golden_match_batch
+
+    moment = now or _utcnow()
+    labelled = 0
+    batches = 0
+    async with AsyncSessionLocal() as db:
+        while batches < _GOLDEN_MATCH_MAX_BATCHES:
+            count = await golden_match_batch(db, now=moment)
+            await db.commit()
+            batches += 1
+            labelled += count
+            if count == 0:
+                break
+    return {"labelled": labelled, "batches": batches}
+
+
+@celery_app.task(name="app.worker.tasks.golden_match_shadow_pairs", queue="default", bind=True, max_retries=0)
+def golden_match_shadow_pairs(self) -> dict:
+    """Nightly (03:50 UTC, after the 03:10 ML training): label pending
+    ``root_cause:`` shadow pairs from the test case's OWN human feedback
+    (``label.source = "feedback"``). Summary pairs are never auto-labelled."""
+    _bind_task_context(self)
+    try:
+        outcome = cast(dict, _run_async(_golden_match_shadow_pairs_async()))
+    except Exception as exc:  # noqa: BLE001
+        _slog.error("shadow_pairs_golden_match_failed", error_type=type(exc).__name__)
+        raise RuntimeError(f"{type(exc).__name__}: shadow pair golden match failed") from None
+    _slog.info("shadow_pairs_golden_matched", labelled=outcome["labelled"], batches=outcome["batches"])
+    return outcome
+
+
+async def _expire_unlabelled_shadow_pairs_async(now: datetime | None = None) -> dict:
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.shadow_pair_service import expire_unlabelled_batch
+
+    moment = now or _utcnow()
+    deleted = 0
+    batches = 0
+    async with AsyncSessionLocal() as db:
+        while batches < _SHADOW_EXPIRY_MAX_BATCHES:
+            count = await expire_unlabelled_batch(db, now=moment)
+            await db.commit()
+            batches += 1
+            deleted += count
+            if count == 0:
+                break
+    return {"deleted": deleted, "batches": batches}
+
+
+@celery_app.task(name="app.worker.tasks.expire_unlabelled_shadow_pairs", queue="default", bind=True, max_retries=0)
+def expire_unlabelled_shadow_pairs(self) -> dict:
+    """Nightly (02:50 UTC, after the 02:40 search-usage purge): delete PENDING
+    shadow pairs older than 30 days, deployment-wide, in committed batches
+    (≤ 100 a night). Labelled pairs are G2 evidence and are kept."""
+    _bind_task_context(self)
+    try:
+        outcome = cast(dict, _run_async(_expire_unlabelled_shadow_pairs_async()))
+    except Exception as exc:  # noqa: BLE001
+        _slog.error("shadow_pairs_expiry_failed", error_type=type(exc).__name__)
+        raise RuntimeError(f"{type(exc).__name__}: shadow pair expiry failed") from None
+    _slog.info("shadow_pairs_expired", deleted=outcome["deleted"], batches=outcome["batches"])
+    return outcome
+
 @celery_app.task(
     name="app.worker.tasks.generate_report_export",
     queue="default",

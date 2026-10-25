@@ -145,6 +145,27 @@ celery_app.conf.update(
             "schedule": crontab(hour=2, minute=40),
             "options": {"queue": "default"},
         },
+        # W16 AGT-13: pending (unlabelled) shadow pairs older than 30 days,
+        # deployment-wide, after the 02:40 search-usage purge.
+        "expire-unlabelled-shadow-pairs": {
+            "task": "app.worker.tasks.expire_unlabelled_shadow_pairs",
+            "schedule": crontab(hour=2, minute=50),
+            "options": {"queue": "default"},
+        },
+        # W16 AGT-13: label pending root-cause pairs from the test's own human
+        # feedback, after the 03:10 ML classifier training.
+        "golden-match-shadow-pairs": {
+            "task": "app.worker.tasks.golden_match_shadow_pairs",
+            "schedule": crontab(hour=3, minute=50),
+            "options": {"queue": "default"},
+        },
+        # W16 AGT-09: a candidate replay whose worker went silent for 15 min is
+        # settled partial / worker_lost (its scored items kept), never re-run.
+        "reconcile-stale-eval-runs": {
+            "task": "app.worker.tasks.reconcile_stale_eval_runs",
+            "schedule": crontab(minute="*/10"),
+            "options": {"queue": "default"},
+        },
         # VIZ-607: report export files older than 7 days, and their rows.
         "nightly-report-export-sweep": {
             "task": "app.worker.tasks.sweep_report_exports",

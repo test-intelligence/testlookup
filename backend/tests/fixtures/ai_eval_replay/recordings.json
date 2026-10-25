@@ -1,0 +1,68 @@
+{
+  "prompt_tag": "fast_classifier_system@v1:9d46ffbbed7b+react_triage@v3:e71c26f0ad74",
+  "provider": "ollama",
+  "model": "qwen2.5:7b",
+  "provenance": "authored — no local Ollama on the build machine",
+  "notes": "Raw model responses, in call order per golden item: the fast classifier's single-shot JSON first (fast_classifier_system v1 output format); when its confidence is below CLASSIFIER_CONFIDENCE_THRESHOLD (85) the ReAct triage loop follows (react_triage v3: Thought / Action / Action Input steps, then Final Answer with the RootCauseAnalysis JSON). A replay has no project, so every tool answers 'unavailable' and the ReAct answers say 'Insufficient telemetry'. Keyed by current_prompt_tag(): a prompt edit fails tests/test_ai_eval_runner.py until the responses are re-recorded against a local model.",
+  "items": {
+      "clear_product_bug_npe": [
+        "{\"category\": \"PRODUCT_BUG\", \"confidence\": 93, \"reasoning\": \"A NullPointerException in PaymentService.processRefund() from a missing null check is broken application code.\"}"
+      ],
+      "pagination_off_by_one": [
+        "{\"category\": \"PRODUCT_BUG\", \"confidence\": 90, \"reasoning\": \"An off-by-one error in the pagination logic is a defect in the application, not in the environment.\"}"
+      ],
+      "sql_injection_bug": [
+        "{\"category\": \"PRODUCT_BUG\", \"confidence\": 94, \"reasoning\": \"Unescaped input reaching the search query is a product defect in the query builder.\"}"
+      ],
+      "db_pool_exhaustion": [
+        "{\"category\": \"INFRASTRUCTURE\", \"confidence\": 91, \"reasoning\": \"All 50 database connections were in use and the request timed out, an environment capacity problem.\"}"
+      ],
+      "oom_kill": [
+        "{\"category\": \"INFRASTRUCTURE\", \"confidence\": 96, \"reasoning\": \"The pod was OOMKilled after exceeding its 512Mi memory limit during batch processing.\"}"
+      ],
+      "dns_resolution_failure": [
+        "{\"category\": \"INFRASTRUCTURE\", \"confidence\": 89, \"reasoning\": \"DNS resolution of the external payment gateway failed, which is a network issue.\"}"
+      ],
+      "race_condition_flaky": [
+        "{\"category\": \"FLAKY\", \"confidence\": 64, \"reasoning\": \"The failure looks intermittent, but a race condition can also be a product bug.\"}",
+        "Thought: I should check the flakiness history of this test before classifying it.\nAction: check_test_flakiness\nAction Input: race_condition_flaky",
+        "Thought: The flakiness lookup returned nothing. I must look at the stack trace.\nAction: fetch_allure_stacktrace\nAction Input: race_condition_flaky",
+        "Thought: No stack trace either. Prior analyses of this test may help.\nAction: recall_similar_failures\nAction Input: race condition in async event handler",
+        "Thought: I now have enough information to form a conclusion\nFinal Answer: {\"root_cause_summary\": \"Insufficient telemetry to determine root cause. The flakiness, stack trace and recall lookups returned no data; the test name points to an intermittent race in an async handler.\", \"failure_category\": \"FLAKY\", \"backend_error_found\": false, \"pod_issue_found\": false, \"is_flaky\": true, \"confidence_score\": 58, \"recommended_actions\": [\"Re-run the test to confirm the intermittent pattern\", \"Add synchronisation around the async event handler\", \"Tag the test as flaky until it is fixed\"], \"role_actions\": {\"qa\": \"Re-run the test several times and record the pass rate.\", \"developer\": \"Review the async event handler for unsynchronised shared state.\", \"sre\": \"No infrastructure signal was available; watch runner load during the re-runs.\", \"release_manager\": \"Proceed with conditions: the failure looks intermittent, not a regression.\"}, \"evidence_references\": []}"
+      ],
+      "timing_sensitive_flaky": [
+        "{\"category\": \"FLAKY\", \"confidence\": 87, \"reasoning\": \"A timing-dependent assertion that fails only under heavy CI load is non-deterministic.\"}"
+      ],
+      "stale_selector": [
+        "{\"category\": \"AUTOMATION_DEFECT\", \"confidence\": 90, \"reasoning\": \"The selector #submit-btn no longer exists after the UI refactor, so the test code is out of date.\"}"
+      ],
+      "stale_test_data": [
+        "{\"category\": \"TEST_DATA\", \"confidence\": 88, \"reasoning\": \"The test references a user account that was deleted from staging, which is stale test data.\"}"
+      ],
+      "misclassified_infra_as_bug": [
+        "{\"category\": \"INFRASTRUCTURE\", \"confidence\": 86, \"reasoning\": \"A connection timeout to the database at peak hours points to environment capacity rather than code.\"}"
+      ],
+      "misclassified_flaky_as_bug": [
+        "{\"category\": \"FLAKY\", \"confidence\": 70, \"reasoning\": \"A 60% pass rate over 10 runs suggests non-determinism.\"}",
+        "Thought: I need the stack trace before forming any conclusion.\nAction: fetch_allure_stacktrace\nAction Input: misclassified_flaky_as_bug",
+        "Thought: I now have enough information to form a conclusion\nFinal Answer: {\"root_cause_summary\": \"Insufficient telemetry to determine root cause. The stack trace lookup returned no data; an assertion failure in an async callback is treated as a product defect until shown otherwise.\", \"failure_category\": \"PRODUCT_BUG\", \"backend_error_found\": false, \"pod_issue_found\": false, \"is_flaky\": false, \"confidence_score\": 52, \"recommended_actions\": [\"Review the async callback under test\", \"Re-run the test to measure its pass rate\", \"Open a defect if the failure reproduces\"], \"role_actions\": {\"qa\": \"Re-run the test and attach the pass rate to the report.\", \"developer\": \"Inspect the async callback for a missed await.\", \"sre\": \"No infrastructure signal was available.\", \"release_manager\": \"Hold the release until the failure is reproduced or ruled flaky.\"}, \"evidence_references\": []}"
+      ],
+      "clear_npe_root_cause": [
+        "{\"category\": \"PRODUCT_BUG\", \"confidence\": 91, \"reasoning\": \"PaymentService.processRefund dereferences a null object at PaymentService.java:142; the refund path is missing a null check.\"}"
+      ],
+      "latency_root_cause": [
+        "{\"category\": \"INFRASTRUCTURE\", \"confidence\": 86, \"reasoning\": \"The API answered in 5432ms against a 200ms budget (PerformanceTest.java:88), which points to a slow or overloaded backend.\"}"
+      ],
+      "selector_change_root_cause": [
+        "{\"category\": \"AUTOMATION_DEFECT\", \"confidence\": 92, \"reasoning\": \"The #login-button locator clicked at LoginPage.ts:25 no longer matches the page.\"}"
+      ],
+      "missing_fixture_root_cause": [
+        "{\"category\": \"TEST_DATA\", \"confidence\": 90, \"reasoning\": \"The users.csv fixture loaded at DataImporter.py:12 is missing from the test environment.\"}"
+      ],
+      "insufficient_evidence": [
+        "{\"category\": \"UNKNOWN\", \"confidence\": 35, \"reasoning\": \"An off-count assertion with no stack trace is not enough to classify the failure.\"}",
+        "Thought: I must use the stack trace tool first.\nAction: fetch_allure_stacktrace\nAction Input: test_concurrent_writes",
+        "Thought: I now have enough information to form a conclusion\nFinal Answer: Insufficient telemetry to determine root cause."
+      ]
+  }
+}
