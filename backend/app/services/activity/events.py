@@ -377,6 +377,20 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # saved a new version (context: from_version, to_version).
     _spec("test_case.bulk_changed", "test_management", "test_library", "Bulk edit of {count} test cases: {change}"),
     _spec("test_case.restored", "test_management", "test_case", "Test case {entity_label} restored from v{from_version}"),
+    # W13 (outcome rows, staged on the request session and committed by the
+    # router). ``suite.updated``: routers/suites.py update_suite, only when a
+    # field changed (context: changed; before / after of the changed fields).
+    # ``test_case.imported``: test_case_import_service.import_cases on an apply
+    # with at least one created case (context: count, duplicate, invalid;
+    # entity_label = the file name). ``requirement_linked`` / ``_unlinked``:
+    # requirement_traceability_service add_link / remove_link (context:
+    # requirement_key, link_type).
+    _spec("suite.updated", "test_management", "suite", "Suite {entity_label} changed: {changed}"),
+    _spec("test_case.imported", "test_management", "test_library", "Imported {count} test cases from {entity_label}"),
+    _spec("test_case.requirement_linked", "test_management", "test_case",
+          "Test case {entity_label} linked to {requirement_key}"),
+    _spec("test_case.requirement_unlinked", "test_management", "test_case",
+          "Test case {entity_label} unlinked from {requirement_key}"),
     # ── integration ─────────────────────────────────────────────────────────
     _spec("api_key.created", "integration", "api_key", "API key {entity_label} was created"),
     _spec("api_key.revoked", "integration", "api_key", "API key {entity_label} was revoked"),

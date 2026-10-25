@@ -11,7 +11,7 @@
  * a decision or a trigger made in one test never leaks into the next.
  */
 import { respond, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
-import { daysAgo, isoAgo, LAYOUT, PROJECT_ID, RUN_ID } from './fixtures'
+import { daysAgo, isoAgo, LAYOUT, NOW, PROJECT_ID, RUN_ID } from './fixtures'
 import { RUN_PAGE } from './fixtures-run'
 
 const P = PROJECT_ID
@@ -695,9 +695,106 @@ const CASE_SUITES = Object.keys(TEST_CASES_SUITE_IDS).map((name, i) => ({
   total_broken: 0,
 }))
 
+type HealthCase = {
+  id: string; title: string; status: string; is_automated?: boolean | null
+  created_at: string; updated_at: string; lifecycle_state_changed_at?: string | null; suite_name?: string | null
+}
+
+/**
+ * W13 TCL-03: `GET /test-management/health` COMPUTED from a case list the way
+ * the server computes it (`test_library_health_service`: today's formulas and
+ * weights, whole-library inputs) — so a world's banner facts, Insights' cards
+ * and `Review queue · N` read what the page's deleted 200-row roll showed.
+ * Nothing here is flaky-scored (that list reads "not measured") and every case
+ * is owned (no "No owner" gap); the traceability flag is off (`requirements`
+ * null). Whole days are floored, as the server's.
+ */
+export function libraryHealthOf(cases: readonly HealthCase[], now: Date, target = 60) {
+  const RETIRED = ['deprecated', 'archived']
+  const days = (iso: string) => Math.max(0, Math.floor((now.getTime() - new Date(iso).getTime()) / 86_400_000))
+  const live = cases.filter((c) => !RETIRED.includes(c.status))
+  const total = live.length
+  const automated = live.filter((c) => c.is_automated === true).length
+  const stale = live.filter((c) => c.status === 'draft' && days(c.updated_at) >= 30).length
+  const queue = live
+    .filter((c) => c.status === 'review_requested' || c.status === 'under_review')
+    .map((c) => ({ c, age: days(c.lifecycle_state_changed_at ?? c.updated_at) }))
+    .sort((a, b) => b.age - a.age || a.c.id.localeCompare(b.c.id))
+  const oldest = queue.length ? queue[0].age : null
+  const pct = total ? Math.round((automated / total) * 100) : 0
+  const values = total ? {
+    automation: (automated / total) * 100,
+    stale_drafts: Math.max(0, 100 - (stale / total) * 400),
+    review_freshness: oldest ? Math.max(0, 100 - (oldest / 14) * 100) : 100,
+    retired_in_open_plans: 100,
+  } : null
+  const weights = { automation: 0.35, stale_drafts: 0.2, review_freshness: 0.2, retired_in_open_plans: 0.25 }
+  const labels = { automation: 'Automated', stale_drafts: 'Stale drafts', review_freshness: 'Review freshness', retired_in_open_plans: 'Retired cases in open plans' }
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+  const details = {
+    automation: `${automated} of ${total} cases automated (target ${target} %)`,
+    stale_drafts: `${stale} of ${total} cases are drafts untouched for 30 days or more`,
+    review_freshness: queue.length
+      ? `The oldest of ${plural(queue.length, 'review')} has waited ${oldest ?? 0} of 14 days`
+      : 'No case awaits review (0 of 14 days used)',
+    retired_in_open_plans: `0 of ${total} cases are retired but still in an open test plan`,
+  }
+  const numerators = { automation: automated, stale_drafts: stale, review_freshness: oldest ?? 0, retired_in_open_plans: 0 }
+  const keys = ['automation', 'stale_drafts', 'review_freshness', 'retired_in_open_plans'] as const
+  const score = values ? Math.round(keys.reduce((sum, k) => sum + values[k] * weights[k], 0)) : null
+  const gaps: Record<string, unknown>[] = []
+  if (total && queue.length && (oldest ?? 0) >= 7) {
+    gaps.push({ kind: 'aging_reviews', severity: 'warn', title: 'Aging reviews over SLA', detail: `oldest ${oldest} days`, count: queue.length, pill: `${queue.length} pending` })
+  }
+  if (total && pct < target) {
+    gaps.push({ kind: 'automation_below_target', severity: 'warn', title: 'Automation below target', detail: `${pct} % automated · target ${target} %`, count: target - pct, pill: `${target - pct} % gap` })
+  }
+  if (total && stale) {
+    gaps.push({ kind: 'stale_drafts', severity: 'warn', title: 'Stale drafts ≥ 30d', detail: 'untouched in the last month', count: stale, pill: `${stale} stale` })
+  }
+  const suites = [...new Set(live.map((c) => (c.suite_name ?? '').trim()).filter(Boolean))].sort()
+  const ages = live.map((c) => days(c.created_at))
+  return {
+    project_id: PROJECT_ID,
+    computed_at: now.toISOString(),
+    measured: total > 0,
+    total_cases: total,
+    active_cases: live.filter((c) => c.status === 'active').length,
+    retired_cases: cases.length - total,
+    automated_cases: automated,
+    automation_target_pct: target,
+    stale_drafts: stale,
+    retired_in_open_plans: 0,
+    avg_age_days: total ? ages.reduce((s, a) => s + a, 0) / total : null,
+    older_than_180_days: ages.filter((a) => a > 180).length,
+    older_than_180_pct: total ? (ages.filter((a) => a > 180).length / total) * 100 : null,
+    score,
+    tag: score === null ? null : score >= 85 ? 'Healthy' : score >= 70 ? 'Needs attention' : 'At risk',
+    components: keys.map((key) => ({
+      key, label: labels[key], weight: weights[key], measured: total > 0, value: values ? values[key] : null,
+      numerator: total ? numerators[key] : null, denominator: total ? (key === 'review_freshness' ? 14 : total) : 0,
+      detail: total ? details[key] : 'No authored test cases yet.',
+    })),
+    review_queue: {
+      total: queue.length, measured: true, oldest_age_days: oldest,
+      items: queue.slice(0, 5).map(({ c, age }) => ({ id: c.id, title: c.title, status: c.status, owner: null, age_days: age, detail: null })),
+    },
+    strategy_gaps: gaps,
+    flaky_active: { total: 0, items: [], measured: false, reason: 'No flaky scores have been computed for this project yet.' },
+    no_owner: { total: 0, items: [], measured: true },
+    suite_names: suites,
+    suite_names_total: suites.length,
+    requirements: null,
+  }
+}
+
+/** `TEST_CASES`' health: the eight `CASES` at the fixtures' `NOW` (8 cases, 38% automated, `Review queue · 2`). */
+export const TEST_CASES_HEALTH = libraryHealthOf(CASES, NOW)
+
 /** The page has no visual-spec fixtures, so its answers are these. */
 export const TEST_CASES: ApiHandlers = [
   ...LAYOUT,
+  ['/api/v1/test-management/health', () => TEST_CASES_HEALTH],
   ['/api/v1/test-management/cases', ({ url }) => {
     const status = url.searchParams.get('status')
     const size = Number(url.searchParams.get('size') ?? 25)

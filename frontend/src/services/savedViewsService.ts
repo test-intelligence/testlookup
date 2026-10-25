@@ -14,9 +14,10 @@ export interface SavedViewRelease {
   reason: string | null;
 }
 
-/** The backend's `SAVED_VIEW_PAGES` (VIZ-609 added summary_report and explore; W12 SRCH-03 search). */
+/** The backend's `SAVED_VIEW_PAGES` (VIZ-609 added summary_report and explore; W12 SRCH-03 search; W13 TCL-01 test_management). */
 export type SavedViewPageName =
-  | 'dashboard' | 'trends' | 'coverage' | 'defects' | 'failures' | 'summary_report' | 'explore' | 'search';
+  | 'dashboard' | 'trends' | 'coverage' | 'defects' | 'failures' | 'summary_report' | 'explore' | 'search'
+  | 'test_management';
 
 export interface SavedView {
   id: string;
@@ -66,6 +67,12 @@ export async function listSavedViews(projectId?: string, page?: SavedViewPageNam
   return data;
 }
 
+/** `suppressToast`: the caller renders the server's refusal in place (W13 CaseViewsBar's
+ * name forms), so the shared client's error toast would say it twice. */
+export interface SavedViewWriteOptions {
+  suppressToast?: boolean;
+}
+
 export async function createSavedView(payload: {
   project_id?: string | null;
   name: string;
@@ -74,8 +81,8 @@ export async function createSavedView(payload: {
   filters: Record<string, unknown>;
   is_shared?: boolean;
   is_default?: boolean;
-}): Promise<SavedView> {
-  const { data } = await api.post<SavedView>('/api/v1/saved-views', payload);
+}, opts: SavedViewWriteOptions = {}): Promise<SavedView> {
+  const { data } = await api.post<SavedView>('/api/v1/saved-views', payload, opts);
   return data;
 }
 
@@ -86,8 +93,8 @@ export async function updateSavedView(id: string, payload: {
   filters?: Record<string, unknown>;
   is_shared?: boolean;
   is_default?: boolean;
-}): Promise<SavedView> {
-  const { data } = await api.patch<SavedView>(`/api/v1/saved-views/${id}`, payload);
+}, opts: SavedViewWriteOptions = {}): Promise<SavedView> {
+  const { data } = await api.patch<SavedView>(`/api/v1/saved-views/${id}`, payload, opts);
   return data;
 }
 

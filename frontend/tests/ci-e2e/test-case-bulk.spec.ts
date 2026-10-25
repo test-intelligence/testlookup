@@ -51,10 +51,10 @@ const selectBox = (p: Page, i: number) => p.getByRole('checkbox', { name: `Selec
 const bar = (p: Page) => p.getByRole('toolbar', { name: 'Bulk edit' })
 const footer = (p: Page) => p.locator('[data-cases-footer-count]')
 const HINT = 'Select cases with the checkboxes to edit them together.'
-/** The two case rolls: the table's page (`size=25`) and the library health roll (`size=200`). */
+/** The two reads a write refreshes: the table's page (`size=25`) and the library health (W13: `GET /test-management/health`, was the `size=200` roll). */
 const rollReads = (api: Parameters<typeof requestsTo>[0]) => {
   const lines = requestsTo(api, CASES)
-  return { table: lines.filter((l) => l.includes('size=25')).length, health: lines.filter((l) => l.includes('size=200')).length }
+  return { table: lines.filter((l) => l.includes('size=25')).length, health: requestsTo(api, '/api/v1/test-management/health').length }
 }
 
 async function open(page: Page, options: TestCaseEditingOptions & { user?: FixtureUser } = {}) {
@@ -178,7 +178,7 @@ test('Ctrl+E opens the bar with its hint and focuses Action, never while typing 
   await bar(page).getByLabel('Action', { exact: true }).selectOption({ label: 'Owner' })
   const owner = bar(page).getByLabel('Owner', { exact: true })
   await expect(owner.locator('option', { hasText: NEW_OWNER.name })).toHaveCount(1)
-  expect(requestsTo(api, MEMBERS).length, 'the members are read once Owner is chosen').toBeGreaterThan(membersAtLoad)
+  expect(requestsTo(api, MEMBERS), 'W13: the members are read ONCE (on load, the Owner filter\'s shared key); choosing Owner reuses them').toEqual([`GET ${MEMBERS}`])
   await owner.selectOption({ label: NEW_OWNER.name })
   await bar(page).getByRole('button', { name: 'Apply', exact: true }).click()
   await expect(bar(page).getByRole('status')).toHaveText('2 changed')

@@ -297,6 +297,13 @@ class Project(Base):
     require_case_review: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default=text("false")
     )
+    # W13 TCL-03 (migration 0228): the share of authored cases the project aims
+    # to automate; the library health measures against it. 0-100, enforced by
+    # ``ck_projects_automation_target_pct`` in the migration only (as for
+    # require_case_review, the ORM declares no constraint the app relies on).
+    automation_target_pct: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, default=60, server_default=text("60")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
@@ -3074,6 +3081,49 @@ class TestCaseComment(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class TestCaseRequirementLink(Base):
+    """A requirement key a person typed on an authored test case (W13 TCL-06, migration 0229).
+
+    MANUAL only: no source column, no knowledge-source key, no backfill.
+    ``requirement_key`` is the key as written; ``requirement_key_norm`` the
+    same key through ``core.test_library_vocab.normalize_requirement_key``,
+    the form every comparison uses (unique per case). ``project_id`` is the
+    case's, denormalised so a project's known keys are one index read.
+    ``link_type``: ``verifies`` | ``partially_verifies`` | ``related``
+    (``REQUIREMENT_LINK_TYPES``). A link is not a content edit: it never bumps
+    the case version; the timeline and the ledger record it.
+    """
+    __tablename__ = "test_case_requirement_links"
+    __table_args__ = (
+        CheckConstraint(
+            "link_type IN ('verifies', 'partially_verifies', 'related')", name="ck_tcrl_link_type",
+        ),
+        CheckConstraint("requirement_key_norm <> ''", name="ck_tcrl_key_norm_nonempty"),
+        UniqueConstraint("test_case_id", "requirement_key_norm", name="uq_tcrl_case_key"),
+        Index("ix_tcrl_project_key", "project_id", "requirement_key_norm"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    test_case_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("managed_test_cases.id", ondelete="CASCADE"), nullable=False
+    )
+    requirement_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    requirement_key_norm: Mapped[str] = mapped_column(String(200), nullable=False)
+    requirement_title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    link_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="verifies", server_default=text("'verifies'")
+    )
+    created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class DuplicateTestCaseCandidate(Base):

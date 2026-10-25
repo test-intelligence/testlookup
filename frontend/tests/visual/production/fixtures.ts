@@ -535,6 +535,8 @@ function suiteCatalog() {
     source: i < 4 ? 'execution' : 'managed',
     first_seen_run_id: i < 4 ? SUITE_LATEST_RUN_ID : null,
     last_seen_run_id: i < 4 ? SUITE_LATEST_RUN_ID : null,
+    // W13 TCL-07: that run's created_at (`suiteDetail().recent_runs[0]`, 2 hours before NOW).
+    last_seen_at: i < 4 ? isoAgo(0, 2) : null,
     last_seen_test_case_id: null,
     deleted_at_run_id: null,
     managed_test_case_id: null,

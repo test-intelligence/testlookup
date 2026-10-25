@@ -62,6 +62,11 @@ export interface CanonicalTestCase {
   run_count: number | null
   created_at: string
   updated_at: string | null
+  /**
+   * W13 TCL-07: the `created_at` of the run `last_seen_run_id` names (read in
+   * the suite's project). Null / absent = unknown: show no date, never a guess.
+   */
+  last_seen_at?: string | null
 }
 
 export interface CanonicalTestCaseListResponse {

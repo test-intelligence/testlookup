@@ -32,6 +32,7 @@ from sqlalchemy import Select, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.activity.events import entity_href
+from app.services.csv_safe import neutralise_csv_value
 
 logger = structlog.get_logger("services.activity.query")
 
@@ -355,11 +356,20 @@ def _export_row(row: Any) -> dict:
 
 
 def rows_to_csv(rows: Iterable[dict]) -> str:
+    """The ledger export as CSV: the header, then one line per row.
+
+    Every cell goes through ``csv_safe.neutralise_csv_value`` (W13 §0.29, the
+    product's other CSV writers' rule, EXEC-06): ledger text is typed by
+    people -- an imported file's name, a requirement key, a suite name -- so a
+    label ``=HYPERLINK("http://x")`` opens in a spreadsheet as that text
+    (``'=HYPERLINK(...``), never as a live formula. The header, the column
+    order and the writer are unchanged.
+    """
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=list(_EXPORT_COLUMNS))
     writer.writeheader()
     for row in rows:
-        writer.writerow(row)
+        writer.writerow({key: neutralise_csv_value(value) for key, value in row.items()})
     return buffer.getvalue()
 
 

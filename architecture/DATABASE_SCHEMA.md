@@ -57,7 +57,7 @@ The curated domain map groups the documented core tables into nine functional do
 | AI Analysis Pipeline | 15 | Agent pipeline runs + per-stage results, classifications, clusters, deep findings, provenance, agent memory |
 | AI Evaluation & Models | 6 | Model versions, eval datasets/runs/baselines, pre-release and tier gates, shadow pairs |
 | Defects, Releases & Gates | 11 | Defects + candidates, release decisions and outcomes, releases/phases, gate policies, compliance packs, coverage |
-| Test Management (Authored Cases) | 10 | Managed cases, versions, reviews, comments, duplicate review, plans, strategies, case audit |
+| Test Management (Authored Cases) | 11 | Managed cases, versions, reviews, comments, requirement links, duplicate review, plans, strategies, case audit |
 | Knowledge, RAG & Generation | 6 | Knowledge sources, sync events, chunks, generation batches + sources, requirement coverage |
 | Analytics, Comparison & Health | 12 | Run baselines/diffs/compare reports, perf baselines, tenant metrics, onboarding, usage, flaky coach/quarantine, health recs |
 | Platform, Ops & Integrations | 25 | Settings + secrets, feature flags, notifications, integration health, webhooks, GitHub, saved views, digests, share links, report exports, ownership, LLM quota/usage, chat |
@@ -569,6 +569,7 @@ erDiagram
     MANAGED_TEST_CASES ||--o{ TEST_CASE_REVIEWS : "test_case_id"
     MANAGED_TEST_CASES ||--o{ TEST_CASE_COMMENTS : "test_case_id"
     TEST_CASE_COMMENTS ||--o{ TEST_CASE_COMMENTS : "parent_id (self)"
+    MANAGED_TEST_CASES ||--o{ TEST_CASE_REQUIREMENT_LINKS : "test_case_id"
     MANAGED_TEST_CASES ||--o{ DUPLICATE_TEST_CASE_CANDIDATES : "case_a_id"
     MANAGED_TEST_CASES ||--o{ DUPLICATE_TEST_CASE_CANDIDATES : "case_b_id"
     MANAGED_TEST_CASES ||--o{ DISMISSED_DUPLICATE_PAIRS : "case_a_id"
@@ -610,6 +611,14 @@ erDiagram
         UUID author_id FK
         UUID parent_id FK
         DateTime created_at
+    }
+    TEST_CASE_REQUIREMENT_LINKS {
+        UUID id PK
+        UUID project_id FK
+        UUID test_case_id FK
+        UUID created_by_id FK
+        String requirement_key_norm
+        String link_type
     }
     DUPLICATE_TEST_CASE_CANDIDATES {
         UUID id PK
@@ -1029,8 +1038,11 @@ Generated incrementally from `backend/app/models/postgres.py` — **112 of 140 d
 | `manager_user_id` | `UUID` | FK | IX | → `users.id` |
 | `default_qa_lead_user_id` | `UUID` | FK | IX | → `users.id` |
 | `require_case_review` | `Boolean` |  | NN def |  |
+| `automation_target_pct` | `SmallInteger` |  | NN def |  |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
+
+_Constraints:_ CHECK `ck_projects_automation_target_pct` (`automation_target_pct BETWEEN 0 AND 100`, migration 0228 only; default 60 — the library health's automation target, W13 TCL-03)
 
 #### `project_members`  <sub>(model `ProjectMember`)</sub>
 
@@ -2340,6 +2352,22 @@ _Constraints:_ Index(`ix_tcr_test_case`, `test_case_id`); Index(`ix_tcr_reviewer
 | `updated_at` | `DateTime` |  | NN def |  |
 
 _Constraints:_ Index(`ix_tcc_test_case`, `test_case_id`)
+
+#### `test_case_requirement_links`  <sub>(model `TestCaseRequirementLink`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `project_id` | `UUID` | FK | NN | → `projects.id` |
+| `test_case_id` | `UUID` | FK | NN | → `managed_test_cases.id` |
+| `requirement_key` | `String(200)` |  | NN |  |
+| `requirement_key_norm` | `String(200)` |  | NN |  |
+| `requirement_title` | `String(500)` |  |  |  |
+| `link_type` | `String(20)` |  | NN def |  |
+| `created_by_id` | `UUID` | FK |  | → `users.id` |
+| `created_at` | `DateTime` |  | NN def |  |
+
+_Constraints:_ CHECK `ck_tcrl_link_type` (`link_type IN ('verifies', 'partially_verifies', 'related')`); CHECK `ck_tcrl_key_norm_nonempty` (`requirement_key_norm <> ''`); UNIQUE `uq_tcrl_case_key` (`test_case_id`, `requirement_key_norm`); Index(`ix_tcrl_project_key`, `project_id`, `requirement_key_norm`); `project_id` / `test_case_id` ON DELETE CASCADE, `created_by_id` ON DELETE SET NULL. Migration 0229 (W13 TCL-06 "lite"): a requirement key a PERSON typed on an authored case (manual only: no source column, no backfill); `requirement_key_norm` is `normalize_requirement_key` of it (one pair of surrounding `[]` / `()` dropped, whitespace collapsed, upper-cased), the form every comparison uses; `project_id` is the case's, denormalised. Read only with the `test_case_requirement_traceability` flag on.
 
 #### `duplicate_test_case_candidates`  <sub>(model `DuplicateTestCaseCandidate`)</sub>
 

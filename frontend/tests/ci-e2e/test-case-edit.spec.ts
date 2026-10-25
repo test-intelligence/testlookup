@@ -54,10 +54,10 @@ const editForm = (p: Page) => opened(p, 'Edit test case')
 const paneTab = (p: Page, name: string) => pane(p).getByRole('button', { name, exact: true })
 /** The form's Title (its label carries a hidden ` *`, so it is found by its accessible name). */
 const titleField = (form: Locator) => form.getByRole('textbox', { name: 'Title', exact: true })
-/** The two case rolls: the table's page (`size=25`) and the library health roll (`size=200`). */
+/** The two reads a write refreshes: the table's page (`size=25`) and the library health (W13: `GET /test-management/health`, was the `size=200` roll). */
 const rollReads = (api: Parameters<typeof requestsTo>[0]) => {
   const lines = requestsTo(api, CASES)
-  return { table: lines.filter((l) => l.includes('size=25')).length, health: lines.filter((l) => l.includes('size=200')).length }
+  return { table: lines.filter((l) => l.includes('size=25')).length, health: requestsTo(api, '/api/v1/test-management/health').length }
 }
 
 async function open(page: Page, options: TestCaseEditingOptions & { user?: FixtureUser } = {}) {
@@ -102,7 +102,7 @@ test('TCM-01 as a QA engineer: Edit in the Details tab → title, a step\'s expe
   await expect(form.getByLabel('Parameter 2 value')).toHaveValue('EU')
   await expectNoOverlay(page)
   await networkQuiet(page, api)
-  expect(requestsTo(api, MEMBERS).length, 'the owner list is read when the form opens').toBeGreaterThan(membersAtLoad)
+  expect(requestsTo(api, MEMBERS), `W13: the members are read ONCE (on load, shared with the Owner filter; ${membersAtLoad} at load); the form's owner list reuses them`).toEqual([`GET ${MEMBERS}`])
 
   const before = rollReads(api)
   await titleField(form).fill('Checkout case 2: the cart survives a refresh and a re-login')
