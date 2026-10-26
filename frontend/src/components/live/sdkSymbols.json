@@ -265,8 +265,12 @@
     ],
     "package": "testlookup-reporter",
     "subpaths": [
+      "cucumber-formatter",
+      "cypress-plugin",
       "jest-reporter",
-      "mocha-reporter"
+      "mocha-reporter",
+      "playwright-reporter",
+      "vitest-reporter"
     ],
     "version": "1.0.0"
   }

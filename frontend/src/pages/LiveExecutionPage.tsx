@@ -81,6 +81,8 @@ import {
   getAPISnippet,
   getInstallSnippet,
   getRunnerSnippet,
+  RUNNERS,
+  runnerStepLabel,
   type SDKLang,
 } from '@/components/live/sdkSnippets'
 
@@ -269,6 +271,9 @@ const SDK_DOWNLOADS: { sdkLang: SDKLang; label: string; backendLang: string }[] 
 
 function ClientSDKGuide({ projectId }: { projectId?: string }) {
   const [lang, setLang] = useState<SDKLang>('python')
+  // W18 DEV-03: the runner within the language (JavaScript and Python have several).
+  const [runnerChoice, setRunner] = useState<string | undefined>(undefined)
+  const runner = runnerChoice ?? RUNNERS[lang]?.[0]?.id
   const [showSdkDropdown, setShowSdkDropdown] = useState(false)
   const pid = projectId ?? '<project-id>'
 
@@ -320,7 +325,7 @@ function ClientSDKGuide({ projectId }: { projectId?: string }) {
         {SDK_TABS.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setLang(tab.id)}
+            onClick={() => { setLang(tab.id); setRunner(undefined) }}
             className={clsx(
               'flex items-center gap-1.5',
               lang === tab.id
@@ -340,10 +345,28 @@ function ClientSDKGuide({ projectId }: { projectId?: string }) {
           <CodeBlock code={getInstallSnippet(lang)} />
         </div>
         <div>
-          <p className="text-[var(--color-text-muted)] mb-2 font-medium">
-            2. {lang === 'python' ? 'Run pytest with the plugin' : lang === 'java' ? 'Configure TestNG XML or env vars (zero-code)' : lang === 'javascript' ? 'Use the Jest or Mocha reporter' : 'Use the testing helper'}
-          </p>
-          <CodeBlock code={getRunnerSnippet(lang, pid, SDK_API_BASE)} />
+          <p className="text-[var(--color-text-muted)] mb-2 font-medium">2. {runnerStepLabel(lang, runner)}</p>
+          {RUNNERS[lang] && (
+            <div className="flex flex-wrap items-center gap-1 mb-2" role="group" aria-label="Test runner">
+              {(RUNNERS[lang] ?? []).map((r) => (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => setRunner(r.id)}
+                  aria-pressed={runner === r.id}
+                  className={clsx(
+                    'px-2 py-0.5 rounded text-xs border',
+                    runner === r.id
+                      ? 'border-[var(--color-accent)] text-[var(--color-text)]'
+                      : 'border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
+                  )}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <CodeBlock code={getRunnerSnippet(lang, pid, SDK_API_BASE, runner)} />
         </div>
         <div>
           <p className="text-[var(--color-text-muted)] mb-2 font-medium">
@@ -1063,7 +1086,7 @@ export default function LiveExecutionPage() {
             <div className="flex-1">
               <p className="text-sm font-semibold text-[var(--color-text)]">Connect a test runner</p>
               <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
-                Stream pytest, JUnit, Jest, or Go test events into this dashboard
+                Stream pytest, Robot, JUnit, TestNG, Jest, Mocha, Playwright, Vitest, Cypress, Cucumber or Go test events into this dashboard
               </p>
             </div>
             <span className="text-[11px] text-[var(--color-text-muted)] mr-2">Python · Java · JS · Go SDKs</span>

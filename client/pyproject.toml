@@ -33,7 +33,7 @@ testlookup = "testlookup_reporter"
 # US-4.3b) and commit_range (local-git commit collection, US-8.1) ship
 # alongside the reporter. If this list grows further, convert to a
 # `[tool.setuptools.packages.find]` block.
-py-modules = ["testlookup_reporter", "ci_context", "commit_range"]
+py-modules = ["testlookup_reporter", "ci_context", "commit_range", "testlookup_robot_listener"]
 
 [tool.setuptools.package-data]
 testlookup_reporter = ["testlookup.yaml.example"]

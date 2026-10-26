@@ -99,6 +99,19 @@ With the package installed, the plugin activates when it can resolve a server UR
 
 An option left unset falls back to its environment variable and then the configuration file, exactly as in the next section; commit, suite, release, framework (default `pytest`) and the TLS settings come from there too. The plugin reports each test as `PASSED`, `FAILED`, `SKIPPED` or `BROKEN` (a setup or teardown error), with the test file as the suite, and closes the session when pytest finishes.
 
+### Robot Framework listener
+
+`testlookup_robot_listener.py` (in the same ZIP) is a Listener API v3 listener on the same core:
+
+```bash
+robot --listener testlookup_robot_listener.TestLookupListener tests/
+robot --listener "testlookup_robot_listener.TestLookupListener:project=<project-id>:url=https://testlookup.example.com" tests/
+```
+
+Arguments (`url`, `project`, `api_key`, `token`, `build`, `branch`, `launch`) win over `TESTLOOKUP_*` and the
+config file. Each test is one result when it ends (PASS / FAIL / SKIP / NOT RUN -> PASSED / FAILED / SKIPPED),
+its suite's long name as the suite. Robot Framework 5, 6 and 7.
+
 ### Configuration
 
 Precedence, highest first: constructor arguments (or plugin options), then environment variables, then **one** configuration file, then built-in defaults.

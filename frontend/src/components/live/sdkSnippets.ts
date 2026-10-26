@@ -80,7 +80,105 @@ go mod edit \\
   }
 }
 
-export function getRunnerSnippet(lang: SDKLang, projectId: string, serverUrl: string): string {
+/**
+ * W18 DEV-03: the live adapters per test runner. JavaScript and Python offer a runner picker; the
+ * other languages have one runner snippet. Every option key below is a ``LiveAdapterOptions`` field
+ * (client/js/src/live-adapter.ts) or the listener's argument (client/testlookup_robot_listener.py).
+ */
+export interface RunnerOption {
+  id: string
+  label: string
+}
+
+export const RUNNERS: Partial<Record<SDKLang, RunnerOption[]>> = {
+  python: [
+    { id: 'pytest', label: 'pytest' },
+    { id: 'robot', label: 'Robot Framework' },
+  ],
+  javascript: [
+    { id: 'jest-mocha', label: 'Jest / Mocha' },
+    { id: 'playwright', label: 'Playwright' },
+    { id: 'vitest', label: 'Vitest' },
+    { id: 'cypress', label: 'Cypress' },
+    { id: 'cucumber', label: 'Cucumber' },
+  ],
+}
+
+export function runnerStepLabel(lang: SDKLang, runner?: string): string {
+  switch (runner) {
+    case 'robot': return 'Run robot with the listener'
+    case 'playwright': return 'Add the Playwright reporter'
+    case 'vitest': return 'Add the Vitest reporter'
+    case 'cypress': return 'Register the Cypress plugin (results stream per spec)'
+    case 'cucumber': return 'Run cucumber-js with the formatter'
+  }
+  return lang === 'python' ? 'Run pytest with the plugin'
+    : lang === 'java' ? 'Configure TestNG XML or env vars (zero-code)'
+      : lang === 'javascript' ? 'Use the Jest or Mocha reporter' : 'Use the testing helper'
+}
+
+function adapterRunnerSnippet(runner: string, projectId: string, serverUrl: string): string | null {
+  const opts = `testlookupUrl: '${serverUrl}',
+  testlookupProject: '${projectId}',
+  testlookupApiKey: process.env.TESTLOOKUP_API_KEY,`
+  switch (runner) {
+    case 'playwright':
+      return `// playwright.config.ts — one result per attempt (retries show as attempt 2),
+// one suite per Playwright project
+export default defineConfig({
+  retries: 1,
+  reporter: [
+    ['list'],
+    ['testlookup-reporter/playwright-reporter', {
+      ${opts.replace(/\n/g, '\n      ')}
+    }],
+  ],
+})`
+    case 'vitest':
+      return `// vitest.config.ts — each test streams as it finishes
+export default defineConfig({
+  test: {
+    reporters: ['default', ['testlookup-reporter/vitest-reporter', {
+      ${opts.replace(/\n/g, '\n      ')}
+    }]],
+  },
+})`
+    case 'cypress':
+      return `// cypress.config.ts — Cypress reports per spec, so a spec's
+// tests appear together when it finishes (needs \`cypress run\`)
+import testlookup from 'testlookup-reporter/cypress-plugin'
+
+export default defineConfig({
+  e2e: {
+    setupNodeEvents(on, config) {
+      return testlookup(on, config, {
+        ${opts.replace(/\n/g, '\n        ')}
+      })
+    },
+  },
+})`
+    case 'cucumber':
+      return `# Cucumber JS — one result per scenario, the feature as its suite
+export TESTLOOKUP_API_KEY=<api-key>
+npx cucumber-js \\
+  --format testlookup-reporter/cucumber-formatter \\
+  --format-options '{"testlookupUrl":"${serverUrl}","testlookupProject":"${projectId}"}'`
+    case 'robot':
+      return `# Robot Framework — the listener ships in the Python SDK ZIP
+export TESTLOOKUP_URL=${serverUrl}
+export TESTLOOKUP_API_KEY=<api-key>
+export TESTLOOKUP_PROJECT_ID=${projectId}
+robot --listener testlookup_robot_listener.TestLookupListener tests/
+
+# or pass the settings to the listener
+robot --listener "testlookup_robot_listener.TestLookupListener:project=${projectId}:url=${serverUrl}" tests/`
+  }
+  return null
+}
+
+export function getRunnerSnippet(lang: SDKLang, projectId: string, serverUrl: string, runner?: string): string {
+  const adapter = runner ? adapterRunnerSnippet(runner, projectId, serverUrl) : null
+  if (adapter) return adapter
   switch (lang) {
     case 'python':
       return `# Option 1: Zero-config — add testlookup.yaml to project root:
