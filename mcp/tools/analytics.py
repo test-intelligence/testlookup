@@ -17,6 +17,7 @@ from typing import Any, Optional
 import httpx
 
 import client as api  # type: ignore[import]
+from release_resolver import UnresolvedName, resolve_project, resolve_releases, unresolved_payload  # type: ignore[import]
 import execution_format  # type: ignore[import]
 
 _CATEGORY_ICON = {
@@ -451,9 +452,12 @@ def register(mcp) -> None:  # noqa: ANN001
                 group_by suite, status, failure_category or test, or any
                 suite_name, is refused with 422 run_only_metric. For a
                 suite's wall clock use get_execution_metrics.
-            project_id: Project UUID. Omit for every project you can read.
-            release_id: Release UUIDs, or "unattributed" for runs no release
-                claims (OR, at most 20).
+            project_id: Project id or exact project name. Omit for every
+                project you can read.
+            release_id: Release ids or names (exact name, else exact version,
+                case-insensitive), or "unattributed" for runs no release claims
+                (OR, at most 20). A name that matches several releases is an
+                error listing them with their ids: never a guess.
             suite_name: Suite names, matched case-insensitively (OR, at most 50).
             days: Window in days ending today, UTC (1-365, default 30).
             top_n: Keep the N largest keys and merge the rest into "other".
@@ -484,6 +488,13 @@ def register(mcp) -> None:  # noqa: ANN001
         `param` and `allowed` from the server (a 422 names the parameter and
         what it accepts), and `retry_after` on a 429 (120 requests a minute).
         """
+        try:
+            project_id = await resolve_project(project_id)
+            release_id = await resolve_releases(release_id, project_id)
+        except UnresolvedName as exc:
+            return unresolved_payload(exc)
+        except Exception as exc:
+            return _analytics_error(exc)
         params = {
             "metric": metric,
             "group_by": group_by,

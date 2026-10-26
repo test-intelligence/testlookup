@@ -42,6 +42,7 @@ from tools import analytics  # noqa: E402
 SNAPSHOT = Path(__file__).parent / "snapshots" / "get_chart_data.tool.json"
 FIXTURES = REPO_ROOT / "contracts" / "viz" / "fixtures"
 PATH = "/api/v1/analytics/chart-data"
+P1 = "11111111-1111-4111-8111-111111111111"  # an id: a name is resolved first (DEV-05)
 R1 = "22222222-2222-4222-8222-222222222221"
 R2 = "22222222-2222-4222-8222-222222222222"
 
@@ -145,7 +146,7 @@ def test_the_docstring_names_every_allowed_value():
 def test_repeated_filters_go_out_as_repeated_keys_with_the_callers_bearer(backend):
     seen, _ = backend
     asyncio.run(_tool()(
-        group_by=["day"], metric="pass_rate", project_id="p1",
+        group_by=["day"], metric="pass_rate", project_id=P1,
         release_id=[R1, R2], suite_name=["checkout"], days=90,
     ))
     assert len(seen) == 1
@@ -154,7 +155,7 @@ def test_repeated_filters_go_out_as_repeated_keys_with_the_callers_bearer(backen
     assert sorted(request.url.params.multi_items()) == sorted([
         ("metric", "pass_rate"),
         ("group_by", "day"),
-        ("project_id", "p1"),
+        ("project_id", P1),
         ("release_id", R1),
         ("release_id", R2),
         ("suite_name", "checkout"),
