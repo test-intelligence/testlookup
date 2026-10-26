@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { useState } from 'react'
 import useSWR from 'swr'
 import { fromNow, formatDateTime } from '@/utils/formatters'
+import { Th } from '@/components/ui/Table'
 import { Plus, Trash2 } from 'lucide-react'
 import { groupFeatureFlags, MUTATING_FLAG_KEYS } from '@/config/featureFlagGroups'
 import toast from 'react-hot-toast'
@@ -275,7 +276,7 @@ export default function FeatureFlagsPage() {
               <th className="text-center px-3 py-2">Global</th>
               <th className="text-center px-3 py-2">Rollout %</th>
               <th className="text-center px-3 py-2">Scope</th>
-              <th className="text-left px-3 py-2 whitespace-nowrap">Last changed</th>
+              <Th className="text-left px-3 py-2 whitespace-nowrap">Last changed</Th>
               <th className="text-right px-3 py-2"></th>
             </tr>
           </thead>
@@ -567,7 +568,7 @@ function FlagHistory({ flagKey, onClose }: { flagKey: string; onClose: () => voi
       {isLoading && !data ? (
         <LoadingSpinner size="sm" />
       ) : error ? (
-        <p className="text-[var(--status-failed)]">Could not load the history.</p>
+        <p className="text-[var(--ui-danger-ink)]">Could not load the history.</p>
       ) : rows.length === 0 ? (
         <p className="text-[var(--color-text-muted)]">No recorded changes.</p>
       ) : (

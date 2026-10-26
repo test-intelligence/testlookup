@@ -364,7 +364,7 @@ function ArchivedProjects({ onRestored }: { onRestored: () => void }) {
     }
   }
 
-  if (failed) return <p className="text-sm text-[var(--status-failed)]">Could not load the archived projects.</p>
+  if (failed) return <p className="text-sm text-[var(--ui-danger-ink)]">Could not load the archived projects.</p>
   if (rows === null) return <p className="text-sm text-[var(--color-text-muted)]">Loading archived projects…</p>
   if (rows.length === 0) {
     return <p className="text-sm text-[var(--color-text-muted)]" data-testid="no-archived-projects">No archived projects.</p>
