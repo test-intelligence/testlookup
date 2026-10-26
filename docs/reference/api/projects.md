@@ -103,7 +103,7 @@ Create Project
 
 
 
-Source: [backend/app/routers/projects.py:111](../../../backend/app/routers/projects.py#L111).
+Source: [backend/app/routers/projects.py:114](../../../backend/app/routers/projects.py#L114).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -195,7 +195,7 @@ revoked nothing: the auto-provisioned QA-lead account stayed live, and
 any API key bound to the project kept authenticating and kept accepting
 ingestion. See ``project_access_revocation_service`` for the measurements.
 
-Source: [backend/app/routers/projects.py:289](../../../backend/app/routers/projects.py#L289).
+Source: [backend/app/routers/projects.py:292](../../../backend/app/routers/projects.py#L292).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -275,7 +275,7 @@ Get Project
 
 
 
-Source: [backend/app/routers/projects.py:205](../../../backend/app/routers/projects.py#L205).
+Source: [backend/app/routers/projects.py:208](../../../backend/app/routers/projects.py#L208).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -362,7 +362,7 @@ Update Project
 
 Update a project's attributes. Only non-None fields are applied. Requires QA_LEAD or higher.
 
-Source: [backend/app/routers/projects.py:218](../../../backend/app/routers/projects.py#L218).
+Source: [backend/app/routers/projects.py:221](../../../backend/app/routers/projects.py#L221).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -469,7 +469,7 @@ yet (covers projects created before this feature shipped). Returns
 the new password so the operator can hand it off; the response is
 not persisted anywhere else.
 
-Source: [backend/app/routers/projects.py:444](../../../backend/app/routers/projects.py#L444).
+Source: [backend/app/routers/projects.py:447](../../../backend/app/routers/projects.py#L447).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -577,7 +577,7 @@ Two-step confirmation: ``payload.confirmation_name`` must equal
 the project's ``name`` exactly (case-sensitive). A mismatch
 returns 422 and nothing is deleted.
 
-Source: [backend/app/routers/projects.py:387](../../../backend/app/routers/projects.py#L387).
+Source: [backend/app/routers/projects.py:390](../../../backend/app/routers/projects.py#L390).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -681,7 +681,7 @@ QA lead is re-enabled by resetting its password from Members). Members
 keep their memberships; runs and history are untouched. 409 when the
 project is not archived.
 
-Source: [backend/app/routers/projects.py:342](../../../backend/app/routers/projects.py#L342).
+Source: [backend/app/routers/projects.py:345](../../../backend/app/routers/projects.py#L345).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
