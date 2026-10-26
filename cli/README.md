@@ -104,7 +104,11 @@ Every group has `--help`, for example `testlookup upload file --help`.
 | `keys` | `create`, `list`, `revoke <key-id>` | Create a personal API key (`--name`), list keys, revoke one (`--yes` skips the prompt) |
 | `upload` | `file <path>`, `dir <directory>` | Upload one report file, or every `.xml`, `.json` and `.trx` file in a directory (see [Uploading results](#uploading-results)) |
 | `ci-verdict` | (top-level command) | Quarantine-aware CI gate: exit 0 when every failure in a run is quarantined (see [Gating CI with ci-verdict](#gating-ci-with-ci-verdict)) |
-| `compliance-pack` | `verify <zip>` | Verify a downloaded compliance pack offline: every file against its manifest and the Ed25519 signature (`--public-key`, `--manifest-sha256`, `--require-signature`, `--json`; see [Verifying a compliance pack](#verifying-a-compliance-pack)) |
+| `compliance-pack` | `verify <zip>`, `list <release>`, `generate <release>`, `download <release> -o <zip>` | Verify a downloaded compliance pack offline: every file against its manifest and the Ed25519 signature (`--public-key`, `--manifest-sha256`, `--require-signature`, `--json`; see [Verifying a compliance pack](#verifying-a-compliance-pack)); list, build (QA lead) and download a release's packs (`--pack` for one id; default the newest) |
+| `release` | `gate <release>`, `list` | The release's gate verdict as a CI exit code (`--evaluate`, `--fail-on`, `--fail-open`, `--json`; see [Gating a release](#gating-a-release)); releases with their standing verdict |
+| `quarantine` | `list`, `approve <id>`, `reject <id>`, `release <id>` | The Flaky › Quarantine queue; approve (`--reason`, `--days`), reject, release early (`--reason`) — QA lead |
+| `defects` | `jira preview`, `jira create` | Preview or file a failure signature (`--fingerprint` or `--cluster`) as a Jira issue (`--target webhook` emits the outbound event instead) |
+| `investigations` | `start <run-id>`, `list`, `show <id>` | Deep investigations: start one for a run, a project's list, one investigation's cause and confidence |
 
 ## Common tasks
 
@@ -323,6 +327,44 @@ the database and `APP_SECRET_KEY`; keep the public key and the recorded digests
 off-host for that. The command needs the `cryptography` package (a dependency
 of the CLI since W11).
 
+## Release names
+
+Every `--release` and `<release>` takes a release id, `unattributed` (analytics), or the release's exact
+**name**, then its exact **version**, case-insensitively; every `--project` takes an id or the project's exact
+name. Names are not unique, so a name that matches several releases (or none) exits `4` and lists the
+candidates with their ids (or the closest names) — the CLI never picks one.
+
+## Gating a release
+
+`testlookup release gate <release> [--project <name>]` prints the release's stored verdict (the one on its
+release page: verdict, pass rate, evidence, blockers) and exits with a stable code, so a pipeline can block on it:
+
+| Code | Meaning |
+|---|---|
+| `0` | `GO`, or `CONDITIONAL_GO` (unless `--fail-on CONDITIONAL_GO`) |
+| `1` | `NO_GO` (or `CONDITIONAL_GO` with `--fail-on CONDITIONAL_GO`) |
+| `3` | No verdict to act on: `NOT_EVALUATED` (not enough evidence) or never evaluated |
+| `2` | Infrastructure error: network, 5xx, authentication, permission, an unknown or ambiguous release name. Fails closed; `--fail-open` exits `0` with a warning instead |
+
+`--evaluate` records a fresh verdict first (QA lead or a project API key); it then appears in the release's
+gate history. `--json` prints `{release_id, gate}`.
+
+```yaml
+# GitHub Actions
+- name: Release gate
+  run: testlookup release gate "2026.10" --project "Checkout Service" --evaluate --fail-on NO_GO
+  env:
+    TESTLOOKUP_URL: ${{ secrets.TESTLOOKUP_URL }}
+    TESTLOOKUP_API_KEY: ${{ secrets.TESTLOOKUP_API_KEY }}
+```
+
+```yaml
+# GitLab CI
+release-gate:
+  script:
+    - testlookup release gate "2026.10" --project "Checkout Service" --fail-on NO_GO
+```
+
 ## Output and exit codes
 
 Commands that print data take `-o`/`--output`: `table` (default) or `json`, and
@@ -336,7 +378,7 @@ Commands that show AI-generated reports (`intelligence show`) print the
 report's review state and the AI disclaimer to stderr. `unknown` means the
 server sent no review status: treat the report as an unreviewed draft.
 
-Apart from `ci-verdict` and `compliance-pack verify` (above), failures map to stable exit codes:
+Apart from `ci-verdict`, `release gate` and `compliance-pack verify` (above), failures map to stable exit codes:
 
 | Code | Meaning |
 |---|---|

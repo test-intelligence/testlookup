@@ -21,6 +21,8 @@ from testlookup_cli.commands.upload import upload_app
 from testlookup_cli.commands.ci_verdict import ci_verdict
 from testlookup_cli.commands.ai_history import ai_history, compare_ai
 from testlookup_cli.commands.compliance_pack import compliance_pack_app
+from testlookup_cli.commands.release import release_app
+from testlookup_cli.commands.parity import defects_app, investigations_app, quarantine_app
 
 app = typer.Typer(
     name="testlookup",
@@ -73,6 +75,11 @@ app.add_typer(keys_app, name="keys")
 app.add_typer(upload_app, name="upload")
 # W11 REL-11: verify a downloaded compliance pack offline (no request).
 app.add_typer(compliance_pack_app, name="compliance-pack")
+# W18 DEV-01: the release gate as a CI exit code, and parity with the MCP tools.
+app.add_typer(release_app, name="release")
+app.add_typer(quarantine_app, name="quarantine")
+app.add_typer(defects_app, name="defects")
+app.add_typer(investigations_app, name="investigations")
 
 # Single top-level command (not a group): `testlookup ci-verdict --run <id>`.
 # US-5.2 — exits 0 when the only failures in a run are quarantined tests.

@@ -27,7 +27,7 @@ import typer
 
 from testlookup_cli import pack_verify
 
-compliance_pack_app = typer.Typer(help="Compliance packs: verify a downloaded pack offline.")
+compliance_pack_app = typer.Typer(help="Compliance packs: generate, list and download a release's packs; verify a downloaded pack offline.")
 
 EXIT_VERIFIED = 0
 EXIT_TAMPERED = 1
@@ -133,3 +133,111 @@ def verify(
         for line in lines:
             typer.echo(line)
     raise typer.Exit(code)
+
+
+# ── W18 DEV-01: generate / list / download (the same packs the release page lists) ──
+
+
+def _resolved_release(release: str, project: Optional[str], profile_name: Optional[str]) -> str:
+    import asyncio
+
+    from testlookup_cli import output, release_resolver
+    from testlookup_cli.errors import exit_code_for
+
+    async def go():
+        pid = await release_resolver.resolve_project(project, profile_name=profile_name)
+        return await release_resolver.resolve_release(release, project_id=pid, profile_name=profile_name)
+
+    try:
+        return asyncio.run(go())
+    except Exception as e:
+        output.print_error(str(e))
+        raise typer.Exit(exit_code_for(e))
+
+
+def _api(method: str, path: str, profile_name: Optional[str], **kw):
+    import asyncio
+
+    from testlookup_cli import client, output
+    from testlookup_cli.errors import exit_code_for
+
+    try:
+        return asyncio.run(client.request(method, path, profile_name=profile_name, **kw))
+    except Exception as e:
+        output.print_error(str(e))
+        raise typer.Exit(exit_code_for(e))
+
+
+@compliance_pack_app.command("list")
+def list_packs(
+    release: str = typer.Argument(..., help="Release id, name or version."),
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project id or name (narrows a release name)."),
+    as_json: bool = typer.Option(False, "--json"),
+    profile_name: Optional[str] = typer.Option(None, "--profile"),
+):
+    """A release's compliance packs, newest first."""
+    from testlookup_cli import output
+
+    rid = _resolved_release(release, project, profile_name)
+    packs = _api("GET", f"/api/v1/releases/{rid}/compliance-packs", profile_name) or []
+    if as_json:
+        output.print_json(packs)
+        return
+    rows = [{"id": p.get("id"), "generated": p.get("generated_at"), "files": p.get("file_count"),
+             "bytes": p.get("bytes"), "manifest_sha256": (p.get("manifest_sha256") or "")[:16] + "…",
+             "expires": p.get("retention_expires_at")} for p in packs]
+    output.print_table(rows, ["id", "generated", "files", "bytes", "manifest_sha256", "expires"], title=f"Compliance packs ({len(rows)})")
+
+
+@compliance_pack_app.command("generate")
+def generate_pack(
+    release: str = typer.Argument(..., help="Release id, name or version."),
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project id or name."),
+    notes: Optional[str] = typer.Option(None, "--notes", help="A note stored with the pack."),
+    retention_days: Optional[int] = typer.Option(None, "--retention-days", help="How long to keep it (server default when omitted)."),
+    as_json: bool = typer.Option(False, "--json"),
+    profile_name: Optional[str] = typer.Option(None, "--profile"),
+):
+    """Build a signed compliance pack for the release (QA lead)."""
+    from testlookup_cli import output
+
+    rid = _resolved_release(release, project, profile_name)
+    body = {k: v for k, v in {"notes": notes, "retention_days": retention_days}.items() if v is not None}
+    pack = _api("POST", f"/api/v1/releases/{rid}/compliance-pack", profile_name, json_body=body, timeout=180.0)
+    if as_json:
+        output.print_json(pack)
+        return
+    output.print_success(
+        f"Compliance pack {pack.get('id')} generated: {pack.get('file_count')} files, {pack.get('bytes')} bytes, "
+        f"manifest sha256 {pack.get('manifest_sha256')}."
+    )
+
+
+@compliance_pack_app.command("download")
+def download_pack(
+    release: str = typer.Argument(..., help="Release id, name or version."),
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project id or name."),
+    pack_id: Optional[str] = typer.Option(None, "--pack", help="A pack id (default: the release's newest pack)."),
+    out: Path = typer.Option(..., "--output", "-o", help="Where to write the ZIP."),
+    profile_name: Optional[str] = typer.Option(None, "--profile"),
+):
+    """Save a pack's ZIP: the same file the release page downloads. Verify it with `compliance-pack verify`."""
+    import asyncio
+
+    from testlookup_cli import client, output
+    from testlookup_cli.errors import EXIT_NOT_FOUND, exit_code_for
+
+    if not pack_id:
+        rid = _resolved_release(release, project, profile_name)
+        packs = _api("GET", f"/api/v1/releases/{rid}/compliance-packs", profile_name) or []
+        if not packs:
+            output.print_error(f"Release {release} has no compliance pack yet. Run `testlookup compliance-pack generate {release}`.")
+            raise typer.Exit(EXIT_NOT_FOUND)
+        pack_id = str(max(packs, key=lambda p: str(p.get("generated_at") or ""))["id"])
+    try:
+        data = asyncio.run(client.download(f"/api/v1/compliance-packs/{pack_id}/download", profile_name=profile_name, timeout=180.0))
+    except Exception as e:
+        output.print_error(str(e))
+        raise typer.Exit(exit_code_for(e))
+    out.write_bytes(data)
+    output.print_success(f"Saved compliance pack {pack_id} to {out} ({len(data)} bytes).")

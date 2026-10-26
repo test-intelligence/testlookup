@@ -141,7 +141,7 @@ Show the LLM cost budget overview: which projects are closest to their cap?
 List open quarantine proposals and approve the one with the highest flip rate
 ```
 
-## Tool reference (74 tools)
+## Tool reference (75 tools)
 
 A `?` marks an optional parameter.
 
@@ -262,6 +262,7 @@ touched a suite whole, so under a suite filter it differs from
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `check_release_readiness` | `project_id`, `days?`, `release_id?` | Project GREEN/AMBER/RED from the server's policy verdict over a time window, or a release's stored gate decision when `release_id` is given |
+| `get_release_gate` | `release`, `project?`, `evaluate?` | A release's gate verdict as data (verdict, pass rate, evidence, blockers, decided_at); `release` is an id or a name / version (an ambiguous name lists the candidates); `evaluate=true` records a fresh verdict (QA lead); never evaluated is `evaluated: false` |
 | `check_run_release_readiness` | `run_id` | Single-run GO/CONDITIONAL_GO/NO_GO with risk score and blocking issues |
 | `create_share_link` | `run_id`, `expires_days?`, `layout?` | Time-limited share URL for a run report |
 
