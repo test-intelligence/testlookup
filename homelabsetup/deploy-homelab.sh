@@ -741,6 +741,17 @@ if [ "$SKIP_BUILD" = false ]; then
       | ( cd "$STAGED_SDK" && tar -xf - )
   fi
 
+  # W17 DEV-02: the `testlookup` CLI as a wheel, served at /api/v1/sdk/cli/<wheel>
+  # so onboarding can say `pip install <this deployment>/...whl`. Built on the
+  # HOST (in-container pip breaks under TLS interception); a failure only warns:
+  # the guide then shows the from-a-clone install.
+  CLI_PY="$(command -v python3 || command -v python || true)"
+  if [ -n "$CLI_PY" ] && "$CLI_PY" -m pip wheel --no-deps --quiet --wheel-dir "$STAGED_SDK/cli" "$REPO_ROOT/cli"; then
+    log "Staged the CLI wheel: $(ls "$STAGED_SDK/cli" 2>/dev/null | tr '\n' ' ')"
+  else
+    warn "Could not build the CLI wheel; onboarding will show 'pip install -e cli/'."
+  fi
+
   log "Building backend image (${BUILD_TAG})..."
   "$CONTAINER_ENGINE" build -t "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}" \
     ${CA_BUILD_ARG[@]+"${CA_BUILD_ARG[@]}"} \

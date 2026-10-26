@@ -48,9 +48,12 @@ Any of these formats work: JUnit XML, TestNG, NUnit, xUnit.net, TRX, pytest, Rob
 
 **From the UI.** On **Runs**, choose **Upload**, pick the project, the file and a build label. If there is no Upload button, an admin can turn on the `manual_upload` feature flag under **Settings → Feature flags**.
 
-**From the CLI.** The CLI is installed from this repository (it is not on PyPI):
+**From the CLI.** The CLI is not on PyPI. A deployment serves its wheel (the Overview's getting-started guide shows
+the exact command; `GET /api/v1/sdk/cli/info` names the file), or install it from a clone of this repository:
 
 ```bash
+pip install http://<your-deployment>/api/v1/sdk/cli/testlookup_cli-0.1.0-py3-none-any.whl
+# or, from a clone:
 pip install -e cli/
 export TESTLOOKUP_URL=http://localhost:8000
 export TESTLOOKUP_API_KEY=qai_your_api_key_here   # Settings → API Keys

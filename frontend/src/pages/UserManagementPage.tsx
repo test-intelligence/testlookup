@@ -13,7 +13,7 @@ import { Navigate, useLocation } from 'react-router-dom'
 import { Fragment, useEffect, useLayoutEffect, useState } from 'react'
 import { Edit3, Plus, Shield, UserCheck, UserPlus, UserX } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { useUsers, refreshUsers } from '@/hooks/useUserManagement'
+import { useUsersPage, refreshUsers } from '@/hooks/useUserManagement'
 import { userManagementService, type UserItem, type UserRole } from '@/services/userManagementService'
 import { projectsService } from '@/services/projectsService'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -153,18 +153,31 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
   // answered 3 against 5, with nothing on screen saying the list was partial.
   // Filtering a truncated page answers a different question than the one the
   // operator asked.
-  const PAGE_SIZE = 200 // the API's maximum
-  const { data: users, isLoading } = useUsers({
+  // ADM-03: the server pages (50 a page) and searches (username, email, full
+  // name); the total comes back with the page, so the pager can say
+  // "1–50 of 132" instead of a 200-row cap notice.
+  const PAGE_SIZE = 50
+  const [search, setSearch] = useState('')
+  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
+  useEffect(() => {
+    const id = setTimeout(() => { setQuery(search.trim()); setPage(1) }, 300)
+    return () => clearTimeout(id)
+  }, [search])
+  const { data: usersPage, isLoading } = useUsersPage({
+    page,
     page_size: PAGE_SIZE,
+    ...(query ? { q: query } : {}),
     ...(filterRole ? { role: filterRole } : {}),
     ...(filterActive === 'all' ? {} : { is_active: filterActive === 'active' }),
   })
 
-  const filtered = users ?? []
-  // Exactly PAGE_SIZE rows means the server had more to give. Say so rather
-  // than letting the table imply it is complete -- a silent cap is its own
-  // defect.
-  const isTruncated = filtered.length >= PAGE_SIZE
+  const filtered = Array.isArray(usersPage?.items) ? usersPage.items : []
+  const total = usersPage?.total ?? null
+  const firstShown = filtered.length ? (page - 1) * PAGE_SIZE + 1 : 0
+  const lastShown = (page - 1) * PAGE_SIZE + filtered.length
+  // Without a total (an older server) a full page means there may be more.
+  const hasNext = total != null ? lastShown < total : filtered.length >= PAGE_SIZE
 
   async function handleRoleChange(userId: string, role: UserRole) {
     try {
@@ -207,7 +220,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
             value={filterRole}
             onChange={(e) => {
               const value = e.target.value as UserRole | ''
-              changeFilter(() => setFilterRole(value))
+              changeFilter(() => { setFilterRole(value); setPage(1) })
             }}
             className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-1.5"
           >
@@ -219,7 +232,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
             value={filterActive}
             onChange={(e) => {
               const value = e.target.value as 'all' | 'active' | 'inactive'
-              changeFilter(() => setFilterActive(value))
+              changeFilter(() => { setFilterActive(value); setPage(1) })
             }}
             className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-1.5"
           >
@@ -227,6 +240,18 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
             <option value="active">Active</option>
             <option value="inactive">Inactive</option>
           </select>
+          <input
+            type="search"
+            aria-label="Search users"
+            placeholder="Search name, username or email"
+            value={search}
+            maxLength={100}
+            onChange={(e) => {
+              const value = e.target.value
+              changeFilter(() => setSearch(value))
+            }}
+            className="w-64 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-1.5"
+          />
         </div>
         {isAdmin && (
           <div className="flex gap-2">
@@ -252,18 +277,6 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
       {toolbarSlot.openKey === 'add' && <AddUserModal slot={toolbarSlot} onClose={() => closeToolbar('add')} />}
       {toolbarSlot.openKey === 'invite' && <InviteUserModal slot={toolbarSlot} onClose={() => closeToolbar('invite')} />}
 
-      {/* A capped list must say so. Silently rendering the first page as if
-          it were the whole table is what made the role filter answer 2 when
-          the truth was 5. */}
-      {isTruncated && (
-        <div
-          className="rounded-lg border border-[var(--status-broken-bd)]/40 bg-[var(--status-broken-bg)]/10 px-4 py-2.5 text-xs text-[var(--status-broken)]"
-          role="status"
-        >
-          Showing the first {PAGE_SIZE} users. More match this filter than are
-          listed &mdash; narrow the role or status filter to see the rest.
-        </div>
-      )}
 
       {/* Table */}
       {isLoading ? (
@@ -348,12 +361,39 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
             })}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-[var(--color-text-muted)]">No users found</td>
+                <td colSpan={4} className="px-4 py-8 text-center text-[var(--color-text-muted)]">
+                  {query ? `No users match “${query}”` : 'No users found'}
+                </td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
+      )}
+
+      {/* ADM-03: the pager. The count is the server's filtered total. */}
+      {(page > 1 || hasNext || filtered.length > 0) && (
+        <div className="flex items-center justify-end gap-3 text-xs text-[var(--color-text-muted)]" data-testid="users-pager">
+          <span>
+            {firstShown}–{lastShown}{total != null ? ` of ${total}` : ''}
+          </span>
+          <button
+            type="button"
+            onClick={() => rowSlot.guard(() => { rowSlot.close(); setPage((n) => Math.max(1, n - 1)) })}
+            disabled={page <= 1}
+            className="btn-secondary btn-sm"
+          >
+            Prev
+          </button>
+          <button
+            type="button"
+            onClick={() => rowSlot.guard(() => { rowSlot.close(); setPage((n) => n + 1) })}
+            disabled={!hasNext}
+            className="btn-secondary btn-sm"
+          >
+            Next
+          </button>
+        </div>
       )}
     </div>
   )

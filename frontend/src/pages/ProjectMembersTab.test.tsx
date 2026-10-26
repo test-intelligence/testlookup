@@ -72,7 +72,11 @@ vi.mock('@/services/userManagementService', () => ({
 }))
 
 vi.mock('@/hooks/useUserManagement', () => ({
-  useUsers: (...args: unknown[]) => mockUsersHook(...args),
+  // ADM-03: the Add Member picker searches a server page ({items, total}); fixtures stay plain lists.
+  useUsersPage: (...args: unknown[]) => {
+    const r = mockUsersHook(...args) as { data?: unknown[] } | undefined
+    return { ...r, data: Array.isArray(r?.data) ? { items: r.data, total: r.data.length } : r?.data }
+  },
   useProjectMembers: (...args: unknown[]) => mockProjectMembersHook(...args),
 }))
 
@@ -199,6 +203,26 @@ describe('ProjectMembersTab in the page (W27b)', () => {
     expect(document.querySelector('[aria-modal]')).toBeNull()
     fireEvent.click(within(section).getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('region', { name: 'Add Member to GoogleProject' })).toBeNull()
+  })
+
+  it('ADM-03: Add Member searches the server, leaves members out, and says when more match than are shown', async () => {
+    const lead = makeMember('QA_LEAD')
+    await renderAndPickProject({ isAdmin: true, members: [lead] })
+    const beyond = { id: 'u-sara', email: 'sara@x.test', username: 'eng_sara', full_name: 'Sara Eng',
+                     role: 'QA_ENGINEER', is_active: true, created_at: '2026-05-01T00:00:00Z' }
+    const already = { ...beyond, id: lead.user_id, username: 'lead', full_name: 'Already Member', email: 'lead@x.test' }
+    mockUsersHook.mockImplementation((params: { q?: string }) => ({
+      data: params?.q === 'sara' ? { items: [beyond, already], total: 41 } : { items: [], total: 0 },
+      isLoading: false, error: null,
+    }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add Member' }))
+    const section = screen.getByRole('region', { name: 'Add Member to GoogleProject' })
+    expect(mockUsersHook).toHaveBeenLastCalledWith({ is_active: true, page_size: 20 })
+    fireEvent.change(within(section).getByLabelText('User'), { target: { value: 'sara' } })
+    await waitFor(() => expect(mockUsersHook).toHaveBeenLastCalledWith({ is_active: true, page_size: 20, q: 'sara' }))
+    expect(await within(section).findByRole('option', { name: 'Sara Eng (sara@x.test)' })).toBeInTheDocument()
+    expect(within(section).queryByRole('option', { name: /Already Member/ })).toBeNull()
+    expect(within(section).getByText('Showing the first 2 of 41 matches — type more to narrow.')).toBeInTheDocument()
   })
 
   it('Remove from project asks in a row under the member (colspan 5); the trigger sends nothing, the strip\'s Remove sends once; no native confirm', async () => {

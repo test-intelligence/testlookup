@@ -52,6 +52,31 @@ locally by default.
 
 ### Added
 
+- **Account and admin basics: user search and paging, restore an archived
+  project, who changed a feature flag and why, and the CLI served by the
+  deployment** (wave W17a, ADM-03, ADM-04, ADM-07 and DEV-02; branch
+  `feat/df-accounts-admin-20261026`; migration 0232). **Users** pages 50 at a
+  time with "1–50 of N", Prev / Next and a search box that matches the
+  username, email or full name on the server (`GET /api/v1/users` takes `q`
+  and returns the filtered total in `X-Total-Count`), instead of stopping at
+  200; **Project access › Add Member** searches the server too, so any user
+  can be found by typing. **Projects** has an Active / Archived switch for
+  administrators: archiving now records when and by whom, and **Restore**
+  (`POST /api/v1/projects/{id}/restore`, ADMIN) brings a project back with its
+  members and runs while its API keys and default QA lead stay revoked (the
+  confirmation says so); `GET /api/v1/projects?include_archived=true` lists
+  archived projects for administrators. **Feature flags** shows when and by
+  whom each flag last changed, takes an optional reason with a change (kept on
+  the audit row) and lists a flag's changes under **History**
+  (`GET /api/v1/feature-flags/{key}/history`). The deployment serves the
+  `testlookup` CLI as a wheel (`/api/v1/sdk/cli/info`,
+  `/api/v1/sdk/cli/<wheel>`), and the getting-started guide shows
+  `pip install <deployment>/api/v1/sdk/cli/<wheel>` (from a clone when the
+  deployment has none). Tests: `test_user_list_search_postgres.py`,
+  `test_feature_flag_reason_postgres.py`, `test_project_restore_postgres.py`,
+  `test_migration_0232.py`, `test_sdk_cli_wheel.py`, and the Users, Project
+  access, Projects, Feature flags and getting-started vitest suites.
+
 - **AI evaluation you can act on: candidate replays with per-item diffs, real
   gate verdicts, the agent-stack gate history, and a labelling queue for live
   tier pairs** (wave W16, AGT-09 and AGT-13; branch

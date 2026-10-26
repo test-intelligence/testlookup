@@ -807,6 +807,9 @@ jobs:
           tests/integration/test_failures_headline_counts_postgres.py
           tests/integration/test_top_failing_last_failed_run_postgres.py
           tests/integration/test_assignee_and_user_list_postgres.py
+          tests/integration/test_user_list_search_postgres.py
+          tests/integration/test_feature_flag_reason_postgres.py
+          tests/integration/test_project_restore_postgres.py
           tests/integration/test_defects_list_fields_postgres.py
           tests/integration/test_analytics_scope_postgres.py
           tests/integration/test_analytics_epoch_redis_postgres.py
@@ -1627,6 +1630,9 @@ jobs:
           rsync -a --exclude='__pycache__' --exclude='node_modules' --exclude='.venv' \
             --exclude='target' --exclude='build' --exclude='*.egg-info' \
             ./client/ ./backend/__client_sdks_staged/
+          # W17 DEV-02: the CLI wheel served at /api/v1/sdk/cli/<wheel>; a failed build fails the step.
+          python3 -m pip wheel --no-deps --quiet --wheel-dir ./backend/__client_sdks_staged/cli ./cli
+          ls ./backend/__client_sdks_staged/cli
 
       - name: Set up Docker Buildx
         if: steps.scope.outputs.run == 'true'
@@ -1821,6 +1827,9 @@ jobs:
             --exclude='.DS_Store' \
             ./client/ "$STAGED_SDK/"
           ls -la "$STAGED_SDK" | head -20
+          # W17 DEV-02: the CLI wheel served at /api/v1/sdk/cli/<wheel>; a failed build fails the step.
+          python3 -m pip wheel --no-deps --quiet --wheel-dir "$STAGED_SDK"/cli ./cli
+          ls "$STAGED_SDK"/cli
 
       - name: Record backend build provenance
         id: build-provenance

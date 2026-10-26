@@ -7,6 +7,9 @@ import { FIRST_RUN_DISMISS_KEY, firstRunDismissKey } from '@/components/onboardi
 import OverviewPage from './OverviewPage'
 import { KPI_STRIP_COLUMNS } from '@/components/ui/KpiStrip'
 
+// W17 DEV-02: the first-run guide asks for the deployment's CLI wheel; none here.
+vi.mock('@/hooks/useCliWheel', () => ({ useCliWheel: () => ({ data: undefined }) }))
+
 /** The router's current query string, for the `?tab=` tests. */
 function LocationProbe() {
   const location = useLocation()

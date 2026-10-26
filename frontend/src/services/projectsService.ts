@@ -22,6 +22,13 @@ export interface DefaultQaLeadResetResponse {
   actor_id: string
 }
 
+export interface ProjectRestoreResult {
+  restored: boolean
+  project_id: string
+  api_keys_still_revoked: number
+  default_qa_lead_reactivated: boolean
+}
+
 export const projectsService = {
   list: (): Promise<Project[]> => getData('/api/v1/projects'),
   get: (id: string): Promise<Project> => getData(`/api/v1/projects/${id}`),
@@ -30,6 +37,10 @@ export const projectsService = {
   update: (id: string, data: ProjectUpdate, opts?: { suppressToast?: boolean }) =>
     putData<Project, ProjectUpdate>(`/api/v1/projects/${id}`, data, opts?.suppressToast ? { suppressToast: true } : undefined),
   delete: (id: string) => deleteData(`/api/v1/projects/${id}`),
+  /** W17 ADM-04 (ADMIN): every project, archived ones included, with when / by whom. */
+  listWithArchived: (): Promise<Project[]> => getData('/api/v1/projects', { params: { include_archived: true } }),
+  /** W17 ADM-04 (ADMIN): bring an archived project back; its API keys stay revoked. */
+  restore: (id: string): Promise<ProjectRestoreResult> => postData(`/api/v1/projects/${id}/restore`, {}),
   reset: (id: string, body: ProjectResetRequest) =>
     postData<ProjectResetResponse, ProjectResetRequest>(`/api/v1/projects/${id}/reset`, body),
   /**

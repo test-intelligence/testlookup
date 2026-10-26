@@ -43,6 +43,11 @@ const svc = vi.hoisted(() => ({
 vi.mock('@/services/userManagementService', () => ({
   userManagementService: {
     listUsers: (...a: unknown[]) => svc.listUsers(...a),
+    // ADM-03: the Users page reads {items, total}; svc.listUsers still counts every read.
+    listUsersPage: (...a: unknown[]) =>
+      Promise.resolve(svc.listUsers(...a)).then((items: unknown) => ({
+        items: Array.isArray(items) ? items : [], total: Array.isArray(items) ? items.length : 0,
+      })),
     createUser: (...a: unknown[]) => svc.createUser(...a),
     inviteUser: (...a: unknown[]) => svc.inviteUser(...a),
     listProjectMembers: (...a: unknown[]) => svc.listProjectMembers(...a),

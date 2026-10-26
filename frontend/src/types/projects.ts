@@ -12,6 +12,10 @@ export interface Project {
   end_date?: string | null
   tags?: string[]
   is_active: boolean
+  /** W17 ADM-04: set while archived (null when archived before migration 0232). */
+  archived_at?: string | null
+  archived_by_user_id?: string | null
+  archived_by_name?: string | null
   created_at: string
   updated_at?: string
   /** Program manager (migration 0076). Legacy fallback for suite ownership. */

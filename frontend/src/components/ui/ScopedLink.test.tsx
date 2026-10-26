@@ -30,6 +30,11 @@ vi.mock('@/store/projectStore', async importOriginal => {
 
 import ScopedLink from './ScopedLink'
 
+// W17 DEV-02: the guide asks the deployment for its CLI wheel; tests choose the answer.
+const cliWheel = vi.hoisted(() => ({ data: undefined as undefined | { available: boolean; version: string | null; filename: string | null; download_url: string | null } }))
+vi.mock('@/hooks/useCliWheel', () => ({ useCliWheel: () => ({ data: cliWheel.data }) }))
+
+
 const A_PROJECT = 'aaaaaaaa-0000-0000-0000-000000000001'
 
 const renderLink = (to: string) =>

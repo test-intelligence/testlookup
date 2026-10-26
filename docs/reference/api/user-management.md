@@ -10,7 +10,7 @@ List Project Members
 
 List all members of a project.
 
-Source: [backend/app/routers/users.py:413](../../../backend/app/routers/users.py#L413).
+Source: [backend/app/routers/users.py:436](../../../backend/app/routers/users.py#L436).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -101,7 +101,7 @@ Add Project Member
 
 Add a user to a project with a role. Requires QA_LEAD or higher.
 
-Source: [backend/app/routers/users.py:440](../../../backend/app/routers/users.py#L440).
+Source: [backend/app/routers/users.py:463](../../../backend/app/routers/users.py#L463).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -200,7 +200,7 @@ Remove Project Member
 
 Remove a user from a project. Requires ADMIN.
 
-Source: [backend/app/routers/users.py:541](../../../backend/app/routers/users.py#L541).
+Source: [backend/app/routers/users.py:564](../../../backend/app/routers/users.py#L564).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -290,7 +290,7 @@ Update Project Member Role
 
 Update a project member's role. Requires QA_LEAD or higher.
 
-Source: [backend/app/routers/users.py:493](../../../backend/app/routers/users.py#L493).
+Source: [backend/app/routers/users.py:516](../../../backend/app/routers/users.py#L516).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -397,14 +397,17 @@ List Users
 
 List all users (paginated). Requires QA_LEAD or higher.
 
-Source: [backend/app/routers/users.py:137](../../../backend/app/routers/users.py#L137).
+The body stays a bare list (other callers read it); the number of users
+matching the filters, across every page, is the ``X-Total-Count`` header.
+
+Source: [backend/app/routers/users.py:138](../../../backend/app/routers/users.py#L138).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-is_active: Optional[bool]=Query(None), role: Optional[UserRole]=Query(None), page: int=Query(1, ge=1, description='Page number'), page_size: int=Query(50, ge=1, le=200, description='Items per page'), db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD))
+response: Response, is_active: Optional[bool]=Query(None), role: Optional[UserRole]=Query(None), q: Optional[str]=Query(None, max_length=100, description='Case-insensitive substring of the username, email or full name (ADM-03).'), page: int=Query(1, ge=1, description='Page number'), page_size: int=Query(50, ge=1, le=200, description='Items per page'), db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD))
 ```
 
 ### Declared wire contract
@@ -445,6 +448,25 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
           }
         ],
         "title": "Role"
+      }
+    },
+    {
+      "description": "Case-insensitive substring of the username, email or full name (ADM-03).",
+      "in": "query",
+      "name": "q",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "maxLength": 100,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Case-insensitive substring of the username, email or full name (ADM-03).",
+        "title": "Q"
       }
     },
     {
@@ -531,7 +553,7 @@ Admin Create User
 
 Admin creates a user directly with a temporary password. Requires ADMIN.
 
-Source: [backend/app/routers/users.py:273](../../../backend/app/routers/users.py#L273).
+Source: [backend/app/routers/users.py:296](../../../backend/app/routers/users.py#L296).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -618,7 +640,7 @@ Invite User
 
 Invite a user by email with a specified role. Requires ADMIN.
 
-Source: [backend/app/routers/users.py:317](../../../backend/app/routers/users.py#L317).
+Source: [backend/app/routers/users.py:340](../../../backend/app/routers/users.py#L340).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -706,7 +728,7 @@ Get User
 
 Get a specific user by ID.
 
-Source: [backend/app/routers/users.py:157](../../../backend/app/routers/users.py#L157).
+Source: [backend/app/routers/users.py:180](../../../backend/app/routers/users.py#L180).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -793,7 +815,7 @@ Update User Profile
 
 Update a user's profile attributes. Requires ADMIN. Only non-None fields are applied.
 
-Source: [backend/app/routers/users.py:223](../../../backend/app/routers/users.py#L223).
+Source: [backend/app/routers/users.py:246](../../../backend/app/routers/users.py#L246).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -894,7 +916,7 @@ Get User Access Audit
 
 Return access audit trail for a specific user.
 
-Source: [backend/app/routers/users.py:399](../../../backend/app/routers/users.py#L399).
+Source: [backend/app/routers/users.py:422](../../../backend/app/routers/users.py#L422).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -994,7 +1016,7 @@ Get User Memberships
 Return all project memberships for a user in a single query.
 Replaces the N+1 pattern of fetching each project's members individually.
 
-Source: [backend/app/routers/users.py:371](../../../backend/app/routers/users.py#L371).
+Source: [backend/app/routers/users.py:394](../../../backend/app/routers/users.py#L394).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1081,7 +1103,7 @@ Update User Role
 
 Update a user's global role. Requires ADMIN.
 
-Source: [backend/app/routers/users.py:171](../../../backend/app/routers/users.py#L171).
+Source: [backend/app/routers/users.py:194](../../../backend/app/routers/users.py#L194).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1179,7 +1201,7 @@ Update User Status
 
 Activate or deactivate a user account. Requires ADMIN.
 
-Source: [backend/app/routers/users.py:197](../../../backend/app/routers/users.py#L197).
+Source: [backend/app/routers/users.py:220](../../../backend/app/routers/users.py#L220).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

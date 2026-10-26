@@ -610,6 +610,11 @@ class ProjectResponse(TimestampMixin):
     default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
     require_case_review: bool = False  # migration 0222 (W28 TCM-02)
     automation_target_pct: int = AUTOMATION_TARGET_DEFAULT  # migration 0228 (W13 TCL-03)
+    # W17 ADM-04 (migration 0232): when / by whom it was archived (NULL when active,
+    # or archived before 0232), and the archiver's name for the Archived list.
+    archived_at: Optional[datetime] = None
+    archived_by_user_id: Optional[uuid.UUID] = None
+    archived_by_name: Optional[str] = None
     # S1 — retention posture, resolved in the SAME query as the project list
     # (LEFT JOIN, never a per-project lookup). Three states, deliberately
     # distinct: "unconfigured" (no policy row has ever existed) is the case
@@ -774,6 +779,14 @@ class ProjectResetRequest(BaseModel):
 
     mode: Literal["runs", "full"]
     confirmation_name: str = Field(..., min_length=1, max_length=255)
+
+
+class ProjectRestoreResponse(BaseModel):
+    """W17 ADM-04: a restored project and what deliberately stayed revoked."""
+    restored: bool = True
+    project_id: uuid.UUID
+    api_keys_still_revoked: int
+    default_qa_lead_reactivated: bool = False
 
 
 class ProjectResetResponse(BaseModel):
@@ -7679,6 +7692,8 @@ class FeatureFlagCreate(BaseModel):
     enabled_projects: Optional[List[uuid.UUID]] = None
     enabled_roles: Optional[List[str]] = None
     rollout_percent: int = Field(100, ge=0, le=100)
+    # W17 ADM-07: the administrator's optional "why", kept on the audit row. Never a secret.
+    reason: Optional[str] = Field(None, max_length=500)
 
 
 class FeatureFlagUpdate(BaseModel):
@@ -7692,6 +7707,8 @@ class FeatureFlagUpdate(BaseModel):
     enabled_projects: Optional[List[uuid.UUID]] = None
     enabled_roles: Optional[List[str]] = None
     rollout_percent: Optional[int] = Field(None, ge=0, le=100)
+    # W17 ADM-07: the administrator's optional "why", kept on the audit row. Never a secret.
+    reason: Optional[str] = Field(None, max_length=500)
 
 
 class FeatureFlagResponse(BaseModel):
@@ -7705,7 +7722,20 @@ class FeatureFlagResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     updated_by_user_id: Optional[uuid.UUID] = None
+    # W17 ADM-07: who last changed the flag (name, not only an id) and the reason
+    # given with that change (None = none given, or a change before migration 0232).
+    updated_by_name: Optional[str] = None
+    last_change_reason: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class FeatureFlagHistoryEntry(BaseModel):
+    """One audit row of a flag (W17 ADM-07): what changed, who, when and why. Field names only."""
+    action: str
+    actor_name: Optional[str] = None
+    changed_fields: List[str] = Field(default_factory=list)
+    reason: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 # ── Decision Trail (Tier 0B) ─────────────────────────────────────────────────

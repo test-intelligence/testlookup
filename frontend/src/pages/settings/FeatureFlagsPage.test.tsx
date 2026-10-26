@@ -38,9 +38,9 @@ vi.mock('@/hooks/useFeatureFlags', () => ({
   },
 }))
 
-const { update } = vi.hoisted(() => ({ update: vi.fn() }))
+const { update, history } = vi.hoisted(() => ({ update: vi.fn(), history: vi.fn() }))
 vi.mock('@/services/featureFlagService', () => ({
-  featureFlagService: { update, remove: vi.fn(), create: vi.fn() },
+  featureFlagService: { update, remove: vi.fn(), create: vi.fn(), history },
 }))
 
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
@@ -51,6 +51,7 @@ beforeEach(() => {
   flagList = [FLAG]
   update.mockReset()
   update.mockResolvedValue({})
+  history.mockReset()
 })
 
 describe('FeatureFlagsPage', () => {
@@ -135,7 +136,7 @@ describe('W04 AIC-07: agent stage flags are grouped', () => {
     const header = document.querySelector('[data-flag-group="agent-stages"]') as HTMLElement
     expect(header).toHaveTextContent('Agent stages (deep pipeline)')
     expect(header).toHaveTextContent('Turn a stage on for one project by switching it on globally and listing the project under Edit.')
-    expect(header.querySelector('th')).toHaveAttribute('colspan', '6')
+    expect(header.querySelector('th')).toHaveAttribute('colspan', '7') // W17 ADM-07 added Last changed
   })
 
   it('the four read-only stages read ON, defect_commander OFF with a MUTATING pill; nothing else is marked', () => {
@@ -193,7 +194,7 @@ describe('FeatureFlagsPage in the page (W27b)', () => {
     const formRow = section.closest('tr') as HTMLElement
     expect(formRow).toHaveAttribute('data-in-page-row')
     expect(formRow).not.toHaveAttribute('data-flag-key')
-    expect(formRow.querySelector('td')).toHaveAttribute('colspan', '6')
+    expect(formRow.querySelector('td')).toHaveAttribute('colspan', '7') // W17 ADM-07 added Last changed
     expect(row.nextElementSibling).toBe(formRow)
     expect(formRow.closest('tbody')).toHaveAttribute('data-flag-group-body', 'agent-stages')
     expect(screen.queryByRole('dialog')).toBeNull()
@@ -222,7 +223,7 @@ describe('FeatureFlagsPage in the page (W27b)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delete flag manual_upload' }))
     expect(remove, 'the trigger sends nothing').not.toHaveBeenCalled()
     const strip = document.querySelector('[data-inline-confirm]') as HTMLElement
-    expect(strip.closest('td')).toHaveAttribute('colspan', '6')
+    expect(strip.closest('td')).toHaveAttribute('colspan', '7') // W17 ADM-07 added Last changed
     expect(strip.querySelector('p')?.textContent).toBe('Delete feature flag "manual_upload"? This cannot be undone.')
 
     fireEvent.click(within(strip).getByRole('button', { name: 'Cancel' }))
@@ -235,5 +236,61 @@ describe('FeatureFlagsPage in the page (W27b)', () => {
     expect(remove).toHaveBeenCalledWith('manual_upload')
     expect(confirmSpy).not.toHaveBeenCalled()
     confirmSpy.mockRestore()
+  })
+})
+
+
+// ── W17 ADM-07: when / who / why a flag last changed ────────────────────────
+
+describe('FeatureFlagsPage: last change (ADM-07)', () => {
+  it('shows when and by whom with the reason, and "No reason given" as the tooltip when none', () => {
+    const recent = new Date(Date.now() - 2 * 3600 * 1000).toISOString()
+    flagList = [
+      { ...FLAG, updated_at: recent, updated_by_name: 'Ada Admin', last_change_reason: 'demo INT-07' },
+      { ...FLAG, id: 'flag-2', key: 'outbound_webhooks', updated_at: recent, updated_by_name: null, last_change_reason: null },
+    ]
+    render(<FeatureFlagsPage />)
+    const [first, second] = screen.getAllByTestId('flag-last-changed')
+    expect(first).toHaveTextContent('about 2 hours ago')
+    expect(first).toHaveTextContent('by Ada Admin')
+    expect(first).toHaveTextContent('“demo INT-07”')
+    expect(first).toHaveAttribute('title', 'Reason: demo INT-07')
+    expect(second).toHaveTextContent('about 2 hours ago')
+    expect(second).not.toHaveTextContent('by ')
+    expect(second).toHaveAttribute('title', 'No reason given')
+  })
+
+  it('sends the typed reason with the next toggle, then clears it; no reason -> no reason key', async () => {
+    render(<FeatureFlagsPage />)
+    fireEvent.change(screen.getByLabelText('Reason for the next change'), { target: { value: '  demo INT-07 ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle manual_upload' }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith('manual_upload', { enabled_global: false, reason: 'demo INT-07' }))
+    await waitFor(() => expect(screen.getByLabelText('Reason for the next change')).toHaveValue(''))
+    fireEvent.click(screen.getByRole('button', { name: 'Toggle manual_upload' }))
+    await waitFor(() => expect(update).toHaveBeenLastCalledWith('manual_upload', { enabled_global: false }))
+  })
+
+  it('a change time ahead of the browser clock reads as the date, not "in N days"', () => {
+    flagList = [{ ...FLAG, updated_at: new Date(Date.now() + 26 * 86400 * 1000).toISOString() }]
+    render(<FeatureFlagsPage />)
+    expect(screen.getByTestId('flag-last-changed')).not.toHaveTextContent(/^in /)
+    expect(screen.getByRole('button', { name: 'History of manual_upload' }).textContent).not.toMatch(/^in /)
+  })
+
+  it('History opens under the row with each change, newest first, and the reason', async () => {
+    history.mockResolvedValue([
+      { action: 'update', actor_name: 'admin', changed_fields: ['enabled_global'], reason: 'demo INT-07', created_at: '2026-10-26T05:00:00Z' },
+      { action: 'create', actor_name: 'admin', changed_fields: [], reason: null, created_at: '2026-10-25T05:00:00Z' },
+    ])
+    render(<FeatureFlagsPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'History of manual_upload' }))
+    const section = await screen.findByRole('region', { name: 'History of manual_upload' })
+    const items = await within(section).findAllByRole('listitem')
+    expect(items[0]).toHaveTextContent('update: enabled_global')
+    expect(items[0]).toHaveTextContent('“demo INT-07”')
+    expect(items[1]).toHaveTextContent('no reason given')
+    expect(history).toHaveBeenCalledWith('manual_upload')
+    fireEvent.click(within(section).getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('region', { name: 'History of manual_upload' })).toBeNull()
   })
 })

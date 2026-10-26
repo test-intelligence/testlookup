@@ -21,6 +21,7 @@ class _Payload:
     enabled_projects = None
     enabled_roles = None
     rollout_percent = 100
+    reason = None  # W17 ADM-07
 
     def model_dump(self, *, exclude_unset=False):
         return {"enabled_global": True}
@@ -39,6 +40,14 @@ def _db_and_invalidator():
     return calls, db, invalidate
 
 
+def _attach(calls):
+    """W17 ADM-07: the response reads who / why AFTER the commit (a plain read, no cache)."""
+    async def attach(db, flags):
+        calls.append("attach")
+        return flags
+    return patch.object(router.ff_service, "attach_last_change", new=attach)
+
+
 @pytest.mark.asyncio
 async def test_patch_commits_before_invalidating_shared_caches():
     calls, db, invalidate = _db_and_invalidator()
@@ -49,12 +58,12 @@ async def test_patch_commits_before_invalidating_shared_caches():
 
     with patch.object(router.ff_service, "update_flag", new=update), patch.object(
         router.ff_service, "invalidate_flag_cache", new=invalidate,
-    ):
+    ), _attach(calls):
         await router.update_feature_flag(
             "release_guard", _Payload(), db=db, current_user=SimpleNamespace(),
         )
 
-    assert calls == ["update", "commit", "invalidate:release_guard"]
+    assert calls == ["update", "commit", "invalidate:release_guard", "attach"]
 
 
 @pytest.mark.asyncio
@@ -67,12 +76,12 @@ async def test_create_commits_before_invalidating_shared_caches():
 
     with patch.object(router.ff_service, "create_flag", new=create), patch.object(
         router.ff_service, "invalidate_flag_cache", new=invalidate,
-    ):
+    ), _attach(calls):
         await router.create_feature_flag(
             _Payload(), db=db, current_user=SimpleNamespace(),
         )
 
-    assert calls == ["create", "commit", "invalidate:release_guard"]
+    assert calls == ["create", "commit", "invalidate:release_guard", "attach"]
 
 
 @pytest.mark.asyncio

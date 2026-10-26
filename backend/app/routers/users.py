@@ -7,8 +7,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_project_access, require_role
@@ -29,6 +29,7 @@ from app.models.schemas import (
     UserListResponse,
 )
 from app.services.access_audit_service import log_access_change
+from app.services.sql_utils import escape_like
 
 logger = structlog.get_logger(__name__)
 
@@ -136,20 +137,42 @@ def _build_project_member_response(member: ProjectMember, user: User) -> Project
 
 @router.get("", response_model=list[UserListResponse])
 async def list_users(
+    response: Response,
     is_active: Optional[bool] = Query(None),
     role: Optional[UserRole] = Query(None),
+    q: Optional[str] = Query(
+        None, max_length=100,
+        description="Case-insensitive substring of the username, email or full name (ADM-03).",
+    ),
     page: int = Query(1, ge=1, description="Page number"),
     page_size: int = Query(50, ge=1, le=200, description="Items per page"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
 ):
-    """List all users (paginated). Requires QA_LEAD or higher."""
-    stmt = select(User).order_by(User.full_name)
+    """List all users (paginated). Requires QA_LEAD or higher.
+
+    The body stays a bare list (other callers read it); the number of users
+    matching the filters, across every page, is the ``X-Total-Count`` header.
+    """
+    filters = []
     if is_active is not None:
-        stmt = stmt.where(User.is_active == is_active)
+        filters.append(User.is_active == is_active)
     if role is not None:
-        stmt = stmt.where(User.role == role)
-    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
+        filters.append(User.role == role)
+    needle = (q or "").strip()
+    if needle:
+        pattern = f"%{escape_like(needle)}%"
+        filters.append(or_(
+            User.username.ilike(pattern, escape="\\"),
+            User.email.ilike(pattern, escape="\\"),
+            User.full_name.ilike(pattern, escape="\\"),
+        ))
+    total = (await db.execute(select(func.count()).select_from(User).where(*filters))).scalar_one()
+    response.headers["X-Total-Count"] = str(int(total or 0))
+    stmt = (
+        select(User).where(*filters).order_by(User.full_name, User.id)
+        .offset((page - 1) * page_size).limit(page_size)
+    )
     result = await db.execute(stmt)
     return result.scalars().all()
 

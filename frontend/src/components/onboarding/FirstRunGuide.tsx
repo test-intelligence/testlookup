@@ -4,6 +4,7 @@ import ScopedLink from '@/components/ui/ScopedLink'
 import { Rocket, Copy, Check, AlertTriangle, ArrowRight, ListChecks, BookOpen, X } from 'lucide-react'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { backendUrl } from '@/services/api'
+import { useCliWheel } from '@/hooks/useCliWheel'
 import { buildSteps } from './firstRunSteps'
 
 function CommandRow({ command }: { command: string }) {
@@ -59,7 +60,11 @@ export default function FirstRunGuide({
   // Resolve the ingest curl to the deployment's own backend origin (same-origin
   // behind an ingress, or VITE_API_BASE_URL) so the copy-paste command works on
   // any self-host — not just the local dev machine.
-  const steps = buildSteps(projectId, backendUrl('/api/v1/ingest/file'))
+  // W17 DEV-02: the CLI wheel this deployment serves (public route); without one
+  // the guide keeps the from-a-clone install.
+  const { data: cli } = useCliWheel()
+  const wheelUrl = cli?.available && cli.download_url ? backendUrl(cli.download_url) : null
+  const steps = buildSteps(projectId, backendUrl('/api/v1/ingest/file'), wheelUrl)
   return (
     <section
       aria-label="Getting started"
@@ -103,8 +108,10 @@ export default function FirstRunGuide({
               {s.cliInstall && (
                 <>
                   <p className="mt-2 text-[11px] text-[var(--color-text-faint)]">
-                    No <code className="font-mono">testlookup</code> command yet? The CLI ships in the
-                    repo — install it once:
+                    No <code className="font-mono">testlookup</code> command yet?{' '}
+                    {s.cliFromDeployment
+                      ? 'Install the CLI from this deployment once:'
+                      : 'The CLI ships in the repo — install it once from a clone:'}
                   </p>
                   <CommandRow command={s.cliInstall} />
                 </>

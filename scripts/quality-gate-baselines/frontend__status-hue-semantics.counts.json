@@ -113,7 +113,7 @@
     "frontend/src/pages/SummaryReportPage.tsx": 5,
     "frontend/src/pages/TestManagementPage.tsx": 46,
     "frontend/src/pages/TrendsPage.tsx": 15,
-    "frontend/src/pages/UserManagementPage.tsx": 7,
+    "frontend/src/pages/UserManagementPage.tsx": 6,
     "frontend/src/pages/ValueMetricsPage.tsx": 2,
     "frontend/src/pages/WorkflowEditorPage.tsx": 4,
     "frontend/src/pages/flaky/QuarantinePolicyCard.tsx": 3,

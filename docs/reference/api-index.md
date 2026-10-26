@@ -184,6 +184,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | DELETE | `/api/v1/feature-flags/{key}` | Delete Feature Flag | [Feature Flags](api/feature-flags.md) |
 | GET | `/api/v1/feature-flags/{key}` | Get Feature Flag | [Feature Flags](api/feature-flags.md) |
 | PATCH | `/api/v1/feature-flags/{key}` | Update Feature Flag | [Feature Flags](api/feature-flags.md) |
+| GET | `/api/v1/feature-flags/{key}/history` | Get Feature Flag History | [Feature Flags](api/feature-flags.md) |
 | GET | `/api/v1/feature-flags/{key}/status` | Get Feature Flag Status | [Feature Flags](api/feature-flags.md) |
 | POST | `/api/v1/feedback/jira-webhook` | Jira Resolution Webhook | [Feedback & Training](api/feedback-training.md) |
 | GET | `/api/v1/feedback/stats` | Get Feedback Stats | [Feedback & Training](api/feedback-training.md) |
@@ -335,6 +336,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | PUT | `/api/v1/projects/{project_id}/quarantine/policy` | Update Quarantine Lifecycle Policy | [Flaky Quarantine](api/flaky-quarantine.md) |
 | GET | `/api/v1/projects/{project_id}/reports/analysis` | Download Analysis Report | [Analysis Report](api/analysis-report.md) |
 | POST | `/api/v1/projects/{project_id}/reset` | Reset Project Data | [Projects](api/projects.md) |
+| POST | `/api/v1/projects/{project_id}/restore` | Restore Project | [Projects](api/projects.md) |
 | GET | `/api/v1/projects/{project_id}/retention-policy` | Get Retention Policy | [Retention](api/retention.md) |
 | PUT | `/api/v1/projects/{project_id}/retention-policy` | Put Retention Policy | [Retention](api/retention.md) |
 | POST | `/api/v1/projects/{project_id}/retention-policy/preview` | Preview Retention Purge | [Retention](api/retention.md) |
@@ -487,6 +489,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | PUT | `/api/v1/scim/v2/Users/{user_id}` | Scim Replace | [SCIM 2.0](api/scim-2-0.md) |
 | GET | `/api/v1/scoring-model` | Get Scoring Model | [Scoring Model](api/scoring-model.md) |
 | GET | `/api/v1/sdk` | List available client SDKs | [SDK Downloads](api/sdk-downloads.md) |
+| GET | `/api/v1/sdk/cli/info` | The CLI wheel this deployment serves | [SDK Downloads](api/sdk-downloads.md) |
+| GET | `/api/v1/sdk/cli/{filename}` | Download the CLI wheel | [SDK Downloads](api/sdk-downloads.md) |
 | GET | `/api/v1/sdk/{lang}` | Download a client SDK | [SDK Downloads](api/sdk-downloads.md) |
 | GET | `/api/v1/search` | Search Test Cases | [Search](api/search.md) |
 | GET | `/api/v1/search/entity-counts` | Get Entity Counts | [Search](api/search.md) |
@@ -657,4 +661,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **648 HTTP operations**, **549 paths**, **86 domain pages**.
+Total: **652 HTTP operations**, **553 paths**, **86 domain pages**.

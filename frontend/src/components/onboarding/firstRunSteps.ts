@@ -65,12 +65,15 @@ export interface Step {
   apiCommand?: string
   /**
    * An optional copy-paste command that installs the `testlookup` CLI, shown
-   * beside a step whose {@link command} invokes it. The CLI is not published to
-   * PyPI — it ships in the repo — so a fresh self-hoster who copies the upload
-   * command hits `command not found: testlookup` with no next step unless the
-   * guide points at the install.
+   * beside a step whose {@link command} invokes it. The CLI is not on PyPI; a
+   * deployment built with the wheel serves it (W17 DEV-02,
+   * `/api/v1/sdk/cli/<wheel>`), otherwise the guide falls back to the
+   * from-a-clone install, so a fresh self-hoster who copies the upload command
+   * never hits `command not found: testlookup` with no next step.
    */
   cliInstall?: string
+  /** True when {@link cliInstall} downloads the wheel from this deployment (not a clone). */
+  cliFromDeployment?: boolean
 }
 
 /**
@@ -82,6 +85,15 @@ export interface Step {
  * checkout the path is the repo-root-relative `cli/`.
  */
 export const CLI_INSTALL_COMMAND = 'pip install -e cli/'
+
+/**
+ * W17 DEV-02: `pip install <deployment>/api/v1/sdk/cli/<wheel>` when this
+ * deployment serves the CLI wheel (`wheelUrl` is its absolute URL), else the
+ * from-a-clone {@link CLI_INSTALL_COMMAND}.
+ */
+export function cliInstallCommand(wheelUrl?: string | null): string {
+  return wheelUrl ? `pip install ${wheelUrl}` : CLI_INSTALL_COMMAND
+}
 
 /**
  * The CLI `upload` command's `-p` flag takes the project **ID** (see
@@ -189,7 +201,11 @@ export const SUPPORTED_FORMAT_SUMMARY = SUPPORTED_FORMATS
  * the ingest `curl` to the deployment's own `ingestUrl` (defaulting to
  * {@link DEFAULT_INGEST_URL} when the caller does not resolve one).
  */
-export function buildSteps(projectId?: string, ingestUrl: string = DEFAULT_INGEST_URL): Step[] {
+export function buildSteps(
+  projectId?: string,
+  ingestUrl: string = DEFAULT_INGEST_URL,
+  cliWheelUrl?: string | null,
+): Step[] {
   return [
     {
       n: 1,
@@ -202,7 +218,8 @@ export function buildSteps(projectId?: string, ingestUrl: string = DEFAULT_INGES
       title: 'Or ingest your own test results',
       body: `Point your CI at the ingest API (${SUPPORTED_FORMAT_SUMMARY}), or upload a file from the CLI.`,
       command: uploadCommand(projectId),
-      cliInstall: CLI_INSTALL_COMMAND,
+      cliInstall: cliInstallCommand(cliWheelUrl),
+      cliFromDeployment: Boolean(cliWheelUrl),
       apiCommand: ingestApiCommand(projectId, ingestUrl),
     },
     {

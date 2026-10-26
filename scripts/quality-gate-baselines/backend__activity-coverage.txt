@@ -76,9 +76,8 @@ c439a44b6b7623e2  # backend/app/routers/ownership.py:134  in bulk_import_rules  
 9a2ba2ec252346f1  # backend/app/routers/ownership.py:192  in import_codeowners  @router.post("/codeowners/import", response_model=CodeownersImportResponse, sta…
 b33d5cfa0fca25e1  # backend/app/routers/ownership.py:412  in upsert_team_channel  @router.put("/team-channels/{team_name}", response_model=TeamChannelResponse)
 7b973c0901df3fd6  # backend/app/routers/ownership.py:450  in delete_team_channel  @router.delete("/team-channels/{team_name}", status_code=204)
-5643602d00a55159  # backend/app/routers/projects.py:256  in delete_project  @router.delete(
-3de29359df66a68c  # backend/app/routers/projects.py:291  in reset_project_data  @router.post(
-368b03da5130cc88  # backend/app/routers/projects.py:348  in reset_default_qa_lead_password_endpoint  @router.post(
+3de29359df66a68c  # backend/app/routers/projects.py:390  in reset_project_data  @router.post(
+368b03da5130cc88  # backend/app/routers/projects.py:447  in reset_default_qa_lead_password_endpoint  @router.post(
 dd44ddea863c2bf9  # backend/app/routers/rag_generation.py:52  in rag_retrieve  @router.post(
 77196b32c91dadb5  # backend/app/routers/rag_generation.py:91  in rag_generate  @router.post(
 5853f85c8065ac5e  # backend/app/routers/rag_generation.py:213  in batch_accept  @router.post(

@@ -947,10 +947,13 @@ async def test_project_deactivation_bumps_after_its_commit(journal, monkeypatch)
     from app.routers.projects import delete_project
     import app.services.project_access_revocation_service as revocation
 
-    project = SimpleNamespace(id=uuid.uuid4(), is_active=True)
+    project = SimpleNamespace(id=uuid.uuid4(), is_active=True, name="Checkout Service")
     monkeypatch.setattr(revocation, "revoke_project_credentials", AsyncMock())
 
-    await delete_project(project.id, db=_Session(journal, scalar=project))
+    # W17 ADM-04: archive stamps who archived it and records project.archived.
+    admin = SimpleNamespace(id=uuid.uuid4(), username="admin")
+    await delete_project(project.id, db=_Session(journal, scalar=project), current_user=admin)
+    assert project.archived_by_user_id == admin.id and project.archived_at is not None
 
     assert project.is_active is False
     _assert_bumped_after_commit(journal, project.id)
