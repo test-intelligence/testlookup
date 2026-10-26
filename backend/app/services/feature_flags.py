@@ -510,7 +510,7 @@ async def attach_last_change(db: AsyncSession, flags: list[FeatureFlag]) -> list
     by_key = {r.setting_key: r for r in latest}
     for flag in flags:
         audit = by_key.get(f"feature_flag:{flag.key}")
-        flag.updated_by_name = names.get(flag.updated_by_user_id) or (audit.actor_name if audit else None)  # type: ignore[attr-defined]
+        flag.updated_by_name = (names.get(flag.updated_by_user_id) if flag.updated_by_user_id else None) or (audit.actor_name if audit else None)  # type: ignore[attr-defined]
         flag.last_change_reason = audit.reason if audit else None  # type: ignore[attr-defined]
     return flags
 

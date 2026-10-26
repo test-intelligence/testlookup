@@ -16964,6 +16964,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Key",
       "type": "string"
     },
+    "reason": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
     "rollout_percent": {
       "default": 100,
       "maximum": 100.0,
@@ -16976,6 +16988,66 @@ These are the full generated JSON Schema definitions, including required fields,
     "key"
   ],
   "title": "FeatureFlagCreate",
+  "type": "object"
+}
+```
+
+## FeatureFlagHistoryEntry
+
+```json
+{
+  "description": "One audit row of a flag (W17 ADM-07): what changed, who, when and why. Field names only.",
+  "properties": {
+    "action": {
+      "title": "Action",
+      "type": "string"
+    },
+    "actor_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Actor Name"
+    },
+    "changed_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Changed Fields",
+      "type": "array"
+    },
+    "created_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    }
+  },
+  "required": [
+    "action"
+  ],
+  "title": "FeatureFlagHistoryEntry",
   "type": "object"
 }
 ```
@@ -17043,6 +17115,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Key",
       "type": "string"
     },
+    "last_change_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Change Reason"
+    },
     "rollout_percent": {
       "title": "Rollout Percent",
       "type": "integer"
@@ -17051,6 +17134,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "format": "date-time",
       "title": "Updated At",
       "type": "string"
+    },
+    "updated_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Updated By Name"
     },
     "updated_by_user_id": {
       "anyOf": [
@@ -29204,6 +29298,41 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "archived_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Archived At"
+    },
+    "archived_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Archived By Name"
+    },
+    "archived_by_user_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Archived By User Id"
+    },
     "automation_target_pct": {
       "default": 60,
       "title": "Automation Target Pct",
@@ -29400,6 +29529,41 @@ These are the full generated JSON Schema definitions, including required fields,
     "is_active"
   ],
   "title": "ProjectResponse",
+  "type": "object"
+}
+```
+
+## ProjectRestoreResponse
+
+```json
+{
+  "description": "W17 ADM-04: a restored project and what deliberately stayed revoked.",
+  "properties": {
+    "api_keys_still_revoked": {
+      "title": "Api Keys Still Revoked",
+      "type": "integer"
+    },
+    "default_qa_lead_reactivated": {
+      "default": false,
+      "title": "Default Qa Lead Reactivated",
+      "type": "boolean"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "restored": {
+      "default": true,
+      "title": "Restored",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "project_id",
+    "api_keys_still_revoked"
+  ],
+  "title": "ProjectRestoreResponse",
   "type": "object"
 }
 ```
@@ -48581,6 +48745,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Enabled Roles"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
     },
     "rollout_percent": {
       "anyOf": [

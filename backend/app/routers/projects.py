@@ -96,7 +96,10 @@ async def list_projects(
         ProjectResponse.model_validate(project).model_copy(
             update={
                 "retention_status": _retention_status(enabled),
-                "archived_by_name": names.get(project.archived_by_user_id) if project.is_active is False else None,
+                "archived_by_name": (
+                    names.get(project.archived_by_user_id)
+                    if project.is_active is False and project.archived_by_user_id else None
+                ),
             }
         )
         for project, enabled in rows

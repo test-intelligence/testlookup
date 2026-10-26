@@ -10,7 +10,7 @@ List Feature Flags
 
 List every flag in the store. ADMIN only.
 
-Source: [backend/app/routers/feature_flags.py:37](../../../backend/app/routers/feature_flags.py#L37).
+Source: [backend/app/routers/feature_flags.py:38](../../../backend/app/routers/feature_flags.py#L38).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -85,7 +85,7 @@ Create Feature Flag
 
 Create a new feature flag. ADMIN only.
 
-Source: [backend/app/routers/feature_flags.py:48](../../../backend/app/routers/feature_flags.py#L48).
+Source: [backend/app/routers/feature_flags.py:49](../../../backend/app/routers/feature_flags.py#L49).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -166,7 +166,7 @@ Delete Feature Flag
 
 Hard-delete a feature flag. ADMIN only.
 
-Source: [backend/app/routers/feature_flags.py:107](../../../backend/app/routers/feature_flags.py#L107).
+Source: [backend/app/routers/feature_flags.py:133](../../../backend/app/routers/feature_flags.py#L133).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -239,7 +239,7 @@ Get Feature Flag
 
 Get a single flag by key. ADMIN only.
 
-Source: [backend/app/routers/feature_flags.py:74](../../../backend/app/routers/feature_flags.py#L74).
+Source: [backend/app/routers/feature_flags.py:77](../../../backend/app/routers/feature_flags.py#L77).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -325,7 +325,7 @@ Update Feature Flag
 
 Partial-update a feature flag. ADMIN only. Any unset field is kept.
 
-Source: [backend/app/routers/feature_flags.py:90](../../../backend/app/routers/feature_flags.py#L90).
+Source: [backend/app/routers/feature_flags.py:114](../../../backend/app/routers/feature_flags.py#L114).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -409,6 +409,109 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/feature-flags/{key}/history`
+
+Get Feature Flag History
+
+A flag's changes, newest first: action, who, when, the changed field
+names and the reason given (W17 ADM-07). ADMIN only; never the values.
+
+Source: [backend/app/routers/feature_flags.py:94](../../../backend/app/routers/feature_flags.py#L94).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+key: str, limit: int=Query(20, ge=1, le=100), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Feature flag '{key}' not found")
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_feature_flag_history_api_v1_feature_flags__key__history_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "key",
+      "required": true,
+      "schema": {
+        "title": "Key",
+        "type": "string"
+      }
+    },
+    {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+        "default": 20,
+        "maximum": 100,
+        "minimum": 1,
+        "title": "Limit",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "items": {
+              "$ref": "#/components/schemas/FeatureFlagHistoryEntry"
+            },
+            "title": "Response Get Feature Flag History Api V1 Feature Flags  Key  History Get",
+            "type": "array"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/feature-flags/{key}/status`
 
 Get Feature Flag Status
@@ -419,7 +522,7 @@ Any authenticated user can call this so frontend code can
 conditionally render UI without needing ADMIN access. Returns
 ``{key, enabled}`` only — no flag configuration detail is leaked.
 
-Source: [backend/app/routers/feature_flags.py:120](../../../backend/app/routers/feature_flags.py#L120).
+Source: [backend/app/routers/feature_flags.py:146](../../../backend/app/routers/feature_flags.py#L146).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
