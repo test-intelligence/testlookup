@@ -61,6 +61,9 @@ test('Playwright: one result per attempt, retries as attempt 2, project as suite
   assert.equal(ev[1].metadata.attempt, 2)
   assert.equal(ev[0].suite_name, 'chromium')
   assert.equal(ev[2].suite_name, 'firefox')
+  // one identity per project: the same spec under two browsers is two tests
+  assert.equal(ev[0].class_name, '/repo/tests/cart.spec.ts [chromium]')
+  assert.equal(ev[2].class_name, '/repo/tests/cart.spec.ts [firefox]')
   assert.ok(server.calls.some((c) => c.method === 'DELETE'), 'the session is closed')
 })
 
@@ -189,5 +192,19 @@ test('a server that answers 500 never throws into the test runner', async () => 
     await handlers['after:run']()
   } finally {
     globalThis.fetch = original
+  }
+})
+
+// ── loadable by every loader ────────────────────────────────────────────────
+
+test('each adapter is the module itself under require() AND import(), with .default for either', async () => {
+  const { createRequire } = await import('node:module')
+  const require = createRequire(import.meta.url)
+  for (const name of ['playwright-reporter', 'vitest-reporter', 'cucumber-formatter', 'cypress-plugin']) {
+    const viaRequire = require(`../dist/${name}.js`)
+    const viaImport = (await import(`../dist/${name}.js`)).default
+    assert.equal(typeof viaRequire, 'function', `${name} under require()`)
+    assert.equal(viaImport, viaRequire, `${name} under import()`)
+    assert.equal(viaRequire.default, viaRequire, `${name}.default`)
   }
 })

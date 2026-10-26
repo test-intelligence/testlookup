@@ -40,8 +40,8 @@ type On = (event: string, handler: (...args: any[]) => unknown) => void
 
 const STATUS: Record<string, TestStatus> = { passed: 'PASSED', failed: 'FAILED', pending: 'SKIPPED', skipped: 'SKIPPED' }
 
-/** Record one spec's tests. Exported for tests. */
-export function recordSpec(adapter: LiveAdapter, spec: { relative?: string; name?: string } | undefined, results: CySpecResults | undefined): void {
+/** Record one spec's tests. */
+function recordSpec(adapter: LiveAdapter, spec: { relative?: string; name?: string } | undefined, results: CySpecResults | undefined): void {
   const specName = spec?.relative ?? spec?.name
   for (const t of results?.tests ?? []) {
     const attempts = t.attempts ?? []
@@ -60,7 +60,7 @@ export function recordSpec(adapter: LiveAdapter, spec: { relative?: string; name
   }
 }
 
-export default function testlookupCypress(on: On, config: unknown, options: LiveAdapterOptions = {}): unknown {
+function testlookupCypress(on: On, config: unknown, options: LiveAdapterOptions = {}): unknown {
   const adapter = new LiveAdapter('cypress', options)
   if (!adapter.enabled) return config
   on('before:run', () => {
@@ -74,3 +74,10 @@ export default function testlookupCypress(on: On, config: unknown, options: Live
   })
   return config
 }
+
+// CommonJS ``module.exports`` IS the function (``export =``), with ``.default`` pointing at itself:
+// require() and ESM import() (Cucumber, Vitest, an ESM config) both get it, whichever they read.
+// ``export default`` compiled to ``exports.default`` only, and ``import()`` then handed back
+// ``{ default: … }`` — "not a constructor" (found driving the adapters against a real server).
+testlookupCypress.default = testlookupCypress
+export = testlookupCypress

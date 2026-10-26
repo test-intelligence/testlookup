@@ -56,7 +56,7 @@ function statusOf(state?: string, mode?: string): TestStatus | null {
 }
 
 /** ``describe > test`` from a task's suite chain (the file is the suite name, not part of the title). */
-export function taskName(task: VTask): string {
+function taskName(task: VTask): string {
   const parts: string[] = [task.name]
   let s = task.suite
   while (s && s.type === 'suite' && s.name) {
@@ -135,4 +135,9 @@ class TestLookupVitestReporter {
   }
 }
 
-export default TestLookupVitestReporter
+// CommonJS ``module.exports`` IS the class (``export =``), with ``.default`` pointing at itself:
+// require() and ESM import() (Cucumber, Vitest, an ESM config) both get it, whichever they read.
+// ``export default`` compiled to ``exports.default`` only, and ``import()`` then handed back
+// ``{ default: … }`` — "not a constructor" (found driving the adapters against a real server).
+Object.assign(TestLookupVitestReporter, { default: TestLookupVitestReporter })
+export = TestLookupVitestReporter

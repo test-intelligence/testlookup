@@ -118,9 +118,12 @@ export function runnerStepLabel(lang: SDKLang, runner?: string): string {
 }
 
 function adapterRunnerSnippet(runner: string, projectId: string, serverUrl: string): string | null {
-  const opts = `testlookupUrl: '${serverUrl}',
-  testlookupProject: '${projectId}',
-  testlookupApiKey: process.env.TESTLOOKUP_API_KEY,`
+  const opts = [
+    `testlookupUrl: '${serverUrl}',`,
+    `testlookupProject: '${projectId}',`,
+    'testlookupApiKey: process.env.TESTLOOKUP_API_KEY,',
+  ].join('
+')
   switch (runner) {
     case 'playwright':
       return `// playwright.config.ts — one result per attempt (retries show as attempt 2),

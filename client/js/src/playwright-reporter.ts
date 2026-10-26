@@ -47,7 +47,7 @@ const STATUS: Record<PwTestResult['status'], TestStatus> = {
 }
 
 /** The project a test belongs to (the suite chain's top below the root). */
-export function projectName(test: PwTestCase): string | undefined {
+function projectName(test: PwTestCase): string | undefined {
   let s: PwSuite | undefined = test.parent
   while (s) {
     const p = s.project?.()
@@ -58,7 +58,7 @@ export function projectName(test: PwTestCase): string | undefined {
 }
 
 /** ``describe > test`` without the root, project and file segments Playwright prepends. */
-export function testName(test: PwTestCase): string {
+function testName(test: PwTestCase): string {
   const path = test.titlePath().filter(Boolean)
   const file = test.location?.file?.replace(/\\/g, '/').split('/').pop()
   const project = projectName(test)
@@ -86,7 +86,9 @@ class TestLookupPlaywrightReporter {
     const err = result.error ?? result.errors?.[0]
     this.adapter.record(testName(test), STATUS[result.status] ?? 'BROKEN', result.duration, {
       suiteName: project ?? test.location?.file,
-      className: test.location?.file,
+      // The project is part of the test's identity: the same spec under chromium and firefox is two
+      // tests (as in Playwright's own reports), not one row overwritten by the other.
+      className: project && test.location?.file ? `${test.location.file} [${project}]` : test.location?.file,
       error: err?.message,
       stackTrace: err?.stack,
       tags: test.tags,
@@ -101,4 +103,9 @@ class TestLookupPlaywrightReporter {
   }
 }
 
-export default TestLookupPlaywrightReporter
+// CommonJS ``module.exports`` IS the class (``export =``), with ``.default`` pointing at itself:
+// require() and ESM import() (Cucumber, Vitest, an ESM config) both get it, whichever they read.
+// ``export default`` compiled to ``exports.default`` only, and ``import()`` then handed back
+// ``{ default: … }`` — "not a constructor" (found driving the adapters against a real server).
+Object.assign(TestLookupPlaywrightReporter, { default: TestLookupPlaywrightReporter })
+export = TestLookupPlaywrightReporter

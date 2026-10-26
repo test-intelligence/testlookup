@@ -102,4 +102,9 @@ class TestLookupCucumberFormatter {
   }
 }
 
-export default TestLookupCucumberFormatter
+// CommonJS ``module.exports`` IS the class (``export =``), with ``.default`` pointing at itself:
+// require() and ESM import() (Cucumber, Vitest, an ESM config) both get it, whichever they read.
+// ``export default`` compiled to ``exports.default`` only, and ``import()`` then handed back
+// ``{ default: … }`` — "not a constructor" (found driving the adapters against a real server).
+Object.assign(TestLookupCucumberFormatter, { default: TestLookupCucumberFormatter })
+export = TestLookupCucumberFormatter
