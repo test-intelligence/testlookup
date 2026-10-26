@@ -108,12 +108,12 @@ async def _invite(world, **extra):
     return await invite_user(payload, db=world["db"], current_user=world["admin"])
 
 
-async def _accept(world, token, username=None, password="Sup3r-secret!"):
+async def _accept(world, token, username=None, chosen="Sup3r-secret!"):
     from app.models.schemas import AcceptInvitationRequest
     from app.routers.auth import accept_invitation
 
     payload = AcceptInvitationRequest(
-        token=token, username=username or f"new-{world['marker']}", full_name="New Tester", password=password,
+        token=token, username=username or f"new-{world['marker']}", full_name="New Tester", password=chosen,
     )
     return await accept_invitation(payload, db=world["db"])
 

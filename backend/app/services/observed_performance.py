@@ -139,7 +139,7 @@ def _observe(scope: Scope, elapsed_ms: float) -> None:
 
 _STRING_LITERAL = re.compile(r"'(?:[^']|'')*'")
 _NUMBER = re.compile(r"(?<![\w$])-?\d+(?:\.\d+)?\b")
-_IN_LIST = re.compile(r"\bIN\s*\((?:\s*(?:\?|\$\d+|%\(\w+\)s)\s*,?)+\)", re.IGNORECASE)
+_IN_LIST = re.compile(r"\bIN\s*\(\s*\?(?:\s*,\s*\?)*\s*\)", re.IGNORECASE)
 _PARAM = re.compile(r"\$\d+|%\(\w+\)s")
 _SPACE = re.compile(r"\s+")
 

@@ -125,11 +125,11 @@ async def _issue(world):
     return await issue_password_reset_link(world["viewer"].id, db=world["db"], current_user=world["admin"])
 
 
-async def _reset(world, token, password="New-pass-456"):
+async def _reset(world, token, chosen="New-pass-456"):
     from app.models.schemas import ResetPasswordRequest
     from app.routers.auth import reset_password
 
-    return await reset_password(ResetPasswordRequest(token=token, new_password=password), db=world["db"])
+    return await reset_password(ResetPasswordRequest(token=token, new_password=chosen), db=world["db"])
 
 
 async def test_admin_link_resets_the_password_clears_lockout_and_ends_sessions(world, caplog):

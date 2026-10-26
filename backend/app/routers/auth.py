@@ -272,8 +272,10 @@ async def process_forgot_request(email: str, request_ip: str | None) -> None:
                 return
             await db.commit()
         raw, to_email = staged
-        sent = await email_password_reset(to_email, fragment_link(RESET_PATH, raw), issued_by_admin=False)
-        logger.info("forgot_password_processed: email_sent=%s", sent)
+        if await email_password_reset(to_email, fragment_link(RESET_PATH, raw), issued_by_admin=False):
+            logger.info("forgot_password_processed: mail handed to the relay")
+        else:
+            logger.info("forgot_password_processed: mail not sent")
     except Exception as exc:  # noqa: BLE001 - a background task must not surface
         logger.warning("forgot_password_failed: %s", type(exc).__name__)
 
