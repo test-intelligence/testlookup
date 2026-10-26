@@ -5456,11 +5456,11 @@ class AcceptInvitationRequest(BaseModel):
     password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
 
 
-class ForgotPasswordRequest(BaseModel):
+class ResetLinkRequest(BaseModel):
     email: EmailStr
 
 
-class ResetPasswordRequest(BaseModel):
+class RedeemResetLinkRequest(BaseModel):
     token: str = Field(..., min_length=1, max_length=256)
     new_password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
 

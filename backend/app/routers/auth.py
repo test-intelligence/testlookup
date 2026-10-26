@@ -35,13 +35,13 @@ from app.models.schemas import (
     AcceptInvitationRequest,
     ChangePasswordRequest,
     FirstTimeResetRequest,
-    ForgotPasswordRequest,
+    ResetLinkRequest,
     InvitationPreviewResponse,
     InvitationTokenRequest,
     MfaChallengeResponse,
     MfaEnrollmentRequiredResponse,
     RefreshRequest,
-    ResetPasswordRequest,
+    RedeemResetLinkRequest,
     SelfUpdateProfileRequest,
     TokenResponse,
     UserCreate,
@@ -245,7 +245,7 @@ async def accept_invitation(
 
 @router.post("/password/forgot", status_code=202)
 async def forgot_password(
-    payload: ForgotPasswordRequest,
+    payload: ResetLinkRequest,
     request: Request,
     background_tasks: BackgroundTasks,
 ) -> dict:
@@ -281,7 +281,7 @@ async def process_forgot_request(email: str, request_ip: str | None) -> None:
 
 
 @router.post("/password/reset", status_code=204)
-async def reset_password(payload: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+async def reset_password(payload: RedeemResetLinkRequest, db: AsyncSession = Depends(get_db)):
     """Redeem a reset link: set the password, clear lockout, sign out everywhere.
 
     MFA is untouched — the next sign-in still asks for the code.

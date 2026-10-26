@@ -126,10 +126,10 @@ async def _issue(world):
 
 
 async def _reset(world, token, chosen="New-pass-456"):
-    from app.models.schemas import ResetPasswordRequest
+    from app.models.schemas import RedeemResetLinkRequest
     from app.routers.auth import reset_password
 
-    return await reset_password(ResetPasswordRequest(token=token, new_password=chosen), db=world["db"])
+    return await reset_password(RedeemResetLinkRequest(token=token, new_password=chosen), db=world["db"])
 
 
 async def test_admin_link_resets_the_password_clears_lockout_and_ends_sessions(world, caplog):
@@ -195,7 +195,7 @@ async def test_forgot_answers_the_same_for_known_and_unknown_and_mails_only_the_
     from fastapi import BackgroundTasks
     from starlette.requests import Request
 
-    from app.models.schemas import ForgotPasswordRequest
+    from app.models.schemas import ResetLinkRequest
     from app.routers.auth import forgot_password
 
     def _req():
@@ -204,7 +204,7 @@ async def test_forgot_answers_the_same_for_known_and_unknown_and_mails_only_the_
     answers = []
     for email in (world["viewer"].email, f"nobody-{world['marker']}@testlookup.dev"):
         tasks = BackgroundTasks()
-        answers.append(await forgot_password(ForgotPasswordRequest(email=email), _req(), tasks))
+        answers.append(await forgot_password(ResetLinkRequest(email=email), _req(), tasks))
         await tasks()
     assert answers[0] == answers[1] == {"detail": "If an account exists for that address, a reset link is on its way."}
     assert [m["to"] for m in world["sent"]] == [world["viewer"].email]

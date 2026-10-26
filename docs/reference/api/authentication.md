@@ -1380,7 +1380,7 @@ Dependency chain: .
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: ForgotPasswordRequest, request: Request, background_tasks: BackgroundTasks
+payload: ResetLinkRequest, request: Request, background_tasks: BackgroundTasks
 ```
 
 ### Declared wire contract
@@ -1394,7 +1394,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
     "content": {
       "application/json": {
         "schema": {
-          "$ref": "#/components/schemas/ForgotPasswordRequest"
+          "$ref": "#/components/schemas/ResetLinkRequest"
         }
       }
     },
@@ -1442,7 +1442,7 @@ Dependency chain: `get_db`.
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: ResetPasswordRequest, db: AsyncSession=Depends(get_db)
+payload: RedeemResetLinkRequest, db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -1463,7 +1463,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
     "content": {
       "application/json": {
         "schema": {
-          "$ref": "#/components/schemas/ResetPasswordRequest"
+          "$ref": "#/components/schemas/RedeemResetLinkRequest"
         }
       }
     },

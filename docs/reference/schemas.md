@@ -18328,25 +18328,6 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
-## ForgotPasswordRequest
-
-```json
-{
-  "properties": {
-    "email": {
-      "format": "email",
-      "title": "Email",
-      "type": "string"
-    }
-  },
-  "required": [
-    "email"
-  ],
-  "title": "ForgotPasswordRequest",
-  "type": "object"
-}
-```
-
 ## FrontendError
 
 ```json
@@ -31218,6 +31199,33 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## RedeemResetLinkRequest
+
+```json
+{
+  "properties": {
+    "new_password": {
+      "maxLength": 128,
+      "minLength": 8,
+      "title": "New Password",
+      "type": "string"
+    },
+    "token": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Token",
+      "type": "string"
+    }
+  },
+  "required": [
+    "token",
+    "new_password"
+  ],
+  "title": "RedeemResetLinkRequest",
+  "type": "object"
+}
+```
+
 ## RefreshRequest
 
 ```json
@@ -33297,29 +33305,21 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
-## ResetPasswordRequest
+## ResetLinkRequest
 
 ```json
 {
   "properties": {
-    "new_password": {
-      "maxLength": 128,
-      "minLength": 8,
-      "title": "New Password",
-      "type": "string"
-    },
-    "token": {
-      "maxLength": 256,
-      "minLength": 1,
-      "title": "Token",
+    "email": {
+      "format": "email",
+      "title": "Email",
       "type": "string"
     }
   },
   "required": [
-    "token",
-    "new_password"
+    "email"
   ],
-  "title": "ResetPasswordRequest",
+  "title": "ResetLinkRequest",
   "type": "object"
 }
 ```
