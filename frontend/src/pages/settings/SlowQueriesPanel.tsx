@@ -43,13 +43,13 @@ export function SlowQueriesPanel() {
             {items.map((q) => (
               <tr key={q.fingerprint}>
                 <Td>
-                  <code className="block max-w-[56rem] truncate font-mono text-xs text-[var(--color-text)]" title={q.sql}>
+                  <code className="block max-w-[30rem] truncate font-mono text-xs text-[var(--color-text)]" title={q.sql}>
                     {q.sql}
                   </code>
                 </Td>
                 <Td numeric>{formatNumber(q.count)}</Td>
-                <Td numeric>{ms(q.mean_ms)}</Td>
-                <Td numeric className="font-semibold">{ms(q.max_ms)}</Td>
+                <Td numeric className="whitespace-nowrap">{ms(q.mean_ms)}</Td>
+                <Td numeric className="whitespace-nowrap font-semibold">{ms(q.max_ms)}</Td>
                 <Td className="text-xs text-[var(--color-text-muted)]">
                   {q.last_seen ? formatCompactDateTime(q.last_seen * 1000) : '—'}
                 </Td>

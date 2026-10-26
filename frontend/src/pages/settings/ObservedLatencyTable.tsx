@@ -27,7 +27,7 @@ function ObservedCell({ value, budget, measured }: { value: number | null; budge
   return (
     <span
       data-breach={over ? 'true' : 'false'}
-      className={over ? 'font-semibold text-[var(--ui-danger)]' : 'text-[var(--ui-success)]'}
+      className={over ? 'whitespace-nowrap font-semibold text-[var(--ui-danger)]' : 'whitespace-nowrap text-[var(--ui-success)]'}
       title={over ? `Over the ${budget} ms budget` : `Within the ${budget} ms budget`}
     >
       {ms(value)}
@@ -87,7 +87,7 @@ export function ObservedLatencyTable({ budgets }: { budgets: LatencyBudget[] }) 
                   <div className="font-mono text-xs text-[var(--color-text)]">{b.operation}</div>
                   {o && <div className="text-2xs text-[var(--color-text-faint)]">{o.http_method} {o.http_handler}</div>}
                 </Td>
-                <Td numeric>{b.p95_ms} ms</Td>
+                <Td numeric className="whitespace-nowrap">{b.p95_ms} ms</Td>
                 {o ? (
                   <>
                     <Td numeric><ObservedCell value={o.observed_p50_ms} budget={b.p50_ms} measured={o.measured} /></Td>
