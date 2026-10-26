@@ -18541,11 +18541,202 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## GitHubAppInstallUrl
+
+```json
+{
+  "properties": {
+    "expires_in": {
+      "title": "Expires In",
+      "type": "integer"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "url",
+    "expires_in"
+  ],
+  "title": "GitHubAppInstallUrl",
+  "type": "object"
+}
+```
+
+## GitHubAppSettingsRead
+
+```json
+{
+  "description": "W19 INT-06: the deployment's GitHub App. Secrets are never returned, only whether they are set.",
+  "properties": {
+    "app_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "App Id"
+    },
+    "configured": {
+      "default": false,
+      "title": "Configured",
+      "type": "boolean"
+    },
+    "private_key_set": {
+      "default": false,
+      "title": "Private Key Set",
+      "type": "boolean"
+    },
+    "slug": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Slug"
+    },
+    "webhook_secret_set": {
+      "default": false,
+      "title": "Webhook Secret Set",
+      "type": "boolean"
+    }
+  },
+  "title": "GitHubAppSettingsRead",
+  "type": "object"
+}
+```
+
+## GitHubAppSettingsWrite
+
+```json
+{
+  "properties": {
+    "app_id": {
+      "maxLength": 20,
+      "minLength": 1,
+      "pattern": "^[0-9]+$",
+      "title": "App Id",
+      "type": "string"
+    },
+    "private_key": {
+      "anyOf": [
+        {
+          "maxLength": 10000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Private Key"
+    },
+    "slug": {
+      "maxLength": 100,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9-]+$",
+      "title": "Slug",
+      "type": "string"
+    },
+    "webhook_secret": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Webhook Secret"
+    }
+  },
+  "required": [
+    "app_id",
+    "slug"
+  ],
+  "title": "GitHubAppSettingsWrite",
+  "type": "object"
+}
+```
+
+## GitHubAppSetupCallback
+
+```json
+{
+  "properties": {
+    "installation_id": {
+      "minimum": 1.0,
+      "title": "Installation Id",
+      "type": "integer"
+    },
+    "state": {
+      "maxLength": 600,
+      "minLength": 10,
+      "title": "State",
+      "type": "string"
+    }
+  },
+  "required": [
+    "installation_id",
+    "state"
+  ],
+  "title": "GitHubAppSetupCallback",
+  "type": "object"
+}
+```
+
+## GitHubAppSetupResult
+
+```json
+{
+  "properties": {
+    "auth_kind": {
+      "title": "Auth Kind",
+      "type": "string"
+    },
+    "installation_id": {
+      "title": "Installation Id",
+      "type": "integer"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "installation_id",
+    "auth_kind"
+  ],
+  "title": "GitHubAppSetupResult",
+  "type": "object"
+}
+```
+
 ## GitHubConnectionTestResponse
 
 ```json
 {
   "properties": {
+    "auth_kind": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Auth Kind"
+    },
     "message": {
       "title": "Message",
       "type": "string"
@@ -18595,6 +18786,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Api Base Url",
       "type": "string"
     },
+    "auth_kind": {
+      "default": "pat",
+      "title": "Auth Kind",
+      "type": "string"
+    },
     "created_at": {
       "format": "date-time",
       "title": "Created At",
@@ -18612,6 +18808,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "format": "uuid",
       "title": "Id",
       "type": "string"
+    },
+    "installation_id": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Installation Id"
     },
     "last_error": {
       "anyOf": [
@@ -18698,6 +18905,21 @@ These are the full generated JSON Schema definitions, including required fields,
       "maxLength": 500,
       "title": "Api Base Url",
       "type": "string"
+    },
+    "auth_kind": {
+      "anyOf": [
+        {
+          "enum": [
+            "pat",
+            "app"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Auth Kind"
     },
     "enabled": {
       "default": true,
@@ -32512,7 +32734,8 @@ These are the full generated JSON Schema definitions, including required fields,
     "source": {
       "enum": [
         "github",
-        "jira"
+        "jira",
+        "gitlab"
       ],
       "title": "Source",
       "type": "string"

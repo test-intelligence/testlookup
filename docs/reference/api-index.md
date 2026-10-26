@@ -195,6 +195,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/feedback/{analysis_id}` | Submit Feedback | [Feedback & Training](api/feedback-training.md) |
 | PUT | `/api/v1/feedback/{analysis_id}` | Update Feedback | [Feedback & Training](api/feedback-training.md) |
 | GET | `/api/v1/fixer/attempts/{attempt_id}` | Get Fixer Attempt | [Fixer](api/fixer.md) |
+| GET | `/api/v1/github/app/install-url` | Github App Install Url | [GitHub App](api/github-app.md) |
+| POST | `/api/v1/github/app/setup-callback` | Github App Setup Callback | [GitHub App](api/github-app.md) |
 | GET | `/api/v1/identity/events` | List Identity Events | [Identity & Audit](api/identity-audit.md) |
 | GET | `/api/v1/identity/sync-status` | Get Identity Sync Status | [Identity & Audit](api/identity-audit.md) |
 | POST | `/api/v1/ingest` | Ingest test results (JSON batch) | [Ingest](api/ingest.md) |
@@ -520,6 +522,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/settings/flags` | List Feature Flags | [Settings](api/settings.md) |
 | DELETE | `/api/v1/settings/flags/{flag_key}` | Remove Feature Flag | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/flags/{flag_key}` | Update Feature Flag | [Settings](api/settings.md) |
+| GET | `/api/v1/settings/github-app` | Get Github App Settings | [GitHub App](api/github-app.md) |
+| PUT | `/api/v1/settings/github-app` | Put Github App Settings | [GitHub App](api/github-app.md) |
 | GET | `/api/v1/settings/integrations` | Get Integrations Config | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/integrations` | Update Integrations Config | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/integrations/health` | Get Integration Health | [Settings](api/settings.md) |
@@ -671,4 +675,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **662 HTTP operations**, **563 paths**, **86 domain pages**.
+Total: **666 HTTP operations**, **566 paths**, **87 domain pages**.

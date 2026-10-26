@@ -12,7 +12,7 @@ Delete the GitHub integration row for a project. The stored PAT
 secret is cleared from ``secret_service`` via the standard upsert
 path with an empty value.
 
-Source: [backend/app/routers/github_integration.py:103](../../../backend/app/routers/github_integration.py#L103).
+Source: [backend/app/routers/github_integration.py:104](../../../backend/app/routers/github_integration.py#L104).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -265,7 +265,7 @@ Test Github Integration
 Probe the configured repo + PAT and report whether the
 integration can actually reach GitHub. QA_LEAD+.
 
-Source: [backend/app/routers/github_integration.py:87](../../../backend/app/routers/github_integration.py#L87).
+Source: [backend/app/routers/github_integration.py:88](../../../backend/app/routers/github_integration.py#L88).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
