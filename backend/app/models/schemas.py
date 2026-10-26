@@ -7679,6 +7679,8 @@ class FeatureFlagCreate(BaseModel):
     enabled_projects: Optional[List[uuid.UUID]] = None
     enabled_roles: Optional[List[str]] = None
     rollout_percent: int = Field(100, ge=0, le=100)
+    # W17 ADM-07: the administrator's optional "why", kept on the audit row. Never a secret.
+    reason: Optional[str] = Field(None, max_length=500)
 
 
 class FeatureFlagUpdate(BaseModel):
@@ -7692,6 +7694,8 @@ class FeatureFlagUpdate(BaseModel):
     enabled_projects: Optional[List[uuid.UUID]] = None
     enabled_roles: Optional[List[str]] = None
     rollout_percent: Optional[int] = Field(None, ge=0, le=100)
+    # W17 ADM-07: the administrator's optional "why", kept on the audit row. Never a secret.
+    reason: Optional[str] = Field(None, max_length=500)
 
 
 class FeatureFlagResponse(BaseModel):
@@ -7705,7 +7709,20 @@ class FeatureFlagResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     updated_by_user_id: Optional[uuid.UUID] = None
+    # W17 ADM-07: who last changed the flag (name, not only an id) and the reason
+    # given with that change (None = none given, or a change before migration 0232).
+    updated_by_name: Optional[str] = None
+    last_change_reason: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
+
+
+class FeatureFlagHistoryEntry(BaseModel):
+    """One audit row of a flag (W17 ADM-07): what changed, who, when and why. Field names only."""
+    action: str
+    actor_name: Optional[str] = None
+    changed_fields: List[str] = Field(default_factory=list)
+    reason: Optional[str] = None
+    created_at: Optional[datetime] = None
 
 
 # ── Decision Trail (Tier 0B) ─────────────────────────────────────────────────

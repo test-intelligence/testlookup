@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 import { useState } from 'react'
+import useSWR from 'swr'
+import { fromNow, formatDateTime } from '@/utils/formatters'
 import { Plus, Trash2 } from 'lucide-react'
 import { groupFeatureFlags, MUTATING_FLAG_KEYS } from '@/config/featureFlagGroups'
 import toast from 'react-hot-toast'
@@ -52,6 +54,10 @@ export default function FeatureFlagsPage() {
   const editSlot = useInlineSlot<string>()
   const closeEdit = useSlotCloser(editSlot)
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
+  // W17 ADM-07: the "why" sent with the next ON / OFF or rollout change (cleared after it lands),
+  // and the one flag whose History is open under its row.
+  const [reason, setReason] = useState('')
+  const [historyKey, setHistoryKey] = useState<string | null>(null)
 
   if (!isAdmin) {
     return (
@@ -72,7 +78,9 @@ export default function FeatureFlagsPage() {
     try {
       await featureFlagService.update(flag.key, {
         enabled_global: !flag.enabled_global,
+        ...(reason.trim() ? { reason: reason.trim() } : {}),
       })
+      setReason('')
       await refresh()
       toast.success(`${flag.key}: ${flag.enabled_global ? 'disabled' : 'enabled'}`)
     } catch (err) {
@@ -82,7 +90,11 @@ export default function FeatureFlagsPage() {
 
   async function updateRollout(flag: FeatureFlag, percent: number) {
     try {
-      await featureFlagService.update(flag.key, { rollout_percent: percent })
+      await featureFlagService.update(flag.key, {
+        rollout_percent: percent,
+        ...(reason.trim() ? { reason: reason.trim() } : {}),
+      })
+      setReason('')
       await refresh()
     } catch (err) {
       toast.error(`Failed to update rollout: ${(err as Error).message}`)
@@ -105,14 +117,17 @@ export default function FeatureFlagsPage() {
     onRollout: (flag: FeatureFlag, percent: number) => void updateRollout(flag, percent),
     onEdit: (flag: FeatureFlag) => editSlot.open(flag.key),
     onDelete: (flag: FeatureFlag) => setConfirmingDelete(flag.key),
+    onHistory: (flag: FeatureFlag) => setHistoryKey((k) => (k === flag.key ? null : flag.key)),
   }
   /** What opens under a flag's row: its Delete question and / or its Edit form. */
   const belowRow = (flag: FeatureFlag): ReactNode => {
     const asking = confirmingDelete === flag.key
     const editing = editSlot.openKey === flag.key
-    if (!asking && !editing) return null
+    const history = historyKey === flag.key
+    if (!asking && !editing && !history) return null
     return (
       <div className="space-y-3">
+        {history && <FlagHistory flagKey={flag.key} onClose={() => setHistoryKey(null)} />}
         {asking && (
           <InlineConfirm
             message={<>Delete feature flag &quot;<strong>{flag.key}</strong>&quot;? This cannot be undone.</>}
@@ -235,6 +250,20 @@ export default function FeatureFlagsPage() {
         </div>
       )}
 
+      {/* W17 ADM-07: the "why" of the next ON / OFF or rollout change; Edit has its own field. */}
+      <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+        <span className="whitespace-nowrap">Reason for the next change (optional)</span>
+        <input
+          type="text"
+          value={reason}
+          maxLength={500}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. turn on for the demo — never a secret"
+          aria-label="Reason for the next change"
+          className="w-96 px-2 py-1 text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded text-[var(--color-text)]"
+        />
+      </label>
+
       {/* Scrolls rather than clips: the 34-character async_decision_report_supersession key
           widened the table past the settings column at 1280 px and hid Scope and Edit. */}
       <div className="overflow-x-auto rounded-md border border-[var(--color-border)]">
@@ -246,13 +275,14 @@ export default function FeatureFlagsPage() {
               <th className="text-center px-3 py-2">Global</th>
               <th className="text-center px-3 py-2">Rollout %</th>
               <th className="text-center px-3 py-2">Scope</th>
+              <th className="text-left px-3 py-2 whitespace-nowrap">Last changed</th>
               <th className="text-right px-3 py-2"></th>
             </tr>
           </thead>
           {flags.length === 0 && (
             <tbody>
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-[var(--color-text-muted)]">
+                <td colSpan={7} className="px-3 py-6 text-center text-[var(--color-text-muted)]">
                   No feature flags defined yet.
                 </td>
               </tr>
@@ -264,7 +294,7 @@ export default function FeatureFlagsPage() {
           {grouped.groups.map(({ group, flags: members }) => (
             <tbody key={group.id} data-flag-group-body={group.id}>
               <tr data-flag-group={group.id} className="border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60">
-                <th colSpan={6} scope="colgroup" className="px-3 py-2 text-left font-normal">
+                <th colSpan={7} scope="colgroup" className="px-3 py-2 text-left font-normal">
                   <span className="block text-xs font-semibold text-[var(--color-text)]">{group.title}</span>
                   <span className="block text-[11px] text-[var(--color-text-muted)]">{group.blurb}</span>
                 </th>
@@ -299,6 +329,7 @@ function FlagRow({
   onRollout,
   onEdit,
   onDelete,
+  onHistory,
   below,
 }: {
   flag: FeatureFlag
@@ -306,6 +337,7 @@ function FlagRow({
   onRollout: (flag: FeatureFlag, percent: number) => void
   onEdit: (flag: FeatureFlag) => void
   onDelete: (flag: FeatureFlag) => void
+  onHistory: (flag: FeatureFlag) => void
   below?: ReactNode
 }) {
   return (
@@ -363,7 +395,27 @@ function FlagRow({
           ? `${flag.enabled_projects?.length ?? 0}p / ${flag.enabled_roles?.length ?? 0}r`
           : 'all'}
       </td>
-      <td className="px-3 py-2 text-right">
+      <td
+        className="px-3 py-2 text-xs text-[var(--color-text-muted)] whitespace-nowrap"
+        data-testid="flag-last-changed"
+        title={flag.last_change_reason ? `Reason: ${flag.last_change_reason}` : 'No reason given'}
+      >
+        <div>
+          {fromNow(flag.updated_at)}
+          {flag.updated_by_name ? <> by <span className="text-[var(--color-text)]">{flag.updated_by_name}</span></> : null}
+        </div>
+        {flag.last_change_reason && (
+          <div className="max-w-[16rem] truncate italic">“{flag.last_change_reason}”</div>
+        )}
+      </td>
+      <td className="px-3 py-2 text-right whitespace-nowrap">
+        <button
+          type="button"
+          onClick={() => onHistory(flag)}
+          className="text-xs text-[var(--color-accent)] hover:underline mr-2"
+        >
+          History
+        </button>
         <button
           type="button"
           onClick={() => onEdit(flag)}
@@ -382,7 +434,7 @@ function FlagRow({
         </button>
       </td>
     </tr>
-    {below && <InlineRowSection colSpan={6}>{below}</InlineRowSection>}
+    {below && <InlineRowSection colSpan={7}>{below}</InlineRowSection>}
     </>
   )
 }
@@ -406,6 +458,7 @@ function EditFlagModal({
     JSON.stringify(flag.enabled_roles ?? [], null, 2),
   )
   const [description, setDescription] = useState(flag.description ?? '')
+  const [editReason, setEditReason] = useState('')
 
   async function save() {
     let projects: string[] | null
@@ -422,6 +475,7 @@ function EditFlagModal({
         description,
         enabled_projects: Array.isArray(projects) && projects.length ? projects : null,
         enabled_roles: Array.isArray(roles) && roles.length ? roles : null,
+        ...(editReason.trim() ? { reason: editReason.trim() } : {}),
       })
       await onSaved()
       toast.success('Flag updated')
@@ -483,7 +537,51 @@ function EditFlagModal({
             className="mt-1 w-full px-2 py-1.5 text-xs font-mono bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
           />
         </label>
+        <label className="text-xs block">
+          <span className="text-[var(--color-text-muted)]">Reason for this change (optional, never a secret)</span>
+          <input
+            type="text"
+            value={editReason}
+            maxLength={500}
+            onChange={(e) => setEditReason(e.target.value)}
+            className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
+          />
+        </label>
       </div>
     </InlineFormSection>
+  )
+}
+
+/** W17 ADM-07: a flag's changes, newest first, in the page under its row. */
+function FlagHistory({ flagKey, onClose }: { flagKey: string; onClose: () => void }) {
+  const { data, error, isLoading } = useSWR(['feature-flag-history', flagKey], () => featureFlagService.history(flagKey))
+  const rows = Array.isArray(data) ? data : []
+  return (
+    <section aria-label={`History of ${flagKey}`} className="space-y-2 text-xs">
+      <div className="flex items-center justify-between">
+        <h3 className="m-0 text-sm font-semibold text-[var(--color-text)]">
+          History: <span className="font-mono">{flagKey}</span>
+        </h3>
+        <button type="button" onClick={onClose} className="btn-secondary text-xs">Close</button>
+      </div>
+      {isLoading && !data ? (
+        <LoadingSpinner size="sm" />
+      ) : error ? (
+        <p className="text-[var(--status-failed)]">Could not load the history.</p>
+      ) : rows.length === 0 ? (
+        <p className="text-[var(--color-text-muted)]">No recorded changes.</p>
+      ) : (
+        <ul className="m-0 list-none space-y-1 p-0">
+          {rows.map((h, i) => (
+            <li key={`${h.created_at}-${i}`} className="flex flex-wrap gap-x-2 text-[var(--color-text-muted)]">
+              <span className="text-[var(--color-text)]">{h.created_at ? formatDateTime(h.created_at) : '—'}</span>
+              <span>{h.actor_name ?? 'unknown'}</span>
+              <span>{h.action}{h.changed_fields.length ? `: ${h.changed_fields.join(', ')}` : ''}</span>
+              <span className="italic">{h.reason ? `“${h.reason}”` : 'no reason given'}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }

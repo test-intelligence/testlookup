@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -25,6 +25,7 @@ from app.core.deps import (
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
     FeatureFlagCreate,
+    FeatureFlagHistoryEntry,
     FeatureFlagResponse,
     FeatureFlagUpdate,
 )
@@ -42,7 +43,7 @@ logger = structlog.get_logger("routers.feature_flags")
 async def list_feature_flags(db: AsyncSession = Depends(get_db)):
     """List every flag in the store. ADMIN only."""
     rows = await ff_service.list_flags(db)
-    return rows
+    return await ff_service.attach_last_change(db, rows)
 
 
 @router.post(
@@ -65,9 +66,11 @@ async def create_feature_flag(
         enabled_roles=payload.enabled_roles,
         rollout_percent=payload.rollout_percent,
         actor=current_user,
+        reason=payload.reason,
     )
     await db.commit()
     await ff_service.invalidate_flag_cache(payload.key)
+    (flag,) = await ff_service.attach_last_change(db, [flag])
     return flag
 
 
@@ -84,7 +87,28 @@ async def get_feature_flag(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Feature flag '{key}' not found",
         )
+    (flag,) = await ff_service.attach_last_change(db, [flag])
     return flag
+
+
+@router.get(
+    "/{key}/history",
+    response_model=list[FeatureFlagHistoryEntry],
+    dependencies=[Depends(require_role(UserRole.ADMIN))],
+)
+async def get_feature_flag_history(
+    key: str,
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+):
+    """A flag's changes, newest first: action, who, when, the changed field
+    names and the reason given (W17 ADM-07). ADMIN only; never the values."""
+    if await ff_service.get_flag(db, key) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Feature flag '{key}' not found",
+        )
+    return await ff_service.flag_history(db, key, limit=limit)
 
 
 @router.patch("/{key}", response_model=FeatureFlagResponse)
@@ -96,11 +120,13 @@ async def update_feature_flag(
 ):
     """Partial-update a feature flag. ADMIN only. Any unset field is kept."""
     updates = payload.model_dump(exclude_unset=True)
+    reason = updates.pop("reason", None)
     flag = await ff_service.update_flag(
-        db, key=key, updates=updates, actor=current_user,
+        db, key=key, updates=updates, actor=current_user, reason=reason,
     )
     await db.commit()
     await ff_service.invalidate_flag_cache(key)
+    (flag,) = await ff_service.attach_last_change(db, [flag])
     return flag
 
 

@@ -331,6 +331,7 @@ async def create_flag(
     enabled_roles: Optional[list[str]],
     rollout_percent: int,
     actor: User,
+    reason: Optional[str] = None,
 ) -> FeatureFlag:
     await lock_global_agent_authority(db)
     existing = await get_flag(db, key)
@@ -355,7 +356,7 @@ async def create_flag(
     # audit row below can reference them and the response serialization
     # below sees the fully-hydrated row. Router owns the commit.
     await db.flush()
-    _write_audit_entry(db, actor, action="create", key=key, after=_serialize_flag(flag))
+    _write_audit_entry(db, actor, action="create", key=key, after=_serialize_flag(flag), reason=reason)
     return flag
 
 
@@ -365,6 +366,7 @@ async def update_flag(
     key: str,
     updates: dict[str, Any],
     actor: User,
+    reason: Optional[str] = None,
 ) -> FeatureFlag:
     from fastapi import HTTPException, status
     await lock_global_agent_authority(db)
@@ -394,7 +396,7 @@ async def update_flag(
     flag.updated_at = datetime.now(timezone.utc)
     await db.flush()
     _write_audit_entry(
-        db, actor, action="update", key=key, before=before, after=_serialize_flag(flag),
+        db, actor, action="update", key=key, before=before, after=_serialize_flag(flag), reason=reason,
     )
     return flag
 
@@ -422,6 +424,7 @@ def _write_audit_entry(
     key: str,
     before: Optional[dict[str, Any]] = None,
     after: Optional[dict[str, Any]] = None,
+    reason: Optional[str] = None,
 ) -> None:
     """Stage a SettingsAuditLog row in the caller's transaction.
 
@@ -456,6 +459,7 @@ def _write_audit_entry(
             actor_id=actor.id,
             actor_name=getattr(actor, "username", None) or getattr(actor, "email", None),
             changed_fields=changed,
+            reason=(reason or "").strip() or None,
         )
         db.add(entry)
 
@@ -475,3 +479,59 @@ def _write_audit_entry(
             action=action,
             error=str(exc),
         )
+
+
+async def attach_last_change(db: AsyncSession, flags: list[FeatureFlag]) -> list[FeatureFlag]:
+    """W17 ADM-07: set ``updated_by_name`` and ``last_change_reason`` on each flag.
+
+    Two queries for the whole list, never one per flag: the names of the
+    ``updated_by_user_id`` users, and the latest ``settings_audit_log`` row of
+    each ``feature_flag:<key>`` (``DISTINCT ON``). The audit row's actor name
+    stands in when the user row is gone.
+    """
+    from app.models.postgres import SettingsAuditLog
+
+    if not flags:
+        return flags
+    user_ids = {f.updated_by_user_id for f in flags if f.updated_by_user_id}
+    names: dict[uuid.UUID, str] = {}
+    if user_ids:
+        rows = (await db.execute(
+            select(User.id, User.full_name, User.username).where(User.id.in_(user_ids))
+        )).all()
+        names = {r.id: (r.full_name or r.username) for r in rows}
+    setting_keys = [f"feature_flag:{f.key}" for f in flags]
+    latest = (await db.execute(
+        select(SettingsAuditLog.setting_key, SettingsAuditLog.actor_name, SettingsAuditLog.reason)
+        .where(SettingsAuditLog.setting_key.in_(setting_keys))
+        .distinct(SettingsAuditLog.setting_key)
+        .order_by(SettingsAuditLog.setting_key, SettingsAuditLog.created_at.desc(), SettingsAuditLog.id.desc())
+    )).all()
+    by_key = {r.setting_key: r for r in latest}
+    for flag in flags:
+        audit = by_key.get(f"feature_flag:{flag.key}")
+        flag.updated_by_name = names.get(flag.updated_by_user_id) or (audit.actor_name if audit else None)  # type: ignore[attr-defined]
+        flag.last_change_reason = audit.reason if audit else None  # type: ignore[attr-defined]
+    return flags
+
+
+async def flag_history(db: AsyncSession, key: str, *, limit: int = 20) -> list[dict[str, Any]]:
+    """W17 ADM-07: a flag's audit rows, newest first (field names and the reason, never values)."""
+    from app.models.postgres import SettingsAuditLog
+
+    rows = (await db.execute(
+        select(SettingsAuditLog)
+        .where(SettingsAuditLog.setting_key == f"feature_flag:{key}")
+        .order_by(SettingsAuditLog.created_at.desc(), SettingsAuditLog.id.desc())
+        .limit(limit)
+    )).scalars().all()
+    return [
+        {
+            "action": r.action,
+            "actor_name": r.actor_name,
+            "changed_fields": list(r.changed_fields or []),
+            "reason": r.reason,
+            "created_at": r.created_at,
+        }
+        for r in rows
+    ]

@@ -270,6 +270,14 @@ class Project(Base):
     end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))     # added migration 0022
     tags: Mapped[Optional[list]] = mapped_column(JSON)                                # added migration 0022
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # W17 ADM-04 (migration 0232): stamped by archive, cleared by restore; NULL on
+    # a project archived before 0232 (when / by whom unknown).
+    archived_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_projects_archived_by"),
+        nullable=True,
+    )
     manager_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(                     # added migration 0076
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -4204,6 +4212,8 @@ class SettingsAuditLog(Base):
     actor_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     actor_name: Mapped[Optional[str]] = mapped_column(String(200))
     changed_fields: Mapped[Optional[list]] = mapped_column(JSON)         # field names only, no secret values
+    # W17 ADM-07 (migration 0232): the administrator's optional "why", written once with the row.
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
