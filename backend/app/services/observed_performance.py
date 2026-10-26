@@ -36,6 +36,8 @@ import time
 from collections import defaultdict
 from typing import Any, Optional
 
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -78,7 +80,7 @@ def _build_route_ops(app: Any) -> dict[tuple[Any, str], str]:
     for route in getattr(app, "routes", []) or []:
         path, endpoint = getattr(route, "path", None), getattr(route, "endpoint", None)
         for method in getattr(route, "methods", None) or ():
-            op = wanted.get((method.upper(), path))
+            op = wanted.get((str(method).upper(), str(path)))
             if op and endpoint is not None:
                 out[(endpoint, method.upper())] = op
     return out
@@ -104,16 +106,16 @@ def record_latency(operation: str, elapsed_ms: float, now: Optional[float] = Non
 class ObservedLatencyMiddleware:
     """Pure ASGI: times a budgeted request from arrival to its last body chunk."""
 
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
-    async def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
         start = time.perf_counter()
 
-        async def _send(message):  # type: ignore[no-untyped-def]
+        async def _send(message: Message) -> None:
             if message.get("type") == "http.response.body" and not message.get("more_body", False):
                 try:
                     _observe(scope, (time.perf_counter() - start) * 1000.0)
@@ -124,7 +126,7 @@ class ObservedLatencyMiddleware:
         await self.app(scope, receive, _send)
 
 
-def _observe(scope: dict, elapsed_ms: float) -> None:
+def _observe(scope: Scope, elapsed_ms: float) -> None:
     global _route_ops
     if _route_ops is None:
         _route_ops = _build_route_ops(scope.get("app"))
@@ -432,7 +434,7 @@ async def slow_queries(db: Any, redis: Any = None, limit: int = 50) -> dict[str,
                 "max_ms": round(float(r.get("max_ms", 0.0)), 1),
                 "last_seen": float(r.get("last_seen", 0.0)),
             })
-    items.sort(key=lambda r: r["max_ms"], reverse=True)
+    items.sort(key=lambda r: float(r["max_ms"] or 0.0), reverse=True)
     return {"source": "in_app", "threshold_ms": threshold, "items": items[:limit], "total": len(items)}
 
 
