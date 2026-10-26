@@ -451,12 +451,28 @@ async def evaluate_pre_release_gate(
     # 3. Compute current metrics
     current = compute_metrics_for_task_type(task_type, items)
 
-    # 4. Compare against baseline and thresholds
-    rule_results = _evaluate_rules(current, baseline)
+    # 4. Compare against baseline and thresholds. A REPLAY baseline is never
+    # compared with the label-agreement metric (the inverse of the candidate
+    # path's ``baseline_metric_kind`` rule): default thresholds, insufficient.
+    replay_baseline = baseline is not None and _metric_kind_of(baseline) == "replay"
+    if replay_baseline:
+        rule_results = [
+            {
+                "rule": "baseline_metric_kind",
+                "passed": False,
+                "detail": (
+                    "The active baseline is a replay run; gate a completed replay run "
+                    "against it instead of the label-agreement metric."
+                ),
+            },
+            *_evaluate_rules(current, None),
+        ]
+    else:
+        rule_results = _evaluate_rules(current, baseline)
 
     # 5. Determine overall status
     failures = [r for r in rule_results if not r["passed"]]
-    if not baseline:
+    if not baseline or replay_baseline:
         status = EvalVerdict.INSUFFICIENT_SAMPLES
     elif failures:
         status = GateStatus.FAIL

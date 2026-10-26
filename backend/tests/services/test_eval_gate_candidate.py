@@ -204,6 +204,31 @@ async def test_without_a_candidate_run_the_gate_answers_as_before_plus_the_new_k
 
 
 @pytest.mark.asyncio
+async def test_without_a_candidate_a_replay_baseline_is_never_compared_with_label_agreement(monkeypatch):
+    """Found on the homelab walk: label agreement 0.83 vs a replay baseline 0.92 read FAIL (no_regression)."""
+    items = [{"input": {}, "expected_output": {"correct": True}}] * 10 + [
+        {"input": {}, "expected_output": {"correct": False}}
+    ] * 2
+    monkeypatch.setattr(svc, "_load_dataset_items", AsyncMock(return_value=items))
+    base_run = uuid.uuid4()
+    replay = _baseline(accuracy=0.95, run_id=base_run)  # a numeric comparison would fail no_regression
+    result = await svc.evaluate_pre_release_gate(
+        _DB(_Result(replay)), task_type="classification", agent_name="AnalysisAgent",
+    )
+    assert result["status"] is EvalVerdict.INSUFFICIENT_SAMPLES
+    assert result["metric_kind"] == "label_agreement"
+    assert result["baseline_run_id"] == str(base_run)
+    first = result["rule_results"][0]
+    assert first == {
+        "rule": "baseline_metric_kind", "passed": False,
+        "detail": "The active baseline is a replay run; gate a completed replay run against it instead of "
+                  "the label-agreement metric.",
+    }
+    assert "no_regression" not in {r["rule"] for r in result["rule_results"]}
+    assert result["baseline_metrics"]["accuracy"] == 0.95  # still shown, never compared
+
+
+@pytest.mark.asyncio
 async def test_set_baseline_from_a_replay_run_keeps_one_replay_baseline_per_tier():
     rules_run = _run(accuracy=0.84, tier="rules")
     legacy = AIEvalBaseline(task_type="classification", agent_name="AnalysisAgent", prompt_version="v1",
