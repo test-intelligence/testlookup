@@ -128,10 +128,16 @@ def list_releases(
     async def _go():
         pid = await release_resolver.resolve_project(project, profile_name=profile_name)
         params = {k: v for k, v in {"project_id": pid, "status": status}.items() if v}
-        return await client.request("GET", "/api/v1/releases", params=params or None, profile_name=profile_name)
+        body = await client.request("GET", "/api/v1/releases", params=params or None, profile_name=profile_name)
+        # A one-project list carries no project_name (only the all-projects view adds it).
+        names = {}
+        if pid:
+            names = {str(p.get("id")): p.get("name") for p in release_resolver._items(
+                await client.request("GET", "/api/v1/projects", profile_name=profile_name))}
+        return body, names
 
     try:
-        body = asyncio.run(_go())
+        body, names = asyncio.run(_go())
     except Exception as e:
         output.print_error(str(e))
         raise typer.Exit(exit_code_for(e))
@@ -142,6 +148,6 @@ def list_releases(
     rows = [{
         "name": r.get("name"), "version": r.get("version") or "-", "status": r.get("status") or "-",
         "gate": (r.get("gate") or {}).get("verdict") or "never evaluated",
-        "project": r.get("project_name") or r.get("project_id"), "id": r.get("id"),
+        "project": r.get("project_name") or names.get(str(r.get("project_id"))) or r.get("project_id"), "id": r.get("id"),
     } for r in items]
     output.print_table(rows, ["name", "version", "status", "gate", "project", "id"], title=f"Releases ({len(rows)})")

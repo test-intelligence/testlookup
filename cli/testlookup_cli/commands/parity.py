@@ -206,8 +206,8 @@ def investigations_list(
         return
     rows = [{"id": i.get("id"), "run": i.get("run_id"), "status": i.get("status"),
              "cause": (i.get("primary_cause") or "-") if isinstance(i.get("primary_cause"), str) else (i.get("primary_cause") or {}).get("summary", "-"),
-             "created": i.get("created_at")} for i in items]
-    output.print_table(rows, ["id", "run", "status", "cause", "created"], title=f"Investigations ({len(rows)})")
+             "started": i.get("started_at") or i.get("created_at")} for i in items]
+    output.print_table(rows, ["id", "run", "status", "cause", "started"], title=f"Investigations ({len(rows)})")
 
 
 @investigations_app.command("show")
@@ -221,4 +221,4 @@ def investigations_show(
     if output_format != "table" or not isinstance(body, dict):
         output.render(body, output_format if output_format != "table" else "json")
         return
-    output.render({k: body.get(k) for k in ("id", "run_id", "status", "primary_cause", "confidence", "created_at", "completed_at") if k in body}, "table")
+    output.render({k: body.get(k) for k in ("id", "run_id", "status", "primary_cause", "confidence", "started_at", "completed_at") if k in body}, "table")
