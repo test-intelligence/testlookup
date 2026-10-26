@@ -66,6 +66,37 @@ or on the command line: `mocha --reporter testlookup-reporter/mocha-reporter --r
 
 Reporter options: `testlookupUrl`, `testlookupApiKey`, `testlookupToken`, `testlookupProject`, `testlookupBuild` (default `mocha-<epoch ms>`), `testlookupBranch`, `testlookupCommit`, `testlookupLaunch`, `testlookupSuite` (default the launch name), `testlookupRelease`; each falls back as described under [Configuration](#configuration). Passing, failing and pending tests are recorded as `PASSED`, `FAILED` and `SKIPPED`, with the parent suite's full title as the suite. A result that finishes before the session is open waits for it, and Mocha waits for the final flush before exiting. Mocha runs one reporter at a time, so this reporter replaces the console output for that run.
 
+## Playwright, Vitest, Cypress and Cucumber
+
+Each adapter takes the same options (`testlookupUrl`, `testlookupProject`, `testlookupApiKey` or
+`testlookupToken`, and optionally `testlookupBuild`, `testlookupBranch`, `testlookupCommit`,
+`testlookupLaunch`, `testlookupSuite`, `testlookupRelease`), falling back to `TESTLOOKUP_*` and
+`testlookup.properties` like the Jest and Mocha reporters. A missing URL, credential or project turns
+the adapter off with one warning; a network error is logged and never fails your run.
+
+| Runner | Entry point | What streams | Supported |
+|---|---|---|---|
+| Playwright Test | `testlookup-reporter/playwright-reporter` (in `reporter:`) | each attempt as it ends; a retry is `metadata.attempt` 2; one suite per Playwright project | `@playwright/test` >= 1.30 |
+| Vitest | `testlookup-reporter/vitest-reporter` (in `test.reporters`) | each test as it ends (Vitest 3 `onTestCaseResult`, Vitest 1/2 `onTaskUpdate`); skipped tests at the end | `vitest` >= 1 |
+| Cypress | `testlookup-reporter/cypress-plugin` (call it in `setupNodeEvents`) | per **spec**: Cypress hands results to Node at `after:spec`; the last attempt is the result | `cypress` >= 10, `cypress run` |
+| Cucumber JS | `testlookup-reporter/cucumber-formatter` (`--format`) | each scenario attempt; the worst step decides the status; the feature is the suite | `@cucumber/cucumber` >= 8 |
+
+```ts
+// playwright.config.ts
+reporter: [['list'], ['testlookup-reporter/playwright-reporter', { testlookupProject: '<project-id>' }]]
+
+// vitest.config.ts
+test: { reporters: ['default', ['testlookup-reporter/vitest-reporter', { testlookupProject: '<project-id>' }]] }
+
+// cypress.config.ts
+import testlookup from 'testlookup-reporter/cypress-plugin'
+e2e: { setupNodeEvents(on, config) { return testlookup(on, config, { testlookupProject: '<project-id>' }) } }
+```
+
+```bash
+npx cucumber-js --format testlookup-reporter/cucumber-formatter   --format-options '{"testlookupProject":"<project-id>"}'
+```
+
 ## Programmatic client
 
 ```ts

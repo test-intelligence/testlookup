@@ -181,3 +181,32 @@ describe('sdkSnippets — every tab renders for the active project', () => {
     expect(code).toContain(PROJECT_ID)
   })
 })
+
+describe('sdkSnippets — W18 DEV-03 runner snippets', () => {
+  const js = symbols.js
+  const ADAPTER_OPTIONS = ['testlookupUrl', 'testlookupProject', 'testlookupApiKey']
+
+  it.each([
+    ['playwright', 'playwright-reporter'],
+    ['vitest', 'vitest-reporter'],
+    ['cypress', 'cypress-plugin'],
+    ['cucumber', 'cucumber-formatter'],
+  ])('%s loads an entry point package.json exports, with adapter option names', (runner, subpath) => {
+    const code = getRunnerSnippet('javascript', PROJECT_ID, SERVER_URL, runner)
+    expect(code).toContain(`testlookup-reporter/${subpath}`)
+    expect(js.subpaths).toContain(subpath)
+    const keys = [...code.matchAll(/\b(testlookup[A-Z]\w*)\b/g)].map((m) => m[1])
+    expect(keys.length).toBeGreaterThan(0)
+    expect(keys.filter((k) => !ADAPTER_OPTIONS.includes(k))).toEqual([])
+  })
+
+  it('Robot names the listener class the Python SDK ships', () => {
+    const code = getRunnerSnippet('python', PROJECT_ID, SERVER_URL, 'robot')
+    expect(code).toContain('testlookup_robot_listener.TestLookupListener')
+  })
+
+  it('the default runner keeps the existing snippet', () => {
+    expect(getRunnerSnippet('javascript', PROJECT_ID, SERVER_URL, 'jest-mocha')).toBe(getRunnerSnippet('javascript', PROJECT_ID, SERVER_URL))
+    expect(getRunnerSnippet('python', PROJECT_ID, SERVER_URL, 'pytest')).toBe(getRunnerSnippet('python', PROJECT_ID, SERVER_URL))
+  })
+})
