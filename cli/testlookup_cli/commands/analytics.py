@@ -16,8 +16,9 @@ Known drift, documented rather than hidden:
   and the server's own limit (365) applies.
 * The UI Trends page's pass-rate trend card reads ``/metrics/trends`` and
   differs from this under a suite filter.
-* Releases are UUIDs or ``unattributed``. Resolving a release by name is a
-  follow-up.
+* ``--release`` takes an id, ``unattributed``, or a release name / version
+  (W18 DEV-05, ``release_resolver``): an unknown or ambiguous name exits 4 with
+  the choices, never a guess. ``--project`` takes an id or a project name.
 
 ``analytics execution`` (EXEC-06) reads ``GET /api/v1/analytics/execution-metrics``
 instead -- the endpoint the UI's Trends > Execution time and MCP's
@@ -31,7 +32,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 
-from testlookup_cli import chart_render, client, output, timing_render
+from testlookup_cli import chart_render, client, output, release_resolver, timing_render
 from testlookup_cli.errors import EXIT_VALIDATION, exit_code_for
 
 analytics_app = typer.Typer(
@@ -120,6 +121,22 @@ def _render(body: dict, output_format: str, metric: str, title: str) -> None:
     ))
 
 
+def _resolve_scope(
+    project_id: Optional[str], releases: Optional[list[str]], profile_name: Optional[str],
+) -> tuple[Optional[str], Optional[list[str]]]:
+    """Names -> ids for ``--project`` and ``--release`` (DEV-05); ids pass through without a request."""
+    async def _go():
+        pid = await release_resolver.resolve_project(project_id, profile_name=profile_name)
+        rels = await release_resolver.resolve_releases(releases, project_id=pid, profile_name=profile_name)
+        return pid, rels
+
+    try:
+        return asyncio.run(_go())
+    except Exception as e:
+        output.print_error(str(e))
+        raise typer.Exit(exit_code_for(e))
+
+
 def _run(params: dict, output_format: str, profile_name: Optional[str], title: str) -> None:
     if output_format not in FORMATS:
         output.print_error(f"Unknown format '{output_format}'. Use one of: {', '.join(FORMATS)}.")
@@ -137,8 +154,8 @@ def _run(params: dict, output_format: str, profile_name: Optional[str], title: s
 
 @analytics_app.command("trends")
 def trends(
-    project_id: str = typer.Option(None, "--project", "-p", help="Project ID. Omit for every project you can read."),
-    releases: list[str] = typer.Option(None, "--release", help="Release UUID or 'unattributed'. Repeat for several (OR)."),
+    project_id: str = typer.Option(None, "--project", "-p", help="Project id or name. Omit for every project you can read."),
+    releases: list[str] = typer.Option(None, "--release", help="Release id, name or version, or 'unattributed'. Repeat for several (OR)."),
     suites: list[str] = typer.Option(None, "--suite", help="Test suite name, case-insensitive. Repeat for several (OR)."),
     days: int = typer.Option(30, "--days", help="Window in days ending today, UTC (1-365)."),
     metric: str = typer.Option("pass_rate", "--metric", help="What to measure, e.g. pass_rate, failures, executions."),
@@ -151,6 +168,7 @@ def trends(
     group_by = ["day", by] if by else ["day"]
     if by and top_n is None:
         top_n = DEFAULT_TOP_N_WITH_BY
+    project_id, releases = _resolve_scope(project_id, releases, profile_name)
     params = chart_params(
         metric=metric, group_by=group_by, project_id=project_id,
         releases=releases, suites=suites, days=days, top_n=top_n,
@@ -187,8 +205,8 @@ def execution_params(
 
 @analytics_app.command("execution")
 def execution(
-    project_id: str = typer.Option(..., "--project", "-p", help="Project ID (required: one project)."),
-    releases: list[str] = typer.Option(None, "--release", help="Release UUID or 'unattributed'. Repeat for several (OR)."),
+    project_id: str = typer.Option(..., "--project", "-p", help="Project id or name (required: one project)."),
+    releases: list[str] = typer.Option(None, "--release", help="Release id, name or version, or 'unattributed'. Repeat for several (OR)."),
     suites: list[str] = typer.Option(None, "--suite", help="Test suite name, case-insensitive. Repeat for several (OR)."),
     days: int = typer.Option(30, "--days", help="Window in days ending today, UTC (1-365); compared with the window before it."),
     branch: str = typer.Option(None, "--branch", help="Only runs of this branch (exact). Omit for every branch."),
@@ -205,6 +223,7 @@ def execution(
     if output_format not in EXECUTION_FORMATS:
         output.print_error(f"Unknown format '{output_format}'. Use one of: {', '.join(EXECUTION_FORMATS)}.")
         raise typer.Exit(EXIT_VALIDATION)
+    project_id, releases = _resolve_scope(project_id, releases, profile_name)
     params = execution_params(
         project_id=project_id, releases=releases, suites=suites, days=days, branch=branch, top=top,
     )
@@ -230,8 +249,8 @@ def execution(
 def chart(
     metric: str = typer.Option(..., "--metric", help="What to measure, e.g. executions, pass_rate, duration_p95."),
     group_by: list[str] = typer.Option(..., "--group-by", help="The axis; repeat once to key series by a second dimension."),
-    project_id: str = typer.Option(None, "--project", "-p", help="Project ID. Omit for every project you can read."),
-    releases: list[str] = typer.Option(None, "--release", help="Release UUID or 'unattributed'. Repeat for several (OR)."),
+    project_id: str = typer.Option(None, "--project", "-p", help="Project id or name. Omit for every project you can read."),
+    releases: list[str] = typer.Option(None, "--release", help="Release id, name or version, or 'unattributed'. Repeat for several (OR)."),
     suites: list[str] = typer.Option(None, "--suite", help="Test suite name, case-insensitive. Repeat for several (OR)."),
     days: int = typer.Option(30, "--days", help="Window in days ending today, UTC (1-365)."),
     top_n: int = typer.Option(None, "--top-n", help="Keep the N largest keys and merge the rest into 'other'."),
@@ -242,6 +261,7 @@ def chart(
     if len(group_by) > MAX_GROUP_BY:
         output.print_error(f"--group-by takes at most {MAX_GROUP_BY} dimensions, got {len(group_by)}.")
         raise typer.Exit(EXIT_VALIDATION)
+    project_id, releases = _resolve_scope(project_id, releases, profile_name)
     params = chart_params(
         metric=metric, group_by=group_by, project_id=project_id,
         releases=releases, suites=suites, days=days, top_n=top_n,

@@ -85,6 +85,7 @@ from tools import investigations
 from tools import reviews
 from tools import agent_actions
 from tools import agents
+from tools import activity
 from resources import registry
 from prompts import templates
 
@@ -210,6 +211,7 @@ investigations.register(mcp)   # start/poll/list investigations
 reviews.register(mcp)          # E8.4 review queue (read-only)
 agent_actions.register(mcp)    # W15 agent-action queue (read-only)
 agents.register(mcp)           # E1.5 agent catalog + single-agent invocations
+activity.register(mcp)         # W18 DEV-04 project activity ledger (read-only)
 
 # ── Register Resources ────────────────────────────────────────────────────────
 registry.register(mcp)

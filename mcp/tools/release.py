@@ -17,6 +17,7 @@ from typing import Any
 import httpx
 
 import client as api  # type: ignore[import]
+import release_resolver  # type: ignore[import]
 from tools.metrics import (  # type: ignore[import]
     PENDING_TEXT,
     SUMMARY_KPIS,
@@ -82,6 +83,62 @@ async def _release_gate(release_id: str) -> str:
 
 
 def register(mcp) -> None:  # noqa: ANN001
+
+    @mcp.tool()
+    async def get_release_gate(release: str, project: str | None = None, evaluate: bool = False) -> dict:
+        """
+        A release's gate verdict (GO / CONDITIONAL_GO / NO_GO / NOT_EVALUATED)
+        as data: verdict, pass rate, evidence, blockers and when it was decided.
+        Reads the stored decision the release page shows; ``evaluate=True``
+        records a fresh one first (QA lead or a project API key; it is appended
+        to the release's gate history).
+
+        Args:
+            release: Release id, or its exact name / version (case-insensitive).
+                A name several releases share is an error listing them with
+                their ids: never a guess.
+            project: Optional project id or name, to narrow a release name.
+            evaluate: Record a new verdict before answering (default False).
+
+        Returns ``{ok: true, release_id, evaluated: false}`` when the release
+        has never been evaluated, so "not looked at" is never read as a verdict.
+        """
+        try:
+            pid = await release_resolver.resolve_project(project)
+            rid = await release_resolver.resolve_release(release, pid)
+        except release_resolver.UnresolvedName as exc:
+            return release_resolver.unresolved_payload(exc)
+        except Exception as exc:
+            return api.error_payload(exc)
+        try:
+            if evaluate:
+                gate = await api.post(f"/api/v1/releases/{rid}/gate/evaluate")
+            else:
+                gate = await api.get(f"/api/v1/releases/{rid}/gate")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404 and not evaluate:
+                return {"ok": True, "release_id": rid, "evaluated": False,
+                        "detail": "This release has not been evaluated yet; evaluate=True records a verdict (QA lead)."}
+            return api.error_payload(exc)
+        except Exception as exc:
+            return api.error_payload(exc)
+        gate = gate or {}
+        card = gate.get("scorecard") or {}
+        reasons = gate.get("blocking_reasons_display") or gate.get("blocking_reasons") or []
+        return {
+            "ok": True,
+            "release_id": rid,
+            "evaluated": True,
+            "verdict": gate.get("verdict"),
+            "recorded": gate.get("recorded"),
+            "decided_at": gate.get("decided_at"),
+            "pass_rate": card.get("pass_rate"),
+            "evidence_count": card.get("evidence_count"),
+            "run_count": card.get("run_count"),
+            "measured": card.get("measured"),
+            "blockers": [_reason_text(r) for r in reasons],
+            "blocking_total": gate.get("blocking_total", len(reasons)),
+        }
 
     @mcp.tool()
     async def check_release_readiness(

@@ -39,6 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = REPO_ROOT / "contracts" / "viz" / "fixtures"
 GOLDEN = Path(__file__).parent / "golden"
 PATH = "/api/v1/analytics/chart-data"
+P1 = "11111111-1111-4111-8111-111111111111"  # an id: a name would be resolved first (DEV-05)
 R1 = "22222222-2222-4222-8222-222222222221"
 R2 = "22222222-2222-4222-8222-222222222222"
 
@@ -115,7 +116,7 @@ def test_trends_sends_exactly_the_scope_it_was_given(api):
     """The story's invocation: one release pair, one suite, a 90-day window."""
     calls, _ = api
     result = _run(
-        "analytics", "trends", "--project", "p1", "--release", R1, "--release", R2,
+        "analytics", "trends", "--project", P1, "--release", R1, "--release", R2,
         "--suite", "checkout", "--days", "90", "--format", "json",
     )
     assert result.exit_code == 0, result.output
@@ -123,7 +124,7 @@ def test_trends_sends_exactly_the_scope_it_was_given(api):
         "method": "GET",
         "path": PATH,
         "params": {
-            "metric": "pass_rate", "group_by": ["day"], "days": 90, "project_id": "p1",
+            "metric": "pass_rate", "group_by": ["day"], "days": 90, "project_id": P1,
             "release_id": [R1, R2], "suite_name": ["checkout"],
         },
     }]
@@ -148,12 +149,12 @@ def test_chart_takes_any_metric_over_two_dimensions(api):
     calls, _ = api
     result = _run(
         "analytics", "chart", "--metric", "duration_p95", "--group-by", "week",
-        "--group-by", "environment", "--top-n", "5", "-p", "p1", "-o", "json",
+        "--group-by", "environment", "--top-n", "5", "-p", P1, "-o", "json",
     )
     assert result.exit_code == 0, result.output
     assert calls[0]["params"] == {
         "metric": "duration_p95", "group_by": ["week", "environment"], "days": 30,
-        "project_id": "p1", "top_n": 5,
+        "project_id": P1, "top_n": 5,
     }
 
 

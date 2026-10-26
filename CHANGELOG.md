@@ -52,6 +52,29 @@ locally by default.
 
 ### Added
 
+- **Gate a release from CI, and the CLI / MCP catch up with the UI** (wave W18a,
+  DEV-05, DEV-01 and DEV-04; branch `feat/df-cli-mcp-sdk-20261026`; no migration).
+  `testlookup release gate <release>` prints the release's stored verdict (verdict,
+  pass rate, evidence, blockers) and exits with a stable code — `0` GO or
+  CONDITIONAL_GO (`1` with `--fail-on CONDITIONAL_GO`), `1` NO_GO, `3` not
+  evaluated / not enough evidence, `2` infrastructure error, failing closed
+  (`--fail-open` for availability); `--evaluate` records a fresh verdict first;
+  the CLI README has the table and GitHub Actions / GitLab snippets. Every
+  `--release` (and `<release>`) now takes a release's name or version as well as
+  its id, and every `--project` a project name: a name several releases share,
+  or none, exits `4` listing the candidates with their ids or the closest names —
+  never a guess. New groups mirror the MCP tools' endpoints: `release list`,
+  `quarantine list|approve|reject|release` (`--reason` recorded),
+  `defects jira preview|create`, `investigations start|list|show`,
+  `compliance-pack list|generate|download`, and `activity list|show|types|export`
+  (the Activity tab's feed, keyset paged: a page with more says so, `--all`
+  follows the cursor; one event's before/after diff; CSV / NDJSON export). MCP
+  gains `get_release_gate` (the verdict as data), `list_project_activity` and
+  `get_activity_event`, and `get_chart_data` takes release and project names.
+  Tests: `cli/tests/test_release_resolver.py`, `test_release_commands.py`,
+  `test_activity_commands.py`; `mcp/tests/test_mcp_release_resolver.py`,
+  `test_mcp_release_gate.py`, `test_mcp_activity.py`.
+
 - **Invitations that work, password reset, and measured performance** (wave
   W17b, ADM-01, ADM-02 and ADM-06; branch `feat/df-accounts-admin-b-20261026`;
   migration 0233). **Invite User** now produces a link someone can redeem:
