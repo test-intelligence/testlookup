@@ -10,7 +10,7 @@ List available client SDKs
 
 Return metadata for all available SDK downloads.
 
-Source: [backend/app/routers/sdk.py:122](../../../backend/app/routers/sdk.py#L122).
+Source: [backend/app/routers/sdk.py:131](../../../backend/app/routers/sdk.py#L131).
 
 Dependency chain: .
 
@@ -56,7 +56,7 @@ W17 DEV-02: the newest staged CLI wheel (name, version, download path), or
 ``available: false`` when this deployment was built without one (the guide
 then shows the from-a-clone install).
 
-Source: [backend/app/routers/sdk.py:165](../../../backend/app/routers/sdk.py#L165).
+Source: [backend/app/routers/sdk.py:174](../../../backend/app/routers/sdk.py#L174).
 
 Dependency chain: .
 
@@ -104,7 +104,7 @@ W17 DEV-02: one staged CLI wheel, by its exact file name (pip needs it).
 Only a name from the staged list is served: anything else -- another
 package, a path, ``..`` -- is a 404, never a file read.
 
-Source: [backend/app/routers/sdk.py:179](../../../backend/app/routers/sdk.py#L179).
+Source: [backend/app/routers/sdk.py:188](../../../backend/app/routers/sdk.py#L188).
 
 Dependency chain: .
 
@@ -164,7 +164,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-FileResponse(path=os.path.join(SDK_BASE_PATH, _SDK_CONFIGS['cli']['path'], filename), filename=filename, media_type=_SDK_CONFIGS['cli']['media_type'])
+FileResponse(path=path, filename=name, media_type=_SDK_CONFIGS['cli']['media_type'])
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -180,7 +180,7 @@ Download the SDK for the specified language.
   otherwise falls back to a ZIP archive of the source directory
 - **go / js** — returns a ZIP archive of the SDK directory
 
-Source: [backend/app/routers/sdk.py:196](../../../backend/app/routers/sdk.py#L196).
+Source: [backend/app/routers/sdk.py:202](../../../backend/app/routers/sdk.py#L202).
 
 Dependency chain: .
 
