@@ -1,9 +1,13 @@
 import useSWR from 'swr'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 import {
+  type ObservedWindow,
   type PerformanceBudgets,
   type SearchConfig,
+  getObservedPerformance,
   getPerformanceBudgets,
   getSearchConfig,
+  getSlowQueries,
 } from '@/services/performanceService'
 
 export interface PerformanceSettings {
@@ -21,7 +25,8 @@ export interface PerformanceSettings {
  * rule (correctly) discourages. SWR owns the loading/data state declaratively,
  * so the page no longer drives state from an effect.
  *
- * Both endpoints serve static, read-only configuration, so the two fetches are
+ * Both endpoints serve static, read-only configuration (the measured numbers have
+ * their own hooks below: `useObservedPerformance`, `useSlowQueries`), so the two fetches are
  * combined under one constant SWR key and run in parallel exactly as the old
  * `Promise.all`. `budgets`/`config` are `null` while loading or on error,
  * preserving the prior `useState<… | null>(null)` semantics (the page renders
@@ -51,4 +56,17 @@ export function usePerformanceSettings() {
     isLoading,
     isError: !!error,
   }
+}
+
+/** W17b ADM-06: measured p50/p95/p99 per budgeted route for the window; re-read every minute. */
+export function useObservedPerformance(window: ObservedWindow) {
+  return useSWR(['performance-observed', window], () => getObservedPerformance(window), {
+    refreshInterval: REFRESH_INTERVALS.BACKGROUND,
+    revalidateOnFocus: false,
+  })
+}
+
+/** W17b ADM-06: the slowest statement shapes. `enabled=false` (not an admin) asks for nothing. */
+export function useSlowQueries(enabled: boolean) {
+  return useSWR(enabled ? 'performance-slow-queries' : null, () => getSlowQueries(), { revalidateOnFocus: false })
 }

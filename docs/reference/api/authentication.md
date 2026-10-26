@@ -10,7 +10,7 @@ Change Password
 
 Change the current user's password.
 
-Source: [backend/app/routers/auth.py:673](../../../backend/app/routers/auth.py#L673).
+Source: [backend/app/routers/auth.py:927](../../../backend/app/routers/auth.py#L927).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -101,7 +101,7 @@ Query param:
 If the requested user does not exist yet (seed not run), a temporary account
 is created on the fly so developers can always access the UI after `make dev`.
 
-Source: [backend/app/routers/auth.py:370](../../../backend/app/routers/auth.py#L370).
+Source: [backend/app/routers/auth.py:624](../../../backend/app/routers/auth.py#L624).
 
 Dependency chain: `get_db`.
 
@@ -190,7 +190,7 @@ Forced password reset for self-registered users on first login.
 - Does NOT require the current/registration password.
 - Clears the must_change_password flag after a successful change.
 
-Source: [backend/app/routers/auth.py:434](../../../backend/app/routers/auth.py#L434).
+Source: [backend/app/routers/auth.py:688](../../../backend/app/routers/auth.py#L688).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -266,6 +266,143 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## POST `/api/v1/auth/invitations/accept`
+
+Accept Invitation
+
+Redeem an invitation: create the account with the invited role and projects, sign in.
+
+Works with ``REGISTRATION_ENABLED=false`` — the invitation is the
+authorisation. Single use under ``SELECT … FOR UPDATE``. When the workspace
+requires MFA for the role, answers the login flow's enrollment shape instead
+of tokens (an invite never skips the second factor).
+
+Source: [backend/app/routers/auth.py:147](../../../backend/app/routers/auth.py#L147).
+
+Dependency chain: `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+payload: AcceptInvitationRequest, db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='SSO is required for this workspace. Sign in with SSO instead of setting a password.')
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail='An account with this email already exists. Sign in instead.')
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail='That username is taken. Choose another.')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "accept_invitation_api_v1_auth_invitations_accept_post",
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/AcceptInvitationRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "201": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TokenResponse"
+              },
+              {
+                "$ref": "#/components/schemas/MfaEnrollmentRequiredResponse"
+              }
+            ],
+            "title": "Response Accept Invitation Api V1 Auth Invitations Accept Post"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  }
+}
+```
+
+## POST `/api/v1/auth/invitations/preview`
+
+Preview Invitation
+
+Who invited whom, as what — read by the accept page before the form. Public.
+
+Source: [backend/app/routers/auth.py:121](../../../backend/app/routers/auth.py#L121).
+
+Dependency chain: `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+payload: InvitationTokenRequest, db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "preview_invitation_api_v1_auth_invitations_preview_post",
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/InvitationTokenRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/InvitationPreviewResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  }
+}
+```
+
 ## POST `/api/v1/auth/login`
 
 Login
@@ -284,7 +421,7 @@ are **not** access tokens and are rejected by ``get_current_user``: see
 ``core/security.create_mfa_token`` for why a claim on a real access token
 would have been a complete bypass.
 
-Source: [backend/app/routers/auth.py:139](../../../backend/app/routers/auth.py#L139).
+Source: [backend/app/routers/auth.py:393](../../../backend/app/routers/auth.py#L393).
 
 Dependency chain: `OAuth2PasswordRequestForm`, `get_db`.
 
@@ -364,7 +501,7 @@ Server-side logout — revokes the caller's access-token jti until its
 natural expiry and revokes all live refresh tokens for the user so the
 session cannot be re-minted via /auth/refresh.
 
-Source: [backend/app/routers/auth.py:610](../../../backend/app/routers/auth.py#L610).
+Source: [backend/app/routers/auth.py:864](../../../backend/app/routers/auth.py#L864).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -437,7 +574,7 @@ Get Me
 
 Return the authenticated user's profile.
 
-Source: [backend/app/routers/auth.py:555](../../../backend/app/routers/auth.py#L555).
+Source: [backend/app/routers/auth.py:809](../../../backend/app/routers/auth.py#L809).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -509,7 +646,7 @@ Update Me
 Self-service profile update — any authenticated user can update their own
 full_name and avatar_color.  Email and username are read-only here.
 
-Source: [backend/app/routers/auth.py:592](../../../backend/app/routers/auth.py#L592).
+Source: [backend/app/routers/auth.py:846](../../../backend/app/routers/auth.py#L846).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -591,7 +728,7 @@ List My Dismissals
 UI prompts this user has dismissed. Read-only; no project scope — a
 dismissal is a property of the person, not of a project.
 
-Source: [backend/app/routers/auth.py:561](../../../backend/app/routers/auth.py#L561).
+Source: [backend/app/routers/auth.py:815](../../../backend/app/routers/auth.py#L815).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -663,7 +800,7 @@ Dismiss Prompt
 Dismiss a UI prompt for this user. Idempotent — dismissing twice is a
 no-op and still returns 201 with the full list.
 
-Source: [backend/app/routers/auth.py:572](../../../backend/app/routers/auth.py#L572).
+Source: [backend/app/routers/auth.py:826](../../../backend/app/routers/auth.py#L826).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1193,7 +1330,10 @@ Auth Options
 
 What the sign-in page may offer. Public: it is read before anyone signs in.
 
-Source: [backend/app/routers/auth.py:70](../../../backend/app/routers/auth.py#L70).
+``password_reset_email`` (W17b ADM-02) is true when SMTP is configured, so
+the login page offers the email form; it reveals nothing about any account.
+
+Source: [backend/app/routers/auth.py:75](../../../backend/app/routers/auth.py#L75).
 
 Dependency chain: .
 
@@ -1227,6 +1367,126 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## POST `/api/v1/auth/password/forgot`
+
+Forgot Password
+
+Always 202 with the same body. The lookup and the mail run after the response.
+
+Source: [backend/app/routers/auth.py:246](../../../backend/app/routers/auth.py#L246).
+
+Dependency chain: .
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+payload: ResetLinkRequest, request: Request, background_tasks: BackgroundTasks
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "forgot_password_api_v1_auth_password_forgot_post",
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/ResetLinkRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "202": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "additionalProperties": true,
+            "title": "Response Forgot Password Api V1 Auth Password Forgot Post",
+            "type": "object"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  }
+}
+```
+
+## POST `/api/v1/auth/password/reset`
+
+Reset Password
+
+Redeem a reset link: set the password, clear lockout, sign out everywhere.
+
+MFA is untouched — the next sign-in still asks for the code.
+
+Source: [backend/app/routers/auth.py:283](../../../backend/app/routers/auth.py#L283).
+
+Dependency chain: `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+payload: RedeemResetLinkRequest, db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=503, detail='Token revocation store unavailable; password reset was not applied')
+HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_LINK_DETAIL)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "reset_password_api_v1_auth_password_reset_post",
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/RedeemResetLinkRequest"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "204": {
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  }
+}
+```
+
 ## POST `/api/v1/auth/refresh`
 
 Refresh Tokens
@@ -1234,7 +1494,7 @@ Refresh Tokens
 Exchange a valid refresh token for a new access + refresh token pair (rotation).
 The old refresh token is not reusable after this call.
 
-Source: [backend/app/routers/auth.py:476](../../../backend/app/routers/auth.py#L476).
+Source: [backend/app/routers/auth.py:730](../../../backend/app/routers/auth.py#L730).
 
 Dependency chain: `get_db`.
 
@@ -1306,7 +1566,7 @@ sign-up form promises -- with no project membership and
 must_change_password=True. It used to be QA_ENGINEER, which can create
 API keys.
 
-Source: [backend/app/routers/auth.py:76](../../../backend/app/routers/auth.py#L76).
+Source: [backend/app/routers/auth.py:330](../../../backend/app/routers/auth.py#L330).
 
 Dependency chain: `get_db`.
 
@@ -1374,7 +1634,7 @@ Return active users for assignee dropdowns (bounded).
 Only the people the caller works with: users who share a project with
 them, and themselves. An admin sees everyone.
 
-Source: [backend/app/routers/auth.py:644](../../../backend/app/routers/auth.py#L644).
+Source: [backend/app/routers/auth.py:898](../../../backend/app/routers/auth.py#L898).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

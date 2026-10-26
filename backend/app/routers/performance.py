@@ -1,9 +1,11 @@
 """Performance Budgets & Metrics router — exposes budgets and index health (OPS-03)."""
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import require_role
+from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 
 logger = logging.getLogger("routers.performance")
@@ -19,6 +21,33 @@ async def get_performance_budgets(
     from app.services.performance_budgets import get_all_budgets
 
     return get_all_budgets()
+
+
+@router.get("/observed")
+async def get_observed_performance(
+    window: str = Query("1h", pattern="^(15m|1h|24h)$", description="15m, 1h or 24h"),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+):
+    """W17b ADM-06: observed p50/p95/p99 and request count per budgeted route, beside its budget.
+
+    ``source`` is ``prometheus`` when ``PROMETHEUS_URL`` answers, else ``in_app`` (measured by
+    TestLookup on every API pod). A route with no requests in the window reads ``measured: false``.
+    """
+    from app.services.observed_performance import observed
+
+    return await observed(window)
+
+
+@router.get("/slow-queries")
+async def get_slow_queries(
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """W17b ADM-06: the slowest statement shapes (no bound values). ADMIN: SQL text reveals the schema."""
+    from app.services.observed_performance import slow_queries
+
+    return await slow_queries(db, limit=limit)
 
 
 @router.get("/search-config")

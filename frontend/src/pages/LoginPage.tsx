@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { Zap, UserPlus, LogIn, Fingerprint, ShieldAlert } from 'lucide-react';
 import { api } from '../services/api';
@@ -101,7 +101,14 @@ export default function LoginPage() {
   const ssoErrorNotice = new URLSearchParams(location.search).has('sso_error')
     ? 'Single sign-on did not complete. Try again, or ask your administrator.'
     : null;
-  const notice = loginNotice ?? ssoErrorNotice;
+  // W17b: a finished reset link (?reset=1) or an accepted invitation that still owes MFA set-up (?invited=1).
+  const query = new URLSearchParams(location.search);
+  const linkNotice = query.has('reset')
+    ? 'Your password was changed and every session was signed out. Sign in with the new password.'
+    : query.has('invited')
+      ? 'Your account is ready. Sign in to set up two-factor authentication.'
+      : null;
+  const notice = loginNotice ?? ssoErrorNotice ?? linkNotice;
 
   /** Shared tail of every successful sign-in — normal, post-challenge, or post-enrollment. */
   const completeSignIn = async (tokens: TokenResponse) => {
@@ -382,9 +389,15 @@ export default function LoginPage() {
               </div>
 
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-[var(--color-text-secondary)]">
-                  Password
-                </label>
+                <div className="flex items-center justify-between">
+                  <label htmlFor="password" className="block text-sm font-medium text-[var(--color-text-secondary)]">
+                    Password
+                  </label>
+                  {/* W17b ADM-02: the email form when SMTP is set up, else "ask an administrator". */}
+                  <Link to="/forgot-password" className="text-xs text-[var(--color-accent)] hover:underline">
+                    Forgot password?
+                  </Link>
+                </div>
                 <div className="mt-1">
                   <input
                     id="password"

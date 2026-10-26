@@ -51,7 +51,38 @@ export interface InviteUserResponse {
   email: string
   role: UserRole
   expires_at: string
+  /** `{base}/accept-invite#token=…` — shown once; only its hash is stored (W17b ADM-01). */
   invitation_link: string
+  /** True when the link was also emailed (SMTP configured and the send worked). An older server omits it. */
+  email_sent?: boolean
+}
+
+export interface InviteProjectMembership {
+  project_id: string
+  role: UserRole
+}
+
+export type InvitationStatus = 'pending' | 'expired' | 'used' | 'revoked'
+
+/** W17b ADM-01: a row of the Pending invitations tab. Never carries a token. */
+export interface InvitationSummary {
+  id: string
+  email: string
+  role: UserRole
+  status: InvitationStatus
+  expires_at: string
+  created_at: string | null
+  used_at: string | null
+  revoked_at: string | null
+  invited_by_name: string | null
+  project_memberships: Array<{ project_id: string; project_name: string | null; role: string }>
+}
+
+/** W17b ADM-02: an admin-issued reset link; the admin never sees or sets the password. */
+export interface PasswordResetLinkResponse {
+  link: string
+  email_sent: boolean
+  expires_at: string
 }
 
 export interface AdminCreateUserResponse {
@@ -112,8 +143,22 @@ export const userManagementService = {
   updateUserStatus: (userId: string, is_active: boolean) =>
     api.patch<UserItem>(`/api/v1/users/${userId}/status`, { is_active }).then((r) => r.data),
 
-  inviteUser: (email: string, role: UserRole) =>
-    api.post<InviteUserResponse>('/api/v1/users/invite', { email, role }).then((r) => r.data),
+  inviteUser: (email: string, role: UserRole, project_memberships: InviteProjectMembership[] = []) =>
+    api
+      .post<InviteUserResponse>('/api/v1/users/invite', { email, role, project_memberships })
+      .then((r) => r.data),
+
+  listInvitations: () =>
+    api.get<InvitationSummary[]>('/api/v1/users/invitations').then((r) => (Array.isArray(r.data) ? r.data : [])),
+
+  revokeInvitation: (invitationId: string) =>
+    api.post<InvitationSummary>(`/api/v1/users/invitations/${invitationId}/revoke`).then((r) => r.data),
+
+  resendInvitation: (invitationId: string) =>
+    api.post<InviteUserResponse>(`/api/v1/users/invitations/${invitationId}/resend`).then((r) => r.data),
+
+  issuePasswordResetLink: (userId: string) =>
+    api.post<PasswordResetLinkResponse>(`/api/v1/users/${userId}/password-reset-link`).then((r) => r.data),
 
   createUser: (email: string, username: string, role: UserRole, full_name?: string) =>
     api

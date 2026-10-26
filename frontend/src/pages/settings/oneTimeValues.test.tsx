@@ -239,7 +239,8 @@ describe('Invite User: the invitation link is shown once, in its section', () =>
 
   it('is shown after Send Invitation, never leaks, asks before Add User replaces it, and Close drops it', async () => {
     svc.listUsers.mockResolvedValue([PRIYA])
-    svc.inviteUser.mockResolvedValue({ invitation_link: `/accept-invite?token=${TOKEN}` })
+    // W17b: the server answers an absolute link with the token in the fragment; the page re-bases it on its origin.
+    svc.inviteUser.mockResolvedValue({ invitation_link: `https://elsewhere.example/accept-invite#token=${TOKEN}`, email_sent: false })
     renderApp(<UserManagementPage />, '/users')
     await screen.findByText('Priya Nair')
 
@@ -249,9 +250,10 @@ describe('Invite User: the invitation link is shown once, in its section', () =>
     fireEvent.change(within(section).getByLabelText('Role'), { target: { value: 'VIEWER' } })
     fireEvent.click(within(section).getByRole('button', { name: 'Send Invitation' }))
 
-    const link = await within(section).findByText(new RegExp(`/accept-invite\\?token=${TOKEN}$`))
-    expect(link.textContent).toBe(new URL(`/accept-invite?token=${TOKEN}`, window.location.origin).toString())
-    expect(svc.inviteUser).toHaveBeenCalledWith('new.hire@example.test', 'VIEWER')
+    const link = await within(section).findByText(new RegExp(`/accept-invite#token=${TOKEN}$`))
+    expect(link.textContent).toBe(`${window.location.origin}/accept-invite#token=${TOKEN}`)
+    expect(within(section).getByText(/SMTP is not configured/)).toBeInTheDocument()
+    expect(svc.inviteUser).toHaveBeenCalledWith('new.hire@example.test', 'VIEWER', [])
     expect(screen.getByRole('table')).toBeInTheDocument()
     expectShownOnceIn(section, TOKEN)
 

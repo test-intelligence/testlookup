@@ -167,3 +167,45 @@ def render_release_signal_email(recommendation: str, risk_score: int | None = No
     <span style="display:inline-block;background:{bg};color:{colour};border:1px solid {colour};padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;">
       {_e(recommendation.replace('_', ' '))}{risk_html}
     </span>"""
+
+
+def _link_button(link: str, label: str) -> str:
+    return (
+        f'<p style="margin:24px 0;"><a href="{_e(link, 2000)}" '
+        'style="background:#2563eb;color:#ffffff;padding:10px 18px;border-radius:6px;'
+        f'text-decoration:none;font-weight:600;">{_e(label)}</a></p>'
+        '<p style="font-size:12px;color:#6b7280;">If the button does not work, copy this link into your browser:<br>'
+        f'<span style="word-break:break-all;">{_e(link, 2000)}</span></p>'
+    )
+
+
+def render_invitation_email(inviter: str, role: str, link: str, expires_at: str) -> str:
+    """W17b ADM-01: the invitation mail. Every value is escaped."""
+    return (
+        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;max-width:560px;">'
+        "<h2 style=\"font-size:18px;\">You are invited to TestLookup</h2>"
+        f"<p>{_e(inviter)} invited you to join TestLookup as <strong>{_e(role)}</strong>.</p>"
+        "<p>Choose a username and password to finish creating your account.</p>"
+        f"{_link_button(link, 'Accept invitation')}"
+        f'<p style="font-size:12px;color:#6b7280;">This invitation expires on {_e(expires_at)}. '
+        "If you were not expecting it, ignore this email.</p>"
+        "</div>"
+    )
+
+
+def render_password_reset_email(link: str, expires_minutes: int, issued_by_admin: bool) -> str:
+    """W17b ADM-02: the password-reset mail. Every value is escaped."""
+    why = (
+        "An administrator issued a password reset link for your TestLookup account."
+        if issued_by_admin
+        else "Someone asked to reset the password of your TestLookup account."
+    )
+    return (
+        '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;max-width:560px;">'
+        "<h2 style=\"font-size:18px;\">Reset your TestLookup password</h2>"
+        f"<p>{_e(why)}</p>"
+        f"{_link_button(link, 'Set a new password')}"
+        f'<p style="font-size:12px;color:#6b7280;">The link works once and expires in {int(expires_minutes)} minutes. '
+        "If you did not ask for it, ignore this email: your password stays as it is.</p>"
+        "</div>"
+    )

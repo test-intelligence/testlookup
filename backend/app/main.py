@@ -135,6 +135,16 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Live event stream consumer started")
 
+    # W17b ADM-06: slow-query capture on this process's engine + the flusher that adds this
+    # process's latency and slow-query counts to Redis (Settings > Performance reads them).
+    _perf_task = None
+    if settings.METRICS_ENABLED:
+        from app.db.postgres import get_engine
+        from app.services.observed_performance import flush_loop, install_slow_query_hook
+
+        install_slow_query_hook(get_engine().sync_engine)
+        _perf_task = asyncio.create_task(flush_loop(), name="observed-performance-flush")
+
     # Last start-up step: freeze the import-time heap so full GC collections
     # stop re-walking ~700k long-lived objects (180-260 ms each, the p95 tail
     # of large analytics responses). Once per worker; see app/core/startup_gc.py.
@@ -146,8 +156,12 @@ async def lifespan(app: FastAPI):
     _consumer_task.cancel()
     _fanout_task.cancel()
     _offline_check_task.cancel()
+    if _perf_task is not None:
+        _perf_task.cancel()
     await asyncio.gather(
-        _consumer_task, _fanout_task, _offline_check_task, return_exceptions=True
+        _consumer_task, _fanout_task, _offline_check_task,
+        *([_perf_task] if _perf_task is not None else []),
+        return_exceptions=True,
     )
     logger.info("Live event stream consumer stopped")
 
@@ -239,6 +253,26 @@ _AUTH_RATE_LIMITS: dict[str, tuple[str, str]] = {
     "/api/v1/auth/mfa/enroll/confirm": (
         "8/minute",
         "Too many enrollment attempts. Try again in a minute.",
+    ),
+    # ── Invitations + password reset (W17b ADM-01/02) ──────────────────────
+    # New unauthenticated routes: account creation and password replacement by
+    # token. 32-byte tokens are not guessable; the ceilings stop scripted
+    # probing and (with the per-mailbox Redis counter) reset-mail flooding.
+    "/api/v1/auth/invitations/preview": (
+        "10/minute",
+        "Too many invitation checks. Try again in a minute.",
+    ),
+    "/api/v1/auth/invitations/accept": (
+        "10/minute",
+        "Too many invitation attempts. Try again in a minute.",
+    ),
+    "/api/v1/auth/password/forgot": (
+        "5/minute",
+        "Too many reset requests. Try again in a minute.",
+    ),
+    "/api/v1/auth/password/reset": (
+        "10/minute",
+        "Too many reset attempts. Try again in a minute.",
     ),
 }
 

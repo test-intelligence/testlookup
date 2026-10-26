@@ -308,7 +308,8 @@ TestLookup works without any model (`ANALYSIS_MODE=rules`). With a model, it is 
 | `COMMIT_RANGE_FILE_FETCH_LIMIT` | int | `25` | Commits in a resolved range whose changed files are fetched from GitHub (one API call each, capped at 100). Raise it when building a test-impact corpus. |
 | `GITHUB_TOKEN` | str (optional) | unset | Instance-wide GitHub token, used only by the deployment-wide GitHub row of Integration health (`api.github.com/rate_limit`); a token saved at `/settings/integrations` comes first. Since W10 no commit lookup reads it: the run Changes tab, the regression diff and the build-changes agent tool list commits through each project's own GitHub integration (`/settings/github`), offline-gated. **Secret.** |
 | `GITHUB_REPO` | str (optional) | unset | Accepted for compatibility, not used (it named the repository of the former instance-wide commit lookups). |
-| `PROMETHEUS_URL` | str (optional) | unset | Prometheus base URL (for example `http://prometheus:9090`) for the agents' application-metrics tool. Unset disables the tool. |
+| `PROMETHEUS_URL` | str (optional) | unset | Prometheus base URL (for example `http://prometheus:9090`) for the agents' application-metrics tool and, when set, the observed latency on Settings › Performance. Unset disables the tool; Performance then measures in-app. |
+| `SLOW_QUERY_MS` | int | `500` | Statements at least this slow (ms) are captured, as their shape only (no values), for Settings › Performance › Slow queries. |
 
 #### Anomaly detection
 

@@ -1,7 +1,7 @@
 import type { User } from '@/store/authStore'
-import type { LoginResponse } from '@/types/mfa'
+import type { LoginResponse, MfaEnrollmentRequiredResponse, TokenResponse } from '@/types/mfa'
 import { api } from './api'
-import { getData } from './http'
+import { getData, postData } from './http'
 
 /**
  * Password sign-in.
@@ -44,9 +44,52 @@ export function fetchCurrentUser(accessToken?: string): Promise<User> {
 /** What the sign-in page may offer. Public (`GET /api/v1/auth/options`): read before anyone signs in. */
 export interface AuthOptions {
   registration_enabled: boolean
+  /** W17b ADM-02: SMTP is configured, so "Forgot password?" offers the email form. Older servers omit it. */
+  password_reset_email?: boolean
 }
 
 /** Quiet on failure: the page then offers sign-in only, which is the safe default. */
 export function getAuthOptions(): Promise<AuthOptions> {
   return getData<AuthOptions>('/api/v1/auth/options', { suppressToast: true })
+}
+
+// ── W17b ADM-01 / ADM-02: one-time links (public; the token travels in a JSON body, never a URL) ──
+
+/** What the accept page shows before the form. 400 = invalid, expired, used or revoked (one answer). */
+export interface InvitationPreview {
+  email: string
+  role: User['role']
+  invited_by_name: string | null
+  expires_at: string
+  project_names: string[]
+  sso_required: boolean
+}
+
+export function previewInvitation(token: string): Promise<InvitationPreview> {
+  return postData<InvitationPreview>('/api/v1/auth/invitations/preview', { token }, { suppressToast: true })
+}
+
+export interface AcceptInvitationBody {
+  token: string
+  username: string
+  full_name?: string
+  password: string
+}
+
+/** Signed in (tokens), or MFA set-up owed first (the login flow's enrollment shape). */
+export function acceptInvitation(
+  body: AcceptInvitationBody,
+): Promise<TokenResponse | MfaEnrollmentRequiredResponse> {
+  return postData<TokenResponse | MfaEnrollmentRequiredResponse>('/api/v1/auth/invitations/accept', body, {
+    suppressToast: true,
+  })
+}
+
+/** Always 202 with the same body, whether or not the address has an account. */
+export function requestPasswordReset(email: string): Promise<{ detail: string }> {
+  return postData<{ detail: string }>('/api/v1/auth/password/forgot', { email }, { suppressToast: true })
+}
+
+export function resetPasswordWithToken(token: string, new_password: string): Promise<void> {
+  return postData<void>('/api/v1/auth/password/reset', { token, new_password }, { suppressToast: true })
 }

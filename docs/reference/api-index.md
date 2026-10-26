@@ -113,6 +113,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/auth/change-password` | Change Password | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/dev-login` | Dev Login | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/first-time-reset` | First Time Reset | [Authentication](api/authentication.md) |
+| POST | `/api/v1/auth/invitations/accept` | Accept Invitation | [Authentication](api/authentication.md) |
+| POST | `/api/v1/auth/invitations/preview` | Preview Invitation | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/login` | Login | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/logout` | Logout | [Authentication](api/authentication.md) |
 | GET | `/api/v1/auth/me` | Get Me | [Authentication](api/authentication.md) |
@@ -126,6 +128,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/auth/mfa/status` | Mfa Status | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/mfa/verify` | Verify Mfa | [Authentication](api/authentication.md) |
 | GET | `/api/v1/auth/options` | Auth Options | [Authentication](api/authentication.md) |
+| POST | `/api/v1/auth/password/forgot` | Forgot Password | [Authentication](api/authentication.md) |
+| POST | `/api/v1/auth/password/reset` | Reset Password | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/refresh` | Refresh Tokens | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/register` | Register | [Authentication](api/authentication.md) |
 | GET | `/api/v1/auth/users` | List Users | [Authentication](api/authentication.md) |
@@ -250,7 +254,9 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/onboarding/{project_id}/skip` | Mark Step Skipped | [Onboarding](api/onboarding.md) |
 | GET | `/api/v1/onboarding/{project_id}/status` | Get Status | [Onboarding](api/onboarding.md) |
 | GET | `/api/v1/performance/budgets` | Get Performance Budgets | [Performance](api/performance.md) |
+| GET | `/api/v1/performance/observed` | Get Observed Performance | [Performance](api/performance.md) |
 | GET | `/api/v1/performance/search-config` | Get Search Config | [Performance](api/performance.md) |
+| GET | `/api/v1/performance/slow-queries` | Get Slow Queries | [Performance](api/performance.md) |
 | GET | `/api/v1/projects` | List Projects | [Projects](api/projects.md) |
 | POST | `/api/v1/projects` | Create Project | [Projects](api/projects.md) |
 | DELETE | `/api/v1/projects/{project_id}` | Delete Project | [Projects](api/projects.md) |
@@ -633,11 +639,15 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/training/status` | Get Training Status | [Feedback & Training](api/feedback-training.md) |
 | GET | `/api/v1/users` | List Users | [User Management](api/user-management.md) |
 | POST | `/api/v1/users` | Admin Create User | [User Management](api/user-management.md) |
+| GET | `/api/v1/users/invitations` | List Invitations | [User Management](api/user-management.md) |
+| POST | `/api/v1/users/invitations/{invitation_id}/resend` | Resend Invitation | [User Management](api/user-management.md) |
+| POST | `/api/v1/users/invitations/{invitation_id}/revoke` | Revoke Invitation | [User Management](api/user-management.md) |
 | POST | `/api/v1/users/invite` | Invite User | [User Management](api/user-management.md) |
 | GET | `/api/v1/users/{user_id}` | Get User | [User Management](api/user-management.md) |
 | PATCH | `/api/v1/users/{user_id}` | Update User Profile | [User Management](api/user-management.md) |
 | GET | `/api/v1/users/{user_id}/access-audit` | Get User Access Audit | [User Management](api/user-management.md) |
 | GET | `/api/v1/users/{user_id}/memberships` | Get User Memberships | [User Management](api/user-management.md) |
+| POST | `/api/v1/users/{user_id}/password-reset-link` | Issue Password Reset Link | [User Management](api/user-management.md) |
 | PATCH | `/api/v1/users/{user_id}/role` | Update User Role | [User Management](api/user-management.md) |
 | PATCH | `/api/v1/users/{user_id}/status` | Update User Status | [User Management](api/user-management.md) |
 | GET | `/api/v1/value-metrics` | Get Metrics | [Value Metrics](api/value-metrics.md) |
@@ -661,4 +671,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **652 HTTP operations**, **553 paths**, **86 domain pages**.
+Total: **662 HTTP operations**, **563 paths**, **86 domain pages**.

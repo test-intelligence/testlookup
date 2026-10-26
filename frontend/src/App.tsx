@@ -1,5 +1,5 @@
 import { type ComponentType, lazy as reactLazy, Suspense } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import {
   AgentRunRedirect,
   DeepInvestigationRunRedirect,
@@ -31,6 +31,10 @@ const lazy = lazyWithRetry as typeof reactLazy
 // on demand rather than with every route (scripts/check-bundle-budget.mjs).
 const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage'))
 const SSOCallbackPage = lazy(() => import('@/pages/SSOCallbackPage'))
+// W17b ADM-01 / ADM-02: public one-time-link pages, visited once each.
+const AcceptInvitePage = lazy(() => import('@/pages/AcceptInvitePage'))
+const ForgotPasswordPage = lazy(() => import('@/pages/ForgotPasswordPage'))
+const ResetPasswordConfirmPage = lazy(() => import('@/pages/ResetPasswordConfirmPage'))
 
 // Lazy: it fetches the suites (the other redirects are eager and dependency-free).
 const SuiteByNameRedirect = lazy(() => import('@/routing/SuiteByNameRedirect'))
@@ -314,6 +318,16 @@ function ManagementGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+/**
+ * Invitation links handed out before W17b were `/register?token=…&email=…`. Never delete a route:
+ * forward to the accept page with the token moved into the fragment (the email is dropped).
+ */
+function LegacyInviteRedirect() {
+  const { search } = useLocation()
+  const token = new URLSearchParams(search).get('token')
+  return <Navigate replace to={token ? { pathname: '/accept-invite', hash: `token=${encodeURIComponent(token)}` } : '/login'} />
+}
+
 export default function App() {
   useWebVitals()
   const documentTitleRouteKey = useRouteDocumentTitle()
@@ -324,6 +338,11 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       {/* Public: the browser arrives from the identity provider before it has a session. */}
       <Route path="/sso/callback" element={renderLazyRoute(SSOCallbackPage)} />
+      {/* Public (W17b): the invitee has no account; a reset link is used signed out. Tokens ride in the fragment. */}
+      <Route path="/accept-invite" element={renderLazyRoute(AcceptInvitePage)} />
+      <Route path="/register" element={<LegacyInviteRedirect />} />
+      <Route path="/forgot-password" element={renderLazyRoute(ForgotPasswordPage)} />
+      <Route path="/reset-password/confirm" element={renderLazyRoute(ResetPasswordConfirmPage)} />
       {import.meta.env.DEV && ChartGalleryPage && (
         <Route path="/__charts" element={renderLazyRoute(ChartGalleryPage)} />
       )}

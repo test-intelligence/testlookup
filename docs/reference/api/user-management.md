@@ -10,7 +10,7 @@ List Project Members
 
 List all members of a project.
 
-Source: [backend/app/routers/users.py:436](../../../backend/app/routers/users.py#L436).
+Source: [backend/app/routers/users.py:657](../../../backend/app/routers/users.py#L657).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -101,7 +101,7 @@ Add Project Member
 
 Add a user to a project with a role. Requires QA_LEAD or higher.
 
-Source: [backend/app/routers/users.py:463](../../../backend/app/routers/users.py#L463).
+Source: [backend/app/routers/users.py:684](../../../backend/app/routers/users.py#L684).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -200,7 +200,7 @@ Remove Project Member
 
 Remove a user from a project. Requires ADMIN.
 
-Source: [backend/app/routers/users.py:564](../../../backend/app/routers/users.py#L564).
+Source: [backend/app/routers/users.py:785](../../../backend/app/routers/users.py#L785).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -290,7 +290,7 @@ Update Project Member Role
 
 Update a project member's role. Requires QA_LEAD or higher.
 
-Source: [backend/app/routers/users.py:516](../../../backend/app/routers/users.py#L516).
+Source: [backend/app/routers/users.py:737](../../../backend/app/routers/users.py#L737).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -400,7 +400,7 @@ List all users (paginated). Requires QA_LEAD or higher.
 The body stays a bare list (other callers read it); the number of users
 matching the filters, across every page, is the ``X-Total-Count`` header.
 
-Source: [backend/app/routers/users.py:138](../../../backend/app/routers/users.py#L138).
+Source: [backend/app/routers/users.py:152](../../../backend/app/routers/users.py#L152).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -553,7 +553,7 @@ Admin Create User
 
 Admin creates a user directly with a temporary password. Requires ADMIN.
 
-Source: [backend/app/routers/users.py:296](../../../backend/app/routers/users.py#L296).
+Source: [backend/app/routers/users.py:327](../../../backend/app/routers/users.py#L327).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -634,13 +634,283 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/users/invitations`
+
+List Invitations
+
+W17b ADM-01: pending (and expired) invitations, newest first. Never a token. ADMIN.
+
+Declared before ``/{user_id}`` so ``invitations`` is not parsed as a user id.
+
+Source: [backend/app/routers/users.py:194](../../../backend/app/routers/users.py#L194).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.ADMIN)), include_closed: bool=Query(False, description='Also list used and revoked invitations')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "list_invitations_api_v1_users_invitations_get",
+  "parameters": [
+    {
+      "description": "Also list used and revoked invitations",
+      "in": "query",
+      "name": "include_closed",
+      "required": false,
+      "schema": {
+        "default": false,
+        "description": "Also list used and revoked invitations",
+        "title": "Include Closed",
+        "type": "boolean"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "items": {
+              "$ref": "#/components/schemas/InvitationSummary"
+            },
+            "title": "Response List Invitations Api V1 Users Invitations Get",
+            "type": "array"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/users/invitations/{invitation_id}/resend`
+
+Resend Invitation
+
+Issue a new link (new token, new expiry); the previous link stops working. ADMIN.
+
+Also the only way to get a copyable link again: the raw token is never
+stored, so an old link cannot be shown twice.
+
+Source: [backend/app/routers/users.py:537](../../../backend/app/routers/users.py#L537).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+invitation_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.ADMIN))
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"This invitation was {('accepted' if state == 'used' else 'revoked')}; send a new invitation instead")
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "resend_invitation_api_v1_users_invitations__invitation_id__resend_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "invitation_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Invitation Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/InviteUserResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/users/invitations/{invitation_id}/revoke`
+
+Revoke Invitation
+
+Kill an invitation link. A used invitation cannot be revoked (the account exists). ADMIN.
+
+Source: [backend/app/routers/users.py:519](../../../backend/app/routers/users.py#L519).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+invitation_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.ADMIN))
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail='This invitation was already accepted')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "revoke_invitation_api_v1_users_invitations__invitation_id__revoke_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "invitation_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Invitation Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/InvitationSummary"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## POST `/api/v1/users/invite`
 
 Invite User
 
-Invite a user by email with a specified role. Requires ADMIN.
+Invite a user by email with a role and optional project memberships. Requires ADMIN.
 
-Source: [backend/app/routers/users.py:340](../../../backend/app/routers/users.py#L340).
+W17b ADM-01: only ``sha256(token)`` is stored; the link carries the token in
+a URL fragment; the link is emailed when SMTP is configured and always
+returned so the admin can copy it (the offline path).
+
+Source: [backend/app/routers/users.py:371](../../../backend/app/routers/users.py#L371).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -653,7 +923,7 @@ payload: InviteUserRequest, db: AsyncSession=Depends(get_db), current_user: User
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
-HTTPException(status_code=status.HTTP_409_CONFLICT, detail='An active invitation already exists for this email')
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail='An active invitation already exists for this email. Resend or revoke it from Pending invitations.')
 HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Email already registered')
 ```
 
@@ -728,7 +998,7 @@ Get User
 
 Get a specific user by ID.
 
-Source: [backend/app/routers/users.py:180](../../../backend/app/routers/users.py#L180).
+Source: [backend/app/routers/users.py:211](../../../backend/app/routers/users.py#L211).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -815,7 +1085,7 @@ Update User Profile
 
 Update a user's profile attributes. Requires ADMIN. Only non-None fields are applied.
 
-Source: [backend/app/routers/users.py:246](../../../backend/app/routers/users.py#L246).
+Source: [backend/app/routers/users.py:277](../../../backend/app/routers/users.py#L277).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -916,7 +1186,7 @@ Get User Access Audit
 
 Return access audit trail for a specific user.
 
-Source: [backend/app/routers/users.py:422](../../../backend/app/routers/users.py#L422).
+Source: [backend/app/routers/users.py:643](../../../backend/app/routers/users.py#L643).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1016,7 +1286,7 @@ Get User Memberships
 Return all project memberships for a user in a single query.
 Replaces the N+1 pattern of fetching each project's members individually.
 
-Source: [backend/app/routers/users.py:394](../../../backend/app/routers/users.py#L394).
+Source: [backend/app/routers/users.py:615](../../../backend/app/routers/users.py#L615).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1097,13 +1367,106 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
+## POST `/api/v1/users/{user_id}/password-reset-link`
+
+Issue Password Reset Link
+
+W17b ADM-02: a single-use reset link for another user. ADMIN.
+
+The administrator never sees or sets the password. Older unused links for
+the user stop working. Refused for the caller's own account (change-password
+exists for that). Audited without the token.
+
+Source: [backend/app/routers/users.py:573](../../../backend/app/routers/users.py#L573).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+user_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.ADMIN))
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='Use Change password for your own account')
+HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='User not found')
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail='The account is deactivated; activate it first')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "issue_password_reset_link_api_v1_users__user_id__password_reset_link_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "user_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "User Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "201": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/PasswordResetLinkResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## PATCH `/api/v1/users/{user_id}/role`
 
 Update User Role
 
 Update a user's global role. Requires ADMIN.
 
-Source: [backend/app/routers/users.py:194](../../../backend/app/routers/users.py#L194).
+Source: [backend/app/routers/users.py:225](../../../backend/app/routers/users.py#L225).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1201,7 +1564,7 @@ Update User Status
 
 Activate or deactivate a user account. Requires ADMIN.
 
-Source: [backend/app/routers/users.py:220](../../../backend/app/routers/users.py#L220).
+Source: [backend/app/routers/users.py:251](../../../backend/app/routers/users.py#L251).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

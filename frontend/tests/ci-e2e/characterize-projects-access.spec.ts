@@ -411,7 +411,7 @@ test('U3 Invite User: Cancel sends nothing; the POST, the toast, the users re-re
   await form.getByRole('button', { name: 'Send Invitation' }).click()
   await expect(page.getByText('Invitation created', { exact: true })).toBeVisible()
   await networkQuiet(page, api)
-  expect(world.writes).toEqual([{ line: 'POST /api/v1/users/invite', body: { email: 'new.hire@example.test', role: 'VIEWER' } }])
+  expect(world.writes).toEqual([{ line: 'POST /api/v1/users/invite', body: { email: 'new.hire@example.test', role: 'VIEWER', project_memberships: [] } }])
   expect(requestsTo(api, '/api/v1/users').length, 'the users re-read').toBeGreaterThan(users)
   await expectSecretKept(page, api, 'w27b-fixture-invite-token')
   assertHermetic(api, errors)

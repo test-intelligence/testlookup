@@ -104,6 +104,12 @@ const REVIEWED: Record<string, ErrorState> = {
   // when the code exchange (or the user read after it) fails.
   ResetPasswordPage: 'no-fetch',
   SSOCallbackPage: 'own-error-ui',
+  // W17b: the public one-time-link pages. A failed invitation preview shows "invalid, expired
+  // or already used" with a way out; a failed /auth/options read shows "ask an administrator"
+  // (the safe answer); the reset-confirm page only posts.
+  AcceptInvitePage: 'own-error-ui',
+  ForgotPasswordPage: 'own-error-ui',
+  ResetPasswordConfirmPage: 'no-fetch',
   DocsPage: 'no-fetch',
   'settings/ProfilePage': 'no-fetch',
   'settings/ProjectDataPage': 'no-fetch',

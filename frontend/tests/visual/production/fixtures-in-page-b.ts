@@ -708,7 +708,7 @@ export const UM_USERS = {
 /** The one-time values the fixtures answer (fixture strings, not real secrets). */
 export const ONE_TIME = {
   tempPassword: 'Tmp-w27b-fixture-Zq81x',
-  invitePath: '/accept-invite?token=w27b-fixture-invite-token',
+  invitePath: '/accept-invite#token=w27b-fixture-invite-token',
   streamingKey: 'qai_w27b_fixture_streaming_key_0001',
   personalKey: 'qai_w27b_fixture_personal_key_0002',
   qaLeadPassword: 'QaLead-w27b-fixture-Pw77',
