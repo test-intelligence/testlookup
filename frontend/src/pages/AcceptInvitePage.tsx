@@ -28,6 +28,13 @@ import { INVALID_INVITE, roleLabel } from '@/utils/oneTimeLink'
 const INPUT =
   'appearance-none block w-full px-3 py-2 border border-[var(--color-border)] rounded-md text-[var(--color-text)] bg-[var(--color-bg-input)] focus:outline-none focus:ring-[var(--color-ring)] focus:border-[var(--color-ring)] sm:text-sm'
 
+/** The HTTP status of a failed request, if it got one. */
+function statusOf(err: unknown): number | undefined {
+  return (err as { response?: { status?: number } })?.response?.status
+}
+
+const INVALID_STATE = { kind: 'invalid' } as const
+
 type State =
   | { kind: 'loading' }
   | { kind: 'invalid' }
@@ -44,6 +51,8 @@ export default function AcceptInvitePage() {
   const [confirm, setConfirm] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  // A 400 is a dead link; anything else (server down, network) is not the invitee's fault.
+  const [loadError, setLoadError] = useState(false)
   const started = useRef(false)
 
   useEffect(() => {
@@ -51,7 +60,7 @@ export default function AcceptInvitePage() {
     started.current = true
     previewInvitation(token)
       .then((preview) => setState({ kind: 'ready', preview }))
-      .catch(() => setState({ kind: 'invalid' }))
+      .catch((err) => { if (statusOf(err) !== 400) setLoadError(true); else setState(INVALID_STATE) })
   }, [token])
 
   const mismatch = confirm.length > 0 && password !== confirm
@@ -83,6 +92,18 @@ export default function AcceptInvitePage() {
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (loadError) {
+    return (
+      <LinkPageShell>
+        <div className="text-center space-y-3" data-testid="invite-load-error">
+          <p role="alert" className="text-sm text-[var(--color-text)]">
+            We could not check this invitation right now. Try the link again in a moment.
+          </p>
+        </div>
+      </LinkPageShell>
+    )
   }
 
   if (state.kind === 'loading') {

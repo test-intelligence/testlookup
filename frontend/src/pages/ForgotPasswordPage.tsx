@@ -20,11 +20,12 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [sent, setSent] = useState(false)
+  const [optionsError, setOptionsError] = useState(false)
 
   useEffect(() => {
     getAuthOptions()
       .then((o) => setEmailAvailable(o.password_reset_email === true))
-      .catch(() => setEmailAvailable(false))
+      .catch(() => { setOptionsError(true); setEmailAvailable(false) })
   }, [])
 
   async function handleSubmit(e: React.FormEvent) {
@@ -48,6 +49,11 @@ export default function ForgotPasswordPage() {
       ) : !emailAvailable ? (
         <div className="space-y-3 text-center" data-testid="forgot-no-smtp">
           <p className="text-sm text-[var(--color-text)]">{ASK_AN_ADMIN}</p>
+          {optionsError && (
+            <p role="alert" className="text-xs text-[var(--color-text-muted)]">
+              Could not check whether this deployment sends email.
+            </p>
+          )}
           <p className="text-xs text-[var(--color-text-muted)]">
             This deployment does not send email. An administrator can send you a single-use link from User Management.
           </p>

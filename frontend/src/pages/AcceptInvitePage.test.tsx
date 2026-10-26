@@ -124,4 +124,11 @@ describe('AcceptInvitePage', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('signs in with single sign-on')
     await waitFor(() => expect(screen.queryByLabelText('Password')).toBeNull())
   })
+
+  it('a server error is not called a dead link', async () => {
+    preview.mockRejectedValue({ response: { status: 503 } })
+    renderAt('/accept-invite#token=tok-5')
+    expect(await screen.findByTestId('invite-load-error')).toHaveTextContent('We could not check this invitation right now.')
+    expect(screen.queryByTestId('invite-invalid')).toBeNull()
+  })
 })
