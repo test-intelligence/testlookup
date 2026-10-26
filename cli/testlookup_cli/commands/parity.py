@@ -68,12 +68,13 @@ def quarantine_list(
     output.print_table(table, ["test", "status", "flip_rate", "expires", "id"], title=f"Quarantine requests ({len(table)})")
 
 
-def _quarantine_write(request_id: str, action: str, notes: Optional[str], profile_name: Optional[str], extra: Optional[dict] = None) -> None:
+def _quarantine_write(path: str, done: str, notes: Optional[str], profile_name: Optional[str], extra: Optional[dict] = None) -> None:
+    """``path`` is spelled out by each caller, so the wire-contract guard can check it against the routes."""
     body: dict = dict(extra or {})
     if notes is not None:
         body["notes"] = notes
-    row = _call(lambda: client.request("POST", f"/api/v1/quarantine/{request_id}/{action}", json_body=body, profile_name=profile_name), profile_name)
-    output.print_success(f"{action.title()}d quarantine request {request_id}: now {row.get('status') if isinstance(row, dict) else row}.")
+    row = _call(lambda: client.request("POST", path, json_body=body, profile_name=profile_name), profile_name)
+    output.print_success(f"{done}: now {row.get('status') if isinstance(row, dict) else row}.")
 
 
 @quarantine_app.command("approve")
@@ -84,7 +85,8 @@ def quarantine_approve(
     profile_name: str = typer.Option(None, "--profile"),
 ):
     """Quarantine the test (QA lead)."""
-    _quarantine_write(request_id, "approve", reason, profile_name, {"quarantine_duration_days": days} if days else None)
+    _quarantine_write(f"/api/v1/quarantine/{request_id}/approve", f"Approved quarantine request {request_id}", reason, profile_name,
+                      {"quarantine_duration_days": days} if days else None)
 
 
 @quarantine_app.command("reject")
@@ -94,7 +96,7 @@ def quarantine_reject(
     profile_name: str = typer.Option(None, "--profile"),
 ):
     """Keep the test in rotation (QA lead)."""
-    _quarantine_write(request_id, "reject", reason, profile_name)
+    _quarantine_write(f"/api/v1/quarantine/{request_id}/reject", f"Rejected quarantine request {request_id}", reason, profile_name)
 
 
 @quarantine_app.command("release")
@@ -104,7 +106,7 @@ def quarantine_release(
     profile_name: str = typer.Option(None, "--profile"),
 ):
     """End an active quarantine early (QA lead)."""
-    _quarantine_write(request_id, "release", reason, profile_name)
+    _quarantine_write(f"/api/v1/quarantine/{request_id}/release", f"Released quarantine request {request_id}", reason, profile_name)
 
 
 # ── defects jira ────────────────────────────────────────────────────────────
