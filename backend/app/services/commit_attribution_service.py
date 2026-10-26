@@ -58,6 +58,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass, field
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
@@ -550,6 +551,16 @@ async def _gh_get(
 _ConnectorTarget = GitHubTarget
 
 
+async def _gitlab_gate_open(db: AsyncSession, run: TestRun) -> bool:
+    """W19 INT-05: the ``gitlab`` gate (flag + offline), asked only when GitHub's is closed."""
+    from app.services import gitlab_integration_service as gl
+
+    try:
+        return await gl._post_allowed(db, project_id=run.project_id)
+    except Exception:  # noqa: BLE001 - a flag-store hiccup reads as closed
+        return False
+
+
 async def _connector_target(db: AsyncSession, run: TestRun) -> Optional[_ConnectorTarget]:
     """Resolve integration + PAT into plain values (DB reads only, no HTTP).
     ``None`` when the connector isn't usable (no integration / disabled / repo
@@ -559,6 +570,82 @@ async def _connector_target(db: AsyncSession, run: TestRun) -> Optional[_Connect
         db, run.project_id, ci_repo=run.ci_repo, check_gate=False,
     )
     return resolution.target
+
+
+@dataclass(frozen=True)
+class GitLabConnectorTarget:
+    """W19 INT-05: a project's GitLab coordinates as plain values (no session, no HTTP)."""
+
+    base_url: str
+    project_path: str
+    pat: str = field(repr=False)
+
+
+def _norm_repo(value: Optional[str]) -> str:
+    v = (value or "").strip().lower().rstrip("/")
+    return v[:-4] if v.endswith(".git") else v
+
+
+async def _gitlab_connector_target(db: AsyncSession, run: TestRun) -> Optional[GitLabConnectorTarget]:
+    """The project's GitLab target when the ``gitlab`` gate is open, it resolves, and the run's repo
+    matches the configured project path (a numeric project id cannot be compared, so it is trusted)."""
+    from app.services import gitlab_integration_service as gl
+
+    if not await gl._post_allowed(db, project_id=run.project_id):
+        return None
+    target = await gl.load_gitlab_target(db, run.project_id)
+    if target.reason or not target.pat or not target.base_url or not target.project_path:
+        return None
+    path = target.project_path
+    if run.ci_repo and not path.isdigit() and _norm_repo(run.ci_repo) != _norm_repo(path):
+        logger.info("commit_range gitlab repo mismatch", run_id=str(run.id))
+        return None
+    return GitLabConnectorTarget(base_url=target.base_url, project_path=path, pat=target.pat)
+
+
+async def _fetch_gitlab_range(
+    target: GitLabConnectorTarget, base: str, head: str, *, run_id: uuid.UUID,
+) -> Optional[list[dict[str, Any]]]:
+    """``base..head`` from GitLab in ONE call (``/repository/compare``). Pure HTTP, no session.
+
+    GitLab's compare returns the commits and the range's changed files (``diffs``),
+    not files per commit, so the files are attached to the head commit — the commit
+    that brought the range to the run's state. ``None`` when blocked or refused.
+    """
+    from app.services.gitlab_integration_service import _api_root, _project_ref
+
+    url = f"{_api_root(target.base_url)}/projects/{_project_ref(target.project_path)}/repository/compare"
+    block = await _ssrf_block_reason(url)
+    if block:
+        logger.warning("commit_range gitlab blocked unsafe target", run_id=str(run_id), reason=block)
+        return None
+    headers = {"PRIVATE-TOKEN": target.pat, "Accept": "application/json", "User-Agent": "TestLookup/1.0"}
+    async with httpx.AsyncClient(verify=http_verify(), timeout=_HTTP_TIMEOUT) as client:
+        try:
+            resp = await _gh_get(url, headers, params={"from": base, "to": head}, client=client)
+        except httpx.HTTPError as exc:
+            logger.warning("commit_range gitlab compare failed", run_id=str(run_id), error=str(exc))
+            return None
+    if resp.status_code != 200:
+        logger.warning("commit_range gitlab compare rejected", run_id=str(run_id), status_code=resp.status_code)
+        return None
+    body = resp.json() if resp.content else {}
+    metas: list[dict[str, Any]] = []
+    for rc in (body.get("commits") or [])[:_MAX_COMMITS]:  # oldest -> newest
+        sha = str(rc.get("id") or "").strip()
+        if not sha:
+            continue
+        metas.append({
+            "sha": sha[:64],
+            "author": str(rc.get("author_name"))[:255] if rc.get("author_name") else None,
+            "message": _first_line(rc.get("title") or rc.get("message")),
+            "files": [],
+            "committed_at": str(rc.get("committed_date") or rc.get("created_at") or "")[:40] or None,
+        })
+    files = [str(d.get("new_path"))[:_FILE_PATH_CAP] for d in (body.get("diffs") or []) if d.get("new_path")]
+    if metas and files:
+        metas[-1]["files"] = files[:_FILES_PER_COMMIT_CAP]
+    return metas
 
 
 async def _fetch_commit_files(
@@ -801,7 +888,7 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
     """
     try:
         # ── Phase 1: DB reads → plain values, on a short-lived session ──────
-        target: Optional[_ConnectorTarget] = None
+        target: Optional[_ConnectorTarget | GitLabConnectorTarget] = None
         base_commit: Optional[str] = None
         base_run_id: Optional[uuid.UUID] = None
         base_source: str = BASE_SOURCE_UNAVAILABLE
@@ -820,13 +907,18 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
                     return {"skipped": "cooldown", "source": existing.source}
 
             head = run.commit_hash
-            if head and await _post_allowed(read_db, project_id=run.project_id):
+            # W19 INT-05: GitHub first (its gate + a matching repo), else GitLab (its own gate + match).
+            github_open = bool(head) and await _post_allowed(read_db, project_id=run.project_id)
+            gitlab_open = bool(head) and not github_open and await _gitlab_gate_open(read_db, run)
+            if github_open or gitlab_open:
                 base_run, base_source = await resolve_base_anchor(read_db, run)
                 if base_run is not None:
                     base_commit = base_run.commit_hash
                     base_run_id = base_run.id
                 if base_commit and base_commit != head:
-                    target = await _connector_target(read_db, run)
+                    target = await _connector_target(read_db, run) if github_open else None
+                    if target is None:
+                        target = await _gitlab_connector_target(read_db, run)
                 elif base_commit:
                     # Base == head bounds an empty range; the anchor is real
                     # but useless, so don't persist a strong-looking label.
@@ -834,7 +926,9 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
 
         # ── Phase 2: HTTP fan-out — no session open ─────────────────────────
         commits: Optional[list[dict[str, Any]]] = None
-        if target is not None and base_commit and head:
+        if isinstance(target, GitLabConnectorTarget) and base_commit and head:
+            commits = await _fetch_gitlab_range(target, base_commit, head, run_id=run_id)
+        elif target is not None and base_commit and head:
             commits = await _fetch_connector_range(
                 target, base_commit, head, run_id=run_id,
             )

@@ -365,4 +365,4 @@ def test_an_unknown_source_is_refused_by_the_schema():
     import pydantic
 
     with pytest.raises(pydantic.ValidationError):
-        router_mod.ReleaseSyncIn(project_id=str(PROJECT), source="gitlab")
+        router_mod.ReleaseSyncIn(project_id=str(PROJECT), source="bitbucket")  # gitlab became a real source in W19 INT-05

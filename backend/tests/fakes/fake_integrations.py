@@ -54,7 +54,13 @@ refuses.
   installation 404. The request log's ``token_kind`` says ``installation``
   (a ``ghs_`` token), ``app_jwt`` or ``pat``.
 * GitLab (``PRIVATE-TOKEN``): ``GET /api/v4/projects/{ref}`` (URL-encoded path
-  or numeric id); 401 / 404 as GitLab words them.
+  or numeric id); 401 / 404 as GitLab words them. W19 INT-05 adds, under the
+  same ref: ``/repository/compare?from=&to=`` (``commits[]`` oldest -> newest
+  with ``id``, ``title``, ``message``, ``author_name``, ``committed_date``, and
+  the range's ``diffs[].new_path``), ``/repository/commits?since=&until=``
+  (newest first) and ``/milestones`` (``iid``, ``title``, ``description``,
+  ``state``, ``due_date``, ``web_url``; steer them with ``POST
+  /_fake/gitlab/milestones``).
 * Receiver: ``POST /hooks/ok`` (200), ``/hooks/fail`` (500), ``/hooks/reject``
   (400); every call is logged with its event, delivery id and whether it was
   signed.
@@ -261,6 +267,24 @@ class FakeState:
     #: path -> {"id", "web_url"}
     gitlab_projects: dict[str, dict[str, Any]] = field(default_factory=lambda: {
         "group/api-gateway": {"id": 42, "web_url": f"{GITLAB_WEB_ROOT}/group/api-gateway"},
+    })
+    # ── W19 INT-05: GitLab commits + milestones ──
+    #: path -> commits oldest -> newest {sha, author, date, message, files}
+    gitlab_commits: dict[str, list[dict[str, Any]]] = field(default_factory=lambda: {
+        "group/api-gateway": _demo_commits("group/api-gateway", [
+            ("Priya Nair", "Add rate-limit headers", ["gateway/ratelimit.py"]),
+            ("Omar Haddad", "Retry upstream on 503", ["gateway/upstream.py", "gateway/retry.py"]),
+            ("Dana Whitfield", "Tighten auth token parsing", ["gateway/auth.py"]),
+        ]),
+    })
+    #: path -> milestones
+    gitlab_milestones: dict[str, list[dict[str, Any]]] = field(default_factory=lambda: {
+        "group/api-gateway": [
+            {"id": 9001, "iid": 1, "title": "Gateway 2.4", "description": "Rate limits", "state": "active",
+             "due_date": "2026-11-15", "web_url": f"{GITLAB_WEB_ROOT}/group/api-gateway/-/milestones/1"},
+            {"id": 9002, "iid": 2, "title": "Gateway 2.5", "description": "", "state": "active",
+             "due_date": None, "web_url": f"{GITLAB_WEB_ROOT}/group/api-gateway/-/milestones/2"},
+        ],
     })
     # ── W10: outbound webhook receiver ──
     #: {path, status, event, delivery_id, signed}
@@ -1077,6 +1101,11 @@ async def _gitlab(request: Request, state: FakeState, path: str, method: str, au
     # ``group%2Fapi-gateway`` reaches the app decoded (``group/api-gateway``);
     # either way everything after /api/v4/projects/ is the reference.
     ref = path[len("/api/v4/projects/"):].replace("%2F", "/").replace("%2f", "/")
+    sub_path = ""
+    for marker in ("/repository/", "/milestones"):
+        if marker in ref:
+            ref, sub_path = ref.split(marker, 1)[0], marker + ref.split(marker, 1)[1]
+            break
     project_path = None
     if ref in state.gitlab_projects:
         project_path = ref
@@ -1088,12 +1117,51 @@ async def _gitlab(request: Request, state: FakeState, path: str, method: str, au
     if project_path is None:
         return JSONResponse({"message": "404 Project Not Found"}, status_code=404)
     project = state.gitlab_projects[project_path]
+    if sub_path:
+        return _gitlab_sub(request, state, project_path, sub_path)
     return JSONResponse({
         "id": project.get("id"),
         "name": project_path.rsplit("/", 1)[-1],
         "path_with_namespace": project_path,
         "web_url": project.get("web_url") or f"{GITLAB_WEB_ROOT}/{project_path}",
     })
+
+
+def _gl_commit(commit: dict[str, Any]) -> dict[str, Any]:
+    message = commit.get("message") or ""
+    return {"id": commit["sha"], "short_id": commit["sha"][:8], "title": message.splitlines()[0] if message else "",
+            "message": message, "author_name": commit.get("author"), "committed_date": commit.get("date"),
+            "created_at": commit.get("date")}
+
+
+def _gitlab_sub(request: Request, state: FakeState, project_path: str, sub_path: str) -> Response:
+    commits = state.gitlab_commits.get(project_path, [])
+    if sub_path == "/repository/compare":
+        base = _find_commit(commits, request.query_params.get("from", ""))
+        head = _find_commit(commits, request.query_params.get("to", ""))
+        if base is None or head is None:
+            return JSONResponse({"message": "404 Commit Not Found"}, status_code=404)
+        between = commits[base + 1: head + 1] if head > base else []
+        files = []
+        for c in between:
+            for f in c.get("files") or []:
+                if f not in files:
+                    files.append(f)
+        return JSONResponse({"commits": [_gl_commit(c) for c in between],
+                             "diffs": [{"new_path": f, "old_path": f} for f in files], "compare_same_ref": head == base})
+    if sub_path == "/repository/commits":
+        since = _parse_time(request.query_params.get("since"))
+        until = _parse_time(request.query_params.get("until"))
+        out = []
+        for c in reversed(commits):
+            when = _parse_time(c.get("date"))
+            if when and ((since and when < since) or (until and when > until)):
+                continue
+            out.append(_gl_commit(c))
+        return JSONResponse(out)
+    if sub_path == "/milestones":
+        return JSONResponse(state.gitlab_milestones.get(project_path, []))
+    return JSONResponse({"message": "404 Not Found"}, status_code=404)
 
 
 # ── Outbound webhook receiver ───────────────────────────────────────────────
@@ -1168,6 +1236,11 @@ async def _control(request: Request, state: FakeState) -> Response:
                 "events": list(body.get("events", current.get("events", []))),
             }
         return JSONResponse({"namespace": namespace, "pod": pod, "events": len(pods[pod]["events"])})
+    if path == "/_fake/gitlab/milestones":
+        body = await request.json()
+        with state._lock:
+            state.gitlab_milestones[str(body["project"])] = list(body["milestones"])
+        return JSONResponse({"milestones": len(body["milestones"])})
     if path == "/_fake/github/app":
         body = await request.json()
         app_id = str(body["app_id"])
