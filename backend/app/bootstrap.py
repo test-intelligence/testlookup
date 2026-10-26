@@ -373,6 +373,12 @@ def configure_metrics(app: FastAPI) -> None:
         excluded_handlers=["/metrics", "/health/live", "/health/ready"],
     ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
+    # W17b ADM-06: budgeted routes are also timed in-app (Settings > Performance reads them back
+    # without a Prometheus server). Cheap: one dict lookup per request, nothing for other routes.
+    from app.services.observed_performance import ObservedLatencyMiddleware
+
+    app.add_middleware(ObservedLatencyMiddleware)
+
     # Refresh durable operational signals on each scrape, never from a timer
     # that can go stale while the scheduler is the sick component.
     _install_celery_queue_depth_collector(app)

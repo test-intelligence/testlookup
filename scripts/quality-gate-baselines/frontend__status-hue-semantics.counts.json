@@ -136,7 +136,7 @@
     "frontend/src/pages/settings/MyNotificationsPage.tsx": 3,
     "frontend/src/pages/settings/NotificationsPage.tsx": 6,
     "frontend/src/pages/settings/OutboundWebhooksPage.tsx": 4,
-    "frontend/src/pages/settings/PerformancePage.tsx": 2,
+    "frontend/src/pages/settings/PerformancePage.tsx": 1,
     "frontend/src/pages/settings/PersonalKeysPage.tsx": 3,
     "frontend/src/pages/settings/ProfilePage.tsx": 1,
     "frontend/src/pages/settings/ProjectDataPage.tsx": 6,

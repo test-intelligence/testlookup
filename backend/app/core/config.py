@@ -782,6 +782,8 @@ class Settings(BaseSettings):
     RISK_WEIGHT_BLAST_RADIUS:      float = 0.15
     RISK_WEIGHT_DIAGNOSIS_CONF:    float = 0.05
     PROMETHEUS_URL: Optional[str] = None          # e.g. http://prometheus:9090
+    # W17b ADM-06: statements at least this slow are captured (shape only) for Settings > Performance.
+    SLOW_QUERY_MS: int = 500
     GITHUB_TOKEN: Optional[str] = None            # GitHub PAT for build change lookup
     GITHUB_REPO: Optional[str] = None             # e.g. "org/repo"
 

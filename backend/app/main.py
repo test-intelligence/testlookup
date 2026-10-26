@@ -135,6 +135,16 @@ async def lifespan(app: FastAPI):
     )
     logger.info("Live event stream consumer started")
 
+    # W17b ADM-06: slow-query capture on this process's engine + the flusher that adds this
+    # process's latency and slow-query counts to Redis (Settings > Performance reads them).
+    _perf_task = None
+    if settings.METRICS_ENABLED:
+        from app.db.postgres import get_engine
+        from app.services.observed_performance import flush_loop, install_slow_query_hook
+
+        install_slow_query_hook(get_engine().sync_engine)
+        _perf_task = asyncio.create_task(flush_loop(), name="observed-performance-flush")
+
     # Last start-up step: freeze the import-time heap so full GC collections
     # stop re-walking ~700k long-lived objects (180-260 ms each, the p95 tail
     # of large analytics responses). Once per worker; see app/core/startup_gc.py.
@@ -146,8 +156,12 @@ async def lifespan(app: FastAPI):
     _consumer_task.cancel()
     _fanout_task.cancel()
     _offline_check_task.cancel()
+    if _perf_task is not None:
+        _perf_task.cancel()
     await asyncio.gather(
-        _consumer_task, _fanout_task, _offline_check_task, return_exceptions=True
+        _consumer_task, _fanout_task, _offline_check_task,
+        *([_perf_task] if _perf_task is not None else []),
+        return_exceptions=True,
     )
     logger.info("Live event stream consumer stopped")
 

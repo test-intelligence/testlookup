@@ -3,17 +3,23 @@ import { clsx } from 'clsx';
 import { usePerformanceSettings } from '@/hooks/usePerformanceSettings';
 import PageHeader from '@/components/ui/PageHeader';
 import { helpTopicParam } from '@/components/help/helpTopics';
+import { usePermissions } from '@/hooks/usePermissions';
+import { ObservedLatencyTable } from './ObservedLatencyTable';
+import { SlowQueriesPanel } from './SlowQueriesPanel';
 
 const HELP_TOPIC = helpTopicParam('/settings/performance');
 
-type Tab = 'budgets' | 'config' | 'scenarios';
+type Tab = 'budgets' | 'slow' | 'config' | 'scenarios';
 
 export default function PerformancePage() {
   const [tab, setTab] = useState<Tab>('budgets');
   const { budgets, config, isLoading } = usePerformanceSettings();
+  const { isAdmin } = usePermissions();
 
+  // W17b ADM-06: Slow queries is admin-only (statement text reveals the schema).
   const tabs: { key: Tab; label: string }[] = [
     { key: 'budgets', label: 'Latency Budgets' },
+    ...(isAdmin ? [{ key: 'slow' as Tab, label: 'Slow queries' }] : []),
     { key: 'config', label: 'Search Config' },
     { key: 'scenarios', label: 'Scale Scenarios' },
   ];
@@ -41,18 +47,8 @@ export default function PerformancePage() {
       {/* Latency Budgets */}
       {tab === 'budgets' && budgets && (
         <div className="space-y-4">
-          <div className="bg-[var(--color-bg-hover)]/50 rounded-lg px-4 py-2 grid grid-cols-5 gap-2 text-xs text-[var(--color-text-muted)] font-medium">
-            <span>Operation</span><span>p50</span><span>p95</span><span>p99</span><span>Description</span>
-          </div>
-          {budgets.latency_budgets.map(b => (
-            <div key={b.operation} className="bg-[var(--color-bg-secondary)] rounded-lg px-4 py-3 grid grid-cols-5 gap-2 items-center text-sm">
-              <span className="text-[var(--color-text)] font-mono text-xs">{b.operation}</span>
-              <span className="text-[var(--status-passed)] text-xs">{b.p50_ms}ms</span>
-              <span className="text-[var(--status-skipped)] text-xs">{b.p95_ms}ms</span>
-              <span className="text-[var(--status-failed)] text-xs">{b.p99_ms}ms</span>
-              <span className="text-[var(--color-text-muted)] text-xs">{b.description}</span>
-            </div>
-          ))}
+          {/* W17b ADM-06: the budget beside the measured p50/p95/p99 (it was the budgets alone). */}
+          <ObservedLatencyTable budgets={budgets.latency_budgets} />
 
           {budgets.throughput_budgets.length > 0 && (
             <>
@@ -68,6 +64,8 @@ export default function PerformancePage() {
           )}
         </div>
       )}
+
+      {tab === 'slow' && isAdmin && <SlowQueriesPanel />}
 
       {/* Search Config */}
       {tab === 'config' && config && (
