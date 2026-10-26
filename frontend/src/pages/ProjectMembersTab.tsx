@@ -7,7 +7,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, KeyRound, ShieldCheck, UserMinus, UserPlus } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { useUsers, useProjectMembers } from '@/hooks/useUserManagement'
+import { useUsersPage, useProjectMembers } from '@/hooks/useUserManagement'
 import { userManagementService, type ProjectMember, type UserItem, type UserRole } from '@/services/userManagementService'
 import { projectsService } from '@/services/projectsService'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -49,9 +49,6 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
   const [defaultQaLeadDraft, setDefaultQaLeadDraft] = useState<string>('')
   const [savingDefault, setSavingDefault] = useState(false)
   const [resettingDefaultLead, setResettingDefaultLead] = useState(false)
-
-  // Use SWR hook for users — reliable, auto-retries, and shares cache with Users tab
-  const { data: allUsers, isLoading: usersLoading, error: usersError } = useUsers()
 
   // Members come from SWR (keyed on the selected project) rather than a
   // load-on-change effect; local edits below patch the cache via mutate.
@@ -170,7 +167,6 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
 
   const selectedProject = selectedProjectObj
   const memberUserIds = new Set(members.map(m => m.user_id))
-  const nonMembers = (allUsers ?? []).filter(u => !memberUserIds.has(u.id) && u.is_active)
   const currentDefaultQaLead = members.find(
     m => m.user_id === (selectedProject?.default_qa_lead_user_id ?? ''),
   )
@@ -213,19 +209,10 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
           slot={addSlot}
           projectId={selectedProjectId}
           projectName={selectedProject?.name ?? ''}
-          nonMembers={nonMembers}
-          usersLoading={usersLoading}
+          memberUserIds={memberUserIds}
           onClose={() => closeAdd('add')}
           onAdded={member => { mutateMembers(prev => [...(prev ?? []), member], { revalidate: false }); closeAdd('add') }}
         />
-      )}
-
-      {/* User loading error warning */}
-      {usersError && (
-        <div className="flex items-center gap-2 text-xs text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20 border border-[var(--status-broken-bd)]/30 rounded px-3 py-2">
-          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-          Could not load users list. The &quot;Add Member&quot; dropdown may be empty. Check your permissions (QA_LEAD+ required).
-        </div>
       )}
 
       {/* Default QA Lead card — admin-only edit, everyone can see the current value.
@@ -435,8 +422,8 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
 interface AddProjectMemberModalProps {
   projectId: string
   projectName: string
-  nonMembers: UserItem[]
-  usersLoading: boolean
+  /** Users already in the project: the search leaves them out. */
+  memberUserIds: Set<string>
   onClose: () => void
   onAdded: (member: ProjectMember) => void
   /** W27b: the tab's Add Member slot (dirty tracking + the discard question). */
@@ -444,8 +431,26 @@ interface AddProjectMemberModalProps {
 }
 
 /** Add Member, in the page under the tab's top row (W27b; it was a modal dialog). */
-function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoading, onClose, onAdded, slot }: AddProjectMemberModalProps) {
+function AddProjectMemberModal({ projectId, projectName, memberUserIds, onClose, onAdded, slot }: AddProjectMemberModalProps) {
   const [userId, setUserId] = useState('')
+  // ADM-03: the picker searches the SERVER (username, email, full name), so a
+  // user beyond the first page is found by typing; it used to load one page of
+  // 50 and could not offer anyone else.
+  const [search, setSearch] = useState('')
+  const [query, setQuery] = useState('')
+  useEffect(() => {
+    const id = setTimeout(() => setQuery(search.trim()), 300)
+    return () => clearTimeout(id)
+  }, [search])
+  const { data: found, isLoading: usersLoading, error: usersError } = useUsersPage({
+    is_active: true,
+    page_size: 20,
+    ...(query ? { q: query } : {}),
+  })
+  const nonMembers: UserItem[] = (Array.isArray(found?.items) ? found.items : []).filter(
+    u => !memberUserIds.has(u.id) && u.is_active,
+  )
+  const moreThanShown = found?.total != null && found.total > (found.items?.length ?? 0)
   const [role, setRole] = useState<UserRole>('TESTER')
   const [saving, setSaving] = useState(false)
 
@@ -489,14 +494,28 @@ function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoadin
     >
         <div className="max-w-2xl space-y-3">
           <div>
-            <label className="block text-xs text-[var(--color-text-muted)] mb-1">User</label>
-            {usersLoading ? (
+            <label htmlFor="member-user-search" className="block text-xs text-[var(--color-text-muted)] mb-1">User</label>
+            <input
+              id="member-user-search"
+              type="search"
+              placeholder="Search name, username or email"
+              value={search}
+              maxLength={100}
+              onChange={e => { setSearch(e.target.value); setUserId('') }}
+              className="mb-2 w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border)]"
+            />
+            {usersError ? (
+              <p className="flex items-center gap-2 text-xs text-[var(--status-broken)] py-2">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                Could not load users. Check your permissions (QA_LEAD+ required).
+              </p>
+            ) : usersLoading && !found ? (
               <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] py-2">
                 <LoadingSpinner size="sm" /> Loading users…
               </div>
             ) : nonMembers.length === 0 ? (
               <p className="text-xs text-[var(--color-text-muted)] py-2">
-                All users are already members of this project, or the users list could not be loaded.
+                {query ? `No user outside this project matches “${query}”.` : 'All users are already members of this project.'}
               </p>
             ) : (
               <select
@@ -509,6 +528,11 @@ function AddProjectMemberModal({ projectId, projectName, nonMembers, usersLoadin
                   <option key={u.id} value={u.id}>{u.full_name || u.username} ({u.email})</option>
                 ))}
               </select>
+            )}
+            {moreThanShown && !usersError && (
+              <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                Showing the first {found?.items.length} of {found?.total} matches — type more to narrow.
+              </p>
             )}
           </div>
           <div>

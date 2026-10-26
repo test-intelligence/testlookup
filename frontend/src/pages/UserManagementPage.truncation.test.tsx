@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 
@@ -24,13 +24,17 @@ import { MemoryRouter } from 'react-router-dom'
  * its own defect.
  *
  * The fix has two halves and this guard pins both: filters go to the server,
- * and hitting the page cap renders a visible notice.
+ * and the list never presents a partial page as the whole table.
+ *
+ * ADM-03 (W17) replaced the 200-row cap notice with server paging: 50 a page,
+ * the server's filtered total in the pager ("1–50 of 132"), Next / Prev and a
+ * server-side search.
  */
 
 const useUsersMock = vi.fn()
 
 vi.mock('@/hooks/useUserManagement', () => ({
-  useUsers: (params?: unknown) => useUsersMock(params),
+  useUsersPage: (params?: unknown) => useUsersMock(params),
   useApiKeys: () => ({ data: [], isLoading: false }),
   refreshUsers: vi.fn(),
   refreshApiKeys: vi.fn(),
@@ -72,27 +76,46 @@ describe('UserManagementPage list completeness', () => {
     useUsersMock.mockReset()
   })
 
-  it('asks the server for a page size rather than taking the default', () => {
-    useUsersMock.mockReturnValue({ data: userRows(3), isLoading: false })
+  it('asks the server for page 1 of 50', () => {
+    useUsersMock.mockReturnValue({ data: { items: userRows(3), total: 3 }, isLoading: false })
     render(<UserManagementPage />, { wrapper: MemoryRouter })
 
-    const params = useUsersMock.mock.calls[0][0]
-    expect(params).toBeDefined()
-    expect(params.page_size).toBeGreaterThan(50)
+    expect(useUsersMock.mock.calls[0][0]).toEqual({ page: 1, page_size: 50 })
   })
 
-  it('renders a truncation notice when the page cap is hit', () => {
-    useUsersMock.mockReturnValue({ data: userRows(200), isLoading: false })
+  it("shows the server's total and pages forward with Next", () => {
+    useUsersMock.mockReturnValue({ data: { items: userRows(50), total: 132 }, isLoading: false })
     render(<UserManagementPage />, { wrapper: MemoryRouter })
 
-    expect(screen.getByRole('status').textContent).toMatch(/Showing the first 200 users/i)
+    const pager = screen.getByTestId('users-pager')
+    expect(pager.textContent).toContain('1–50 of 132')
+    expect((screen.getByRole('button', { name: 'Prev' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(useUsersMock.mock.calls[useUsersMock.mock.calls.length - 1][0]).toEqual({ page: 2, page_size: 50 })
+    expect(screen.getByTestId('users-pager').textContent).toContain('51–100 of 132')
   })
 
-  it('renders no notice when the list fits', () => {
-    useUsersMock.mockReturnValue({ data: userRows(12), isLoading: false })
+  it('disables Next on the last page, and says nothing is cut when the list fits', () => {
+    useUsersMock.mockReturnValue({ data: { items: userRows(12), total: 12 }, isLoading: false })
     render(<UserManagementPage />, { wrapper: MemoryRouter })
 
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByTestId('users-pager').textContent).toContain('1–12 of 12')
+    expect((screen.getByRole('button', { name: 'Next' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByText(/Showing the first/i)).toBeNull()
+  })
+
+  it('sends the search to the server after a pause and goes back to page 1', async () => {
+    vi.useFakeTimers()
+    try {
+      useUsersMock.mockReturnValue({ data: { items: userRows(50), total: 132 }, isLoading: false })
+      render(<UserManagementPage />, { wrapper: MemoryRouter })
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search users' }), { target: { value: ' sara ' } })
+      await act(async () => { vi.advanceTimersByTime(350) })
+      expect(useUsersMock.mock.calls[useUsersMock.mock.calls.length - 1][0]).toEqual({ page: 1, page_size: 50, q: 'sara' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('sends the chosen role to the server and does not re-filter locally', () => {
@@ -103,7 +126,7 @@ describe('UserManagementPage list completeness', () => {
     const rows = userRows(4)
     rows[0].role = 'ADMIN'
     rows[1].is_active = false
-    useUsersMock.mockReturnValue({ data: rows, isLoading: false })
+    useUsersMock.mockReturnValue({ data: { items: rows, total: rows.length }, isLoading: false })
     render(<UserManagementPage />, { wrapper: MemoryRouter })
 
     const roleSelect = screen.getAllByRole('combobox')[0]

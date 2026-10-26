@@ -312,7 +312,7 @@ def configure_middlewares(app: FastAPI) -> None:
         # be a full payload) and the cache header would be invisible exactly
         # where it is read. ``Retry-After`` -- the 429 and the 503
         # ``analytics_timeout`` -- is already here.
-        expose_headers=["X-Refresh-Retry-Safe", "Retry-After", "X-TestLookup-AI-Generated", "X-TestLookup-Review-State", "X-Request-ID", "X-Analytics-Meta", "ETag", "X-Analytics-Cache", "Content-Disposition"],
+        expose_headers=["X-Refresh-Retry-Safe", "Retry-After", "X-TestLookup-AI-Generated", "X-TestLookup-Review-State", "X-Request-ID", "X-Analytics-Meta", "ETag", "X-Analytics-Cache", "Content-Disposition", "X-Total-Count"],
     )
 
     # Import locally so middleware setup stays close to other app wiring.

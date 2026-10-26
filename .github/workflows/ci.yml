@@ -807,6 +807,7 @@ jobs:
           tests/integration/test_failures_headline_counts_postgres.py
           tests/integration/test_top_failing_last_failed_run_postgres.py
           tests/integration/test_assignee_and_user_list_postgres.py
+          tests/integration/test_user_list_search_postgres.py
           tests/integration/test_defects_list_fields_postgres.py
           tests/integration/test_analytics_scope_postgres.py
           tests/integration/test_analytics_epoch_redis_postgres.py

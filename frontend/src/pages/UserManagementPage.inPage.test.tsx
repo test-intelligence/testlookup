@@ -19,9 +19,11 @@ const users = vi.hoisted(() => ({
 }))
 
 vi.mock('@/hooks/useUserManagement', () => ({
-  useUsers: (params: unknown) => {
+  // ADM-03: the page reads a server page ({items, total}); the fixtures stay plain lists.
+  useUsersPage: (params: unknown) => {
     users.calls.push(params)
-    return users.state
+    const rows = users.state.data
+    return { ...users.state, data: rows ? { items: rows, total: rows.length } : undefined }
   },
   refreshUsers: vi.fn(),
 }))
@@ -129,7 +131,7 @@ describe('UserManagementPage — Add User and Invite User in the page', () => {
     )
     expect(screen.queryByRole('table')).toBeNull()
     expect(within(screen.getByRole('region', { name: 'Add User' })).getByLabelText('Username')).toHaveValue('jdoe')
-    expect(users.calls[users.calls.length - 1]).toEqual({ page_size: 200, role: 'ADMIN' })
+    expect(users.calls[users.calls.length - 1]).toEqual({ page: 1, page_size: 50, role: 'ADMIN' })
 
     fireEvent.click(within(screen.getByRole('region', { name: 'Add User' })).getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('region', { name: 'Add User' })).toBeNull()
@@ -185,6 +187,6 @@ describe('UserManagementPage — Edit user under its row', () => {
     fireEvent.click(within(within(section).getByRole('group')).getByRole('button', { name: 'Discard changes' }))
     expect(screen.queryByRole('region', { name: 'Edit User' })).toBeNull()
     expect(screen.getByRole('combobox', { name: 'Filter by status' })).toHaveValue('inactive')
-    expect(users.calls[users.calls.length - 1]).toEqual({ page_size: 200, is_active: false })
+    expect(users.calls[users.calls.length - 1]).toEqual({ page: 1, page_size: 50, is_active: false })
   })
 })

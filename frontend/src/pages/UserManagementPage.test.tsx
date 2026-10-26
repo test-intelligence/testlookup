@@ -17,7 +17,7 @@ const useApiKeysSpy = vi.fn()
 let apiKeys: unknown[] = []
 
 vi.mock('@/hooks/useUserManagement', () => ({
-  useUsers: () => ({ data: [], isLoading: false }),
+  useUsersPage: () => ({ data: { items: [], total: 0 }, isLoading: false }),
   refreshUsers: vi.fn(),
 }))
 vi.mock('@/hooks/useApiKeys', () => ({

@@ -1,10 +1,23 @@
 import useSWR from 'swr'
 import { appMutate as mutate } from '@/utils/swrCacheMutate'
-import { userManagementService, type UserRole } from '@/services/userManagementService'
+import { userManagementService, type UserRole, type UsersPageParams } from '@/services/userManagementService'
 
 export function useUsers(params?: { is_active?: boolean; role?: UserRole; page_size?: number }) {
   const key = params ? ['/api/v1/users', params] : '/api/v1/users'
   return useSWR(key, () => userManagementService.listUsers(params))
+}
+
+/**
+ * ADM-03: a server page of users with the filtered total. Keyed under
+ * '/api/v1/users' (with a 'page' tag) so `refreshUsers` re-reads it too.
+ * `null` params = no request (a closed picker asks for nothing).
+ */
+export function useUsersPage(params: UsersPageParams | null) {
+  return useSWR(
+    params ? ['/api/v1/users', 'page', params] : null,
+    () => userManagementService.listUsersPage(params as UsersPageParams),
+    { keepPreviousData: true },
+  )
 }
 
 export function useProjectMembers(projectId: string | null) {

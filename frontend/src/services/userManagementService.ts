@@ -65,6 +65,20 @@ export interface AdminCreateUserResponse {
   temp_password: string
 }
 
+export interface UsersPageParams {
+  is_active?: boolean
+  role?: UserRole
+  q?: string
+  page?: number
+  page_size?: number
+}
+
+export interface UsersPage {
+  items: UserItem[]
+  /** Users matching the filters on every page; null when the server did not say. */
+  total: number | null
+}
+
 export const userManagementService = {
   // Users
   /**
@@ -77,6 +91,20 @@ export const userManagementService = {
    */
   listUsers: (params?: { is_active?: boolean; role?: UserRole; page_size?: number }) =>
     api.get<UserItem[]>('/api/v1/users', { params }).then((r) => r.data),
+
+  /**
+   * ADM-03: one page of users and the number matching the filters across
+   * every page (the ``X-Total-Count`` header; the body stays a bare list).
+   * ``q`` is matched by the SERVER on username, email and full name. An older
+   * server without the header answers ``total: null`` -- never a guess.
+   */
+  listUsersPage: (params: UsersPageParams) =>
+    api.get<UserItem[]>('/api/v1/users', { params }).then((r) => {
+      const items = Array.isArray(r.data) ? r.data : []
+      const raw = r.headers?.['x-total-count']
+      const total = raw == null || raw === '' || Number.isNaN(Number(raw)) ? null : Number(raw)
+      return { items, total } as UsersPage
+    }),
 
   updateUserRole: (userId: string, role: UserRole) =>
     api.patch<UserItem>(`/api/v1/users/${userId}/role`, { role }).then((r) => r.data),
