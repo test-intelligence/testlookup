@@ -125,3 +125,21 @@ def test_change_correlation_reads_gitlab_commits_in_the_window(fake, monkeypatch
                                                     "2026-10-20T09:30:00Z", "2026-10-20T11:30:00Z"))
     assert [c["message"] for c in commits] == ["Tighten auth token parsing", "Retry upstream on 503"]
     assert commits[0]["author"] == "Dana Whitfield" and len(commits[0]["sha"]) == 8
+
+
+def test_a_gitlab_commit_links_to_gitlab_never_github(fake):
+    """The compare's commits carry a GitLab link (found in the W19 demo: they linked to github.com)."""
+    target = ca.GitLabConnectorTarget(base_url=BASE, project_path="group/api-gateway", pat="fake-gitlab-pat")
+    base, head = demo_sha("group/api-gateway", 0), demo_sha("group/api-gateway", 2)
+    commits = asyncio.run(ca._fetch_gitlab_range(target, base, head, run_id=uuid.uuid4()))
+    assert [c["web_url"] for c in commits] == [f"{BASE}/group/api-gateway/-/commit/{c['sha']}" for c in commits]
+
+
+@pytest.mark.parametrize("web_url,expected", [
+    ("https://gitlab.corp/g/r/-/commit/abc", "https://gitlab.corp/g/r/-/commit/abc"),
+    ("javascript:alert(1)", "https://gitlab.corp/g/r/-/commit/abc"),
+    (None, "https://gitlab.corp/g/r/-/commit/abc"),
+])
+def test_the_gitlab_link_is_its_web_url_or_built_from_the_base(web_url, expected):
+    target = ca.GitLabConnectorTarget(base_url="https://gitlab.corp/api/v4", project_path="g/r", pat="x")
+    assert ca._gitlab_commit_link(target, {"web_url": web_url}, "abc") == expected

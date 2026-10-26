@@ -409,6 +409,25 @@ def _commit_html_url(ci_repo: Optional[str], api_base: Optional[str], sha: str) 
     return f"{root}/{repo}/commit/{sha}"
 
 
+def _http_link(value: Any) -> Optional[str]:
+    """``value`` when it is an absolute http(s) URL with a host, else ``None`` (it lands in an href)."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parts = urlsplit(value.strip())
+    except ValueError:
+        return None
+    return value.strip() if parts.scheme in ("http", "https") and parts.hostname else None
+
+
+def _gitlab_commit_link(target: "GitLabConnectorTarget", rc: dict[str, Any], sha: str) -> Optional[str]:
+    """W19 INT-05: a GitLab commit links to GitLab — its ``web_url``, else ``{base}/{path}/-/commit/{sha}``."""
+    root = target.base_url.rstrip("/")
+    if root.endswith("/api/v4"):
+        root = root[: -len("/api/v4")]
+    return _http_link(rc.get("web_url")) or _http_link(f"{root}/{target.project_path.strip('/')}/-/commit/{sha}")
+
+
 async def _commit_link_api_base(db: AsyncSession, run: TestRun) -> Optional[str]:
     """The API base commit links are built against: the project's GitHub
     integration, so a GitHub Enterprise project links to its own server.
@@ -641,6 +660,7 @@ async def _fetch_gitlab_range(
             "message": _first_line(rc.get("title") or rc.get("message")),
             "files": [],
             "committed_at": str(rc.get("committed_date") or rc.get("created_at") or "")[:40] or None,
+            "web_url": _gitlab_commit_link(target, rc, sha[:64]),
         })
     files = [str(d.get("new_path"))[:_FILE_PATH_CAP] for d in (body.get("diffs") or []) if d.get("new_path")]
     if metas and files:
@@ -998,7 +1018,7 @@ def _serialize_range(
             "resolved_at": row.resolved_at.isoformat() if row is not None and row.resolved_at else None,
         }
     commits = [
-        {**c, "commit_url": _commit_html_url(run.ci_repo, api_base, c.get("sha", ""))}
+        {**c, "commit_url": c.get("web_url") or _commit_html_url(run.ci_repo, api_base, c.get("sha", ""))}
         for c in row.commits
     ]
     return {
@@ -1182,8 +1202,9 @@ async def rank_suspects(
     suspects = score_commits(list(row.commits), loc)
     # Attach deep links now that we know the repo, on the project's GitHub host.
     api_base = await _commit_link_api_base(db, run)
+    web_urls = {c.get("sha"): c.get("web_url") for c in row.commits if c.get("web_url")}  # W19: GitLab's own
     for s in suspects:
-        s["commit_url"] = _commit_html_url(run.ci_repo, api_base, s.get("sha", ""))
+        s["commit_url"] = web_urls.get(s.get("sha")) or _commit_html_url(run.ci_repo, api_base, s.get("sha", ""))
 
     return {
         "run_id": str(run.id),

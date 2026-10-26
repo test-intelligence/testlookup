@@ -365,7 +365,8 @@ export default function RunDetailPage() {
   ]
 
   const subtitle = run
-    ? [run.jenkins_job ?? 'Jenkins', run.branch, formatDateTime(run.created_at)].filter(Boolean).join(' · ')
+    ? // The Jenkins job when there is one; never a guessed "Jenkins" (a GitLab or GitHub run said Jenkins, W19 demo).
+      [run.jenkins_job, run.branch, formatDateTime(run.created_at)].filter(Boolean).join(' · ')
     : undefined
 
   return (
