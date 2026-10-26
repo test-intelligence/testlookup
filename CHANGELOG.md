@@ -916,6 +916,15 @@ locally by default.
 
 ### Fixed
 
+- The pre-release gate run without a candidate (Settings › AI evaluation ›
+  Gate, the agent-stack gate and the nightly gate) no longer compares the
+  legacy label-agreement metric with a replay baseline. Once a replay run was
+  set as the baseline, the classification gate read FAIL ("Accuracy dropped
+  8.3 %") because it compared two different measures; it now reads Not enough
+  evidence and says why: gate a completed replay run against a replay
+  baseline. Found walking W16 on the homelab (branch
+  `fix/df-ai-eval-gate-kind-20261026`). Test: `test_eval_gate_candidate.py`.
+
 - PII redaction no longer masks a run id as a card number. A random run id
   whose first three groups happen to be all digits
   (`05982379-5519-4289-a773-…`) read as 16 digits and was stored as
