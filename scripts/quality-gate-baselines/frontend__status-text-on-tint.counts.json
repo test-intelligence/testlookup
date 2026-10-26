@@ -47,7 +47,7 @@
     "frontend/src/pages/inbox/CaseApprovals.tsx": 1,
     "frontend/src/pages/inbox/DefectApprovals.tsx": 1,
     "frontend/src/pages/settings/AIConfigPage.tsx": 8,
-    "frontend/src/pages/settings/AIEvalDashboardPage.tsx": 17,
+    "frontend/src/pages/settings/AIEvalDashboardPage.tsx": 14,
     "frontend/src/pages/settings/AuditDashboardPage.tsx": 4,
     "frontend/src/pages/settings/BillingPage.tsx": 4,
     "frontend/src/pages/settings/DigestsPage.tsx": 5,

@@ -322,3 +322,125 @@ def test_migration_is_next_head_reversible_and_concurrent_for_existing_table():
     assert "if_not_exists=True" in up
     assert "drop_table(PAIR_TABLE)" in down and "drop_column" in down
     assert "postgresql_concurrently=True" in down and "if_exists=True" in down
+
+
+# ── W16 AGT-13: labelled live pairs are a second G2 corpus (cases ADDED; the cases above are untouched) ──
+
+import hashlib  # noqa: E402
+import json  # noqa: E402
+
+#: Today's answer for the full summary corpus, computed on the tree BEFORE ``labelled_pairs`` existed
+#: (sha256 of the canonical JSON of the whole answer, and its manifest checksum).
+_SUMMARY_ANSWER_SHA256 = "f1b39db0cb07aa9d0deca88820a8bd0e6f38caafda6ec83bad8fe71dd87a3485"
+_SUMMARY_MANIFEST_CHECKSUM = "1db3469e24abcfc304a2e65ab7bd9a89891e9d87f948c15149831b60d74654c5"
+
+
+def _answer_sha(result) -> str:
+    return hashlib.sha256(
+        json.dumps(result, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _live(pair_id: str, verdict: str, *, label_status="human_labelled", incumbent=None, candidate=None):
+    return svc.LabelledPair(
+        pair_id=pair_id,
+        verdict=verdict,
+        label_status=label_status,
+        incumbent_output={"summary": "Checkout fails on the cart step."} if incumbent is None else incumbent,
+        candidate_output={"summary": "The cart step times out."} if candidate is None else candidate,
+        incumbent_tokens=40,
+        candidate_tokens=12,
+    )
+
+
+def _summary(pairs, labelled=None):
+    kwargs = {} if labelled is None else {"labelled_pairs": labelled}
+    return svc.compare_tier_outputs(
+        capability="summary", incumbent_tier="llm", candidate_tier="slm", pairs=pairs, **kwargs
+    )
+
+
+def test_no_labelled_pairs_reproduces_todays_answer_byte_for_byte():
+    default = _summary(_pairs("summary"))
+    explicit = _summary(_pairs("summary"), labelled=())
+
+    assert _answer_sha(default) == _answer_sha(explicit) == _SUMMARY_ANSWER_SHA256
+    assert default["manifest_checksum"] == _SUMMARY_MANIFEST_CHECKSUM
+    assert "live_labelled_pairs" not in default and "live_label_count" not in default["manifest"]
+    assert all("provenance" not in row for row in default["scored_pairs"])
+    params = list(inspect.signature(svc.compare_tier_outputs).parameters.values())
+    assert params[-1].name == "labelled_pairs" and params[-1].kind is inspect.Parameter.KEYWORD_ONLY
+    assert params[-1].default == ()
+
+
+def test_eighteen_corpus_and_three_live_pairs_cross_the_summary_floor():
+    corpus = _pairs("summary", 18)
+    before = _summary(corpus)
+    assert before["verdict"] == EvalVerdict.INSUFFICIENT_SAMPLES.value and before["sample_count"] == 18
+
+    live = [_live("pA1b2C3d4", "both"), _live("pB2c3D4e5", "both", label_status="golden_match"),
+            _live("pC3d4E5f6", "both")]
+    after = _summary(corpus, labelled=live)
+
+    assert after["sample_count"] == 21 and after["live_labelled_pairs"] == 3
+    assert after["verdict"] == EvalVerdict.PASS.value, after["reason"]
+    provenance = [row["provenance"] for row in after["scored_pairs"]]
+    assert provenance == ["corpus"] * 18 + ["human_labelled", "golden_match", "human_labelled"]
+    live_ids = {"live:pA1b2C3d4", "live:pB2c3D4e5", "live:pC3d4E5f6"}
+    assert live_ids <= set(after["manifest"]["sample_ids"]) and after["manifest"]["live_label_count"] == 3
+    assert after["manifest_checksum"] != before["manifest_checksum"], "the checksum covers the evidence used"
+    metrics = {m["name"]: m for m in after["per_gate"]["G2"]}
+    assert metrics["incumbent_accuracy"]["n"] == 21
+    # Cost and latency stay measured on the corpus rows: a live pair records neither.
+    assert metrics["cost_delta_usd"]["value"] == pytest.approx(-0.01)
+    assert metrics["latency_delta_ms"]["value"] == -20
+
+
+def test_a_live_pair_labelled_neither_lowers_both_accuracies():
+    result = _summary(_pairs("summary"), labelled=[_live("pD4e5F6a7", "neither")])
+    metrics = {m["name"]: m for m in result["per_gate"]["G2"]}
+    assert metrics["incumbent_accuracy"]["value"] == pytest.approx(20 / 21)
+    assert metrics["candidate_accuracy"]["value"] == pytest.approx(20 / 21)
+    assert result["scored_pairs"][-1]["sample_id"] == "live:pD4e5F6a7"
+
+
+def test_a_verdict_credits_only_the_tier_it_names():
+    result = _summary(
+        _pairs("summary"), labelled=[_live("pE5f6A7b8", "incumbent"), _live("pF6a7B8c9", "candidate")]
+    )
+    incumbent, candidate = result["scored_pairs"][-2:]
+    assert (incumbent["incumbent_correct"], incumbent["candidate_correct"]) == (True, False)
+    assert (candidate["incumbent_correct"], candidate["candidate_correct"]) == (False, True)
+
+
+def test_a_live_pair_with_an_empty_output_is_not_contract_valid():
+    result = _summary(_pairs("summary"), labelled=[_live("pA7b8C9d0", "both", candidate={})])
+    assert result["verdict"] == EvalVerdict.FAIL.value
+    assert "contract-valid" in result["reason"]
+
+
+def test_duplicate_live_ids_and_unknown_verdicts_are_rejected():
+    with pytest.raises(ValueError, match="duplicate paired sample: live:pB8c9D0e1"):
+        _summary(_pairs("summary"), labelled=[_live("pB8c9D0e1", "both"), _live("pB8c9D0e1", "neither")])
+    with pytest.raises(ValueError, match="no valid verdict"):
+        _summary(_pairs("summary"), labelled=[_live("pC9d0E1f2", "maybe")])
+
+
+async def test_store_shadow_pair_sanitizes_both_outputs_before_the_insert():
+    db = _DB(used=0)
+    row = await svc.store_shadow_pair(
+        db,
+        project_id=PROJECT_ID,
+        agent_id=AGENT_ID,
+        sample_key="summary:run-a1",
+        incumbent_tier="llm",
+        candidate_tier="slm",
+        incumbent_output={"summary": "Retry with token=Zx9Yw8Vu7Ts6", "x": 1},
+        candidate_output={"x": 1},
+        incumbent_tokens=3,
+        candidate_tokens=2,
+        daily_token_budget=100,
+    )
+    assert row is not None
+    assert row.incumbent_output == {"summary": "Retry with token=[REDACTED]", "x": 1}
+    assert row.candidate_output == {"x": 1}, "a clean output is stored unchanged"

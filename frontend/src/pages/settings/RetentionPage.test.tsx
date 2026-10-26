@@ -359,6 +359,7 @@ describe('RetentionPage', () => {
         search_index_documents: null,
         ai_history_versions: 3,
         search_usage_rows: 0,
+        shadow_pairs_unlabelled: 0,
       },
       unmeasured: ['analysis_cache_entries', 'search_index_documents'],
     })
@@ -398,6 +399,7 @@ describe('RetentionPage', () => {
         search_index_documents: 0,
         ai_history_versions: 0,
         search_usage_rows: 0,
+        shadow_pairs_unlabelled: 0,
       },
       unmeasured: [],
     })
@@ -726,6 +728,7 @@ describe('RetentionPage', () => {
         runs: 1, test_cases: 2, mongo_docs: {}, minio_objects: 3, event_archive_rows: 4, audit_rows: 5,
         provenance_rows: 6, compliance_packs_expired: 7, evidence_artifact_rows: 8, memory_entries_expired: 9,
         analysis_cache_entries: 10, search_index_documents: 11, ai_history_versions: 12, search_usage_rows: 1234,
+        shadow_pairs_unlabelled: 56,
       },
       unmeasured: [],
     }
@@ -743,6 +746,45 @@ describe('RetentionPage', () => {
     first.unmount()
 
     const { search_usage_rows: _dropped, ...older } = PREVIEW.candidates
+    mockPreview.mockResolvedValue({ ...PREVIEW, candidates: older })
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Preview purge')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(screen.getByText('Preview purge'))
+    })
+    await waitFor(() => expect(screen.getByText(label)).toBeTruthy())
+    expect((screen.getByText(label).closest('tr') as HTMLElement).textContent).toBe(`${label}not measured`)
+  })
+
+  it('W16 AGT-13: the preview lists the unlabelled shadow pairs last, and "not measured" from an older server', async () => {
+    const PREVIEW = {
+      cutoffs: {
+        raw_events: '2026-05-04T00:00:00Z',
+        runs: '2025-08-02T00:00:00Z',
+        artifacts: '2026-02-03T00:00:00Z',
+        audit: '2019-08-05T00:00:00Z',
+      },
+      candidates: {
+        runs: 1, test_cases: 2, mongo_docs: {}, minio_objects: 3, event_archive_rows: 4, audit_rows: 5,
+        provenance_rows: 6, compliance_packs_expired: 7, evidence_artifact_rows: 8, memory_entries_expired: 9,
+        analysis_cache_entries: 10, search_index_documents: 11, ai_history_versions: 12, search_usage_rows: 13,
+        shadow_pairs_unlabelled: 2048,
+      },
+      unmeasured: [],
+    }
+    const label = 'Unlabelled shadow pairs (kept 30 days)'
+    mockPreview.mockResolvedValue(PREVIEW)
+    const first = await renderPage()
+    await waitFor(() => expect(screen.getByText('Preview purge')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(screen.getByText('Preview purge'))
+    })
+    await waitFor(() => expect(screen.getByText(label)).toBeTruthy())
+    const rows = Array.from(first.container.querySelectorAll('tbody tr')).map(tr => tr.textContent)
+    expect(rows.indexOf(`${label}2,048`)).toBe(rows.indexOf('Search usage rows (kept 30 days)13') + 1)
+    first.unmount()
+
+    const { shadow_pairs_unlabelled: _dropped, ...older } = PREVIEW.candidates
     mockPreview.mockResolvedValue({ ...PREVIEW, candidates: older })
     await renderPage()
     await waitFor(() => expect(screen.getByText('Preview purge')).toBeTruthy())

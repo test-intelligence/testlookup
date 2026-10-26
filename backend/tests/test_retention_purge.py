@@ -430,6 +430,9 @@ async def test_preview_writes_nothing_and_returns_all_count_keys():
         # W12 SRCH-05: the project's search usage rows past the fixed 30-day
         # window (tests/integration/test_search_usage_postgres.py).
         "search_usage_rows",
+        # W16 AGT-13 (a deliberate key): the project's PENDING shadow pairs past
+        # their 30 days (tests/integration/test_shadow_pairs_postgres.py).
+        "shadow_pairs_unlabelled",
     }
     assert set(out["cutoffs"]) == {"raw_events", "runs", "artifacts", "audit"}
     assert out["candidates"]["runs"] == 1

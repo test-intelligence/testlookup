@@ -91,7 +91,8 @@ async def test_masked_parameters_never_leave_the_server_with_their_value():
     case = make_case()
     params = [
         {"name": "password", "value": "hunter2", "mode": None, "masked": True},
-        {"name": "token", "value": "abc", "mode": "hidden", "masked": False},
+        # Not a hex-looking value: the dump carries random uuid4 ids, and "abc" turned up inside one ~2 % of runs.
+        {"name": "token", "value": "tok-secret-zz", "mode": "hidden", "masked": False},
         {"name": "user", "value": "alice", "mode": None, "masked": False},
     ]
     history = await case_history(scripted_db([(version_row(case, 1, parameters=params), "P", "p")]), case)
@@ -101,7 +102,7 @@ async def test_masked_parameters_never_leave_the_server_with_their_value():
         {"name": "token", "value": None, "mode": "hidden", "masked": True},
         {"name": "user", "value": "alice", "mode": None, "masked": False},
     ]
-    assert "hunter2" not in history[0].model_dump_json() and "abc" not in history[0].model_dump_json()
+    assert "hunter2" not in history[0].model_dump_json() and "tok-secret-zz" not in history[0].model_dump_json()
     # The ORM row itself is untouched (the history only reads).
     assert params[0]["value"] == "hunter2"
 

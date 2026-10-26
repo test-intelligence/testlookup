@@ -770,19 +770,30 @@ async def _find_duplicate_semantic(
             "ChromaDB duplicate check failed, falling back to difflib: %s", exc
         )
 
-    # Fallback: difflib title similarity
-    import difflib
-
-    hint_lower = duplicate_hint.lower()
+    # Fallback: difflib title similarity (the pure decision core, W16).
     for d in open_defects:
-        candidate_title = (d.title or d.cluster_id or "").lower()
-        ratio = difflib.SequenceMatcher(
-            None, hint_lower[:100], candidate_title[:100]
-        ).ratio()
-        if ratio > 0.7:
+        candidate_title = d.title or d.cluster_id or ""
+        if title_duplicate_ratio(duplicate_hint, candidate_title) > DUPLICATE_TITLE_RATIO:
             return str(d.id), True
 
     return None, False
+
+
+#: A title pair whose ratio is ABOVE this is a duplicate (the fallback's rule).
+DUPLICATE_TITLE_RATIO = 0.7
+
+
+def title_duplicate_ratio(a: str, b: str) -> float:
+    """``difflib`` similarity of two titles over their first 100 lower-cased chars.
+
+    The decision core of ``_find_duplicate_semantic``'s fallback, extracted so
+    the AI-eval replay (``ai_eval_runner``) can judge a golden title PAIR
+    without touching a project's defects or its ChromaDB collection (the
+    detector upserts every open defect before it queries). Side-effect free.
+    """
+    import difflib
+
+    return difflib.SequenceMatcher(None, (a or "").lower()[:100], (b or "").lower()[:100]).ratio()
 
 
 async def _create_jira_ticket(

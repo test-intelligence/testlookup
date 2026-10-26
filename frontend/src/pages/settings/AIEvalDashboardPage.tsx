@@ -1,41 +1,47 @@
 import { useMemo, useState } from 'react';
 import useSWR from 'swr';
-import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import PageHeader from '@/components/ui/PageHeader';
+import Tabs, { type TabItem } from '@/components/ui/Tabs';
+import { useTabParam } from '@/components/ui/useTabParam';
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline';
 import Disclosure from '@/components/ui/Disclosure';
 import { buildAIEvalWorkflow } from '@/components/workflow/workflowPresets';
+import AgentStackTab from '@/components/aiEval/AgentStackTab';
+import DatasetsTab from '@/components/aiEval/DatasetsTab';
+import EvalGateTab from '@/components/aiEval/EvalGateTab';
+import ReviewerQualityTab from '@/components/aiEval/ReviewerQualityTab';
+import TierComparisonTab from '@/components/aiEval/TierComparisonTab';
+import { CHIP_CLASS, TONE_CLASS, metricChip, workflowGateResult } from '@/components/aiEval/aiEvalModel';
+import { useShadowPairs } from '@/hooks/useAiEval';
+import { usePermissions } from '@/hooks/usePermissions';
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore';
 import {
   type EvalGateResult,
-  createDatasetFromFeedback,
   getReportEvalReadiness,
   getDashboard,
   listReportEvalCycles,
   listBaselines,
   listDatasets,
-  runEvaluation,
-  runPreReleaseGate,
-  seedGoldenDatasets,
 } from '../../services/aiEvalService';
 import { helpTopicParam } from '@/components/help/helpTopics';
 import { formatDay } from '@/utils/formatters';
 
 const HELP_TOPIC = helpTopicParam('/settings/ai-eval');
 
-type Tab = 'dashboard' | 'datasets' | 'gate';
-
-const GATE_STATUS_STYLES: Record<string, string> = {
-  PASS: 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)] border-[var(--status-passed-bd)]/50',
-  FAIL: 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)] border-[var(--status-failed-bd)]/50',
-  WARN: 'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)] border-[var(--status-broken-bd)]/50',
-  NO_BASELINE: 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)] border-[var(--color-border)]',
-};
+/** The six tabs (W16 AGT-09), kept in `?tab=`; short labels so the bar fits the settings column (§7.2 D-16). */
+const TAB_IDS = ['overview', 'datasets', 'gate', 'stack', 'tiers', 'reviewer'] as const;
+type Tab = (typeof TAB_IDS)[number];
 
 export default function AIEvalDashboardPage() {
-  const [tab, setTab] = useState<Tab>('dashboard');
+  const [tab, setTab] = useTabParam<Tab>(TAB_IDS, 'overview');
   const [gateResult, setGateResult] = useState<EvalGateResult | null>(null);
-  const [gateRunning, setGateRunning] = useState(false);
+  const { isAdmin } = usePermissions();
+  const activeProjectId = useProjectStore((s) => s.activeProjectId);
+  // One project pinned, or none (All Projects): the Tiers and Reviewer tabs read per project only.
+  const pinnedProjectId = activeProjectId && activeProjectId !== ALL_PROJECTS_ID ? activeProjectId : null;
+  // The Tiers badge: the labelling queue's default view reads the SAME key (one request).
+  const { data: shadowPairs } = useShadowPairs(pinnedProjectId, undefined, 'pending');
 
   // Data via SWR instead of load-on-tab-change effects. Dashboard + baselines
   // feed the always-visible workflow timeline, so they stay fetched across
@@ -60,68 +66,28 @@ export default function AIEvalDashboardPage() {
     readinessCorpus ? (['ai-eval/report-cycles/readiness', readinessCorpus] as const) : null,
     ([, corpus]) => getReportEvalReadiness(corpus),
   );
-  const { data: baselines = [], isLoading: baselinesLoading } = useSWR(
+  const { data: baselines = [], isLoading: baselinesLoading, mutate: mutateBaselines } = useSWR(
     'ai-eval/baselines',
     () => listBaselines(),
   );
-  const loading =
-    (tab === 'dashboard' && dashboardLoading) ||
-    (tab === 'datasets' && datasetsLoading) ||
-    (tab === 'gate' && baselinesLoading) ||
-    gateRunning;
+  const loading = tab === 'overview' && dashboardLoading;
 
+  // The shared timeline still reads the old uppercase vocabulary: hand it the gate result in those words.
   const workflow = useMemo(
-    () => buildAIEvalWorkflow(dashboard, baselines, gateResult),
+    () => buildAIEvalWorkflow(dashboard, baselines, workflowGateResult(gateResult)),
     [dashboard, baselines, gateResult],
   );
   const latestActionCount = reportCycles[0]?.metrics?.action_count;
   const latestActionResolution = reportCycles[0]?.metrics?.action_resolution_rate;
 
-  const handleGenerateDataset = async () => {
-    try {
-      await createDatasetFromFeedback();
-      toast.success('Dataset generated from feedback');
-      mutateDatasets();
-    } catch { toast.error('No feedback data available'); }
-  };
-
-  const handleSeedGolden = async () => {
-    try {
-      const result = await seedGoldenDatasets();
-      if (result.total > 0) {
-        toast.success(`Seeded ${result.total} golden datasets`);
-      } else {
-        toast.success('Golden datasets already exist');
-      }
-      mutateDatasets();
-    } catch { toast.error('Failed to seed golden datasets'); }
-  };
-
-  const handleRunEval = async (datasetId: string) => {
-    try {
-      await runEvaluation(datasetId);
-      toast.success('Evaluation complete');
-      mutateDashboard();
-    } catch { toast.error('Evaluation failed'); }
-  };
-
-  const handleRunGate = async (taskType: string, agentName: string) => {
-    setGateRunning(true);
-    try {
-      const result = await runPreReleaseGate(taskType, agentName);
-      setGateResult(result);
-      if (result.status === 'PASS') toast.success('Evaluation gate: PASS');
-      else if (result.status === 'FAIL') toast.error('Evaluation gate: FAIL');
-      else if (result.status === 'WARN') toast.success('Evaluation gate: WARN');
-      else toast.success('No baseline configured');
-    } catch { toast.error('Gate evaluation failed'); }
-    finally { setGateRunning(false); }
-  };
-
-  const tabs: { key: Tab; label: string }[] = [
-    { key: 'dashboard', label: 'Quality Overview' },
-    { key: 'datasets', label: 'Evaluation Datasets' },
-    { key: 'gate', label: 'Evaluation Gate' },
+  const pendingPairs = pinnedProjectId && typeof shadowPairs?.pending_total === 'number' ? shadowPairs.pending_total : undefined;
+  const tabs: TabItem<Tab>[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'datasets', label: 'Datasets' },
+    { id: 'gate', label: 'Gate' },
+    { id: 'stack', label: 'Agent stack' },
+    { id: 'tiers', label: 'Tiers', count: pendingPairs },
+    { id: 'reviewer', label: 'Reviewer' },
   ];
 
   return (
@@ -133,19 +99,12 @@ export default function AIEvalDashboardPage() {
         helpTopic={HELP_TOPIC}
       />
 
-      <div className="flex gap-1 border-b border-[var(--color-border)]">
-        {tabs.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={clsx('px-4 py-2 text-sm font-medium rounded-t-lg', tab === t.key ? 'bg-[var(--color-bg-secondary)] text-[var(--color-text)] border-b-2 border-[var(--color-border)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]')}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <Tabs ariaLabel="AI evaluation" items={tabs} value={tab} onChange={setTab} />
 
       {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div> : (
         <>
-          {/* Dashboard Tab */}
-          {tab === 'dashboard' && dashboard && (
+          {/* Overview Tab: the panels stay here (moving them would carry their W29 counts into a new file) */}
+          {tab === 'overview' && dashboard && (
             <div className="space-y-6">
               {dashboard.eval_provenance && (
                 <div className={clsx(
@@ -400,11 +359,16 @@ export default function AIEvalDashboardPage() {
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
                   <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Recent Evaluation Runs</h2>
                   <div className="space-y-2">
-                    {dashboard.recent_eval_runs.map(run => (
-                      <div key={run.id} className="bg-[var(--color-bg)]/50 rounded px-3 py-2 flex justify-between items-center text-sm">
+                    {dashboard.recent_eval_runs.map(run => {
+                      const chip = metricChip(run);
+                      return (
+                      <div key={run.id} data-eval-run-row={run.id} className="bg-[var(--color-bg)]/50 rounded px-3 py-2 flex justify-between items-center text-sm">
                         <div className="flex items-center gap-3">
                           <span className="text-[var(--color-text-secondary)] font-mono text-xs">{run.model_name}</span>
                           <span className="text-[var(--color-text-muted)] text-xs">{run.task_type}</span>
+                          <span data-metric-kind={run.metric_kind ?? 'label_agreement'} title={chip.title} className={clsx(CHIP_CLASS, TONE_CLASS[chip.tone])}>
+                            {chip.label}
+                          </span>
                         </div>
                         <div className="flex items-center gap-4 text-xs">
                           {run.accuracy != null && <span className="text-[var(--status-passed)]">Acc: {(run.accuracy * 100).toFixed(1)}%</span>}
@@ -413,7 +377,8 @@ export default function AIEvalDashboardPage() {
                           <span className="text-[var(--color-text-muted)]">{formatDay(run.evaluated_at)}</span>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -446,129 +411,31 @@ export default function AIEvalDashboardPage() {
             </div>
           )}
 
-          {/* Datasets Tab */}
+          {/* Datasets / Gate / Agent stack / Tiers / Reviewer: each tab body is its own component (§2.1 a) */}
           {tab === 'datasets' && (
-            <div className="space-y-4">
-              <div className="flex gap-2">
-                <button onClick={handleGenerateDataset}
-                  className="btn-primary">
-                  Generate from Feedback
-                </button>
-                <button onClick={handleSeedGolden}
-                  className="px-4 py-2 bg-[var(--status-passed-bg)] text-[var(--color-text)] rounded-lg hover:bg-[var(--status-passed-bg)] text-sm">
-                  Seed Golden Datasets
-                </button>
-              </div>
-
-              {datasets.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No evaluation datasets. Generate one from human feedback or seed golden datasets.</div>}
-              {datasets.map(ds => (
-                <div key={ds.id} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 flex justify-between items-center">
-                  <div>
-                    <span className="text-[var(--color-text)] font-medium">{ds.name}</span>
-                    <p className="text-xs text-[var(--color-text-muted)] mt-1">{ds.task_type} · {ds.item_count} items · Created {formatDay(ds.created_at)}</p>
-                  </div>
-                  <button onClick={() => handleRunEval(ds.id)}
-                    className="px-3 py-1.5 bg-[var(--status-flaky-bg)] text-[var(--color-text)] rounded text-xs hover:bg-[var(--status-flaky-bg)]">
-                    Run Evaluation
-                  </button>
-                </div>
-              ))}
-            </div>
+            <DatasetsTab
+              datasets={datasets}
+              loading={datasetsLoading}
+              isAdmin={isAdmin}
+              projectId={pinnedProjectId}
+              onDatasetsChanged={() => { void mutateDatasets(); }}
+              onEvaluated={() => { void mutateDashboard(); }}
+              onBaselineSet={() => { void mutateBaselines(); }}
+            />
           )}
-
-          {/* Evaluation Gate Tab */}
           {tab === 'gate' && (
-            <div className="space-y-6">
-              {/* Gate runner */}
-              <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
-                <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Run Pre-Release Gate</h2>
-                <p className="text-xs text-[var(--color-text-muted)] mb-4">
-                  Evaluate agent quality against baselines. Prompt, model, or routing changes should not ship if the gate returns FAIL.
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { task: 'classification', agent: 'AnalysisAgent', label: 'Classification' },
-                    { task: 'root_cause', agent: 'AnalysisAgent', label: 'Root Cause' },
-                    { task: 'duplicate_detection', agent: 'ClusterAgent', label: 'Duplicate Detection' },
-                    { task: 'release_decision', agent: 'ReleaseRiskAgent', label: 'Release Decision' },
-                  ].map(g => (
-                    <button key={g.task} onClick={() => handleRunGate(g.task, g.agent)}
-                      className="px-4 py-2 bg-[var(--color-accent-muted)] text-[var(--color-text)] rounded-lg hover:bg-[var(--color-accent-muted)] text-sm">
-                      Gate: {g.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Gate result */}
-              {gateResult && (
-                <div className={clsx('rounded-lg border p-4', GATE_STATUS_STYLES[gateResult.status] || 'bg-[var(--color-bg-secondary)]')}>
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-sm font-semibold">
-                      Gate Result: {gateResult.status}
-                    </h2>
-                    <span className="text-xs text-[var(--color-text-muted)]">
-                      {gateResult.agent_name} / {gateResult.task_type}
-                    </span>
-                  </div>
-
-                  {/* Current metrics */}
-                  {gateResult.current_metrics && (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4">
-                      {[
-                        { label: 'Accuracy', value: gateResult.current_metrics.accuracy },
-                        { label: 'Precision', value: gateResult.current_metrics.precision },
-                        { label: 'Recall', value: gateResult.current_metrics.recall },
-                        { label: 'F1 Score', value: gateResult.current_metrics.f1_score },
-                      ].map(m => (
-                        <div key={m.label} className="bg-[var(--color-bg)]/50 rounded p-2 text-center">
-                          <div className="text-lg font-bold text-[var(--color-text)]">
-                            {m.value != null ? `${(m.value * 100).toFixed(1)}%` : 'N/A'}
-                          </div>
-                          <div className="text-[10px] text-[var(--color-text-muted)]">{m.label}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Rule results */}
-                  <div className="space-y-1">
-                    <h3 className="text-xs font-medium text-[var(--color-text-muted)] mb-1">Rules</h3>
-                    {gateResult.rule_results.map((rule, i) => (
-                      <div key={i} className="flex items-center gap-2 text-xs">
-                        <span className={rule.passed ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]'}>
-                          {rule.passed ? 'PASS' : 'FAIL'}
-                        </span>
-                        <span className="text-[var(--color-text-muted)]">{rule.rule}</span>
-                        <span className="text-[var(--color-text-muted)]">{rule.detail}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Active baselines */}
-              <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
-                <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Active Baselines</h2>
-                {baselines.length === 0 && (
-                  <p className="text-xs text-[var(--color-text-muted)]">No baselines configured. Set a baseline from the API to enable gate comparisons.</p>
-                )}
-                {baselines.map(b => (
-                  <div key={b.id} className="bg-[var(--color-bg)]/50 rounded px-3 py-2 mb-2 flex justify-between items-center text-sm">
-                    <div>
-                      <span className="text-[var(--color-text-secondary)]">{b.agent_name}</span>
-                      <span className="text-[var(--color-text-muted)] text-xs ml-2">{b.task_type} / {b.prompt_version}</span>
-                    </div>
-                    <div className="flex gap-3 text-xs text-[var(--color-text-muted)]">
-                      <span>Acc: {b.baseline_accuracy != null ? `${(b.baseline_accuracy * 100).toFixed(1)}%` : 'N/A'}</span>
-                      <span>Min: {(b.min_accuracy * 100).toFixed(0)}%</span>
-                      <span>Max drop: {b.max_regression_pct.toFixed(1)}%</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <EvalGateTab
+              baselines={baselines}
+              loading={baselinesLoading}
+              isAdmin={isAdmin}
+              result={gateResult}
+              onResult={setGateResult}
+              onBaselineSet={() => { void mutateBaselines(); }}
+            />
           )}
+          {tab === 'stack' && <AgentStackTab isAdmin={isAdmin} />}
+          {tab === 'tiers' && <TierComparisonTab projectId={pinnedProjectId} />}
+          {tab === 'reviewer' && <ReviewerQualityTab projectId={pinnedProjectId} />}
         </>
       )}
 

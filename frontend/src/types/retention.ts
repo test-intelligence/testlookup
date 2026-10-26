@@ -104,6 +104,11 @@ export interface RetentionPreviewCandidates {
    * the fixed 30-day window. Absent on an older server: render "not measured", never 0.
    */
   search_usage_rows?: number
+  /**
+   * W16 AGT-13: the project's UNLABELLED shadow pairs older than their fixed 30 days (labelled
+   * pairs are G2 evidence and stay). Absent on an older server: render "not measured", never 0.
+   */
+  shadow_pairs_unlabelled?: number
 }
 
 export interface RetentionPreview {

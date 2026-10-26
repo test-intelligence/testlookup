@@ -93,7 +93,7 @@
     "frontend/src/pages/inbox/DefectApprovals.tsx": 4,
     "frontend/src/pages/settings/AIAgentsPage.tsx": 1,
     "frontend/src/pages/settings/AIConfigPage.tsx": 11,
-    "frontend/src/pages/settings/AIEvalDashboardPage.tsx": 19,
+    "frontend/src/pages/settings/AIEvalDashboardPage.tsx": 18,
     "frontend/src/pages/settings/AgentActivityPage.tsx": 5,
     "frontend/src/pages/settings/ApiKeysPage.tsx": 2,
     "frontend/src/pages/settings/AuditDashboardPage.tsx": 1,

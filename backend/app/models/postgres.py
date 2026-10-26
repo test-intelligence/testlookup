@@ -5348,6 +5348,11 @@ class AIEvalRun(Base):
     __table_args__ = (
         Index("ix_aer_dataset", "dataset_id"),
         Index("ix_aer_time", "evaluated_at"),
+        # W16 (migration 0231): the vocabularies of services/ai_eval_vocab.py.
+        CheckConstraint("metric_kind IN ('label_agreement','replay')", name="ck_aer_metric_kind"),
+        CheckConstraint(
+            "status IN ('queued','running','completed','partial','failed')", name="ck_aer_status"
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -5373,6 +5378,71 @@ class AIEvalRun(Base):
     fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
     evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    # W16 AGT-09 (migration 0231): a REPLAY of a candidate. Constant server
+    # defaults, so every legacy row reads label_agreement / completed; the
+    # Python-side defaults fill a row at flush (an UNFLUSHED row still reads
+    # None — AIEvalRunResponse maps that to the default). No onupdate column:
+    # the worker sets heartbeat_at explicitly.
+    metric_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="label_agreement", server_default=text("'label_agreement'")
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="completed", server_default=text("'completed'")
+    )
+    candidate: Mapped[Optional[dict]] = mapped_column(JSONB)  # EvalCandidateResolved
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL", name="fk_aer_project_id")
+    )
+    requested_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_aer_requested_by")
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    scored_items: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    unscored_items: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    error_items: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    items_capped: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    error_code: Mapped[Optional[str]] = mapped_column(String(100))
+    metrics: Mapped[Optional[list]] = mapped_column(JSONB)  # [EvalMetric] (replay runs only)
+
+
+class AIEvalItemOutput(Base):
+    """One replayed item of a candidate evaluation run (W16 AGT-09, 0231).
+
+    Written one at a time by the worker (``INSERT … ON CONFLICT (eval_run_id,
+    item_index) DO NOTHING``); deleting the run (or its dataset) deletes them.
+    ``expected`` / ``output`` are stored sanitized and re-sanitized on read.
+    """
+    __tablename__ = "ai_eval_item_outputs"
+    __table_args__ = (
+        UniqueConstraint("eval_run_id", "item_index", name="uq_aeio_run_item"),
+        Index("ix_aeio_run_status", "eval_run_id", "status"),
+        CheckConstraint("status IN ('correct','incorrect','unscored','error')", name="ck_aeio_status"),
+        CheckConstraint("item_index >= 0", name="ck_aeio_item_index_nonnegative"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    eval_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("ai_eval_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    item_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    item_key: Mapped[Optional[str]] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(20), nullable=False)  # ITEM_STATUSES
+    error_code: Mapped[Optional[str]] = mapped_column(String(100))
+    expected: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    output: Mapped[Optional[dict]] = mapped_column(JSONB)
+    score: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    latency_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    tokens: Mapped[Optional[int]] = mapped_column(Integer)
+    mode_used: Mapped[Optional[str]] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 # ── AI Evaluation Baselines (P5 — Evaluation as Release Gate) ────────────────
@@ -5384,6 +5454,8 @@ class AIEvalBaseline(Base):
     __table_args__ = (
         Index("ix_aeb_task_agent", "task_type", "agent_name"),
         UniqueConstraint("task_type", "agent_name", "prompt_version", name="uq_aeb_task_agent_prompt"),
+        # W16 (migration 0231).
+        CheckConstraint("metric_kind IN ('label_agreement','replay')", name="ck_aeb_metric_kind"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -5407,6 +5479,10 @@ class AIEvalBaseline(Base):
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+    # W16 (0231): every pre-W16 baseline is a legacy label-agreement one.
+    metric_kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="label_agreement", server_default=text("'label_agreement'")
+    )
 
 
 class AIEvalGateRun(Base):

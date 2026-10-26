@@ -329,6 +329,12 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("workflow.default_cleared", "configuration", "workflow", "The {base} default workflow {entity_label} was cleared", "outcome", _HUMAN_OR_KEY),
     _spec("ai_eval.tier_compared", "configuration", "project", "Agent {entity_label} tier comparison {verdict} with {sample_count} paired samples", "outcome", _HUMAN_OR_KEY),
     _spec("ai_eval.reviewer_evaluated", "configuration", "project", "Agent {entity_label} reviewer evaluation {verdict} with {sample_count} semantic samples", "outcome", _HUMAN_OR_KEY),
+    # W16 AGT-09 / AGT-13. Outcome writes on the route's one commit: the
+    # candidate run row (POST /ai-eval/runs/evaluate/{dataset_id} with a body;
+    # entity = the body's project, label = the dataset name) and a person's
+    # shadow-pair label (entity = the pair's project, label = the agent label).
+    _spec("ai_eval.candidate_requested", "configuration", "project", "Candidate evaluation of {entity_label} queued: {tier} on {item_count} items", "outcome", _HUMAN_OR_KEY),
+    _spec("ai_eval.shadow_pair_labelled", "configuration", "project", "A {entity_label} shadow pair was labelled: {verdict}", "outcome", _HUMAN_OR_KEY),
     _spec("attribution_rule.created", "configuration", "attribution_rule", "Attribution rule {entity_label} was created"),
     _spec("attribution_rule.updated", "configuration", "attribution_rule", "Attribution rule {entity_label} changed: {changed}"),
     _spec("attribution_rule.deleted", "configuration", "attribution_rule", "Attribution rule {entity_label} was deleted"),

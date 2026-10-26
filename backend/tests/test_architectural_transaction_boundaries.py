@@ -92,6 +92,15 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     # proposals (staged on _finalize's session, committed by its commit).
     "agent_action_queue_service.py",
     "investigation_action_proposals.py",
+    # ── W16 AI evaluation: new modules, commit-free from birth ──
+    # The vocabularies (pure), the replay scorers (pure), the candidate runner
+    # (stages on the worker task's sessions, which commit in worker/tasks.py)
+    # and the shadow-pair service (the label route and the two nightly jobs
+    # commit in routers/ai_evaluation.py / worker/tasks.py).
+    "ai_eval_vocab.py",
+    "ai_eval_scorers.py",
+    "ai_eval_runner.py",
+    "shadow_pair_service.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

@@ -15,15 +15,14 @@
 3d43a41d1ea33865  # backend/app/routers/agent_investigations.py:163  in start_investigation  @router.post(
 418819775e838798  # backend/app/routers/agent_investigations.py:254  in cancel_investigation  @router.post(
 e0ca11061a227e85  # backend/app/routers/agent_memory.py:94  in recall_similar_memories  @router.post(
-6b95b209c407468d  # backend/app/routers/ai_evaluation.py:123  in create_dataset  @router.post("/datasets", response_model=AIEvalDatasetResponse, status_code=201)
-8922751081f1dc82  # backend/app/routers/ai_evaluation.py:144  in create_dataset_from_feedback  @router.post("/datasets/from-feedback", response_model=AIEvalDatasetResponse, s…
-58522eca806eb3b4  # backend/app/routers/ai_evaluation.py:175  in delete_dataset  @router.delete("/datasets/{dataset_id}", status_code=204)
-b84c8394b0d9f2e0  # backend/app/routers/ai_evaluation.py:212  in run_evaluation  @router.post("/runs/evaluate/{dataset_id}", response_model=AIEvalRunResponse, s…
-67bce288df205e7e  # backend/app/routers/ai_evaluation.py:348  in create_report_eval_cycle  @router.post("/report-cycles", status_code=201)
-6e3f83e8db82de84  # backend/app/routers/ai_evaluation.py:476  in run_pre_release_gate  @router.post("/pre-release-gate")
-5ed19f29da9ce45d  # backend/app/routers/ai_evaluation.py:500  in run_agent_stack_release_gate  @router.post("/agent-stack-release-gate")
-d2c1a8eaeab87a74  # backend/app/routers/ai_evaluation.py:695  in set_baseline  @router.post("/baselines", status_code=201)
-1b345949ab82e681  # backend/app/routers/ai_evaluation.py:758  in seed_golden_datasets  @router.post("/golden-datasets/seed", status_code=201)
+6b95b209c407468d  # backend/app/routers/ai_evaluation.py:141  in create_dataset  @router.post("/datasets", response_model=AIEvalDatasetResponse, status_code=201)
+8922751081f1dc82  # backend/app/routers/ai_evaluation.py:162  in create_dataset_from_feedback  @router.post("/datasets/from-feedback", response_model=AIEvalDatasetResponse, s…
+58522eca806eb3b4  # backend/app/routers/ai_evaluation.py:193  in delete_dataset  @router.delete("/datasets/{dataset_id}", status_code=204)
+67bce288df205e7e  # backend/app/routers/ai_evaluation.py:641  in create_report_eval_cycle  @router.post("/report-cycles", status_code=201)
+6e3f83e8db82de84  # backend/app/routers/ai_evaluation.py:775  in run_pre_release_gate  @router.post("/pre-release-gate")
+5ed19f29da9ce45d  # backend/app/routers/ai_evaluation.py:803  in run_agent_stack_release_gate  @router.post("/agent-stack-release-gate")
+d2c1a8eaeab87a74  # backend/app/routers/ai_evaluation.py:1100  in set_baseline  @router.post("/baselines", status_code=201)
+1b345949ab82e681  # backend/app/routers/ai_evaluation.py:1169  in seed_golden_datasets  @router.post("/golden-datasets/seed", status_code=201)
 dfd4e0516545c383  # backend/app/routers/analytics.py:720  in create_defect  @router.post(
 9d93f42ccd4b37a0  # backend/app/routers/analytics.py:799  in notify_suite_owner  @router.post("/notify-owner", response_model=NotifyTestOwnerResponse)
 1961ac64b9cef330  # backend/app/routers/chat.py:88  in create_session  @router.post("/sessions", response_model=ChatSessionResponse, status_code=201)

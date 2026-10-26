@@ -1122,6 +1122,28 @@
         "title": "AIEvalDatasetResponse",
         "type": "object"
       },
+      "AIEvalGateRunListResponse": {
+        "description": "Agent-stack history (``gate_type IS NULL``) and the G2 history (W16).",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AIEvalGateRunResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "AIEvalGateRunListResponse",
+        "type": "object"
+      },
       "AIEvalGateRunResponse": {
         "properties": {
           "agent_id": {
@@ -1269,6 +1291,147 @@
         "title": "AIEvalGateRunResponse",
         "type": "object"
       },
+      "AIEvalItemListResponse": {
+        "properties": {
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AIEvalItemOutputRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "counts"
+        ],
+        "title": "AIEvalItemListResponse",
+        "type": "object"
+      },
+      "AIEvalItemOutputRead": {
+        "properties": {
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Text"
+          },
+          "expected": {
+            "additionalProperties": true,
+            "title": "Expected",
+            "type": "object"
+          },
+          "input": {
+            "additionalProperties": true,
+            "title": "Input",
+            "type": "object"
+          },
+          "item_index": {
+            "title": "Item Index",
+            "type": "integer"
+          },
+          "item_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Item Key"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "mode_used": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode Used"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output"
+          },
+          "score": {
+            "additionalProperties": true,
+            "title": "Score",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens"
+          }
+        },
+        "required": [
+          "item_index",
+          "status",
+          "expected"
+        ],
+        "title": "AIEvalItemOutputRead",
+        "type": "object"
+      },
       "AIEvalManifestResponse": {
         "properties": {
           "eval_manifest_checksum": {
@@ -1322,6 +1485,28 @@
         "title": "AIEvalManifestResponse",
         "type": "object"
       },
+      "AIEvalRunListResponse": {
+        "description": "GET /ai-eval/runs (was a bare list; no client read it).",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AIEvalRunResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "AIEvalRunListResponse",
+        "type": "object"
+      },
       "AIEvalRunResponse": {
         "properties": {
           "accuracy": {
@@ -1346,6 +1531,28 @@
             ],
             "title": "Agreement Rate"
           },
+          "candidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvalCandidateResolved"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
           "correct_items": {
             "default": 0,
             "title": "Correct Items",
@@ -1366,6 +1573,40 @@
               }
             ],
             "title": "Duration Ms"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 0,
+            "title": "Error Items"
+          },
+          "error_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Text"
           },
           "evaluated_at": {
             "format": "date-time",
@@ -1388,10 +1629,70 @@
             "title": "Fallback Used",
             "type": "boolean"
           },
+          "heartbeat_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat At"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "items_capped": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": false,
+            "title": "Items Capped"
+          },
+          "measured": {
+            "default": true,
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "metric_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "label_agreement",
+            "title": "Metric Kind"
+          },
+          "metric_label": {
+            "default": "",
+            "title": "Metric Label",
+            "type": "string"
+          },
+          "metrics": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/EvalMetric"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metrics"
           },
           "model_name": {
             "title": "Model Name",
@@ -1420,6 +1721,18 @@
             ],
             "title": "Precision"
           },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
           "recall": {
             "anyOf": [
               {
@@ -1431,6 +1744,54 @@
             ],
             "title": "Recall"
           },
+          "requested_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "scored_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 0,
+            "title": "Scored Items"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "completed",
+            "title": "Status"
+          },
           "task_type": {
             "title": "Task Type",
             "type": "string"
@@ -1439,6 +1800,18 @@
             "default": 0,
             "title": "Total Items",
             "type": "integer"
+          },
+          "unscored_items": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 0,
+            "title": "Unscored Items"
           }
         },
         "required": [
@@ -7675,6 +8048,155 @@
         "title": "BulkTriggerResponse",
         "type": "object"
       },
+      "CandidateEvaluationAccepted": {
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "status"
+        ],
+        "title": "CandidateEvaluationAccepted",
+        "type": "object"
+      },
+      "CandidateEvaluationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/EvalCandidateIn"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate",
+          "project_id"
+        ],
+        "title": "CandidateEvaluationRequest",
+        "type": "object"
+      },
+      "CandidateOptionsResponse": {
+        "properties": {
+          "max_items": {
+            "title": "Max Items",
+            "type": "integer"
+          },
+          "offline_mode": {
+            "title": "Offline Mode",
+            "type": "boolean"
+          },
+          "prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Version"
+          },
+          "supported_tiers_by_task": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Supported Tiers By Task",
+            "type": "object"
+          },
+          "tiers": {
+            "items": {
+              "$ref": "#/components/schemas/CandidateTierOption"
+            },
+            "title": "Tiers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tiers",
+          "offline_mode",
+          "max_items",
+          "supported_tiers_by_task"
+        ],
+        "title": "CandidateOptionsResponse",
+        "type": "object"
+      },
+      "CandidateTierOption": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "boolean"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier",
+          "available"
+        ],
+        "title": "CandidateTierOption",
+        "type": "object"
+      },
       "CanonicalManagedUnlinkRequest": {
         "properties": {
           "reason": {
@@ -13877,6 +14399,141 @@
           }
         },
         "title": "EscalationConfig",
+        "type": "object"
+      },
+      "EvalCandidateIn": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "prompt_version": {
+            "anyOf": [
+              {
+                "maxLength": 400,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Version"
+          },
+          "tier": {
+            "maxLength": 20,
+            "minLength": 2,
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier"
+        ],
+        "title": "EvalCandidateIn",
+        "type": "object"
+      },
+      "EvalCandidateResolved": {
+        "description": "What the run ACTUALLY replays (stored in ``ai_eval_runs.candidate``).",
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "offline_mode": {
+            "title": "Offline Mode",
+            "type": "boolean"
+          },
+          "prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Version"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
+          },
+          "requested": {
+            "$ref": "#/components/schemas/EvalCandidateIn"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier",
+          "offline_mode",
+          "requested"
+        ],
+        "title": "EvalCandidateResolved",
+        "type": "object"
+      },
+      "EvalMetric": {
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "measured": {
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "n": {
+            "default": 0,
+            "title": "N",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "name",
+          "measured",
+          "kind"
+        ],
+        "title": "EvalMetric",
         "type": "object"
       },
       "EvalProvenanceHealthResponse": {
@@ -26273,6 +26930,18 @@
             "title": "Agent Name",
             "type": "string"
           },
+          "candidate_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Run Id"
+          },
           "dataset_id": {
             "anyOf": [
               {
@@ -30349,6 +31018,11 @@
             "title": "Search Usage Rows",
             "type": "integer"
           },
+          "shadow_pairs_unlabelled": {
+            "default": 0,
+            "title": "Shadow Pairs Unlabelled",
+            "type": "integer"
+          },
           "test_cases": {
             "title": "Test Cases",
             "type": "integer"
@@ -31018,6 +31692,180 @@
           "project_id"
         ],
         "title": "ReviewerQualityRequest",
+        "type": "object"
+      },
+      "ReviewerQualityRunListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewerQualityRunRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "ReviewerQualityRunListResponse",
+        "type": "object"
+      },
+      "ReviewerQualityRunRead": {
+        "description": "An ``AIEvalReviewerQuality`` row WITHOUT its observation arrays (W16).",
+        "properties": {
+          "agent_id": {
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "auto_disable_applied": {
+            "title": "Auto Disable Applied",
+            "type": "boolean"
+          },
+          "auto_disable_eligible": {
+            "title": "Auto Disable Eligible",
+            "type": "boolean"
+          },
+          "clean_sample_count": {
+            "title": "Clean Sample Count",
+            "type": "integer"
+          },
+          "deterministic_recall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deterministic Recall"
+          },
+          "evaluated_at": {
+            "format": "date-time",
+            "title": "Evaluated At",
+            "type": "string"
+          },
+          "false_flag_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "False Flag Rate"
+          },
+          "false_omission_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "False Omission Rate"
+          },
+          "human_outcome_count": {
+            "title": "Human Outcome Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metrics": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Metrics",
+            "type": "array"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "recall_delta": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recall Delta"
+          },
+          "regressions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Regressions",
+            "type": "array"
+          },
+          "second_model_recall": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Second Model Recall"
+          },
+          "semantic_sample_counts": {
+            "additionalProperties": true,
+            "title": "Semantic Sample Counts",
+            "type": "object"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "window_ended_at": {
+            "format": "date-time",
+            "title": "Window Ended At",
+            "type": "string"
+          },
+          "window_started_at": {
+            "format": "date-time",
+            "title": "Window Started At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "agent_id",
+          "source",
+          "status",
+          "window_started_at",
+          "window_ended_at",
+          "evaluated_at",
+          "metrics",
+          "regressions",
+          "semantic_sample_counts",
+          "clean_sample_count",
+          "human_outcome_count",
+          "auto_disable_eligible",
+          "auto_disable_applied"
+        ],
+        "title": "ReviewerQualityRunRead",
         "type": "object"
       },
       "RoleActions": {
@@ -34526,6 +35374,18 @@
             ],
             "title": "Dataset Id"
           },
+          "eval_run_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eval Run Id"
+          },
           "max_regression_pct": {
             "default": 5.0,
             "title": "Max Regression Pct",
@@ -34584,6 +35444,275 @@
           }
         },
         "title": "ShadowConfig",
+        "type": "object"
+      },
+      "ShadowPairLabelRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "failure_category": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Category"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "verdict": {
+            "maxLength": 20,
+            "minLength": 3,
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "verdict"
+        ],
+        "title": "ShadowPairLabelRequest",
+        "type": "object"
+      },
+      "ShadowPairListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ShadowPairRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "live_tier_pairs_seen": {
+            "title": "Live Tier Pairs Seen",
+            "type": "boolean"
+          },
+          "pending_total": {
+            "title": "Pending Total",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "pending_total",
+          "live_tier_pairs_seen"
+        ],
+        "title": "ShadowPairListResponse",
+        "type": "object"
+      },
+      "ShadowPairRead": {
+        "properties": {
+          "agent_id": {
+            "title": "Agent Id",
+            "type": "string"
+          },
+          "agent_label": {
+            "title": "Agent Label",
+            "type": "string"
+          },
+          "candidate_output": {
+            "additionalProperties": true,
+            "title": "Candidate Output",
+            "type": "object"
+          },
+          "candidate_tier": {
+            "title": "Candidate Tier",
+            "type": "string"
+          },
+          "candidate_tokens": {
+            "title": "Candidate Tokens",
+            "type": "integer"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "incumbent_output": {
+            "additionalProperties": true,
+            "title": "Incumbent Output",
+            "type": "object"
+          },
+          "incumbent_tier": {
+            "title": "Incumbent Tier",
+            "type": "string"
+          },
+          "incumbent_tokens": {
+            "title": "Incumbent Tokens",
+            "type": "integer"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "label_status": {
+            "title": "Label Status",
+            "type": "string"
+          },
+          "labelled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labelled At"
+          },
+          "labelled_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labelled By Name"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "sample_key": {
+            "title": "Sample Key",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShadowPairSource"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "agent_id",
+          "agent_label",
+          "sample_key",
+          "incumbent_tier",
+          "candidate_tier",
+          "incumbent_output",
+          "candidate_output",
+          "incumbent_tokens",
+          "candidate_tokens",
+          "label_status"
+        ],
+        "title": "ShadowPairRead",
+        "type": "object"
+      },
+      "ShadowPairSource": {
+        "properties": {
+          "build_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Number"
+          },
+          "href": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Href"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          }
+        },
+        "required": [
+          "kind",
+          "id"
+        ],
+        "title": "ShadowPairSource",
         "type": "object"
       },
       "ShareLinkResponse": {
@@ -41593,6 +42722,11 @@
             "title": "Delta",
             "type": "number"
           },
+          "include_live_labels": {
+            "default": false,
+            "title": "Include Live Labels",
+            "type": "boolean"
+          },
           "incumbent_tier": {
             "pattern": "^(deterministic|slm|llm|auto)$",
             "title": "Incumbent Tier",
@@ -46834,7 +47968,7 @@
     },
     "/api/v1/ai-eval/agent-stack-release-gate/runs": {
       "get": {
-        "description": "List historical agent-stack release gate decisions.",
+        "description": "List historical agent-stack release gate decisions, newest first, with ``total``.\n\nAgent-stack rows only (``gate_type IS NULL``): the project-scoped G2 tier\ncomparisons share the table and are read per project through\n``GET /tier-comparison/runs`` -- listing them here showed every QA lead\nother projects' tier verdicts (W16 contract §0.4).",
         "operationId": "list_agent_stack_gate_runs_api_v1_ai_eval_agent_stack_release_gate_runs_get",
         "parameters": [
           {
@@ -46903,11 +48037,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/AIEvalGateRunResponse"
-                  },
-                  "title": "Response List Agent Stack Gate Runs Api V1 Ai Eval Agent Stack Release Gate Runs Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/AIEvalGateRunListResponse"
                 }
               }
             },
@@ -47060,6 +48190,61 @@
           }
         ],
         "summary": "Set Baseline",
+        "tags": [
+          "AI Evaluation"
+        ]
+      }
+    },
+    "/api/v1/ai-eval/candidate-options": {
+      "get": {
+        "description": "The tiers a candidate evaluation may replay, with the reason a tier is unavailable.\n\nADMIN (the Evaluate form is admin-only). Reads the effective AI config on\nthis request's session and the ML model's metadata; writes nothing.",
+        "operationId": "get_candidate_options_api_v1_ai_eval_candidate_options_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateOptionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Candidate Options",
         "tags": [
           "AI Evaluation"
         ]
@@ -47981,9 +49166,86 @@
         ]
       }
     },
+    "/api/v1/ai-eval/reviewer-quality/runs": {
+      "get": {
+        "description": "The project's G3 reviewer-quality history, newest first, with ``total`` (W16).\n\nREAD-ONLY (the page never posts ``/reviewer-quality``, whose default\n``auto_disable`` can retire the second model). The observation arrays are\nnever selected. Writes nothing.",
+        "operationId": "list_reviewer_quality_runs_api_v1_ai_eval_reviewer_quality_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewerQualityRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Reviewer Quality Runs",
+        "tags": [
+          "AI Evaluation"
+        ]
+      }
+    },
     "/api/v1/ai-eval/runs": {
       "get": {
-        "description": "List evaluation runs with optional filters.",
+        "description": "List evaluation runs, newest first, with the ``total`` of the filtered set.\n\nW16: ``{items, total}`` (was a bare list no client read); ``metric_kind``\n(legacy label agreement / replay) and ``status`` filter. Writes nothing.",
         "operationId": "list_eval_runs_api_v1_ai_eval_runs_get",
         "parameters": [
           {
@@ -48021,6 +49283,40 @@
           },
           {
             "in": "query",
+            "name": "metric_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 20,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Metric Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 20,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -48053,11 +49349,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/AIEvalRunResponse"
-                  },
-                  "title": "Response List Eval Runs Api V1 Ai Eval Runs Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/AIEvalRunListResponse"
                 }
               }
             },
@@ -48087,7 +49379,7 @@
     },
     "/api/v1/ai-eval/runs/evaluate/{dataset_id}": {
       "post": {
-        "description": "Run evaluation against a dataset using the current active model (ADMIN only).",
+        "description": "Run evaluation against a dataset (ADMIN only).\n\nNo body: the LEGACY label-agreement evaluation, synchronous, 201 with the\nrun (unchanged). A ``candidate`` body (W16 AGT-09): a queued REPLAY of the\ncandidate through the real engine, 202 ``{run_id, status: \"queued\"}``.",
         "operationId": "run_evaluation_api_v1_ai_eval_runs_evaluate__dataset_id__post",
         "parameters": [
           {
@@ -48117,8 +49409,100 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CandidateEvaluationRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIEvalRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateEvaluationAccepted"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Run Evaluation",
+        "tags": [
+          "AI Evaluation"
+        ]
+      }
+    },
+    "/api/v1/ai-eval/runs/{eval_run_id}": {
+      "get": {
+        "description": "One evaluation run (legacy or replay) with its aggregate scores. Writes nothing.",
+        "operationId": "get_eval_run_api_v1_ai_eval_runs__eval_run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Eval Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -48144,7 +49528,303 @@
             "JWT": []
           }
         ],
-        "summary": "Run Evaluation",
+        "summary": "Get Eval Run",
+        "tags": [
+          "AI Evaluation"
+        ]
+      }
+    },
+    "/api/v1/ai-eval/runs/{eval_run_id}/items": {
+      "get": {
+        "description": "A replay run's per-item outputs in stored order (ADMIN only, contract D-4).\n\nItems carry dataset text that a feedback-built dataset draws from every\nproject, so QA leads see aggregates only. Inputs, expected values and\noutputs are re-sanitized here. A legacy run stored no items. Writes nothing.",
+        "operationId": "list_eval_run_items_api_v1_ai_eval_runs__eval_run_id__items_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Eval Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 20,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIEvalItemListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Eval Run Items",
+        "tags": [
+          "AI Evaluation"
+        ]
+      }
+    },
+    "/api/v1/ai-eval/shadow-pairs": {
+      "get": {
+        "description": "The project's live shadow pairs, newest first (QA lead+, interactive login only).\n\nThe QUERY project is checked before anything is read; ``agent_id`` and\n``label_status`` (``all`` = every status) filter INSIDE it. Outputs are\nre-sanitized; each pair's source is resolved inside its project. Writes nothing.",
+        "operationId": "list_shadow_pairs_api_v1_ai_eval_shadow_pairs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "label_status",
+            "required": false,
+            "schema": {
+              "default": "pending",
+              "maxLength": 20,
+              "title": "Label Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShadowPairListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Shadow Pairs",
+        "tags": [
+          "AI Evaluation"
+        ]
+      }
+    },
+    "/api/v1/ai-eval/shadow-pairs/{shadow_pair_id}/label": {
+      "post": {
+        "description": "Label one live shadow pair with a person's verdict (QA lead+, interactive login only).\n\nEvery check runs before anything is written; the label, ``labelled_by``\nand the activity row share ONE commit. A label is final (no relabel).",
+        "operationId": "label_shadow_pair_api_v1_ai_eval_shadow_pairs__shadow_pair_id__label_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shadow_pair_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Shadow Pair Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShadowPairLabelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShadowPairRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Label Shadow Pair",
         "tags": [
           "AI Evaluation"
         ]
@@ -48208,6 +49888,100 @@
           }
         ],
         "summary": "Run Tier Comparison",
+        "tags": [
+          "AI Evaluation"
+        ]
+      }
+    },
+    "/api/v1/ai-eval/tier-comparison/runs": {
+      "get": {
+        "description": "The project's recorded G2 tier comparisons, newest first, with ``total`` (W16).\n\nThe QUERY project is checked like a body project before anything is read;\n``agent_id`` filters INSIDE that project. Writes nothing.",
+        "operationId": "list_tier_comparison_runs_api_v1_ai_eval_tier_comparison_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agent_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Agent Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AIEvalGateRunListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Tier Comparison Runs",
         "tags": [
           "AI Evaluation"
         ]

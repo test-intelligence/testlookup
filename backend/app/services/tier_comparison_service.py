@@ -9,7 +9,9 @@ of the paired difference must be no worse than ``-delta``.
 
 Live shadow outputs are stored separately as labelling candidates.  They do
 not become gate evidence merely because a model produced them: only a human
-label or a match to a golden input may promote a pair into G2 evidence.
+label or a golden match (W16: the test's own human feedback,
+``shadow_pair_service.golden_match_batch``) may promote a pair into G2
+evidence, passed to ``compare_tier_outputs(labelled_pairs=...)``.
 """
 from __future__ import annotations
 
@@ -33,7 +35,9 @@ from app.services.agent_eval_samples import (
     LabelKind,
 )
 from app.services.agent_capability_registry import CAPABILITY_REGISTRY, DEFAULT_TIERS
+from app.services.ai_eval_vocab import SHADOW_VERDICTS
 from app.services.eval_verdict import EvalVerdict
+from app.services.evidence_sanitizer import sanitize_persistence_payload
 
 TIER_ORDER: tuple[str, ...] = ("deterministic", "slm", "llm", "auto")
 DEFAULT_NON_INFERIORITY_DELTA = 0.05
@@ -58,6 +62,34 @@ class TierOutputPair:
     candidate_latency_ms: int = 0
     incumbent_tokens: int = 0
     candidate_tokens: int = 0
+
+
+#: W16 AGT-13: the verdicts a person (or the golden-match job) gives a live pair, and which tier each one credits.
+_INCUMBENT_CORRECT_VERDICTS = frozenset({"incumbent", "both"})
+_CANDIDATE_CORRECT_VERDICTS = frozenset({"candidate", "both"})
+_LIVE_VERDICTS = frozenset(SHADOW_VERDICTS)
+
+
+@dataclass(frozen=True)
+class LabelledPair:
+    """A labelled live shadow pair (W16 AGT-13): G2 evidence scored from its VERDICT.
+
+    A live pair has no corpus sample, so it is scored from the label: ``incumbent_correct`` when the verdict is
+    ``incumbent`` or ``both``, ``candidate_correct`` when it is ``candidate`` or ``both``; an output is valid when
+    it is a non-empty mapping. ``label_status`` (``human_labelled`` / ``golden_match``) is the row's provenance.
+    """
+
+    pair_id: str
+    verdict: str
+    label_status: str
+    incumbent_output: Any
+    candidate_output: Any
+    incumbent_tokens: int = 0
+    candidate_tokens: int = 0
+
+
+def _live_valid(output: Any) -> bool:
+    return isinstance(output, Mapping) and bool(output)
 
 
 def _canonical(value: Any) -> str:
@@ -131,8 +163,17 @@ def compare_tier_outputs(
     candidate_tier: str,
     pairs: Sequence[TierOutputPair],
     delta: float = DEFAULT_NON_INFERIORITY_DELTA,
+    labelled_pairs: Sequence[LabelledPair] = (),
 ) -> dict[str, Any]:
-    """Score a paired corpus and return the shared G2 gate vocabulary."""
+    """Score a paired corpus and return the shared G2 gate vocabulary.
+
+    ``labelled_pairs`` (W16 AGT-13) is a SECOND corpus: labelled live shadow pairs, each scored from its verdict
+    as the row ``live:<pair id>`` and merged into the same paired arrays; floors, Wilson bounds and the verdict
+    rules are unchanged. With none, the answer is today's byte for byte (no ``provenance``, no
+    ``live_labelled_pairs``, the same manifest checksum); with some, every scored row carries ``provenance``
+    (``corpus`` / ``human_labelled`` / ``golden_match``), the manifest's ``sample_ids`` include the live ids and
+    gain ``live_label_count``, and the answer gains ``live_labelled_pairs``.
+    """
     if incumbent_tier not in TIER_ORDER or candidate_tier not in TIER_ORDER:
         raise ValueError(f"tiers must be one of {TIER_ORDER}")
     if not 0 <= delta <= 1:
@@ -164,6 +205,33 @@ def compare_tier_outputs(
             "incumbent_tokens": max(0, int(pair.incumbent_tokens)),
             "candidate_tokens": max(0, int(pair.candidate_tokens)),
         })
+
+    live_count = 0
+    if labelled_pairs:
+        for row in scored:
+            row["provenance"] = "corpus"
+        for live in labelled_pairs:
+            sample_id = f"live:{live.pair_id}"
+            if sample_id in seen:
+                raise ValueError(f"duplicate paired sample: {sample_id}")
+            if live.verdict not in _LIVE_VERDICTS:
+                raise ValueError(f"live pair {live.pair_id!r} has no valid verdict")
+            seen.add(sample_id)
+            scored.append({
+                "sample_id": sample_id,
+                "incumbent_correct": live.verdict in _INCUMBENT_CORRECT_VERDICTS,
+                "candidate_correct": live.verdict in _CANDIDATE_CORRECT_VERDICTS,
+                "incumbent_valid": _live_valid(live.incumbent_output),
+                "candidate_valid": _live_valid(live.candidate_output),
+                "incumbent_cost_usd": 0.0,
+                "candidate_cost_usd": 0.0,
+                "incumbent_latency_ms": 0,
+                "candidate_latency_ms": 0,
+                "incumbent_tokens": max(0, int(live.incumbent_tokens)),
+                "candidate_tokens": max(0, int(live.candidate_tokens)),
+                "provenance": str(live.label_status),
+            })
+            live_count += 1
 
     n = len(scored)
     incumbent_successes = sum(int(row["incumbent_correct"]) for row in scored)
@@ -205,8 +273,12 @@ def compare_tier_outputs(
         verdict = EvalVerdict.PASS
         reason = "candidate tier is non-inferior on the paired corpus"
 
+    # Cost and latency are measured on the corpus rows only: a live pair records neither, and its zeros would
+    # read as a cheaper, faster tier (absence is not a measurement). With no live pairs this is every row.
+    costed = scored[: n - live_count]
+
     def average(field: str) -> float:
-        return sum(float(row[field]) for row in scored) / n if n else 0.0
+        return sum(float(row[field]) for row in costed) / len(costed) if costed else 0.0
 
     manifest = {
         "schema_version": 1,
@@ -217,6 +289,9 @@ def compare_tier_outputs(
         "sample_ids": sorted(seen),
         "delta": delta,
     }
+    if labelled_pairs:
+        # The checksum covers the evidence actually used: the live ids are in sample_ids, and their count here.
+        manifest["live_label_count"] = live_count
     checksum = _checksum(manifest)
     metrics = [
         {"name": "incumbent_accuracy", "value": incumbent_successes / n if n else None, "n": n,
@@ -249,6 +324,7 @@ def compare_tier_outputs(
         "reason": reason,
         "sample_count": n,
         "scored_pairs": scored,
+        **({"live_labelled_pairs": live_count} if labelled_pairs else {}),
     }
 
 
@@ -454,14 +530,17 @@ async def store_shadow_pair(
     total_tokens = max(0, incumbent_tokens) + max(0, candidate_tokens)
     if int(used or 0) + total_tokens > max(0, daily_token_budget):
         return None
+    # W16 AGT-13: model text is stored redacted and bounded (the labelling queue re-sanitizes on read too).
+    safe_incumbent, _ = sanitize_persistence_payload(incumbent_output)
+    safe_candidate, _ = sanitize_persistence_payload(candidate_output)
     row = AIEvalShadowPair(
         project_id=project_id,
         agent_id=agent_id,
         sample_key=sample_key,
         incumbent_tier=incumbent_tier,
         candidate_tier=candidate_tier,
-        incumbent_output=incumbent_output,
-        candidate_output=candidate_output,
+        incumbent_output=safe_incumbent,
+        candidate_output=safe_candidate,
         incumbent_tokens=max(0, incumbent_tokens),
         candidate_tokens=max(0, candidate_tokens),
         total_tokens=total_tokens,
@@ -474,6 +553,7 @@ async def store_shadow_pair(
 
 __all__ = [
     "DEFAULT_NON_INFERIORITY_DELTA",
+    "LabelledPair",
     "TierComparisonRejected",
     "TierOutputPair",
     "compare_tier_outputs",

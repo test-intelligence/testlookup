@@ -533,6 +533,10 @@ async def compute_agreement_rate(
 
 # ── Drift detection ─────────────────────────────────────────────────────────
 
+#: Drift averages the nightly LEGACY label-agreement series only (W16 AGT-09):
+#: a candidate replay is compared by the gate, never averaged into drift.
+_DRIFT_METRIC_KIND = "label_agreement"
+
 
 async def detect_quality_drift(
     db: AsyncSession,
@@ -558,7 +562,11 @@ async def detect_quality_drift(
             func.coalesce(func.sum(AIEvalRun.correct_items), 0).label("correct_items"),
             func.coalesce(func.sum(AIEvalRun.total_items), 0).label("total_items"),
         )
-        .where(AIEvalRun.task_type == task_type, AIEvalRun.evaluated_at >= current_cutoff)
+        .where(
+            AIEvalRun.task_type == task_type,
+            AIEvalRun.metric_kind == _DRIFT_METRIC_KIND,
+            AIEvalRun.evaluated_at >= current_cutoff,
+        )
     )
     current = current_result.one_or_none()
 
@@ -574,6 +582,7 @@ async def detect_quality_drift(
         )
         .where(
             AIEvalRun.task_type == task_type,
+            AIEvalRun.metric_kind == _DRIFT_METRIC_KIND,
             AIEvalRun.evaluated_at >= previous_cutoff,
             AIEvalRun.evaluated_at < current_cutoff,
         )
