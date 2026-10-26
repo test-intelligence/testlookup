@@ -948,7 +948,7 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
         commits: Optional[list[dict[str, Any]]] = None
         if isinstance(target, GitLabConnectorTarget) and base_commit and head:
             commits = await _fetch_gitlab_range(target, base_commit, head, run_id=run_id)
-        elif target is not None and base_commit and head:
+        elif target is not None and not isinstance(target, GitLabConnectorTarget) and base_commit and head:
             commits = await _fetch_connector_range(
                 target, base_commit, head, run_id=run_id,
             )
