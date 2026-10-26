@@ -122,8 +122,7 @@ function adapterRunnerSnippet(runner: string, projectId: string, serverUrl: stri
     `testlookupUrl: '${serverUrl}',`,
     `testlookupProject: '${projectId}',`,
     'testlookupApiKey: process.env.TESTLOOKUP_API_KEY,',
-  ].join('
-')
+  ].join('\n')
   switch (runner) {
     case 'playwright':
       return `// playwright.config.ts — one result per attempt (retries show as attempt 2),
