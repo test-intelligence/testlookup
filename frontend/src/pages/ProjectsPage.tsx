@@ -20,7 +20,7 @@ import { projectsService } from '@/services/projectsService'
 import { useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import type { Project, ProjectUpdate } from '@/types/projects'
-import { fromNow } from '@/utils/formatters'
+import { formatDay, fromNow } from '@/utils/formatters'
 import { fieldErrorsFrom } from '@/utils/fieldErrors'
 import toast from 'react-hot-toast'
 import { helpTopicParam } from '@/components/help/helpTopics'
@@ -135,6 +135,9 @@ export default function ProjectsPage() {
     }
   }
 
+  // W17 ADM-04: an administrator can switch to the archived projects and restore one.
+  const [view, setView] = useState<'active' | 'archived'>('active')
+
   const handleDelete = async (p: Project) => {
     try {
       await projectsService.delete(p.id)
@@ -224,6 +227,25 @@ export default function ProjectsPage() {
         </InlineFormSection>
       )}
 
+      {isAdmin && (
+        <div className="flex gap-1" role="group" aria-label="Which projects">
+          {(['active', 'archived'] as const).map(v => (
+            <button
+              key={v}
+              type="button"
+              aria-pressed={view === v}
+              onClick={() => setView(v)}
+              className={view === v ? 'btn-primary btn-sm' : 'btn-secondary btn-sm'}
+            >
+              {v === 'active' ? 'Active' : 'Archived'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {isAdmin && view === 'archived' ? (
+        <ArchivedProjects onRestored={() => { void load() }} />
+      ) : (
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
         {projects.map(p => {
           const editKey: ProjectForm = `edit:${p.id}`
@@ -306,7 +328,77 @@ export default function ProjectsPage() {
           </div>
         )}
       </div>
+      )}
 
+    </div>
+  )
+}
+
+/** W17 ADM-04: the archived projects (ADMIN), each with when / by whom and Restore. */
+function ArchivedProjects({ onRestored }: { onRestored: () => void }) {
+  const [rows, setRows] = useState<Project[] | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [asking, setAsking] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const read = useCallback(
+    () => projectsService.listWithArchived()
+      .then(all => { setFailed(false); setRows((Array.isArray(all) ? all : []).filter(p => p.is_active === false)) })
+      .catch(() => setFailed(true)),
+    [],
+  )
+  useEffect(() => { void read() }, [read])
+
+  const restore = async (p: Project) => {
+    setBusy(true)
+    try {
+      const answer = await projectsService.restore(p.id)
+      const n = answer?.api_keys_still_revoked ?? 0
+      toast.success(`${p.name} restored. ${n} API key${n === 1 ? '' : 's'} stay revoked.`)
+      setAsking(null)
+      void read()
+      onRestored()
+    } catch {
+      toast.error(`Could not restore ${p.name}.`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (failed) return <p className="text-sm text-[var(--status-failed)]">Could not load the archived projects.</p>
+  if (rows === null) return <p className="text-sm text-[var(--color-text-muted)]">Loading archived projects…</p>
+  if (rows.length === 0) {
+    return <p className="text-sm text-[var(--color-text-muted)]" data-testid="no-archived-projects">No archived projects.</p>
+  }
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4" data-testid="archived-projects">
+      {rows.map(p => (
+        <Fragment key={p.id}>
+          <div className="card opacity-80" data-archived-project={p.slug}>
+            <p className="font-semibold text-[var(--color-text)]">{p.name}</p>
+            <p className="text-xs text-[var(--color-text-muted)] font-mono mt-0.5">{p.slug}</p>
+            <p className="text-xs text-[var(--color-text-muted)] mt-2">
+              {p.archived_at
+                ? <>Archived on {formatDay(p.archived_at)}{p.archived_by_name ? <> by {p.archived_by_name}</> : null}</>
+                : 'Archived (date not recorded)'}
+            </p>
+            <button type="button" className="btn-secondary btn-sm mt-3" onClick={() => setAsking(p.id)} disabled={busy}>
+              Restore
+            </button>
+          </div>
+          {asking === p.id && (
+            <div data-in-page-row="" className="col-span-full">
+              <InlineConfirm
+                message={<>Restore project &quot;<strong>{p.name}</strong>&quot;? Its members and runs come back with it.
+                  Its API keys stay revoked (create new ones in API Keys), and its default QA lead stays disabled (reset
+                  its password from Members to re-enable it).</>}
+                confirmLabel="Restore"
+                onConfirm={() => { void restore(p) }}
+                onCancel={() => setAsking(null)}
+              />
+            </div>
+          )}
+        </Fragment>
+      ))}
     </div>
   )
 }

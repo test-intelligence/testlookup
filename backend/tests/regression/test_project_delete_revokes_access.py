@@ -151,6 +151,7 @@ async def test_delete_project_calls_the_revocation():
     result.scalar_one_or_none = MagicMock(return_value=project)
     db.execute = AsyncMock(return_value=result)
     db.commit = AsyncMock()
+    db.add = MagicMock()  # W17 ADM-04: the project.archived activity row is staged
 
     called: list[object] = []
 
@@ -162,7 +163,7 @@ async def test_delete_project_calls_the_revocation():
     original = svc.revoke_project_credentials
     svc.revoke_project_credentials = _spy
     try:
-        await delete_project(project.id, db=db)
+        await delete_project(project.id, db=db, current_user=MagicMock(id=uuid.uuid4(), username="admin"))
     finally:
         svc.revoke_project_credentials = original
 

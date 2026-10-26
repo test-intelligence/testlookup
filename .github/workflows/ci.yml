@@ -809,6 +809,7 @@ jobs:
           tests/integration/test_assignee_and_user_list_postgres.py
           tests/integration/test_user_list_search_postgres.py
           tests/integration/test_feature_flag_reason_postgres.py
+          tests/integration/test_project_restore_postgres.py
           tests/integration/test_defects_list_fields_postgres.py
           tests/integration/test_analytics_scope_postgres.py
           tests/integration/test_analytics_epoch_redis_postgres.py

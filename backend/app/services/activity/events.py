@@ -311,6 +311,10 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # ── configuration ───────────────────────────────────────────────────────
     _spec("project.created", "configuration", "project", "Project {entity_label} was created"),
     _spec("project.updated", "configuration", "project", "Project settings changed: {changed}"),
+    # W17 ADM-04: archive hides the project and revokes its keys; restore brings it
+    # back (ADMIN) with the keys and the default QA lead still revoked.
+    _spec("project.archived", "configuration", "project", "Project {entity_label} was archived"),
+    _spec("project.restored", "configuration", "project", "Project {entity_label} was restored"),
     _spec("project.reset", "configuration", "project", "Project data reset ({mode}) was issued", "attempt"),
     _spec("policy.created", "configuration", "policy", "Release gate policy {entity_label} was created"),
     _spec("policy.updated", "configuration", "policy", "Release gate policy {entity_label} changed: {changed}"),

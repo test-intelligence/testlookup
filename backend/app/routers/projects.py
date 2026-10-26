@@ -1,11 +1,18 @@
 """Project CRUD endpoints."""
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_accessible_project_ids, get_current_active_user, require_project_access, require_role
+from app.core.deps import (
+    _api_key_bound_project,
+    get_accessible_project_ids,
+    get_current_active_user,
+    require_project_access,
+    require_role,
+)
 from app.db.postgres import get_db
 from app.services.activity.service import ActorRef, record as record_activity
 from app.models.postgres import (
@@ -19,6 +26,7 @@ from app.models.schemas import (
     ProjectCreate,
     ProjectResetRequest,
     ProjectResetResponse,
+    ProjectRestoreResponse,
     ProjectResponse,
     ProjectUpdate,
 )
@@ -48,6 +56,10 @@ def _retention_status(enabled: bool | None) -> str:
 async def list_projects(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
+    include_archived: bool = Query(
+        False,
+        description="W17 ADM-04: also list archived projects, with when / by whom (ADMIN only; 403 otherwise).",
+    ),
 ):
     # S1: the retention posture rides along on a LEFT JOIN rather than a
     # per-project lookup. `enabled` is NOT NULL on the policy table, so a NULL
@@ -59,20 +71,41 @@ async def list_projects(
             ProjectRetentionPolicy,
             ProjectRetentionPolicy.project_id == Project.id,
         )
-        .where(Project.is_active.is_(True))
         .order_by(Project.name)
     )
+    if include_archived:
+        if _role_value(current_user) != UserRole.ADMIN.value or _api_key_bound_project(current_user) is not None:
+            raise HTTPException(status_code=403, detail="Only an administrator can list archived projects.")
+    else:
+        stmt = stmt.where(Project.is_active.is_(True))
     # Tenant isolation: non-admin users only see projects they belong to
     accessible = await get_accessible_project_ids(db, current_user)
     if accessible is not None:
         stmt = stmt.where(Project.id.in_(accessible))
-    result = await db.execute(stmt)
+    rows = (await db.execute(stmt)).all()
+    names: dict[uuid.UUID, str] = {}
+    archivers = {p.archived_by_user_id for p, _ in rows if p.archived_by_user_id and p.is_active is False}
+    if archivers:
+        names = {
+            r.id: (r.full_name or r.username)
+            for r in (await db.execute(
+                select(User.id, User.full_name, User.username).where(User.id.in_(archivers))
+            )).all()
+        }
     return [
         ProjectResponse.model_validate(project).model_copy(
-            update={"retention_status": _retention_status(enabled)}
+            update={
+                "retention_status": _retention_status(enabled),
+                "archived_by_name": names.get(project.archived_by_user_id) if project.is_active is False else None,
+            }
         )
-        for project, enabled in result.all()
+        for project, enabled in rows
     ]
+
+
+def _role_value(user: User) -> str:
+    role = getattr(user, "role", None)
+    return str(getattr(role, "value", role) or "")
 
 
 @router.post(
@@ -261,7 +294,11 @@ async def update_project(
         Depends(require_project_access()),
     ],
 )
-async def delete_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def delete_project(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
     """Soft-delete a project and revoke everything that grants access to it.
 
     The soft delete used to be the whole handler, which meant "deleted"
@@ -277,7 +314,21 @@ async def delete_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_d
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    was_active = project.is_active is not False
     project.is_active = False
+    if was_active:
+        # W17 ADM-04: when and by whom, for the Archived list; an already
+        # archived project keeps its first stamp.
+        project.archived_at = datetime.now(timezone.utc)
+        project.archived_by_user_id = getattr(current_user, "id", None)
+        await record_activity(
+            db,
+            project_id=project.id,
+            event_type="project.archived",
+            actor=ActorRef.from_user(current_user),
+            entity_id=project.id,
+            entity_label=project.name,
+        )
     await revoke_project_credentials(db, project)
     await db.commit()
     # VIZ-212: all-projects analytics filter on is_active, so they must drop
@@ -286,6 +337,51 @@ async def delete_project(project_id: uuid.UUID, db: AsyncSession = Depends(get_d
     from app.services.cache_service import bump_analytics_epoch
 
     await bump_analytics_epoch(project_id)
+
+
+@router.post(
+    "/{project_id}/restore",
+    response_model=ProjectRestoreResponse,
+    dependencies=[Depends(require_project_access())],
+)
+async def restore_project(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """Bring an archived project back (W17 ADM-04). ADMIN only.
+
+    Archive revoked the project's API keys and its default QA-lead account on
+    purpose; restoring does NOT bring them back (new keys are one click; the
+    QA lead is re-enabled by resetting its password from Members). Members
+    keep their memberships; runs and history are untouched. 409 when the
+    project is not archived.
+    """
+    from app.models.postgres import ApiKey
+    from app.services.cache_service import bump_analytics_epoch
+
+    project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project.is_active is not False:
+        raise HTTPException(status_code=409, detail="This project is not archived.")
+    project.is_active = True
+    project.archived_at = None
+    project.archived_by_user_id = None
+    revoked_keys = (await db.execute(
+        select(func.count()).select_from(ApiKey).where(ApiKey.project_id == project.id, ApiKey.is_active.is_(False))
+    )).scalar_one()
+    await record_activity(
+        db,
+        project_id=project.id,
+        event_type="project.restored",
+        actor=ActorRef.from_user(current_user),
+        entity_id=project.id,
+        entity_label=project.name,
+    )
+    await db.commit()
+    await bump_analytics_epoch(project_id)
+    return ProjectRestoreResponse(project_id=project.id, api_keys_still_revoked=int(revoked_keys or 0))
 
 
 @router.post(
