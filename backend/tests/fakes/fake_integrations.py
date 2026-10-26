@@ -45,6 +45,14 @@ refuses.
   ``.../commits/{sha}``, ``.../commits?since=&until=&per_page=``. An unknown or
   revoked PAT is 401 ``Bad credentials``; a repo the PAT cannot see, or an
   unknown sha, is 404 ``Not Found``.
+* GitHub App (W19 INT-06): ``POST /app/installations/{id}/access_tokens`` (root
+  and ``/api/v3``) takes ``Authorization: Bearer <App JWT>`` -- RS256, ``iss`` =
+  the App id, signed by the key registered with ``POST /_fake/github/app``, not
+  expired, issued at most 10 minutes ahead -- and answers 201 ``{token:
+  "ghs_…", expires_at}``; the token then reads the installation's repos like a
+  PAT. A bad JWT is 401 ``A JSON web token could not be decoded``, an unknown
+  installation 404. The request log's ``token_kind`` says ``installation``
+  (a ``ghs_`` token), ``app_jwt`` or ``pat``.
 * GitLab (``PRIVATE-TOKEN``): ``GET /api/v4/projects/{ref}`` (URL-encoded path
   or numeric id); 401 / 404 as GitLab words them.
 * Receiver: ``POST /hooks/ok`` (200), ``/hooks/fail`` (500), ``/hooks/reject``
@@ -76,6 +84,8 @@ Inspect and steer it under ``/_fake/``:
   (``{_time, level, service, message, host}``) to an index
 * ``POST /_fake/ocp/pods`` -- ``{"namespace", "pod", "phase", "events",
   "image", "limits", "node"}``: create or replace a pod (and its namespace)
+* ``POST /_fake/github/app`` -- ``{"app_id", "public_key" (PEM), "installations": {"<id>": ["owner/repo", ...]}}``:
+  register a GitHub App (W19 INT-06).
 * ``POST /_fake/github/revoke`` -- ``{"token"}``: that PAT now answers 401
 * ``GET /_fake/hooks`` -- the receiver's log ``{path, status, event,
   delivery_id, signed}``
@@ -241,6 +251,11 @@ class FakeState:
     #: repo -> commits oldest -> newest {sha (40 hex), author, date, message, files}
     github_commits: dict[str, list[dict[str, Any]]] = field(default_factory=_demo_github_commits)
     revoked_github_tokens: set[str] = field(default_factory=set)
+    # ── W19 INT-06: GitHub Apps ──
+    #: app id -> public key PEM
+    github_app_keys: dict[str, str] = field(default_factory=dict)
+    #: installation id -> {"app_id", "repos"}
+    github_installations: dict[str, dict[str, Any]] = field(default_factory=dict)
     # ── W10: GitLab ──
     gitlab_token: str = "fake-gitlab-pat"
     #: path -> {"id", "web_url"}
@@ -704,7 +719,7 @@ def _service_of(path: str) -> Optional[str]:
         return "ocp"
     if path.startswith("/api/v4/projects/"):
         return "gitlab"
-    if path.startswith("/api/v3/") or path.startswith("/repos/") or path == "/rate_limit":
+    if path.startswith("/api/v3/") or path.startswith("/repos/") or path == "/rate_limit" or path.startswith("/app/"):
         return "github"
     if path.startswith("/hooks/"):
         return "hooks"
@@ -942,7 +957,51 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _token_kind(request: Request) -> Optional[str]:
+    raw = _github_pat(request)
+    if raw is None:
+        return None
+    if raw.startswith("ghs_"):
+        return "installation"
+    return "app_jwt" if raw.count(".") == 2 else "pat"
+
+
+async def _github_app_token(request: Request, state: FakeState, installation_id: str) -> Response:
+    import secrets as _secrets
+
+    bad = JSONResponse({"message": "A JSON web token could not be decoded",
+                        "documentation_url": "https://docs.github.com/rest"}, status_code=401)
+    raw = _github_pat(request)
+    if not raw or raw.count(".") != 2:
+        return bad
+    try:
+        import jwt as _jwt
+
+        unverified = _jwt.decode(raw, options={"verify_signature": False})
+        app_id = str(unverified.get("iss"))
+        key = state.github_app_keys.get(app_id)
+        if key is None:
+            return bad
+        claims = _jwt.decode(raw, key, algorithms=["RS256"], options={"require": ["iat", "exp", "iss"]})
+        if int(claims["exp"]) - int(claims["iat"]) > 660:
+            return bad
+    except Exception:
+        return bad
+    inst = state.github_installations.get(installation_id)
+    if inst is None or str(inst.get("app_id")) != app_id:
+        return _gh_not_found()
+    token = "ghs_" + _secrets.token_hex(18)
+    with state._lock:
+        state.github_tokens[token] = set(inst.get("repos") or [])
+    expires = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=1)
+    return JSONResponse({"token": token, "expires_at": expires.isoformat().replace("+00:00", "Z"),
+                         "permissions": {"checks": "write", "contents": "read"}}, status_code=201)
+
+
 async def _github(request: Request, state: FakeState, path: str, method: str) -> Response:
+    am = re.fullmatch(r"/app/installations/([0-9]+)/access_tokens", path)
+    if am and method == "POST":
+        return await _github_app_token(request, state, am.group(1))
     if method != "GET":
         return _gh_not_found()
     pat = _github_pat(request)
@@ -1109,6 +1168,14 @@ async def _control(request: Request, state: FakeState) -> Response:
                 "events": list(body.get("events", current.get("events", []))),
             }
         return JSONResponse({"namespace": namespace, "pod": pod, "events": len(pods[pod]["events"])})
+    if path == "/_fake/github/app":
+        body = await request.json()
+        app_id = str(body["app_id"])
+        with state._lock:
+            state.github_app_keys[app_id] = str(body["public_key"])
+            for inst_id, repos in (body.get("installations") or {}).items():
+                state.github_installations[str(inst_id)] = {"app_id": app_id, "repos": set(repos)}
+        return JSONResponse({"app_id": app_id, "installations": sorted(state.github_installations)})
     if path == "/_fake/github/revoke":
         token = str((await request.json())["token"])
         with state._lock:
@@ -1159,6 +1226,8 @@ def create_app(state: Optional[FakeState] = None) -> Starlette:
         }
         if base is not None:
             entry["base"] = base
+        if service == "github":
+            entry["token_kind"] = _token_kind(request)
         with state._lock:
             state.requests.append(entry)
 

@@ -8392,6 +8392,8 @@ class GitHubIntegrationWrite(BaseModel):
     # still updates an existing marker comment on a green run so a PR
     # that went red→green shows green.
     pr_comment_mode: Literal["off", "failures_only", "always"] = "failures_only"
+    #: W19 INT-06: ``pat`` or ``app`` (a GitHub App installation). Omitted leaves it as stored.
+    auth_kind: Optional[Literal["pat", "app"]] = None
 
 
 class GitHubIntegrationRead(BaseModel):
@@ -8403,6 +8405,9 @@ class GitHubIntegrationRead(BaseModel):
     api_base_url: str
     has_pat: bool
     pr_comment_mode: str = "failures_only"
+    #: W19 INT-06
+    auth_kind: str = "pat"
+    installation_id: Optional[int] = None
     last_posted_at: Optional[datetime] = None
     last_error: Optional[str] = None
     last_error_at: Optional[datetime] = None
@@ -8416,6 +8421,41 @@ class GitHubConnectionTestResponse(BaseModel):
     status_code: Optional[int] = None
     message: str
     repo_html_url: Optional[str] = None
+    #: W19 INT-06: which credential was used — ``pat`` | ``app_installation`` (``app`` when the App path failed).
+    auth_kind: Optional[str] = None
+
+
+class GitHubAppSettingsRead(BaseModel):
+    """W19 INT-06: the deployment's GitHub App. Secrets are never returned, only whether they are set."""
+    app_id: Optional[str] = None
+    slug: Optional[str] = None
+    private_key_set: bool = False
+    webhook_secret_set: bool = False
+    configured: bool = False
+
+
+class GitHubAppSettingsWrite(BaseModel):
+    app_id: str = Field(..., min_length=1, max_length=20, pattern=r"^[0-9]+$")
+    slug: str = Field(..., min_length=1, max_length=100, pattern=r"^[A-Za-z0-9-]+$")
+    #: None keeps the stored key, "" clears it, a PEM replaces it.
+    private_key: Optional[str] = Field(None, max_length=10000)
+    webhook_secret: Optional[str] = Field(None, max_length=500)
+
+
+class GitHubAppInstallUrl(BaseModel):
+    url: str
+    expires_in: int
+
+
+class GitHubAppSetupCallback(BaseModel):
+    installation_id: int = Field(..., ge=1)
+    state: str = Field(..., min_length=10, max_length=600)
+
+
+class GitHubAppSetupResult(BaseModel):
+    project_id: uuid.UUID
+    installation_id: int
+    auth_kind: str
 
 
 # ── GitLab Integration (PMF Epic 3 US-3.1/3.2/3.3) ──────────────────────────

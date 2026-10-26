@@ -17,6 +17,8 @@ import {
   type PrCommentMode,
 } from '@/services/githubIntegrationService'
 import { formatCompactDateTime } from '@/utils/formatters'
+import { GitHubAppAdminCard, GitHubAuthMethod } from './GitHubAppSection'
+import { useGitHubAppCallback } from '@/hooks/useGitHubAppCallback'
 
 const PR_COMMENT_MODES: { value: PrCommentMode; label: string }[] = [
   { value: 'off', label: 'Off — never comment on PRs' },
@@ -41,7 +43,7 @@ const HELP_TOPIC = helpTopicParam('/settings/github')
  * action row (`InlineConfirm`), never with the browser's prompt.
  */
 export default function GitHubIntegrationPage() {
-  const { canAccessManagement: canEdit } = usePermissions()
+  const { canAccessManagement: canEdit, isAdmin } = usePermissions()
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
   const activeProject = useProjectStore((s) => s.activeProject)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID || !activeProjectId
@@ -54,8 +56,11 @@ export default function GitHubIntegrationPage() {
     repo_name: '',
     api_base_url: 'https://api.github.com',
     pr_comment_mode: 'failures_only',
+    auth_kind: 'pat',
   })
   const [patDraft, setPatDraft] = useState<string>('')
+  // W19 INT-06: bumped after the GitHub App callback records an installation, to re-read the row.
+  const [reloadKey, setReloadKey] = useState(0)
   const [testing, setTesting] = useState(false)
   const [lastTest, setLastTest] = useState<GitHubConnectionTestResponse | null>(null)
   // Remove asks in the Repository card first (W27b).
@@ -76,6 +81,7 @@ export default function GitHubIntegrationPage() {
           repo_name: data.repo_name,
           api_base_url: data.api_base_url,
           pr_comment_mode: data.pr_comment_mode ?? 'failures_only',
+          auth_kind: data.auth_kind ?? 'pat',
         })
       } catch (err: unknown) {
         const status = (err as { response?: { status?: number } })?.response?.status
@@ -92,7 +98,9 @@ export default function GitHubIntegrationPage() {
     return () => {
       cancelled = true
     }
-  }, [activeProjectId, isAllProjects])
+  }, [activeProjectId, isAllProjects, reloadKey])
+
+  useGitHubAppCallback(!isAllProjects && Boolean(activeProjectId), () => setReloadKey((k) => k + 1))
 
   if (isAllProjects) {
     return (
@@ -223,6 +231,17 @@ export default function GitHubIntegrationPage() {
             type="password"
           />
         </div>
+
+        {activeProjectId && (
+          <GitHubAuthMethod
+            projectId={activeProjectId}
+            authKind={form.auth_kind ?? 'pat'}
+            installationId={existing?.installation_id ?? null}
+            hasPat={Boolean(existing?.has_pat)}
+            canEdit={canEdit}
+            onChange={(kind) => setForm({ ...form, auth_kind: kind })}
+          />
+        )}
 
         <label className="text-xs flex items-center gap-2">
           <input
@@ -373,6 +392,8 @@ export default function GitHubIntegrationPage() {
           <code>checks:write</code> on a fine-grained token).
         </p>
       </section>
+      {/* W19 INT-06: the deployment's GitHub App, administrators only. */}
+      {isAdmin && <GitHubAppAdminCard />}
     </div>
   )
 }

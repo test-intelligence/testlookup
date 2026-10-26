@@ -334,11 +334,10 @@ async def fetch_codeowners_text(
     if integration is None or not integration.enabled:
         return None, "integration_disabled_or_missing"
 
-    from app.services import secret_service
+    from app.services import github_auth
 
-    pat = await secret_service.read_secret(
-        db, gh.SECRET_SCOPE, gh._secret_key(project_id),
-    )
+    _cred = await github_auth.get_github_token(db, project_id, integration=integration)
+    pat = _cred.token if _cred else None
     if not pat:
         return None, "no_pat_configured"
 

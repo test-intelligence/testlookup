@@ -77,9 +77,7 @@ from app.models.postgres import (
 )
 from app.core.config import settings
 from app.services.github_checks_service import (
-    SECRET_SCOPE,
     _post_allowed,
-    _secret_key,
     _ssrf_block_reason,
     get_integration,
 )
@@ -547,10 +545,9 @@ async def _gather_context(run_id: uuid.UUID) -> Optional[_PRCommentContext]:
             )
             return None
 
-        from app.services import secret_service
-        pat = await secret_service.read_secret(
-            db, SECRET_SCOPE, _secret_key(run.project_id),
-        )
+        from app.services import github_auth
+        _cred = await github_auth.get_github_token(db, run.project_id)
+        pat = _cred.token if _cred else None
         if not pat:
             logger.debug("pr_comment skipped: no PAT", run_id=str(run_id))
             return None

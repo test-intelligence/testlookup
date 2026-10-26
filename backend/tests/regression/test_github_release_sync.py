@@ -55,9 +55,10 @@ def test_the_gate_checks_offline_credential_and_ssrf_in_that_order():
     src = inspect.getsource(sync._authorized_get)
     assert "AI_OFFLINE_MODE" in src
     assert "_ssrf_block_reason" in src
-    assert "read_secret" in src
-    assert src.index("AI_OFFLINE_MODE") < src.index("read_secret")
-    assert src.index("read_secret") < src.index("_ssrf_block_reason")
+    # W19 INT-06: the credential is read through the one reader (PAT or GitHub App token).
+    assert "get_github_token" in src
+    assert src.index("AI_OFFLINE_MODE") < src.index("get_github_token")
+    assert src.index("get_github_token") < src.index("_ssrf_block_reason")
 
 
 def test_ssrf_guard_is_the_same_one_the_write_path_uses():

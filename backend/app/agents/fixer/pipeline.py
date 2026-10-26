@@ -624,11 +624,9 @@ async def poll_open_fixer_prs() -> dict[str, int]:
     from app.core.http_client import http_verify
 
     from app.db.postgres import AsyncSessionLocal
-    from app.services import secret_service
+    from app.services import github_auth
     from app.services.feedback_service import record_fix_outcome
     from app.services.github_checks_service import (
-        SECRET_SCOPE,
-        _secret_key,
         _ssrf_block_reason,
         get_integration,
     )
@@ -658,7 +656,8 @@ async def poll_open_fixer_prs() -> dict[str, int]:
             integration = await get_integration(db, project_id)
             if integration is None or not integration.enabled:
                 continue
-            pat = await secret_service.read_secret(db, SECRET_SCOPE, _secret_key(project_id))
+            _cred = await github_auth.get_github_token(db, project_id, integration=integration)
+            pat = _cred.token if _cred else None
             if not pat:
                 continue
             creds[project_id] = (
