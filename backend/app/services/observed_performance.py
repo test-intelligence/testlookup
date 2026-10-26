@@ -319,12 +319,14 @@ async def _prometheus_rows(budgets: list, window: str) -> Optional[dict[str, dic
     """Per operation ``{p50, p95, p99, count}`` from Prometheus, or None when it cannot answer."""
     import httpx
 
+    from app.core.http_client import http_verify
+
     base = (settings.PROMETHEUS_URL or "").rstrip("/")
     if not base.startswith(("http://", "https://")):
         return None
     out: dict[str, dict[str, Any]] = {}
     try:
-        async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=False, verify=http_verify()) as client:
             for b in budgets:
                 sel = f'handler="{b.http_handler}",method="{b.http_method.upper()}"'
                 row: dict[str, Any] = {}

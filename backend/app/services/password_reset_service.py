@@ -2,7 +2,8 @@
 
 Anti-enumeration is the design constraint. ``POST /auth/password/forgot``
 answers the same 202 for every address and does the account lookup, the
-per-mailbox limit and the send in :func:`process_forgot_request`, scheduled as
+per-mailbox limit and the send in ``routers.auth.process_forgot_request`` (via
+:func:`stage_forgot_token`), scheduled as
 a background task *after* the response — so neither the body nor the latency
 says whether an account exists.
 """
@@ -21,12 +22,11 @@ from app.models.postgres import PasswordResetToken, User, UserRole
 from app.services.account_links_service import (
     FORGOT_PER_EMAIL_PER_HOUR,
     PASSWORD_RESET_LIFETIME,
-    RESET_PATH,
     send_link_email,
     smtp_enabled,
 )
 from app.services.notification.email_templates import render_password_reset_email
-from app.services.one_time_tokens import fragment_link, hash_ip, new_token
+from app.services.one_time_tokens import hash_ip, new_token
 
 logger = logging.getLogger(__name__)
 
@@ -105,28 +105,25 @@ async def _self_service_allowed(db: AsyncSession, user: User) -> bool:
     return True
 
 
-async def process_forgot_request(email: str, request_ip: Optional[str]) -> None:
-    """Background half of ``/auth/password/forgot``. Silent on every skip; never raises."""
-    from app.db.postgres import AsyncSessionLocal
+async def stage_forgot_token(db: AsyncSession, email: str, request_ip: Optional[str]) -> Optional[tuple[str, str]]:
+    """The checks and the token of ``/auth/password/forgot``; the caller commits, then mails.
 
-    try:
-        if not await smtp_enabled():
-            logger.info("forgot_password_skipped: reason=smtp_off")
-            return
-        if not await _within_mailbox_limit(email):
-            logger.info("forgot_password_skipped: reason=rate_limited")
-            return
-        async with AsyncSessionLocal() as db:
-            user = (
-                await db.execute(select(User).where(func.lower(User.email) == email.lower()))
-            ).scalar_one_or_none()
-            if user is None or not await _self_service_allowed(db, user):
-                logger.info("forgot_password_skipped: reason=no_eligible_account")
-                return
-            raw, _expires = await create_password_reset_token(db, user, request_ip=request_ip)
-            await db.commit()
-            user_id, to_email = user.id, user.email
-        sent = await email_password_reset(to_email, fragment_link(RESET_PATH, raw), issued_by_admin=False)
-        logger.info("forgot_password_processed: user_id=%s email_sent=%s", user_id, sent)
-    except Exception as exc:  # noqa: BLE001 - a background task must not surface
-        logger.warning("forgot_password_failed: %s", type(exc).__name__)
+    Returns ``(raw token, mailbox)`` or ``None`` on every silent skip: SMTP off,
+    the per-mailbox limit reached, no such account, inactive, or SSO-only.
+    Stage-only (the transaction-boundary rule): the router's background task
+    owns the session and the commit.
+    """
+    if not await smtp_enabled():
+        logger.info("forgot_password_skipped: reason=smtp_off")
+        return None
+    if not await _within_mailbox_limit(email):
+        logger.info("forgot_password_skipped: reason=rate_limited")
+        return None
+    user = (
+        await db.execute(select(User).where(func.lower(User.email) == email.lower()))
+    ).scalar_one_or_none()
+    if user is None or not await _self_service_allowed(db, user):
+        logger.info("forgot_password_skipped: reason=no_eligible_account")
+        return None
+    raw, _expires = await create_password_reset_token(db, user, request_ip=request_ip)
+    return raw, user.email

@@ -213,7 +213,7 @@ async def test_forgot_answers_the_same_for_known_and_unknown_and_mails_only_the_
 
 
 async def test_forgot_is_silent_when_smtp_is_off_and_limited_per_mailbox(world):
-    from app.services.password_reset_service import process_forgot_request
+    from app.routers.auth import process_forgot_request
 
     world["smtp"]["enabled"] = False
     await process_forgot_request(world["viewer"].email, "10.0.0.9")
@@ -227,7 +227,7 @@ async def test_forgot_is_silent_when_smtp_is_off_and_limited_per_mailbox(world):
 
 async def test_forgot_skips_a_deactivated_account(world):
     from app.models.postgres import User
-    from app.services.password_reset_service import process_forgot_request
+    from app.routers.auth import process_forgot_request
 
     db = world["db"]
     user = (await db.execute(select(User).where(User.id == world["viewer"].id))).scalar_one()

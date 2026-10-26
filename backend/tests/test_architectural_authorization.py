@@ -1410,6 +1410,10 @@ def test_binding_confinement_is_not_scope_evidence() -> None:
 
 #: Path ids that name nothing tenant-owned, with the reason.
 GLOBAL_PATH_PARAMS: dict[str, str] = {
+    # W17b ADM-01: /users/invitations/{invitation_id}/revoke|resend. An invitation
+    # to the instance (users are instance-wide), owned by no project; both routes
+    # are require_role(ADMIN) with no project-key access.
+    "invitation_id": "an instance-wide user invitation, managed only by require_role(ADMIN)",
     "agent_id": "a capability id from the global agent registry (agent.<name>.v<n>), not tenant data",
     "entry_id": "an instance-global Redis DLQ stream id guarded by require_instance_admin",
     # W11 REL-11: GET /compliance-packs/signing-keys/{signing_key_id}/pem. The

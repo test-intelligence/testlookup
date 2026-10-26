@@ -250,12 +250,32 @@ async def forgot_password(
     background_tasks: BackgroundTasks,
 ) -> dict:
     """Always 202 with the same body. The lookup and the mail run after the response."""
-    from app.services.password_reset_service import FORGOT_ACCEPTED_DETAIL, process_forgot_request
+    from app.services.password_reset_service import FORGOT_ACCEPTED_DETAIL
 
     background_tasks.add_task(
         process_forgot_request, str(payload.email), request.client.host if request.client else None,
     )
     return {"detail": FORGOT_ACCEPTED_DETAIL}
+
+
+async def process_forgot_request(email: str, request_ip: str | None) -> None:
+    """Background half of ``/auth/password/forgot`` (after the 202). Silent on every skip; never raises."""
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.account_links_service import RESET_PATH
+    from app.services.one_time_tokens import fragment_link
+    from app.services.password_reset_service import email_password_reset, stage_forgot_token
+
+    try:
+        async with AsyncSessionLocal() as db:
+            staged = await stage_forgot_token(db, email, request_ip)
+            if staged is None:
+                return
+            await db.commit()
+        raw, to_email = staged
+        sent = await email_password_reset(to_email, fragment_link(RESET_PATH, raw), issued_by_admin=False)
+        logger.info("forgot_password_processed: email_sent=%s", sent)
+    except Exception as exc:  # noqa: BLE001 - a background task must not surface
+        logger.warning("forgot_password_failed: %s", type(exc).__name__)
 
 
 @router.post("/password/reset", status_code=204)
