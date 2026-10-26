@@ -103,20 +103,29 @@ _SDK_CONFIGS: dict[str, dict] = {
 _CLI_WHEEL_RE = re.compile(r"^testlookup_cli-(\d+(?:\.\d+)*(?:[a-z0-9.+-]*)?)-py3-none-any\.whl$")
 
 
-def _cli_wheels() -> list[tuple[str, str]]:
-    """The staged CLI wheels as ``(filename, version)``, newest version first."""
+def _cli_wheel_paths() -> list[tuple[str, str, str]]:
+    """The staged CLI wheels as ``(filename, version, path)``, newest version first.
+
+    ``path`` comes from the directory listing, so a download serves a file the
+    server found itself -- never a path assembled from the request.
+    """
     folder = os.path.join(SDK_BASE_PATH, _SDK_CONFIGS["cli"]["path"])
-    found: list[tuple[str, str]] = []
+    found: list[tuple[str, str, str]] = []
     for path in glob.glob(os.path.join(folder, "testlookup_cli-*.whl")):
         name = os.path.basename(path)
         match = _CLI_WHEEL_RE.match(name)
         if match and os.path.isfile(path):
-            found.append((name, match.group(1)))
+            found.append((name, match.group(1), path))
 
-    def _key(item: tuple[str, str]) -> tuple:
+    def _key(item: tuple[str, str, str]) -> tuple:
         return tuple(int(x) if x.isdigit() else 0 for x in re.split(r"[.+-]", item[1]))
 
     return sorted(found, key=_key, reverse=True)
+
+
+def _cli_wheels() -> list[tuple[str, str]]:
+    """The staged CLI wheels as ``(filename, version)``, newest version first."""
+    return [(name, version) for name, version, _ in _cli_wheel_paths()]
 
 
 @router.get("", summary="List available client SDKs")
@@ -183,14 +192,11 @@ async def download_cli_wheel(filename: str):
     Only a name from the staged list is served: anything else -- another
     package, a path, ``..`` -- is a 404, never a file read.
     """
-    staged = {name for name, _ in _cli_wheels()}
-    if filename not in staged:
+    match = next(((name, path) for name, _, path in _cli_wheel_paths() if name == filename), None)
+    if match is None:
         raise HTTPException(status_code=404, detail="No such CLI wheel on this deployment.")
-    return FileResponse(
-        path=os.path.join(SDK_BASE_PATH, _SDK_CONFIGS["cli"]["path"], filename),
-        filename=filename,
-        media_type=_SDK_CONFIGS["cli"]["media_type"],
-    )
+    name, path = match
+    return FileResponse(path=path, filename=name, media_type=_SDK_CONFIGS["cli"]["media_type"])
 
 
 @router.get("/{lang}", summary="Download a client SDK")

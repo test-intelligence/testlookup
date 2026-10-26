@@ -251,11 +251,12 @@ describe('FeatureFlagsPage: last change (ADM-07)', () => {
     ]
     render(<FeatureFlagsPage />)
     const [first, second] = screen.getAllByTestId('flag-last-changed')
-    expect(first).toHaveTextContent('about 2 hours ago by Ada Admin')
+    expect(first).toHaveTextContent('about 2 hours ago')
+    expect(first).toHaveTextContent('by Ada Admin')
     expect(first).toHaveTextContent('“demo INT-07”')
     expect(first).toHaveAttribute('title', 'Reason: demo INT-07')
     expect(second).toHaveTextContent('about 2 hours ago')
-    expect(second).not.toHaveTextContent(' by ')
+    expect(second).not.toHaveTextContent('by ')
     expect(second).toHaveAttribute('title', 'No reason given')
   })
 
@@ -269,13 +270,20 @@ describe('FeatureFlagsPage: last change (ADM-07)', () => {
     await waitFor(() => expect(update).toHaveBeenLastCalledWith('manual_upload', { enabled_global: false }))
   })
 
+  it('a change time ahead of the browser clock reads as the date, not "in N days"', () => {
+    flagList = [{ ...FLAG, updated_at: new Date(Date.now() + 26 * 86400 * 1000).toISOString() }]
+    render(<FeatureFlagsPage />)
+    expect(screen.getByTestId('flag-last-changed')).not.toHaveTextContent(/^in /)
+    expect(screen.getByRole('button', { name: 'History of manual_upload' }).textContent).not.toMatch(/^in /)
+  })
+
   it('History opens under the row with each change, newest first, and the reason', async () => {
     history.mockResolvedValue([
       { action: 'update', actor_name: 'admin', changed_fields: ['enabled_global'], reason: 'demo INT-07', created_at: '2026-10-26T05:00:00Z' },
       { action: 'create', actor_name: 'admin', changed_fields: [], reason: null, created_at: '2026-10-25T05:00:00Z' },
     ])
     render(<FeatureFlagsPage />)
-    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    fireEvent.click(screen.getByRole('button', { name: 'History of manual_upload' }))
     const section = await screen.findByRole('region', { name: 'History of manual_upload' })
     const items = await within(section).findAllByRole('listitem')
     expect(items[0]).toHaveTextContent('update: enabled_global')

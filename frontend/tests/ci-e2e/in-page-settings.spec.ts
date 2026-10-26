@@ -337,7 +337,7 @@ for (const width of [1280, 1440]) {
       assertHermetic(api, errors)
     })
 
-    test(`/settings/feature-flags @${width}: a flag's Edit and Delete under its row, inside its group (6 columns)`, async ({ page }) => {
+    test(`/settings/feature-flags @${width}: a flag's Edit and Delete under its row, inside its group (7 columns: W17 ADM-07 added Last changed)`, async ({ page }) => {
       watchNativeDialogs(page)
       const flags = flagsDeleteWorld()
       const { api, errors } = await openRollout(page, '/settings/feature-flags', { handlers: flags.handlers, ready: h1('Feature Flags'), user: ADMIN })
@@ -350,14 +350,14 @@ for (const width of [1280, 1440]) {
       const rowsBefore = await page.locator('tr[data-flag-key]').count()
       await flagRow.getByRole('button', { name: 'Edit' }).click()
       const edit = opened(page, 'Edit defect_commander')
-      await expectRowForm(page, '/settings/feature-flags edit', width, flagTable, flagRow, 6, edit, closed)
+      await expectRowForm(page, '/settings/feature-flags edit', width, flagTable, flagRow, 7, edit, closed)
       await expect(group.locator(edit), 'inside the flag\'s group').toHaveCount(1)
       await expect(page.locator('tr[data-flag-key]'), 'the form row is not a flag row').toHaveCount(rowsBefore)
       await edit.getByRole('button', { name: 'Cancel' }).click()
       await page.getByRole('button', { name: 'Delete flag defect_commander' }).click()
       const del = strip(page)
       await expect(del.locator('p').first()).toHaveText('Delete feature flag "defect_commander"? This cannot be undone.')
-      await expectRowForm(page, '/settings/feature-flags delete', width, flagTable, flagRow, 6, del, closed)
+      await expectRowForm(page, '/settings/feature-flags delete', width, flagTable, flagRow, 7, del, closed)
       await del.getByRole('button', { name: 'Cancel', exact: true }).click()
       expect(flags.state.writes).toEqual([])
       assertHermetic(api, errors)

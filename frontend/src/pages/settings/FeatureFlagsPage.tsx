@@ -276,7 +276,7 @@ export default function FeatureFlagsPage() {
               <th className="text-center px-3 py-2">Global</th>
               <th className="text-center px-3 py-2">Rollout %</th>
               <th className="text-center px-3 py-2">Scope</th>
-              <Th className="text-left px-3 py-2 whitespace-nowrap">Last changed</Th>
+              <Th className="text-left px-3 py-2">Last changed</Th>
               <th className="text-right px-3 py-2"></th>
             </tr>
           </thead>
@@ -396,27 +396,25 @@ function FlagRow({
           ? `${flag.enabled_projects?.length ?? 0}p / ${flag.enabled_roles?.length ?? 0}r`
           : 'all'}
       </td>
+      {/* W17 ADM-07: the time opens the History; the cell wraps so the table still fits the settings
+          column (a separate History button pushed Edit / Delete out of view at 1280). */}
       <td
-        className="px-3 py-2 text-xs text-[var(--color-text-muted)] whitespace-nowrap"
+        className="px-3 py-2 text-xs text-[var(--color-text-muted)] max-w-[10rem]"
         data-testid="flag-last-changed"
         title={flag.last_change_reason ? `Reason: ${flag.last_change_reason}` : 'No reason given'}
       >
-        <div>
-          {fromNow(flag.updated_at)}
-          {flag.updated_by_name ? <> by <span className="text-[var(--color-text)]">{flag.updated_by_name}</span></> : null}
-        </div>
-        {flag.last_change_reason && (
-          <div className="max-w-[16rem] truncate italic">“{flag.last_change_reason}”</div>
-        )}
-      </td>
-      <td className="px-3 py-2 text-right whitespace-nowrap">
         <button
           type="button"
           onClick={() => onHistory(flag)}
-          className="text-xs text-[var(--color-accent)] hover:underline mr-2"
+          aria-label={`History of ${flag.key}`}
+          className="text-left text-[var(--color-accent)] hover:underline"
         >
-          History
+          {changedWhen(flag.updated_at)}
         </button>
+        {flag.updated_by_name ? <div>by <span className="text-[var(--color-text)]">{flag.updated_by_name}</span></div> : null}
+        {flag.last_change_reason && <div className="truncate italic">“{flag.last_change_reason}”</div>}
+      </td>
+      <td className="px-3 py-2 text-right">
         <button
           type="button"
           onClick={() => onEdit(flag)}
@@ -551,6 +549,11 @@ function EditFlagModal({
       </div>
     </InlineFormSection>
   )
+}
+
+/** "2 hours ago"; a time ahead of this browser's clock (skew) reads as the date, never "in 26 days". */
+function changedWhen(iso: string): string {
+  return new Date(iso).getTime() > Date.now() ? formatDateTime(iso) : fromNow(iso)
 }
 
 /** W17 ADM-07: a flag's changes, newest first, in the page under its row. */
