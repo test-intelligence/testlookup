@@ -141,7 +141,7 @@ Show the LLM cost budget overview: which projects are closest to their cap?
 List open quarantine proposals and approve the one with the highest flip rate
 ```
 
-## Tool reference (75 tools)
+## Tool reference (77 tools)
 
 A `?` marks an optional parameter.
 
@@ -265,6 +265,13 @@ touched a suite whole, so under a suite filter it differs from
 | `get_release_gate` | `release`, `project?`, `evaluate?` | A release's gate verdict as data (verdict, pass rate, evidence, blockers, decided_at); `release` is an id or a name / version (an ambiguous name lists the candidates); `evaluate=true` records a fresh verdict (QA lead); never evaluated is `evaluated: false` |
 | `check_run_release_readiness` | `run_id` | Single-run GO/CONDITIONAL_GO/NO_GO with risk score and blocking issues |
 | `create_share_link` | `run_id`, `expires_days?`, `layout?` | Time-limited share URL for a run report |
+
+### Activity ledger
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `list_project_activity` | `project_id`, `category?`, `since?`, `limit?`, `cursor?` | A project's activity, newest first, as on its Activity tab (`project_id` may be the project name; `since` like `7d`); `more` + `next_cursor` when there are older events |
+| `get_activity_event` | `project_id`, `event_id` | One event with its before / after diff |
 
 ### Decision trail
 

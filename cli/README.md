@@ -109,6 +109,7 @@ Every group has `--help`, for example `testlookup upload file --help`.
 | `quarantine` | `list`, `approve <id>`, `reject <id>`, `release <id>` | The Flaky › Quarantine queue; approve (`--reason`, `--days`), reject, release early (`--reason`) — QA lead |
 | `defects` | `jira preview`, `jira create` | Preview or file a failure signature (`--fingerprint` or `--cluster`) as a Jira issue (`--target webhook` emits the outbound event instead) |
 | `investigations` | `start <run-id>`, `list`, `show <id>` | Deep investigations: start one for a run, a project's list, one investigation's cause and confidence |
+| `activity` | `list`, `show <event-id>`, `types`, `export -o <file>` | A project's activity ledger, newest first, as on its Activity tab (`--since 7d`, `--category`, `--event`, `--release`, `--all` follows the cursor; a page with more says so); one event's before/after diff; the event vocabulary; CSV / NDJSON export (QA lead) |
 
 ## Common tasks
 
