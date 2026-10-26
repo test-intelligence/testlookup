@@ -52,6 +52,25 @@ locally by default.
 
 ### Added
 
+- **Live streaming from Playwright, Vitest, Cypress, Cucumber JS and Robot
+  Framework** (wave W18b, DEV-03; branch `feat/df-live-reporters-20261026`; no
+  migration). The JavaScript SDK gains `testlookup-reporter/playwright-reporter`
+  (each attempt as it ends; a retry is `metadata.attempt` 2; one suite per
+  Playwright project, the project part of the test's identity),
+  `vitest-reporter` (Vitest 3's `onTestCaseResult`, Vitest 1/2's
+  `onTaskUpdate`, skipped tests at the end), `cypress-plugin` (per spec at
+  `after:spec`; the last attempt is the result) and `cucumber-formatter`
+  (Cucumber's message stream: one result per scenario attempt, the worst step
+  decides, the feature is the suite), on one shared adapter: options, then
+  `TESTLOOKUP_*` / `testlookup.properties`; off with one warning when not
+  configured; a network error never fails the run. Each loads under `require()`
+  and ESM `import()`. The Python SDK ZIP gains `testlookup_robot_listener.py`
+  (Listener API v3, Robot Framework 5-7). `/live` › Connect a test runner offers
+  a runner picker under JavaScript (Jest / Mocha, Playwright, Vitest, Cypress,
+  Cucumber) and Python (pytest, Robot Framework) with each snippet.
+  Cucumber-JVM is not included. Tests: `client/js/tests/live-adapters.test.mjs`,
+  `client/tests/test_robot_listener.py`, `frontend/src/components/live/sdkSnippets.test.ts`.
+
 - **Gate a release from CI, and the CLI / MCP catch up with the UI** (wave W18a,
   DEV-05, DEV-01 and DEV-04; branch `feat/df-cli-mcp-sdk-20261026`; no migration).
   `testlookup release gate <release>` prints the release's stored verdict (verdict,
