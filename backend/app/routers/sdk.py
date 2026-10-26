@@ -3,8 +3,10 @@ SDK download endpoints — serves the client SDK files from ./client/ at
 /api/v1/sdk/{lang}.  Registered as a PUBLIC router (no JWT required) so
 developers can download SDKs without logging in first.
 """
+import glob
 import io
 import os
+import re
 import zipfile
 
 import structlog
@@ -85,7 +87,36 @@ _SDK_CONFIGS: dict[str, dict] = {
         "path": "js",
         "filename": "testlookup-js-sdk.zip",
     },
+    # W17 DEV-02: the `testlookup` CLI as a wheel, built from cli/ while the
+    # image's build context is staged (CI and deploy-homelab.sh), so
+    # `pip install <deployment>/api/v1/sdk/cli/<wheel>` works without a clone.
+    "cli": {
+        "label": "CLI",
+        "type": "wheel",
+        "path": "cli",
+        "filename": "testlookup_cli-<version>-py3-none-any.whl",
+        "media_type": "application/octet-stream",
+    },
 }
+
+# A wheel file name pip accepts, for the CLI only (no path, no other package).
+_CLI_WHEEL_RE = re.compile(r"^testlookup_cli-(\d+(?:\.\d+)*(?:[a-z0-9.+-]*)?)-py3-none-any\.whl$")
+
+
+def _cli_wheels() -> list[tuple[str, str]]:
+    """The staged CLI wheels as ``(filename, version)``, newest version first."""
+    folder = os.path.join(SDK_BASE_PATH, _SDK_CONFIGS["cli"]["path"])
+    found: list[tuple[str, str]] = []
+    for path in glob.glob(os.path.join(folder, "testlookup_cli-*.whl")):
+        name = os.path.basename(path)
+        match = _CLI_WHEEL_RE.match(name)
+        if match and os.path.isfile(path):
+            found.append((name, match.group(1)))
+
+    def _key(item: tuple[str, str]) -> tuple:
+        return tuple(int(x) if x.isdigit() else 0 for x in re.split(r"[.+-]", item[1]))
+
+    return sorted(found, key=_key, reverse=True)
 
 
 @router.get("", summary="List available client SDKs")
@@ -93,6 +124,16 @@ async def list_sdks() -> JSONResponse:
     """Return metadata for all available SDK downloads."""
     available = []
     for lang, cfg in _SDK_CONFIGS.items():
+        if cfg["type"] == "wheel":
+            wheels = _cli_wheels()
+            available.append({
+                "lang": lang,
+                "label": cfg["label"],
+                "filename": wheels[0][0] if wheels else None,
+                "download_url": f"/api/v1/sdk/cli/{wheels[0][0]}" if wheels else None,
+                "available": bool(wheels),
+            })
+            continue
         full_path = os.path.join(SDK_BASE_PATH, cfg["path"])
         exists = os.path.exists(full_path)
         if cfg["type"] == "files":
@@ -121,6 +162,37 @@ async def list_sdks() -> JSONResponse:
     return JSONResponse(content={"sdks": available})
 
 
+@router.get("/cli/info", summary="The CLI wheel this deployment serves")
+async def cli_info() -> JSONResponse:
+    """W17 DEV-02: the newest staged CLI wheel (name, version, download path), or
+    ``available: false`` when this deployment was built without one (the guide
+    then shows the from-a-clone install)."""
+    wheels = _cli_wheels()
+    if not wheels:
+        return JSONResponse(content={"available": False, "version": None, "filename": None, "download_url": None})
+    name, version = wheels[0]
+    return JSONResponse(content={
+        "available": True, "version": version, "filename": name, "download_url": f"/api/v1/sdk/cli/{name}",
+    })
+
+
+@router.get("/cli/{filename}", summary="Download the CLI wheel")
+async def download_cli_wheel(filename: str):
+    """W17 DEV-02: one staged CLI wheel, by its exact file name (pip needs it).
+
+    Only a name from the staged list is served: anything else -- another
+    package, a path, ``..`` -- is a 404, never a file read.
+    """
+    staged = {name for name, _ in _cli_wheels()}
+    if filename not in staged:
+        raise HTTPException(status_code=404, detail="No such CLI wheel on this deployment.")
+    return FileResponse(
+        path=os.path.join(SDK_BASE_PATH, _SDK_CONFIGS["cli"]["path"], filename),
+        filename=filename,
+        media_type=_SDK_CONFIGS["cli"]["media_type"],
+    )
+
+
 @router.get("/{lang}", summary="Download a client SDK")
 async def download_sdk(lang: str):
     """
@@ -137,6 +209,12 @@ async def download_sdk(lang: str):
             status_code=404,
             detail=f"Unknown SDK language '{lang}'. Available: {list(_SDK_CONFIGS)}",
         )
+
+    if cfg["type"] == "wheel":
+        wheels = _cli_wheels()
+        if not wheels:
+            raise HTTPException(status_code=503, detail="This deployment was built without the CLI wheel.")
+        return await download_cli_wheel(wheels[0][0])
 
     full_path = os.path.join(SDK_BASE_PATH, cfg["path"])
     if not os.path.exists(full_path):

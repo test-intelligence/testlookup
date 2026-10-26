@@ -79,6 +79,9 @@ import { useReleaseStore } from '@/store/releaseStore'
 import { firstRunDismissKey } from '@/components/onboarding/firstRunSteps'
 import OverviewPage from './OverviewPage'
 
+// W17 DEV-02: the first-run guide asks for the deployment's CLI wheel; none here.
+vi.mock('@/hooks/useCliWheel', () => ({ useCliWheel: () => ({ data: undefined }) }))
+
 const summaryTotal = vi.hoisted(() => ({ value: 0 }))
 const list = vi.mocked(runsService.list)
 

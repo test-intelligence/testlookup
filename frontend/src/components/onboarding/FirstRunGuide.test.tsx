@@ -20,6 +20,9 @@ import { backendUrl } from '@/services/api'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 
 const copyMock = vi.fn(async (_value: string) => true)
+// W17 DEV-02: the guide asks the deployment for its CLI wheel; tests choose the answer.
+const cliWheel = vi.hoisted(() => ({ data: undefined as undefined | { available: boolean; version: string | null; filename: string | null; download_url: string | null } }))
+vi.mock('@/hooks/useCliWheel', () => ({ useCliWheel: () => ({ data: cliWheel.data }) }))
 vi.mock('@/utils/clipboard', () => ({
   copyTextToClipboard: (v: string) => copyMock(v),
 }))
@@ -234,6 +237,34 @@ describe('FirstRunGuide', () => {
     renderGuide()
     fireEvent.click(screen.getByRole('button', { name: `Copy command: ${CLI_INSTALL_COMMAND}` }))
     await waitFor(() => expect(copyMock).toHaveBeenCalledWith(CLI_INSTALL_COMMAND))
+  })
+
+  it('DEV-02: installs the CLI from this deployment when it serves the wheel', async () => {
+    cliWheel.data = {
+      available: true, version: '0.1.0', filename: 'testlookup_cli-0.1.0-py3-none-any.whl',
+      download_url: '/api/v1/sdk/cli/testlookup_cli-0.1.0-py3-none-any.whl',
+    }
+    try {
+      renderGuide()
+      const command = `pip install ${backendUrl('/api/v1/sdk/cli/testlookup_cli-0.1.0-py3-none-any.whl')}`
+      expect(screen.getByText(/Install the CLI from this deployment once:/)).toBeInTheDocument()
+      expect(screen.queryByText(/install it once from a clone/)).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: `Copy command: ${command}` }))
+      await waitFor(() => expect(copyMock).toHaveBeenCalledWith(command))
+    } finally {
+      cliWheel.data = undefined
+    }
+  })
+
+  it('DEV-02: without a served wheel the guide keeps the from-a-clone install and says so', () => {
+    cliWheel.data = { available: false, version: null, filename: null, download_url: null }
+    try {
+      renderGuide()
+      expect(screen.getByText(/install it once from a clone:/)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: `Copy command: ${CLI_INSTALL_COMMAND}` })).toBeInTheDocument()
+    } finally {
+      cliWheel.data = undefined
+    }
   })
 
   it('points to the API Keys settings page for the credential the CI curl needs', () => {
