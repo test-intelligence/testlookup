@@ -4574,14 +4574,48 @@ class AccessAuditLog(Base):
 class UserInvitation(Base):
     """Email invite token for onboarding new users."""
     __tablename__ = "user_invitations"
+    __table_args__ = (
+        Index("uq_user_invitations_token_hash", "token_hash", unique=True),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     role: Mapped[UserRole] = mapped_column(String(20), nullable=False, default=UserRole.QA_ENGINEER)
-    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    # W17b ADM-01 (migration 0233): the raw token is never stored. ``token`` is
+    # kept (nullable, always NULL) only so the column is not dropped; the link
+    # carries the raw token in a URL fragment and ``token_hash`` is its sha256.
+    token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True)
+    token_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     invited_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     is_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    accepted_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_user_invitations_accepted_user"), nullable=True,
+    )
+    #: ``[{"project_id": "<uuid>", "role": "<project role>"}]`` granted on accept.
+    project_memberships: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PasswordResetToken(Base):
+    """A single-use password-reset link (W17b ADM-02, migration 0233). Hash only.
+
+    ``issued_by_user_id`` NULL = the user asked for it (forgot password); set =
+    an administrator issued it from User Management.
+    """
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    issued_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    request_ip_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

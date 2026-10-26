@@ -5390,9 +5390,16 @@ class UpdateUserProfileRequest(BaseModel):
     is_active: Optional[bool] = None
 
 
+class InviteProjectMembership(BaseModel):
+    """W17b ADM-01: a project the invitee joins on accept, with its project role."""
+    project_id: uuid.UUID
+    role: UserRole = UserRole.QA_ENGINEER
+
+
 class InviteUserRequest(BaseModel):
     email: EmailStr
     role: UserRole = UserRole.QA_ENGINEER
+    project_memberships: List[InviteProjectMembership] = Field(default_factory=list, max_length=50)
 
 
 class InviteUserResponse(BaseModel):
@@ -5400,8 +5407,69 @@ class InviteUserResponse(BaseModel):
     email: str
     role: UserRole
     expires_at: datetime
-    invitation_link: str  # frontend URL with token
+    #: ``{public_base_url}/accept-invite#token=…`` — shown once; only its hash is stored.
+    invitation_link: str
+    #: True when the link was also emailed (SMTP configured and the send worked).
+    email_sent: bool = False
     model_config = ConfigDict(from_attributes=True)
+
+
+class InvitationMembershipView(BaseModel):
+    project_id: uuid.UUID
+    project_name: Optional[str] = None
+    role: str
+
+
+class InvitationSummary(BaseModel):
+    """W17b ADM-01: one row of the Pending invitations tab. Never carries a token."""
+    id: uuid.UUID
+    email: str
+    role: UserRole
+    #: ``pending`` | ``expired`` | ``used`` | ``revoked``
+    status: str
+    expires_at: datetime
+    created_at: Optional[datetime] = None
+    used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+    invited_by_name: Optional[str] = None
+    project_memberships: List[InvitationMembershipView] = Field(default_factory=list)
+
+
+class InvitationTokenRequest(BaseModel):
+    token: str = Field(..., min_length=1, max_length=256)
+
+
+class InvitationPreviewResponse(BaseModel):
+    email: str
+    role: UserRole
+    invited_by_name: Optional[str] = None
+    expires_at: datetime
+    project_names: List[str] = Field(default_factory=list)
+    #: SSO is enforced and this role may not hold a password: sign in with SSO instead.
+    sso_required: bool = False
+
+
+class AcceptInvitationRequest(BaseModel):
+    token: str = Field(..., min_length=1, max_length=256)
+    username: str = Field(..., min_length=3, max_length=50)
+    full_name: Optional[str] = Field(None, max_length=255)
+    password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=1, max_length=256)
+    new_password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
+
+
+class PasswordResetLinkResponse(BaseModel):
+    """W17b ADM-02: an admin-issued reset link. The admin never sees or sets the password."""
+    link: str
+    email_sent: bool = False
+    expires_at: datetime
 
 
 class AdminCreateUserRequest(BaseModel):

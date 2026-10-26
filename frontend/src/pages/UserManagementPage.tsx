@@ -11,10 +11,16 @@
  */
 import { Navigate, useLocation } from 'react-router-dom'
 import { Fragment, useEffect, useLayoutEffect, useState } from 'react'
-import { Edit3, Plus, Shield, UserCheck, UserPlus, UserX } from 'lucide-react'
+import { Edit3, KeyRound, Plus, Shield, UserCheck, UserPlus, UserX } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { useUsersPage, refreshUsers } from '@/hooks/useUserManagement'
-import { userManagementService, type UserItem, type UserRole } from '@/services/userManagementService'
+import { useUsersPage, refreshUsers, refreshInvitations } from '@/hooks/useUserManagement'
+import {
+  userManagementService,
+  type InviteUserResponse,
+  type PasswordResetLinkResponse,
+  type UserItem,
+  type UserRole,
+} from '@/services/userManagementService'
 import { projectsService } from '@/services/projectsService'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useAuthStore } from '@/store/authStore'
@@ -29,24 +35,10 @@ import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInline
 import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { ProjectMembersTab } from './ProjectMembersTab'
 import { copyTextToClipboard } from '@/utils/clipboard'
+import { OneTimeLinkBox, PendingInvitationsTab } from './PendingInvitationsTab'
 import type { Project } from '@/types/projects'
 
 const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
-
-// Build an invitation URL safely. The backend returns a relative path like
-// "/accept-invite?token=...". We refuse to render anything that tries to
-// escape the current origin (protocol-relative "//evil.com", absolute
-// "https://evil.com", or javascript:) — that would turn a compromised or
-// buggy backend into a full phishing redirect.
-function buildInvitationUrl(rawPath: string): string {
-  if (typeof rawPath !== 'string' || rawPath.length === 0) return ''
-  if (!rawPath.startsWith('/') || rawPath.startsWith('//')) return ''
-  try {
-    return new URL(rawPath, window.location.origin).toString()
-  } catch {
-    return ''
-  }
-}
 
 const ROLE_COLORS: Record<UserRole, string> = {
   VIEWER: 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]',
@@ -89,9 +81,9 @@ function useSecretHoldsSlot(slot: InlineSlot | undefined, holding: boolean) {
 
 const HELP_TOPIC = helpTopicParam('/users')
 
-type UsersPageTab = 'users' | 'project-members'
+type UsersPageTab = 'users' | 'project-members' | 'invitations'
 
-const TAB_IDS: readonly UsersPageTab[] = ['users', 'project-members']
+const TAB_IDS: readonly UsersPageTab[] = ['users', 'project-members', 'invitations']
 
 /**
  * `?tab=` ids are a contract: the settings sub-nav links "Members & access" to
@@ -104,6 +96,8 @@ const TAB_ITEMS: readonly TabItem<UsersPageTab>[] = [
   { id: 'users', label: 'Users' },
   { id: 'project-members', label: 'Project access' },
 ]
+/** W17b ADM-01: admins also see the invitations nobody has accepted yet. */
+const ADMIN_TAB_ITEMS: readonly TabItem<UsersPageTab>[] = [...TAB_ITEMS, { id: 'invitations', label: 'Pending invitations' }]
 
 export default function UserManagementPage() {
   const [tab, setTab] = useTabParam(TAB_IDS, 'users')
@@ -119,11 +113,12 @@ export default function UserManagementPage() {
         helpTopic={HELP_TOPIC}
         title="User Management"
         subtitle="Users and roles, and who has access to each project"
-        tabs={<Tabs items={TAB_ITEMS} value={tab} onChange={setTab} ariaLabel="User management sections" />}
+        tabs={<Tabs items={isAdmin ? ADMIN_TAB_ITEMS : TAB_ITEMS} value={tab} onChange={setTab} ariaLabel="User management sections" />}
       />
 
       {tab === 'users' && <UsersTab canManageUsers={canManageUsers} isAdmin={isAdmin} />}
       {tab === 'project-members' && <ProjectMembersTab isAdmin={isAdmin} canManageUsers={canManageUsers} />}
+      {tab === 'invitations' && (isAdmin ? <PendingInvitationsTab /> : <UsersTab canManageUsers={canManageUsers} isAdmin={isAdmin} />)}
     </div>
   )
 }
@@ -132,7 +127,7 @@ export default function UserManagementPage() {
 
 /** The two forms under the Users tab toolbar (one at a time) and a row's Edit user (one per table). */
 type ToolbarForm = 'add' | 'invite'
-type RowForm = `edit:${string}`
+type RowForm = `edit:${string}` | `reset:${string}`
 
 function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmin: boolean }) {
   // W27b: one open form under the toolbar (Add User / Invite User), one under a table row (Edit user).
@@ -295,6 +290,8 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
           <tbody className="divide-y divide-[var(--color-border)]">
             {filtered.map((user) => {
               const editKey: RowForm = `edit:${user.id}`
+              const resetKey: RowForm = `reset:${user.id}`
+              const isSelf = user.id === useAuthStore.getState().user?.id
               return (
               <Fragment key={user.id}>
               <tr className="hover:bg-[var(--color-bg-hover)]/30 transition-colors">
@@ -336,6 +333,17 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                       >
                         <Edit3 className="h-3.5 w-3.5" />
                       </button>
+                      {/* W17b ADM-02: a single-use link; the admin never sees or sets the password. */}
+                      {!isSelf && user.is_active && (
+                        <button
+                          onClick={() => rowSlot.open(resetKey)}
+                          className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]/30 p-1 rounded transition-colors"
+                          title="Send password reset link"
+                          aria-label={`Send password reset link to ${user.username}`}
+                        >
+                          <KeyRound className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                       <button
                         onClick={() => handleToggleStatus(user.id, user.is_active)}
                         className={`text-xs px-2 py-1 rounded transition-colors ${
@@ -354,6 +362,11 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
               {rowSlot.openKey === editKey && (
                 <InlineRowSection colSpan={4}>
                   <EditUserModal user={user} slot={rowSlot} onClose={() => closeRow(editKey)} />
+                </InlineRowSection>
+              )}
+              {rowSlot.openKey === resetKey && (
+                <InlineRowSection colSpan={4}>
+                  <PasswordResetLinkSection user={user} slot={rowSlot} onClose={() => closeRow(resetKey)} />
                 </InlineRowSection>
               )}
               </Fragment>
@@ -818,22 +831,39 @@ function AddUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlo
 function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlot }) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<UserRole>('QA_ENGINEER')
+  const [projects, setProjects] = useState<Project[]>([])
+  const [projectIds, setProjectIds] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<{ invitation_link: string } | null>(null)
+  const [result, setResult] = useState<InviteUserResponse | null>(null)
 
   // The invitation link is shown once, here: while it is, opening Add User in its place asks first.
   useSecretHoldsSlot(slot, result !== null)
+
+  useEffect(() => {
+    projectsService.list().then((list) => setProjects(Array.isArray(list) ? list : [])).catch(() => {})
+  }, [])
+
+  function toggleProject(id: string) {
+    setProjectIds((prev) => (prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id]))
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
     try {
-      const res = await userManagementService.inviteUser(email, role)
+      // W17b ADM-01: the invitee joins the chosen projects, with the invited role, when they accept.
+      const res = await userManagementService.inviteUser(
+        email,
+        role,
+        projectIds.map((project_id) => ({ project_id, role })),
+      )
       setResult(res)
       refreshUsers()
-      toast.success('Invitation created')
-    } catch {
-      toast.error('Failed to create invitation')
+      void refreshInvitations()
+      toast.success(res.email_sent ? 'Invitation emailed' : 'Invitation created')
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(typeof detail === 'string' && detail ? detail : 'Failed to create invitation')
     } finally {
       setLoading(false)
     }
@@ -850,32 +880,23 @@ function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: Inline
       slot={slot}
     >
       <div className="max-w-2xl">
-        {result ? (() => {
-          const inviteUrl = buildInvitationUrl(result.invitation_link)
-          return (
-            <div className="space-y-3">
-              <p className="text-sm text-[var(--color-text-secondary)]">Invitation created. Share this link with the user:</p>
-              <div className="bg-[var(--color-bg-card)] border border-[var(--color-border)] rounded p-3">
-                <code className="text-xs text-[var(--status-passed)] break-all">
-                  {inviteUrl || 'Invalid invitation link received from server.'}
-                </code>
-              </div>
-              <div className="flex justify-end">
-                <button
-                  disabled={!inviteUrl}
-                  onClick={async () => {
-                    if (!inviteUrl) return
-                    const ok = await copyTextToClipboard(inviteUrl)
-                    if (ok) toast.success('Copied!')
-                    else toast.error('Clipboard access denied — copy manually')
-                  }}
-                  className="text-sm text-[var(--color-text)] hover:text-[var(--color-text-secondary)] mr-3 disabled:opacity-40"
-                >Copy link</button>
-                <button onClick={onClose} className="bg-[var(--color-bg-hover)] hover:bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm px-4 py-2 rounded">Close</button>
-              </div>
+        {result ? (
+          <div className="space-y-3">
+            <OneTimeLinkBox
+              link={result.invitation_link}
+              path="/accept-invite"
+              emailSent={result.email_sent === true}
+              email={result.email || email}
+              what="Invitation"
+            />
+            <p className="text-xs text-[var(--color-text-muted)]">
+              The link works once and expires in 7 days. It is listed under Pending invitations until it is accepted.
+            </p>
+            <div className="flex justify-end">
+              <button onClick={onClose} className="bg-[var(--color-bg-hover)] hover:bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm px-4 py-2 rounded">Close</button>
             </div>
-          )
-        })() : (
+          </div>
+        ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
               <label htmlFor="user-field-9" className="block text-sm text-[var(--color-text-muted)] mb-1">Email address</label>
@@ -890,6 +911,20 @@ function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: Inline
                 {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
+            {projects.length > 0 && (
+              <fieldset>
+                <legend className="block text-sm text-[var(--color-text-muted)] mb-1">Projects (optional)</legend>
+                <div className="max-h-40 overflow-y-auto grid grid-cols-2 gap-1 bg-[var(--color-bg-input)] border border-[var(--color-border)] rounded p-2">
+                  {projects.map((p) => (
+                    <label key={p.id} className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+                      <input type="checkbox" checked={projectIds.includes(p.id)} onChange={() => toggleProject(p.id)} />
+                      <span className="truncate" title={p.name}>{p.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-1 text-xs text-[var(--color-text-faint)]">They join these projects as {role} when they accept.</p>
+              </fieldset>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">Cancel</button>
               <button type="submit" disabled={loading}
@@ -898,6 +933,69 @@ function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: Inline
               </button>
             </div>
           </form>
+        )}
+      </div>
+    </InlineFormSection>
+  )
+}
+
+// ── Send password reset link (W17b ADM-02, under its row) ─────
+
+function PasswordResetLinkSection({ user, onClose, slot }: { user: UserItem; onClose: () => void; slot?: InlineSlot }) {
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState<PasswordResetLinkResponse | null>(null)
+
+  // A reset link is a one-time secret like the invitation link: shown once, held until Close.
+  useSecretHoldsSlot(slot, result !== null)
+
+  async function issue() {
+    setLoading(true)
+    try {
+      const res = await userManagementService.issuePasswordResetLink(user.id)
+      setResult(res)
+      toast.success(res.email_sent ? `Reset link emailed to ${user.email}` : 'Reset link created')
+    } catch (err: unknown) {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(typeof detail === 'string' && detail ? detail : 'Failed to create a reset link')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <InlineFormSection
+      title={`Send password reset link to ${user.full_name || user.username}`}
+      titleId={`reset-link-${user.id}`}
+      onClose={onClose}
+      canClose={result === null && !loading}
+      showClose={false}
+      slot={slot}
+    >
+      <div className="max-w-2xl space-y-3">
+        {result ? (
+          <>
+            <OneTimeLinkBox link={result.link} path="/reset-password/confirm" emailSent={result.email_sent} email={user.email} what="Reset link" />
+            <p className="text-xs text-[var(--color-text-muted)]">
+              The link works once and expires in 60 minutes. Older links for this account stopped working.
+              Using it signs the account out everywhere; two-factor sign-in stays on.
+            </p>
+            <div className="flex justify-end">
+              <button onClick={onClose} className="bg-[var(--color-bg-hover)] hover:bg-[var(--color-bg-card)] text-[var(--color-text)] text-sm px-4 py-2 rounded">Close</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-[var(--color-text-secondary)]">
+              Creates a single-use link that lets <strong>{user.email}</strong> choose a new password. You never see or
+              set the password. It is emailed when SMTP is configured; otherwise copy it and send it yourself.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">Cancel</button>
+              <button type="button" onClick={issue} disabled={loading} className="btn-primary">
+                {loading ? 'Creating…' : 'Create reset link'}
+              </button>
+            </div>
+          </>
         )}
       </div>
     </InlineFormSection>

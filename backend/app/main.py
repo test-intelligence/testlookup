@@ -240,6 +240,26 @@ _AUTH_RATE_LIMITS: dict[str, tuple[str, str]] = {
         "8/minute",
         "Too many enrollment attempts. Try again in a minute.",
     ),
+    # ── Invitations + password reset (W17b ADM-01/02) ──────────────────────
+    # New unauthenticated routes: account creation and password replacement by
+    # token. 32-byte tokens are not guessable; the ceilings stop scripted
+    # probing and (with the per-mailbox Redis counter) reset-mail flooding.
+    "/api/v1/auth/invitations/preview": (
+        "10/minute",
+        "Too many invitation checks. Try again in a minute.",
+    ),
+    "/api/v1/auth/invitations/accept": (
+        "10/minute",
+        "Too many invitation attempts. Try again in a minute.",
+    ),
+    "/api/v1/auth/password/forgot": (
+        "5/minute",
+        "Too many reset requests. Try again in a minute.",
+    ),
+    "/api/v1/auth/password/reset": (
+        "10/minute",
+        "Too many reset attempts. Try again in a minute.",
+    ),
 }
 
 

@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Union
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -32,11 +32,16 @@ from app.services.refresh_token_service import (
     rotate_refresh_token,
 )
 from app.models.schemas import (
+    AcceptInvitationRequest,
     ChangePasswordRequest,
     FirstTimeResetRequest,
+    ForgotPasswordRequest,
+    InvitationPreviewResponse,
+    InvitationTokenRequest,
     MfaChallengeResponse,
     MfaEnrollmentRequiredResponse,
     RefreshRequest,
+    ResetPasswordRequest,
     SelfUpdateProfileRequest,
     TokenResponse,
     UserCreate,
@@ -69,8 +74,235 @@ REGISTRATION_DISABLED = {
 
 @router.get("/options")
 async def auth_options() -> dict:
-    """What the sign-in page may offer. Public: it is read before anyone signs in."""
-    return {"registration_enabled": settings.REGISTRATION_ENABLED}
+    """What the sign-in page may offer. Public: it is read before anyone signs in.
+
+    ``password_reset_email`` (W17b ADM-02) is true when SMTP is configured, so
+    the login page offers the email form; it reveals nothing about any account.
+    """
+    from app.services.account_links_service import smtp_enabled
+
+    return {
+        "registration_enabled": settings.REGISTRATION_ENABLED,
+        "password_reset_email": await smtp_enabled(),
+    }
+
+
+# ── Invitations (W17b ADM-01) ────────────────────────────────────────────────
+# Public, unauthenticated: the invitee has no account yet. Both routes are in
+# ``_AUTH_RATE_LIMITS`` and answer one generic 400 for every bad token.
+
+
+async def _redeemable_invitation(db: AsyncSession, raw_token: str, *, for_update: bool):
+    from app.models.postgres import UserInvitation
+    from app.services.account_links_service import invitation_redeemable
+    from app.services.one_time_tokens import INVALID_LINK_DETAIL, hash_token
+
+    stmt = select(UserInvitation).where(UserInvitation.token_hash == hash_token(raw_token))
+    if for_update:
+        stmt = stmt.with_for_update()
+    invitation = (await db.execute(stmt)).scalar_one_or_none()
+    if not invitation_redeemable(invitation):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_LINK_DETAIL)
+    return invitation
+
+
+async def _invite_needs_sso(db: AsyncSession, role) -> bool:
+    """SSO_REQUIRED: only an admin (with the fallback switch) may hold a password."""
+    if not settings.SSO_ENABLED:
+        return False
+    from app.services.sso_service import is_sso_enforced
+
+    if not await is_sso_enforced(db):
+        return False
+    is_admin = role == UserRole.ADMIN or str(role) == UserRole.ADMIN.value
+    return not (is_admin and settings.SSO_ADMIN_FALLBACK_ENABLED)
+
+
+@router.post("/invitations/preview", response_model=InvitationPreviewResponse)
+async def preview_invitation(payload: InvitationTokenRequest, db: AsyncSession = Depends(get_db)):
+    """Who invited whom, as what — read by the accept page before the form. Public."""
+    from app.models.postgres import Project
+
+    invitation = await _redeemable_invitation(db, payload.token, for_update=False)
+    inviter_name = None
+    if invitation.invited_by_id:
+        inviter = (await db.execute(select(User).where(User.id == invitation.invited_by_id))).scalar_one_or_none()
+        if inviter is not None:
+            inviter_name = inviter.full_name or inviter.username
+    project_names: list[str] = []
+    ids = [m.get("project_id") for m in (invitation.project_memberships or []) if isinstance(m, dict)]
+    if ids:
+        rows = await db.execute(select(Project.name).where(Project.id.in_([_uuid.UUID(str(i)) for i in ids])))
+        project_names = sorted(r[0] for r in rows)
+    return InvitationPreviewResponse(
+        email=invitation.email,
+        role=invitation.role,
+        invited_by_name=inviter_name,
+        expires_at=invitation.expires_at,
+        project_names=project_names,
+        sso_required=await _invite_needs_sso(db, invitation.role),
+    )
+
+
+@router.post(
+    "/invitations/accept",
+    response_model=Union[TokenResponse, MfaEnrollmentRequiredResponse],
+    status_code=201,
+)
+async def accept_invitation(
+    payload: AcceptInvitationRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Redeem an invitation: create the account with the invited role and projects, sign in.
+
+    Works with ``REGISTRATION_ENABLED=false`` — the invitation is the
+    authorisation. Single use under ``SELECT … FOR UPDATE``. When the workspace
+    requires MFA for the role, answers the login flow's enrollment shape instead
+    of tokens (an invite never skips the second factor).
+    """
+    from app.core.deps import invalidate_membership_cache
+    from app.models.postgres import Project, ProjectMember
+    from app.services.access_audit_service import log_access_change
+
+    invitation = await _redeemable_invitation(db, payload.token, for_update=True)
+    if await _invite_needs_sso(db, invitation.role):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="SSO is required for this workspace. Sign in with SSO instead of setting a password.",
+        )
+    clash = await db.execute(
+        select(User.email, User.username).where(
+            (func.lower(User.email) == invitation.email.lower()) | (User.username == payload.username)
+        )
+    )
+    for row in clash:
+        if row.email.lower() == invitation.email.lower():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An account with this email already exists. Sign in instead.")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="That username is taken. Choose another.")
+
+    user = User(
+        email=invitation.email,
+        username=payload.username,
+        full_name=payload.full_name,
+        hashed_password=get_password_hash(payload.password),
+        role=invitation.role,
+        must_change_password=False,
+    )
+    db.add(user)
+    await db.flush()
+
+    granted = 0
+    for m in invitation.project_memberships or []:
+        try:
+            project_id = _uuid.UUID(str(m.get("project_id")))
+        except (ValueError, AttributeError):
+            continue
+        project = (await db.execute(select(Project).where(Project.id == project_id))).scalar_one_or_none()
+        if project is None or not getattr(project, "is_active", True):
+            continue  # archived since the invite: skip, never fail the whole accept
+        role_value = str(m.get("role") or UserRole.QA_ENGINEER.value)
+        db.add(ProjectMember(user_id=user.id, project_id=project_id, role=role_value))
+        await log_access_change(
+            db, "member_added", None, target_user_id=user.id, project_id=project_id,
+            after_value={"role": role_value, "via": "invitation"},
+        )
+        granted += 1
+
+    now = datetime.now(timezone.utc)
+    invitation.is_used = True
+    invitation.used_at = now
+    invitation.accepted_user_id = user.id
+    await db.flush()
+
+    policy = await mfa_service.load_policy(db)
+    requirement = await mfa_service.evaluate_login_requirement(db, user, policy)
+    if requirement is mfa_service.LoginRequirement.ENROLL:
+        enroll_token, _jti, ttl = await issue_mfa_jwt(db, str(user.id), MFA_ENROLLMENT_TOKEN_TYPE)
+        await db.commit()
+        await invalidate_membership_cache(user.id)
+        logger.info("Invitation accepted (MFA enrollment owed): user_id=%s projects=%d", user.id, granted)
+        return MfaEnrollmentRequiredResponse(
+            enrollment_token=enroll_token, expires_in=ttl, required_for_role=policy.required_for_role,
+        )
+
+    access_token = await issue_access_jwt(db, str(user.id))
+    refresh_token = await issue_refresh_token(db, user.id)
+    await mfa_service.register_successful_login(db, user)
+    await db.commit()
+    await invalidate_membership_cache(user.id)
+    logger.info("Invitation accepted: user_id=%s projects=%d", user.id, granted)
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        must_change_password=False,
+    )
+
+
+# ── Password reset (W17b ADM-02) ─────────────────────────────────────────────
+
+
+@router.post("/password/forgot", status_code=202)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> dict:
+    """Always 202 with the same body. The lookup and the mail run after the response."""
+    from app.services.password_reset_service import FORGOT_ACCEPTED_DETAIL, process_forgot_request
+
+    background_tasks.add_task(
+        process_forgot_request, str(payload.email), request.client.host if request.client else None,
+    )
+    return {"detail": FORGOT_ACCEPTED_DETAIL}
+
+
+@router.post("/password/reset", status_code=204)
+async def reset_password(payload: ResetPasswordRequest, db: AsyncSession = Depends(get_db)):
+    """Redeem a reset link: set the password, clear lockout, sign out everywhere.
+
+    MFA is untouched — the next sign-in still asks for the code.
+    """
+    from app.models.postgres import PasswordResetToken
+    from app.services.one_time_tokens import INVALID_LINK_DETAIL, hash_token
+
+    now = datetime.now(timezone.utc)
+    token = (
+        await db.execute(
+            select(PasswordResetToken)
+            .where(PasswordResetToken.token_hash == hash_token(payload.token))
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    expires = token.expires_at if token is not None else None
+    if expires is not None and expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if token is None or token.used_at is not None or expires is None or expires <= now:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_LINK_DETAIL)
+    user = (await db.execute(select(User).where(User.id == token.user_id).with_for_update())).scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_LINK_DETAIL)
+
+    user.hashed_password = get_password_hash(payload.new_password)
+    user.must_change_password = False
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    token.used_at = now
+    await db.execute(
+        update(PasswordResetToken)
+        .where(PasswordResetToken.user_id == user.id, PasswordResetToken.used_at.is_(None))
+        .values(used_at=now)
+    )
+    await _revoke_refresh_family(db, user.id, reason="password_reset_link")
+    try:
+        await revoke_all_user_tokens(user.id, db)
+    except RevocationUnavailable as exc:
+        await db.rollback()
+        raise HTTPException(status_code=503, detail="Token revocation store unavailable; password reset was not applied") from exc
+    await db.commit()
+    logger.info("Password reset via link: user_id=%s admin_issued=%s", user.id, token.issued_by_user_id is not None)
+    return None
 
 
 @router.post("/register", response_model=UserResponse, status_code=201)

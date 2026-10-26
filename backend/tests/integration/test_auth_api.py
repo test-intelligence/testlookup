@@ -69,12 +69,21 @@ async def test_register_is_refused_while_registration_is_off(client, override_db
 async def test_auth_options_tell_the_sign_in_page_whether_to_offer_register(client, monkeypatch):
     from app.core.config import settings
 
+    from app.services.notification import email_service
+
+    async def _smtp_off():
+        return {"enabled": False}
+
+    monkeypatch.setattr(email_service, "get_smtp_config", _smtp_off)
     resp = await client.get("/api/v1/auth/options")  # public: no token
     assert resp.status_code == 200
-    assert resp.json() == {"registration_enabled": False}
+    # W17b ADM-02: password_reset_email says whether the login page offers the email form.
+    assert resp.json() == {"registration_enabled": False, "password_reset_email": False}
 
     monkeypatch.setattr(settings, "REGISTRATION_ENABLED", True)
-    assert (await client.get("/api/v1/auth/options")).json() == {"registration_enabled": True}
+    assert (await client.get("/api/v1/auth/options")).json() == {
+        "registration_enabled": True, "password_reset_email": False,
+    }
 
 
 async def test_register_creates_a_viewer_with_must_change_password(

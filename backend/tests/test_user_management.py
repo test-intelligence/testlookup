@@ -302,15 +302,24 @@ class TestCreateApiKey:
 
 class TestInviteUser:
     @pytest.mark.asyncio
-    async def test_creates_invitation_with_register_link(self):
+    async def test_creates_invitation_with_a_fragment_accept_link(self, monkeypatch):
+        """W17b ADM-01: ``/accept-invite#token=…``; no email in the link; only the hash stored."""
         from app.routers.users import invite_user
+        from app.services.notification import email_service
+        from app.services.one_time_tokens import hash_token
 
+        async def _smtp_off():
+            return {"enabled": False}
+
+        monkeypatch.setattr(email_service, "get_smtp_config", _smtp_off)
         admin = _make_user(role=UserRole.ADMIN)
         inv_id = uuid.uuid4()
 
         db = AsyncMock()
         db.add = MagicMock()
-        db.execute.return_value = _execute_result(scalar_value=None)
+        result_row = _execute_result(scalar_value=None)
+        result_row.scalars.return_value.first.return_value = None
+        db.execute.return_value = result_row
 
         # Simulate DB refresh: set the PK that the DB would normally assign
         async def _refresh(obj):
@@ -322,9 +331,13 @@ class TestInviteUser:
 
         result = await invite_user(payload=payload, db=db, current_user=admin)
 
-        assert "register" in result.invitation_link
-        assert "newbie@example.com" in result.invitation_link
+        assert "/accept-invite#token=" in result.invitation_link
+        assert "newbie@example.com" not in result.invitation_link
+        assert result.email_sent is False
         db.add.assert_called_once()
+        stored = db.add.call_args.args[0]
+        raw = result.invitation_link.split("#token=", 1)[1]
+        assert stored.token is None and stored.token_hash == hash_token(raw)
         db.commit.assert_awaited_once()
 
     @pytest.mark.asyncio

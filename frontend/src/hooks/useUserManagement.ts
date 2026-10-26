@@ -52,3 +52,13 @@ export function refreshUsers() {
 // Two key spaces for one resource: neither matcher could match the other's key,
 // so a revoke on one page left the other page listing the revoked key. Both
 // consumers now import from '@/hooks/useApiKeys'.
+/** W17b ADM-01: pending (and expired) invitations — admin only, so `enabled=false` asks for nothing. */
+export const INVITATIONS_KEY = '/api/v1/users/invitations'
+
+export function useInvitations(enabled: boolean) {
+  return useSWR(enabled ? INVITATIONS_KEY : null, () => userManagementService.listInvitations())
+}
+
+export function refreshInvitations() {
+  return mutate(INVITATIONS_KEY)
+}

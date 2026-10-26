@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
@@ -14,13 +14,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_active_user, require_project_access, require_role
 from app.core.security import get_password_hash
 from app.db.postgres import get_db
-from app.models.postgres import Project, ProjectMember, User, UserInvitation, UserRole
+from app.models.postgres import Project, ProjectMember, SettingsAuditLog, User, UserInvitation, UserRole
 from app.models.schemas import (
     AddProjectMemberRequest,
     AdminCreateUserRequest,
     AdminCreateUserResponse,
+    InvitationMembershipView,
+    InvitationSummary,
     InviteUserRequest,
     InviteUserResponse,
+    PasswordResetLinkResponse,
     ProjectMemberResponse,
     UpdateProjectMemberRoleRequest,
     UpdateUserProfileRequest,
@@ -29,6 +32,17 @@ from app.models.schemas import (
     UserListResponse,
 )
 from app.services.access_audit_service import log_access_change
+from app.services.account_links_service import (
+    INVITATION_LIFETIME,
+    INVITE_PATH,
+    RESET_PATH,
+    invitation_status,
+    send_link_email,
+)
+from app.services.activity.service import ActorRef, record as record_activity
+from app.services.notification.email_templates import render_invitation_email
+from app.services.one_time_tokens import fragment_link, new_token
+from app.services.password_reset_service import create_password_reset_token, email_password_reset
 from app.services.sql_utils import escape_like
 
 logger = structlog.get_logger(__name__)
@@ -175,6 +189,23 @@ async def list_users(
     )
     result = await db.execute(stmt)
     return result.scalars().all()
+
+
+@router.get("/invitations", response_model=list[InvitationSummary])
+async def list_invitations(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    include_closed: bool = Query(False, description="Also list used and revoked invitations"),
+):
+    """W17b ADM-01: pending (and expired) invitations, newest first. Never a token. ADMIN.
+
+    Declared before ``/{user_id}`` so ``invitations`` is not parsed as a user id.
+    """
+    stmt = select(UserInvitation).order_by(UserInvitation.created_at.desc(), UserInvitation.id).limit(500)
+    if not include_closed:
+        stmt = stmt.where(UserInvitation.is_used == False, UserInvitation.revoked_at.is_(None))  # noqa: E712
+    invitations = list((await db.execute(stmt)).scalars().all())
+    return await _invitation_summaries(db, invitations)
 
 
 @router.get("/{user_id}", response_model=UserListResponse)
@@ -343,50 +374,240 @@ async def invite_user(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_role(UserRole.ADMIN)),
 ):
-    """Invite a user by email with a specified role. Requires ADMIN."""
-    # Check if email already registered
-    existing = await db.execute(select(User).where(User.email == payload.email))
+    """Invite a user by email with a role and optional project memberships. Requires ADMIN.
+
+    W17b ADM-01: only ``sha256(token)`` is stored; the link carries the token in
+    a URL fragment; the link is emailed when SMTP is configured and always
+    returned so the admin can copy it (the offline path).
+    """
+    email = str(payload.email)
+    existing = await db.execute(select(User).where(func.lower(User.email) == email.lower()))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
-    # Check for existing unexpired invite
     existing_invite = await db.execute(
         select(UserInvitation).where(
-            UserInvitation.email == payload.email,
+            func.lower(UserInvitation.email) == email.lower(),
             UserInvitation.is_used == False,  # noqa: E712
+            UserInvitation.revoked_at.is_(None),
             UserInvitation.expires_at > datetime.now(timezone.utc),
         )
     )
-    if existing_invite.scalar_one_or_none():
+    if existing_invite.scalars().first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="An active invitation already exists for this email",
+            detail="An active invitation already exists for this email. Resend or revoke it from Pending invitations.",
         )
 
-    token = secrets.token_urlsafe(32)
-    expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+    memberships = await _validated_invite_memberships(db, payload)
 
+    raw, token_hash = new_token()
     invitation = UserInvitation(
-        email=payload.email,
+        email=email,
         role=payload.role,
-        token=token,
+        token=None,
+        token_hash=token_hash,
         invited_by_id=current_user.id,
-        expires_at=expires_at,
+        expires_at=datetime.now(timezone.utc) + INVITATION_LIFETIME,
+        project_memberships=memberships or None,
     )
     db.add(invitation)
+    await db.flush()
+    for m in memberships:
+        await record_activity(
+            db,
+            project_id=m["project_id"],
+            event_type="invitation.sent",
+            actor=ActorRef.from_user(current_user),
+            entity_id=invitation.id,
+            entity_label=email,
+            context={"role": m["role"]},
+        )
     await db.commit()
     await db.refresh(invitation)
 
-    # In production this would send an email — for now return the link
-    invitation_link = f"/register?token={token}&email={payload.email}"
-
+    link = fragment_link(INVITE_PATH, raw)
+    email_sent = await _email_invitation(invitation, current_user, link)
+    logger.info("invitation_created", invitation_id=str(invitation.id), email_sent=email_sent, by=str(current_user.id))
     return InviteUserResponse(
         id=invitation.id,
         email=invitation.email,
         role=invitation.role,
         expires_at=invitation.expires_at,
-        invitation_link=invitation_link,
+        invitation_link=link,
+        email_sent=email_sent,
     )
+
+
+async def _validated_invite_memberships(db: AsyncSession, payload: InviteUserRequest) -> list[dict]:
+    """Each requested project must exist and be active; one entry per project."""
+    out: dict[str, dict] = {}
+    for m in payload.project_memberships:
+        project = (
+            await db.execute(select(Project).where(Project.id == m.project_id))
+        ).scalar_one_or_none()
+        if project is None or not getattr(project, "is_active", True):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+        out[str(m.project_id)] = {"project_id": str(m.project_id), "role": _normalize_user_role(m.role).value}
+    return list(out.values())
+
+
+async def _email_invitation(invitation: UserInvitation, inviter: User, link: str) -> bool:
+    expires = invitation.expires_at.strftime("%Y-%m-%d %H:%M UTC")
+    inviter_name = inviter.full_name or inviter.username
+    role = _normalize_user_role(invitation.role).value.replace("_", " ").title()
+    html_body = render_invitation_email(inviter_name, role, link, expires)
+    text_body = (
+        f"{inviter_name} invited you to join TestLookup as {role}.\n\n"
+        f"Accept the invitation: {link}\n\nThis invitation expires on {expires}."
+    )
+    return await send_link_email(invitation.email, "You are invited to TestLookup", html_body, text_body)
+
+
+async def _invitation_summaries(db: AsyncSession, invitations: list[UserInvitation]) -> list[InvitationSummary]:
+    inviter_ids = {i.invited_by_id for i in invitations if i.invited_by_id}
+    project_ids: set[uuid.UUID] = set()
+    for inv in invitations:
+        for m in inv.project_memberships or []:
+            try:
+                project_ids.add(uuid.UUID(str(m.get("project_id"))))
+            except (ValueError, AttributeError):
+                continue
+    names: dict[uuid.UUID, str] = {}
+    if inviter_ids:
+        rows = await db.execute(select(User.id, User.full_name, User.username).where(User.id.in_(inviter_ids)))
+        names = {r.id: (r.full_name or r.username) for r in rows}
+    projects: dict[str, str] = {}
+    if project_ids:
+        rows = await db.execute(select(Project.id, Project.name).where(Project.id.in_(project_ids)))
+        projects = {str(r.id): r.name for r in rows}
+    now = datetime.now(timezone.utc)
+    return [
+        InvitationSummary(
+            id=inv.id,
+            email=inv.email,
+            role=_normalize_user_role(inv.role),
+            status=invitation_status(inv, now),
+            expires_at=inv.expires_at,
+            created_at=inv.created_at,
+            used_at=inv.used_at,
+            revoked_at=inv.revoked_at,
+            invited_by_name=names.get(inv.invited_by_id) if inv.invited_by_id else None,
+            project_memberships=[
+                InvitationMembershipView(
+                    project_id=m["project_id"],
+                    project_name=projects.get(str(m["project_id"])),
+                    role=str(m.get("role") or ""),
+                )
+                for m in (inv.project_memberships or [])
+                if isinstance(m, dict) and m.get("project_id")
+            ],
+        )
+        for inv in invitations
+    ]
+
+
+async def _get_invitation_for_update(db: AsyncSession, invitation_id: uuid.UUID) -> UserInvitation:
+    invitation = (
+        await db.execute(select(UserInvitation).where(UserInvitation.id == invitation_id).with_for_update())
+    ).scalar_one_or_none()
+    if invitation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    return invitation
+
+
+@router.post("/invitations/{invitation_id}/revoke", response_model=InvitationSummary)
+async def revoke_invitation(
+    invitation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """Kill an invitation link. A used invitation cannot be revoked (the account exists). ADMIN."""
+    invitation = await _get_invitation_for_update(db, invitation_id)
+    if invitation_status(invitation) == "used":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This invitation was already accepted")
+    if invitation.revoked_at is None:
+        invitation.revoked_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(invitation)
+    logger.info("invitation_revoked", invitation_id=str(invitation.id), by=str(current_user.id))
+    return (await _invitation_summaries(db, [invitation]))[0]
+
+
+@router.post("/invitations/{invitation_id}/resend", response_model=InviteUserResponse)
+async def resend_invitation(
+    invitation_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """Issue a new link (new token, new expiry); the previous link stops working. ADMIN.
+
+    Also the only way to get a copyable link again: the raw token is never
+    stored, so an old link cannot be shown twice.
+    """
+    invitation = await _get_invitation_for_update(db, invitation_id)
+    state = invitation_status(invitation)
+    if state in ("used", "revoked"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"This invitation was {'accepted' if state == 'used' else 'revoked'}; send a new invitation instead",
+        )
+    raw, token_hash = new_token()
+    invitation.token_hash = token_hash
+    invitation.expires_at = datetime.now(timezone.utc) + INVITATION_LIFETIME
+    await db.commit()
+    await db.refresh(invitation)
+    link = fragment_link(INVITE_PATH, raw)
+    email_sent = await _email_invitation(invitation, current_user, link)
+    logger.info("invitation_resent", invitation_id=str(invitation.id), email_sent=email_sent, by=str(current_user.id))
+    return InviteUserResponse(
+        id=invitation.id,
+        email=invitation.email,
+        role=invitation.role,
+        expires_at=invitation.expires_at,
+        invitation_link=link,
+        email_sent=email_sent,
+    )
+
+
+@router.post("/{user_id}/password-reset-link", response_model=PasswordResetLinkResponse, status_code=201)
+async def issue_password_reset_link(
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """W17b ADM-02: a single-use reset link for another user. ADMIN.
+
+    The administrator never sees or sets the password. Older unused links for
+    the user stop working. Refused for the caller's own account (change-password
+    exists for that). Audited without the token.
+    """
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Use Change password for your own account",
+        )
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if not user.is_active:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The account is deactivated; activate it first")
+
+    raw, expires_at = await create_password_reset_token(db, user, issued_by=current_user)
+    db.add(
+        SettingsAuditLog(
+            setting_key=f"user:{user.id}",
+            action="password_reset_issued",
+            actor_id=current_user.id,
+            actor_name=current_user.username,
+            changed_fields=["password_reset_link"],
+        )
+    )
+    await db.commit()
+    link = fragment_link(RESET_PATH, raw)
+    email_sent = await email_password_reset(user.email, link, issued_by_admin=True)
+    logger.info("password_reset_link_issued", user_id=str(user.id), email_sent=email_sent, by=str(current_user.id))
+    return PasswordResetLinkResponse(link=link, email_sent=email_sent, expires_at=expires_at)
 
 
 # ── User Memberships (aggregated — replaces N+1 per-project fetch) ────────────
