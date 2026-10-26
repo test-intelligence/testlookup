@@ -52,6 +52,43 @@ locally by default.
 
 ### Added
 
+- **Invitations that work, password reset, and measured performance** (wave
+  W17b, ADM-01, ADM-02 and ADM-06; branch `feat/df-accounts-admin-b-20261026`;
+  migration 0233). **Invite User** now produces a link someone can redeem:
+  only a hash of the token is stored, the link is `/accept-invite#token=…`
+  (the token in the fragment, the email no longer in the link), it is emailed
+  when SMTP is configured ("Invitation emailed to …") and always shown to copy
+  ("SMTP is not configured — copy this link"), and the invite can name the
+  projects the person joins. The accept page shows who invited them and as
+  what, creates the account with that role and those projects and signs them
+  in — also with self-registration off; a used, expired, revoked or wrong link
+  gets one message. **Pending invitations** (User Management, admins) lists
+  open invitations with Resend (a new link; the old one stops working) and
+  Revoke. Old `/register?token=` links redirect to the accept page. **Forgot
+  password?** on the sign-in page: with SMTP it emails a single-use,
+  60-minute link and answers every address the same way (the lookup runs
+  after the response; three requests per mailbox per hour); without SMTP it
+  says to ask an administrator, who can **Send password reset link** from a
+  user's row (never their own; audited, no token kept). Using a link sets the
+  password, clears a lockout, signs the account out everywhere and leaves
+  two-factor sign-in on. New public routes `POST
+  /api/v1/auth/invitations/{preview,accept}` and `POST
+  /api/v1/auth/password/{forgot,reset}` are rate-limited; `GET
+  /api/v1/auth/options` adds `password_reset_email`. **Settings ›
+  Performance** shows the measured p50 / p95 / p99 and request count beside
+  each latency budget for the last 15 minutes, hour or 24 hours, red where p95
+  is over budget and "No requests" where nothing was measured (timed in-app on
+  every API pod, or read from `PROMETHEUS_URL` when set;
+  `GET /api/v1/performance/observed`), and a **Slow queries** tab for
+  administrators lists the statement shapes slower than `SLOW_QUERY_MS`
+  (default 500 ms) with count, mean, max and last seen — no values are ever
+  recorded (`GET /api/v1/performance/slow-queries`; `pg_stat_statements` when
+  readable). Tests: `test_invitations_postgres.py`,
+  `test_password_reset_postgres.py`, `test_migration_0233.py`,
+  `test_account_link_routes_guarded.py`, `test_observed_performance.py`, and
+  the accept-invite, forgot / reset, User Management invitations, one-time
+  link and Performance vitest suites.
+
 - **Account and admin basics: user search and paging, restore an archived
   project, who changed a feature flag and why, and the CLI served by the
   deployment** (wave W17a, ADM-03, ADM-04, ADM-07 and DEV-02; branch

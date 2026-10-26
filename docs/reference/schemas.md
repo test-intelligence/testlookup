@@ -3482,6 +3482,52 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## AcceptInvitationRequest
+
+```json
+{
+  "properties": {
+    "full_name": {
+      "anyOf": [
+        {
+          "maxLength": 255,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Full Name"
+    },
+    "password": {
+      "maxLength": 128,
+      "minLength": 8,
+      "title": "Password",
+      "type": "string"
+    },
+    "token": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Token",
+      "type": "string"
+    },
+    "username": {
+      "maxLength": 50,
+      "minLength": 3,
+      "title": "Username",
+      "type": "string"
+    }
+  },
+  "required": [
+    "token",
+    "username",
+    "password"
+  ],
+  "title": "AcceptInvitationRequest",
+  "type": "object"
+}
+```
+
 ## AcceptReviewRequest
 
 ```json
@@ -18282,6 +18328,25 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ForgotPasswordRequest
+
+```json
+{
+  "properties": {
+    "email": {
+      "format": "email",
+      "title": "Email",
+      "type": "string"
+    }
+  },
+  "required": [
+    "email"
+  ],
+  "title": "ForgotPasswordRequest",
+  "type": "object"
+}
+```
+
 ## FrontendError
 
 ```json
@@ -20456,6 +20521,230 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## InvitationMembershipView
+
+```json
+{
+  "properties": {
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "project_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Name"
+    },
+    "role": {
+      "title": "Role",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "role"
+  ],
+  "title": "InvitationMembershipView",
+  "type": "object"
+}
+```
+
+## InvitationPreviewResponse
+
+```json
+{
+  "properties": {
+    "email": {
+      "title": "Email",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "invited_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Invited By Name"
+    },
+    "project_names": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Project Names",
+      "type": "array"
+    },
+    "role": {
+      "$ref": "#/components/schemas/UserRole"
+    },
+    "sso_required": {
+      "default": false,
+      "title": "Sso Required",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "email",
+    "role",
+    "expires_at"
+  ],
+  "title": "InvitationPreviewResponse",
+  "type": "object"
+}
+```
+
+## InvitationSummary
+
+```json
+{
+  "description": "W17b ADM-01: one row of the Pending invitations tab. Never carries a token.",
+  "properties": {
+    "created_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created At"
+    },
+    "email": {
+      "title": "Email",
+      "type": "string"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "invited_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Invited By Name"
+    },
+    "project_memberships": {
+      "items": {
+        "$ref": "#/components/schemas/InvitationMembershipView"
+      },
+      "title": "Project Memberships",
+      "type": "array"
+    },
+    "revoked_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Revoked At"
+    },
+    "role": {
+      "$ref": "#/components/schemas/UserRole"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "used_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Used At"
+    }
+  },
+  "required": [
+    "id",
+    "email",
+    "role",
+    "status",
+    "expires_at"
+  ],
+  "title": "InvitationSummary",
+  "type": "object"
+}
+```
+
+## InvitationTokenRequest
+
+```json
+{
+  "properties": {
+    "token": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Token",
+      "type": "string"
+    }
+  },
+  "required": [
+    "token"
+  ],
+  "title": "InvitationTokenRequest",
+  "type": "object"
+}
+```
+
+## InviteProjectMembership
+
+```json
+{
+  "description": "W17b ADM-01: a project the invitee joins on accept, with its project role.",
+  "properties": {
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "role": {
+      "$ref": "#/components/schemas/UserRole",
+      "default": "QA_ENGINEER"
+    }
+  },
+  "required": [
+    "project_id"
+  ],
+  "title": "InviteProjectMembership",
+  "type": "object"
+}
+```
+
 ## InviteUserRequest
 
 ```json
@@ -20465,6 +20754,14 @@ These are the full generated JSON Schema definitions, including required fields,
       "format": "email",
       "title": "Email",
       "type": "string"
+    },
+    "project_memberships": {
+      "items": {
+        "$ref": "#/components/schemas/InviteProjectMembership"
+      },
+      "maxItems": 50,
+      "title": "Project Memberships",
+      "type": "array"
     },
     "role": {
       "$ref": "#/components/schemas/UserRole",
@@ -20487,6 +20784,11 @@ These are the full generated JSON Schema definitions, including required fields,
     "email": {
       "title": "Email",
       "type": "string"
+    },
+    "email_sent": {
+      "default": false,
+      "title": "Email Sent",
+      "type": "boolean"
     },
     "expires_at": {
       "format": "date-time",
@@ -26772,6 +27074,36 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## PasswordResetLinkResponse
+
+```json
+{
+  "description": "W17b ADM-02: an admin-issued reset link. The admin never sees or sets the password.",
+  "properties": {
+    "email_sent": {
+      "default": false,
+      "title": "Email Sent",
+      "type": "boolean"
+    },
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "link": {
+      "title": "Link",
+      "type": "string"
+    }
+  },
+  "required": [
+    "link",
+    "expires_at"
+  ],
+  "title": "PasswordResetLinkResponse",
+  "type": "object"
+}
+```
+
 ## PendingDefectItem
 
 ```json
@@ -32961,6 +33293,33 @@ These are the full generated JSON Schema definitions, including required fields,
     "created_at"
   ],
   "title": "RequirementLinkRead",
+  "type": "object"
+}
+```
+
+## ResetPasswordRequest
+
+```json
+{
+  "properties": {
+    "new_password": {
+      "maxLength": 128,
+      "minLength": 8,
+      "title": "New Password",
+      "type": "string"
+    },
+    "token": {
+      "maxLength": 256,
+      "minLength": 1,
+      "title": "Token",
+      "type": "string"
+    }
+  },
+  "required": [
+    "token",
+    "new_password"
+  ],
+  "title": "ResetPasswordRequest",
   "type": "object"
 }
 ```

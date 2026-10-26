@@ -252,6 +252,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `RISK_WEIGHT_BLAST_RADIUS` | `float` | `0.15` |
 | `RISK_WEIGHT_DIAGNOSIS_CONF` | `float` | `0.05` |
 | `PROMETHEUS_URL` | `Optional[str]` | `None` |
+| `SLOW_QUERY_MS` | `int` | `500` |
 | `GITHUB_TOKEN` | `Optional[str]` | `None` |
 | `GITHUB_REPO` | `Optional[str]` | `None` |
 | `COMMIT_RANGE_FILE_FETCH_LIMIT` | `int` | `25` |

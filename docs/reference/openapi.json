@@ -3292,6 +3292,47 @@
         "title": "AcceptCaseRequest",
         "type": "object"
       },
+      "AcceptInvitationRequest": {
+        "properties": {
+          "full_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Full Name"
+          },
+          "password": {
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Password",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          },
+          "username": {
+            "maxLength": 50,
+            "minLength": 3,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "username",
+          "password"
+        ],
+        "title": "AcceptInvitationRequest",
+        "type": "object"
+      },
       "AcceptReviewRequest": {
         "properties": {
           "notes": {
@@ -17072,6 +17113,20 @@
         "title": "FlakyScoreComponent",
         "type": "object"
       },
+      "ForgotPasswordRequest": {
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "ForgotPasswordRequest",
+        "type": "object"
+      },
       "FrontendError": {
         "properties": {
           "component_stack": {
@@ -19111,12 +19166,219 @@
         "title": "InvestigatorPolicyBudgets",
         "type": "object"
       },
+      "InvitationMembershipView": {
+        "properties": {
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "role"
+        ],
+        "title": "InvitationMembershipView",
+        "type": "object"
+      },
+      "InvitationPreviewResponse": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "invited_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invited By Name"
+          },
+          "project_names": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Project Names",
+            "type": "array"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "sso_required": {
+            "default": false,
+            "title": "Sso Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "email",
+          "role",
+          "expires_at"
+        ],
+        "title": "InvitationPreviewResponse",
+        "type": "object"
+      },
+      "InvitationSummary": {
+        "description": "W17b ADM-01: one row of the Pending invitations tab. Never carries a token.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "invited_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invited By Name"
+          },
+          "project_memberships": {
+            "items": {
+              "$ref": "#/components/schemas/InvitationMembershipView"
+            },
+            "title": "Project Memberships",
+            "type": "array"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used At"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role",
+          "status",
+          "expires_at"
+        ],
+        "title": "InvitationSummary",
+        "type": "object"
+      },
+      "InvitationTokenRequest": {
+        "properties": {
+          "token": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "InvitationTokenRequest",
+        "type": "object"
+      },
+      "InviteProjectMembership": {
+        "description": "W17b ADM-01: a project the invitee joins on accept, with its project role.",
+        "properties": {
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/UserRole",
+            "default": "QA_ENGINEER"
+          }
+        },
+        "required": [
+          "project_id"
+        ],
+        "title": "InviteProjectMembership",
+        "type": "object"
+      },
       "InviteUserRequest": {
         "properties": {
           "email": {
             "format": "email",
             "title": "Email",
             "type": "string"
+          },
+          "project_memberships": {
+            "items": {
+              "$ref": "#/components/schemas/InviteProjectMembership"
+            },
+            "maxItems": 50,
+            "title": "Project Memberships",
+            "type": "array"
           },
           "role": {
             "$ref": "#/components/schemas/UserRole",
@@ -19134,6 +19396,11 @@
           "email": {
             "title": "Email",
             "type": "string"
+          },
+          "email_sent": {
+            "default": false,
+            "title": "Email Sent",
+            "type": "boolean"
           },
           "expires_at": {
             "format": "date-time",
@@ -25012,6 +25279,31 @@
         "title": "OwnershipRuleUpdate",
         "type": "object"
       },
+      "PasswordResetLinkResponse": {
+        "description": "W17b ADM-02: an admin-issued reset link. The admin never sees or sets the password.",
+        "properties": {
+          "email_sent": {
+            "default": false,
+            "title": "Email Sent",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "link": {
+            "title": "Link",
+            "type": "string"
+          }
+        },
+        "required": [
+          "link",
+          "expires_at"
+        ],
+        "title": "PasswordResetLinkResponse",
+        "type": "object"
+      },
       "PendingDefectItem": {
         "description": "One defect awaiting approval (GET /deep-investigate/defects/pending-review).",
         "properties": {
@@ -30783,6 +31075,28 @@
           "created_at"
         ],
         "title": "RequirementLinkRead",
+        "type": "object"
+      },
+      "ResetPasswordRequest": {
+        "properties": {
+          "new_password": {
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "New Password",
+            "type": "string"
+          },
+          "token": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "new_password"
+        ],
+        "title": "ResetPasswordRequest",
         "type": "object"
       },
       "RetentionCriteria": {
@@ -54882,6 +55196,98 @@
         ]
       }
     },
+    "/api/v1/auth/invitations/accept": {
+      "post": {
+        "description": "Redeem an invitation: create the account with the invited role and projects, sign in.\n\nWorks with ``REGISTRATION_ENABLED=false`` — the invitation is the\nauthorisation. Single use under ``SELECT … FOR UPDATE``. When the workspace\nrequires MFA for the role, answers the login flow's enrollment shape instead\nof tokens (an invite never skips the second factor).",
+        "operationId": "accept_invitation_api_v1_auth_invitations_accept_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptInvitationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/TokenResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MfaEnrollmentRequiredResponse"
+                    }
+                  ],
+                  "title": "Response Accept Invitation Api V1 Auth Invitations Accept Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Invitation",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v1/auth/invitations/preview": {
+      "post": {
+        "description": "Who invited whom, as what — read by the accept page before the form. Public.",
+        "operationId": "preview_invitation_api_v1_auth_invitations_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvitationTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Invitation",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "description": "Authenticate and return JWT access + refresh tokens.\n\nThree success shapes, all HTTP 200 (see ``models/schemas.py``):\n\n* :class:`TokenResponse` — fully authenticated.\n* :class:`MfaChallengeResponse` — password accepted, second factor owed.\n* :class:`MfaEnrollmentRequiredResponse` — password accepted, workspace\n  policy requires MFA and this account has none yet.\n\nThe last two carry interstitial tokens with their own ``type`` claim. They\nare **not** access tokens and are rejected by ``get_current_user``: see\n``core/security.create_mfa_token`` for why a claim on a real access token\nwould have been a complete bypass.",
@@ -55528,7 +55934,7 @@
     },
     "/api/v1/auth/options": {
       "get": {
-        "description": "What the sign-in page may offer. Public: it is read before anyone signs in.",
+        "description": "What the sign-in page may offer. Public: it is read before anyone signs in.\n\n``password_reset_email`` (W17b ADM-02) is true when SMTP is configured, so\nthe login page offers the email form; it reveals nothing about any account.",
         "operationId": "auth_options_api_v1_auth_options_get",
         "responses": {
           "200": {
@@ -55545,6 +55951,85 @@
           }
         },
         "summary": "Auth Options",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v1/auth/password/forgot": {
+      "post": {
+        "description": "Always 202 with the same body. The lookup and the mail run after the response.",
+        "operationId": "forgot_password_api_v1_auth_password_forgot_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Forgot Password Api V1 Auth Password Forgot Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forgot Password",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
+    "/api/v1/auth/password/reset": {
+      "post": {
+        "description": "Redeem a reset link: set the password, clear lockout, sign out everywhere.\n\nMFA is untouched — the next sign-in still asks for the code.",
+        "operationId": "reset_password_api_v1_auth_password_reset_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reset Password",
         "tags": [
           "Authentication"
         ]
@@ -64478,6 +64963,72 @@
         ]
       }
     },
+    "/api/v1/performance/observed": {
+      "get": {
+        "description": "W17b ADM-06: observed p50/p95/p99 and request count per budgeted route, beside its budget.\n\n``source`` is ``prometheus`` when ``PROMETHEUS_URL`` answers, else ``in_app`` (measured by\nTestLookup on every API pod). A route with no requests in the window reads ``measured: false``.",
+        "operationId": "get_observed_performance_api_v1_performance_observed_get",
+        "parameters": [
+          {
+            "description": "15m, 1h or 24h",
+            "in": "query",
+            "name": "window",
+            "required": false,
+            "schema": {
+              "default": "1h",
+              "description": "15m, 1h or 24h",
+              "pattern": "^(15m|1h|24h)$",
+              "title": "Window",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Observed Performance",
+        "tags": [
+          "Performance"
+        ]
+      }
+    },
     "/api/v1/performance/search-config": {
       "get": {
         "description": "Return current search and indexing configuration.",
@@ -64526,6 +65077,71 @@
           }
         ],
         "summary": "Get Search Config",
+        "tags": [
+          "Performance"
+        ]
+      }
+    },
+    "/api/v1/performance/slow-queries": {
+      "get": {
+        "description": "W17b ADM-06: the slowest statement shapes (no bound values). ADMIN: SQL text reveals the schema.",
+        "operationId": "get_slow_queries_api_v1_performance_slow_queries_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Slow Queries",
         "tags": [
           "Performance"
         ]
@@ -93530,9 +94146,210 @@
         ]
       }
     },
+    "/api/v1/users/invitations": {
+      "get": {
+        "description": "W17b ADM-01: pending (and expired) invitations, newest first. Never a token. ADMIN.\n\nDeclared before ``/{user_id}`` so ``invitations`` is not parsed as a user id.",
+        "operationId": "list_invitations_api_v1_users_invitations_get",
+        "parameters": [
+          {
+            "description": "Also list used and revoked invitations",
+            "in": "query",
+            "name": "include_closed",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Also list used and revoked invitations",
+              "title": "Include Closed",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/InvitationSummary"
+                  },
+                  "title": "Response List Invitations Api V1 Users Invitations Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Invitations",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
+    "/api/v1/users/invitations/{invitation_id}/resend": {
+      "post": {
+        "description": "Issue a new link (new token, new expiry); the previous link stops working. ADMIN.\n\nAlso the only way to get a copyable link again: the raw token is never\nstored, so an old link cannot be shown twice.",
+        "operationId": "resend_invitation_api_v1_users_invitations__invitation_id__resend_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invitation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invitation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InviteUserResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Resend Invitation",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
+    "/api/v1/users/invitations/{invitation_id}/revoke": {
+      "post": {
+        "description": "Kill an invitation link. A used invitation cannot be revoked (the account exists). ADMIN.",
+        "operationId": "revoke_invitation_api_v1_users_invitations__invitation_id__revoke_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "invitation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Invitation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvitationSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Revoke Invitation",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
     "/api/v1/users/invite": {
       "post": {
-        "description": "Invite a user by email with a specified role. Requires ADMIN.",
+        "description": "Invite a user by email with a role and optional project memberships. Requires ADMIN.\n\nW17b ADM-01: only ``sha256(token)`` is stored; the link carries the token in\na URL fragment; the link is emailed when SMTP is configured and always\nreturned so the admin can copy it (the offline path).",
         "operationId": "invite_user_api_v1_users_invite_post",
         "parameters": [
           {
@@ -93866,6 +94683,71 @@
           }
         ],
         "summary": "Get User Memberships",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/password-reset-link": {
+      "post": {
+        "description": "W17b ADM-02: a single-use reset link for another user. ADMIN.\n\nThe administrator never sees or sets the password. Older unused links for\nthe user stop working. Refused for the caller's own account (change-password\nexists for that). Audited without the token.",
+        "operationId": "issue_password_reset_link_api_v1_users__user_id__password_reset_link_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordResetLinkResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Issue Password Reset Link",
         "tags": [
           "User Management"
         ]
