@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -65,12 +66,16 @@ async def list_projects(
     # per-project lookup. `enabled` is NOT NULL on the policy table, so a NULL
     # here means exactly one thing — no policy row has ever existed — which is
     # the state the activation nudge exists to catch.
+    # W17 ADM-04: the archiver's name rides on the same query (a second LEFT
+    # JOIN), so the list stays ONE execute whatever the number of projects.
+    archiver = aliased(User)
     stmt = (
-        select(Project, ProjectRetentionPolicy.enabled)
+        select(Project, ProjectRetentionPolicy.enabled, archiver.full_name, archiver.username)
         .outerjoin(
             ProjectRetentionPolicy,
             ProjectRetentionPolicy.project_id == Project.id,
         )
+        .outerjoin(archiver, archiver.id == Project.archived_by_user_id)
         .order_by(Project.name)
     )
     if include_archived:
@@ -82,27 +87,15 @@ async def list_projects(
     accessible = await get_accessible_project_ids(db, current_user)
     if accessible is not None:
         stmt = stmt.where(Project.id.in_(accessible))
-    rows = (await db.execute(stmt)).all()
-    names: dict[uuid.UUID, str] = {}
-    archivers = {p.archived_by_user_id for p, _ in rows if p.archived_by_user_id and p.is_active is False}
-    if archivers:
-        names = {
-            r.id: (r.full_name or r.username)
-            for r in (await db.execute(
-                select(User.id, User.full_name, User.username).where(User.id.in_(archivers))
-            )).all()
-        }
+    result = await db.execute(stmt)
     return [
         ProjectResponse.model_validate(project).model_copy(
             update={
                 "retention_status": _retention_status(enabled),
-                "archived_by_name": (
-                    names.get(project.archived_by_user_id)
-                    if project.is_active is False and project.archived_by_user_id else None
-                ),
+                "archived_by_name": (archiver_full or archiver_user) if project.is_active is False else None,
             }
         )
-        for project, enabled in rows
+        for project, enabled, archiver_full, archiver_user in result.all()
     ]
 
 
