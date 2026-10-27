@@ -737,7 +737,7 @@ Four guards, each a real hazard rather than defensive habit:
   beyond non-empty. Prefixes outside the project's scope are refused and
   REPORTED, never deleted.
 
-Source: [backend/app/routers/runs.py:908](../../../backend/app/routers/runs.py#L908).
+Source: [backend/app/routers/runs.py:921](../../../backend/app/routers/runs.py#L921).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -1234,7 +1234,7 @@ Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_curren
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, db: AsyncSession=Depends(get_db), _: User=Depends(require_run_access())
+run_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_run_access())
 ```
 
 Direct handler error branches (dependency/service errors can add others):

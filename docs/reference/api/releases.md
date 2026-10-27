@@ -690,7 +690,7 @@ Delete Release
 
 
 
-Source: [backend/app/routers/releases.py:623](../../../backend/app/routers/releases.py#L623).
+Source: [backend/app/routers/releases.py:672](../../../backend/app/routers/releases.py#L672).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -849,7 +849,7 @@ Update Release
 
 
 
-Source: [backend/app/routers/releases.py:529](../../../backend/app/routers/releases.py#L529).
+Source: [backend/app/routers/releases.py:558](../../../backend/app/routers/releases.py#L558).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -965,7 +965,7 @@ uuid4, so without it half of all orderings present two active rows to a
 partial unique index. Writing ``is_active`` here instead would route around
 that.
 
-Source: [backend/app/routers/releases.py:904](../../../backend/app/routers/releases.py#L904).
+Source: [backend/app/routers/releases.py:953](../../../backend/app/routers/releases.py#L953).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1260,7 +1260,7 @@ demote of the previous verdict and the insert of the new one land as one
 unit of work — a failure cannot leave a release with two current verdicts or
 none.
 
-Source: [backend/app/routers/releases.py:660](../../../backend/app/routers/releases.py#L660).
+Source: [backend/app/routers/releases.py:709](../../../backend/app/routers/releases.py#L709).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1358,7 +1358,7 @@ Mark Release Outcome
 
 Append a human incident or rollback outcome for later G5 evaluation.
 
-Source: [backend/app/routers/releases.py:592](../../../backend/app/routers/releases.py#L592).
+Source: [backend/app/routers/releases.py:641](../../../backend/app/routers/releases.py#L641).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1454,14 +1454,14 @@ Add Phase
 
 
 
-Source: [backend/app/routers/releases.py:698](../../../backend/app/routers/releases.py#L698).
+Source: [backend/app/routers/releases.py:747](../../../backend/app/routers/releases.py#L747).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-release_id: str, body: PhaseIn, db: AsyncSession=Depends(get_db), _: User=Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)), __: User=Depends(require_release_access())
+release_id: str, body: PhaseIn, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)), __: User=Depends(require_release_access())
 ```
 
 ### Declared wire contract
@@ -1554,7 +1554,7 @@ Create a release's first schedule in one request (REL-07's Create; also a manual
 ``POST /phases``); every name unique in the batch; ``source`` /
 ``model_name`` are recorded in the activity row and the metric only.
 
-Source: [backend/app/routers/releases.py:838](../../../backend/app/routers/releases.py#L838).
+Source: [backend/app/routers/releases.py:887](../../../backend/app/routers/releases.py#L887).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1649,7 +1649,7 @@ BEFORE anything else reads it: an unknown, malformed (Pydantic's 422) or
 FOREIGN source is the same 404 text, so the route is no oracle for another
 project's release ids. ``require_release_access`` scopes the path id.
 
-Source: [backend/app/routers/releases.py:720](../../../backend/app/routers/releases.py#L720).
+Source: [backend/app/routers/releases.py:769](../../../backend/app/routers/releases.py#L769).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1758,7 +1758,7 @@ a release manager to do the wrong one half the time. ``NO_PHASES`` is a
 fourth state and not a pass: phases are optional, so having none is not a
 failure, but nothing was gated either.
 
-Source: [backend/app/routers/releases.py:1005](../../../backend/app/routers/releases.py#L1005).
+Source: [backend/app/routers/releases.py:1054](../../../backend/app/routers/releases.py#L1054).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`.
 
@@ -1850,7 +1850,7 @@ The heading parser always runs; the model is asked only in ``llm`` /
 back BEFORE the config read and the model call, so no connection is held
 while the model runs. The PRD is never stored or logged.
 
-Source: [backend/app/routers/releases.py:801](../../../backend/app/routers/releases.py#L801).
+Source: [backend/app/routers/releases.py:850](../../../backend/app/routers/releases.py#L850).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1945,14 +1945,14 @@ Delete Phase
 
 
 
-Source: [backend/app/routers/releases.py:1056](../../../backend/app/routers/releases.py#L1056).
+Source: [backend/app/routers/releases.py:1105](../../../backend/app/routers/releases.py#L1105).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-release_id: str, phase_id: str, db: AsyncSession=Depends(get_db), _: User=Depends(require_role(UserRole.ADMIN, allow_project_key=True)), __: User=Depends(require_release_access())
+release_id: str, phase_id: str, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.ADMIN, allow_project_key=True)), __: User=Depends(require_release_access())
 ```
 
 ### Declared wire contract
@@ -2027,7 +2027,7 @@ Update Phase
 
 
 
-Source: [backend/app/routers/releases.py:882](../../../backend/app/routers/releases.py#L882).
+Source: [backend/app/routers/releases.py:931](../../../backend/app/routers/releases.py#L931).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -2136,7 +2136,7 @@ Evaluate ONE phase and, by default, record the verdict.
 that table, so writing to it is a deliberate act rather than a side effect
 of looking — which is also why the read endpoint above never records.
 
-Source: [backend/app/routers/releases.py:1033](../../../backend/app/routers/releases.py#L1033).
+Source: [backend/app/routers/releases.py:1082](../../../backend/app/routers/releases.py#L1082).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -2243,7 +2243,7 @@ Link Test Run
 
 
 
-Source: [backend/app/routers/releases.py:1070](../../../backend/app/routers/releases.py#L1070).
+Source: [backend/app/routers/releases.py:1119](../../../backend/app/routers/releases.py#L1119).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -2340,14 +2340,14 @@ Unlink Test Run
 
 
 
-Source: [backend/app/routers/releases.py:1093](../../../backend/app/routers/releases.py#L1093).
+Source: [backend/app/routers/releases.py:1142](../../../backend/app/routers/releases.py#L1142).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-release_id: str, run_id: str, db: AsyncSession=Depends(get_db), _: User=Depends(require_role(UserRole.ADMIN, allow_project_key=True)), __: User=Depends(require_run_access()), ___: User=Depends(require_release_access())
+release_id: str, run_id: str, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.ADMIN, allow_project_key=True)), __: User=Depends(require_run_access()), ___: User=Depends(require_release_access())
 ```
 
 ### Declared wire contract
