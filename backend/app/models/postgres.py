@@ -4232,6 +4232,8 @@ class ProjectMember(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     role: Mapped[UserRole] = mapped_column(String(20), nullable=False, default=UserRole.QA_ENGINEER.value)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # W20 ADM-09: NULL = granted by a person; "scim:<group>" = created by SCIM group reconciliation.
+    source: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
 
 
 class ApiKey(Base):
@@ -4798,6 +4800,39 @@ class FederatedIdentity(Base):
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class SCIMGroup(Base):
+    """W20 ADM-09: a group an IdP pushes over SCIM ``/Groups``."""
+
+    __tablename__ = "scim_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    external_id: Mapped[Optional[str]] = mapped_column(String(255))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class SCIMGroupMember(Base):
+    __tablename__ = "scim_group_members"
+    __table_args__ = (Index("ix_scim_group_members_user", "user_id"),)
+
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scim_groups.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+
+
+class SCIMGroupMapping(Base):
+    """W20 ADM-09: an administrator's grant — members of the group get ``project_role`` on the project."""
+
+    __tablename__ = "scim_group_mappings"
+    __table_args__ = (UniqueConstraint("group_id", "project_id", name="uq_scim_group_mapping"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scim_groups.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    project_role: Mapped[str] = mapped_column(String(20), nullable=False)
 
 
 class SCIMToken(Base):
