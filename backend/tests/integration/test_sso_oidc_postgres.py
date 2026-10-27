@@ -71,7 +71,8 @@ async def world(monkeypatch):
     oidc_service.clear_caches()
 
     engine = create_async_engine(_dsn(), pool_size=1, max_overflow=0)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    # As the app: no autoflush (an autoflushing session hid an insert-order FK bug in create).
+    factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
     admin = User(id=uuid.uuid4(), email=f"a-{marker}@testlookup.dev", username=f"a-{marker}", full_name="A",
                  hashed_password="x", role=UserRole.ADMIN, is_active=True)
     existing = User(id=uuid.uuid4(), email=f"taken-{marker}@example.test", username=f"t-{marker}", full_name="T",
@@ -167,6 +168,12 @@ async def test_sign_in_maps_the_group_and_hands_off_once(world):
 
     config = await _create_active_oidc(world)
     assert config.oidc_client_secret_set is True
+    from app.models.postgres import IdentityEvent
+
+    async with world.factory() as db:
+        created_event = (await db.execute(select(IdentityEvent).where(
+            IdentityEvent.sso_config_id == config.id, IdentityEvent.event_type == "SSO_CONFIG_CREATED"))).scalar_one()
+    assert created_event.detail["provider_type"] == "OIDC"
     assert config.oidc_issuer == ISSUER  # trailing slash trimmed
     assert "fake-oidc-secret" not in config.model_dump_json()
     async with world.factory() as db:

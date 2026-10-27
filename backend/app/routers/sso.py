@@ -546,6 +546,9 @@ async def create_sso_config(
         enforcement_mode=payload.enforcement_mode,
     )
     db.add(config)
+    # The app's sessions do not autoflush: insert the config before the audit row that references it
+    # (unrelated tables, so the unit of work may otherwise insert identity_events first → FK violation).
+    await db.flush()
     if is_oidc and payload.oidc_client_secret:
         await store_secret(db, OIDC_SECRET_SCOPE, str(config.id), payload.oidc_client_secret, actor_id=current_user.id)
 
@@ -556,7 +559,7 @@ async def create_sso_config(
         sso_config_id=config.id,
         actor_id=current_user.id,
         actor_name=current_user.username,
-        detail={"display_name": config.display_name, "provider_type": str(config.provider_type)},
+        detail={"display_name": config.display_name, "provider_type": SSOProviderType(config.provider_type).value},
         ip_address=client_ip,
     )
 

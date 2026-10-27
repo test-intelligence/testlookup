@@ -18,6 +18,25 @@ import { exchangeSSOCode } from '@/services/ssoService'
 import { useAuthStore } from '@/store/authStore'
 import { returnPathFromString } from '@/utils/returnPath'
 
+/**
+ * The last code this tab spent. The ref below stops a second effect in the SAME
+ * instance; this stops a NEW instance (the route remounts when the session
+ * appears, and the router still holds the old hash) from spending it again — a
+ * duplicate POST /sso/exchange answered 400 (found in the W20 ADM-08b walk).
+ * The code is already spent and dead within a minute, so keeping it is harmless.
+ */
+const SPENT_CODE_KEY = 'sso:spent-code'
+
+function alreadySpent(code: string): boolean {
+  try {
+    if (sessionStorage.getItem(SPENT_CODE_KEY) === code) return true
+    sessionStorage.setItem(SPENT_CODE_KEY, code)
+  } catch {
+    // Storage unavailable: the per-instance ref still guards.
+  }
+  return false
+}
+
 export default function SSOCallbackPage() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -34,6 +53,7 @@ export default function SSOCallbackPage() {
   useEffect(() => {
     if (started.current || !code) return
     started.current = true
+    if (alreadySpent(code)) return
     // Keep the code out of the address bar and history.
     if (window.location.hash.includes('code=')) {
       window.history.replaceState(null, '', window.location.pathname + window.location.search)
