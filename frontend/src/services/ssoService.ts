@@ -227,3 +227,35 @@ export async function getIdentitySyncStatus(ssoConfigId?: string): Promise<Ident
   });
   return data;
 }
+
+// ── SCIM groups → project roles (W20 ADM-09) ────────────────────────────────
+
+export interface SCIMGroupMappingRow {
+  project_id: string;
+  project_name?: string;
+  role: string;
+}
+
+export interface SCIMGroupSummary {
+  id: string;
+  display_name: string;
+  external_id: string | null;
+  member_count: number;
+  mappings: SCIMGroupMappingRow[];
+}
+
+export async function listSCIMGroups(): Promise<{ groups: SCIMGroupSummary[]; roles: string[] }> {
+  const { data } = await api.get<{ groups: SCIMGroupSummary[]; roles: string[] }>('/api/v1/sso/scim-groups');
+  return data;
+}
+
+export async function putSCIMGroupMappings(
+  groupId: string,
+  mappings: { project_id: string; role: string }[],
+): Promise<{ reconciled_users: number; groups: SCIMGroupSummary[] }> {
+  const { data } = await api.put<{ reconciled_users: number; groups: SCIMGroupSummary[] }>(
+    `/api/v1/sso/scim-groups/${groupId}/mappings`,
+    { mappings },
+  );
+  return data;
+}

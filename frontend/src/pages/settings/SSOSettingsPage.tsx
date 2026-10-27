@@ -28,6 +28,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import SSORoleMappingEditor from './SSORoleMappingEditor'
+import SCIMGroupsSection from './SCIMGroupsSection'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { usePermissions } from '@/hooks/usePermissions'
 
@@ -449,6 +450,7 @@ export default function SSOSettingsPage() {
                   </Fragment>
                 ))}
               </div>
+              <SCIMGroupsSection />
             </div>
           )}
 

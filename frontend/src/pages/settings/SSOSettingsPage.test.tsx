@@ -55,8 +55,12 @@ vi.mock('../../services/ssoService', async () => {
     listSCIMTokens: vi.fn(),
     createSCIMToken: vi.fn(),
     revokeSCIMToken: vi.fn(),
+    // W20 ADM-09: the SCIM tab's groups section (none pushed here).
+    listSCIMGroups: () => Promise.resolve({ groups: [], roles: ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD'] }),
+    putSCIMGroupMappings: vi.fn(),
   }
 })
+vi.mock('@/services/projectsService', () => ({ projectsService: { list: () => Promise.resolve([]) } }))
 
 const permissions = { isAdmin: true }
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => permissions }))
