@@ -135,7 +135,7 @@ async def test_audit_event_mirrors_test_case_and_plan_rows(world):
     assert [(x.event_type, x.summary) for x in rows] == [
         ("test_case.created", f"Test case {w.case.title} was created"),
         ("test_case.updated", f"Test case {w.case.title} changed: priority, title"),
-        ("test_case.status_changed", f"Test case {w.case.title} moved to in_review"),
+        ("test_case.status_changed", f"Test case {w.case.title} moved to in review"),
         ("test_case.approved", f"Test case {w.case.title} was approved"),
         ("test_case.deleted", f"Test case {w.case.title} was deleted"),
         ("test_plan.created", f"Test plan {w.plan.name} was created"),

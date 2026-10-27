@@ -154,7 +154,7 @@ async def _mirror_to_activity(
         actor=ActorRef.from_user(actor),
         entity_id=entity_id,
         entity_label=label or str(entity_id)[:8],
-        context={"changed": changed, "status": transition_to or "", "action": action},
+        context={"changed": changed, "status": (transition_to or "").replace("_", " "), "action": action},
         source_table="test_case_audit_logs",
         source_id=source_id,
     )
