@@ -52,6 +52,22 @@ locally by default.
 
 ### Added
 
+- **Activity feed: configuration and integration changes now appear** (wave
+  W21b, ACT-01 slice (b); branch `feat/df-activity-ledger-b-20261027`; no
+  migration). Twenty-four more registered event types now have producers:
+  gate policies created / changed / activated (a deactivation reads as a
+  change), ownership rules created / changed / deleted, a bulk ownership
+  import and a CODEOWNERS import (one row each), team notification channels
+  set / removed, outbound webhooks created / changed / paused / deleted, a
+  GitHub or GitLab connection test and a GitHub disconnect, knowledge sources
+  added / synced / removed, a project-bound notification preference changed,
+  a project entering or leaving a feature flag's allow-list, a confirmed
+  project data reset (written even if the reset fails), a retention policy
+  change and each retention purge (written after the purge commits). Channel
+  targets, webhook URLs and e-mail overrides never enter the feed.
+  `policy.deleted` was removed from the registry: gate policies are versioned,
+  never deleted. `backend.activity-registry-emitted` 44 -> 19 left. Tests:
+  `backend/tests/integration/test_activity_ledger_slice_b_postgres.py`.
 - **Activity feed: run, analysis, investigation and release events now
   appear** (wave W21a, ACT-01 slice (a); branch
   `feat/df-activity-ledger-a-20261027`; no migration). Seventeen event types
