@@ -183,7 +183,7 @@ async def test_concurrent_email_dispatch_does_not_share_a_db_session(monkeypatch
             value = (
                 _smtp_row()
                 if guard.read_count == 1
-                else SimpleNamespace(encrypted_value=None)
+                else SimpleNamespace(encrypted_value=None, provider="db")  # a SecretRef row (W20 ADM-10 reads provider)
             )
             res.scalar_one_or_none = MagicMock(return_value=value)
             return res

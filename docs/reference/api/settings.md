@@ -491,7 +491,7 @@ Get Audit Log
 
 Return recent settings change audit entries.
 
-Source: [backend/app/routers/app_settings.py:1360](../../../backend/app/routers/app_settings.py#L1360).
+Source: [backend/app/routers/app_settings.py:1361](../../../backend/app/routers/app_settings.py#L1361).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -596,7 +596,7 @@ List Feature Flags
 
 List all feature flags.
 
-Source: [backend/app/routers/app_settings.py:1382](../../../backend/app/routers/app_settings.py#L1382).
+Source: [backend/app/routers/app_settings.py:1383](../../../backend/app/routers/app_settings.py#L1383).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -673,7 +673,7 @@ Remove Feature Flag
 
 Delete a feature flag. Requires ADMIN.
 
-Source: [backend/app/routers/app_settings.py:1417](../../../backend/app/routers/app_settings.py#L1417).
+Source: [backend/app/routers/app_settings.py:1418](../../../backend/app/routers/app_settings.py#L1418).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -746,7 +746,7 @@ Update Feature Flag
 
 Create or update a feature flag. Requires ADMIN.
 
-Source: [backend/app/routers/app_settings.py:1392](../../../backend/app/routers/app_settings.py#L1392).
+Source: [backend/app/routers/app_settings.py:1393](../../../backend/app/routers/app_settings.py#L1393).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -842,7 +842,7 @@ Get Integrations Config
 
 
 
-Source: [backend/app/routers/app_settings.py:1119](../../../backend/app/routers/app_settings.py#L1119).
+Source: [backend/app/routers/app_settings.py:1120](../../../backend/app/routers/app_settings.py#L1120).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -913,7 +913,7 @@ Update Integrations Config
 
 
 
-Source: [backend/app/routers/app_settings.py:1128](../../../backend/app/routers/app_settings.py#L1128).
+Source: [backend/app/routers/app_settings.py:1129](../../../backend/app/routers/app_settings.py#L1129).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1003,7 +1003,7 @@ Return health status for all tracked integration providers.
 The deployment-wide view only (``scope_key = ''``): per-project GitHub /
 GitLab rows (W10 INT-04) are Integration Health's ``?scope=all`` read.
 
-Source: [backend/app/routers/app_settings.py:1517](../../../backend/app/routers/app_settings.py#L1517).
+Source: [backend/app/routers/app_settings.py:1518](../../../backend/app/routers/app_settings.py#L1518).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1080,7 +1080,7 @@ Get Mfa Policy
 
 Read the workspace MFA + lockout policy. QA_LEAD or higher.
 
-Source: [backend/app/routers/app_settings.py:1447](../../../backend/app/routers/app_settings.py#L1447).
+Source: [backend/app/routers/app_settings.py:1448](../../../backend/app/routers/app_settings.py#L1448).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1151,7 +1151,7 @@ Update Mfa Policy
 
 Update the workspace MFA + lockout policy. ADMIN only, audit-logged.
 
-Source: [backend/app/routers/app_settings.py:1459](../../../backend/app/routers/app_settings.py#L1459).
+Source: [backend/app/routers/app_settings.py:1460](../../../backend/app/routers/app_settings.py#L1460).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1455,7 +1455,7 @@ Get Storage Config
 
 
 
-Source: [backend/app/routers/app_settings.py:1282](../../../backend/app/routers/app_settings.py#L1282).
+Source: [backend/app/routers/app_settings.py:1283](../../../backend/app/routers/app_settings.py#L1283).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1526,7 +1526,7 @@ Update Storage Config
 
 
 
-Source: [backend/app/routers/app_settings.py:1296](../../../backend/app/routers/app_settings.py#L1296).
+Source: [backend/app/routers/app_settings.py:1297](../../../backend/app/routers/app_settings.py#L1297).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

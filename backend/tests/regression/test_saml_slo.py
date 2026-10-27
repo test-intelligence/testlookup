@@ -85,6 +85,8 @@ def _redirect_query(xml: bytes, key, *, sig_alg=RSA_SHA256, relay="rs-1", sign=T
 
 
 def _post_body(xml: bytes, key, cert_pem: str) -> str:
+    pytest.importorskip("lxml")
+    pytest.importorskip("signxml")
     from lxml import etree
     from signxml import XMLSigner
 
@@ -281,6 +283,8 @@ def test_urlencode_is_used_for_the_answer():  # guard: the RelayState is encoded
 
 
 def _signed_saml_response(key, cert_pem: str, *, sig="rsa-sha256", digest="sha256") -> str:
+    pytest.importorskip("lxml")
+    pytest.importorskip("signxml")
     from lxml import etree
     from signxml import XMLSigner
 

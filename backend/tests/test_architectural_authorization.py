@@ -1433,6 +1433,9 @@ GLOBAL_PATH_PARAMS: dict[str, str] = {
         "ai_eval_datasets have no tenant owner), role-gated (QA_LEAD reads the run, ADMIN "
         "its items); its project_id names only the budget and release policy a replay used"
     ),
+    # W20 ADM-09: /scim/v2/Groups/{group_id}. A SCIM group the IdP pushes is instance-wide (scim_groups has no
+    # project owner); the routes authenticate with the SCIM bearer token (verify_scim_bearer), not a user session.
+    "group_id": "an instance-wide SCIM group (scim_groups), reachable only with the SCIM bearer token",
 }
 
 #: Path ids in use when this scan was added that neither list classifies. Their
