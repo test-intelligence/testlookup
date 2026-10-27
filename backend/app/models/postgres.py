@@ -4711,6 +4711,8 @@ class IdentityEventType(str, PyEnum):
     ADMIN_FALLBACK_LOGIN = "ADMIN_FALLBACK_LOGIN"
     JIT_PROVISIONED = "JIT_PROVISIONED"
     ROLE_MAPPED = "ROLE_MAPPED"
+    # W20 ADM-08c: the IdP's signed LogoutRequest ended a user's sessions (only after the signature verified).
+    SSO_LOGOUT = "SSO_LOGOUT"
     # ── MFA + account lockout (0117) ─────────────────────────────────────
     # ``IdentityEvent.event_type`` is a ``String(40)`` fronted by this enum —
     # the documented enum/column drift trap. Every value below is <= 40 chars

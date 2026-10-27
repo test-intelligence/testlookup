@@ -200,7 +200,8 @@ async def test_sign_in_maps_the_group_and_hands_off_once(world):
     # The same state again (a replayed callback) is refused, and so is the used code.
     replay = await _callback(world, code=code, state=state)
     assert replay.status_code == 303 and replay.headers["location"].endswith("/login?sso_error=1")
-    assert any("state unknown" in e for e in await _failures(world, config.id))
+    # Refused, but not an identity event: anyone can send a made-up or spent state (no retention clock there).
+    assert not any("state unknown" in e for e in await _failures(world, config.id))
 
 
 async def test_tokens_the_idp_should_not_have_sent_are_refused(world):

@@ -172,7 +172,7 @@ def _verify_xml_signature(xml_bytes: bytes, idp_certificate_pem: str):
     """
     try:
         from lxml import etree  # noqa: PLC0415
-        from signxml import XMLVerifier, DigestAlgorithm, SignatureMethod  # noqa: PLC0415
+        from signxml import DigestAlgorithm, SignatureConfiguration, SignatureMethod, XMLVerifier  # noqa: PLC0415
         from signxml.exceptions import InvalidSignature, InvalidCertificate  # noqa: PLC0415
     except ImportError as exc:
         # Fail closed: we cannot verify, so we cannot trust the assertion.
@@ -208,14 +208,17 @@ def _verify_xml_signature(xml_bytes: bytes, idp_certificate_pem: str):
     }
 
     try:
+        # signxml 5 (requirements pin 5.1.0): the allow-list is a SignatureConfiguration. The former
+        # ``XMLVerifier.VerifyConfig`` does not exist there, so every signed assertion raised and every real
+        # SAML sign-in was refused (found in W20 ADM-08c, the first test with a real signature).
         verified = XMLVerifier().verify(
             root,
             x509_cert=idp_certificate_pem,
-            expect_references=1,
             # Pin the allow-list so SHA-1 / MD5-based signatures are rejected.
-            expect_config=XMLVerifier.VerifyConfig(
-                expect_signature_method=allowed_sig,
-                expect_digest_method=allowed_digest,
+            expect_config=SignatureConfiguration(
+                expect_references=1,
+                signature_methods=frozenset(allowed_sig),
+                digest_algorithms=frozenset(allowed_digest),
             ),
         )
     except (InvalidSignature, InvalidCertificate) as exc:

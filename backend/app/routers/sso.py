@@ -16,7 +16,9 @@ from app.core.deps import require_role
 from app.services.auth_session_tokens import issue_access_jwt
 from app.services.refresh_token_service import issue_refresh_token
 from app.db.postgres import get_db
+from app.core.token_revocation import RevocationUnavailable, revoke_all_user_tokens
 from app.models.postgres import (
+    FederatedIdentity,
     IdentityEventType,
     SSOConfiguration,
     SSOProviderType,
@@ -38,6 +40,7 @@ from app.services.sso_service import (
     build_authn_request,
     certificate_expiration,
     certificate_fingerprint,
+    claim_assertion_id,
     claim_sso_login,
     enforce_saml_security,
     get_active_sso_config,
@@ -53,7 +56,8 @@ from app.services.sso_service import (
     validate_certificate_format,
     validate_saml_issuer,
 )
-from app.services import oidc_service
+from app.services import oidc_service, saml_slo
+from app.services.refresh_token_service import _revoke_family as _revoke_refresh_family
 from app.services.secret_service import expire_secret, has_secret, read_secret, store_secret
 
 logger = logging.getLogger(__name__)
@@ -75,17 +79,98 @@ def _is_oidc(config: SSOConfiguration) -> bool:
 
 
 @router.get("/metadata", response_model=dict)
-async def get_sp_metadata():
+async def get_sp_metadata(db: AsyncSession = Depends(get_db)):
     """Return SP metadata for configuring the IdP.
 
-    No single-logout URL: there is no SLO handler, so advertising one sent IdPs
-    to a 404 (sign-out is local: the app revokes its own session).
+    W20 ADM-08c: the single-logout URL is advertised only while the active SAML
+    configuration has an IdP SLO URL (``/sso/slo`` answers 404 otherwise, and
+    advertising it then sent IdPs to that 404). IdP-initiated SLO only, so no
+    SP signing key is published.
     """
-    return {
+    metadata: dict = {
         "entity_id": settings.SAML_SP_ENTITY_ID,
         "acs_url": f"{settings.SAML_BASE_URL}/api/v1/sso/acs",
         "name_id_format": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
     }
+    if settings.SSO_ENABLED:
+        config = await get_active_sso_config(db)
+        if config is not None and not _is_oidc(config) and config.idp_slo_url:
+            metadata["single_logout_url"] = saml_slo.slo_url()
+            metadata["single_logout_bindings"] = [
+                "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
+                "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
+            ]
+    return metadata
+
+
+@router.api_route("/slo", methods=["GET", "POST"])
+async def saml_single_logout(request: Request, db: AsyncSession = Depends(get_db)):
+    """W20 ADM-08c: IdP-initiated single logout (HTTP-Redirect or HTTP-POST binding).
+
+    A LogoutRequest signed by the configured IdP ends the NameID's TestLookup sessions — every refresh token
+    revoked and an access-token cutoff written, so the next API call goes to the sign-in page — and the browser
+    goes back to the IdP with a Success LogoutResponse. Anything unsigned, signed by another key, from another
+    issuer, stale or replayed is refused with 400 and changes nothing (no identity event: anyone can send one).
+    """
+    if not settings.SSO_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO is not enabled")
+    config = await get_active_sso_config(db)
+    if config is None or _is_oidc(config) or not config.idp_slo_url:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Single logout is not configured")
+
+    if request.method == "POST":
+        form = await request.form()
+        relay_state = form.get("RelayState")
+        verify = dict(binding="post", form_saml_request=str(form.get("SAMLRequest") or ""))
+    else:
+        relay_state = request.query_params.get("RelayState")
+        verify = dict(binding="redirect", raw_query=request.url.query)
+    try:
+        claims = saml_slo.verify_logout_request(idp_certificate_pem=config.idp_certificate or "", **verify)
+        saml_slo.check_logout_request(claims, idp_entity_id=config.idp_entity_id)
+        if not await claim_assertion_id(f"slo:{claims['id']}", saml_slo.REPLAY_TTL_SECONDS):
+            raise ValueError("the LogoutRequest was already processed (replay)")
+    except ValueError as exc:
+        logger.warning("SAML LogoutRequest refused: %s", exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="The logout request was refused.")
+
+    fed = (await db.execute(
+        select(FederatedIdentity).where(
+            FederatedIdentity.sso_config_id == config.id,
+            FederatedIdentity.external_id == claims["name_id"],
+        )
+    )).scalar_one_or_none()
+    if fed is not None:
+        await _revoke_refresh_family(db, fed.user_id, reason="saml_slo")
+        try:
+            await revoke_all_user_tokens(fed.user_id, db)
+        except RevocationUnavailable as exc:
+            await db.rollback()
+            raise HTTPException(status_code=503, detail="Token revocation store unavailable; try again") from exc
+        await log_identity_event(
+            db,
+            IdentityEventType.SSO_LOGOUT,
+            user_id=fed.user_id,
+            sso_config_id=config.id,
+            detail={"name_id": claims["name_id"], "request_id": claims["id"],
+                    "session_indexes": claims["session_indexes"][:10]},
+            ip_address=request.client.host if request.client else None,
+        )
+        await db.commit()
+        logger.info("SAML single logout ended the sessions of user %s", fed.user_id)
+    else:
+        # Nothing to end here (never signed in through this IdP): still a Success for the IdP's chain.
+        logger.info("SAML single logout for an unknown NameID; nothing to end")
+
+    return RedirectResponse(
+        url=saml_slo.logout_response_url(
+            idp_slo_url=config.idp_slo_url,
+            in_response_to=claims["id"],
+            sp_entity_id=config.sp_entity_id,
+            relay_state=str(relay_state) if relay_state else None,
+        ),
+        status_code=status.HTTP_302_FOUND,
+    )
 
 
 @router.get("/login-url", response_model=dict)
@@ -173,9 +258,11 @@ async def oidc_callback(
     client_ip = request.client.host if request.client else None
     config = await get_active_sso_config(db)
 
-    async def refuse(reason: str, **detail: object) -> RedirectResponse:
+    async def refuse(reason: str, *, audit: bool = True, **detail: object) -> RedirectResponse:
         logger.warning("OIDC sign-in refused: %s", reason)
-        if config is not None:
+        # identity_events has no retention clock: a refusal anyone can trigger with a made-up state is a log line,
+        # not an event (see IdentityEventType). Only a login this server started (its state burned) is audited.
+        if config is not None and audit:
             await log_identity_event(
                 db,
                 IdentityEventType.SSO_LOGIN_FAILED,
@@ -189,13 +276,13 @@ async def oidc_callback(
         return RedirectResponse(url=f"{settings.public_base_url}/login?sso_error=1", status_code=status.HTTP_303_SEE_OTHER)
 
     if config is None or not _is_oidc(config):
-        return await refuse("no active OIDC configuration")
+        return await refuse("no active OIDC configuration", audit=False)
     # Burn the state before anything else, so an error answer cannot be replayed either.
     parked = await oidc_service.consume_state(state)
+    if parked is None:
+        return await refuse("state unknown, already used or expired", audit=False)
     if error:
         return await refuse(f"identity provider returned error {error[:100]!r}")
-    if parked is None:
-        return await refuse("state unknown, already used or expired")
     if parked.get("config_id") != str(config.id):
         return await refuse("the active SSO configuration changed during the sign-in")
     if not code or len(code) > _OIDC_CODE_MAX:
