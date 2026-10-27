@@ -88227,7 +88227,7 @@
     "/api/v1/sso/slo": {
       "get": {
         "description": "W20 ADM-08c: IdP-initiated single logout (HTTP-Redirect or HTTP-POST binding).\n\nA LogoutRequest signed by the configured IdP ends the NameID's TestLookup sessions — every refresh token\nrevoked and an access-token cutoff written, so the next API call goes to the sign-in page — and the browser\ngoes back to the IdP with a Success LogoutResponse. Anything unsigned, signed by another key, from another\nissuer, stale or replayed is refused with 400 and changes nothing (no identity event: anyone can send one).",
-        "operationId": "saml_single_logout_api_v1_sso_slo_get",
+        "operationId": "saml_single_logout_api_v1_sso_slo_post",
         "responses": {
           "200": {
             "content": {
@@ -88245,7 +88245,7 @@
       },
       "post": {
         "description": "W20 ADM-08c: IdP-initiated single logout (HTTP-Redirect or HTTP-POST binding).\n\nA LogoutRequest signed by the configured IdP ends the NameID's TestLookup sessions — every refresh token\nrevoked and an access-token cutoff written, so the next API call goes to the sign-in page — and the browser\ngoes back to the IdP with a Success LogoutResponse. Anything unsigned, signed by another key, from another\nissuer, stale or replayed is refused with 400 and changes nothing (no identity event: anyone can send one).",
-        "operationId": "saml_single_logout_api_v1_sso_slo_get",
+        "operationId": "saml_single_logout_api_v1_sso_slo_post",
         "responses": {
           "200": {
             "content": {
