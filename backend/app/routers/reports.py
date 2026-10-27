@@ -4,7 +4,7 @@ import io
 import logging
 import re
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
@@ -140,6 +140,20 @@ async def _relay_status() -> tuple[Optional[dict], Optional[str], Optional[str]]
     return cfg, None, None
 
 
+async def _record_export(
+    db: AsyncSession, user: User, project_id: Optional[uuid.UUID], entity_id: Any, label: str, context: dict,
+) -> None:
+    """W21 ACT-01 slice (c): ``report.exported`` beside the export's audit row,
+    on the same single commit (outcome mode). A run with no project (gone
+    mid-request) records nothing."""
+    if project_id is None:
+        return
+    await record_activity(
+        db, project_id=project_id, event_type="report.exported", actor=ActorRef.from_user(user),
+        entity_id=str(entity_id), entity_type="export", entity_label=label, context=context,
+    )
+
+
 @router.post("/email-trends", response_model=EmailTrendsResponse)
 @analytics_error_contract
 async def email_trends_report(
@@ -248,6 +262,8 @@ async def export_trends_report_pdf(
     payload = await trends_report_service.build_trends_report(db, scope)
     # ReportLab is synchronous and CPU-bound: keep the event loop free.
     content = await run_in_threadpool(trends_report_pdf.render_trends_report_pdf, payload)
+    await _record_export(db, current_user, scope.project_id, scope.project_id,
+                         f"Trends PDF, last {scope.window_days} days", {"format": "pdf", "kind": "trends"})
     _stage_audit(db, "report_trends_export_pdf", current_user, scope.project_id, {
         "days": scope.window_days,
         "release_ids": list(scope.release_ids),
@@ -333,6 +349,8 @@ async def export_run_report_pdf(
     project_id = (await db.execute(
         select(TestRun.project_id).where(TestRun.id == run_id)
     )).scalar_one_or_none()
+    await _record_export(db, current_user, project_id, run_id, f"Run {str(run_id)[:8]} PDF ({layout})",
+                         {"format": "pdf", "kind": "run", "layout": layout})
     _stage_audit(db, "report_export_pdf", current_user, project_id, {
         "run_id": str(run_id), "layout": layout,
     })
@@ -370,6 +388,8 @@ async def export_evidence_bundle(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Bundle generation failed")
 
     # Audit log — stage + single commit before streaming the response
+    await _record_export(db, current_user, project_id, run_id, f"Run {str(run_id)[:8]} evidence bundle",
+                         {"format": "zip", "kind": "evidence_bundle"})
     _stage_audit(db, "report_export_bundle", current_user, project_id, {
         "run_id": str(run_id),
     })
@@ -463,6 +483,12 @@ async def create_share_link_endpoint(
     link = created.link
     raw_token = created.raw_token
 
+    # W21 ACT-01 slice (c): never the token, only who shared which run and for how long.
+    await record_activity(
+        db, project_id=project_id, event_type="report.shared", actor=ActorRef.from_user(current_user),
+        entity_id=str(run_id), entity_type="export", entity_label=f"Run {str(run_id)[:8]} ({link.report_layout})",
+        context={"expires_at": link.expires_at.isoformat(), "layout": link.report_layout},
+    )
     _stage_audit(db, "report_share_created", current_user, project_id, {
         "run_id": str(run_id), "layout": body.layout, "expiry_days": body.expiry_days,
     })

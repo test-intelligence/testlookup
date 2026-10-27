@@ -298,7 +298,8 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # labels and names, never user ids); a review rejection is a status change.
     _spec("defect.updated", "quality", "defect", "Defect {entity_label} changed: {changed}"),
     _spec("defect.ticket_linked", "quality", "defect", "Defect {entity_label} linked to Jira {ticket_key}"),
-    _spec("flaky.detected", "quality", "test", "{entity_label} was detected as flaky"),
+    # W21 ACT-01 (c): no ``flaky.detected`` -- flakiness is a continuous score with no
+    # detected/not verdict to emit on; removed rather than left as a dead filter.
     _spec("test.newly_failing", "quality", "test", "{entity_label} started failing"),
     _spec("test.recovered", "quality", "test", "{entity_label} recovered"),
     # W08 TRND-04: staged by routers/timeline_notes.py on the request session
@@ -389,7 +390,7 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("test_case.deleted", "test_management", "test", "Test case {entity_label} was deleted"),
     _spec("test_plan.created", "test_management", "test", "Test plan {entity_label} was created"),
     _spec("test_plan.updated", "test_management", "test", "Test plan {entity_label} changed: {changed}"),
-    _spec("test_plan.deleted", "test_management", "test", "Test plan {entity_label} was deleted"),
+    # W21 ACT-01 (c): no ``test_plan.deleted`` -- test plans have no delete route.
     _spec("suite.sync_deleted", "test_management", "suite", "{count} tests were removed from suite {entity_label}"),
     # W28 TCM-03 / TCM-04: staged by services/test_case_editing_service.py on
     # the request session (outcome: a rolled-back request leaves no row).
@@ -432,9 +433,11 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("knowledge_source.synced", "integration", "knowledge_source", "Knowledge source {entity_label} was synced"),
     _spec("knowledge_source.removed", "integration", "knowledge_source", "Knowledge source {entity_label} was removed"),
     # ── agent ───────────────────────────────────────────────────────────────
-    _spec("agent.investigation_run", "agent", "agent_action", "{actor_name} investigated {entity_label}", "outcome", frozenset({"agent"})),
+    # W21 ACT-01 (c): no ``agent.investigation_run`` -- ``investigation.started`` /
+    # ``investigation.completed`` (W21a) already record every investigation.
     _spec("agent.fix_proposed", "agent", "agent_action", "{actor_name} proposed a fix for {entity_label}", "outcome", frozenset({"agent"})),
-    _spec("agent.fix_rejected", "agent", "agent_action", "{actor_name} rejected a fix for {entity_label}: {reason}", "outcome", frozenset({"agent"})),
+    # W21 ACT-01 (c): no ``agent.fix_rejected`` -- agents do not reject fixes; a person's
+    # refusal is ``agent.action_denied``.
     _spec("agent.action_approved", "agent", "agent_action", "Agent action on {entity_label} was approved", "outcome", _HUMAN_OR_KEY),
     _spec("agent.action_executed", "agent", "agent_action", "{actor_name} executed an action on {entity_label}", "outcome", frozenset({"agent"})),
     _spec("agent.action_denied", "agent", "agent_action", "Agent action on {entity_label} was denied", "outcome", _ANY_WRITER),
@@ -453,7 +456,8 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # the message (outcome mode, committed with the request). ``context`` holds
     # the recipient COUNT and the window, never an address (personal data).
     _spec("report.emailed", "system", "export", "Report {entity_label} was emailed to {count} recipients"),
-    _spec("maintenance.executed", "system", "project", "Maintenance task {entity_label} was executed", "attempt"),
+    # W21 ACT-01 (c): no ``maintenance.executed`` -- no maintenance task records itself
+    # (the backlog's recommended removal); retention purges are ``retention.purge_executed``.
 )
 
 ACTIVITY_EVENTS: Final[Mapping[str, ActivityEventSpec]] = {

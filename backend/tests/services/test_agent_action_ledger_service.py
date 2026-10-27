@@ -44,7 +44,7 @@ async def test_create_proposal_sanitizes_and_reuses_idempotently():
     )
     assert created is True
     assert row.status == "pending_review"
-    stored = db.add.call_args.args[0]
+    stored = _ledger_row(db)
     assert "hunter2" not in str(stored.request_payload)
     assert len(stored.request_sha256) == 64
 
@@ -154,7 +154,7 @@ async def test_report_proposals_are_bounded_and_approval_gated():
         ],
     )
     assert count == 1
-    proposal = db.add.call_args.args[0]
+    proposal = _ledger_row(db)
     assert proposal.approval_required is True
     assert proposal.status == "pending_review"
     assert proposal.action_type == "decision_report_action"
@@ -403,3 +403,10 @@ async def test_executor_needs_no_review_for_an_action_with_no_proposing_run(monk
     assert not any("FROM review_requests" in s for s in world.statements()), (
         "no review lookup without a proposing run"
     )
+
+
+def _ledger_row(db):
+    """The ledger row the service added (W21 ACT-01: an agent's proposal also adds its activity row)."""
+    from app.models.postgres import AgentActionLedger
+
+    return [c.args[0] for c in db.add.call_args_list if isinstance(c.args[0], AgentActionLedger)][-1]

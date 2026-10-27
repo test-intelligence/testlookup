@@ -40,6 +40,7 @@ from app.core.test_library_vocab import (
     IMPORT_UNREADABLE,
     IMPORT_XLSX_TOO_BIG,
 )
+from app.services.test_management_audit_service import activity_summarised_elsewhere
 
 logger = structlog.get_logger(__name__)
 
@@ -401,6 +402,7 @@ async def import_cases(db: Any, *, project_id: Any, actor: Any, file_name: str, 
     return _response(project_id, dry_run, name, parsed, results, attempted=len(to_create))
 
 
+@activity_summarised_elsewhere
 async def _apply(db: Any, *, project_id: Any, actor: Any, file_name: str,
                  rows: list[tuple[RowCheck, Any, str]], results: list[dict]) -> None:
     """Create each row in its own SAVEPOINT (a failure leaves the others), then ONE activity row."""

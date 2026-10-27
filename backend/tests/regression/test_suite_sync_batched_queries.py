@@ -55,6 +55,7 @@ def _fake_db(*, run_cases, managed=None, existing=None, deleted=None):
         _Res(managed or []),      # 2. managed cases (batched)
         _Res(existing or []),     # 3. existing memberships (batched)
         _Res(deleted or []),      # 4. deleted-bucket memberships (batched)
+        _Res([]),                 # 5. W21 ACT-01: catalogue suite ids, ONLY when a sync removed tests
     ])
     db.add = MagicMock()
     db.commit = AsyncMock()
@@ -102,7 +103,8 @@ async def test_multi_suite_add_unchanged_and_delete_preserved():
 
     summaries = await sync_suite_membership(db, project_id, run_id)
 
-    assert db.execute.await_count == 4
+    # 4 + the one suite-id lookup for the suite.sync_deleted row (one query per sync, not per suite).
+    assert db.execute.await_count == 5
     by_suite = {s["suite_name"]: s for s in summaries}
     assert by_suite["Smoke"]["added_count"] == 1
     assert by_suite["Reg"]["unchanged_count"] == 1

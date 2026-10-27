@@ -243,6 +243,14 @@ async def generate_compliance_pack(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         )
+    # W21 ACT-01 slice (c): committed by get_db at request end (outcome mode).
+    from app.services.activity.service import ActorRef, record as record_activity  # noqa: PLC0415
+
+    await record_activity(
+        db, project_id=pack.project_id, event_type="compliance_pack.generated", actor=ActorRef.from_user(current_user),
+        entity_id=pack.id, entity_type="export", entity_label=f"for release {release.name}", release_id=release.id,
+        context={"retention_days": payload.retention_days},
+    )
     return pack
 
 

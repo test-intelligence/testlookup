@@ -28,9 +28,8 @@ dfd4e0516545c383  # backend/app/routers/analytics.py:720  in create_defect  @rou
 1961ac64b9cef330  # backend/app/routers/chat.py:88  in create_session  @router.post("/sessions", response_model=ChatSessionResponse, status_code=201)
 f05b2efa5645c677  # backend/app/routers/chat.py:114  in delete_session  @router.delete("/sessions/{session_id}", status_code=204)
 6255a2d1ec22662d  # backend/app/routers/chat.py:134  in send_message  @router.post("/sessions/{session_id}/messages", response_model=SendMessageRespo…
-3d03c3f8af79e8f4  # backend/app/routers/compliance_packs.py:209  in generate_compliance_pack  @router.post(
-629766d5b20d15e8  # backend/app/routers/compliance_packs.py:377  in retire_compliance_pack  @router.post(
-10406d2dacce4af6  # backend/app/routers/compliance_packs.py:430  in delete_compliance_pack  @router.delete("/api/v1/compliance-packs/{pack_id}", status_code=204)
+629766d5b20d15e8  # backend/app/routers/compliance_packs.py:385  in retire_compliance_pack  @router.post(
+10406d2dacce4af6  # backend/app/routers/compliance_packs.py:438  in delete_compliance_pack  @router.delete("/api/v1/compliance-packs/{pack_id}", status_code=204)
 7c99eee4182c72df  # backend/app/routers/defect_jira.py:89  in create_jira_defect_one_click  @router.post(
 7983f4daf343bbfb  # backend/app/routers/digests.py:50  in create_subscription  @router.post("/subscriptions", response_model=DigestSubscriptionResponse, statu…
 5795c02ff97404c3  # backend/app/routers/digests.py:177  in update_subscription  @router.patch("/subscriptions/{sub_id}", response_model=DigestSubscriptionRespo…
@@ -71,8 +70,7 @@ b8cd2a75cc4d8004  # backend/app/routers/rag_generation.py:256  in reject_case  @
 4712fd14a801f354  # backend/app/routers/release_gate_policies.py:504  in simulate_policy  @router.post("/simulate", response_model=PolicySimulateResponse)
 f4832734540644f9  # backend/app/routers/releases.py:709  in evaluate_release_gate  @router.post("/{release_id}/gate/evaluate")
 2268f8e551edc0bb  # backend/app/routers/releases.py:1082  in evaluate_release_phase_gate  @router.post("/{release_id}/phases/{phase_id}/gate/evaluate")
-253d36928bcf0d27  # backend/app/routers/reports.py:423  in create_share_link_endpoint  @router.post("/runs/{run_id}/share", response_model=ShareLinkResponse, status_c…
-7934901b0f20ae3c  # backend/app/routers/reports.py:539  in revoke_share_link_endpoint  @router.delete("/share-links/{link_id}", status_code=204)
+7934901b0f20ae3c  # backend/app/routers/reports.py:565  in revoke_share_link_endpoint  @router.delete("/share-links/{link_id}", status_code=204)
 7c54fd8f377d3557  # backend/app/routers/retention.py:275  in preview_criteria_deletion  @router.post(
 78de11a0dd52bd7c  # backend/app/routers/retention.py:382  in execute_criteria_deletion  @router.post(
 1c1fd060156d2184  # backend/app/routers/run_intelligence.py:378  in refresh_intelligence  @router.post("/{run_id}/intelligence/refresh")
@@ -105,7 +103,6 @@ b131d46fa0d733fa  # backend/app/routers/test_management_cases.py:548  in review_
 8e7f28140738b77d  # backend/app/routers/test_management_plans.py:126  in add_plan_item  @router.post("/plans/{plan_id}/items", response_model=TestPlanItemResponse, sta…
 7e1959c0a9e3c631  # backend/app/routers/test_management_plans.py:140  in remove_plan_item  @router.delete("/plans/{plan_id}/items/{item_id}", status_code=status.HTTP_204_…
 35fab643eaa1ad4b  # backend/app/routers/test_management_plans.py:152  in record_execution  @router.patch("/plans/{plan_id}/items/{item_id}/execute", response_model=TestPl…
-f835b5a76f67efc2  # backend/app/routers/test_management_plans.py:175  in ai_create_plan  @router.post("/plans/ai-create", response_model=TestPlanResponse, status_code=s…
 5f39ecf1c2778b34  # backend/app/routers/test_management_plans.py:225  in ai_create_plan_async  @router.post("/plans/ai-create/async", response_model=AITaskEnqueueResponse)
 9e3a0c90f72c9f2f  # backend/app/routers/test_management_strategies.py:53  in ai_generate_strategy  @router.post("/strategies/ai-generate", response_model=TestStrategyResponse)
 20da90cbd2c70f61  # backend/app/routers/test_management_strategies.py:68  in ai_generate_strategy_async  @router.post("/strategies/ai-generate/async", response_model=AITaskEnqueueRespo…
