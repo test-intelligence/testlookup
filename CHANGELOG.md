@@ -52,6 +52,21 @@ locally by default.
 
 ### Added
 
+- **Activity feed: test management, agent proposals and exports now appear;
+  every filter matches something** (wave W21c, ACT-01 slice (c); branch
+  `feat/df-activity-ledger-c-20261027`; no migration). Test-case changes
+  (created, changed, moved between statuses, reviewed, approved, rejected,
+  deleted) and test-plan changes are mirrored from the test-management audit
+  trail, each row pointing at its audit record; a bulk edit or an import
+  stays ONE row. An agent's new action proposal, report exports (trends PDF,
+  run PDF, evidence bundle), report share links (never the token), compliance
+  pack generation, and a suite sync that removed tests (one row per suite)
+  are recorded too. Five names nothing could ever produce were removed from
+  the event-type filter: `flaky.detected`, `test_plan.deleted`,
+  `agent.investigation_run`, `agent.fix_rejected`, `maintenance.executed`.
+  `backend.activity-registry-emitted` is now 0 — every registered event type
+  has a producer. Tests:
+  `backend/tests/integration/test_activity_ledger_slice_c_postgres.py`.
 - **Activity feed: configuration and integration changes now appear** (wave
   W21b, ACT-01 slice (b); branch `feat/df-activity-ledger-b-20261027`; no
   migration). Twenty-four more registered event types now have producers:
