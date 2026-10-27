@@ -103,8 +103,21 @@ async def get_sp_metadata(db: AsyncSession = Depends(get_db)):
     return metadata
 
 
-@router.api_route("/slo", methods=["GET", "POST"])
-async def saml_single_logout(request: Request, db: AsyncSession = Depends(get_db)):
+@router.get("/slo", operation_id="saml_single_logout_redirect")
+async def saml_single_logout_redirect_binding(request: Request, db: AsyncSession = Depends(get_db)):
+    """W20 ADM-08c: IdP-initiated single logout, HTTP-Redirect binding (see ``saml_single_logout``)."""
+    return await saml_single_logout(request, db)
+
+
+# Two routes, not one api_route(methods=[GET, POST]): that shares one operationId between the methods and the
+# generated reference picked either name from run to run.
+@router.post("/slo", operation_id="saml_single_logout_post")
+async def saml_single_logout_post_binding(request: Request, db: AsyncSession = Depends(get_db)):
+    """W20 ADM-08c: IdP-initiated single logout, HTTP-POST binding (see ``saml_single_logout``)."""
+    return await saml_single_logout(request, db)
+
+
+async def saml_single_logout(request: Request, db: AsyncSession):
     """W20 ADM-08c: IdP-initiated single logout (HTTP-Redirect or HTTP-POST binding).
 
     A LogoutRequest signed by the configured IdP ends the NameID's TestLookup sessions — every refresh token

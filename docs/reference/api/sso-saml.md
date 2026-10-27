@@ -19,7 +19,7 @@ The POST comes from the browser. It answers with a 303 into the app
 app exchanges for the tokens (``POST /sso/exchange``); a refusal goes back
 to ``/login``. A client that asks for JSON gets the tokens as before.
 
-Source: [backend/app/routers/sso.py:375](../../../backend/app/routers/sso.py#L375).
+Source: [backend/app/routers/sso.py:388](../../../backend/app/routers/sso.py#L388).
 
 Dependency chain: `get_db`.
 
@@ -64,7 +64,7 @@ List Sso Configs
 
 List all SSO configurations (ADMIN only).
 
-Source: [backend/app/routers/sso.py:558](../../../backend/app/routers/sso.py#L558).
+Source: [backend/app/routers/sso.py:571](../../../backend/app/routers/sso.py#L571).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -139,7 +139,7 @@ Create Sso Config
 
 Create a new SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:587](../../../backend/app/routers/sso.py#L587).
+Source: [backend/app/routers/sso.py:600](../../../backend/app/routers/sso.py#L600).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -227,7 +227,7 @@ Delete Sso Config
 
 Delete an SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:768](../../../backend/app/routers/sso.py#L768).
+Source: [backend/app/routers/sso.py:781](../../../backend/app/routers/sso.py#L781).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -307,7 +307,7 @@ Get Sso Config
 
 Get a specific SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:571](../../../backend/app/routers/sso.py#L571).
+Source: [backend/app/routers/sso.py:584](../../../backend/app/routers/sso.py#L584).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -394,7 +394,7 @@ Update Sso Config
 
 Update an SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:661](../../../backend/app/routers/sso.py#L661).
+Source: [backend/app/routers/sso.py:674](../../../backend/app/routers/sso.py#L674).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -497,7 +497,7 @@ W20 ADM-08a: the role a user in these IdP groups would get (ADMIN only; pure, wr
 
 The posted ``role_mapping`` / ``default_role`` preview an unsaved edit; otherwise the stored ones answer.
 
-Source: [backend/app/routers/sso.py:802](../../../backend/app/routers/sso.py#L802).
+Source: [backend/app/routers/sso.py:815](../../../backend/app/routers/sso.py#L815).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -596,7 +596,7 @@ Test Sso Connection
 
 Test an SSO configuration by validating the certificate and IdP metadata (ADMIN only).
 
-Source: [backend/app/routers/sso.py:831](../../../backend/app/routers/sso.py#L831).
+Source: [backend/app/routers/sso.py:844](../../../backend/app/routers/sso.py#L844).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -686,7 +686,7 @@ The tokens for an SSO sign-in the ACS completed, for its one-time code.
 Public, like the ACS: the code is the credential. It works once, within a
 minute of the IdP's response.
 
-Source: [backend/app/routers/sso.py:519](../../../backend/app/routers/sso.py#L519).
+Source: [backend/app/routers/sso.py:532](../../../backend/app/routers/sso.py#L532).
 
 Dependency chain: .
 
@@ -753,7 +753,7 @@ The IdP URL that starts an SP-initiated login: the IdP SSO URL carrying a
 SAML AuthnRequest (HTTP-Redirect binding) and, when ``next`` is an
 app-relative path, a RelayState the browser returns to after sign-in.
 
-Source: [backend/app/routers/sso.py:176](../../../backend/app/routers/sso.py#L176).
+Source: [backend/app/routers/sso.py:189](../../../backend/app/routers/sso.py#L189).
 
 Dependency chain: `get_db`.
 
@@ -879,7 +879,7 @@ the ID token validated (signature / iss / aud / exp / nonce), then the user is J
 and handed into the app through the one-time-code fragment. Every refusal goes back to ``/login`` with a
 generic notice; the reason stays in the server log and the identity-event audit.
 
-Source: [backend/app/routers/sso.py:243](../../../backend/app/routers/sso.py#L243).
+Source: [backend/app/routers/sso.py:256](../../../backend/app/routers/sso.py#L256).
 
 Dependency chain: `get_db`.
 
@@ -999,7 +999,7 @@ Oidc Login
 
 W20 ADM-08b: start an OIDC sign-in — 302 to the IdP's authorization endpoint (state, nonce, PKCE S256).
 
-Source: [backend/app/routers/sso.py:227](../../../backend/app/routers/sso.py#L227).
+Source: [backend/app/routers/sso.py:240](../../../backend/app/routers/sso.py#L240).
 
 Dependency chain: `get_db`.
 
@@ -1249,14 +1249,9 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 ## GET `/api/v1/sso/slo`
 
-Saml Single Logout
+Saml Single Logout Redirect Binding
 
-W20 ADM-08c: IdP-initiated single logout (HTTP-Redirect or HTTP-POST binding).
-
-A LogoutRequest signed by the configured IdP ends the NameID's TestLookup sessions — every refresh token
-revoked and an access-token cutoff written, so the next API call goes to the sign-in page — and the browser
-goes back to the IdP with a Success LogoutResponse. Anything unsigned, signed by another key, from another
-issuer, stale or replayed is refused with 400 and changes nothing (no identity event: anyone can send one).
+W20 ADM-08c: IdP-initiated single logout, HTTP-Redirect binding (see ``saml_single_logout``).
 
 Source: [backend/app/routers/sso.py:106](../../../backend/app/routers/sso.py#L106).
 
@@ -1268,22 +1263,13 @@ Declared Python handler arguments (includes exact role/guard options):
 request: Request, db: AsyncSession=Depends(get_db)
 ```
 
-Direct handler error branches (dependency/service errors can add others):
-
-```python
-HTTPException(status_code=503, detail='Token revocation store unavailable; try again')
-HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='The logout request was refused.')
-HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='SSO is not enabled')
-HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Single logout is not configured')
-```
-
 ### Declared wire contract
 
 References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
 
 ```json
 {
-  "operationId": "saml_single_logout_api_v1_sso_slo_post",
+  "operationId": "saml_single_logout_redirect",
   "responses": {
     "200": {
       "content": {
@@ -1300,23 +1286,18 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-RedirectResponse(url=saml_slo.logout_response_url(idp_slo_url=config.idp_slo_url, in_response_to=claims['id'], sp_entity_id=config.sp_entity_id, relay_state=str(relay_state) if relay_state else None), status_code=status.HTTP_302_FOUND)
+await saml_single_logout(request, db)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
 ## POST `/api/v1/sso/slo`
 
-Saml Single Logout
+Saml Single Logout Post Binding
 
-W20 ADM-08c: IdP-initiated single logout (HTTP-Redirect or HTTP-POST binding).
+W20 ADM-08c: IdP-initiated single logout, HTTP-POST binding (see ``saml_single_logout``).
 
-A LogoutRequest signed by the configured IdP ends the NameID's TestLookup sessions — every refresh token
-revoked and an access-token cutoff written, so the next API call goes to the sign-in page — and the browser
-goes back to the IdP with a Success LogoutResponse. Anything unsigned, signed by another key, from another
-issuer, stale or replayed is refused with 400 and changes nothing (no identity event: anyone can send one).
-
-Source: [backend/app/routers/sso.py:106](../../../backend/app/routers/sso.py#L106).
+Source: [backend/app/routers/sso.py:114](../../../backend/app/routers/sso.py#L114).
 
 Dependency chain: `get_db`.
 
@@ -1326,22 +1307,13 @@ Declared Python handler arguments (includes exact role/guard options):
 request: Request, db: AsyncSession=Depends(get_db)
 ```
 
-Direct handler error branches (dependency/service errors can add others):
-
-```python
-HTTPException(status_code=503, detail='Token revocation store unavailable; try again')
-HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='The logout request was refused.')
-HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='SSO is not enabled')
-HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Single logout is not configured')
-```
-
 ### Declared wire contract
 
 References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
 
 ```json
 {
-  "operationId": "saml_single_logout_api_v1_sso_slo_post",
+  "operationId": "saml_single_logout_post",
   "responses": {
     "200": {
       "content": {
@@ -1358,7 +1330,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-RedirectResponse(url=saml_slo.logout_response_url(idp_slo_url=config.idp_slo_url, in_response_to=claims['id'], sp_entity_id=config.sp_entity_id, relay_state=str(relay_state) if relay_state else None), status_code=status.HTTP_302_FOUND)
+await saml_single_logout(request, db)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -1369,7 +1341,7 @@ Get Sso Status
 
 Public endpoint to check if SSO is enabled and available.
 
-Source: [backend/app/routers/sso.py:537](../../../backend/app/routers/sso.py#L537).
+Source: [backend/app/routers/sso.py:550](../../../backend/app/routers/sso.py#L550).
 
 Dependency chain: `get_db`.
 

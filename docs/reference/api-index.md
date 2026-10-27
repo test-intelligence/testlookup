@@ -558,8 +558,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/sso/oidc/login` | Oidc Login | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/sso/scim-groups` | List Scim Groups | [SSO / SAML](api/sso-saml.md) |
 | PUT | `/api/v1/sso/scim-groups/{group_id}/mappings` | Put Scim Group Mappings | [SSO / SAML](api/sso-saml.md) |
-| GET | `/api/v1/sso/slo` | Saml Single Logout | [SSO / SAML](api/sso-saml.md) |
-| POST | `/api/v1/sso/slo` | Saml Single Logout | [SSO / SAML](api/sso-saml.md) |
+| GET | `/api/v1/sso/slo` | Saml Single Logout Redirect Binding | [SSO / SAML](api/sso-saml.md) |
+| POST | `/api/v1/sso/slo` | Saml Single Logout Post Binding | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/sso/status` | Get Sso Status | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/stream/active` | List Active Sessions | [Live Stream](api/live-stream.md) |
 | POST | `/api/v1/stream/events/batch` | Ingest Event Batch | [Live Stream](api/live-stream.md) |
