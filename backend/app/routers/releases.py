@@ -525,16 +525,17 @@ async def sync_releases_from_external(
     # them back instead of changing three return shapes. Outcome mode: staged
     # here, committed with the sync itself.
     provider = {"github": "GitHub", "gitlab": "GitLab"}.get(body.source, "Jira")
-    touched = []
+    touched: list[tuple[uuid.UUID, str]] = []
     if summary.get("created") or summary.get("updated"):
-        touched = (
-            await db.execute(
+        touched = [
+            (row[0], row[1])
+            for row in (await db.execute(
                 select(Release.id, Release.name).where(
                     Release.project_id == scoped,
                     Release.last_synced_at >= sync_started,
                 )
-            )
-        ).all()
+            )).all()
+        ]
     for touched_id, touched_name in touched:
         await record_activity(
             db,
