@@ -53,6 +53,10 @@ async def list_ownership_rules(
     return result.scalars().all()
 
 
+def _rule_label(rule: ServiceOwnershipRule) -> str:
+    return f"{rule.match_pattern} → {rule.team_name}"
+
+
 @router.post("/rules", response_model=OwnershipRuleResponse, status_code=201)
 async def create_ownership_rule(
     project_id: uuid.UUID,
@@ -73,6 +77,14 @@ async def create_ownership_rule(
         created_by=current_user.id,
     )
     db.add(rule)
+    await db.flush()
+    # W21 ACT-01: outcome rows staged on the route's session for every
+    # ownership mutation below; the route's one commit carries them.
+    await record_activity(
+        db, project_id=project_id, event_type="ownership_rule.created", actor=ActorRef.from_user(current_user),
+        entity_id=rule.id, entity_label=_rule_label(rule),
+        after={"match_pattern": rule.match_pattern, "team_name": rule.team_name},
+    )
     await db.commit()
     await db.refresh(rule)
     logger.info("Ownership rule created: %s → %s by %s", payload.match_pattern, payload.team_name, current_user.username)
@@ -99,8 +111,17 @@ async def update_ownership_rule(
     if not rule:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    changed = [field for field, value in updates.items() if getattr(rule, field) != value]
+    before = {field: getattr(rule, field) for field in changed}
+    for field, value in updates.items():
         setattr(rule, field, value)
+    if changed:
+        await record_activity(
+            db, project_id=project_id, event_type="ownership_rule.updated", actor=ActorRef.from_user(current_user),
+            entity_id=rule.id, entity_label=_rule_label(rule), context={"changed": ", ".join(changed)},
+            before=before, after={field: getattr(rule, field) for field in changed}, changed_fields=changed,
+        )
 
     await db.commit()
     await db.refresh(rule)
@@ -126,6 +147,10 @@ async def delete_ownership_rule(
     if not rule:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
 
+    await record_activity(
+        db, project_id=project_id, event_type="ownership_rule.deleted", actor=ActorRef.from_user(current_user),
+        entity_id=rule.id, entity_label=_rule_label(rule),
+    )
     await db.delete(rule)
     await db.commit()
     return None
@@ -163,6 +188,13 @@ async def bulk_import_rules(
         db.add(rule)
         created.append(rule)
 
+    # One row for the whole import (not one per rule), so a large import
+    # does not flood the feed. The entity is the project's rule set.
+    await record_activity(
+        db, project_id=project_id, event_type="ownership_rules.bulk_imported",
+        actor=ActorRef.from_user(current_user), entity_id=project_id, entity_label="Ownership rules",
+        context={"count": len(created), "replace_existing": bool(payload.replace_existing)},
+    )
     await db.commit()
     for rule in created:
         await db.refresh(rule)
@@ -240,6 +272,11 @@ async def import_codeowners(
         ) from exc
     # Coverage is computed after the flush so it sees the freshly imported rows.
     coverage = await codeowners_service.compute_coverage(db, project_id)
+    await record_activity(
+        db, project_id=project_id, event_type="codeowners.imported", actor=ActorRef.from_user(current_user),
+        entity_id=project_id, entity_label="CODEOWNERS",
+        context={"count": summary["rules_created"], "source": payload.source},
+    )
     await db.commit()
 
     logger.info(
@@ -438,6 +475,14 @@ async def upsert_team_channel(
     row.channel_type = payload.channel_type
     row.target = payload.target
     row.is_active = payload.is_active
+    await db.flush()
+    # The target (a webhook URL or address) is not copied into the ledger;
+    # the channel type is enough to read the change.
+    await record_activity(
+        db, project_id=project_id, event_type="team_channel.set", actor=ActorRef.from_user(current_user),
+        entity_id=row.id, entity_label=team,
+        context={"channel_type": payload.channel_type, "is_active": payload.is_active},
+    )
     await db.commit()
     await db.refresh(row)
     logger.info(
@@ -466,6 +511,10 @@ async def delete_team_channel(
     row = result.scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team channel not found")
+    await record_activity(
+        db, project_id=project_id, event_type="team_channel.removed", actor=ActorRef.from_user(current_user),
+        entity_id=row.id, entity_label=row.team_name,
+    )
     await db.delete(row)
     await db.commit()
     return None

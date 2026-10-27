@@ -28,6 +28,7 @@ from app.core.deps import (
     require_role,
 )
 from app.models.postgres import User, UserRole
+from app.services.activity.service import ActorRef, record as record_activity
 from app.models.schemas import (
     GitHubConnectionTestResponse,
     GitHubIntegrationRead,
@@ -98,6 +99,12 @@ async def test_github_integration(
     """Probe the configured repo + PAT and report whether the
     integration can actually reach GitHub. QA_LEAD+."""
     result = await svc.test_connection(db, project_id)
+    # W21 ACT-01: the probe's verdict, committed by get_db at request end.
+    await record_activity(
+        db, project_id=project_id, event_type="integration.tested", actor=ActorRef.from_user(current_user),
+        entity_id=project_id, entity_label="GitHub", entity_type="integration",
+        context={"provider": "GitHub", "ok": bool(result.get("success"))},
+    )
     return GitHubConnectionTestResponse(**result)
 
 
@@ -130,6 +137,10 @@ async def delete_github_integration(
         repo_name=row.repo_name,
         api_base_url=row.api_base_url,
         pat="",
+    )
+    await record_activity(
+        db, project_id=project_id, event_type="integration.disconnected", actor=ActorRef.from_user(current_user),
+        entity_id=row.id, entity_label="GitHub", entity_type="integration", context={"provider": "GitHub"},
     )
     await db.delete(row)
     await db.commit()

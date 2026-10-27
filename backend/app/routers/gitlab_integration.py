@@ -38,6 +38,7 @@ from app.models.schemas import (
     GitLabConnectionTestResponse,
 )
 from app.services import gitlab_integration_service as svc
+from app.services.activity.service import ActorRef, record as record_activity
 
 router = APIRouter(prefix="/api/v1/projects", tags=["GitLab Integration"])
 logger = structlog.get_logger("routers.gitlab_integration")
@@ -137,6 +138,12 @@ async def test_gitlab_integration(
 ):
     """Probe the configured project + PAT and report reachability. QA_LEAD+."""
     result = await svc.test_connection(db, project_id)
+    # W21 ACT-01: the probe's verdict, committed by get_db at request end.
+    await record_activity(
+        db, project_id=project_id, event_type="integration.tested", actor=ActorRef.from_user(current_user),
+        entity_id=project_id, entity_label="GitLab", entity_type="integration",
+        context={"provider": "GitLab", "ok": bool(result.get("ok"))},
+    )
     logger.info(
         "gitlab connection tested",
         project_id=str(project_id),

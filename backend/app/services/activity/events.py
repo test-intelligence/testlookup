@@ -318,7 +318,10 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("project.reset", "configuration", "project", "Project data reset ({mode}) was issued", "attempt"),
     _spec("policy.created", "configuration", "policy", "Release gate policy {entity_label} was created"),
     _spec("policy.updated", "configuration", "policy", "Release gate policy {entity_label} changed: {changed}"),
-    _spec("policy.deleted", "configuration", "policy", "Release gate policy {entity_label} was deleted"),
+    # W21 ACT-01: no ``policy.deleted`` -- gate policies are versioned and
+    # never deleted (a superseded version is deactivated, which records
+    # ``policy.updated``), so the name was removed rather than left as a
+    # filter that matches nothing.
     _spec("policy.activated", "configuration", "policy", "Release gate policy {entity_label} was activated"),
     _spec("agent_config.updated", "configuration", "project", "Agent {entity_label} configuration changed to version {config_version}: {changed}", "outcome", _HUMAN_OR_KEY),
     _spec("workflow.created", "configuration", "workflow", "Workflow {entity_label} version {version} was created", "outcome", _HUMAN_OR_KEY),

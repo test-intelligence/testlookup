@@ -242,6 +242,7 @@ class _FakeStorage:
 
 def _policy_row(**overrides):
     base = dict(
+        id=uuid.uuid4(),
         enabled=True,
         raw_events_days=90,
         runs_days=365,

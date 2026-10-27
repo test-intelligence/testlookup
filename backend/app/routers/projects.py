@@ -419,6 +419,28 @@ async def reset_project_data(
     the project's ``name`` exactly (case-sensitive). A mismatch
     returns 422 and nothing is deleted.
     """
+    # W21 ACT-01: ``project.reset`` is an attempt event -- written on its own
+    # session so the row survives a reset that fails part-way. Written HERE,
+    # before the service takes its FOR UPDATE lock on the project row: an
+    # insert on another session needs a key-share lock on that row and would
+    # wait on this request forever. Only a confirmed request records (the
+    # service repeats the same check under the lock).
+    target = await db.get(Project, project_id)
+    if (
+        target is not None
+        and target.is_active
+        and payload.confirmation_name == target.name
+        and payload.mode in ("runs", "full")
+    ):
+        await record_activity(
+            None,
+            project_id=project_id,
+            event_type="project.reset",
+            actor=ActorRef.from_user(current_user),
+            entity_id=project_id,
+            entity_label=target.name,
+            context={"mode": payload.mode},
+        )
     try:
         result = await reset_project(
             db,

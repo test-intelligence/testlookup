@@ -817,6 +817,7 @@ jobs:
           tests/integration/test_scim_groups_postgres.py
           tests/integration/test_sso_oidc_postgres.py
           tests/integration/test_activity_ledger_slice_a_postgres.py
+          tests/integration/test_activity_ledger_slice_b_postgres.py
           tests/integration/test_defects_list_fields_postgres.py
           tests/integration/test_analytics_scope_postgres.py
           tests/integration/test_analytics_epoch_redis_postgres.py

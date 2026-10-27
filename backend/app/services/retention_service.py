@@ -323,6 +323,7 @@ async def upsert_policy(
     audit_days: Optional[int] = None,
     ai_versions_per_run: Optional[int] = None,
     ai_versions_per_test: Optional[int] = None,
+    actor: Any = None,
 ) -> EffectiveRetentionPolicy:
     """Upsert the project's policy row from a PARTIAL update.
 
@@ -414,6 +415,17 @@ async def upsert_policy(
         )
     )
     await db.flush()
+    if changed and actor is not None:
+        # W21 ACT-01: outcome row staged on the router's session beside the
+        # settings audit row, so a rolled-back save records nothing.
+        from app.services.activity.service import ActorRef, record as record_activity
+
+        await record_activity(
+            db, project_id=project_id, event_type="retention_policy.updated", actor=ActorRef.from_user(actor),
+            entity_id=row.id, entity_label="Retention policy",
+            context={"changed": ", ".join(f.replace("_", " ") for f in changed)},
+            changed_fields=list(changed),
+        )
 
     logger.info(
         "retention_policy_upserted",

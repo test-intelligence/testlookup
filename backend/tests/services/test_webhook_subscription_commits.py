@@ -143,6 +143,7 @@ async def test_update_subscription_does_not_commit_on_caller_session(_stub_audit
     actor = _fake_actor()
     existing_row = SimpleNamespace(
         id=sub_id,
+        project_id=uuid.uuid4(),
         name="old-name",
         target_url="https://old.example/hook",
         events=["run.completed"],
@@ -191,7 +192,7 @@ async def test_delete_subscription_does_not_commit_on_caller_session(_stub_audit
 
     sub_id = uuid.uuid4()
     actor = _fake_actor()
-    existing_row = SimpleNamespace(id=sub_id)
+    existing_row = SimpleNamespace(id=sub_id, project_id=uuid.uuid4(), name="hook")
 
     db = _fake_caller_db()
 

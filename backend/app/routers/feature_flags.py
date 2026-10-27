@@ -30,6 +30,7 @@ from app.models.schemas import (
     FeatureFlagUpdate,
 )
 from app.services import feature_flags as ff_service
+from app.services.activity.service import ActorRef, record as record_activity
 
 router = APIRouter(prefix="/api/v1/feature-flags", tags=["Feature Flags"])
 logger = structlog.get_logger("routers.feature_flags")
@@ -44,6 +45,39 @@ async def list_feature_flags(db: AsyncSession = Depends(get_db)):
     """List every flag in the store. ADMIN only."""
     rows = await ff_service.list_flags(db)
     return await ff_service.attach_last_change(db, rows)
+
+
+def _project_ids(flag: object) -> set[str]:
+    return {str(p) for p in (getattr(flag, "enabled_projects", None) or [])}
+
+
+async def _record_project_toggles(
+    db: AsyncSession, key: str, before: set[str], after: set[str], user: User,
+) -> None:
+    """W21 ACT-01: one ``feature_flag.project_toggled`` row per project whose
+    allow-list membership changed, in THAT project's feed (outcome mode, on the
+    route's commit). Ids in the list that name no project are skipped."""
+    toggled = {pid: "enabled" for pid in after - before} | {pid: "disabled" for pid in before - after}
+    if not toggled:
+        return
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    from app.models.postgres import Project
+
+    ids = []
+    for pid in toggled:
+        try:
+            ids.append(_uuid.UUID(pid))
+        except ValueError:
+            continue
+    known = set((await db.execute(select(Project.id).where(Project.id.in_(ids)))).scalars().all()) if ids else set()
+    for project_id in sorted(known, key=str):
+        await record_activity(
+            db, project_id=project_id, event_type="feature_flag.project_toggled", actor=ActorRef.from_user(user),
+            entity_id=project_id, entity_label=key, context={"flag_key": key, "state": toggled[str(project_id)]},
+        )
 
 
 @router.post(
@@ -68,6 +102,7 @@ async def create_feature_flag(
         actor=current_user,
         reason=payload.reason,
     )
+    await _record_project_toggles(db, payload.key, set(), _project_ids(flag), current_user)
     await db.commit()
     await ff_service.invalidate_flag_cache(payload.key)
     (flag,) = await ff_service.attach_last_change(db, [flag])
@@ -121,9 +156,12 @@ async def update_feature_flag(
     """Partial-update a feature flag. ADMIN only. Any unset field is kept."""
     updates = payload.model_dump(exclude_unset=True)
     reason = updates.pop("reason", None)
+    existing = await ff_service.get_flag(db, key)
+    before = _project_ids(existing) if existing is not None else set()
     flag = await ff_service.update_flag(
         db, key=key, updates=updates, actor=current_user, reason=reason,
     )
+    await _record_project_toggles(db, key, before, _project_ids(flag), current_user)
     await db.commit()
     await ff_service.invalidate_flag_cache(key)
     (flag,) = await ff_service.attach_last_change(db, [flag])

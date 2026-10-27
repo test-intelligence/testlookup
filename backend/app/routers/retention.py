@@ -110,6 +110,7 @@ async def put_retention_policy(
             audit_days=payload.audit_days,
             ai_versions_per_run=payload.ai_versions_per_run,
             ai_versions_per_test=payload.ai_versions_per_test,
+            actor=current_user,
         )
     except svc.RetentionValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

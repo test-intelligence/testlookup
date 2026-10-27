@@ -27,6 +27,7 @@ from app.services.notification import gate_notifications
 from app.services.notification.manager import send_test_notification
 from app.services.notification_service import (
     delete_preference as delete_notification_preference,
+    get_preference_or_404,
     list_notification_history,
     list_preferences as list_notification_preferences,
     mark_all_notifications_read,
@@ -77,6 +78,36 @@ async def list_preferences(
     return await list_notification_preferences(db, current_user)
 
 
+async def _record_pref_event(
+    db: AsyncSession,
+    pref: Any,
+    user: User,
+    *,
+    removed: bool = False,
+    channel: Any = None,
+    project_id: Any = None,
+) -> None:
+    """W21 ACT-01: ``notification_pref.updated``, staged on the route's session.
+
+    Only a preference bound to a project lands in that project's feed; an
+    all-projects preference (``project_id`` NULL) has no feed and records
+    nothing. Addresses and webhook URLs never enter the ledger.
+    """
+    project_id = project_id if removed else pref.project_id
+    if project_id is None:
+        return
+    channel = str(getattr(channel if removed else pref.channel, "value", channel if removed else pref.channel))
+    if removed:
+        changed = f"{channel} removed"
+    else:
+        state = "on" if pref.enabled else "off"
+        changed = f"{channel} {state}, {len(pref.events or [])} event types"
+    await record_activity(
+        db, project_id=project_id, event_type="notification_pref.updated", actor=ActorRef.from_user(user),
+        entity_id=pref.id, entity_label=f"{channel} notifications", context={"changed": changed, "channel": channel},
+    )
+
+
 @router.post("/preferences", response_model=NotificationPreferenceResponse, status_code=status.HTTP_201_CREATED)
 async def upsert_preference(
     payload: NotificationPreferenceCreate,
@@ -84,6 +115,8 @@ async def upsert_preference(
     db: AsyncSession = Depends(get_db),
 ):
     pref = await upsert_notification_preference(db, payload, current_user)
+    await db.flush()
+    await _record_pref_event(db, pref, current_user)
     await db.commit()
     await db.refresh(pref)
     return pref
@@ -97,6 +130,7 @@ async def update_preference(
     db: AsyncSession = Depends(get_db),
 ):
     pref = await update_notification_preference(db, pref_id, payload, current_user)
+    await _record_pref_event(db, pref, current_user)
     await db.commit()
     await db.refresh(pref)
     return pref
@@ -108,7 +142,10 @@ async def delete_preference(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
+    pref = await get_preference_or_404(db, pref_id, current_user.id)
+    channel, project_id = pref.channel, pref.project_id
     await delete_notification_preference(db, pref_id, current_user)
+    await _record_pref_event(db, pref, current_user, removed=True, channel=channel, project_id=project_id)
     await db.commit()
 
 
