@@ -1206,6 +1206,63 @@ def _backend_activity_coverage() -> list[Violation]:
     return violations
 
 
+# ── backend.activity-registry-emitted (W21 ACT-01) ───────────────────────────
+
+_ACTIVITY_SPEC_NAME = re.compile(r'^\s*_spec\(\s*"([a-z_][a-z0-9_.]*)"')
+
+
+def _backend_activity_registry_emitted() -> list[Violation]:
+    """Every registered activity event type has at least one producer.
+
+    "Declaration is not emission": a name in ``services/activity/events.py``
+    that nothing records is still offered by ``GET /activity/event-types`` as a
+    filter, and picking it matches nothing -- the feed looks broken, or worse,
+    looks like the thing never happens. 72 of 122 names were in that state when
+    ACT-01 was filed.
+
+    A producer is any quoted occurrence of the name in ``backend/app`` outside
+    the registry itself. There are no dynamically built event names (the
+    ACT-01 re-count checked), so the literal search is complete; a mapping
+    table of names counts, which is how the computed producers are written.
+
+    A shrink-only ratchet: the remaining gap is baselined, so a NEW unemitted
+    name fails, and wiring a producer leaves a stale entry to delete. A name
+    nothing will ever emit is removed from the registry, not baselined.
+    """
+    app_dir = REPO_ROOT / "backend" / "app"
+    registry = app_dir / "services" / "activity" / "events.py"
+    try:
+        lines = registry.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return []
+    names: dict[str, int] = {}
+    for idx, line in enumerate(lines):
+        match = _ACTIVITY_SPEC_NAME.match(line)
+        if match:
+            names.setdefault(match.group(1), idx + 1)
+    if not names:
+        return []
+
+    corpus: list[str] = []
+    for path in iter_files(app_dir, (".py",)):
+        if path.resolve() == registry.resolve():
+            continue
+        try:
+            corpus.append(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+    text = "\n".join(corpus)
+    return [
+        Violation(
+            registry, line_no,
+            f"activity event '{name}' is registered but nothing in backend/app "
+            "records it - the /activity filter offers a type that matches nothing",
+        )
+        for name, line_no in names.items()
+        if f'"{name}"' not in text and f"'{name}'" not in text
+    ]
+
+
 def _backend_audit_write_discipline(root: Optional[Path] = None) -> list[Violation]:
     """Audit tables are append-only — enforce it, don't just document it.
 
@@ -7081,6 +7138,20 @@ GUARDS: list[Guard] = [
             "suppressing the retry is deliberate (the side effect is "
             "irreversible, e.g. mail already sent), mark the call "
             "``at-most-once:`` in a comment and say why."
+        ),
+    ),
+    Guard(
+        name="backend.activity-registry-emitted",
+        description=(
+            "Every event type registered in services/activity/events.py has a "
+            "producer in backend/app (W21 ACT-01) - a registered name nothing "
+            "records is a filter option that matches nothing."
+        ),
+        check=_backend_activity_registry_emitted,
+        fix_hint=(
+            "Record the event where the action happens (services.activity."
+            "service.record), or remove the name from the registry with a "
+            "REMOVED note. Never baseline a new name."
         ),
     ),
     Guard(
