@@ -19,7 +19,7 @@ double-submitted form deleting twice) and 409 on hash drift. The queued
 transition is committed before dispatch so a second request cannot race
 through the same preview.
 
-Source: [backend/app/routers/retention.py:381](../../../backend/app/routers/retention.py#L381).
+Source: [backend/app/routers/retention.py:382](../../../backend/app/routers/retention.py#L382).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -122,7 +122,7 @@ The purge already writes a never-purged record to ``settings_audit_log``,
 but that row is written after the fact — it cannot say a job is running
 now, and it cannot exist for one that failed. This is that view.
 
-Source: [backend/app/routers/retention.py:162](../../../backend/app/routers/retention.py#L162).
+Source: [backend/app/routers/retention.py:163](../../../backend/app/routers/retention.py#L163).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -218,7 +218,7 @@ One deletion job — the endpoint a 202 caller polls.
 404s when the job belongs to another project, rather than leaking that the
 id exists somewhere else.
 
-Source: [backend/app/routers/retention.py:186](../../../backend/app/routers/retention.py#L186).
+Source: [backend/app/routers/retention.py:187](../../../backend/app/routers/retention.py#L187).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -327,7 +327,7 @@ replays that set.
 Runs that cannot be deleted are reported HERE rather than discovered
 mid-execution, so the count an ADMIN authorises is the count that will go.
 
-Source: [backend/app/routers/retention.py:274](../../../backend/app/routers/retention.py#L274).
+Source: [backend/app/routers/retention.py:275](../../../backend/app/routers/retention.py#L275).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -606,7 +606,7 @@ Preview Retention Purge
 Dry-run the purge NOW (synchronous, read-only): per-class cutoffs and
 candidate counts. Deliberately available while the policy is disabled.
 
-Source: [backend/app/routers/retention.py:209](../../../backend/app/routers/retention.py#L209).
+Source: [backend/app/routers/retention.py:210](../../../backend/app/routers/retention.py#L210).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -691,7 +691,7 @@ Two-step confirmation: ``confirmation_name`` must equal the project's
 name exactly (422 on mismatch — the project-reset convention). 409
 while the policy is disabled.
 
-Source: [backend/app/routers/retention.py:231](../../../backend/app/routers/retention.py#L231).
+Source: [backend/app/routers/retention.py:232](../../../backend/app/routers/retention.py#L232).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -798,7 +798,7 @@ figures rather than a zero — the endpoint degrades per store instead of
 500-ing, because a page whose whole job is reporting is more useful
 partially right than absent.
 
-Source: [backend/app/routers/retention.py:122](../../../backend/app/routers/retention.py#L122).
+Source: [backend/app/routers/retention.py:123](../../../backend/app/routers/retention.py#L123).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
