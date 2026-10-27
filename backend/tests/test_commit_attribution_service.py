@@ -547,6 +547,48 @@ async def test_resolve_unavailable_when_offline_no_base():
     assert upsert.await_args.kwargs["source"] == svc.SOURCE_UNAVAILABLE
 
 
+@pytest.mark.asyncio
+async def test_resolve_gitlab_gate_without_an_integration_anchors_no_base():
+    """W19 INT-05: GitHub's gate shut, the ``gitlab`` flag on (a fresh install's default) but no
+    usable GitLab target: no base is anchored. An unavailable row WITH a base reads as a failed
+    fetch to the lazy resolver and would sit out a 6 h cooldown (CI's lazy-resolve test)."""
+    run = _run()
+    with (
+        patch.object(svc, "AsyncSessionLocal", _fake_session_local(run)),
+        patch.object(svc, "_get_row", AsyncMock(return_value=None)),
+        patch.object(svc, "_post_allowed", AsyncMock(return_value=False)),
+        patch.object(svc, "_gitlab_gate_open", AsyncMock(return_value=True)),
+        patch.object(svc, "_gitlab_connector_target", AsyncMock(return_value=None)),
+        patch.object(svc, "_last_green_run", AsyncMock()) as green,
+        patch.object(svc, "_upsert_range", AsyncMock()) as upsert,
+    ):
+        out = await svc.resolve_commit_range(MagicMock(), RUN_ID)
+    assert out["source"] == svc.SOURCE_UNAVAILABLE
+    green.assert_not_called()
+    assert upsert.await_args.kwargs["base_commit"] is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_gitlab_target_fetches_from_gitlab():
+    run = _run()
+    base_run = _run(id=uuid.uuid4(), commit_hash="b" * 40)
+    gl_target = svc.GitLabConnectorTarget(base_url="https://gitlab.example", project_path="g/r", pat="x")
+    fetch = AsyncMock(return_value=[_commit("a" * 40, ["x.py"])])
+    with (
+        patch.object(svc, "AsyncSessionLocal", _fake_session_local(run)),
+        patch.object(svc, "_get_row", AsyncMock(return_value=None)),
+        patch.object(svc, "_post_allowed", AsyncMock(return_value=False)),
+        patch.object(svc, "_gitlab_connector_target", AsyncMock(return_value=gl_target)),
+        patch.object(svc, "_last_green_run", AsyncMock(return_value=base_run)),
+        patch.object(svc, "_fetch_gitlab_range", fetch),
+        patch.object(svc, "_upsert_range", AsyncMock()) as upsert,
+    ):
+        out = await svc.resolve_commit_range(MagicMock(), RUN_ID)
+    assert out["source"] == svc.SOURCE_CONNECTOR
+    assert fetch.await_args.args[0] is gl_target
+    assert upsert.await_args.kwargs["base_run_id"] == base_run.id
+
+
 # ── cooldown / needs_resolution gate (router amplification kill) ─────────────
 
 

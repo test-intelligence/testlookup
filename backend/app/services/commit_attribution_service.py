@@ -571,7 +571,7 @@ _ConnectorTarget = GitHubTarget
 
 
 async def _gitlab_gate_open(db: AsyncSession, run: TestRun) -> bool:
-    """W19 INT-05: the ``gitlab`` gate (flag + offline), asked only when GitHub's is closed."""
+    """W19 INT-05: the ``gitlab`` gate (flag + offline), asked before any GitLab read."""
     from app.services import gitlab_integration_service as gl
 
     try:
@@ -610,7 +610,7 @@ async def _gitlab_connector_target(db: AsyncSession, run: TestRun) -> Optional[G
     matches the configured project path (a numeric project id cannot be compared, so it is trusted)."""
     from app.services import gitlab_integration_service as gl
 
-    if not await gl._post_allowed(db, project_id=run.project_id):
+    if not await _gitlab_gate_open(db, run):
         return None
     target = await gl.load_gitlab_target(db, run.project_id)
     if target.reason or not target.pat or not target.base_url or not target.project_path:
@@ -929,14 +929,18 @@ async def resolve_commit_range(db: AsyncSession, run_id: uuid.UUID) -> dict[str,
             head = run.commit_hash
             # W19 INT-05: GitHub first (its gate + a matching repo), else GitLab (its own gate + match).
             github_open = bool(head) and await _post_allowed(read_db, project_id=run.project_id)
-            gitlab_open = bool(head) and not github_open and await _gitlab_gate_open(read_db, run)
-            if github_open or gitlab_open:
+            # GitLab counts only with a usable target (gate + integration + repo match): its gate alone
+            # (on by default for a fresh install) would anchor a base with nothing to fetch it, and an
+            # unavailable row WITH a base reads as a failed fetch (6 h cooldown) to the lazy resolver.
+            gitlab_target = (await _gitlab_connector_target(read_db, run)
+                             if bool(head) and not github_open else None)
+            if github_open or gitlab_target is not None:
                 base_run, base_source = await resolve_base_anchor(read_db, run)
                 if base_run is not None:
                     base_commit = base_run.commit_hash
                     base_run_id = base_run.id
                 if base_commit and base_commit != head:
-                    target = await _connector_target(read_db, run) if github_open else None
+                    target = await _connector_target(read_db, run) if github_open else gitlab_target
                     if target is None:
                         target = await _gitlab_connector_target(read_db, run)
                 elif base_commit:

@@ -1172,6 +1172,8 @@ export function githubInPageWorld() {
       return respond(204)
     }, 'DELETE'],
     [PATH, () => state.row ?? respond(404, { detail: 'GitHub integration not configured' })],
+    // W19 INT-06: the administrator's GitHub App card (no App registered).
+    ['/api/v1/settings/github-app', () => ({ app_id: null, slug: null, private_key_set: false, webhook_secret_set: false, configured: false })],
     ...LAYOUT,
   ]
   return { handlers, writes }
