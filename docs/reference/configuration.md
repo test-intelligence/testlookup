@@ -201,6 +201,15 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `SAML_ALLOW_IDP_INITIATED` | `bool` | `False` |
 | `SAML_CLOCK_SKEW_SECONDS` | `int` | `60` |
 | `SSO_MAX_PROVISIONED_ROLE` | `str` | `'ADMIN'` |
+| `SECRET_PROVIDER_VAULT_ADDR` | `str` | `''` |
+| `SECRET_PROVIDER_VAULT_AUTH` | `str` | `'token'` |
+| `SECRET_PROVIDER_VAULT_TOKEN` | `str` | `''` |
+| `SECRET_PROVIDER_VAULT_ROLE_ID` | `str` | `''` |
+| `SECRET_PROVIDER_VAULT_SECRET_ID` | `str` | `''` |
+| `SECRET_PROVIDER_VAULT_K8S_ROLE` | `str` | `''` |
+| `SECRET_PROVIDER_VAULT_MOUNT` | `str` | `'secret'` |
+| `SECRET_PROVIDER_VAULT_NAMESPACE` | `str` | `''` |
+| `SECRET_PROVIDER_VAULT_CACHE_SECONDS` | `int` | `60` |
 | `FINETUNE_ENABLED` | `bool` | `False` |
 | `FINETUNE_CLASSIFIER_MIN_EXAMPLES` | `int` | `500` |
 | `FINETUNE_REASONING_MIN_EXAMPLES` | `int` | `2000` |

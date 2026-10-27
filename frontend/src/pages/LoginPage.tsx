@@ -431,7 +431,7 @@ export default function LoginPage() {
                     type="button"
                     onClick={async () => {
                       try {
-                        // `next`: where to land after the identity provider (sent as the SAML RelayState).
+                        // `next`: where to land after the identity provider (the SAML RelayState, or kept with the OIDC state).
                         const { data } = await api.get('/api/v1/sso/login-url', { params: { next: from } });
                         if (!isSafeExternalUrl(data?.redirect_url)) {
                           toast.error('SSO login URL rejected');
@@ -445,7 +445,7 @@ export default function LoginPage() {
                     className="w-full flex justify-center items-center gap-2 py-2 px-4 border border-[var(--color-border-light)] rounded-md shadow-sm text-sm font-medium text-[var(--color-text)] bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[var(--color-ring)] focus:ring-offset-[var(--color-bg)] transition-colors"
                   >
                     <Fingerprint className="w-4 h-4" />
-                    Sign in with SSO
+                    {ssoStatus.display_name ? `Sign in with ${ssoStatus.display_name}` : 'Sign in with SSO'}
                   </button>
                   {ssoStatus.enforcement_mode === 'SSO_REQUIRED' && (
                     <p className="text-xs text-[var(--status-broken)] mt-1.5 text-center">

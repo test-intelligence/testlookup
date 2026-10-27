@@ -99,7 +99,7 @@
 1 app/services/scim_discovery.py
 1 app/services/scim_service.py
 7 app/services/search_service.py
-2 app/services/sso_service.py
+1 app/services/sso_service.py
 1 app/services/suite_review_service.py
 10 app/services/suite_sync_service.py
 1 app/services/value_metrics_service.py

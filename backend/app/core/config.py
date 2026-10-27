@@ -651,6 +651,19 @@ class Settings(BaseSettings):
     # is emitted. Default ADMIN honours deliberate admin-configured mappings;
     # set lower (e.g. QA_LEAD) to refuse IdP-driven admin grants entirely.
     SSO_MAX_PROVISIONED_ROLE: str = "ADMIN"
+    # W20 ADM-10: a Vault-compatible KV v2 store (HashiCorp Vault / OpenBao) for secret REFERENCES
+    # ("vault:<path>#<key>" entered instead of a value). Empty address = not configured. The address comes from
+    # the deployment only, never from the UI. Auth: "token" (SECRET_PROVIDER_VAULT_TOKEN), "approle"
+    # (ROLE_ID + SECRET_ID) or "kubernetes" (K8S_ROLE + the pod's service-account token).
+    SECRET_PROVIDER_VAULT_ADDR: str = ""
+    SECRET_PROVIDER_VAULT_AUTH: str = "token"
+    SECRET_PROVIDER_VAULT_TOKEN: str = ""
+    SECRET_PROVIDER_VAULT_ROLE_ID: str = ""
+    SECRET_PROVIDER_VAULT_SECRET_ID: str = ""
+    SECRET_PROVIDER_VAULT_K8S_ROLE: str = ""
+    SECRET_PROVIDER_VAULT_MOUNT: str = "secret"
+    SECRET_PROVIDER_VAULT_NAMESPACE: str = ""
+    SECRET_PROVIDER_VAULT_CACHE_SECONDS: int = 60
 
     @field_validator("LLM_CLUSTER_SLOT_LEASE_SECONDS")
     @classmethod

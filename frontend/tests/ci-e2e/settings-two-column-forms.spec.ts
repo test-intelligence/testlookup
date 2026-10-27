@@ -152,6 +152,8 @@ const HANDLERS: ApiHandlers = [
   // W04 AIC-05: the ML card under the mode radios reads its own status.
   ['/api/v1/settings/ai/ml/status', () => ML_STATUS],
   ['/api/v1/settings/storage', () => STORAGE],
+  // W20 ADM-10: the Secrets card on Data & storage (no Vault).
+  ['/api/v1/settings/secret-providers', () => ({ providers: [{ name: 'vault', configured: false, address_host: null, auth_method: 'token', healthy: false, message: 'Not configured: set SECRET_PROVIDER_VAULT_ADDR on the deployment.', references: 0 }], reference_syntax: 'vault:<path>#<key>' })],
   ['/api/v1/settings/mfa-policy', () => MFA_POLICY],
   [`/api/v1/projects/${PROJECT_ID}/retention-policy`, () => RETENTION_POLICY],
   [`/api/v1/projects/${PROJECT_ID}/storage`, () => PROJECT_STORAGE],

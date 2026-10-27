@@ -44,7 +44,7 @@ async def test_activating_sso_config_deactivates_previous_policy(monkeypatch):
     db = _db_for_config(config)
     event = AsyncMock()
     monkeypatch.setattr(sso, "log_identity_event", event)
-    monkeypatch.setattr(sso, "_config_to_response", lambda value: value)
+    monkeypatch.setattr(sso, "_config_response", AsyncMock(side_effect=lambda _db, value: value))
 
     response = await sso.update_sso_config(
         config.id,

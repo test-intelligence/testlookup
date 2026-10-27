@@ -47,6 +47,9 @@ from app.services.scim_service import (
     validate_scim_token,
 )
 from app.services.scim_discovery import (
+    GROUP_SCHEMA,
+    group_resource_type,
+    group_schema,
     USER_SCHEMA as DISCOVERY_USER_SCHEMA,
     discovery_list,
     service_provider_configuration,
@@ -338,7 +341,7 @@ async def scim_resource_types(
     _scim_token: SCIMToken = Depends(verify_scim_bearer),
 ):
     """SCIM 2.0: List provisionable resource types."""
-    return discovery_list([user_resource_type(_scim_base_url(request))])
+    return discovery_list([user_resource_type(_scim_base_url(request)), group_resource_type(_scim_base_url(request))])
 
 
 @router.get("/ResourceTypes/{resource_type}")
@@ -348,6 +351,8 @@ async def scim_resource_type(
     _scim_token: SCIMToken = Depends(verify_scim_bearer),
 ):
     """SCIM 2.0: Retrieve one provisionable resource type."""
+    if resource_type.casefold() == "group":
+        return group_resource_type(_scim_base_url(request))
     if resource_type.casefold() != "user":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resource type not found")
     return user_resource_type(_scim_base_url(request))
@@ -359,7 +364,7 @@ async def scim_schemas(
     _scim_token: SCIMToken = Depends(verify_scim_bearer),
 ):
     """SCIM 2.0: List supported resource schemas."""
-    return discovery_list([user_schema(_scim_base_url(request))])
+    return discovery_list([user_schema(_scim_base_url(request)), group_schema(_scim_base_url(request))])
 
 
 @router.get("/Schemas/{schema_uri:path}")
@@ -369,6 +374,8 @@ async def scim_schema(
     _scim_token: SCIMToken = Depends(verify_scim_bearer),
 ):
     """SCIM 2.0: Retrieve one supported resource schema."""
+    if schema_uri.casefold() == GROUP_SCHEMA.casefold():
+        return group_schema(_scim_base_url(request))
     if schema_uri.casefold() != DISCOVERY_USER_SCHEMA.casefold():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Schema not found")
     return user_schema(_scim_base_url(request))
@@ -814,6 +821,240 @@ async def scim_delete(
             detail=str(exc),
         )
 
+    return None
+
+
+# ── SCIM Group Endpoints (W20 ADM-09) ───────────────────────────────────────
+
+_GROUP_CONFLICT = {"detail": "A group with that displayName exists", "scimType": "uniqueness"}
+_GROUP_FILTER = re.compile(r'^\s*displayName\s+eq\s+"([^"]{1,255})"\s*$', re.IGNORECASE)
+_MEMBER_PATH = re.compile(r'^members\[value eq "([^"]+)"\]$', re.IGNORECASE)
+
+
+def _group_resource(group, members: list, base_url: str) -> dict:
+    return {
+        "schemas": [GROUP_SCHEMA],
+        "id": str(group.id),
+        "displayName": group.display_name,
+        **({"externalId": group.external_id} if group.external_id else {}),
+        "members": [{"value": str(u.id), "display": u.username} for u in members],
+        "meta": {
+            "resourceType": "Group",
+            "location": f"{base_url}{router.prefix}/Groups/{group.id}",
+            "version": f'W/"{group.version}"',
+        },
+    }
+
+
+async def _load_group(db: AsyncSession, group_id: uuid.UUID):
+    from app.models.postgres import SCIMGroup
+
+    group = (await db.execute(select(SCIMGroup).where(SCIMGroup.id == group_id))).scalar_one_or_none()
+    if group is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Group not found")
+    return group
+
+
+async def _group_members(db: AsyncSession, group_id: uuid.UUID) -> list:
+    from app.models.postgres import SCIMGroupMember
+
+    return list((await db.execute(
+        select(User).join(SCIMGroupMember, SCIMGroupMember.user_id == User.id)
+        .where(SCIMGroupMember.group_id == group_id).order_by(User.username)
+    )).scalars().all())
+
+
+async def _member_ids(db: AsyncSession, refs: object) -> set[uuid.UUID]:
+    """SCIM ``members`` → user ids; an unknown or malformed value is a 400 invalidValue."""
+    if refs in (None, ""):
+        return set()
+    if not isinstance(refs, list):
+        raise HTTPException(status_code=400, detail={"detail": "members must be a list", "scimType": "invalidValue"})
+    ids: set[uuid.UUID] = set()
+    for ref in refs:
+        raw = ref.get("value") if isinstance(ref, dict) else None
+        try:
+            ids.add(uuid.UUID(str(raw)))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail={"detail": f"Invalid member value {raw!r}", "scimType": "invalidValue"})
+    if ids:
+        found = set((await db.execute(select(User.id).where(User.id.in_(list(ids))))).scalars().all())
+        if ids - found:
+            raise HTTPException(status_code=400, detail={"detail": "Unknown member id(s)", "scimType": "invalidValue"})
+    return ids
+
+
+async def _commit_group_change(db: AsyncSession, group, changed_users) -> None:
+    from app.services import scim_group_service as sgs
+
+    await sgs.reconcile_users(db, changed_users)
+    group.version = (group.version or 0) + 1
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=_GROUP_CONFLICT)
+    await sgs.invalidate(changed_users)
+
+
+def _base(request: Request) -> str:
+    return str(request.base_url).rstrip("/")
+
+
+@router.get("/Groups")
+async def scim_list_groups(
+    request: Request,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+    filter: str | None = None,
+    startIndex: int = Query(1, ge=1),
+    count: int = Query(100, ge=0, le=500),
+):
+    """SCIM 2.0: list groups (W20 ADM-09); ``filter=displayName eq "<name>"`` only."""
+    from sqlalchemy import func as sa_func
+
+    from app.models.postgres import SCIMGroup
+
+    query = select(SCIMGroup)
+    if filter:
+        m = _GROUP_FILTER.match(filter)
+        if not m:
+            raise HTTPException(status_code=400, detail={"detail": 'Only displayName eq "<name>" is supported', "scimType": "invalidFilter"})
+        query = query.where(sa_func.lower(SCIMGroup.display_name) == m.group(1).lower())
+    groups = list((await db.execute(query.order_by(SCIMGroup.display_name))).scalars().all())
+    page = groups[startIndex - 1:startIndex - 1 + count]
+    resources = [_group_resource(g, await _group_members(db, g.id), _base(request)) for g in page]
+    return {"schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"], "totalResults": len(groups),
+            "startIndex": startIndex, "itemsPerPage": len(resources), "Resources": resources}
+
+
+@router.get("/Groups/{group_id}")
+async def scim_get_group(
+    group_id: uuid.UUID,
+    request: Request,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """SCIM 2.0: one group with its members."""
+    group = await _load_group(db, group_id)
+    return _group_resource(group, await _group_members(db, group.id), _base(request))
+
+
+@router.post("/Groups", status_code=201)
+async def scim_create_group(
+    request: Request,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """SCIM 2.0: create a group; its members' project memberships follow the group's mappings."""
+    from app.models.postgres import SCIMGroup
+    from app.services import scim_group_service as sgs
+
+    body = await request.json()
+    name = str(body.get("displayName") or "").strip()
+    if not name or len(name) > 255:
+        raise HTTPException(status_code=400, detail={"detail": "displayName is required", "scimType": "invalidValue"})
+    ids = await _member_ids(db, body.get("members"))
+    external = str(body.get("externalId"))[:255] if body.get("externalId") else None
+    group = SCIMGroup(display_name=name, external_id=external, version=0)
+    db.add(group)
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=_GROUP_CONFLICT)
+    changed = await sgs.set_members(db, group.id, ids)
+    await _commit_group_change(db, group, changed)
+    await db.refresh(group)
+    return _group_resource(group, await _group_members(db, group.id), _base(request))
+
+
+@router.put("/Groups/{group_id}")
+async def scim_replace_group(
+    group_id: uuid.UUID,
+    request: Request,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """SCIM 2.0: replace a group's name and members."""
+    from app.services import scim_group_service as sgs
+
+    group = await _load_group(db, group_id)
+    body = await request.json()
+    name = str(body.get("displayName") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail={"detail": "displayName is required", "scimType": "invalidValue"})
+    group.display_name = name[:255]
+    if "externalId" in body:
+        group.external_id = str(body["externalId"])[:255] if body["externalId"] else None
+    changed = await sgs.set_members(db, group.id, await _member_ids(db, body.get("members")))
+    await _commit_group_change(db, group, changed)
+    await db.refresh(group)
+    return _group_resource(group, await _group_members(db, group.id), _base(request))
+
+
+@router.patch("/Groups/{group_id}")
+async def scim_patch_group(
+    group_id: uuid.UUID,
+    request: Request,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """SCIM 2.0 PatchOp on ``members`` (add / remove / replace, and ``members[value eq "<id>"]``) and ``displayName``."""
+    from app.services import scim_group_service as sgs
+
+    group = await _load_group(db, group_id)
+    body = await request.json()
+    ops = body.get("Operations") if isinstance(body, dict) else None
+    if not isinstance(ops, list) or not ops:
+        raise HTTPException(status_code=400, detail={"detail": "Operations are required", "scimType": "invalidSyntax"})
+    target = set(await sgs.group_member_ids(db, group.id))
+    for op_ in ops:
+        kind = str(op_.get("op", "")).lower()
+        path = str(op_.get("path") or "")
+        value = op_.get("value")
+        member_path = _MEMBER_PATH.match(path)
+        if path.lower() == "members" or (not path and kind in ("add", "replace") and isinstance(value, dict) and "members" in value):
+            refs = value.get("members") if isinstance(value, dict) else value
+            ids = await _member_ids(db, refs)
+            if kind == "add":
+                target |= ids
+            elif kind == "remove":
+                target = target - ids if ids else set()
+            elif kind == "replace":
+                target = ids
+            else:
+                raise HTTPException(status_code=400, detail={"detail": f"Unsupported op {kind!r}", "scimType": "invalidSyntax"})
+        elif member_path and kind == "remove":
+            try:
+                target.discard(uuid.UUID(member_path.group(1)))
+            except ValueError:
+                raise HTTPException(status_code=400, detail={"detail": "Invalid member value", "scimType": "invalidValue"})
+        elif path.lower() == "displayname" and kind in ("add", "replace") and isinstance(value, str) and value.strip():
+            group.display_name = value.strip()[:255]
+        elif not path and kind == "replace" and isinstance(value, dict) and isinstance(value.get("displayName"), str):
+            group.display_name = value["displayName"].strip()[:255]
+        else:
+            raise HTTPException(status_code=400, detail={"detail": f"Unsupported patch path {path!r}", "scimType": "invalidPath"})
+    changed = await sgs.set_members(db, group.id, target)
+    await _commit_group_change(db, group, changed)
+    await db.refresh(group)
+    return _group_resource(group, await _group_members(db, group.id), _base(request))
+
+
+@router.delete("/Groups/{group_id}", status_code=204, response_class=Response)
+async def scim_delete_group(
+    group_id: uuid.UUID,
+    scim_token: SCIMToken = Depends(verify_scim_bearer),
+    db: AsyncSession = Depends(get_db),
+):
+    """SCIM 2.0: delete a group; memberships it alone granted are removed."""
+    from app.services import scim_group_service as sgs
+
+    group = await _load_group(db, group_id)
+    changed = await sgs.delete_group(db, group)
+    await db.commit()
+    await sgs.invalidate(changed)
     return None
 
 

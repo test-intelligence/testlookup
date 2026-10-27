@@ -4155,6 +4155,7 @@ class SecretRef(Base):
     provider: Mapped[str] = mapped_column(String(50), nullable=False, default="db")  # "db" | "vault" | "aws_sm"
     key_name: Mapped[str] = mapped_column(String(255), nullable=False)       # e.g. "jira_api_token"
     encrypted_value: Mapped[Optional[str]] = mapped_column(Text)             # stored encrypted; NULL if external
+    external_ref: Mapped[Optional[str]] = mapped_column(String(500))         # W20 ADM-10: "vault:<path>#<key>" when provider="vault"
     masked_value: Mapped[Optional[str]] = mapped_column(String(50))          # e.g. "sk-...abc1"
     rotation_status: Mapped[str] = mapped_column(String(30), default="active")
     updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
@@ -4231,6 +4232,8 @@ class ProjectMember(Base):
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
     role: Mapped[UserRole] = mapped_column(String(20), nullable=False, default=UserRole.QA_ENGINEER.value)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # W20 ADM-09: NULL = granted by a person; "scim:<group>" = created by SCIM group reconciliation.
+    source: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
 
 
 class ApiKey(Base):
@@ -4683,7 +4686,7 @@ class FlakyCoachResult(Base):
 
 class SSOProviderType(str, PyEnum):
     SAML = "SAML"
-    OIDC = "OIDC"  # reserved for future use
+    OIDC = "OIDC"  # W20 ADM-08b: authorization code + PKCE (services/oidc_service.py)
 
 
 class SSOEnforcementMode(str, PyEnum):
@@ -4708,6 +4711,8 @@ class IdentityEventType(str, PyEnum):
     ADMIN_FALLBACK_LOGIN = "ADMIN_FALLBACK_LOGIN"
     JIT_PROVISIONED = "JIT_PROVISIONED"
     ROLE_MAPPED = "ROLE_MAPPED"
+    # W20 ADM-08c: the IdP's signed LogoutRequest ended a user's sessions (only after the signature verified).
+    SSO_LOGOUT = "SSO_LOGOUT"
     # ── MFA + account lockout (0117) ─────────────────────────────────────
     # ``IdentityEvent.event_type`` is a ``String(40)`` fronted by this enum —
     # the documented enum/column drift trap. Every value below is <= 40 chars
@@ -4746,18 +4751,30 @@ class SSOConfiguration(Base):
             postgresql_where=text("is_active IS TRUE"),
             sqlite_where=text("is_active IS TRUE"),
         ),
+        # W20 ADM-08b (migration 0237): the SAML fields are NULL-able for an OIDC row, never for a SAML one.
+        CheckConstraint(
+            "(provider_type <> 'SAML' OR (idp_entity_id IS NOT NULL AND idp_sso_url IS NOT NULL"
+            " AND idp_certificate IS NOT NULL AND sp_entity_id IS NOT NULL AND sp_acs_url IS NOT NULL))"
+            " AND (provider_type <> 'OIDC' OR (oidc_issuer IS NOT NULL AND oidc_client_id IS NOT NULL))",
+            name="ck_sso_config_fields_by_provider",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     provider_type: Mapped[SSOProviderType] = mapped_column(String(20), nullable=False, default=SSOProviderType.SAML.value)
-    # SAML-specific fields
-    idp_entity_id: Mapped[str] = mapped_column(String(1000), nullable=False)
-    idp_sso_url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    # SAML-specific fields (NULL on an OIDC row; the CHECK above keeps a SAML row complete)
+    idp_entity_id: Mapped[Optional[str]] = mapped_column(String(1000))
+    idp_sso_url: Mapped[Optional[str]] = mapped_column(String(2000))
     idp_slo_url: Mapped[Optional[str]] = mapped_column(String(2000))
-    idp_certificate: Mapped[str] = mapped_column(Text, nullable=False)  # PEM-encoded X.509 cert
-    sp_entity_id: Mapped[str] = mapped_column(String(1000), nullable=False)
-    sp_acs_url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    idp_certificate: Mapped[Optional[str]] = mapped_column(Text)  # PEM-encoded X.509 cert
+    sp_entity_id: Mapped[Optional[str]] = mapped_column(String(1000))
+    sp_acs_url: Mapped[Optional[str]] = mapped_column(String(2000))
+    # OIDC-specific fields (W20 ADM-08b). The client secret lives in secret_refs (scope "sso_oidc", key = id).
+    oidc_issuer: Mapped[Optional[str]] = mapped_column(String(1000))
+    oidc_client_id: Mapped[Optional[str]] = mapped_column(String(255))
+    oidc_scopes: Mapped[Optional[str]] = mapped_column(String(500))  # space-separated; NULL = "openid email profile"
+    oidc_groups_claim: Mapped[Optional[str]] = mapped_column(String(255))  # NULL = "groups"
     # Audience restriction (if different from sp_entity_id)
     audience: Mapped[Optional[str]] = mapped_column(String(1000))
     # Role mapping: JSON dict mapping IdP group/attribute values to UserRole values
@@ -4797,6 +4814,39 @@ class FederatedIdentity(Base):
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+
+
+class SCIMGroup(Base):
+    """W20 ADM-09: a group an IdP pushes over SCIM ``/Groups``."""
+
+    __tablename__ = "scim_groups"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    external_id: Mapped[Optional[str]] = mapped_column(String(255))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class SCIMGroupMember(Base):
+    __tablename__ = "scim_group_members"
+    __table_args__ = (Index("ix_scim_group_members_user", "user_id"),)
+
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scim_groups.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+
+
+class SCIMGroupMapping(Base):
+    """W20 ADM-09: an administrator's grant — members of the group get ``project_role`` on the project."""
+
+    __tablename__ = "scim_group_mappings"
+    __table_args__ = (UniqueConstraint("group_id", "project_id", name="uq_scim_group_mapping"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    group_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("scim_groups.id", ondelete="CASCADE"), nullable=False)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    project_role: Mapped[str] = mapped_column(String(20), nullable=False)
 
 
 class SCIMToken(Base):

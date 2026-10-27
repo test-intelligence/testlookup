@@ -88,7 +88,16 @@ Two more production-only behaviours:
 | `MFA_RECOVERY_CODE_COUNT` | int | `10` | Single-use recovery codes minted when a user enables MFA. |
 | `MFA_BREAKGLASS_ENABLED` | bool | `false` | Read by `backend/scripts/mfa_breakglass.py`, which refuses to reset a user's MFA unless this is true in the backend environment. Every use writes an `MFA_BREAKGLASS_RESET` identity event. Turn it on only for the duration of a recovery. |
 | `REGISTRATION_ENABLED` | bool | `false` | Self-service sign-up. While false, `POST /api/v1/auth/register` answers 403 (`registration_disabled`) and the sign-in page hides **Register** (it reads the public `GET /api/v1/auth/options`). When true, a new account is a `VIEWER` with no project membership and must change its password at first sign-in. Administrators create accounts under Settings, Users (`POST /api/v1/users`, which returns a one-time temporary password) either way. |
-| `SSO_ENABLED` | bool | `false` | Master switch for SAML 2.0 SSO (`/api/v1/sso/login-url`, `/acs`, `/exchange`, `/status`) and for SSO enforcement at password login. See [SSO](integrations.md#single-sign-on-saml-20). |
+| `SSO_ENABLED` | bool | `false` | Master switch for SAML 2.0 and OIDC SSO (`/api/v1/sso/login-url`, `/acs`, `/slo`, `/oidc/login`, `/oidc/callback`, `/exchange`, `/status`) and for SSO enforcement at password login. See [SSO](integrations.md#single-sign-on-saml-20). |
+| `SECRET_PROVIDER_VAULT_ADDR` | str | `""` | Vault (or OpenBao) address for `vault:<path>#<key>` secret references (KV v2). Empty = references cannot resolve (the field reads as unset). Deployment-only; never set from the UI. |
+| `SECRET_PROVIDER_VAULT_AUTH` | str | `token` | How the backend logs in to Vault: `token`, `approle` or `kubernetes`. |
+| `SECRET_PROVIDER_VAULT_TOKEN` | str | `""` | Vault token for `token` auth. |
+| `SECRET_PROVIDER_VAULT_ROLE_ID` | str | `""` | AppRole role id for `approle` auth. |
+| `SECRET_PROVIDER_VAULT_SECRET_ID` | str | `""` | AppRole secret id for `approle` auth. |
+| `SECRET_PROVIDER_VAULT_K8S_ROLE` | str | `""` | Vault role for `kubernetes` auth (the pod's service-account token is sent). |
+| `SECRET_PROVIDER_VAULT_MOUNT` | str | `secret` | The KV v2 mount the reference paths live under. |
+| `SECRET_PROVIDER_VAULT_NAMESPACE` | str | `""` | Vault Enterprise namespace (`X-Vault-Namespace`), when used. |
+| `SECRET_PROVIDER_VAULT_CACHE_SECONDS` | int | `60` | How long a resolved reference is cached in the process. |
 | `SCIM_ENABLED` | bool | `false` | Master switch for SCIM 2.0 provisioning under `/api/v1/scim/v2`. While false every SCIM request answers 404. |
 | `SAML_SP_ENTITY_ID` | str | `https://testlookup.io/saml/metadata` | Service-provider entity ID returned by `GET /api/v1/sso/metadata`. Set it to an identifier you control (for example `https://testlookup.example.com/saml/metadata`) and use the same value in the IdP and in the SSO configuration's `sp_entity_id`. |
 | `SAML_BASE_URL` | str | `http://localhost:8000` | Base URL used to build the ACS URL (`<base>/api/v1/sso/acs`) shown in SP metadata. Set it to the public URL that reaches the backend. Production warning while it is the localhost default and SSO is on. |

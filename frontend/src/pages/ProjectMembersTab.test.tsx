@@ -143,6 +143,16 @@ describe('ProjectMembersTab — Default QA Lead', () => {
     expect(optionLabels.some(o => o.includes('qa_lead@x.test'))).toBe(true)
   })
 
+  it('marks a membership granted through a SCIM group (W20 ADM-09)', async () => {
+    await renderAndPickProject({
+      isAdmin: true,
+      members: [{ ...makeMember('QA_ENGINEER'), source: 'scim:payments-qa' }, makeMember('QA_LEAD')],
+    })
+    const badges = await screen.findAllByTestId('member-source')
+    expect(badges).toHaveLength(1)
+    expect(badges[0]).toHaveTextContent('via SCIM group payments-qa')
+  })
+
   it('warns when no member has role=QA_LEAD yet', async () => {
     await renderAndPickProject({
       isAdmin: true,

@@ -40,6 +40,8 @@ vi.mock('@/services/appSettingsService', () => ({
     getStorageConfig: () => mockGet(),
     updateStorageConfig: (p: unknown) => mockUpdate(p),
   },
+  // W20 ADM-10: the Secrets card (Vault not configured here).
+  getSecretProviders: () => Promise.resolve({ providers: [{ name: 'vault', configured: false, address_host: null, auth_method: 'token', healthy: false, message: 'Not configured: set SECRET_PROVIDER_VAULT_ADDR on the deployment.', references: 0 }], reference_syntax: 'vault:<path>#<key>' }),
 }))
 
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isAdmin }) }))

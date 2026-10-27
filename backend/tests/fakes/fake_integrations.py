@@ -95,17 +95,36 @@ Inspect and steer it under ``/_fake/``:
 * ``POST /_fake/github/revoke`` -- ``{"token"}``: that PAT now answers 401
 * ``GET /_fake/hooks`` -- the receiver's log ``{path, status, event,
   delivery_id, signed}``
+* OIDC identity provider (W20 ADM-08b) under ``/oidc``: discovery
+  (``/oidc/.well-known/openid-configuration``), ``/oidc/jwks`` (one RS256 key
+  generated at start), ``/oidc/authorize`` (authorization code; PKCE S256
+  REQUIRED; ``login_hint=<user>`` signs that user in at once, otherwise a page
+  lists the users to pick), ``POST /oidc/token`` (``client_secret_basic`` or
+  ``_post``; the code works once, within 60 s, for the same redirect_uri, and
+  only with the matching ``code_verifier``) answering a signed ID token with
+  ``nonce``, ``email``, ``email_verified``, ``name`` and ``groups``. Client
+  ``testlookup`` / ``fake-oidc-secret``; any redirect_uri ending
+  ``/api/v1/sso/oidc/callback`` unless the client lists its own. Steer it with
+  ``POST /_fake/oidc/users`` (``{"<username>": {email, name, groups,
+  email_verified}}``) and ``POST /_fake/oidc/next-token`` (claims to override
+  in the next ID token, e.g. ``{"aud": "someone-else"}``, or ``{"alg":
+  "none"}`` for an unsigned one).
 
 Environment (``_state_from_env``): ``FAKE_JIRA_EMAIL``, ``FAKE_JIRA_TOKEN``,
 ``FAKE_BASE_URL``, ``FAKE_SPLUNK_TOKEN``, ``FAKE_OCP_TOKEN``,
-``FAKE_GITHUB_PAT`` (the PAT that sees ``acme/payments``), ``FAKE_GITLAB_PAT``.
+``FAKE_GITHUB_PAT`` (the PAT that sees ``acme/payments``), ``FAKE_GITLAB_PAT``,
+``FAKE_OIDC_ISSUER`` (default: this server's own ``<scheme>://<host>/oidc``),
+``FAKE_OIDC_CLIENT_SECRET``.
 """
 from __future__ import annotations
 
 import asyncio
 import base64
 import hashlib
+import html
 import json
+import secrets
+import time
 import os
 import re
 import threading
@@ -286,6 +305,33 @@ class FakeState:
              "due_date": None, "web_url": f"{GITLAB_WEB_ROOT}/group/api-gateway/-/milestones/2"},
         ],
     })
+    # ── W20 ADM-10: a Vault-compatible KV v2 store (token + approle auth) ──
+    vault_root_token: str = "fake-vault-token"
+    vault_approle: tuple[str, str] = ("fake-role-id", "fake-secret-id")
+    #: path (under the "secret" mount) -> {key: value}
+    vault_kv: dict[str, dict[str, str]] = field(default_factory=lambda: {
+        "testlookup/jira": {"api_token": "fake-jira-token"},
+    })
+    vault_issued: set[str] = field(default_factory=set)
+    # ── W20 ADM-08b: an OIDC identity provider ──
+    #: None = derived from the request (``<scheme>://<host>/oidc``)
+    oidc_issuer: Optional[str] = None
+    #: client_id -> {"secret", "redirect_uris" (empty = any ".../api/v1/sso/oidc/callback")}
+    oidc_clients: dict[str, dict[str, Any]] = field(default_factory=lambda: {
+        "testlookup": {"secret": "fake-oidc-secret", "redirect_uris": []},
+    })
+    oidc_users: dict[str, dict[str, Any]] = field(default_factory=lambda: {
+        "dana.lead": {"email": "dana.lead@example.test", "name": "Dana Lead",
+                      "groups": ["qa-leads"], "email_verified": True},
+        "sam.viewer": {"email": "sam.viewer@example.test", "name": "Sam Viewer",
+                       "groups": ["staff"], "email_verified": True},
+        "ivy.admin": {"email": "ivy.admin@example.test", "name": "Ivy Admin",
+                      "groups": ["platform-admins"], "email_verified": True},
+    })
+    oidc_codes: dict[str, dict[str, Any]] = field(default_factory=dict)
+    oidc_next_token: dict[str, Any] = field(default_factory=dict)
+    oidc_kid: str = "fake-oidc-1"
+    _oidc_key: Any = None
     # ── W10: outbound webhook receiver ──
     #: {path, status, event, delivery_id, signed}
     hooks: list[dict[str, Any]] = field(default_factory=list)
@@ -330,6 +376,8 @@ class FakeState:
             self.splunk_searches.clear()
             self.hooks.clear()
             self.revoked_github_tokens.clear()
+            self.oidc_codes.clear()
+            self.oidc_next_token.clear()
             for project in self.projects.values():
                 project["seq"] = 0
                 project["versions"] = []
@@ -1236,6 +1284,11 @@ async def _control(request: Request, state: FakeState) -> Response:
                 "events": list(body.get("events", current.get("events", []))),
             }
         return JSONResponse({"namespace": namespace, "pod": pod, "events": len(pods[pod]["events"])})
+    if path == "/_fake/vault/kv":
+        body = await request.json()
+        with state._lock:
+            state.vault_kv[str(body["path"])] = {str(k): str(v) for k, v in dict(body["data"]).items()}
+        return JSONResponse({"path": body["path"], "keys": sorted(body["data"])})
     if path == "/_fake/gitlab/milestones":
         body = await request.json()
         with state._lock:
@@ -1256,10 +1309,215 @@ async def _control(request: Request, state: FakeState) -> Response:
         return JSONResponse({"revoked": len(state.revoked_github_tokens)})
     if path == "/_fake/hooks":
         return JSONResponse(state.hooks)
+    if path == "/_fake/oidc/users":
+        for username, user in dict(await request.json()).items():
+            state.oidc_users[str(username)] = dict(user)
+        return JSONResponse({"users": sorted(state.oidc_users)})
+    if path == "/_fake/oidc/next-token":
+        state.oidc_next_token = dict(await request.json())
+        return JSONResponse({"next_token": state.oidc_next_token})
     return JSONResponse({"error": "unknown control path"}, status_code=404)
 
 
+# ── W20 ADM-08b: OIDC identity provider ─────────────────────────────────────
+
+
+def _oidc_signing_key(state: FakeState) -> Any:
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    with state._lock:
+        if state._oidc_key is None:
+            state._oidc_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        return state._oidc_key
+
+
+def _b64url_uint(value: int) -> str:
+    raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _oidc_issuer(request: Request, state: FakeState) -> str:
+    if state.oidc_issuer:
+        return state.oidc_issuer.rstrip("/")
+    return f"{request.url.scheme}://{request.url.netloc}/oidc"
+
+
+def _oidc_redirect_ok(client: dict[str, Any], redirect_uri: str) -> bool:
+    if client.get("redirect_uris"):
+        return redirect_uri in client["redirect_uris"]
+    return redirect_uri.startswith(("http://", "https://")) and redirect_uri.endswith("/api/v1/sso/oidc/callback")
+
+
+def _oidc_error_redirect(redirect_uri: str, error: str, state_param: str) -> Response:
+    sep = "&" if "?" in redirect_uri else "?"
+    from urllib.parse import urlencode
+
+    return Response(status_code=302, headers={
+        "location": f"{redirect_uri}{sep}{urlencode({'error': error, 'state': state_param})}"})
+
+
+def _oidc_client_auth(request: Request, form: dict[str, str], state: FakeState) -> Optional[str]:
+    """The authenticated client id (client_secret_basic or client_secret_post), else None."""
+    from urllib.parse import unquote
+
+    header = request.headers.get("authorization") or ""
+    client_id = secret = None
+    if header.lower().startswith("basic "):
+        try:
+            decoded = base64.b64decode(header[6:]).decode()
+            raw_id, _, raw_secret = decoded.partition(":")
+            client_id, secret = unquote(raw_id), unquote(raw_secret)
+        except (ValueError, UnicodeDecodeError):
+            return None
+    elif form.get("client_secret"):
+        client_id, secret = form.get("client_id"), form.get("client_secret")
+    client = state.oidc_clients.get(client_id or "")
+    if client is None or not secret or not hmac_compare(secret, client["secret"]):
+        return None
+    return client_id
+
+
+def hmac_compare(a: str, b: str) -> bool:
+    import hmac
+
+    return hmac.compare_digest(a.encode(), b.encode())
+
+
+def _oidc_id_token(state: FakeState, issuer: str, entry: dict[str, Any]) -> str:
+    import jwt
+    from cryptography.hazmat.primitives import serialization
+
+    user = state.oidc_users[entry["username"]]
+    now = int(time.time())
+    claims: dict[str, Any] = {
+        "iss": issuer, "aud": entry["client_id"], "sub": f"fake-sub-{entry['username']}",
+        "iat": now, "exp": now + 300, "auth_time": now, "nonce": entry.get("nonce"),
+        "email": user.get("email"), "email_verified": user.get("email_verified", True),
+        "name": user.get("name"), "preferred_username": entry["username"], "groups": list(user.get("groups") or []),
+    }
+    overrides = dict(state.oidc_next_token)
+    state.oidc_next_token.clear()
+    alg = overrides.pop("alg", "RS256")
+    for key, value in overrides.items():
+        if value is None:
+            claims.pop(key, None)
+        else:
+            claims[key] = value
+    if alg == "none":
+        return jwt.encode(claims, None, algorithm="none")
+    pem = _oidc_signing_key(state).private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    return jwt.encode(claims, pem, algorithm="RS256", headers={"kid": state.oidc_kid})
+
+
+async def _oidc(request: Request, state: FakeState, path: str, method: str) -> Response:
+    issuer = _oidc_issuer(request, state)
+    sub = path[len("/oidc"):]
+    with state._lock:
+        state.requests.append({"method": method, "path": path, "query": dict(request.query_params), "body": None,
+                               "service": "oidc", "auth": "none"})
+    if sub == "/.well-known/openid-configuration":
+        return JSONResponse({
+            "issuer": issuer,
+            "authorization_endpoint": f"{issuer}/authorize",
+            "token_endpoint": f"{issuer}/token",
+            "jwks_uri": f"{issuer}/jwks",
+            "end_session_endpoint": f"{issuer}/logout",
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+            "code_challenge_methods_supported": ["S256"],
+            "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
+            "scopes_supported": ["openid", "email", "profile"],
+        })
+    if sub == "/jwks":
+        public = _oidc_signing_key(state).public_key().public_numbers()
+        return JSONResponse({"keys": [{"kty": "RSA", "use": "sig", "alg": "RS256", "kid": state.oidc_kid,
+                                       "n": _b64url_uint(public.n), "e": _b64url_uint(public.e)}]})
+    if sub == "/authorize" and method == "GET":
+        q = request.query_params
+        client = state.oidc_clients.get(q.get("client_id") or "")
+        redirect_uri = q.get("redirect_uri") or ""
+        if client is None or not _oidc_redirect_ok(client, redirect_uri):
+            # Never redirect to an unregistered URI (as a real IdP): an error page instead.
+            return PlainTextResponse("invalid client_id or redirect_uri", status_code=400)
+        state_param = q.get("state") or ""
+        if q.get("response_type") != "code" or "openid" not in (q.get("scope") or "").split():
+            return _oidc_error_redirect(redirect_uri, "invalid_request", state_param)
+        if not q.get("code_challenge") or q.get("code_challenge_method") != "S256":
+            return _oidc_error_redirect(redirect_uri, "invalid_request", state_param)
+        hint = q.get("login_hint")
+        if hint not in state.oidc_users:
+            links = "".join(
+                f'<li><a id="user-{html.escape(name)}" href="{html.escape(str(request.url.include_query_params(login_hint=name)))}">'
+                f'{html.escape(user.get("name") or name)}</a> &mdash; {html.escape(", ".join(user.get("groups") or []))}</li>'
+                for name, user in state.oidc_users.items()
+            )
+            return Response(
+                f"<!doctype html><title>Fake OIDC sign-in</title><h1>Fake OIDC IdP</h1>"
+                f"<p>Sign in to <b>{html.escape(q.get('client_id') or '')}</b> as:</p><ul>{links}</ul>",
+                media_type="text/html")
+        code = secrets.token_urlsafe(24)
+        with state._lock:
+            state.oidc_codes[code] = {
+                "client_id": q.get("client_id"), "redirect_uri": redirect_uri, "username": hint,
+                "nonce": q.get("nonce"), "challenge": q.get("code_challenge"), "expires": time.time() + 60,
+            }
+        from urllib.parse import urlencode
+
+        sep = "&" if "?" in redirect_uri else "?"
+        return Response(status_code=302, headers={
+            "location": f"{redirect_uri}{sep}{urlencode({'code': code, 'state': state_param})}"})
+    if sub == "/token" and method == "POST":
+        form = _form(await request.body(), request.headers.get("content-type", "")) or {}
+        client_id = _oidc_client_auth(request, form, state)
+        if client_id is None:
+            return JSONResponse({"error": "invalid_client"}, status_code=401)
+        with state._lock:
+            entry = state.oidc_codes.pop(form.get("code") or "", None)
+        if (form.get("grant_type") != "authorization_code" or entry is None or entry["expires"] < time.time()
+                or entry["client_id"] != client_id or entry["redirect_uri"] != form.get("redirect_uri")):
+            return JSONResponse({"error": "invalid_grant"}, status_code=400)
+        verifier = form.get("code_verifier") or ""
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+        if not verifier or not hmac_compare(challenge, entry["challenge"] or ""):
+            return JSONResponse({"error": "invalid_grant", "error_description": "PKCE verification failed"},
+                                status_code=400)
+        return JSONResponse({"access_token": secrets.token_urlsafe(24), "token_type": "Bearer", "expires_in": 300,
+                             "id_token": _oidc_id_token(state, issuer, entry)})
+    return JSONResponse({"error": "not_found"}, status_code=404)
+
+
 # ── App ─────────────────────────────────────────────────────────────────────
+
+
+async def _vault(request: Request, state: FakeState, path: str, method: str) -> Response:
+    """W20 ADM-10: Vault KV v2 under mount ``secret`` — ``POST /v1/auth/approle/login``, ``GET
+    /v1/auth/token/lookup-self``, ``GET /v1/secret/data/<path>``; ``X-Vault-Token`` is the root token or one the
+    approle login issued. Logged as service ``vault`` (auth ok|bad|none, never the token)."""
+    token = request.headers.get("x-vault-token")
+    ok = bool(token) and (token == state.vault_root_token or token in state.vault_issued)
+    with state._lock:
+        state.requests.append({"method": method, "path": path, "query": dict(request.query_params), "body": None,
+                               "service": "vault", "auth": "ok" if ok else ("bad" if token else "none")})
+    if path == "/v1/auth/approle/login" and method == "POST":
+        body = await request.json()
+        if (body.get("role_id"), body.get("secret_id")) != state.vault_approle:
+            return JSONResponse({"errors": ["invalid role or secret ID"]}, status_code=400)
+        issued = f"s.fake-{len(state.vault_issued) + 1}"
+        state.vault_issued.add(issued)
+        return JSONResponse({"auth": {"client_token": issued, "lease_duration": 3600, "renewable": True}})
+    if not ok:
+        return JSONResponse({"errors": ["permission denied"]}, status_code=403)
+    if path == "/v1/auth/token/lookup-self":
+        return JSONResponse({"data": {"policies": ["testlookup-read"], "ttl": 3600}})
+    prefix = "/v1/secret/data/"
+    if path.startswith(prefix) and method == "GET":
+        data = state.vault_kv.get(path[len(prefix):])
+        if data is None:
+            return JSONResponse({"errors": []}, status_code=404)
+        return JSONResponse({"data": {"data": dict(data), "metadata": {"version": 1}}})
+    return JSONResponse({"errors": ["unsupported path"]}, status_code=404)
 
 
 def create_app(state: Optional[FakeState] = None) -> Starlette:
@@ -1270,6 +1528,10 @@ def create_app(state: Optional[FakeState] = None) -> Starlette:
         method = request.method.upper()
         if path.startswith("/_fake/"):
             return await _control(request, state)
+        if path.startswith("/v1/"):
+            return await _vault(request, state, path, method)
+        if path.startswith("/oidc/"):
+            return await _oidc(request, state, path, method)
         raw = await request.body()
         try:
             body: Any = json.loads(raw) if raw else None
@@ -1375,7 +1637,10 @@ def _state_from_env() -> FakeState:
         splunk_token=os.environ.get("FAKE_SPLUNK_TOKEN", "fake-splunk-token"),
         ocp_token=os.environ.get("FAKE_OCP_TOKEN", "fake-ocp-token"),
         gitlab_token=os.environ.get("FAKE_GITLAB_PAT", "fake-gitlab-pat"),
+        oidc_issuer=os.environ.get("FAKE_OIDC_ISSUER") or None,
     )
+    if os.environ.get("FAKE_OIDC_CLIENT_SECRET"):
+        state.oidc_clients["testlookup"]["secret"] = os.environ["FAKE_OIDC_CLIENT_SECRET"]
     github_pat = os.environ.get("FAKE_GITHUB_PAT")
     if github_pat and github_pat != "fake-gh-pat":
         # The deployment's PAT sees what the default "fake-gh-pat" saw.

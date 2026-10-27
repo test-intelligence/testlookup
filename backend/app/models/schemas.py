@@ -5210,6 +5210,8 @@ class IntegrationsConfigRead(BaseModel):
     # comes from the process environment because the key was never saved here
     # (non-empty environment value only). Names only, never a value.
     environment_fields: List[str] = Field(default_factory=list)
+    # W20 ADM-10: secret fields stored as Vault references (``vault:<path>#<key>``).
+    vault_fields: List[str] = Field(default_factory=list)
 
 
 def _stripped(value: Optional[str]) -> Optional[str]:
@@ -5507,6 +5509,8 @@ class ProjectMemberResponse(BaseModel):
     is_service_account: bool = False
     is_synthetic: bool = False
     is_active: bool = True
+    # W20 ADM-09: NULL = granted by a person; "scim:<group>" = granted through that SCIM group.
+    source: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -5865,20 +5869,42 @@ class TestCaseHistoryResponse(BaseModel):
 
 
 class SSOConfigCreate(BaseModel):
-    """Create a new SSO configuration."""
+    """Create a new SSO configuration.
+
+    W20 ADM-08b: a SAML config needs the IdP entity id / SSO URL / certificate and
+    the SP entity id / ACS URL; an OIDC config needs the issuer, client id and client
+    secret (write-only — stored in ``secret_refs``, never returned).
+    """
     display_name: str = Field(..., min_length=2, max_length=255)
     provider_type: SSOProviderType = SSOProviderType.SAML
-    idp_entity_id: str = Field(..., min_length=1, max_length=1000)
-    idp_sso_url: str = Field(..., min_length=1, max_length=2000)
+    idp_entity_id: Optional[str] = Field(None, min_length=1, max_length=1000)
+    idp_sso_url: Optional[str] = Field(None, min_length=1, max_length=2000)
     idp_slo_url: Optional[str] = Field(None, max_length=2000)
-    idp_certificate: str = Field(..., min_length=1)  # PEM-encoded X.509
-    sp_entity_id: str = Field(..., min_length=1, max_length=1000)
-    sp_acs_url: str = Field(..., min_length=1, max_length=2000)
+    idp_certificate: Optional[str] = Field(None, min_length=1)  # PEM-encoded X.509
+    sp_entity_id: Optional[str] = Field(None, min_length=1, max_length=1000)
+    sp_acs_url: Optional[str] = Field(None, min_length=1, max_length=2000)
     audience: Optional[str] = Field(None, max_length=1000)
+    oidc_issuer: Optional[str] = Field(None, min_length=1, max_length=1000)
+    oidc_client_id: Optional[str] = Field(None, min_length=1, max_length=255)
+    oidc_client_secret: Optional[str] = Field(None, min_length=1, max_length=4000)
+    oidc_scopes: Optional[str] = Field(None, max_length=500)
+    oidc_groups_claim: Optional[str] = Field(None, max_length=255)
     role_mapping: Optional[dict] = None
     default_role: UserRole = UserRole.VIEWER
     group_attribute: Optional[str] = Field(None, max_length=255)
     enforcement_mode: SSOEnforcementMode = SSOEnforcementMode.OPTIONAL
+
+    @model_validator(mode="after")
+    def _fields_for_provider(self) -> "SSOConfigCreate":
+        required: tuple[str, ...]
+        if self.provider_type == SSOProviderType.OIDC:
+            required = ("oidc_issuer", "oidc_client_id", "oidc_client_secret")
+        else:
+            required = ("idp_entity_id", "idp_sso_url", "idp_certificate", "sp_entity_id", "sp_acs_url")
+        missing = [name for name in required if not getattr(self, name)]
+        if missing:
+            raise ValueError(f"A {self.provider_type.value} configuration needs: {', '.join(missing)}")
+        return self
 
 
 class SSOConfigUpdate(BaseModel):
@@ -5894,6 +5920,12 @@ class SSOConfigUpdate(BaseModel):
     role_mapping: Optional[dict] = None
     default_role: Optional[UserRole] = None
     group_attribute: Optional[str] = Field(None, max_length=255)
+    oidc_issuer: Optional[str] = Field(None, min_length=1, max_length=1000)
+    oidc_client_id: Optional[str] = Field(None, min_length=1, max_length=255)
+    # Write-only: a non-empty value replaces the stored secret; omit it to keep the current one.
+    oidc_client_secret: Optional[str] = Field(None, min_length=1, max_length=4000)
+    oidc_scopes: Optional[str] = Field(None, max_length=500)
+    oidc_groups_claim: Optional[str] = Field(None, max_length=255)
     enforcement_mode: Optional[SSOEnforcementMode] = None
     is_active: Optional[bool] = None
 
@@ -5903,13 +5935,21 @@ class SSOConfigResponse(BaseModel):
     id: uuid.UUID
     display_name: str
     provider_type: SSOProviderType
-    idp_entity_id: str
-    idp_sso_url: str
+    idp_entity_id: Optional[str] = None
+    idp_sso_url: Optional[str] = None
     idp_slo_url: Optional[str] = None
     idp_certificate_fingerprint: str = ""  # SHA-256 fingerprint, not the full cert
-    sp_entity_id: str
-    sp_acs_url: str
+    sp_entity_id: Optional[str] = None
+    sp_acs_url: Optional[str] = None
     audience: Optional[str] = None
+    oidc_issuer: Optional[str] = None
+    oidc_client_id: Optional[str] = None
+    oidc_scopes: Optional[str] = None
+    oidc_groups_claim: Optional[str] = None
+    #: The client secret itself is never returned — only whether one is stored.
+    oidc_client_secret_set: bool = False
+    #: Where the IdP must send the browser back (register it as the client's redirect URI).
+    oidc_redirect_uri: Optional[str] = None
     role_mapping: Optional[dict] = None
     default_role: UserRole
     group_attribute: Optional[str] = None
@@ -5930,6 +5970,22 @@ class SSOTestConnectionResponse(BaseModel):
     idp_entity_id: Optional[str] = None
     certificate_valid: Optional[bool] = None
     certificate_expires_at: Optional[str] = None
+
+
+class SSORolePreviewRequest(BaseModel):
+    """W20 ADM-08a: preview the role a user in ``groups`` gets. ``role_mapping`` / ``default_role`` preview an
+    unsaved edit; omitted, the stored configuration answers."""
+    groups: list[str] = Field(default_factory=list, max_length=200)
+    role_mapping: Optional[dict[str, str]] = None
+    default_role: Optional[str] = None
+
+
+class SSORolePreviewResponse(BaseModel):
+    role: str
+    matched_groups: list[str]
+    source: Literal["mapping", "default"]
+    ceiling: str
+    clamped: bool
 
 
 class SAMLLoginInitResponse(BaseModel):

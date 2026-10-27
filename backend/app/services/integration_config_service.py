@@ -165,6 +165,20 @@ async def resolve_global_integrations(
     }
 
 
+async def list_vault_reference_fields(db: AsyncSession) -> list[str]:
+    """W20 ADM-10: the integration secret fields stored as Vault references (shown "(set — Vault)" even while Vault
+    is down). Only the settings page asks; the runtime resolver above stays one read."""
+    from app.models.postgres import SecretRef
+
+    try:
+        rows = await db.execute(select(SecretRef.key_name).where(
+            SecretRef.scope == _SCOPE, SecretRef.provider == "vault", SecretRef.rotation_status != "expired"))
+        return sorted(set(rows.scalars().all()) & set(_SECRET_ENV_SETTING))
+    except Exception:  # noqa: BLE001 - a display label; never fail the settings read over it
+        logger.warning("integrations: could not list Vault reference fields", exc_info=True)
+        return []
+
+
 async def resolve_global_notification_webhooks(
     db: AsyncSession,
     *,

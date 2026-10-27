@@ -366,7 +366,14 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
               {members.map(m => (
                 <Fragment key={m.id}>
                 <tr className="hover:bg-[var(--color-bg-secondary)]/60 transition-colors">
-                  <td className="px-4 py-3 text-[var(--color-text)] font-medium">{m.full_name || m.username}</td>
+                  <td className="px-4 py-3 text-[var(--color-text)] font-medium">
+                    {m.full_name || m.username}
+                    {m.source?.startsWith('scim:') && (
+                      <span className="ml-2 text-xs font-normal text-[var(--color-text-muted)]" data-testid="member-source">
+                        via SCIM group {m.source.slice('scim:'.length)}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-[var(--color-text-muted)]">{m.email}</td>
                   <td className="px-4 py-3">
                     {canManageUsers ? (

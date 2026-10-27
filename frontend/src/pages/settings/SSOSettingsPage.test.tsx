@@ -35,7 +35,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SSOSettingsPage from './SSOSettingsPage'
 import { expectTemplateHeader } from '@/test/expectTemplateHeader'
-import { revokeSCIMToken, type SSOConfig } from '../../services/ssoService'
+import { createSSOConfig, revokeSCIMToken, type SSOConfig } from '../../services/ssoService'
 
 const mockUpdateSSOConfig = vi.fn()
 const mockDeleteSSOConfig = vi.fn()
@@ -55,8 +55,12 @@ vi.mock('../../services/ssoService', async () => {
     listSCIMTokens: vi.fn(),
     createSCIMToken: vi.fn(),
     revokeSCIMToken: vi.fn(),
+    // W20 ADM-09: the SCIM tab's groups section (none pushed here).
+    listSCIMGroups: () => Promise.resolve({ groups: [], roles: ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD'] }),
+    putSCIMGroupMappings: vi.fn(),
   }
 })
+vi.mock('@/services/projectsService', () => ({ projectsService: { list: () => Promise.resolve([]) } }))
 
 const permissions = { isAdmin: true }
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => permissions }))
@@ -302,5 +306,69 @@ describe('the questions are asked in the page, one at a time (W27b S2, S3)', () 
     expect(question()).toBe('Are you sure you want to delete this SSO configuration?')
     expect(mockUpdateSSOConfig).not.toHaveBeenCalled()
     expect(mockDeleteSSOConfig).not.toHaveBeenCalled()
+  })
+})
+
+describe('OIDC configurations (W20 ADM-08b)', () => {
+  const OIDC = {
+    provider_type: 'OIDC' as const, display_name: 'Keycloak', idp_entity_id: null, idp_sso_url: null,
+    idp_certificate_fingerprint: '', sp_entity_id: null, sp_acs_url: null,
+    oidc_issuer: 'https://keycloak.example/realms/testlookup', oidc_client_id: 'testlookup', oidc_scopes: null,
+    oidc_groups_claim: 'groups', oidc_client_secret_set: true,
+    oidc_redirect_uri: 'https://testlookup.example/api/v1/sso/oidc/callback',
+  }
+
+  it('the form asks for the OIDC fields only, and sends only them', async () => {
+    vi.mocked(createSSOConfig).mockResolvedValue(config(OIDC))
+    renderWith([])
+    fireEvent.click(screen.getByRole('button', { name: 'Add SSO Configuration' }))
+    fireEvent.change(screen.getByPlaceholderText('IdP Entity ID *'), { target: { value: 'typed-before-switching' } })
+    fireEvent.change(screen.getByLabelText('Provider type'), { target: { value: 'OIDC' } })
+    expect(screen.queryByPlaceholderText('IdP Certificate (PEM) *')).toBeNull()
+    expect(screen.getByPlaceholderText('Client secret *')).toHaveAttribute('type', 'password')
+    fireEvent.change(screen.getByPlaceholderText('Display Name *'), { target: { value: 'Keycloak' } })
+    fireEvent.change(screen.getByPlaceholderText(/Issuer URL/), { target: { value: OIDC.oidc_issuer } })
+    fireEvent.change(screen.getByPlaceholderText('Client ID *'), { target: { value: 'testlookup' } })
+    fireEvent.change(screen.getByPlaceholderText('Client secret *'), { target: { value: 's3cret' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Create Configuration' }))
+    await waitFor(() => expect(createSSOConfig).toHaveBeenCalled())
+    const sent = vi.mocked(createSSOConfig).mock.calls[0][0]
+    expect(sent).toMatchObject({
+      provider_type: 'OIDC', display_name: 'Keycloak', oidc_issuer: OIDC.oidc_issuer,
+      oidc_client_id: 'testlookup', oidc_client_secret: 's3cret',
+    })
+    expect(sent).not.toHaveProperty('idp_entity_id', 'typed-before-switching')
+    expect(sent.idp_entity_id).toBeUndefined()
+  })
+
+  it('an OIDC card shows the issuer, whether a secret is stored, and the redirect URI — never a secret', () => {
+    renderWith([config(OIDC)])
+    const card = document.querySelector('[data-oidc-config]') as HTMLElement
+    expect(card).toHaveTextContent('OIDC | Issuer: https://keycloak.example/realms/testlookup')
+    expect(card).toHaveTextContent('secret (set)')
+    expect(card).toHaveTextContent('https://testlookup.example/api/v1/sso/oidc/callback')
+    expect(screen.queryByText(/Cert fingerprint/)).toBeNull()
+    expect(screen.getByLabelText('Groups claim')).toHaveValue('groups')
+  })
+
+  it('Replace secret sends the new secret alone', async () => {
+    mockUpdateSSOConfig.mockResolvedValue(config(OIDC))
+    renderWith([config(OIDC)])
+    const replace = screen.getByRole('button', { name: 'Replace secret' })
+    expect(replace).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('New client secret for Keycloak'), { target: { value: 'rotated' } })
+    fireEvent.click(replace)
+    await waitFor(() => expect(mockUpdateSSOConfig).toHaveBeenCalledWith('cfg-1', { oidc_client_secret: 'rotated' }))
+    expect(mockRefresh).toHaveBeenCalled()
+  })
+})
+
+describe('single logout on a SAML card (W20 ADM-08c)', () => {
+  it('says on with the IdP SLO URL, off without one', () => {
+    renderWith([config({ id: 'a', idp_slo_url: 'https://idp.example/slo' }), config({ id: 'b', display_name: 'Other' })])
+    const lines = Array.from(document.querySelectorAll('[data-slo]')).map((n) => n.textContent)
+    expect(lines[0]).toContain('Single logout: on')
+    expect(lines[0]).toContain('https://idp.example/slo')
+    expect(lines[1]).toBe('Single logout: off (no IdP SLO URL)')
   })
 })

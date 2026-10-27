@@ -33,6 +33,7 @@ from app.models.postgres import (
     IdentityEventType,
     SSOConfiguration,
     SSOEnforcementMode,
+    SSOProviderType,
     User,
     UserRole,
 )
@@ -171,7 +172,7 @@ def _verify_xml_signature(xml_bytes: bytes, idp_certificate_pem: str):
     """
     try:
         from lxml import etree  # noqa: PLC0415
-        from signxml import XMLVerifier, DigestAlgorithm, SignatureMethod  # noqa: PLC0415
+        from signxml import DigestAlgorithm, SignatureConfiguration, SignatureMethod, XMLVerifier  # noqa: PLC0415
         from signxml.exceptions import InvalidSignature, InvalidCertificate  # noqa: PLC0415
     except ImportError as exc:
         # Fail closed: we cannot verify, so we cannot trust the assertion.
@@ -207,14 +208,17 @@ def _verify_xml_signature(xml_bytes: bytes, idp_certificate_pem: str):
     }
 
     try:
+        # signxml 5 (requirements pin 5.1.0): the allow-list is a SignatureConfiguration. The former
+        # ``XMLVerifier.VerifyConfig`` does not exist there, so every signed assertion raised and every real
+        # SAML sign-in was refused (found in W20 ADM-08c, the first test with a real signature).
         verified = XMLVerifier().verify(
             root,
             x509_cert=idp_certificate_pem,
-            expect_references=1,
             # Pin the allow-list so SHA-1 / MD5-based signatures are rejected.
-            expect_config=XMLVerifier.VerifyConfig(
-                expect_signature_method=allowed_sig,
-                expect_digest_method=allowed_digest,
+            expect_config=SignatureConfiguration(
+                expect_references=1,
+                signature_methods=frozenset(allowed_sig),
+                digest_algorithms=frozenset(allowed_digest),
             ),
         )
     except (InvalidSignature, InvalidCertificate) as exc:
@@ -765,6 +769,40 @@ def resolve_role_from_groups(
     return resolved
 
 
+def preview_role_from_groups(
+    groups: list[str],
+    role_mapping: dict | None,
+    default_role: UserRole,
+) -> dict:
+    """W20 ADM-08a: what ``resolve_role_from_groups`` would grant, with why — no logging, no side effects.
+
+    The settings page previews a mapping before it is saved: the role, the groups that matched, whether the
+    default role applied, and whether ``SSO_MAX_PROVISIONED_ROLE`` clamped the result.
+    """
+    best_idx, matched = -1, []
+    for group in groups:
+        mapped = (role_mapping or {}).get(group)
+        if not mapped:
+            continue
+        try:
+            idx = _ROLE_ORDER.index(UserRole(mapped))
+        except (ValueError, KeyError):
+            continue
+        matched.append(group)
+        best_idx = max(best_idx, idx)
+    unclamped = _ROLE_ORDER[best_idx] if best_idx >= 0 else default_role
+    ceiling = _provisioning_ceiling()
+    clamped = unclamped in _ROLE_ORDER and _ROLE_ORDER.index(unclamped) > _ROLE_ORDER.index(ceiling)
+    role = ceiling if clamped else unclamped
+    return {
+        "role": role.value,
+        "matched_groups": matched,
+        "source": "mapping" if best_idx >= 0 else "default",
+        "ceiling": ceiling.value,
+        "clamped": clamped,
+    }
+
+
 # ── SSO Configuration CRUD ──────────────────────────────────────────────────
 
 
@@ -797,9 +835,15 @@ async def jit_provision_or_link(
     name_id: str,
     attributes: dict[str, list[str]],
     ip_address: str | None = None,
+    email_verified: Optional[bool] = None,
 ) -> tuple[User, bool]:
     """
     Just-In-Time provision a new user or link an existing user from SAML assertion.
+
+    W20 ADM-08b: an OIDC sign-in passes ``name_id`` = the ID token's ``sub``, its claims
+    as ``attributes`` and ``email_verified``; the groups come from ``oidc_groups_claim``.
+    An IdP that says the email is NOT verified never links to an existing local account
+    with that email (that would hand the account to whoever typed the address).
 
     Returns (user, is_new_user).
     """
@@ -819,8 +863,12 @@ async def jit_provision_or_link(
 
     # Extract groups for role mapping
     groups: list[str] = []
-    if config.group_attribute and config.group_attribute in attributes:
-        groups = attributes[config.group_attribute]
+    if config.provider_type == SSOProviderType.OIDC:
+        group_key: Optional[str] = config.oidc_groups_claim or "groups"
+    else:
+        group_key = config.group_attribute
+    if group_key and group_key in attributes:
+        groups = attributes[group_key]
 
     # Check for existing federated identity
     result = await db.execute(
@@ -862,6 +910,9 @@ async def jit_provision_or_link(
         # Check if a user with this email already exists
         user_result = await db.execute(select(User).where(User.email == email))
         user = user_result.scalar_one_or_none()
+
+        if user is not None and email_verified is False:
+            raise ValueError("The identity provider has not verified this email; it cannot sign in to an existing account")
 
         if user is None:
             # JIT provision new user

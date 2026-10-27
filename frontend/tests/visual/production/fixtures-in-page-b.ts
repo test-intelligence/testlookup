@@ -1137,6 +1137,8 @@ export function ssoInPageWorld() {
     }, 'DELETE'],
     ['/api/v1/sso/configs', () => configs],
     ['/api/v1/scim-tokens', () => tokens],
+    // W20 ADM-09: the SCIM tab's groups section (none pushed).
+    ['/api/v1/sso/scim-groups', () => ({ groups: [], roles: ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD'] })],
     ['/api/v1/identity-events', () => []],
     ['/api/v1/sso/sync-status', () => []],
     ...LAYOUT,

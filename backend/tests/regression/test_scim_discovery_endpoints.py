@@ -58,9 +58,12 @@ async def test_resource_type_list_and_item_share_one_user_contract():
     item = await scim_resource_type("user", request, _token())
 
     assert listing["schemas"] == ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
-    assert listing["totalResults"] == 1
-    assert listing["itemsPerPage"] == 1
-    assert listing["Resources"] == [item]
+    # W20 ADM-09: Group joined User; the User entry is unchanged.
+    group = await scim_resource_type("group", request, _token())
+    assert listing["totalResults"] == 2
+    assert listing["itemsPerPage"] == 2
+    assert listing["Resources"] == [item, group]
+    assert (group["id"], group["endpoint"]) == ("Group", "/Groups")
     assert item["id"] == "User"
     assert item["endpoint"] == "/Users"
     assert item["schema"] == "urn:ietf:params:scim:schemas:core:2.0:User"
@@ -79,8 +82,10 @@ async def test_schema_list_describes_only_attributes_the_user_api_exposes():
         _token(),
     )
 
-    assert listing["totalResults"] == 1
-    assert listing["Resources"] == [item]
+    # W20 ADM-09: the Group schema joined the User schema.
+    assert listing["totalResults"] == 2
+    assert listing["Resources"][0] == item
+    assert listing["Resources"][1]["id"] == "urn:ietf:params:scim:schemas:core:2.0:Group"
     assert item["schemas"] == ["urn:ietf:params:scim:schemas:core:2.0:Schema"]
     assert item["id"] == "urn:ietf:params:scim:schemas:core:2.0:User"
     attributes = {attribute["name"]: attribute for attribute in item["attributes"]}
@@ -108,7 +113,7 @@ async def test_schema_list_describes_only_attributes_the_user_api_exposes():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("endpoint", "unknown"),
-    [("resource_type", "Group"), ("schema", "urn:example:unsupported")],
+    [("resource_type", "Widget"), ("schema", "urn:example:unsupported")],
 )
 async def test_unknown_discovery_item_returns_scim_404(endpoint, unknown):
     from app.routers import scim

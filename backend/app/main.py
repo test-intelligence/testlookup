@@ -208,6 +208,17 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # ty
 app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 app.add_exception_handler(RequestValidationError, validation_exception_handler)
 app.add_exception_handler(AnalyticsQueryError, analytics_query_error_handler)
+
+
+async def _vault_reference_error_handler(request, exc):  # W20 ADM-10: a malformed "vault:" reference in any secret field
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+from app.services.secret_providers.vault import VaultReferenceError  # noqa: E402
+
+app.add_exception_handler(VaultReferenceError, _vault_reference_error_handler)
 # Last resort: a JSON body with the request id for analytics routes, Starlette's
 # plain "Internal Server Error" everywhere else. Never a trace.
 app.add_exception_handler(Exception, unhandled_exception_handler)

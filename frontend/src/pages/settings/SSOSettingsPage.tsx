@@ -1,6 +1,11 @@
 /**
- * SSO & Identity Management (admin): SAML configurations, SCIM tokens,
+ * SSO & Identity Management (admin): SAML and OIDC configurations, SCIM tokens,
  * identity events and sync status.
+ *
+ * W20 ADM-08b: "Add SSO Configuration" asks for the provider type first; an
+ * OIDC configuration takes the issuer, client id, client secret (write-only —
+ * the card only says whether one is stored, and can replace it), scopes and the
+ * groups claim, and its card shows the redirect URI to register at the IdP.
  *
  * W27b PAN-06: the three questions (activating an enforced configuration,
  * deleting a configuration, revoking a SCIM token) are asked in the page
@@ -27,6 +32,8 @@ import { formatCompactDateTime, formatDay } from '@/utils/formatters'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
+import SSORoleMappingEditor from './SSORoleMappingEditor'
+import SCIMGroupsSection from './SCIMGroupsSection'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { usePermissions } from '@/hooks/usePermissions'
 
@@ -72,16 +79,30 @@ export default function SSOSettingsPage() {
   const [newToken, setNewToken] = useState<SCIMTokenCreated | null>(null);
   const [tokenName, setTokenName] = useState('');
   const [confirming, setConfirming] = useState<Confirming | null>(null);
+  const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
+  const isOidcForm = formData.provider_type === 'OIDC';
 
 
   const handleCreateConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.display_name || !formData.idp_entity_id || !formData.idp_sso_url || !formData.idp_certificate || !formData.sp_entity_id || !formData.sp_acs_url) {
+    const missing = isOidcForm
+      ? !formData.display_name || !formData.oidc_issuer || !formData.oidc_client_id || !formData.oidc_client_secret
+      : !formData.display_name || !formData.idp_entity_id || !formData.idp_sso_url || !formData.idp_certificate || !formData.sp_entity_id || !formData.sp_acs_url;
+    if (missing) {
       setError('Please fill in all required fields');
       return;
     }
+    // Send only the chosen type's fields (switching type keeps what was typed, but does not send it).
+    const { oidc_issuer, oidc_client_id, oidc_client_secret, oidc_scopes, oidc_groups_claim,
+      idp_entity_id, idp_sso_url, idp_slo_url, idp_certificate, sp_entity_id, sp_acs_url, audience, group_attribute,
+      ...common } = formData;
+    const payload: SSOConfigCreate = isOidcForm
+      ? { ...common, display_name: formData.display_name ?? '', provider_type: 'OIDC', oidc_issuer, oidc_client_id,
+          oidc_client_secret, oidc_scopes: oidc_scopes || undefined, oidc_groups_claim: oidc_groups_claim || undefined }
+      : { ...common, display_name: formData.display_name ?? '', provider_type: 'SAML', idp_entity_id, idp_sso_url,
+          idp_slo_url, idp_certificate, sp_entity_id, sp_acs_url, audience, group_attribute };
     try {
-      await createSSOConfig(formData as SSOConfigCreate);
+      await createSSOConfig(payload);
       setShowForm(false);
       setFormData({});
       refresh();
@@ -107,6 +128,18 @@ export default function SSOSettingsPage() {
       setTestResult(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Test connection failed');
+    }
+  };
+
+  const handleReplaceSecret = async (configId: string) => {
+    const value = (secretDraft[configId] || '').trim();
+    if (!value) return;
+    try {
+      await updateSSOConfig(configId, { oidc_client_secret: value });
+      setSecretDraft(d => ({ ...d, [configId]: '' }));
+      refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to replace the client secret');
     }
   };
 
@@ -164,7 +197,7 @@ export default function SSOSettingsPage() {
       <PageHeader
         compact
         title="SSO & Identity Management"
-        subtitle="Configure SAML SSO, manage SCIM provisioning tokens, and monitor identity events."
+        subtitle="Configure SAML or OIDC single sign-on, manage SCIM provisioning tokens, and monitor identity events."
         helpTopic={HELP_TOPIC}
       />
 
@@ -221,13 +254,64 @@ export default function SSOSettingsPage() {
               {showForm && (
                 <form onSubmit={handleCreateConfig} className="bg-[var(--color-bg-secondary)] rounded-lg p-4 space-y-3">
                   <div className="grid grid-cols-2 gap-3">
+                    <select
+                      aria-label="Provider type"
+                      value={formData.provider_type || 'SAML'}
+                      onChange={e => setFormData(d => ({ ...d, provider_type: e.target.value as 'SAML' | 'OIDC' }))}
+                      className="input text-sm"
+                    >
+                      <option value="SAML">SAML 2.0</option>
+                      <option value="OIDC">OpenID Connect (OIDC)</option>
+                    </select>
                     <input
                       placeholder="Display Name *"
                       value={formData.display_name || ''}
                       onChange={e => setFormData(d => ({ ...d, display_name: e.target.value }))}
-                      className="bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm"
+                      className="input text-sm"
                       required
                     />
+                  </div>
+                  {isOidcForm ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <input
+                        placeholder="Issuer URL * (e.g. https://keycloak.example.com/realms/testlookup)"
+                        value={formData.oidc_issuer || ''}
+                        onChange={e => setFormData(d => ({ ...d, oidc_issuer: e.target.value }))}
+                        className="input text-sm"
+                        required
+                      />
+                      <input
+                        placeholder="Client ID *"
+                        value={formData.oidc_client_id || ''}
+                        onChange={e => setFormData(d => ({ ...d, oidc_client_id: e.target.value }))}
+                        className="input text-sm"
+                        required
+                      />
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        placeholder="Client secret *"
+                        value={formData.oidc_client_secret || ''}
+                        onChange={e => setFormData(d => ({ ...d, oidc_client_secret: e.target.value }))}
+                        className="input text-sm"
+                        required
+                      />
+                      <input
+                        placeholder="Scopes (default: openid email profile)"
+                        value={formData.oidc_scopes || ''}
+                        onChange={e => setFormData(d => ({ ...d, oidc_scopes: e.target.value }))}
+                        className="input text-sm"
+                      />
+                      <input
+                        placeholder="Groups claim (default: groups)"
+                        value={formData.oidc_groups_claim || ''}
+                        onChange={e => setFormData(d => ({ ...d, oidc_groups_claim: e.target.value }))}
+                        className="input text-sm"
+                      />
+                    </div>
+                  ) : (
+                  <>
+                  <div className="grid grid-cols-2 gap-3">
                     <input
                       placeholder="IdP Entity ID *"
                       value={formData.idp_entity_id || ''}
@@ -257,6 +341,12 @@ export default function SSOSettingsPage() {
                       required
                     />
                     <input
+                      placeholder="IdP SLO URL (optional: enables single logout)"
+                      value={formData.idp_slo_url || ''}
+                      onChange={e => setFormData(d => ({ ...d, idp_slo_url: e.target.value }))}
+                      className="input text-sm"
+                    />
+                    <input
                       placeholder="Group Attribute (e.g., memberOf)"
                       value={formData.group_attribute || ''}
                       onChange={e => setFormData(d => ({ ...d, group_attribute: e.target.value }))}
@@ -270,6 +360,8 @@ export default function SSOSettingsPage() {
                     className="w-full bg-[var(--color-bg-card)] text-[var(--color-text)] rounded px-3 py-2 text-sm font-mono h-32"
                     required
                   />
+                  </>
+                  )}
                   <div className="flex gap-2">
                     <select
                       value={formData.enforcement_mode || 'OPTIONAL'}
@@ -308,12 +400,34 @@ export default function SSOSettingsPage() {
                   <div className="flex justify-between items-start">
                     <div>
                       <h3 className="text-[var(--color-text)] font-medium">{config.display_name}</h3>
-                      <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                        {config.provider_type} | Entity: {config.idp_entity_id}
-                      </p>
-                      <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                        Cert fingerprint: {config.idp_certificate_fingerprint.slice(0, 16)}...
-                      </p>
+                      {config.provider_type === 'OIDC' ? (
+                        <div data-oidc-config="" className="text-xs text-[var(--color-text-muted)] mt-1 space-y-1">
+                          <p>OIDC | Issuer: {config.oidc_issuer}</p>
+                          <p>
+                            Client: {config.oidc_client_id} · secret{' '}
+                            <span className={config.oidc_client_secret_set ? 'text-[var(--status-passed)]' : 'text-[var(--ui-danger)]'}>
+                              {config.oidc_client_secret_set ? '(set)' : '(not set)'}
+                            </span>
+                            {' '}· scopes: {config.oidc_scopes || 'openid email profile'}
+                          </p>
+                          <p>Redirect URI (register it at the IdP): <code className="font-mono">{config.oidc_redirect_uri}</code></p>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                            {config.provider_type} | Entity: {config.idp_entity_id}
+                          </p>
+                          <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                            Cert fingerprint: {config.idp_certificate_fingerprint.slice(0, 16)}...
+                          </p>
+                          {/* W20 ADM-08c: IdP-initiated single logout is served only while an IdP SLO URL is set. */}
+                          <p data-slo="" className="text-xs text-[var(--color-text-muted)] mt-1">
+                            {config.idp_slo_url
+                              ? <>Single logout: on: signing out at the IdP ends TestLookup sessions (answers {config.idp_slo_url})</>
+                              : 'Single logout: off (no IdP SLO URL)'}
+                          </p>
+                        </>
+                      )}
                     </div>
                     <div className="flex items-center gap-2">
                       <span className={`px-2 py-0.5 rounded text-xs ${config.is_active ? 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]' : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]'}`}>
@@ -362,6 +476,28 @@ export default function SSOSettingsPage() {
                       onCancel={() => setConfirming(null)}
                     />
                   )}
+                  {config.provider_type === 'OIDC' && (
+                    <div className="flex items-center gap-2 pt-1">
+                      <input
+                        type="password"
+                        autoComplete="new-password"
+                        aria-label={`New client secret for ${config.display_name}`}
+                        placeholder="New client secret"
+                        value={secretDraft[config.id] || ''}
+                        onChange={e => setSecretDraft(d => ({ ...d, [config.id]: e.target.value }))}
+                        className="input text-xs py-1 !w-64"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleReplaceSecret(config.id)}
+                        disabled={!(secretDraft[config.id] || '').trim()}
+                        className="btn-secondary text-xs px-3 py-1 disabled:opacity-50"
+                      >
+                        Replace secret
+                      </button>
+                    </div>
+                  )}
+                  <SSORoleMappingEditor key={`${config.id}-${config.updated_at ?? ''}`} config={config} onSaved={refresh} />
                   {config.last_test_at && (
                     <p className="text-xs text-[var(--color-text-muted)]">
                       Last test: {formatCompactDateTime(config.last_test_at)} —{' '}
@@ -447,6 +583,7 @@ export default function SSOSettingsPage() {
                   </Fragment>
                 ))}
               </div>
+              <SCIMGroupsSection />
             </div>
           )}
 

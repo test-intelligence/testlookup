@@ -10,7 +10,7 @@ List Scim Tokens
 
 List all SCIM tokens (ADMIN only).
 
-Source: [backend/app/routers/scim.py:823](../../../backend/app/routers/scim.py#L823).
+Source: [backend/app/routers/scim.py:1064](../../../backend/app/routers/scim.py#L1064).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -85,7 +85,7 @@ Create Token
 
 Create a new SCIM bearer token (ADMIN only). The raw token is shown once.
 
-Source: [backend/app/routers/scim.py:835](../../../backend/app/routers/scim.py#L835).
+Source: [backend/app/routers/scim.py:1076](../../../backend/app/routers/scim.py#L1076).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -166,7 +166,7 @@ Revoke Scim Token
 
 Revoke a SCIM token (ADMIN only).
 
-Source: [backend/app/routers/scim.py:880](../../../backend/app/routers/scim.py#L880).
+Source: [backend/app/routers/scim.py:1121](../../../backend/app/routers/scim.py#L1121).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

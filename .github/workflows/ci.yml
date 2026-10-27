@@ -814,6 +814,8 @@ jobs:
           tests/integration/test_password_reset_postgres.py
           tests/integration/test_github_app_postgres.py
           tests/integration/test_gitlab_release_sync_postgres.py
+          tests/integration/test_scim_groups_postgres.py
+          tests/integration/test_sso_oidc_postgres.py
           tests/integration/test_defects_list_fields_postgres.py
           tests/integration/test_analytics_scope_postgres.py
           tests/integration/test_analytics_epoch_redis_postgres.py

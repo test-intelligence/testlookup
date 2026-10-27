@@ -49,6 +49,7 @@ function renderAt(entry: string, { strict = false } = {}) {
 describe('SSOCallbackPage', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    sessionStorage.clear()
     exchange.mockResolvedValue(TOKENS)
     fetchUser.mockResolvedValue(USER)
   })
@@ -74,6 +75,16 @@ describe('SSOCallbackPage', () => {
     renderAt('/sso/callback#code=abc', { strict: true })
     await screen.findByTestId('landed')
     expect(exchange).toHaveBeenCalledTimes(1)
+  })
+
+  it('a remounted page never spends the same code again (W20 ADM-08b walk: a duplicate exchange → 400)', async () => {
+    const first = renderAt('/sso/callback#code=abc')
+    await screen.findByTestId('landed')
+    first.unmount()
+    renderAt('/sso/callback#code=abc')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(exchange).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(/expired or was already used/i)).toBeNull()
   })
 
   it('says so when the code has expired or was used, and offers sign-in', async () => {

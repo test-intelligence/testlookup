@@ -6,13 +6,21 @@ export interface SSOConfig {
   id: string;
   display_name: string;
   provider_type: 'SAML' | 'OIDC';
-  idp_entity_id: string;
-  idp_sso_url: string;
+  /** SAML fields — null on an OIDC configuration. */
+  idp_entity_id: string | null;
+  idp_sso_url: string | null;
   idp_slo_url: string | null;
   idp_certificate_fingerprint: string;
-  sp_entity_id: string;
-  sp_acs_url: string;
+  sp_entity_id: string | null;
+  sp_acs_url: string | null;
   audience: string | null;
+  /** W20 ADM-08b: OIDC fields — null on a SAML configuration. The client secret is never returned. */
+  oidc_issuer?: string | null;
+  oidc_client_id?: string | null;
+  oidc_scopes?: string | null;
+  oidc_groups_claim?: string | null;
+  oidc_client_secret_set?: boolean;
+  oidc_redirect_uri?: string | null;
   role_mapping: Record<string, string> | null;
   default_role: string;
   group_attribute: string | null;
@@ -28,13 +36,18 @@ export interface SSOConfig {
 export interface SSOConfigCreate {
   display_name: string;
   provider_type?: 'SAML' | 'OIDC';
-  idp_entity_id: string;
-  idp_sso_url: string;
+  idp_entity_id?: string;
+  idp_sso_url?: string;
   idp_slo_url?: string;
-  idp_certificate: string;
-  sp_entity_id: string;
-  sp_acs_url: string;
+  idp_certificate?: string;
+  sp_entity_id?: string;
+  sp_acs_url?: string;
   audience?: string;
+  oidc_issuer?: string;
+  oidc_client_id?: string;
+  oidc_client_secret?: string;
+  oidc_scopes?: string;
+  oidc_groups_claim?: string;
   role_mapping?: Record<string, string>;
   default_role?: string;
   group_attribute?: string;
@@ -50,6 +63,12 @@ export interface SSOConfigUpdate {
   sp_entity_id?: string;
   sp_acs_url?: string;
   audience?: string;
+  oidc_issuer?: string;
+  oidc_client_id?: string;
+  /** Write-only: a non-empty value replaces the stored secret. */
+  oidc_client_secret?: string;
+  oidc_scopes?: string;
+  oidc_groups_claim?: string;
   role_mapping?: Record<string, string>;
   default_role?: string;
   group_attribute?: string;
@@ -69,6 +88,9 @@ export interface SSOStatus {
   sso_enabled: boolean;
   has_active_config: boolean;
   enforcement_mode: string | null;
+  /** W20 ADM-08b: the active configuration's type and name ("Sign in with <display_name>"). */
+  provider_type?: 'SAML' | 'OIDC' | null;
+  display_name?: string | null;
 }
 
 export interface SCIMToken {
@@ -152,6 +174,23 @@ export async function updateSSOConfig(id: string, payload: SSOConfigUpdate): Pro
   return data;
 }
 
+/** W20 ADM-08a: the role a user in `groups` gets; `role_mapping` / `default_role` preview an unsaved edit. */
+export interface SSORolePreview {
+  role: string;
+  matched_groups: string[];
+  source: 'mapping' | 'default';
+  ceiling: string;
+  clamped: boolean;
+}
+
+export async function previewSSORole(
+  id: string,
+  body: { groups: string[]; role_mapping?: Record<string, string>; default_role?: string },
+): Promise<SSORolePreview> {
+  const { data } = await api.post<SSORolePreview>(`/api/v1/sso/configs/${id}/preview-role`, body);
+  return data;
+}
+
 export async function deleteSSOConfig(id: string): Promise<void> {
   await api.delete(`/api/v1/sso/configs/${id}`);
 }
@@ -208,5 +247,37 @@ export async function getIdentitySyncStatus(ssoConfigId?: string): Promise<Ident
   const { data } = await api.get<IdentitySyncStatus>('/api/v1/identity/sync-status', {
     params: ssoConfigId ? { sso_config_id: ssoConfigId } : undefined,
   });
+  return data;
+}
+
+// ── SCIM groups → project roles (W20 ADM-09) ────────────────────────────────
+
+export interface SCIMGroupMappingRow {
+  project_id: string;
+  project_name?: string;
+  role: string;
+}
+
+export interface SCIMGroupSummary {
+  id: string;
+  display_name: string;
+  external_id: string | null;
+  member_count: number;
+  mappings: SCIMGroupMappingRow[];
+}
+
+export async function listSCIMGroups(): Promise<{ groups: SCIMGroupSummary[]; roles: string[] }> {
+  const { data } = await api.get<{ groups: SCIMGroupSummary[]; roles: string[] }>('/api/v1/sso/scim-groups');
+  return data;
+}
+
+export async function putSCIMGroupMappings(
+  groupId: string,
+  mappings: { project_id: string; role: string }[],
+): Promise<{ reconciled_users: number; groups: SCIMGroupSummary[] }> {
+  const { data } = await api.put<{ reconciled_users: number; groups: SCIMGroupSummary[] }>(
+    `/api/v1/sso/scim-groups/${groupId}/mappings`,
+    { mappings },
+  );
   return data;
 }

@@ -1046,9 +1046,10 @@ async def _load_integrations_config(db: AsyncSession) -> dict:
     result = await db.execute(select(AppSetting).where(AppSetting.key == _INTEGRATIONS_KEY))
     row = result.scalar_one_or_none()
     overrides = dict(row.value) if row and row.value else {}
-    from app.services.integration_config_service import resolve_global_integrations
+    from app.services.integration_config_service import list_vault_reference_fields, resolve_global_integrations
 
-    return await resolve_global_integrations(db, overrides=overrides)
+    cfg = await resolve_global_integrations(db, overrides=overrides)
+    return {**cfg, "_vault_fields": await list_vault_reference_fields(db)}
 
 
 def _integrations_read(cfg: dict) -> IntegrationsConfigRead:
@@ -1081,6 +1082,7 @@ def _integrations_read(cfg: dict) -> IntegrationsConfigRead:
         github_repo=cfg["github_repo"],
         github_token_set=bool(cfg.get("github_token")),
         environment_fields=list(cfg.get("_environment_fields") or []),
+        vault_fields=list(cfg.get("_vault_fields") or []),
     )
 
 
