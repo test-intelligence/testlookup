@@ -152,6 +152,23 @@ export async function updateSSOConfig(id: string, payload: SSOConfigUpdate): Pro
   return data;
 }
 
+/** W20 ADM-08a: the role a user in `groups` gets; `role_mapping` / `default_role` preview an unsaved edit. */
+export interface SSORolePreview {
+  role: string;
+  matched_groups: string[];
+  source: 'mapping' | 'default';
+  ceiling: string;
+  clamped: boolean;
+}
+
+export async function previewSSORole(
+  id: string,
+  body: { groups: string[]; role_mapping?: Record<string, string>; default_role?: string },
+): Promise<SSORolePreview> {
+  const { data } = await api.post<SSORolePreview>(`/api/v1/sso/configs/${id}/preview-role`, body);
+  return data;
+}
+
 export async function deleteSSOConfig(id: string): Promise<void> {
   await api.delete(`/api/v1/sso/configs/${id}`);
 }

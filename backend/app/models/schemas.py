@@ -5932,6 +5932,22 @@ class SSOTestConnectionResponse(BaseModel):
     certificate_expires_at: Optional[str] = None
 
 
+class SSORolePreviewRequest(BaseModel):
+    """W20 ADM-08a: preview the role a user in ``groups`` gets. ``role_mapping`` / ``default_role`` preview an
+    unsaved edit; omitted, the stored configuration answers."""
+    groups: list[str] = Field(default_factory=list, max_length=200)
+    role_mapping: Optional[dict[str, str]] = None
+    default_role: Optional[str] = None
+
+
+class SSORolePreviewResponse(BaseModel):
+    role: str
+    matched_groups: list[str]
+    source: Literal["mapping", "default"]
+    ceiling: str
+    clamped: bool
+
+
 class SAMLLoginInitResponse(BaseModel):
     """Response with redirect URL for SP-initiated SAML login."""
     redirect_url: str

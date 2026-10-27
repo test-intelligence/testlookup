@@ -27,6 +27,7 @@ import { formatCompactDateTime, formatDay } from '@/utils/formatters'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
+import SSORoleMappingEditor from './SSORoleMappingEditor'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { usePermissions } from '@/hooks/usePermissions'
 
@@ -362,6 +363,7 @@ export default function SSOSettingsPage() {
                       onCancel={() => setConfirming(null)}
                     />
                   )}
+                  <SSORoleMappingEditor key={`${config.id}-${config.updated_at ?? ''}`} config={config} onSaved={refresh} />
                   {config.last_test_at && (
                     <p className="text-xs text-[var(--color-text-muted)]">
                       Last test: {formatCompactDateTime(config.last_test_at)} —{' '}

@@ -765,6 +765,40 @@ def resolve_role_from_groups(
     return resolved
 
 
+def preview_role_from_groups(
+    groups: list[str],
+    role_mapping: dict | None,
+    default_role: UserRole,
+) -> dict:
+    """W20 ADM-08a: what ``resolve_role_from_groups`` would grant, with why — no logging, no side effects.
+
+    The settings page previews a mapping before it is saved: the role, the groups that matched, whether the
+    default role applied, and whether ``SSO_MAX_PROVISIONED_ROLE`` clamped the result.
+    """
+    best_idx, matched = -1, []
+    for group in groups:
+        mapped = (role_mapping or {}).get(group)
+        if not mapped:
+            continue
+        try:
+            idx = _ROLE_ORDER.index(UserRole(mapped))
+        except (ValueError, KeyError):
+            continue
+        matched.append(group)
+        best_idx = max(best_idx, idx)
+    unclamped = _ROLE_ORDER[best_idx] if best_idx >= 0 else default_role
+    ceiling = _provisioning_ceiling()
+    clamped = unclamped in _ROLE_ORDER and _ROLE_ORDER.index(unclamped) > _ROLE_ORDER.index(ceiling)
+    role = ceiling if clamped else unclamped
+    return {
+        "role": role.value,
+        "matched_groups": matched,
+        "source": "mapping" if best_idx >= 0 else "default",
+        "ceiling": ceiling.value,
+        "clamped": clamped,
+    }
+
+
 # ── SSO Configuration CRUD ──────────────────────────────────────────────────
 
 

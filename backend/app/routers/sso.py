@@ -28,6 +28,8 @@ from app.models.schemas import (
     SSOConfigUpdate,
     SSOExchangeRequest,
     SSOLoginResponse,
+    SSORolePreviewRequest,
+    SSORolePreviewResponse,
     SSOTestConnectionResponse,
     UserResponse,
 )
@@ -41,6 +43,7 @@ from app.services.sso_service import (
     jit_provision_or_link,
     log_identity_event,
     parse_saml_response,
+    preview_role_from_groups,
     probe_idp_endpoint,
     remember_saml_request,
     safe_relay_state,
@@ -518,6 +521,35 @@ async def delete_sso_config(
     await db.commit()
     logger.info("SSO config deleted: %s by %s", config.display_name, current_user.username)
     return None
+
+
+@router.post("/configs/{config_id}/preview-role", response_model=SSORolePreviewResponse)
+async def preview_sso_role(
+    config_id: uuid.UUID,
+    payload: SSORolePreviewRequest,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """W20 ADM-08a: the role a user in these IdP groups would get (ADMIN only; pure, writes nothing).
+
+    The posted ``role_mapping`` / ``default_role`` preview an unsaved edit; otherwise the stored ones answer.
+    """
+    config = (await db.execute(select(SSOConfiguration).where(SSOConfiguration.id == config_id))).scalar_one_or_none()
+    if not config:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO configuration not found")
+    valid_roles = {r.value for r in UserRole}
+    mapping = payload.role_mapping if payload.role_mapping is not None else (config.role_mapping or {})
+    for group_name, role_value in mapping.items():
+        if role_value not in valid_roles:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid role '{role_value}' in role_mapping for group '{group_name}'",
+            )
+    default = payload.default_role or config.default_role
+    if default not in valid_roles:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid default role '{default}'")
+    groups = [g.strip() for g in payload.groups if g and g.strip()]
+    return preview_role_from_groups(groups, mapping, UserRole(default))
 
 
 @router.post("/configs/{config_id}/test", response_model=SSOTestConnectionResponse)
