@@ -10,7 +10,7 @@ Get Gitlab Integration
 
 Return the project's GitLab config (defaults when unconfigured).
 
-Source: [backend/app/routers/gitlab_integration.py:74](../../../backend/app/routers/gitlab_integration.py#L74).
+Source: [backend/app/routers/gitlab_integration.py:75](../../../backend/app/routers/gitlab_integration.py#L75).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -94,7 +94,7 @@ Create or replace the GitLab integration for a project. QA_LEAD+.
 ``token`` is write-only: ``None`` leaves the stored PAT alone, ``""``
 clears it, any value sets/rotates it.
 
-Source: [backend/app/routers/gitlab_integration.py:89](../../../backend/app/routers/gitlab_integration.py#L89).
+Source: [backend/app/routers/gitlab_integration.py:90](../../../backend/app/routers/gitlab_integration.py#L90).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -185,7 +185,7 @@ Test Gitlab Integration
 
 Probe the configured project + PAT and report reachability. QA_LEAD+.
 
-Source: [backend/app/routers/gitlab_integration.py:128](../../../backend/app/routers/gitlab_integration.py#L128).
+Source: [backend/app/routers/gitlab_integration.py:129](../../../backend/app/routers/gitlab_integration.py#L129).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

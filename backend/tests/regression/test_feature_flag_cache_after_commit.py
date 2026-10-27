@@ -56,9 +56,14 @@ async def test_patch_commits_before_invalidating_shared_caches():
         calls.append("update")
         return SimpleNamespace(key="release_guard")
 
+    async def no_flag(*args, **kwargs):
+        # W21 ACT-01: the route reads the stored allow-list first (for
+        # feature_flag.project_toggled); that read is not part of the ordering.
+        return None
+
     with patch.object(router.ff_service, "update_flag", new=update), patch.object(
         router.ff_service, "invalidate_flag_cache", new=invalidate,
-    ), _attach(calls):
+    ), patch.object(router.ff_service, "get_flag", new=no_flag), _attach(calls):
         await router.update_feature_flag(
             "release_guard", _Payload(), db=db, current_user=SimpleNamespace(),
         )

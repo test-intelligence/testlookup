@@ -12,7 +12,7 @@ Delete the GitHub integration row for a project. The stored PAT
 secret is cleared from ``secret_service`` via the standard upsert
 path with an empty value.
 
-Source: [backend/app/routers/github_integration.py:104](../../../backend/app/routers/github_integration.py#L104).
+Source: [backend/app/routers/github_integration.py:111](../../../backend/app/routers/github_integration.py#L111).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -86,7 +86,7 @@ Get Github Integration
 
 
 
-Source: [backend/app/routers/github_integration.py:42](../../../backend/app/routers/github_integration.py#L42).
+Source: [backend/app/routers/github_integration.py:43](../../../backend/app/routers/github_integration.py#L43).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -173,7 +173,7 @@ Upsert Github Integration
 
 Create or replace the GitHub integration for a project. QA_LEAD+.
 
-Source: [backend/app/routers/github_integration.py:61](../../../backend/app/routers/github_integration.py#L61).
+Source: [backend/app/routers/github_integration.py:62](../../../backend/app/routers/github_integration.py#L62).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -265,7 +265,7 @@ Test Github Integration
 Probe the configured repo + PAT and report whether the
 integration can actually reach GitHub. QA_LEAD+.
 
-Source: [backend/app/routers/github_integration.py:88](../../../backend/app/routers/github_integration.py#L88).
+Source: [backend/app/routers/github_integration.py:89](../../../backend/app/routers/github_integration.py#L89).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

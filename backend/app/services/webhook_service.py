@@ -438,7 +438,26 @@ async def create_subscription(
         row.has_secret = True
 
     await _audit(db, actor, "create", row)
+    await _record_webhook_event(
+        db, row, "webhook.created", actor, context={"target_host": urlsplit(target_url).hostname or "?"},
+    )
     return row
+
+
+async def _record_webhook_event(
+    db: AsyncSession, row: WebhookSubscription, event_type: str, actor: User, **kwargs: Any,
+) -> None:
+    """W21 ACT-01: one ``webhook.*`` outcome row on the request session.
+
+    Staged beside the subscription write and committed with it by ``get_db``.
+    The target URL and secret never enter the ledger -- only the host.
+    """
+    from app.services.activity.service import ActorRef, record as record_activity
+
+    await record_activity(
+        db, project_id=row.project_id, event_type=event_type, actor=ActorRef.from_user(actor),
+        entity_id=row.id, entity_label=row.name, **kwargs,
+    )
 
 
 async def update_subscription(
@@ -469,6 +488,22 @@ async def update_subscription(
         raise HTTPException(status_code=_s.HTTP_404_NOT_FOUND, detail="Subscription not found")
 
     now = datetime.now(timezone.utc)
+    changed: list[str] = []
+    if name is not None and name != row.name:
+        changed.append("name")
+    if target_url is not None and target_url != row.target_url:
+        changed.append("target")
+    if events is not None and list(events) != list(row.events or []):
+        changed.append("events")
+    if enabled and not bool(getattr(row, "enabled", True)):
+        changed.append("re-enabled")
+    if max_retries is not None and max_retries != row.max_retries:
+        changed.append("max retries")
+    if breaker_threshold is not None and breaker_threshold != row.breaker_threshold:
+        changed.append("breaker threshold")
+    if secret is not None:
+        changed.append("secret")
+    paused = enabled is False and bool(getattr(row, "enabled", True))
     if name is not None:
         row.name = name
     if target_url is not None:
@@ -509,6 +544,13 @@ async def update_subscription(
     # All mutations land in get_db's single commit at request end. Audit
     # is independent (own session via ``_audit``).
     await _audit(db, actor, "update", row)
+    # A person's pause reads as its own event; any other edit as ``updated``.
+    if paused:
+        await _record_webhook_event(db, row, "webhook.disabled", actor)
+    if changed:
+        await _record_webhook_event(
+            db, row, "webhook.updated", actor, context={"changed": ", ".join(changed)}, changed_fields=changed,
+        )
     return row
 
 
@@ -520,6 +562,7 @@ async def delete_subscription(
     if row is None:
         raise HTTPException(status_code=_s.HTTP_404_NOT_FOUND, detail="Subscription not found")
     await _audit(db, actor, "delete", row)
+    await _record_webhook_event(db, row, "webhook.deleted", actor)
     await db.delete(row)
     # get_db commits at request end. Audit is independent (own session).
 

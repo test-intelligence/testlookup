@@ -172,7 +172,7 @@ async def test_a_bound_key_may_deactivate_its_own_projects_policy():
     from app.routers.release_gate_policies import deactivate_policy
 
     policy = SimpleNamespace(
-        project_id=BOUND, is_draft=False, is_active=True, name="own", version=1
+        id=uuid.uuid4(), project_id=BOUND, is_draft=False, is_active=True, name="own", version=1
     )
     db = _db(policy)
 

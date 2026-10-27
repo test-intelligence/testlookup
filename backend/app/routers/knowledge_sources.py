@@ -25,6 +25,7 @@ from app.models.schemas import (
     KnowledgeSyncEventResponse,
 )
 from app.services import knowledge_source_service as svc
+from app.services.activity.service import ActorRef, record as record_activity
 
 router = APIRouter(prefix="/api/v1/knowledge-sources", tags=["Knowledge Sources"])
 
@@ -68,6 +69,12 @@ async def create_knowledge_source(
     current_user: User = Depends(get_current_active_user),
 ):
     source = await svc.create_source(db, project_id, payload.model_dump(), current_user)
+    await db.flush()
+    # W21 ACT-01: outcome rows, committed with the source write itself.
+    await record_activity(
+        db, project_id=source.project_id, event_type="knowledge_source.added", actor=ActorRef.from_user(current_user),
+        entity_id=source.id, entity_label=source.title, context={"source_type": source.source_type},
+    )
     await db.commit()
     await db.refresh(source)
     return source
@@ -116,7 +123,12 @@ async def delete_knowledge_source(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    source = await svc.get_source_or_404(db, source_id, current_user)
     await svc.delete_source(db, source_id, current_user)
+    await record_activity(
+        db, project_id=source.project_id, event_type="knowledge_source.removed", actor=ActorRef.from_user(current_user),
+        entity_id=source.id, entity_label=source.title,
+    )
     await db.commit()
 
 

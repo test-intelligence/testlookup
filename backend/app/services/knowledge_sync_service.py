@@ -182,6 +182,16 @@ async def run_sync(
             duration_ms=duration_ms,
         )
         db.add(event)
+        # W21 ACT-01: only a sync that indexed content records a row (an
+        # unchanged-content skip or a failure does not), committed with the
+        # sync event. System actor: the worker ran it, whoever triggered it.
+        from app.services.activity.service import ActorRef, record as record_activity
+
+        await record_activity(
+            db, project_id=source.project_id, event_type="knowledge_source.synced",
+            actor=ActorRef.system(f"knowledge_sync:{trigger}"), entity_id=source.id, entity_label=source.title,
+            context={"chunk_count": chunk_count, "content_changed": content_changed},
+        )
         await db.commit()
 
         # RAG-12: Mark generated cases stale when content changed

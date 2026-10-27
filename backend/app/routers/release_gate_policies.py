@@ -26,6 +26,7 @@ from app.models.schemas import (
     ReleaseGatePolicyUpdate,
     RuleEvaluationResponse,
 )
+from app.services.activity.service import ActorRef, record as record_activity
 
 logger = logging.getLogger("routers.release_gate_policies")
 
@@ -53,6 +54,32 @@ ALREADY_PUBLISHED_DETAIL = "Policy is already published"
 #: project-scope version constraint of 0032). Any other IntegrityError is a
 #: real bug and is re-raised.
 _SCOPE_RACE_INDEX_PREFIX = "uq_rgp_"
+
+
+async def _record_policy_event(
+    db: AsyncSession,
+    policy: ReleaseGatePolicy,
+    event_type: str,
+    user: User,
+    **kwargs,
+) -> None:
+    """W21 ACT-01: one ``policy.*`` row, staged on the route's session.
+
+    Outcome mode: committed with the policy write itself, so a refused or
+    rolled-back write leaves no row. The system-default policy (no project)
+    has no project feed to land in and records nothing.
+    """
+    if policy.project_id is None:
+        return
+    await record_activity(
+        db,
+        project_id=policy.project_id,
+        event_type=event_type,
+        actor=ActorRef.from_user(user),
+        entity_id=policy.id,
+        entity_label=f"{policy.name} v{policy.version}",
+        **kwargs,
+    )
 
 
 def _scope_lock_key(project_id: Optional[uuid.UUID]) -> str:
@@ -308,6 +335,8 @@ async def create_policy(
     )
     db.add(policy)
     try:
+        await db.flush()
+        await _record_policy_event(db, policy, "policy.created", current_user)
         await db.commit()
     except IntegrityError as exc:
         # Backstop for a writer that skipped the lock (manual SQL, an old
@@ -349,8 +378,14 @@ async def update_policy(
         _validate_policy_document(doc)
         update_data["rules"] = doc.model_dump() if hasattr(doc, "model_dump") else doc
 
+    changed = [field for field, value in update_data.items() if getattr(policy, field) != value]
     for field, value in update_data.items():
         setattr(policy, field, value)
+    if changed:
+        await _record_policy_event(
+            db, policy, "policy.updated", current_user,
+            context={"changed": ", ".join(changed)}, changed_fields=changed,
+        )
 
     await db.commit()
     await db.refresh(policy)
@@ -411,6 +446,7 @@ async def publish_policy(
     policy.is_active = True
     policy.activated_by = current_user.id
     policy.activated_at = datetime.now(timezone.utc)
+    await _record_policy_event(db, policy, "policy.activated", current_user)
 
     try:
         await db.commit()
@@ -445,7 +481,16 @@ async def deactivate_policy(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found")
     _enforce_policy_binding(current_user, policy.project_id)
 
+    was_active = policy.is_active
     policy.is_active = False
+    if was_active:
+        # No ``policy.deactivated`` name: deactivation is an edit of the
+        # active flag, so it reads as one in the feed.
+        await _record_policy_event(
+            db, policy, "policy.updated", current_user,
+            context={"changed": "deactivated"}, changed_fields=["is_active"],
+            before={"is_active": True}, after={"is_active": False},
+        )
     await db.commit()
     await db.refresh(policy)
     # VIZ-212: the readiness band falls back to another policy now.

@@ -6864,6 +6864,30 @@ def run_duplicate_detection(
 # ── Retention purge (PMF US-11.4) ───────────────────────────────────────────
 
 
+async def _record_retention_purge(project_id: Any, out: dict[str, Any]) -> None:
+    """W21 ACT-01: ``retention.purge_executed`` AFTER the purge commit.
+
+    On its own session, never on the purge's: the purge deletes old activity
+    rows itself, and a row written before the commit could claim deletions
+    that then rolled back. ``count`` is every Postgres row the purge removed.
+    """
+    from app.db.postgres import AsyncSessionLocal
+    from app.services.activity.service import ActorRef, record as record_activity
+
+    pg_counts = ((out.get("counts") or {}).get("postgres") or {})
+    removed = sum(int(v) for v in pg_counts.values() if isinstance(v, (int, float)))
+    try:
+        async with AsyncSessionLocal() as ledger_db:
+            await record_activity(
+                ledger_db, project_id=project_id, event_type="retention.purge_executed",
+                actor=ActorRef.system("retention-scheduler"), entity_id=project_id,
+                entity_label="Retention purge", context={"count": removed, "runs": int(pg_counts.get("runs") or 0)},
+            )
+            await ledger_db.commit()
+    except Exception as exc:  # the purge itself already committed
+        logger.warning("[retention] activity write failed for project %s: %s", project_id, exc)
+
+
 async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any]:
     """Execute-mode retention purge — one project or the nightly sweep.
 
@@ -6982,6 +7006,8 @@ async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any
                 "[retention] purge-audit write failed for project %s: %s",
                 pid, exc,
             )
+        if not errors and out is not None:
+            await _record_retention_purge(pid, out)
 
         summary["results"][str(pid)] = {
             "counts": (out or {}).get("counts"),
