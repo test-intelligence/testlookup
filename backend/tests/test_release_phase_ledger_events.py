@@ -44,8 +44,22 @@ def _audits(db):
     return [row for row in db.added if isinstance(row, AccessAuditLog)]
 
 
+#: W21 ACT-01: every real phase change also stages a ``release.phase_updated``
+#: row (and ``release.phase_advanced`` into in_progress). These tests are about
+#: the GATE's rows, so the CRUD rows are set aside here and asserted in
+#: ``tests/integration/test_activity_ledger_slice_a_postgres.py``.
+_PHASE_CRUD_EVENTS = {"release.phase_updated", "release.phase_advanced"}
+
+
+def _gate_rows(db):
+    return [
+        row for row in db.added
+        if not (isinstance(row, ProjectActivityEvent) and row.event_type in _PHASE_CRUD_EVENTS)
+    ]
+
+
 def _ledger(db):
-    return [row for row in db.added if isinstance(row, ProjectActivityEvent)]
+    return [row for row in _gate_rows(db) if isinstance(row, ProjectActivityEvent)]
 
 
 class _Phase:
@@ -196,8 +210,10 @@ async def test_a_go_phase_stages_nothing_and_reads_no_release(gate):
     phase, _ = await _update(db, gate.phase, _actor(), status="completed")
 
     assert phase.status == "completed"
-    assert db.added == []
-    assert db.gets == 0, "the release name was read for an event that was never staged"
+    assert _gate_rows(db) == []
+    # W21 ACT-01: the one read is the phase_updated row's ``db.get(Release)``
+    # (an identity-map hit in a real request), never a gate-event read.
+    assert db.gets == 1
     # The project lookup and the all-done COUNT, nothing more.
     assert db.executed == 2
 
@@ -211,8 +227,8 @@ async def test_with_enforcement_off_nothing_is_staged_and_no_statement_is_added(
                              skip_reason="vendor environment down")
 
     assert phase.status == "skipped"
-    assert db.added == []
-    assert db.gets == 0
+    assert _gate_rows(db) == []
+    assert db.gets == 1  # W21 ACT-01: the phase_updated row's label, as above
     assert db.executed == 1, "the flag-off path must spend only the all-done COUNT"
 
 
@@ -239,7 +255,7 @@ async def test_a_refused_override_stages_no_row(gate):
         await _update(db, gate.phase, _actor(), status="completed")
 
     assert exc.value.status_code == 409
-    assert db.added == [], "a refused completion reached the audit or the ledger"
+    assert _gate_rows(db) == [], "a refused completion reached the audit or the ledger"
     assert gate.phase.status == "in_progress"
 
 
@@ -251,7 +267,7 @@ async def test_a_refused_skip_stages_no_row(gate):
         await _update(db, gate.phase, _actor(), status="skipped")
 
     assert exc.value.status_code == 409
-    assert db.added == []
+    assert _gate_rows(db) == []
 
 
 # ── 3. Outcome mode, through the router too ──────────────────────────────────
@@ -376,7 +392,11 @@ async def test_a_rolled_back_request_leaves_no_ledger_row_and_a_committed_one_le
     await db.commit()
     assert await _events() == 1
     row = (await db.execute(
-        select(ProjectActivityEvent).where(ProjectActivityEvent.release_id == release_id)
+        select(ProjectActivityEvent).where(
+            ProjectActivityEvent.release_id == release_id,
+            # W21 ACT-01: the same change also leaves a release.phase_updated row.
+            ProjectActivityEvent.event_type == "release.phase_gate_overridden",
+        )
     )).scalar_one()
     assert row.summary == "Phase gate Regression overridden on release 2026.11: Customer waiver CAB-142"
     assert row.context["verdict"] == "NO_GO"

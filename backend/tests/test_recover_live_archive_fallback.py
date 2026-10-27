@@ -117,7 +117,7 @@ async def test_recover_uses_redis_when_buffer_is_fresh():
          patch("app.worker.tasks.persist_live_session") as task_mock:
         task_mock.apply_async = MagicMock()
         result = await recover_live_run_from_buffer(
-            run_id=run.id, db=db, _=SimpleNamespace(id=uuid.uuid4()),
+            run_id=run.id, db=db, current_user=SimpleNamespace(id=uuid.uuid4()),
         )
 
     assert result["queued"] is True
@@ -150,7 +150,7 @@ async def test_recover_reports_stream_batch_and_event_counts_separately():
         result = await recover_live_run_from_buffer(
             run_id=run.id,
             db=db,
-            _=SimpleNamespace(id=uuid.uuid4()),
+            current_user=SimpleNamespace(id=uuid.uuid4()),
         )
 
     assert result["buffered_events"] == 7
@@ -194,7 +194,7 @@ async def test_recover_falls_back_to_archive_within_15_days():
          patch("app.worker.tasks.persist_live_session") as task_mock:
         task_mock.apply_async = MagicMock()
         result = await recover_live_run_from_buffer(
-            run_id=run.id, db=db, _=SimpleNamespace(id=uuid.uuid4()),
+            run_id=run.id, db=db, current_user=SimpleNamespace(id=uuid.uuid4()),
         )
 
     assert result["queued"] is True
@@ -249,7 +249,7 @@ async def test_recover_ignores_expired_archive_falls_back_to_synthesis():
                return_value="ingestion.shard.0"):
         task_mock.apply_async = MagicMock()
         result = await recover_live_run_from_buffer(
-            run_id=run.id, db=db, _=SimpleNamespace(id=uuid.uuid4()),
+            run_id=run.id, db=db, current_user=SimpleNamespace(id=uuid.uuid4()),
         )
 
     assert result["queued"] is True
@@ -290,7 +290,7 @@ async def test_recover_rejects_when_no_redis_no_archive_and_zero_aggregates():
     with patch("app.db.redis_client.get_redis", return_value=redis):
         with pytest.raises(HTTPException) as exc:
             await recover_live_run_from_buffer(
-                run_id=run.id, db=db, _=SimpleNamespace(id=uuid.uuid4()),
+                run_id=run.id, db=db, current_user=SimpleNamespace(id=uuid.uuid4()),
             )
 
     assert exc.value.status_code == 422

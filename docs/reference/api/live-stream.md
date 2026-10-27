@@ -10,7 +10,7 @@ List Active Sessions
 
 
 
-Source: [backend/app/routers/stream.py:177](../../../backend/app/routers/stream.py#L177).
+Source: [backend/app/routers/stream.py:204](../../../backend/app/routers/stream.py#L204).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -139,7 +139,7 @@ Ingest Event Batch
 
 
 
-Source: [backend/app/routers/stream.py:113](../../../backend/app/routers/stream.py#L113).
+Source: [backend/app/routers/stream.py:140](../../../backend/app/routers/stream.py#L140).
 
 Dependency chain: .
 
@@ -213,7 +213,7 @@ can derive ``project_id`` itself) and carry the ``stream:write`` scope.
 The first call for a given ``run_id`` auto-creates a live session;
 subsequent calls reuse it.
 
-Source: [backend/app/routers/stream.py:136](../../../backend/app/routers/stream.py#L136).
+Source: [backend/app/routers/stream.py:163](../../../backend/app/routers/stream.py#L163).
 
 Dependency chain: `get_db`, `get_streaming_api_key_context`.
 
@@ -289,7 +289,7 @@ Create Session
 
 
 
-Source: [backend/app/routers/stream.py:49](../../../backend/app/routers/stream.py#L49).
+Source: [backend/app/routers/stream.py:51](../../../backend/app/routers/stream.py#L51).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -376,7 +376,7 @@ Close Session
 
 
 
-Source: [backend/app/routers/stream.py:92](../../../backend/app/routers/stream.py#L92).
+Source: [backend/app/routers/stream.py:105](../../../backend/app/routers/stream.py#L105).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -449,7 +449,7 @@ Get Session
 
 
 
-Source: [backend/app/routers/stream.py:76](../../../backend/app/routers/stream.py#L76).
+Source: [backend/app/routers/stream.py:89](../../../backend/app/routers/stream.py#L89).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -535,7 +535,7 @@ Sse Stream
 
 
 
-Source: [backend/app/routers/stream.py:252](../../../backend/app/routers/stream.py#L252).
+Source: [backend/app/routers/stream.py:279](../../../backend/app/routers/stream.py#L279).
 
 Dependency chain: .
 

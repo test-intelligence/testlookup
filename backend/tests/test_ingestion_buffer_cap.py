@@ -172,7 +172,9 @@ async def test_close_commit_failure_does_not_finalize_redis(monkeypatch):
     session_id = "11111111-1111-1111-1111-111111111111"
     db = type("DB", (), {})()
     db.commit = AsyncMock(side_effect=RuntimeError("commit failed"))
-    close = AsyncMock()
+    # None = no run row was closed, so no W21 ``run.live_finalized`` row is
+    # staged on this attribute-less fake; the producer has its own pg test.
+    close = AsyncMock(return_value=None)
     finalize = AsyncMock()
     monkeypatch.setattr(stream_router.stream_service, "close_session", close)
     monkeypatch.setattr(

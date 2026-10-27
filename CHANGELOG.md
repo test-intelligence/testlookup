@@ -52,6 +52,21 @@ locally by default.
 
 ### Added
 
+- **Activity feed: run, analysis, investigation and release events now
+  appear** (wave W21a, ACT-01 slice (a); branch
+  `feat/df-activity-ledger-a-20261027`; no migration). Seventeen event types
+  were registered — offered as `/activity` filters — and recorded by nothing.
+  They now have producers: release phase added / changed / advanced / removed,
+  a run linked to and unlinked from a release (seen from the release and the
+  run), a release closed, a release synced from GitHub / GitLab / Jira, a run
+  deleted, live runs started / finalized / recovered, an upload that failed
+  ingestion, an AI analysis that failed after its retries, and a deep
+  investigation started / completed. A new quality-gate ratchet,
+  `backend.activity-registry-emitted`, fails when a registered event type has
+  no producer (44 left, baselined shrink-only). Tests:
+  `backend/tests/integration/test_activity_ledger_slice_a_postgres.py` (real
+  handlers against PostgreSQL, rows read back) and the guard's self-tests in
+  `scripts/test_quality_gate.py`.
 - **Identity and secrets: SSO role mapping, OIDC, SAML single logout, SCIM
   groups, Vault references** (wave W20, ADM-08 + ADM-09 + ADM-10; branch
   `feat/df-identity-secrets-20261027`; migrations 0235–0237). Settings › SSO

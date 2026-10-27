@@ -5316,3 +5316,47 @@ def test_committed_baselines_of_the_w29b_count_guards_are_count_json() -> None:
         assert list(data["counts"]) == sorted(data["counts"]), name
         assert "W29b" in data["_comment"], name
         assert not (qg.BASELINE_DIR / f"{name.replace('.', '__')}.txt").exists(), name
+
+
+# ── backend.activity-registry-emitted (W21 ACT-01) ───────────────────────────
+
+
+def _activity_registry(tmp_path: Path, *names: str) -> None:
+    specs = "\n".join(f'    _spec("{n}", "runs", "run", "{n} happened"),' for n in names)
+    _write(tmp_path / "backend" / "app" / "services" / "activity" / "events.py",
+           "_SPECS = (\n" + specs + "\n)\n")
+
+
+def test_activity_registry_emitted_flags_a_name_nothing_records(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _activity_registry(tmp_path, "run.deleted", "run.recorded")
+    _write(tmp_path / "backend" / "app" / "routers" / "runs.py", """
+        async def delete(db):
+            await record_activity(None, event_type="run.recorded")
+    """)
+    violations = qg._backend_activity_registry_emitted()
+    assert [v.message.split("'")[1] for v in violations] == ["run.deleted"]
+    assert violations[0].line == 2
+
+
+def test_activity_registry_emitted_counts_a_mapping_table_and_single_quotes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Computed producers are written as a name table; that counts as emission."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _activity_registry(tmp_path, "quarantine.approved", "run.deleted")
+    _write(tmp_path / "backend" / "app" / "services" / "q.py", """
+        _EVENTS = {"approve": "quarantine.approved", "delete": 'run.deleted'}
+    """)
+    assert qg._backend_activity_registry_emitted() == []
+
+
+def test_activity_registry_emitted_ignores_the_registry_itself(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The registry quotes every name; reading it as a producer would pass everything."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _activity_registry(tmp_path, "run.deleted")
+    assert len(qg._backend_activity_registry_emitted()) == 1

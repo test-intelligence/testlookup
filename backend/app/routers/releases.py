@@ -488,6 +488,7 @@ async def sync_releases_from_external(
     if scoped is None:
         raise HTTPException(status_code=400, detail="Invalid project ID")
 
+    sync_started = datetime.now(timezone.utc)
     try:
         if body.source == "github":
             summary = await github_release_sync.sync_milestones(db, scoped)
@@ -518,6 +519,34 @@ async def sync_releases_from_external(
             status_code=502,
             detail=f"Could not reach {source}: {type(exc).__name__}",
         ) from exc
+
+    # W21 ACT-01: one row per release the sync created or refreshed. The three
+    # services stamp ``last_synced_at`` on exactly those rows, so this reads
+    # them back instead of changing three return shapes. Outcome mode: staged
+    # here, committed with the sync itself.
+    provider = {"github": "GitHub", "gitlab": "GitLab"}.get(body.source, "Jira")
+    touched: list[tuple[uuid.UUID, str]] = []
+    if summary.get("created") or summary.get("updated"):
+        touched = [
+            (row[0], row[1])
+            for row in (await db.execute(
+                select(Release.id, Release.name).where(
+                    Release.project_id == scoped,
+                    Release.last_synced_at >= sync_started,
+                )
+            )).all()
+        ]
+    for touched_id, touched_name in touched:
+        await record_activity(
+            db,
+            project_id=scoped,
+            event_type="release.synced_external",
+            actor=ActorRef.from_user(current_user),
+            entity_id=touched_id,
+            entity_label=touched_name,
+            release_id=touched_id,
+            context={"provider": provider},
+        )
 
     # The services deliberately do not commit -- the router owns the
     # transaction, so one commit covers the whole sync and a failure part-way
@@ -582,6 +611,26 @@ async def update_release(
             changed_fields=changed,
             context={"changed": ", ".join(changed)},
             **diff,
+        )
+    # W21 ACT-01: a release entering a terminal status is the lifecycle event
+    # the feed filters on, distinct from the field-level "changed" row above.
+    old_status, new_status = before.get("status"), getattr(release, "status", None)
+    if (
+        "status" in changed
+        and new_status in release_lifecycle_service.TERMINAL_STATUSES
+        and old_status not in release_lifecycle_service.TERMINAL_STATUSES
+    ):
+        await record_activity(
+            db,
+            project_id=release.project_id,
+            event_type="release.closed",
+            actor=ActorRef.from_user(current_user),
+            entity_id=release.id,
+            entity_label=release.name,
+            release_id=release.id,
+            before={"status": old_status},
+            after={"status": new_status},
+            changed_fields=["status"],
         )
 
     await db.commit()
@@ -700,10 +749,10 @@ async def add_phase(
     release_id: str,
     body: PhaseIn,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     __: User = Depends(require_release_access()),
 ):
-    phase = await release_service.add_phase(db, release_id, body)
+    phase = await release_service.add_phase(db, release_id, body, actor=current_user)
     await db.commit()
     await db.refresh(phase)
     return serialize_model(phase)
@@ -1060,10 +1109,10 @@ async def delete_phase(
     db: AsyncSession = Depends(get_db),
     # N20: the require_*_access guards below confine a project-bound key to
     # its own project.
-    _: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     __: User = Depends(require_release_access()),
 ):
-    await release_service.delete_phase(db, release_id, phase_id)
+    await release_service.delete_phase(db, release_id, phase_id, actor=current_user)
     await db.commit()
 
 
@@ -1076,7 +1125,7 @@ async def link_test_run(
     __: User = Depends(require_release_access()),
 ):
     link, is_new = await release_service.link_test_run(
-        db, release_id, body, linked_by_id=current_user.id
+        db, release_id, body, linked_by_id=current_user.id, actor=current_user
     )
     if is_new:
         await db.commit()
@@ -1097,7 +1146,7 @@ async def unlink_test_run(
     db: AsyncSession = Depends(get_db),
     # N20: the require_*_access guards below confine a project-bound key to
     # its own project.
-    _: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
     __: User = Depends(require_run_access()),
     # The route carries TWO scoped path params and only the run was checked.
     # The authz ratchet stops at the first scoped param it can satisfy, so it
@@ -1109,7 +1158,7 @@ async def unlink_test_run(
     project_id = await db.scalar(
         select(TestRun.project_id).where(TestRun.id == uuid.UUID(run_id))
     )
-    await release_service.unlink_test_run(db, release_id, run_id)
+    await release_service.unlink_test_run(db, release_id, run_id, actor=current_user)
     await db.commit()
     # VIZ-212: the unlink promoted a survivor (or cleared the primary release).
     from app.services.cache_service import bump_analytics_epoch

@@ -1032,7 +1032,7 @@ async def test_release_unlink_bumps_the_runs_project_after_commit(journal, monke
 
     await route.unlink_test_run(
         str(uuid.uuid4()), str(uuid.uuid4()), db=_Session(journal, scalar=project_id),
-        _=None, __=None, ___=None,
+        current_user=None, __=None, ___=None,
     )
 
     _assert_bumped_after_commit(journal, project_id)
