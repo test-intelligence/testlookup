@@ -40,7 +40,7 @@ locally by default.
 - **Test management**: authored test cases, plans, strategies, reviews and
   audit.
 - **Administration**: projects and five roles, API keys, MFA and lockout,
-  SAML 2.0 SSO and SCIM 2.0, retention and purge, feature flags, audit and
+  SAML 2.0 and OIDC SSO and SCIM 2.0, retention and purge, feature flags, audit and
   activity logs, integrations (Jira, Slack, Microsoft Teams, email, GitHub
   checks, GitLab, outbound webhooks, Splunk, OpenShift).
 - **Interfaces**: web UI with an in-app guide at `/docs`, REST API with
@@ -52,6 +52,44 @@ locally by default.
 
 ### Added
 
+- **Identity and secrets: SSO role mapping, OIDC, SAML single logout, SCIM
+  groups, Vault references** (wave W20, ADM-08 + ADM-09 + ADM-10; branch
+  `feat/df-identity-secrets-20261027`; migrations 0235–0237). Settings › SSO
+  gets a role-mapping editor (IdP group → role, default role, group
+  attribute) with a server-side preview (`POST
+  /api/v1/sso/configs/{id}/preview-role`). **OIDC**: a configuration may now
+  be OpenID Connect — issuer, client id, write-only client secret (kept in
+  `secret_refs`, scope `sso_oidc`, shown only as "(set)"), scopes, groups
+  claim; `/api/v1/sso/oidc/login` → the IdP (state + nonce + PKCE S256, single
+  use, 10 minutes) → `/api/v1/sso/oidc/callback` exchanges the code and
+  validates the ID token against the IdP's JWKS (RS256 / ES256 only; `iss`,
+  `aud`, `azp`, `exp`, `iat`, `nonce`), then the same role mapping and JIT
+  provisioning as SAML; an IdP that says the email is not verified never
+  takes over an existing account; `/login` says "Sign in with <name>". 0237
+  makes the SAML columns NULL-able under a CHECK by provider type. **SAML
+  single logout** (IdP-initiated): `/api/v1/sso/slo` (Redirect and POST
+  bindings) verifies the IdP's signed LogoutRequest (SHA-2, Issuer,
+  Destination, freshness, single use), revokes that user's refresh tokens and
+  access tokens, and answers a Success LogoutResponse; the SP metadata
+  advertises it only while an IdP SLO URL is set. **SCIM `/Groups`** mapped
+  to project roles (0236; memberships SCIM created carry `source =
+  scim:<group>` and are the only ones reconciliation touches; Project access
+  shows "via SCIM group <name>"). **Vault references** for any secret field
+  (`vault:<path>#<key>`, KV v2, token or AppRole auth; 0235). Fixed with it:
+  every real SAML sign-in was refused — the assertion verifier called
+  `XMLVerifier.VerifyConfig`, which the pinned signxml 5.1.0 does not have
+  (now a `SignatureConfiguration` with the same SHA-2 allow-list); creating an
+  SSO configuration could insert its audit row first (500); a remounted
+  `/sso/callback` spent the one-time code twice. Tests:
+  `tests/regression/test_oidc_id_token_validation.py` (alg `none`, HS256 keyed
+  with the public key, wrong aud / iss, expired, nonce, unknown kid, state
+  reuse, SSRF on discovery), `tests/integration/test_sso_oidc_postgres.py`
+  (end to end against the fake OIDC IdP in `tests/fakes/fake_integrations.py`),
+  `tests/regression/test_saml_slo.py` (both bindings, real signatures, the
+  verifier fix), `tests/integration/test_scim_groups_postgres.py`,
+  `tests/regression/test_vault_secret_references.py`, the role preview, the
+  migration shapes, and vitest for the settings page, login button and
+  callback.
 - **GitHub App authentication, and GitLab does what GitHub does** (wave W19,
   INT-06 + INT-05; branch `feat/df-git-hosts-20261026`; migration 0234). An
   administrator registers one GitHub App under Settings › GitHub (`PUT

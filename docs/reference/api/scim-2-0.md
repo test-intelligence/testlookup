@@ -4,13 +4,497 @@
 
 Generated from tracked source by `scripts/generate_reference.py`. Do not edit by hand. What the checks cover is recorded in [verification](../../maintainers/verification.md).
 
+## GET `/api/v1/scim/v2/Groups`
+
+Scim List Groups
+
+SCIM 2.0: list groups (W20 ADM-09); ``filter=displayName eq "<name>"`` only.
+
+Source: [backend/app/routers/scim.py:904](../../../backend/app/routers/scim.py#L904).
+
+Dependency chain: `get_db`, `verify_scim_bearer`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+request: Request, scim_token: SCIMToken=Depends(verify_scim_bearer), db: AsyncSession=Depends(get_db), filter: str | None=None, startIndex: int=Query(1, ge=1), count: int=Query(100, ge=0, le=500)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=400, detail={'detail': 'Only displayName eq "<name>" is supported', 'scimType': 'invalidFilter'})
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "scim_list_groups_api_v1_scim_v2_Groups_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "filter",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Filter"
+      }
+    },
+    {
+      "in": "query",
+      "name": "startIndex",
+      "required": false,
+      "schema": {
+        "default": 1,
+        "minimum": 1,
+        "title": "Startindex",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "query",
+      "name": "count",
+      "required": false,
+      "schema": {
+        "default": 100,
+        "maximum": 500,
+        "minimum": 0,
+        "title": "Count",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "Authorization",
+      "required": true,
+      "schema": {
+        "title": "Authorization",
+        "type": "string"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/scim+json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  }
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+{'schemas': ['urn:ietf:params:scim:api:messages:2.0:ListResponse'], 'totalResults': len(groups), 'startIndex': startIndex, 'itemsPerPage': len(resources), 'Resources': resources}
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## POST `/api/v1/scim/v2/Groups`
+
+Scim Create Group
+
+SCIM 2.0: create a group; its members' project memberships follow the group's mappings.
+
+Source: [backend/app/routers/scim.py:943](../../../backend/app/routers/scim.py#L943).
+
+Dependency chain: `get_db`, `verify_scim_bearer`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+request: Request, scim_token: SCIMToken=Depends(verify_scim_bearer), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=400, detail={'detail': 'displayName is required', 'scimType': 'invalidValue'})
+HTTPException(status_code=409, detail=_GROUP_CONFLICT)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "scim_create_group_api_v1_scim_v2_Groups_post",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "Authorization",
+      "required": true,
+      "schema": {
+        "title": "Authorization",
+        "type": "string"
+      }
+    }
+  ],
+  "responses": {
+    "201": {
+      "content": {
+        "application/scim+json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  }
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+_group_resource(group, await _group_members(db, group.id), _base(request))
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## DELETE `/api/v1/scim/v2/Groups/{group_id}`
+
+Scim Delete Group
+
+SCIM 2.0: delete a group; memberships it alone granted are removed.
+
+Source: [backend/app/routers/scim.py:1045](../../../backend/app/routers/scim.py#L1045).
+
+Dependency chain: `get_db`, `verify_scim_bearer`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+group_id: uuid.UUID, scim_token: SCIMToken=Depends(verify_scim_bearer), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "scim_delete_group_api_v1_scim_v2_Groups__group_id__delete",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "group_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Group Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "Authorization",
+      "required": true,
+      "schema": {
+        "title": "Authorization",
+        "type": "string"
+      }
+    }
+  ],
+  "responses": {
+    "204": {
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  }
+}
+```
+
+## GET `/api/v1/scim/v2/Groups/{group_id}`
+
+Scim Get Group
+
+SCIM 2.0: one group with its members.
+
+Source: [backend/app/routers/scim.py:931](../../../backend/app/routers/scim.py#L931).
+
+Dependency chain: `get_db`, `verify_scim_bearer`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+group_id: uuid.UUID, request: Request, scim_token: SCIMToken=Depends(verify_scim_bearer), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "scim_get_group_api_v1_scim_v2_Groups__group_id__get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "group_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Group Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "Authorization",
+      "required": true,
+      "schema": {
+        "title": "Authorization",
+        "type": "string"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/scim+json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  }
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+_group_resource(group, await _group_members(db, group.id), _base(request))
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## PATCH `/api/v1/scim/v2/Groups/{group_id}`
+
+Scim Patch Group
+
+SCIM 2.0 PatchOp on ``members`` (add / remove / replace, and ``members[value eq "<id>"]``) and ``displayName``.
+
+Source: [backend/app/routers/scim.py:996](../../../backend/app/routers/scim.py#L996).
+
+Dependency chain: `get_db`, `verify_scim_bearer`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+group_id: uuid.UUID, request: Request, scim_token: SCIMToken=Depends(verify_scim_bearer), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=400, detail={'detail': 'Invalid member value', 'scimType': 'invalidValue'})
+HTTPException(status_code=400, detail={'detail': 'Operations are required', 'scimType': 'invalidSyntax'})
+HTTPException(status_code=400, detail={'detail': f'Unsupported op {kind!r}', 'scimType': 'invalidSyntax'})
+HTTPException(status_code=400, detail={'detail': f'Unsupported patch path {path!r}', 'scimType': 'invalidPath'})
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "scim_patch_group_api_v1_scim_v2_Groups__group_id__patch",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "group_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Group Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "Authorization",
+      "required": true,
+      "schema": {
+        "title": "Authorization",
+        "type": "string"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/scim+json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  }
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+_group_resource(group, await _group_members(db, group.id), _base(request))
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## PUT `/api/v1/scim/v2/Groups/{group_id}`
+
+Scim Replace Group
+
+SCIM 2.0: replace a group's name and members.
+
+Source: [backend/app/routers/scim.py:972](../../../backend/app/routers/scim.py#L972).
+
+Dependency chain: `get_db`, `verify_scim_bearer`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+group_id: uuid.UUID, request: Request, scim_token: SCIMToken=Depends(verify_scim_bearer), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=400, detail={'detail': 'displayName is required', 'scimType': 'invalidValue'})
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "scim_replace_group_api_v1_scim_v2_Groups__group_id__put",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "group_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Group Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "Authorization",
+      "required": true,
+      "schema": {
+        "title": "Authorization",
+        "type": "string"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/scim+json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  }
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+_group_resource(group, await _group_members(db, group.id), _base(request))
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
 ## GET `/api/v1/scim/v2/ResourceTypes`
 
 Scim Resource Types
 
 SCIM 2.0: List provisionable resource types.
 
-Source: [backend/app/routers/scim.py:335](../../../backend/app/routers/scim.py#L335).
+Source: [backend/app/routers/scim.py:338](../../../backend/app/routers/scim.py#L338).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -64,7 +548,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-discovery_list([user_resource_type(_scim_base_url(request))])
+discovery_list([user_resource_type(_scim_base_url(request)), group_resource_type(_scim_base_url(request))])
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -75,7 +559,7 @@ Scim Resource Type
 
 SCIM 2.0: Retrieve one provisionable resource type.
 
-Source: [backend/app/routers/scim.py:344](../../../backend/app/routers/scim.py#L344).
+Source: [backend/app/routers/scim.py:347](../../../backend/app/routers/scim.py#L347).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -144,6 +628,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
+group_resource_type(_scim_base_url(request))
 user_resource_type(_scim_base_url(request))
 ```
 
@@ -155,7 +640,7 @@ Scim Schemas
 
 SCIM 2.0: List supported resource schemas.
 
-Source: [backend/app/routers/scim.py:356](../../../backend/app/routers/scim.py#L356).
+Source: [backend/app/routers/scim.py:361](../../../backend/app/routers/scim.py#L361).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -209,7 +694,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-discovery_list([user_schema(_scim_base_url(request))])
+discovery_list([user_schema(_scim_base_url(request)), group_schema(_scim_base_url(request))])
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -278,7 +763,7 @@ Scim Service Provider Config
 
 SCIM 2.0: Discover implemented protocol capabilities.
 
-Source: [backend/app/routers/scim.py:326](../../../backend/app/routers/scim.py#L326).
+Source: [backend/app/routers/scim.py:329](../../../backend/app/routers/scim.py#L329).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -343,7 +828,7 @@ Scim List
 
 SCIM 2.0: List users.
 
-Source: [backend/app/routers/scim.py:377](../../../backend/app/routers/scim.py#L377).
+Source: [backend/app/routers/scim.py:384](../../../backend/app/routers/scim.py#L384).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -487,7 +972,7 @@ Scim Create
 
 SCIM 2.0: Create a user.
 
-Source: [backend/app/routers/scim.py:459](../../../backend/app/routers/scim.py#L459).
+Source: [backend/app/routers/scim.py:466](../../../backend/app/routers/scim.py#L466).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -604,7 +1089,7 @@ Scim Delete
 
 SCIM 2.0: Deactivate (soft-delete) a user.
 
-Source: [backend/app/routers/scim.py:790](../../../backend/app/routers/scim.py#L790).
+Source: [backend/app/routers/scim.py:797](../../../backend/app/routers/scim.py#L797).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -672,7 +1157,7 @@ Scim Get
 
 SCIM 2.0: Get a single user.
 
-Source: [backend/app/routers/scim.py:434](../../../backend/app/routers/scim.py#L434).
+Source: [backend/app/routers/scim.py:441](../../../backend/app/routers/scim.py#L441).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -785,7 +1270,7 @@ Scim Patch
 
 SCIM 2.0: Patch (partial update) a user.
 
-Source: [backend/app/routers/scim.py:601](../../../backend/app/routers/scim.py#L601).
+Source: [backend/app/routers/scim.py:608](../../../backend/app/routers/scim.py#L608).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -917,7 +1402,7 @@ Scim Replace
 
 SCIM 2.0: Replace (full update) a user.
 
-Source: [backend/app/routers/scim.py:526](../../../backend/app/routers/scim.py#L526).
+Source: [backend/app/routers/scim.py:533](../../../backend/app/routers/scim.py#L533).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 

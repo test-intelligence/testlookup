@@ -19130,6 +19130,49 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## GroupMappingIn
+
+```json
+{
+  "properties": {
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "role": {
+      "title": "Role",
+      "type": "string"
+    }
+  },
+  "required": [
+    "project_id",
+    "role"
+  ],
+  "title": "GroupMappingIn",
+  "type": "object"
+}
+```
+
+## GroupMappingsIn
+
+```json
+{
+  "properties": {
+    "mappings": {
+      "items": {
+        "$ref": "#/components/schemas/GroupMappingIn"
+      },
+      "maxItems": 200,
+      "title": "Mappings",
+      "type": "array"
+    }
+  },
+  "title": "GroupMappingsIn",
+  "type": "object"
+}
+```
+
 ## HTTPValidationError
 
 ```json
@@ -19310,6 +19353,7 @@ These are the full generated JSON Schema definitions, including required fields,
     "ADMIN_FALLBACK_LOGIN",
     "JIT_PROVISIONED",
     "ROLE_MAPPED",
+    "SSO_LOGOUT",
     "MFA_ENROLL_STARTED",
     "MFA_ENABLED",
     "MFA_DISABLED",
@@ -20299,6 +20343,13 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Teams Webhook Url"
+    },
+    "vault_fields": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Vault Fields",
+      "type": "array"
     }
   },
   "required": [
@@ -29744,6 +29795,17 @@ These are the full generated JSON Schema definitions, including required fields,
     "role": {
       "$ref": "#/components/schemas/UserRole"
     },
+    "source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source"
+    },
     "user_id": {
       "format": "uuid",
       "title": "User Id",
@@ -37441,7 +37503,7 @@ These are the full generated JSON Schema definitions, including required fields,
 
 ```json
 {
-  "description": "Create a new SSO configuration.",
+  "description": "Create a new SSO configuration.\n\nW20 ADM-08b: a SAML config needs the IdP entity id / SSO URL / certificate and\nthe SP entity id / ACS URL; an OIDC config needs the issuer, client id and client\nsecret (write-only — stored in ``secret_refs``, never returned).",
   "properties": {
     "audience": {
       "anyOf": [
@@ -37482,15 +37544,29 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Group Attribute"
     },
     "idp_certificate": {
-      "minLength": 1,
-      "title": "Idp Certificate",
-      "type": "string"
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Idp Certificate"
     },
     "idp_entity_id": {
-      "maxLength": 1000,
-      "minLength": 1,
-      "title": "Idp Entity Id",
-      "type": "string"
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Idp Entity Id"
     },
     "idp_slo_url": {
       "anyOf": [
@@ -37505,10 +37581,80 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Idp Slo Url"
     },
     "idp_sso_url": {
-      "maxLength": 2000,
-      "minLength": 1,
-      "title": "Idp Sso Url",
-      "type": "string"
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Idp Sso Url"
+    },
+    "oidc_client_id": {
+      "anyOf": [
+        {
+          "maxLength": 255,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Client Id"
+    },
+    "oidc_client_secret": {
+      "anyOf": [
+        {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Client Secret"
+    },
+    "oidc_groups_claim": {
+      "anyOf": [
+        {
+          "maxLength": 255,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Groups Claim"
+    },
+    "oidc_issuer": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Issuer"
+    },
+    "oidc_scopes": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Scopes"
     },
     "provider_type": {
       "$ref": "#/components/schemas/SSOProviderType",
@@ -37527,25 +37673,34 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Role Mapping"
     },
     "sp_acs_url": {
-      "maxLength": 2000,
-      "minLength": 1,
-      "title": "Sp Acs Url",
-      "type": "string"
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sp Acs Url"
     },
     "sp_entity_id": {
-      "maxLength": 1000,
-      "minLength": 1,
-      "title": "Sp Entity Id",
-      "type": "string"
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sp Entity Id"
     }
   },
   "required": [
-    "display_name",
-    "idp_entity_id",
-    "idp_sso_url",
-    "idp_certificate",
-    "sp_entity_id",
-    "sp_acs_url"
+    "display_name"
   ],
   "title": "SSOConfigCreate",
   "type": "object"
@@ -37606,8 +37761,15 @@ These are the full generated JSON Schema definitions, including required fields,
       "type": "string"
     },
     "idp_entity_id": {
-      "title": "Idp Entity Id",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Idp Entity Id"
     },
     "idp_slo_url": {
       "anyOf": [
@@ -37621,8 +37783,15 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Idp Slo Url"
     },
     "idp_sso_url": {
-      "title": "Idp Sso Url",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Idp Sso Url"
     },
     "is_active": {
       "title": "Is Active",
@@ -37662,6 +37831,66 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Last Test Success"
     },
+    "oidc_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Client Id"
+    },
+    "oidc_client_secret_set": {
+      "default": false,
+      "title": "Oidc Client Secret Set",
+      "type": "boolean"
+    },
+    "oidc_groups_claim": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Groups Claim"
+    },
+    "oidc_issuer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Issuer"
+    },
+    "oidc_redirect_uri": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Redirect Uri"
+    },
+    "oidc_scopes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Scopes"
+    },
     "provider_type": {
       "$ref": "#/components/schemas/SSOProviderType"
     },
@@ -37678,12 +37907,26 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Role Mapping"
     },
     "sp_acs_url": {
-      "title": "Sp Acs Url",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sp Acs Url"
     },
     "sp_entity_id": {
-      "title": "Sp Entity Id",
-      "type": "string"
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sp Entity Id"
     },
     "updated_at": {
       "anyOf": [
@@ -37702,10 +37945,6 @@ These are the full generated JSON Schema definitions, including required fields,
     "id",
     "display_name",
     "provider_type",
-    "idp_entity_id",
-    "idp_sso_url",
-    "sp_entity_id",
-    "sp_acs_url",
     "default_role",
     "enforcement_mode",
     "is_active",
@@ -37839,6 +38078,69 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Is Active"
     },
+    "oidc_client_id": {
+      "anyOf": [
+        {
+          "maxLength": 255,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Client Id"
+    },
+    "oidc_client_secret": {
+      "anyOf": [
+        {
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Client Secret"
+    },
+    "oidc_groups_claim": {
+      "anyOf": [
+        {
+          "maxLength": 255,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Groups Claim"
+    },
+    "oidc_issuer": {
+      "anyOf": [
+        {
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Issuer"
+    },
+    "oidc_scopes": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oidc Scopes"
+    },
     "role_mapping": {
       "anyOf": [
         {
@@ -37970,6 +38272,96 @@ These are the full generated JSON Schema definitions, including required fields,
   ],
   "title": "SSOProviderType",
   "type": "string"
+}
+```
+
+## SSORolePreviewRequest
+
+```json
+{
+  "description": "W20 ADM-08a: preview the role a user in ``groups`` gets. ``role_mapping`` / ``default_role`` preview an\nunsaved edit; omitted, the stored configuration answers.",
+  "properties": {
+    "default_role": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Default Role"
+    },
+    "groups": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 200,
+      "title": "Groups",
+      "type": "array"
+    },
+    "role_mapping": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Role Mapping"
+    }
+  },
+  "title": "SSORolePreviewRequest",
+  "type": "object"
+}
+```
+
+## SSORolePreviewResponse
+
+```json
+{
+  "properties": {
+    "ceiling": {
+      "title": "Ceiling",
+      "type": "string"
+    },
+    "clamped": {
+      "title": "Clamped",
+      "type": "boolean"
+    },
+    "matched_groups": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Matched Groups",
+      "type": "array"
+    },
+    "role": {
+      "title": "Role",
+      "type": "string"
+    },
+    "source": {
+      "enum": [
+        "mapping",
+        "default"
+      ],
+      "title": "Source",
+      "type": "string"
+    }
+  },
+  "required": [
+    "role",
+    "matched_groups",
+    "source",
+    "ceiling",
+    "clamped"
+  ],
+  "title": "SSORolePreviewResponse",
+  "type": "object"
 }
 ```
 

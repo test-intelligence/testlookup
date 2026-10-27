@@ -484,6 +484,12 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/scim-tokens` | List Scim Tokens | [SCIM Tokens](api/scim-tokens.md) |
 | POST | `/api/v1/scim-tokens` | Create Token | [SCIM Tokens](api/scim-tokens.md) |
 | DELETE | `/api/v1/scim-tokens/{token_id}` | Revoke Scim Token | [SCIM Tokens](api/scim-tokens.md) |
+| GET | `/api/v1/scim/v2/Groups` | Scim List Groups | [SCIM 2.0](api/scim-2-0.md) |
+| POST | `/api/v1/scim/v2/Groups` | Scim Create Group | [SCIM 2.0](api/scim-2-0.md) |
+| DELETE | `/api/v1/scim/v2/Groups/{group_id}` | Scim Delete Group | [SCIM 2.0](api/scim-2-0.md) |
+| GET | `/api/v1/scim/v2/Groups/{group_id}` | Scim Get Group | [SCIM 2.0](api/scim-2-0.md) |
+| PATCH | `/api/v1/scim/v2/Groups/{group_id}` | Scim Patch Group | [SCIM 2.0](api/scim-2-0.md) |
+| PUT | `/api/v1/scim/v2/Groups/{group_id}` | Scim Replace Group | [SCIM 2.0](api/scim-2-0.md) |
 | GET | `/api/v1/scim/v2/ResourceTypes` | Scim Resource Types | [SCIM 2.0](api/scim-2-0.md) |
 | GET | `/api/v1/scim/v2/ResourceTypes/{resource_type}` | Scim Resource Type | [SCIM 2.0](api/scim-2-0.md) |
 | GET | `/api/v1/scim/v2/Schemas` | Scim Schemas | [SCIM 2.0](api/scim-2-0.md) |
@@ -529,6 +535,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/settings/integrations/health` | Get Integration Health | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/mfa-policy` | Get Mfa Policy | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/mfa-policy` | Update Mfa Policy | [Settings](api/settings.md) |
+| GET | `/api/v1/settings/secret-providers` | Get Secret Providers | [Secret providers](api/secret-providers.md) |
 | GET | `/api/v1/settings/smtp` | Get Smtp Config | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/smtp` | Update Smtp Config | [Settings](api/settings.md) |
 | POST | `/api/v1/settings/smtp/test` | Test Smtp Config | [Settings](api/settings.md) |
@@ -542,10 +549,17 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | DELETE | `/api/v1/sso/configs/{config_id}` | Delete Sso Config | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/sso/configs/{config_id}` | Get Sso Config | [SSO / SAML](api/sso-saml.md) |
 | PATCH | `/api/v1/sso/configs/{config_id}` | Update Sso Config | [SSO / SAML](api/sso-saml.md) |
+| POST | `/api/v1/sso/configs/{config_id}/preview-role` | Preview Sso Role | [SSO / SAML](api/sso-saml.md) |
 | POST | `/api/v1/sso/configs/{config_id}/test` | Test Sso Connection | [SSO / SAML](api/sso-saml.md) |
 | POST | `/api/v1/sso/exchange` | Exchange Sso Code | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/sso/login-url` | Get Sso Login Url | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/sso/metadata` | Get Sp Metadata | [SSO / SAML](api/sso-saml.md) |
+| GET | `/api/v1/sso/oidc/callback` | Oidc Callback | [SSO / SAML](api/sso-saml.md) |
+| GET | `/api/v1/sso/oidc/login` | Oidc Login | [SSO / SAML](api/sso-saml.md) |
+| GET | `/api/v1/sso/scim-groups` | List Scim Groups | [SSO / SAML](api/sso-saml.md) |
+| PUT | `/api/v1/sso/scim-groups/{group_id}/mappings` | Put Scim Group Mappings | [SSO / SAML](api/sso-saml.md) |
+| GET | `/api/v1/sso/slo` | Saml Single Logout | [SSO / SAML](api/sso-saml.md) |
+| POST | `/api/v1/sso/slo` | Saml Single Logout | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/sso/status` | Get Sso Status | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/stream/active` | List Active Sessions | [Live Stream](api/live-stream.md) |
 | POST | `/api/v1/stream/events/batch` | Ingest Event Batch | [Live Stream](api/live-stream.md) |
@@ -675,4 +689,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **666 HTTP operations**, **566 paths**, **87 domain pages**.
+Total: **680 HTTP operations**, **575 paths**, **88 domain pages**.

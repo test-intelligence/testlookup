@@ -17845,6 +17845,39 @@
         "title": "GitLabConnectionTestResponse",
         "type": "object"
       },
+      "GroupMappingIn": {
+        "properties": {
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "role"
+        ],
+        "title": "GroupMappingIn",
+        "type": "object"
+      },
+      "GroupMappingsIn": {
+        "properties": {
+          "mappings": {
+            "items": {
+              "$ref": "#/components/schemas/GroupMappingIn"
+            },
+            "maxItems": 200,
+            "title": "Mappings",
+            "type": "array"
+          }
+        },
+        "title": "GroupMappingsIn",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -18007,6 +18040,7 @@
           "ADMIN_FALLBACK_LOGIN",
           "JIT_PROVISIONED",
           "ROLE_MAPPED",
+          "SSO_LOGOUT",
           "MFA_ENROLL_STARTED",
           "MFA_ENABLED",
           "MFA_DISABLED",
@@ -18946,6 +18980,13 @@
               }
             ],
             "title": "Teams Webhook Url"
+          },
+          "vault_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Vault Fields",
+            "type": "array"
           }
         },
         "required": [
@@ -27756,6 +27797,17 @@
           "role": {
             "$ref": "#/components/schemas/UserRole"
           },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
           "user_id": {
             "format": "uuid",
             "title": "User Id",
@@ -34903,7 +34955,7 @@
         "type": "object"
       },
       "SSOConfigCreate": {
-        "description": "Create a new SSO configuration.",
+        "description": "Create a new SSO configuration.\n\nW20 ADM-08b: a SAML config needs the IdP entity id / SSO URL / certificate and\nthe SP entity id / ACS URL; an OIDC config needs the issuer, client id and client\nsecret (write-only — stored in ``secret_refs``, never returned).",
         "properties": {
           "audience": {
             "anyOf": [
@@ -34944,15 +34996,29 @@
             "title": "Group Attribute"
           },
           "idp_certificate": {
-            "minLength": 1,
-            "title": "Idp Certificate",
-            "type": "string"
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idp Certificate"
           },
           "idp_entity_id": {
-            "maxLength": 1000,
-            "minLength": 1,
-            "title": "Idp Entity Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idp Entity Id"
           },
           "idp_slo_url": {
             "anyOf": [
@@ -34967,10 +35033,80 @@
             "title": "Idp Slo Url"
           },
           "idp_sso_url": {
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Idp Sso Url",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idp Sso Url"
+          },
+          "oidc_client_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Client Id"
+          },
+          "oidc_client_secret": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Client Secret"
+          },
+          "oidc_groups_claim": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Groups Claim"
+          },
+          "oidc_issuer": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Issuer"
+          },
+          "oidc_scopes": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Scopes"
           },
           "provider_type": {
             "$ref": "#/components/schemas/SSOProviderType",
@@ -34989,25 +35125,34 @@
             "title": "Role Mapping"
           },
           "sp_acs_url": {
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Sp Acs Url",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sp Acs Url"
           },
           "sp_entity_id": {
-            "maxLength": 1000,
-            "minLength": 1,
-            "title": "Sp Entity Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sp Entity Id"
           }
         },
         "required": [
-          "display_name",
-          "idp_entity_id",
-          "idp_sso_url",
-          "idp_certificate",
-          "sp_entity_id",
-          "sp_acs_url"
+          "display_name"
         ],
         "title": "SSOConfigCreate",
         "type": "object"
@@ -35063,8 +35208,15 @@
             "type": "string"
           },
           "idp_entity_id": {
-            "title": "Idp Entity Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idp Entity Id"
           },
           "idp_slo_url": {
             "anyOf": [
@@ -35078,8 +35230,15 @@
             "title": "Idp Slo Url"
           },
           "idp_sso_url": {
-            "title": "Idp Sso Url",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idp Sso Url"
           },
           "is_active": {
             "title": "Is Active",
@@ -35119,6 +35278,66 @@
             ],
             "title": "Last Test Success"
           },
+          "oidc_client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Client Id"
+          },
+          "oidc_client_secret_set": {
+            "default": false,
+            "title": "Oidc Client Secret Set",
+            "type": "boolean"
+          },
+          "oidc_groups_claim": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Groups Claim"
+          },
+          "oidc_issuer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Issuer"
+          },
+          "oidc_redirect_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Redirect Uri"
+          },
+          "oidc_scopes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Scopes"
+          },
           "provider_type": {
             "$ref": "#/components/schemas/SSOProviderType"
           },
@@ -35135,12 +35354,26 @@
             "title": "Role Mapping"
           },
           "sp_acs_url": {
-            "title": "Sp Acs Url",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sp Acs Url"
           },
           "sp_entity_id": {
-            "title": "Sp Entity Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sp Entity Id"
           },
           "updated_at": {
             "anyOf": [
@@ -35159,10 +35392,6 @@
           "id",
           "display_name",
           "provider_type",
-          "idp_entity_id",
-          "idp_sso_url",
-          "sp_entity_id",
-          "sp_acs_url",
           "default_role",
           "enforcement_mode",
           "is_active",
@@ -35291,6 +35520,69 @@
             ],
             "title": "Is Active"
           },
+          "oidc_client_id": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Client Id"
+          },
+          "oidc_client_secret": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Client Secret"
+          },
+          "oidc_groups_claim": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Groups Claim"
+          },
+          "oidc_issuer": {
+            "anyOf": [
+              {
+                "maxLength": 1000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Issuer"
+          },
+          "oidc_scopes": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oidc Scopes"
+          },
           "role_mapping": {
             "anyOf": [
               {
@@ -35402,6 +35694,86 @@
         ],
         "title": "SSOProviderType",
         "type": "string"
+      },
+      "SSORolePreviewRequest": {
+        "description": "W20 ADM-08a: preview the role a user in ``groups`` gets. ``role_mapping`` / ``default_role`` preview an\nunsaved edit; omitted, the stored configuration answers.",
+        "properties": {
+          "default_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Role"
+          },
+          "groups": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "title": "Groups",
+            "type": "array"
+          },
+          "role_mapping": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role Mapping"
+          }
+        },
+        "title": "SSORolePreviewRequest",
+        "type": "object"
+      },
+      "SSORolePreviewResponse": {
+        "properties": {
+          "ceiling": {
+            "title": "Ceiling",
+            "type": "string"
+          },
+          "clamped": {
+            "title": "Clamped",
+            "type": "boolean"
+          },
+          "matched_groups": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Matched Groups",
+            "type": "array"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "mapping",
+              "default"
+            ],
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "matched_groups",
+          "source",
+          "ceiling",
+          "clamped"
+        ],
+        "title": "SSORolePreviewResponse",
+        "type": "object"
       },
       "SSOTestConnectionResponse": {
         "description": "Result of testing SSO configuration.",
@@ -83365,6 +83737,318 @@
         ]
       }
     },
+    "/api/v1/scim/v2/Groups": {
+      "get": {
+        "description": "SCIM 2.0: list groups (W20 ADM-09); ``filter=displayName eq \"<name>\"`` only.",
+        "operationId": "scim_list_groups_api_v1_scim_v2_Groups_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "filter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Filter"
+            }
+          },
+          {
+            "in": "query",
+            "name": "startIndex",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Startindex",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "count",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 0,
+              "title": "Count",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/scim+json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scim List Groups",
+        "tags": [
+          "SCIM 2.0"
+        ]
+      },
+      "post": {
+        "description": "SCIM 2.0: create a group; its members' project memberships follow the group's mappings.",
+        "operationId": "scim_create_group_api_v1_scim_v2_Groups_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/scim+json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scim Create Group",
+        "tags": [
+          "SCIM 2.0"
+        ]
+      }
+    },
+    "/api/v1/scim/v2/Groups/{group_id}": {
+      "delete": {
+        "description": "SCIM 2.0: delete a group; memberships it alone granted are removed.",
+        "operationId": "scim_delete_group_api_v1_scim_v2_Groups__group_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scim Delete Group",
+        "tags": [
+          "SCIM 2.0"
+        ]
+      },
+      "get": {
+        "description": "SCIM 2.0: one group with its members.",
+        "operationId": "scim_get_group_api_v1_scim_v2_Groups__group_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/scim+json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scim Get Group",
+        "tags": [
+          "SCIM 2.0"
+        ]
+      },
+      "patch": {
+        "description": "SCIM 2.0 PatchOp on ``members`` (add / remove / replace, and ``members[value eq \"<id>\"]``) and ``displayName``.",
+        "operationId": "scim_patch_group_api_v1_scim_v2_Groups__group_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/scim+json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scim Patch Group",
+        "tags": [
+          "SCIM 2.0"
+        ]
+      },
+      "put": {
+        "description": "SCIM 2.0: replace a group's name and members.",
+        "operationId": "scim_replace_group_api_v1_scim_v2_Groups__group_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "Authorization",
+            "required": true,
+            "schema": {
+              "title": "Authorization",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/scim+json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Scim Replace Group",
+        "tags": [
+          "SCIM 2.0"
+        ]
+      }
+    },
     "/api/v1/scim/v2/ResourceTypes": {
       "get": {
         "description": "SCIM 2.0: List provisionable resource types.",
@@ -86255,6 +86939,62 @@
         ]
       }
     },
+    "/api/v1/settings/secret-providers": {
+      "get": {
+        "operationId": "get_secret_providers_api_v1_settings_secret_providers_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Secret Providers Api V1 Settings Secret Providers Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Secret Providers",
+        "tags": [
+          "Secret providers"
+        ]
+      }
+    },
     "/api/v1/settings/smtp": {
       "get": {
         "description": "Return current SMTP configuration (password is never returned — only a boolean flag).",
@@ -86966,6 +87706,81 @@
         ]
       }
     },
+    "/api/v1/sso/configs/{config_id}/preview-role": {
+      "post": {
+        "description": "W20 ADM-08a: the role a user in these IdP groups would get (ADMIN only; pure, writes nothing).\n\nThe posted ``role_mapping`` / ``default_role`` preview an unsaved edit; otherwise the stored ones answer.",
+        "operationId": "preview_sso_role_api_v1_sso_configs__config_id__preview_role_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "config_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Config Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SSORolePreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SSORolePreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Preview Sso Role",
+        "tags": [
+          "SSO / SAML"
+        ]
+      }
+    },
     "/api/v1/sso/configs/{config_id}/test": {
       "post": {
         "description": "Test an SSO configuration by validating the certificate and IdP metadata (ADMIN only).",
@@ -87127,7 +87942,7 @@
     },
     "/api/v1/sso/metadata": {
       "get": {
-        "description": "Return SP metadata for configuring the IdP.\n\nNo single-logout URL: there is no SLO handler, so advertising one sent IdPs\nto a 404 (sign-out is local: the app revokes its own session).",
+        "description": "Return SP metadata for configuring the IdP.\n\nW20 ADM-08c: the single-logout URL is advertised only while the active SAML\nconfiguration has an IdP SLO URL (``/sso/slo`` answers 404 otherwise, and\nadvertising it then sent IdPs to that 404). IdP-initiated SLO only, so no\nSP signing key is published.",
         "operationId": "get_sp_metadata_api_v1_sso_metadata_get",
         "responses": {
           "200": {
@@ -87144,6 +87959,304 @@
           }
         },
         "summary": "Get Sp Metadata",
+        "tags": [
+          "SSO / SAML"
+        ]
+      }
+    },
+    "/api/v1/sso/oidc/callback": {
+      "get": {
+        "description": "W20 ADM-08b: the IdP sends the browser back here with ``code`` + ``state``.\n\nThe state is burned first (single use), the code exchanged with the client secret and the PKCE verifier,\nthe ID token validated (signature / iss / aud / exp / nonce), then the user is JIT-provisioned or linked\nand handed into the app through the one-time-code fragment. Every refusal goes back to ``/login`` with a\ngeneric notice; the reason stays in the server log and the identity-event audit.",
+        "operationId": "oidc_callback_api_v1_sso_oidc_callback_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Code"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "error",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Error"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oidc Callback",
+        "tags": [
+          "SSO / SAML"
+        ]
+      }
+    },
+    "/api/v1/sso/oidc/login": {
+      "get": {
+        "description": "W20 ADM-08b: start an OIDC sign-in — 302 to the IdP's authorization endpoint (state, nonce, PKCE S256).",
+        "operationId": "oidc_login_api_v1_sso_oidc_login_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "next",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Next"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Oidc Login",
+        "tags": [
+          "SSO / SAML"
+        ]
+      }
+    },
+    "/api/v1/sso/scim-groups": {
+      "get": {
+        "operationId": "list_scim_groups_api_v1_sso_scim_groups_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Scim Groups Api V1 Sso Scim Groups Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Scim Groups",
+        "tags": [
+          "SSO / SAML"
+        ]
+      }
+    },
+    "/api/v1/sso/scim-groups/{group_id}/mappings": {
+      "put": {
+        "operationId": "put_scim_group_mappings_api_v1_sso_scim_groups__group_id__mappings_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "group_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Group Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroupMappingsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Put Scim Group Mappings Api V1 Sso Scim Groups  Group Id  Mappings Put",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Put Scim Group Mappings",
+        "tags": [
+          "SSO / SAML"
+        ]
+      }
+    },
+    "/api/v1/sso/slo": {
+      "get": {
+        "description": "W20 ADM-08c: IdP-initiated single logout (HTTP-Redirect or HTTP-POST binding).\n\nA LogoutRequest signed by the configured IdP ends the NameID's TestLookup sessions — every refresh token\nrevoked and an access-token cutoff written, so the next API call goes to the sign-in page — and the browser\ngoes back to the IdP with a Success LogoutResponse. Anything unsigned, signed by another key, from another\nissuer, stale or replayed is refused with 400 and changes nothing (no identity event: anyone can send one).",
+        "operationId": "saml_single_logout_api_v1_sso_slo_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Saml Single Logout",
+        "tags": [
+          "SSO / SAML"
+        ]
+      },
+      "post": {
+        "description": "W20 ADM-08c: IdP-initiated single logout (HTTP-Redirect or HTTP-POST binding).\n\nA LogoutRequest signed by the configured IdP ends the NameID's TestLookup sessions — every refresh token\nrevoked and an access-token cutoff written, so the next API call goes to the sign-in page — and the browser\ngoes back to the IdP with a Success LogoutResponse. Anything unsigned, signed by another key, from another\nissuer, stale or replayed is refused with 400 and changes nothing (no identity event: anyone can send one).",
+        "operationId": "saml_single_logout_api_v1_sso_slo_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Saml Single Logout",
         "tags": [
           "SSO / SAML"
         ]
