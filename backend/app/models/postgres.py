@@ -4686,7 +4686,7 @@ class FlakyCoachResult(Base):
 
 class SSOProviderType(str, PyEnum):
     SAML = "SAML"
-    OIDC = "OIDC"  # reserved for future use
+    OIDC = "OIDC"  # W20 ADM-08b: authorization code + PKCE (services/oidc_service.py)
 
 
 class SSOEnforcementMode(str, PyEnum):
@@ -4749,18 +4749,30 @@ class SSOConfiguration(Base):
             postgresql_where=text("is_active IS TRUE"),
             sqlite_where=text("is_active IS TRUE"),
         ),
+        # W20 ADM-08b (migration 0237): the SAML fields are NULL-able for an OIDC row, never for a SAML one.
+        CheckConstraint(
+            "(provider_type <> 'SAML' OR (idp_entity_id IS NOT NULL AND idp_sso_url IS NOT NULL"
+            " AND idp_certificate IS NOT NULL AND sp_entity_id IS NOT NULL AND sp_acs_url IS NOT NULL))"
+            " AND (provider_type <> 'OIDC' OR (oidc_issuer IS NOT NULL AND oidc_client_id IS NOT NULL))",
+            name="ck_sso_config_fields_by_provider",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     provider_type: Mapped[SSOProviderType] = mapped_column(String(20), nullable=False, default=SSOProviderType.SAML.value)
-    # SAML-specific fields
-    idp_entity_id: Mapped[str] = mapped_column(String(1000), nullable=False)
-    idp_sso_url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    # SAML-specific fields (NULL on an OIDC row; the CHECK above keeps a SAML row complete)
+    idp_entity_id: Mapped[Optional[str]] = mapped_column(String(1000))
+    idp_sso_url: Mapped[Optional[str]] = mapped_column(String(2000))
     idp_slo_url: Mapped[Optional[str]] = mapped_column(String(2000))
-    idp_certificate: Mapped[str] = mapped_column(Text, nullable=False)  # PEM-encoded X.509 cert
-    sp_entity_id: Mapped[str] = mapped_column(String(1000), nullable=False)
-    sp_acs_url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    idp_certificate: Mapped[Optional[str]] = mapped_column(Text)  # PEM-encoded X.509 cert
+    sp_entity_id: Mapped[Optional[str]] = mapped_column(String(1000))
+    sp_acs_url: Mapped[Optional[str]] = mapped_column(String(2000))
+    # OIDC-specific fields (W20 ADM-08b). The client secret lives in secret_refs (scope "sso_oidc", key = id).
+    oidc_issuer: Mapped[Optional[str]] = mapped_column(String(1000))
+    oidc_client_id: Mapped[Optional[str]] = mapped_column(String(255))
+    oidc_scopes: Mapped[Optional[str]] = mapped_column(String(500))  # space-separated; NULL = "openid email profile"
+    oidc_groups_claim: Mapped[Optional[str]] = mapped_column(String(255))  # NULL = "groups"
     # Audience restriction (if different from sp_entity_id)
     audience: Mapped[Optional[str]] = mapped_column(String(1000))
     # Role mapping: JSON dict mapping IdP group/attribute values to UserRole values

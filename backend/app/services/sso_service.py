@@ -33,6 +33,7 @@ from app.models.postgres import (
     IdentityEventType,
     SSOConfiguration,
     SSOEnforcementMode,
+    SSOProviderType,
     User,
     UserRole,
 )
@@ -831,9 +832,15 @@ async def jit_provision_or_link(
     name_id: str,
     attributes: dict[str, list[str]],
     ip_address: str | None = None,
+    email_verified: Optional[bool] = None,
 ) -> tuple[User, bool]:
     """
     Just-In-Time provision a new user or link an existing user from SAML assertion.
+
+    W20 ADM-08b: an OIDC sign-in passes ``name_id`` = the ID token's ``sub``, its claims
+    as ``attributes`` and ``email_verified``; the groups come from ``oidc_groups_claim``.
+    An IdP that says the email is NOT verified never links to an existing local account
+    with that email (that would hand the account to whoever typed the address).
 
     Returns (user, is_new_user).
     """
@@ -853,8 +860,12 @@ async def jit_provision_or_link(
 
     # Extract groups for role mapping
     groups: list[str] = []
-    if config.group_attribute and config.group_attribute in attributes:
-        groups = attributes[config.group_attribute]
+    if config.provider_type == SSOProviderType.OIDC:
+        group_key: Optional[str] = config.oidc_groups_claim or "groups"
+    else:
+        group_key = config.group_attribute
+    if group_key and group_key in attributes:
+        groups = attributes[group_key]
 
     # Check for existing federated identity
     result = await db.execute(
@@ -896,6 +907,9 @@ async def jit_provision_or_link(
         # Check if a user with this email already exists
         user_result = await db.execute(select(User).where(User.email == email))
         user = user_result.scalar_one_or_none()
+
+        if user is not None and email_verified is False:
+            raise ValueError("The identity provider has not verified this email; it cannot sign in to an existing account")
 
         if user is None:
             # JIT provision new user

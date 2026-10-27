@@ -1,9 +1,9 @@
-"""SSO / SAML router — admin configuration CRUD, SP-initiated login, SAML ACS."""
+"""SSO router — admin configuration CRUD, SP-initiated login, SAML ACS, OIDC login + callback (W20 ADM-08b)."""
 import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
@@ -19,6 +19,7 @@ from app.db.postgres import get_db
 from app.models.postgres import (
     IdentityEventType,
     SSOConfiguration,
+    SSOProviderType,
     User,
     UserRole,
 )
@@ -52,6 +53,8 @@ from app.services.sso_service import (
     validate_certificate_format,
     validate_saml_issuer,
 )
+from app.services import oidc_service
+from app.services.secret_service import expire_secret, has_secret, read_secret, store_secret
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +62,14 @@ router = APIRouter(prefix="/api/v1/sso", tags=["SSO / SAML"])
 
 # Upper bound on an inbound base64 SAMLResponse before we decode/parse it.
 _MAX_SAML_RESPONSE_BYTES = 1_000_000
+
+# W20 ADM-08b: the OIDC client secret lives in secret_refs under this scope, keyed by the config id.
+OIDC_SECRET_SCOPE = "sso_oidc"
+_OIDC_CODE_MAX = 4096
+
+
+def _is_oidc(config: SSOConfiguration) -> bool:
+    return getattr(config, "provider_type", None) == SSOProviderType.OIDC
 
 # ── Public endpoints (no JWT required) ───────────────────────────────────────
 
@@ -94,6 +105,17 @@ async def get_sso_login_url(next: Optional[str] = None, db: AsyncSession = Depen
             detail="No active SSO configuration found",
         )
 
+    if _is_oidc(config):
+        try:
+            oidc_url = await oidc_service.start_login(config, next_path=safe_relay_state(next))
+        except oidc_service.OIDCError as exc:
+            logger.warning("OIDC login could not start: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="The identity provider could not be reached. Contact your administrator.",
+            )
+        return {"redirect_url": oidc_url, "request_id": None, "provider_type": SSOProviderType.OIDC.value}
+
     # SP-initiated: redirect to IdP SSO URL. Persist the minted request id
     # (single-use, short TTL) so the ACS can bind the IdP's response to this
     # request via InResponseTo and reject replays / unsolicited responses.
@@ -111,7 +133,136 @@ async def get_sso_login_url(next: Optional[str] = None, db: AsyncSession = Depen
         "redirect_url": redirect_url,
         "request_id": request_id,
         "sp_entity_id": config.sp_entity_id,
+        "provider_type": SSOProviderType.SAML.value,
     }
+
+
+@router.get("/oidc/login")
+async def oidc_login(next: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """W20 ADM-08b: start an OIDC sign-in — 302 to the IdP's authorization endpoint (state, nonce, PKCE S256)."""
+    if not settings.SSO_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO is not enabled")
+    config = await get_active_sso_config(db)
+    if config is None or not _is_oidc(config):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active OIDC configuration found")
+    try:
+        url = await oidc_service.start_login(config, next_path=safe_relay_state(next))
+    except oidc_service.OIDCError as exc:
+        logger.warning("OIDC login could not start: %s", exc)
+        return RedirectResponse(url=f"{settings.public_base_url}/login?sso_error=1", status_code=status.HTTP_302_FOUND)
+    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+
+
+@router.get("/oidc/callback")
+async def oidc_callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """W20 ADM-08b: the IdP sends the browser back here with ``code`` + ``state``.
+
+    The state is burned first (single use), the code exchanged with the client secret and the PKCE verifier,
+    the ID token validated (signature / iss / aud / exp / nonce), then the user is JIT-provisioned or linked
+    and handed into the app through the one-time-code fragment. Every refusal goes back to ``/login`` with a
+    generic notice; the reason stays in the server log and the identity-event audit.
+    """
+    if not settings.SSO_ENABLED:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO is not enabled")
+    client_ip = request.client.host if request.client else None
+    config = await get_active_sso_config(db)
+
+    async def refuse(reason: str, **detail: object) -> RedirectResponse:
+        logger.warning("OIDC sign-in refused: %s", reason)
+        if config is not None:
+            await log_identity_event(
+                db,
+                IdentityEventType.SSO_LOGIN_FAILED,
+                sso_config_id=config.id,
+                detail={"error": reason, "provider_type": "OIDC", **detail},
+                ip_address=client_ip,
+                success=False,
+                error_message=reason[:500],
+            )
+            await db.commit()
+        return RedirectResponse(url=f"{settings.public_base_url}/login?sso_error=1", status_code=status.HTTP_303_SEE_OTHER)
+
+    if config is None or not _is_oidc(config):
+        return await refuse("no active OIDC configuration")
+    # Burn the state before anything else, so an error answer cannot be replayed either.
+    parked = await oidc_service.consume_state(state)
+    if error:
+        return await refuse(f"identity provider returned error {error[:100]!r}")
+    if parked is None:
+        return await refuse("state unknown, already used or expired")
+    if parked.get("config_id") != str(config.id):
+        return await refuse("the active SSO configuration changed during the sign-in")
+    if not code or len(code) > _OIDC_CODE_MAX:
+        return await refuse("missing authorization code")
+    client_secret = await read_secret(db, OIDC_SECRET_SCOPE, str(config.id))
+    if not client_secret:
+        return await refuse("no client secret is stored for this configuration")
+
+    try:
+        doc = await oidc_service.discover(config.oidc_issuer or "")
+        tokens = await oidc_service.exchange_code(
+            doc,
+            code=code,
+            code_verifier=parked["code_verifier"],
+            redirect_uri=parked["redirect_uri"],
+            client_id=config.oidc_client_id or "",
+            client_secret=client_secret,
+        )
+        claims = await oidc_service.validate_with_jwks(
+            tokens["id_token"], doc,
+            issuer=config.oidc_issuer or "", client_id=config.oidc_client_id or "", nonce=parked["nonce"],
+        )
+        email, attributes, email_verified = oidc_service.claims_to_attributes(claims, config.oidc_groups_claim)
+    except oidc_service.OIDCError as exc:
+        return await refuse(str(exc))
+
+    try:
+        user, is_new = await jit_provision_or_link(
+            db=db,
+            config=config,
+            name_id=claims["sub"],
+            attributes=attributes,
+            ip_address=client_ip,
+            email_verified=email_verified,
+        )
+    except ValueError as exc:
+        return await refuse(str(exc), sub=claims["sub"])
+    if not user.is_active:
+        return await refuse("account is deactivated", sub=claims["sub"])
+
+    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await db.refresh(user)
+    access_token = await issue_access_jwt(db, str(user.id))
+    refresh_token = await issue_refresh_token(db, user.id)
+    await log_identity_event(
+        db,
+        IdentityEventType.SSO_LOGIN,
+        user_id=user.id,
+        sso_config_id=config.id,
+        detail={"sub": claims["sub"], "email": email, "is_new_user": is_new, "provider_type": "OIDC"},
+        ip_address=client_ip,
+    )
+    await db.commit()
+    logger.info("OIDC login successful for user: %s (new=%s)", user.username, is_new)
+
+    signed_in = SSOLoginResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        user=UserResponse.model_validate(user),
+        is_new_user=is_new,
+    )
+    handoff = await stash_sso_login(signed_in.model_dump(mode="json"))
+    fragment = f"code={quote(handoff)}"
+    if parked.get("next"):
+        fragment += f"&next={quote(parked['next'], safe='')}"
+    return RedirectResponse(url=f"{settings.public_base_url}/sso/callback#{fragment}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 def _wants_browser_redirect(request: Request) -> bool:
@@ -154,8 +305,8 @@ async def saml_acs(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO is not enabled")
 
     config = await get_active_sso_config(db)
-    if config is None:
-        raise _acs_failure(browser, status.HTTP_400_BAD_REQUEST, "No active SSO configuration")
+    if config is None or _is_oidc(config):
+        raise _acs_failure(browser, status.HTTP_400_BAD_REQUEST, "No active SAML configuration")
 
     # Parse form data (SAML POST binding)
     form = await request.form()
@@ -298,13 +449,17 @@ async def exchange_sso_code(payload: SSOExchangeRequest):
 async def get_sso_status(db: AsyncSession = Depends(get_db)):
     """Public endpoint to check if SSO is enabled and available."""
     if not settings.SSO_ENABLED:
-        return {"sso_enabled": False, "has_active_config": False, "enforcement_mode": None}
+        return {"sso_enabled": False, "has_active_config": False, "enforcement_mode": None,
+                "provider_type": None, "display_name": None}
 
     config = await get_active_sso_config(db)
     return {
         "sso_enabled": True,
         "has_active_config": config is not None,
         "enforcement_mode": config.enforcement_mode if config else None,
+        # W20 ADM-08b: the login page labels its button "Sign in with <display_name>" for either type.
+        "provider_type": config.provider_type if config else None,
+        "display_name": config.display_name if config else None,
     }
 
 
@@ -321,7 +476,7 @@ async def list_sso_configs(
         select(SSOConfiguration).order_by(SSOConfiguration.created_at.desc())
     )
     configs = result.scalars().all()
-    return [_config_to_response(c) for c in configs]
+    return [await _config_response(db, c) for c in configs]
 
 
 @router.get("/configs/{config_id}", response_model=SSOConfigResponse)
@@ -337,7 +492,7 @@ async def get_sso_config(
     config = result.scalar_one_or_none()
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO configuration not found")
-    return _config_to_response(config)
+    return await _config_response(db, config)
 
 
 @router.post("/configs", response_model=SSOConfigResponse, status_code=201)
@@ -348,13 +503,16 @@ async def create_sso_config(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new SSO configuration (ADMIN only)."""
-    # Validate certificate
-    cert_valid, cert_msg = validate_certificate_format(payload.idp_certificate)
-    if not cert_valid:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid IdP certificate: {cert_msg}",
-        )
+    is_oidc = payload.provider_type == SSOProviderType.OIDC
+    if is_oidc:
+        _check_oidc_issuer(payload.oidc_issuer or "")
+    else:
+        cert_valid, cert_msg = validate_certificate_format(payload.idp_certificate or "")
+        if not cert_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid IdP certificate: {cert_msg}",
+            )
 
     # Validate role mapping values
     if payload.role_mapping:
@@ -368,21 +526,28 @@ async def create_sso_config(
                 )
 
     config = SSOConfiguration(
+        id=uuid.uuid4(),
         display_name=payload.display_name,
         provider_type=payload.provider_type,
-        idp_entity_id=payload.idp_entity_id,
-        idp_sso_url=payload.idp_sso_url,
-        idp_slo_url=payload.idp_slo_url,
-        idp_certificate=payload.idp_certificate,
-        sp_entity_id=payload.sp_entity_id,
-        sp_acs_url=payload.sp_acs_url,
-        audience=payload.audience,
+        idp_entity_id=None if is_oidc else payload.idp_entity_id,
+        idp_sso_url=None if is_oidc else payload.idp_sso_url,
+        idp_slo_url=None if is_oidc else payload.idp_slo_url,
+        idp_certificate=None if is_oidc else payload.idp_certificate,
+        sp_entity_id=None if is_oidc else payload.sp_entity_id,
+        sp_acs_url=None if is_oidc else payload.sp_acs_url,
+        audience=None if is_oidc else payload.audience,
+        oidc_issuer=payload.oidc_issuer.rstrip("/") if is_oidc and payload.oidc_issuer else None,
+        oidc_client_id=payload.oidc_client_id if is_oidc else None,
+        oidc_scopes=payload.oidc_scopes if is_oidc else None,
+        oidc_groups_claim=payload.oidc_groups_claim if is_oidc else None,
         role_mapping=payload.role_mapping or {},
         default_role=payload.default_role,
         group_attribute=payload.group_attribute,
         enforcement_mode=payload.enforcement_mode,
     )
     db.add(config)
+    if is_oidc and payload.oidc_client_secret:
+        await store_secret(db, OIDC_SECRET_SCOPE, str(config.id), payload.oidc_client_secret, actor_id=current_user.id)
 
     client_ip = request.client.host if request.client else None
     await log_identity_event(
@@ -398,7 +563,7 @@ async def create_sso_config(
     await db.commit()
     await db.refresh(config)
     logger.info("SSO config created: %s by %s", config.display_name, current_user.username)
-    return _config_to_response(config)
+    return await _config_response(db, config)
 
 
 @router.patch("/configs/{config_id}", response_model=SSOConfigResponse)
@@ -418,6 +583,20 @@ async def update_sso_config(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO configuration not found")
 
     update_data = payload.model_dump(exclude_unset=True)
+    new_secret = update_data.pop("oidc_client_secret", None)
+
+    # W20 ADM-08b: the fields this provider type cannot do without may change, never become empty
+    # (the CHECK constraint would refuse it at commit; say which field instead).
+    required = (
+        ("oidc_issuer", "oidc_client_id") if _is_oidc(config)
+        else ("idp_entity_id", "idp_sso_url", "idp_certificate", "sp_entity_id", "sp_acs_url")
+    )
+    for name in required:
+        if name in update_data and not update_data[name]:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{name} cannot be empty")
+    if update_data.get("oidc_issuer"):
+        _check_oidc_issuer(update_data["oidc_issuer"])
+        update_data["oidc_issuer"] = update_data["oidc_issuer"].rstrip("/")
 
     # Validate certificate if being updated
     if "idp_certificate" in update_data and update_data["idp_certificate"]:
@@ -459,6 +638,9 @@ async def update_sso_config(
         if old_val != value:
             changes[field] = {"old": str(old_val) if field != "idp_certificate" else "(masked)", "new": str(value) if field != "idp_certificate" else "(masked)"}
             setattr(config, field, value)
+    if new_secret and _is_oidc(config):
+        await store_secret(db, OIDC_SECRET_SCOPE, str(config.id), new_secret, actor_id=current_user.id)
+        changes["oidc_client_secret"] = {"old": "(masked)", "new": "(masked)"}
     if deactivated_count:
         changes["deactivated_other_configs"] = deactivated_count
 
@@ -488,7 +670,7 @@ async def update_sso_config(
     await db.commit()
     await db.refresh(config)
     logger.info("SSO config updated: %s by %s", config.display_name, current_user.username)
-    return _config_to_response(config)
+    return await _config_response(db, config)
 
 
 @router.delete("/configs/{config_id}", status_code=204)
@@ -517,6 +699,8 @@ async def delete_sso_config(
         ip_address=client_ip,
     )
 
+    if _is_oidc(config):
+        await expire_secret(db, OIDC_SECRET_SCOPE, str(config.id))
     await db.delete(config)
     await db.commit()
     logger.info("SSO config deleted: %s by %s", config.display_name, current_user.username)
@@ -570,19 +754,35 @@ async def test_sso_connection(
     client_ip = request.client.host if request.client else None
     now = datetime.now(timezone.utc)
 
-    # Validate certificate format
-    cert_valid, cert_msg = validate_certificate_format(config.idp_certificate)
+    cert_valid: Optional[bool]
+    if _is_oidc(config):
+        # W20 ADM-08b: discovery (fresh, not cached) + JWKS prove the IdP answers and names its endpoints;
+        # the stored secret is checked for presence (only a real sign-in proves it).
+        cert_valid = None
+        try:
+            doc = await oidc_service.discover(config.oidc_issuer or "", use_cache=False)
+            jwks = await oidc_service.fetch_jwks(doc["jwks_uri"], force=True)
+            success = await has_secret(db, OIDC_SECRET_SCOPE, str(config.id))
+            message = f"OIDC provider reachable; discovery OK, {len(jwks.get('keys') or [])} signing key(s)"
+            if not success:
+                message = f"Validation failed: {message}; no client secret is stored"
+        except oidc_service.OIDCError as exc:
+            success = False
+            message = f"Validation failed: {exc}"
+    else:
+        # Validate certificate format
+        cert_valid, cert_msg = validate_certificate_format(config.idp_certificate or "")
 
-    # A non-empty URL proves only configuration presence. Probe the endpoint
-    # so DNS/TLS/connectivity failures cannot be reported as a valid connection.
-    url_ok, endpoint_message = await probe_idp_endpoint(config.idp_sso_url)
+        # A non-empty URL proves only configuration presence. Probe the endpoint
+        # so DNS/TLS/connectivity failures cannot be reported as a valid connection.
+        url_ok, endpoint_message = await probe_idp_endpoint(config.idp_sso_url or "")
 
-    success = cert_valid and url_ok
-    message = (
-        f"SSO configuration is valid; {endpoint_message}"
-        if success
-        else f"Validation failed: {cert_msg if not cert_valid else endpoint_message}"
-    )
+        success = cert_valid and url_ok
+        message = (
+            f"SSO configuration is valid; {endpoint_message}"
+            if success
+            else f"Validation failed: {cert_msg if not cert_valid else endpoint_message}"
+        )
 
     config.last_test_at = now
     config.last_test_success = success
@@ -606,18 +806,33 @@ async def test_sso_connection(
     return SSOTestConnectionResponse(
         success=success,
         message=message,
-        idp_entity_id=config.idp_entity_id,
+        idp_entity_id=config.oidc_issuer if _is_oidc(config) else config.idp_entity_id,
         certificate_valid=cert_valid,
         certificate_expires_at=(
             expiry.isoformat()
-            if (expiry := certificate_expiration(config.idp_certificate))
+            if config.idp_certificate and (expiry := certificate_expiration(config.idp_certificate))
             else None
         ),
     )
 
 
-def _config_to_response(config: SSOConfiguration) -> SSOConfigResponse:
-    """Convert a SSOConfiguration model to a response with masked certificate."""
+def _check_oidc_issuer(issuer: str) -> None:
+    """An issuer is an absolute http(s) URL with no query or fragment (OIDC Discovery §2)."""
+    parts = urlsplit(issuer)
+    if parts.scheme not in ("https", "http") or not parts.netloc or parts.query or parts.fragment:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="oidc_issuer must be an absolute https URL without a query or fragment",
+        )
+
+
+async def _config_response(db: AsyncSession, config: SSOConfiguration) -> SSOConfigResponse:
+    secret_set = _is_oidc(config) and await has_secret(db, OIDC_SECRET_SCOPE, str(config.id))
+    return _config_to_response(config, oidc_client_secret_set=secret_set)
+
+
+def _config_to_response(config: SSOConfiguration, *, oidc_client_secret_set: bool = False) -> SSOConfigResponse:
+    """Convert a SSOConfiguration model to a response with masked certificate (and never the OIDC secret)."""
     return SSOConfigResponse(
         id=config.id,
         display_name=config.display_name,
@@ -625,10 +840,16 @@ def _config_to_response(config: SSOConfiguration) -> SSOConfigResponse:
         idp_entity_id=config.idp_entity_id,
         idp_sso_url=config.idp_sso_url,
         idp_slo_url=config.idp_slo_url,
-        idp_certificate_fingerprint=certificate_fingerprint(config.idp_certificate),
+        idp_certificate_fingerprint=certificate_fingerprint(config.idp_certificate) if config.idp_certificate else "",
         sp_entity_id=config.sp_entity_id,
         sp_acs_url=config.sp_acs_url,
         audience=config.audience,
+        oidc_issuer=config.oidc_issuer,
+        oidc_client_id=config.oidc_client_id,
+        oidc_scopes=config.oidc_scopes,
+        oidc_groups_claim=config.oidc_groups_claim,
+        oidc_client_secret_set=oidc_client_secret_set,
+        oidc_redirect_uri=oidc_service.callback_url() if _is_oidc(config) else None,
         role_mapping=config.role_mapping,
         default_role=config.default_role,
         group_attribute=config.group_attribute,
