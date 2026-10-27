@@ -341,6 +341,12 @@ export default function SSOSettingsPage() {
                       required
                     />
                     <input
+                      placeholder="IdP SLO URL (optional: enables single logout)"
+                      value={formData.idp_slo_url || ''}
+                      onChange={e => setFormData(d => ({ ...d, idp_slo_url: e.target.value }))}
+                      className="input text-sm"
+                    />
+                    <input
                       placeholder="Group Attribute (e.g., memberOf)"
                       value={formData.group_attribute || ''}
                       onChange={e => setFormData(d => ({ ...d, group_attribute: e.target.value }))}
@@ -413,6 +419,12 @@ export default function SSOSettingsPage() {
                           </p>
                           <p className="text-xs text-[var(--color-text-muted)] mt-1">
                             Cert fingerprint: {config.idp_certificate_fingerprint.slice(0, 16)}...
+                          </p>
+                          {/* W20 ADM-08c: IdP-initiated single logout is served only while an IdP SLO URL is set. */}
+                          <p data-slo="" className="text-xs text-[var(--color-text-muted)] mt-1">
+                            {config.idp_slo_url
+                              ? <>Single logout: on: signing out at the IdP ends TestLookup sessions (answers {config.idp_slo_url})</>
+                              : 'Single logout: off (no IdP SLO URL)'}
                           </p>
                         </>
                       )}

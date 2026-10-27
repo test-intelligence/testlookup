@@ -362,3 +362,13 @@ describe('OIDC configurations (W20 ADM-08b)', () => {
     expect(mockRefresh).toHaveBeenCalled()
   })
 })
+
+describe('single logout on a SAML card (W20 ADM-08c)', () => {
+  it('says on with the IdP SLO URL, off without one', () => {
+    renderWith([config({ id: 'a', idp_slo_url: 'https://idp.example/slo' }), config({ id: 'b', display_name: 'Other' })])
+    const lines = Array.from(document.querySelectorAll('[data-slo]')).map((n) => n.textContent)
+    expect(lines[0]).toContain('Single logout: on')
+    expect(lines[0]).toContain('https://idp.example/slo')
+    expect(lines[1]).toBe('Single logout: off (no IdP SLO URL)')
+  })
+})
