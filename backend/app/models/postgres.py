@@ -4155,6 +4155,7 @@ class SecretRef(Base):
     provider: Mapped[str] = mapped_column(String(50), nullable=False, default="db")  # "db" | "vault" | "aws_sm"
     key_name: Mapped[str] = mapped_column(String(255), nullable=False)       # e.g. "jira_api_token"
     encrypted_value: Mapped[Optional[str]] = mapped_column(Text)             # stored encrypted; NULL if external
+    external_ref: Mapped[Optional[str]] = mapped_column(String(500))         # W20 ADM-10: "vault:<path>#<key>" when provider="vault"
     masked_value: Mapped[Optional[str]] = mapped_column(String(50))          # e.g. "sk-...abc1"
     rotation_status: Mapped[str] = mapped_column(String(30), default="active")
     updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)

@@ -158,10 +158,22 @@ async def resolve_global_integrations(
         if key in INTEGRATION_TEXT_KEYS and source == "environment" and _non_empty(value):
             environment_fields.append(key)
 
+    # W20 ADM-10: which secret fields are Vault references (shown "(set — Vault)" even while Vault is down).
+    from app.models.postgres import SecretRef
+
+    try:
+        vault_rows = await db.execute(select(SecretRef.key_name).where(
+            SecretRef.scope == _SCOPE, SecretRef.provider == "vault", SecretRef.rotation_status != "expired"))
+        vault_fields = sorted(set(vault_rows.scalars().all()) & set(_SECRET_ENV_SETTING))
+    except Exception:  # noqa: BLE001 - a display label; never fail the settings read over it
+        logger.warning("integrations: could not list Vault reference fields", exc_info=True)
+        vault_fields = []
+
     return {
         **resolved,
         **secrets,
         "_environment_fields": sorted(environment_fields),
+        "_vault_fields": vault_fields,
     }
 
 

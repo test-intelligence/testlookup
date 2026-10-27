@@ -286,6 +286,14 @@ class FakeState:
              "due_date": None, "web_url": f"{GITLAB_WEB_ROOT}/group/api-gateway/-/milestones/2"},
         ],
     })
+    # ── W20 ADM-10: a Vault-compatible KV v2 store (token + approle auth) ──
+    vault_root_token: str = "fake-vault-token"
+    vault_approle: tuple[str, str] = ("fake-role-id", "fake-secret-id")
+    #: path (under the "secret" mount) -> {key: value}
+    vault_kv: dict[str, dict[str, str]] = field(default_factory=lambda: {
+        "testlookup/jira": {"api_token": "fake-jira-token"},
+    })
+    vault_issued: set[str] = field(default_factory=set)
     # ── W10: outbound webhook receiver ──
     #: {path, status, event, delivery_id, signed}
     hooks: list[dict[str, Any]] = field(default_factory=list)
@@ -1236,6 +1244,11 @@ async def _control(request: Request, state: FakeState) -> Response:
                 "events": list(body.get("events", current.get("events", []))),
             }
         return JSONResponse({"namespace": namespace, "pod": pod, "events": len(pods[pod]["events"])})
+    if path == "/_fake/vault/kv":
+        body = await request.json()
+        with state._lock:
+            state.vault_kv[str(body["path"])] = {str(k): str(v) for k, v in dict(body["data"]).items()}
+        return JSONResponse({"path": body["path"], "keys": sorted(body["data"])})
     if path == "/_fake/gitlab/milestones":
         body = await request.json()
         with state._lock:
@@ -1262,6 +1275,35 @@ async def _control(request: Request, state: FakeState) -> Response:
 # ── App ─────────────────────────────────────────────────────────────────────
 
 
+async def _vault(request: Request, state: FakeState, path: str, method: str) -> Response:
+    """W20 ADM-10: Vault KV v2 under mount ``secret`` — ``POST /v1/auth/approle/login``, ``GET
+    /v1/auth/token/lookup-self``, ``GET /v1/secret/data/<path>``; ``X-Vault-Token`` is the root token or one the
+    approle login issued. Logged as service ``vault`` (auth ok|bad|none, never the token)."""
+    token = request.headers.get("x-vault-token")
+    ok = bool(token) and (token == state.vault_root_token or token in state.vault_issued)
+    with state._lock:
+        state.requests.append({"method": method, "path": path, "query": dict(request.query_params), "body": None,
+                               "service": "vault", "auth": "ok" if ok else ("bad" if token else "none")})
+    if path == "/v1/auth/approle/login" and method == "POST":
+        body = await request.json()
+        if (body.get("role_id"), body.get("secret_id")) != state.vault_approle:
+            return JSONResponse({"errors": ["invalid role or secret ID"]}, status_code=400)
+        issued = f"s.fake-{len(state.vault_issued) + 1}"
+        state.vault_issued.add(issued)
+        return JSONResponse({"auth": {"client_token": issued, "lease_duration": 3600, "renewable": True}})
+    if not ok:
+        return JSONResponse({"errors": ["permission denied"]}, status_code=403)
+    if path == "/v1/auth/token/lookup-self":
+        return JSONResponse({"data": {"policies": ["testlookup-read"], "ttl": 3600}})
+    prefix = "/v1/secret/data/"
+    if path.startswith(prefix) and method == "GET":
+        data = state.vault_kv.get(path[len(prefix):])
+        if data is None:
+            return JSONResponse({"errors": []}, status_code=404)
+        return JSONResponse({"data": {"data": dict(data), "metadata": {"version": 1}}})
+    return JSONResponse({"errors": ["unsupported path"]}, status_code=404)
+
+
 def create_app(state: Optional[FakeState] = None) -> Starlette:
     state = state or FakeState()
 
@@ -1270,6 +1312,8 @@ def create_app(state: Optional[FakeState] = None) -> Starlette:
         method = request.method.upper()
         if path.startswith("/_fake/"):
             return await _control(request, state)
+        if path.startswith("/v1/"):
+            return await _vault(request, state, path, method)
         raw = await request.body()
         try:
             body: Any = json.loads(raw) if raw else None

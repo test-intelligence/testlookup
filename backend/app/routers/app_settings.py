@@ -1081,6 +1081,7 @@ def _integrations_read(cfg: dict) -> IntegrationsConfigRead:
         github_repo=cfg["github_repo"],
         github_token_set=bool(cfg.get("github_token")),
         environment_fields=list(cfg.get("_environment_fields") or []),
+        vault_fields=list(cfg.get("_vault_fields") or []),
     )
 
 

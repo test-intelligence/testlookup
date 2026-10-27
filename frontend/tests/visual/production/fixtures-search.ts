@@ -1079,6 +1079,8 @@ export function embeddingWorld(options: EmbeddingWorldOptions = {}) {
       'POST',
     ],
     [STORAGE_API, () => storageRead(state.storedPrefix, state.index ? state.index.active.prefix : null)],
+    // W20 ADM-10: the Secrets card on Data & storage (no Vault).
+    ['/api/v1/settings/secret-providers', () => ({ providers: [{ name: 'vault', configured: false, address_host: null, auth_method: 'token', healthy: false, message: 'Not configured: set SECRET_PROVIDER_VAULT_ADDR on the deployment.', references: 0 }], reference_syntax: 'vault:<path>#<key>' })],
     [
       STORAGE_API,
       (request) => {

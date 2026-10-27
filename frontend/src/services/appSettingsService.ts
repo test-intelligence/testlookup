@@ -344,6 +344,8 @@ export interface IntegrationsConfigRead {
    * Names only, never a value. Optional: an older server sends nothing (read `[]`).
    */
   environment_fields?: string[]
+  /** W20 ADM-10: secret fields stored as Vault references (`vault:<path>#<key>`). */
+  vault_fields?: string[]
 }
 
 export interface IntegrationsConfigUpdate {
@@ -479,4 +481,20 @@ export const appSettingsService = {
       .put<StorageConfigRead>('/api/v1/settings/storage', payload, opts?.suppressToast ? { suppressToast: true } : undefined)
       .then(r => r.data)
   },
+}
+
+/** W20 ADM-10: `GET /settings/secret-providers` (ADMIN) — the deployment's Vault reference provider. */
+export interface SecretProviderStatus {
+  name: string
+  configured: boolean
+  address_host: string | null
+  auth_method: string
+  healthy: boolean
+  message: string
+  references: number
+}
+
+export async function getSecretProviders(): Promise<{ providers: SecretProviderStatus[]; reference_syntax: string }> {
+  const { data } = await api.get<{ providers: SecretProviderStatus[]; reference_syntax: string }>('/api/v1/settings/secret-providers')
+  return data
 }

@@ -6,6 +6,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { appSettingsService, type StorageConfigRead, type StorageConfigUpdate } from '@/services/appSettingsService'
 import { usePermissions } from '@/hooks/usePermissions'
 import Field from '@/components/ui/Field'
+import SecretProvidersCard from './SecretProvidersCard'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import {
   COLLECTION_PREFIX_HELP,
@@ -216,6 +217,8 @@ export default function StoragePage() {
           </button>
         )}
       </form>
+
+      {isAdmin && <SecretProvidersCard />}
     </div>
   )
 }

@@ -15,6 +15,7 @@ import {
   SAVED,
   SAVE_FAILED,
   SECRET_SET,
+  SECRET_SET_VAULT,
   SLACK_CHANNEL_HELP_LEAD,
   SLACK_CHANNEL_HELP_LINK,
   SLACK_CHANNEL_HELP_TO,
@@ -105,12 +106,13 @@ function SecretField({ id, label, state, value, onChange, disabled, placeholder,
   return (
     <div className={className ?? 'min-w-0'}>
       <label htmlFor={id} className="block text-xs text-[var(--color-text-muted)] mb-1">
-        {label} {state && <span data-secret-state={name} className={state === SECRET_SET ? 'text-[var(--status-passed)]' : 'text-[var(--color-text-muted)]'}>{state}</span>}
+        {label} {state && <span data-secret-state={name} className={state === SECRET_SET || state === SECRET_SET_VAULT ? 'text-[var(--status-passed)]' : 'text-[var(--color-text-muted)]'}>{state}</span>}
       </label>
       <input id={id} type="password" value={value} placeholder={state ? '••••••••' : placeholder} disabled={disabled}
         onChange={e => onChange(e.target.value)} aria-describedby={describedBy} aria-invalid={error ? true : undefined}
         className={INPUT} />
       {lines}
+      {!disabled && <p className="text-2xs text-[var(--color-text-muted)] mt-1">Or a Vault reference: <code>vault:path#key</code></p>}
     </div>
   )
 }

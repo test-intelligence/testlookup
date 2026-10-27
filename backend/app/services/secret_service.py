@@ -177,6 +177,12 @@ async def store_secret(
     Encrypt and store a secret. Returns the masked value for display.
     Upserts: if a secret_ref for (scope, key_name) exists, updates it.
     """
+    # W20 ADM-10: "vault:<path>#<key>" is a REFERENCE — the pointer is stored, the value stays in Vault.
+    from app.services.secret_providers import vault
+
+    if vault.is_reference(raw_value):
+        return await _store_reference(db, scope, key_name, str(vault.parse_reference(raw_value)), actor_id)
+
     masked = mask_value(raw_value)
     ciphertext = encrypt_value(raw_value)
 
@@ -193,6 +199,8 @@ async def store_secret(
         existing.masked_value = masked
         existing.updated_by = actor_id
         existing.rotation_status = "active"
+        existing.provider = "db"
+        existing.external_ref = None
     else:
         db.add(SecretRef(
             scope=scope,
@@ -203,6 +211,27 @@ async def store_secret(
             updated_by=actor_id,
         ))
 
+    return masked
+
+
+async def _store_reference(
+    db: AsyncSession, scope: str, key_name: str, reference: str, actor_id: Optional[uuid.UUID],
+) -> str:
+    """Upsert a ``provider='vault'`` row holding only the reference (no ciphertext). Returns the display value."""
+    masked = reference[:50]
+    existing = (await db.execute(
+        select(SecretRef).where(SecretRef.scope == scope, SecretRef.key_name == key_name)
+    )).scalar_one_or_none()
+    if existing:
+        existing.provider = "vault"
+        existing.external_ref = reference
+        existing.encrypted_value = None
+        existing.masked_value = masked
+        existing.updated_by = actor_id
+        existing.rotation_status = "active"
+    else:
+        db.add(SecretRef(scope=scope, provider="vault", key_name=key_name, external_ref=reference,
+                         encrypted_value=None, masked_value=masked, updated_by=actor_id))
     return masked
 
 
@@ -237,6 +266,11 @@ async def read_secret(
         )
     )
     ref = result.scalar_one_or_none()
+    if ref is not None and ref.provider == "vault":
+        # W20 ADM-10: resolve the reference (None when Vault is unset, refuses, or the key is missing).
+        from app.services.secret_providers import vault
+
+        return await vault.read(ref.external_ref or "")
     if not ref or not ref.encrypted_value:
         return None
 

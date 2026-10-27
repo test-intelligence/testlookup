@@ -5210,6 +5210,8 @@ class IntegrationsConfigRead(BaseModel):
     # comes from the process environment because the key was never saved here
     # (non-empty environment value only). Names only, never a value.
     environment_fields: List[str] = Field(default_factory=list)
+    # W20 ADM-10: secret fields stored as Vault references (``vault:<path>#<key>``).
+    vault_fields: List[str] = Field(default_factory=list)
 
 
 def _stripped(value: Optional[str]) -> Optional[str]:

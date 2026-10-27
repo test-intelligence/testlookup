@@ -16,6 +16,7 @@ import {
   environmentFields,
   initialIntegrationForm,
   secretStateLabel,
+  SECRET_SET_VAULT,
   showsEnvHint,
 } from './integrationsForm'
 
@@ -112,6 +113,12 @@ describe('the environment hints', () => {
     expect(SECRET_SET_IN_ENV).toBe('(set in the environment)')
     expect(secretStateLabel('jira_api_token', config, env)).toBe(SECRET_SET)
     expect(secretStateLabel('splunk_api_token', config, env)).toBeNull()
+  })
+
+  it('a Vault reference reads "(set — Vault)" (W20 ADM-10), even when Vault resolved nothing', () => {
+    const vaulted = cfg({ vault_fields: ['splunk_api_token'], splunk_token_set: false })
+    expect(secretStateLabel('splunk_api_token', vaulted, environmentFields(vaulted))).toBe(SECRET_SET_VAULT)
+    expect(SECRET_SET_VAULT).toBe('(set — Vault)')
   })
 
   it('an older server without environment_fields shows no hint', () => {

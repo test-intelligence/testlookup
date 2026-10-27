@@ -52,6 +52,8 @@ export const ENV_HINT = 'From the deployment environment'
 export const SECRET_SET = '(set)'
 /** Beside a secret's label: not stored here, the environment supplies it. */
 export const SECRET_SET_IN_ENV = '(set in the environment)'
+/** W20 ADM-10: the stored value is a Vault reference; the secret itself lives in Vault. */
+export const SECRET_SET_VAULT = '(set — Vault)'
 /** The inline line when Save finds nothing changed (and sends nothing). */
 export const NO_CHANGES = 'No changes to save'
 export const SAVED = 'Integrations saved'
@@ -140,6 +142,7 @@ export function secretStateLabel(
   cfg: IntegrationsConfigRead,
   envFields: ReadonlySet<string>,
 ): string | null {
+  if (cfg.vault_fields?.includes(key)) return SECRET_SET_VAULT
   if (envFields.has(key)) return SECRET_SET_IN_ENV
   return cfg[SECRET_SET_FLAG[key]] === true ? SECRET_SET : null
 }
