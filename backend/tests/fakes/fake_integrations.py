@@ -45,8 +45,22 @@ refuses.
   ``.../commits/{sha}``, ``.../commits?since=&until=&per_page=``. An unknown or
   revoked PAT is 401 ``Bad credentials``; a repo the PAT cannot see, or an
   unknown sha, is 404 ``Not Found``.
+* GitHub App (W19 INT-06): ``POST /app/installations/{id}/access_tokens`` (root
+  and ``/api/v3``) takes ``Authorization: Bearer <App JWT>`` -- RS256, ``iss`` =
+  the App id, signed by the key registered with ``POST /_fake/github/app``, not
+  expired, issued at most 10 minutes ahead -- and answers 201 ``{token:
+  "ghs_…", expires_at}``; the token then reads the installation's repos like a
+  PAT. A bad JWT is 401 ``A JSON web token could not be decoded``, an unknown
+  installation 404. The request log's ``token_kind`` says ``installation``
+  (a ``ghs_`` token), ``app_jwt`` or ``pat``.
 * GitLab (``PRIVATE-TOKEN``): ``GET /api/v4/projects/{ref}`` (URL-encoded path
-  or numeric id); 401 / 404 as GitLab words them.
+  or numeric id); 401 / 404 as GitLab words them. W19 INT-05 adds, under the
+  same ref: ``/repository/compare?from=&to=`` (``commits[]`` oldest -> newest
+  with ``id``, ``title``, ``message``, ``author_name``, ``committed_date``, and
+  the range's ``diffs[].new_path``), ``/repository/commits?since=&until=``
+  (newest first) and ``/milestones`` (``iid``, ``title``, ``description``,
+  ``state``, ``due_date``, ``web_url``; steer them with ``POST
+  /_fake/gitlab/milestones``).
 * Receiver: ``POST /hooks/ok`` (200), ``/hooks/fail`` (500), ``/hooks/reject``
   (400); every call is logged with its event, delivery id and whether it was
   signed.
@@ -76,6 +90,8 @@ Inspect and steer it under ``/_fake/``:
   (``{_time, level, service, message, host}``) to an index
 * ``POST /_fake/ocp/pods`` -- ``{"namespace", "pod", "phase", "events",
   "image", "limits", "node"}``: create or replace a pod (and its namespace)
+* ``POST /_fake/github/app`` -- ``{"app_id", "public_key" (PEM), "installations": {"<id>": ["owner/repo", ...]}}``:
+  register a GitHub App (W19 INT-06).
 * ``POST /_fake/github/revoke`` -- ``{"token"}``: that PAT now answers 401
 * ``GET /_fake/hooks`` -- the receiver's log ``{path, status, event,
   delivery_id, signed}``
@@ -241,11 +257,34 @@ class FakeState:
     #: repo -> commits oldest -> newest {sha (40 hex), author, date, message, files}
     github_commits: dict[str, list[dict[str, Any]]] = field(default_factory=_demo_github_commits)
     revoked_github_tokens: set[str] = field(default_factory=set)
+    # ── W19 INT-06: GitHub Apps ──
+    #: app id -> public key PEM
+    github_app_keys: dict[str, str] = field(default_factory=dict)
+    #: installation id -> {"app_id", "repos"}
+    github_installations: dict[str, dict[str, Any]] = field(default_factory=dict)
     # ── W10: GitLab ──
     gitlab_token: str = "fake-gitlab-pat"
     #: path -> {"id", "web_url"}
     gitlab_projects: dict[str, dict[str, Any]] = field(default_factory=lambda: {
         "group/api-gateway": {"id": 42, "web_url": f"{GITLAB_WEB_ROOT}/group/api-gateway"},
+    })
+    # ── W19 INT-05: GitLab commits + milestones ──
+    #: path -> commits oldest -> newest {sha, author, date, message, files}
+    gitlab_commits: dict[str, list[dict[str, Any]]] = field(default_factory=lambda: {
+        "group/api-gateway": _demo_commits("group/api-gateway", [
+            ("Priya Nair", "Add rate-limit headers", ["gateway/ratelimit.py"]),
+            ("Omar Haddad", "Retry upstream on 503", ["gateway/upstream.py", "gateway/retry.py"]),
+            ("Dana Whitfield", "Tighten auth token parsing", ["gateway/auth.py"]),
+        ]),
+    })
+    #: path -> milestones
+    gitlab_milestones: dict[str, list[dict[str, Any]]] = field(default_factory=lambda: {
+        "group/api-gateway": [
+            {"id": 9001, "iid": 1, "title": "Gateway 2.4", "description": "Rate limits", "state": "active",
+             "due_date": "2026-11-15", "web_url": f"{GITLAB_WEB_ROOT}/group/api-gateway/-/milestones/1"},
+            {"id": 9002, "iid": 2, "title": "Gateway 2.5", "description": "", "state": "active",
+             "due_date": None, "web_url": f"{GITLAB_WEB_ROOT}/group/api-gateway/-/milestones/2"},
+        ],
     })
     # ── W10: outbound webhook receiver ──
     #: {path, status, event, delivery_id, signed}
@@ -704,7 +743,7 @@ def _service_of(path: str) -> Optional[str]:
         return "ocp"
     if path.startswith("/api/v4/projects/"):
         return "gitlab"
-    if path.startswith("/api/v3/") or path.startswith("/repos/") or path == "/rate_limit":
+    if path.startswith("/api/v3/") or path.startswith("/repos/") or path == "/rate_limit" or path.startswith("/app/"):
         return "github"
     if path.startswith("/hooks/"):
         return "hooks"
@@ -942,7 +981,51 @@ def _parse_time(value: Optional[str]) -> Optional[datetime]:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+def _token_kind(request: Request) -> Optional[str]:
+    raw = _github_pat(request)
+    if raw is None:
+        return None
+    if raw.startswith("ghs_"):
+        return "installation"
+    return "app_jwt" if raw.count(".") == 2 else "pat"
+
+
+async def _github_app_token(request: Request, state: FakeState, installation_id: str) -> Response:
+    import secrets as _secrets
+
+    bad = JSONResponse({"message": "A JSON web token could not be decoded",
+                        "documentation_url": "https://docs.github.com/rest"}, status_code=401)
+    raw = _github_pat(request)
+    if not raw or raw.count(".") != 2:
+        return bad
+    try:
+        import jwt as _jwt
+
+        unverified = _jwt.decode(raw, options={"verify_signature": False})
+        app_id = str(unverified.get("iss"))
+        key = state.github_app_keys.get(app_id)
+        if key is None:
+            return bad
+        claims = _jwt.decode(raw, key, algorithms=["RS256"], options={"require": ["iat", "exp", "iss"]})
+        if int(claims["exp"]) - int(claims["iat"]) > 660:
+            return bad
+    except Exception:
+        return bad
+    inst = state.github_installations.get(installation_id)
+    if inst is None or str(inst.get("app_id")) != app_id:
+        return _gh_not_found()
+    token = "ghs_" + _secrets.token_hex(18)
+    with state._lock:
+        state.github_tokens[token] = set(inst.get("repos") or [])
+    expires = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=1)
+    return JSONResponse({"token": token, "expires_at": expires.isoformat().replace("+00:00", "Z"),
+                         "permissions": {"checks": "write", "contents": "read"}}, status_code=201)
+
+
 async def _github(request: Request, state: FakeState, path: str, method: str) -> Response:
+    am = re.fullmatch(r"/app/installations/([0-9]+)/access_tokens", path)
+    if am and method == "POST":
+        return await _github_app_token(request, state, am.group(1))
     if method != "GET":
         return _gh_not_found()
     pat = _github_pat(request)
@@ -1018,6 +1101,11 @@ async def _gitlab(request: Request, state: FakeState, path: str, method: str, au
     # ``group%2Fapi-gateway`` reaches the app decoded (``group/api-gateway``);
     # either way everything after /api/v4/projects/ is the reference.
     ref = path[len("/api/v4/projects/"):].replace("%2F", "/").replace("%2f", "/")
+    sub_path = ""
+    for marker in ("/repository/", "/milestones"):
+        if marker in ref:
+            ref, sub_path = ref.split(marker, 1)[0], marker + ref.split(marker, 1)[1]
+            break
     project_path = None
     if ref in state.gitlab_projects:
         project_path = ref
@@ -1029,12 +1117,51 @@ async def _gitlab(request: Request, state: FakeState, path: str, method: str, au
     if project_path is None:
         return JSONResponse({"message": "404 Project Not Found"}, status_code=404)
     project = state.gitlab_projects[project_path]
+    if sub_path:
+        return _gitlab_sub(request, state, project_path, sub_path)
     return JSONResponse({
         "id": project.get("id"),
         "name": project_path.rsplit("/", 1)[-1],
         "path_with_namespace": project_path,
         "web_url": project.get("web_url") or f"{GITLAB_WEB_ROOT}/{project_path}",
     })
+
+
+def _gl_commit(commit: dict[str, Any]) -> dict[str, Any]:
+    message = commit.get("message") or ""
+    return {"id": commit["sha"], "short_id": commit["sha"][:8], "title": message.splitlines()[0] if message else "",
+            "message": message, "author_name": commit.get("author"), "committed_date": commit.get("date"),
+            "created_at": commit.get("date")}
+
+
+def _gitlab_sub(request: Request, state: FakeState, project_path: str, sub_path: str) -> Response:
+    commits = state.gitlab_commits.get(project_path, [])
+    if sub_path == "/repository/compare":
+        base = _find_commit(commits, request.query_params.get("from", ""))
+        head = _find_commit(commits, request.query_params.get("to", ""))
+        if base is None or head is None:
+            return JSONResponse({"message": "404 Commit Not Found"}, status_code=404)
+        between = commits[base + 1: head + 1] if head > base else []
+        files = []
+        for c in between:
+            for f in c.get("files") or []:
+                if f not in files:
+                    files.append(f)
+        return JSONResponse({"commits": [_gl_commit(c) for c in between],
+                             "diffs": [{"new_path": f, "old_path": f} for f in files], "compare_same_ref": head == base})
+    if sub_path == "/repository/commits":
+        since = _parse_time(request.query_params.get("since"))
+        until = _parse_time(request.query_params.get("until"))
+        out = []
+        for c in reversed(commits):
+            when = _parse_time(c.get("date"))
+            if when and ((since and when < since) or (until and when > until)):
+                continue
+            out.append(_gl_commit(c))
+        return JSONResponse(out)
+    if sub_path == "/milestones":
+        return JSONResponse(state.gitlab_milestones.get(project_path, []))
+    return JSONResponse({"message": "404 Not Found"}, status_code=404)
 
 
 # ── Outbound webhook receiver ───────────────────────────────────────────────
@@ -1109,6 +1236,19 @@ async def _control(request: Request, state: FakeState) -> Response:
                 "events": list(body.get("events", current.get("events", []))),
             }
         return JSONResponse({"namespace": namespace, "pod": pod, "events": len(pods[pod]["events"])})
+    if path == "/_fake/gitlab/milestones":
+        body = await request.json()
+        with state._lock:
+            state.gitlab_milestones[str(body["project"])] = list(body["milestones"])
+        return JSONResponse({"milestones": len(body["milestones"])})
+    if path == "/_fake/github/app":
+        body = await request.json()
+        app_id = str(body["app_id"])
+        with state._lock:
+            state.github_app_keys[app_id] = str(body["public_key"])
+            for inst_id, repos in (body.get("installations") or {}).items():
+                state.github_installations[str(inst_id)] = {"app_id": app_id, "repos": set(repos)}
+        return JSONResponse({"app_id": app_id, "installations": sorted(state.github_installations)})
     if path == "/_fake/github/revoke":
         token = str((await request.json())["token"])
         with state._lock:
@@ -1159,6 +1299,8 @@ def create_app(state: Optional[FakeState] = None) -> Starlette:
         }
         if base is not None:
             entry["base"] = base
+        if service == "github":
+            entry["token_kind"] = _token_kind(request)
         with state._lock:
             state.requests.append(entry)
 

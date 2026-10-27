@@ -19,8 +19,8 @@ The reasons, in the order they are decided, are ``GITHUB_UNAVAILABLE_REASONS``.
 The env ``GITHUB_TOKEN`` / ``GITHUB_REPO`` are not read here: they feed only
 the deployment-wide GitHub probe row.
 
-W19 hand-off: INT-06 replaces the PAT read inside ``resolve_github_target``
-with ``github_auth.get_github_token(db, project_id)`` and nothing else; INT-05
+W19 INT-06: the credential comes from ``github_auth.get_github_token`` (the PAT,
+or a GitHub App installation token; the field stays ``pat``); INT-05
 adds ``resolve_git_host_target(db, run)`` here, returning a GitHub or a GitLab
 target and wrapping ``gitlab_integration_service.load_gitlab_target``.
 
@@ -126,11 +126,10 @@ async def resolve_github_target(
     if check_gate and not await github_checks_service._post_allowed(db, project_id=key):
         return unavailable("github_checks_off")
 
-    from app.services import secret_service
+    from app.services import github_auth
 
-    pat = await secret_service.read_secret(
-        db, github_checks_service.SECRET_SCOPE, github_checks_service._secret_key(project_id),
-    )
+    _cred = await github_auth.get_github_token(db, project_id, integration=row)
+    pat = _cred.token if _cred else None
     if not pat:
         return unavailable("no_token")
     return GitHubTargetResolution(

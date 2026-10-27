@@ -43,8 +43,6 @@ from app.core.http_client import http_verify
 from app.core.config import settings
 from app.models.postgres import Release
 from app.services.github_checks_service import (
-    SECRET_SCOPE,
-    _secret_key,
     _ssrf_block_reason,
     get_integration,
 )
@@ -86,9 +84,13 @@ async def _authorized_get(
     if row is None or not row.enabled:
         raise GitHubSyncUnavailable("No enabled GitHub integration for this project")
 
-    from app.services import secret_service
+    from app.services import github_auth
 
-    pat = await secret_service.read_secret(db, SECRET_SCOPE, _secret_key(project_id))
+    try:
+        _cred = await github_auth.get_github_token(db, project_id, integration=row, raise_app_errors=True)
+    except github_auth.GitHubAppUnavailable as exc:
+        raise GitHubSyncUnavailable(str(exc)) from exc
+    pat = _cred.token if _cred else None
     if not pat:
         raise GitHubSyncUnavailable("No PAT stored for this integration")
 

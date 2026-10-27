@@ -52,6 +52,31 @@ locally by default.
 
 ### Added
 
+- **GitHub App authentication, and GitLab does what GitHub does** (wave W19,
+  INT-06 + INT-05; branch `feat/df-git-hosts-20261026`; migration 0234). An
+  administrator registers one GitHub App under Settings › GitHub (`PUT
+  /api/v1/settings/github-app`; the private key is write-only, validated as an
+  RSA PEM and shown back only as "(set)"); a project then chooses *GitHub App*
+  instead of a personal access token and installs the App (`GET
+  /api/v1/github/app/install-url`, a signed, user-bound 10-minute state;
+  `POST /api/v1/github/app/setup-callback` records the installation). Every
+  GitHub call — checks, PR comments, CODEOWNERS, milestone sync, the commit
+  range, the fixer — now reads its credential through one seam
+  (`github_auth.get_github_token`): an installation token minted from an
+  RS256 App JWT and cached until five minutes before it expires, or the PAT.
+  GitLab parity: a run whose repository is the project's GitLab project gets
+  its commit range and changed files from GitLab's compare (Changes tab,
+  failure suspects; commit links go to GitLab), `POST /releases/sync` accepts
+  `source: "gitlab"` (milestones keyed on their iid, so a rename renames the
+  release), the sync dialog and Settings › GitLab offer *Sync milestones now*,
+  and change correlation falls back to GitLab's commits. 0234 adds
+  `github_integrations.auth_kind` / `installation_id` and turns `github_checks`
+  and `gitlab` on for a fresh install. Fixed with it: the run header no longer
+  says "Jenkins" for a run without a Jenkins job. Tests:
+  `tests/regression/test_github_app_auth.py`, `tests/regression/test_gitlab_parity.py`,
+  `tests/integration/test_github_app_postgres.py`,
+  `tests/integration/test_gitlab_release_sync_postgres.py`, `tests/test_migration_0234.py`.
+
 - **Live streaming from Playwright, Vitest, Cypress, Cucumber JS and Robot
   Framework** (wave W18b, DEV-03; branch `feat/df-live-reporters-20261026`; no
   migration). The JavaScript SDK gains `testlookup-reporter/playwright-reporter`

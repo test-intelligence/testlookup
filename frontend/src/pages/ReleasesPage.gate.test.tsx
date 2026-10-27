@@ -57,6 +57,10 @@ vi.mock('@/hooks/useUserManagement', () => ({
   })),
 }))
 vi.mock('@/utils/swrCacheMutate', () => ({ appMutate: vi.fn(() => Promise.resolve(undefined)) }))
+// W19 INT-05: the sync dialog asks whether the project has a GitLab integration (none here).
+vi.mock('@/services/gitlabIntegrationService', () => ({
+  gitlabIntegrationService: { get: vi.fn(() => Promise.reject(Object.assign(new Error('404'), { response: { status: 404 } }))) },
+}))
 vi.mock('@/services/releasesService', () => ({
   releasesService: {
     list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn(),

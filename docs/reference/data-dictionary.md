@@ -63,7 +63,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [flaky_score](#flaky_score) | FlakyScore | 11 |
 | [generation_batches](#generation_batches) | GenerationBatch | 17 |
 | [generation_case_sources](#generation_case_sources) | GenerationCaseSource | 12 |
-| [github_integrations](#github_integrations) | GitHubIntegration | 14 |
+| [github_integrations](#github_integrations) | GitHubIntegration | 16 |
 | [gitlab_integrations](#gitlab_integrations) | GitLabIntegration | 14 |
 | [identity_events](#identity_events) | IdentityEvent | 11 |
 | [integration_health_checks](#integration_health_checks) | IntegrationHealthCheck | 8 |
@@ -1330,7 +1330,7 @@ Constraints and indexes:
 
 ## compliance_packs
 
-[backend/app/models/postgres.py:7065](../../backend/app/models/postgres.py#L7065)
+[backend/app/models/postgres.py:7071](../../backend/app/models/postgres.py#L7071)
 
 Generated compliance export pack (ZIP) for a release decision.
 
@@ -1364,7 +1364,7 @@ Constraints and indexes:
 
 ## compliance_signing_keys
 
-[backend/app/models/postgres.py:7142](../../backend/app/models/postgres.py#L7142)
+[backend/app/models/postgres.py:7148](../../backend/app/models/postgres.py#L7148)
 
 The deployment's Ed25519 compliance-pack signing keys (migration 0225, W11 REL-11, D14).
 
@@ -1727,7 +1727,7 @@ approver: Mapped[Optional['User']] = relationship('User', foreign_keys=[approved
 
 ## deletion_jobs
 
-[backend/app/models/postgres.py:7438](../../backend/app/models/postgres.py#L7438)
+[backend/app/models/postgres.py:7444](../../backend/app/models/postgres.py#L7444)
 
 One record of a deletion actually happening (migration 0147, S2b).
 
@@ -2197,7 +2197,7 @@ Constraints and indexes:
 
 ## flaky_quarantine_requests
 
-[backend/app/models/postgres.py:7185](../../backend/app/models/postgres.py#L7185)
+[backend/app/models/postgres.py:7191](../../backend/app/models/postgres.py#L7191)
 
 Workflow record for proposing, approving, and enforcing quarantine
 of a flaky test.
@@ -2366,6 +2366,8 @@ Per-project GitHub Checks API integration config.
 | `repo_name` | `VARCHAR(255)` | False | False | `—` |  |
 | `api_base_url` | `VARCHAR(500)` | False | False | `application=https://api.github.com` |  |
 | `has_pat` | `BOOLEAN` | False | False | `application=False` |  |
+| `auth_kind` | `VARCHAR(10)` | False | False | `server=pat; application=pat` |  |
+| `installation_id` | `BIGINT` | True | False | `—` |  |
 | `pr_comment_mode` | `VARCHAR(20)` | False | False | `server=failures_only; application=failures_only` |  |
 | `last_posted_at` | `DATETIME` | True | False | `—` |  |
 | `last_error` | `TEXT` | True | False | `—` |  |
@@ -2384,7 +2386,7 @@ Constraints and indexes:
 
 ## gitlab_integrations
 
-[backend/app/models/postgres.py:6982](../../backend/app/models/postgres.py#L6982)
+[backend/app/models/postgres.py:6988](../../backend/app/models/postgres.py#L6988)
 
 Per-project GitLab integration config (PMF Epic 3 US-3.1).
 
@@ -3100,7 +3102,7 @@ Constraints and indexes:
 
 ## project_activity_events
 
-[backend/app/models/postgres.py:7685](../../backend/app/models/postgres.py#L7685)
+[backend/app/models/postgres.py:7691](../../backend/app/models/postgres.py#L7691)
 
 Append-only, project-scoped product feed of everything that happens.
 
@@ -3205,7 +3207,7 @@ Constraints and indexes:
 
 ## project_llm_usage
 
-[backend/app/models/postgres.py:7645](../../backend/app/models/postgres.py#L7645)
+[backend/app/models/postgres.py:7651](../../backend/app/models/postgres.py#L7651)
 
 Running per-period LLM cost meter for a project.
 
@@ -3257,7 +3259,7 @@ Constraints and indexes:
 
 ## project_retention_policies
 
-[backend/app/models/postgres.py:7571](../../backend/app/models/postgres.py#L7571)
+[backend/app/models/postgres.py:7577](../../backend/app/models/postgres.py#L7577)
 
 Per-project data retention policy (PMF US-11.4, migration 0113).
 
@@ -3424,7 +3426,7 @@ project: Mapped['Project'] = relationship('Project', back_populates='quality_gat
 
 ## quarantine_lifecycle_policies
 
-[backend/app/models/postgres.py:7315](../../backend/app/models/postgres.py#L7315)
+[backend/app/models/postgres.py:7321](../../backend/app/models/postgres.py#L7321)
 
 Per-project quarantine lifecycle configuration (PMF US-5.4/5.5/5.6).
 
@@ -3821,7 +3823,7 @@ test_run_links: Mapped[list['ReleaseTestRunLink']] = relationship('ReleaseTestRu
 
 ## report_exports
 
-[backend/app/models/postgres.py:7520](../../backend/app/models/postgres.py#L7520)
+[backend/app/models/postgres.py:7526](../../backend/app/models/postgres.py#L7526)
 
 VIZ-607: one background export of a report (migration 0194).
 
@@ -4188,7 +4190,7 @@ Constraints and indexes:
 
 ## run_tombstones
 
-[backend/app/models/postgres.py:7397](../../backend/app/models/postgres.py#L7397)
+[backend/app/models/postgres.py:7403](../../backend/app/models/postgres.py#L7403)
 
 A run that was deliberately deleted, and must not come back (0148, S2c).
 
@@ -5700,7 +5702,7 @@ Constraints and indexes:
 
 ## value_metric_assumptions
 
-[backend/app/models/postgres.py:7356](../../backend/app/models/postgres.py#L7356)
+[backend/app/models/postgres.py:7362](../../backend/app/models/postgres.py#L7362)
 
 Per-project tunable assumptions for the engineer-hours-saved model
 (PMF US-12.1, migration 0112).

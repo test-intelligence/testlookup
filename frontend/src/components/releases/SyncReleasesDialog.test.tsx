@@ -11,6 +11,9 @@ const sync = vi.fn()
 vi.mock('@/services/releasesService', () => ({
   releasesService: { sync: (...args: unknown[]) => sync(...args) },
 }))
+// W19 INT-05: the dialog asks whether the project has a GitLab integration (404 = none, so no GitLab choice).
+const gitlabGet = vi.hoisted(() => vi.fn())
+vi.mock('@/services/gitlabIntegrationService', () => ({ gitlabIntegrationService: { get: (...a: unknown[]) => gitlabGet(...a) } }))
 const toastSuccess = vi.hoisted(() => vi.fn())
 vi.mock('react-hot-toast', () => ({ default: { success: toastSuccess, error: vi.fn() } }))
 
@@ -33,6 +36,8 @@ function renderDialog() {
 beforeEach(() => {
   sync.mockReset()
   toastSuccess.mockReset()
+  gitlabGet.mockReset()
+  gitlabGet.mockRejectedValue(Object.assign(new Error("404"), { response: { status: 404 } }))
 })
 
 describe('SyncReleasesDialog', () => {
@@ -108,5 +113,14 @@ describe('SyncReleasesDialog', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Close sync releases dialog' })).toBeEnabled())
     fireEvent.keyDown(screen.getByLabelText('GitHub milestones'), { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('W19 INT-05: offers GitLab milestones only when the project has a GitLab integration, and syncs from it', async () => {
+    gitlabGet.mockResolvedValue({ project_id: 'p1' })
+    sync.mockResolvedValue({ source: 'gitlab', created: 2, updated: 0, skipped: 0 })
+    render(<MemoryRouter><SyncReleasesDialog projectId="p1" onClose={vi.fn()} onDone={vi.fn()} /></MemoryRouter>)
+    fireEvent.click(await screen.findByLabelText('GitLab milestones'))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Sync' })[0])
+    await waitFor(() => expect(sync).toHaveBeenCalledWith(expect.objectContaining({ project_id: 'p1', source: 'gitlab' })))
   })
 })

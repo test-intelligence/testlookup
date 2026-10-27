@@ -50,6 +50,7 @@ from app.services.activity.service import ActorRef, record as record_activity
 from app.models.serializers import serialize_model
 from app.services import (
     github_release_sync,
+    gitlab_release_sync,
     release_lifecycle_service,
     jira_release_sync,
     release_gate_reasons,
@@ -191,7 +192,7 @@ class ReleaseSyncIn(BaseModel):
     #: A closed set, so an unknown source is a 422 naming the valid ones rather
     #: than a silent no-op that reports "0 created" and looks like an empty
     #: milestone list.
-    source: Literal["github", "jira"]
+    source: Literal["github", "jira", "gitlab"]  # W19 INT-05: gitlab = project milestones
     #: Jira only. Falls back to the deployment's configured default key.
     jira_project_key: Optional[str] = None
 
@@ -490,12 +491,15 @@ async def sync_releases_from_external(
     try:
         if body.source == "github":
             summary = await github_release_sync.sync_milestones(db, scoped)
+        elif body.source == "gitlab":
+            summary = await gitlab_release_sync.sync_milestones(db, scoped)
         else:
             summary = await jira_release_sync.sync_fix_versions(
                 db, scoped, body.jira_project_key
             )
     except (
         github_release_sync.GitHubSyncUnavailable,
+        gitlab_release_sync.GitLabSyncUnavailable,
         jira_release_sync.JiraSyncUnavailable,
     ) as exc:
         # 503 with the gate's own words. "AI_OFFLINE_MODE is enabled" and "No
@@ -509,7 +513,7 @@ async def sync_releases_from_external(
         # that read like a TestLookup bug. 502 = the upstream failed. The class
         # name only -- ``str(exc)`` carries the URL, which names the repository
         # or Jira host and does not belong in a toast.
-        source = "GitHub" if body.source == "github" else "Jira"
+        source = {"github": "GitHub", "gitlab": "GitLab"}.get(body.source, "Jira")
         raise HTTPException(
             status_code=502,
             detail=f"Could not reach {source}: {type(exc).__name__}",

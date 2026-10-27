@@ -127,6 +127,8 @@ export function releasesHandlers(options: ReleasesOptions = {}): { handlers: Api
   const row = (id: string) => world.rows.find((r) => r.id === id)
 
   const handlers: ApiHandlers = [
+    // W19 INT-05: the sync dialog asks whether the project has a GitLab integration (none: GitHub / Jira only).
+    [/^\/api\/v1\/projects\/[^/]+\/integrations\/gitlab$/, () => respond(404, { detail: 'GitLab integration not configured' })],
     // REL-01: record a verdict. The hotfix goes GO; any other release keeps its stored verdict, re-dated.
     [/^\/api\/v1\/releases\/[^/]+\/gate\/evaluate$/, (request) => {
       record(request)

@@ -314,6 +314,8 @@ export function integrationHealthWorld(options: IntegrationHealthOptions = {}) {
     ['/api/v1/integration-health/trends', () => []],
     // A row's "Open GitHub / GitLab settings" lands on that project's settings page.
     [/^\/api\/v1\/projects\/[^/]+\/github-integration$/, ({ path }) => githubSettingsOf(path.split('/')[4])],
+    // W19 INT-06: the administrator's GitHub App card (no App registered).
+    ['/api/v1/settings/github-app', () => ({ app_id: null, slug: null, private_key_set: false, webhook_secret_set: false, configured: false })],
     [/^\/api\/v1\/projects\/[^/]+\/integrations\/gitlab$/, () => ({ ...GITLAB_CONFIG, base_url: 'https://gitlab.fake.test', project_path: 'group/api-gateway' })],
     ['/api/v1/projects', () => projects],
     ...LAYOUT,

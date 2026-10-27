@@ -6953,6 +6953,12 @@ class GitHubIntegration(Base):
     # through the secret service for the list view.
     has_pat: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # W19 INT-06 (migration 0234): ``pat`` (the stored PAT) or ``app`` (an
+    # installation token minted from the deployment's GitHub App via
+    # ``services/github_auth.py``, the ONLY reader of either credential).
+    auth_kind: Mapped[str] = mapped_column(String(10), default="pat", server_default="pat", nullable=False)
+    installation_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+
     # PMF US-4.1 — sticky PR summary comment mode (migration 0102):
     # off | failures_only | always. ``failures_only`` still UPDATES an
     # existing marker comment on a green run so a red→green PR shows green.

@@ -146,6 +146,7 @@ async def upsert_integration(
     api_base_url: str,
     pat: Optional[str],
     pr_comment_mode: Optional[str] = None,
+    auth_kind: Optional[str] = None,
 ) -> GitHubIntegration:
     """Create or update a project's GitHub integration.
 
@@ -179,6 +180,8 @@ async def upsert_integration(
 
     if pr_comment_mode is not None:
         row.pr_comment_mode = pr_comment_mode
+    if auth_kind is not None:
+        row.auth_kind = auth_kind  # W19 INT-06: the installation id is kept, switching back is one click
 
     # Token handling — delegated to secret_service so we don't store the
     # plaintext on the DB row.
@@ -250,15 +253,22 @@ async def test_connection(
             "repo_html_url": None,
         }
 
-    from app.services import secret_service
-    pat = await secret_service.read_secret(db, SECRET_SCOPE, _secret_key(project_id))
-    if not pat:
+    # W19 INT-06: the PAT or the GitHub App installation token, from the one reader.
+    from app.services import github_auth
+    try:
+        cred = await github_auth.get_github_token(db, project_id, integration=row, raise_app_errors=True)
+    except github_auth.GitHubAppUnavailable as exc:
+        return {"success": False, "status_code": None, "message": str(exc), "repo_html_url": None,
+                "auth_kind": "app"}
+    if cred is None:
         return {
             "success": False,
             "status_code": None,
             "message": "No PAT stored for this integration",
             "repo_html_url": None,
         }
+    pat = cred.token
+    auth_label = "GitHub App installation" if cred.kind == "app_installation" else "personal access token"
 
     url = f"{row.api_base_url.rstrip('/')}/repos/{row.repo_owner}/{row.repo_name}"
 
@@ -292,7 +302,8 @@ async def test_connection(
         return {
             "success": True,
             "status_code": 200,
-            "message": f"OK — repo '{body.get('full_name', '?')}' reachable",
+            "message": f"OK — repo '{body.get('full_name', '?')}' reachable. Authenticated as {auth_label}.",
+            "auth_kind": cred.kind,
             "repo_html_url": body.get("html_url"),
         }
     return {
@@ -907,10 +918,9 @@ async def post_check_run_for_run(run_id: uuid.UUID) -> Optional[dict[str, Any]]:
         if integration is None or not integration.enabled:
             return {"skipped": "integration_disabled_or_missing"}
 
-        from app.services import secret_service
-        pat = await secret_service.read_secret(
-            db, SECRET_SCOPE, _secret_key(run.project_id),
-        )
+        from app.services import github_auth
+        _cred = await github_auth.get_github_token(db, run.project_id, integration=integration)
+        pat = _cred.token if _cred else None
         if not pat:
             return {"skipped": "no_pat_configured"}
 

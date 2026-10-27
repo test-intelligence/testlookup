@@ -303,6 +303,12 @@ describe('Run page — tabs', () => {
     quiet.mockRestore()
   })
 
+  it('names no CI it does not know: a run without a Jenkins job is not labelled "Jenkins"', () => {
+    hooks.useRun.mockReturnValue({ data: { ...RUN, jenkins_job: null } })
+    renderAt('/runs/run-1')
+    expect(screen.queryByText(/Jenkins/)).toBeNull()
+  })
+
   it('?tab=changes renders the regression diff and the way into Compare', () => {
     const { container } = renderAt('/runs/run-1?tab=changes')
     const primary = container.querySelector('[data-primary]') as HTMLElement

@@ -29,6 +29,7 @@ import {
   type MrCommentMode,
 } from '@/types/gitlab'
 import { formatCompactDateTime } from '@/utils/formatters'
+import { GitLabSyncSection } from './GitLabSyncSection'
 
 // Exhaustiveness-checked against the MrCommentMode union: adding a mode to the
 // type without a label here is a compile error.
@@ -496,6 +497,8 @@ export default function GitLabIntegrationPage() {
           the integration is a silent no-op regardless of the toggle above.
         </p>
       </section>
+
+      {config && projectKey && <GitLabSyncSection projectId={projectKey} canEdit={canEdit} />}
     </div>
   )
 }

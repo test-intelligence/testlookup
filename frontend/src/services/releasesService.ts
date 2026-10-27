@@ -78,10 +78,10 @@ export interface ReleaseGateEvaluationResult extends ReleaseGateEvaluation {
   } | null
 }
 
-/** `POST /releases/sync`: pull releases from GitHub milestones or Jira fix versions (REL-08). */
+/** `POST /releases/sync`: pull releases from GitHub milestones, GitLab milestones (W19 INT-05) or Jira fix versions (REL-08). */
 export interface ReleaseSyncBody {
   project_id: string
-  source: 'github' | 'jira'
+  source: 'github' | 'jira' | 'gitlab'
   jira_project_key?: string
 }
 

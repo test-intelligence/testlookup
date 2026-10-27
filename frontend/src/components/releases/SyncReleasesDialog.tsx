@@ -1,5 +1,6 @@
 /**
- * Pull releases in from GitHub milestones or Jira fix versions (REL-08).
+ * Pull releases in from GitHub milestones, GitLab milestones (W19 INT-05, offered when the project has a
+ * GitLab integration) or Jira fix versions (REL-08).
  *
  * `POST /api/v1/releases/sync` writes identity only (name, external id, link);
  * phases, gate policy and run attribution stay TestLookup's. While the
@@ -14,13 +15,14 @@
  * `data-sync-releases-dialog` and close label are the dialog's, kept; Cancel,
  * the X and Escape inside it close it (not mid-sync), as before.
  */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { releasesService } from '@/services/releasesService'
+import { gitlabIntegrationService } from '@/services/gitlabIntegrationService'
 import { extractErrorMessage } from '@/services/apiErrors'
 
 export interface SyncReleasesDialogProps {
@@ -32,9 +34,9 @@ export interface SyncReleasesDialogProps {
   slot?: InlineSlot
 }
 
-type Source = 'github' | 'jira'
+type Source = 'github' | 'jira' | 'gitlab'
 
-const SOURCE_NAME: Record<Source, string> = { github: 'GitHub', jira: 'Jira' }
+const SOURCE_NAME: Record<Source, string> = { github: 'GitHub', jira: 'Jira', gitlab: 'GitLab' }
 
 interface SyncFailure {
   status: number | null
@@ -46,6 +48,13 @@ export default function SyncReleasesDialog({ projectId, onClose, onDone, slot }:
   const [jiraKey, setJiraKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<SyncFailure | null>(null)
+  // W19 INT-05: GitLab is offered only when the project has a GitLab integration (a 404 = none).
+  const [hasGitLab, setHasGitLab] = useState(false)
+  useEffect(() => {
+    let live = true
+    gitlabIntegrationService.get(projectId).then(() => { if (live) setHasGitLab(true) }).catch(() => { if (live) setHasGitLab(false) })
+    return () => { live = false }
+  }, [projectId])
 
   async function sync() {
     setBusy(true)
@@ -118,6 +127,12 @@ export default function SyncReleasesDialog({ projectId, onClose, onDone, slot }:
             <input type="radio" name="sync-source" value="jira" checked={source === 'jira'} onChange={() => choose('jira')} />
             Jira fix versions
           </label>
+          {hasGitLab && (
+            <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+              <input type="radio" name="sync-source" value="gitlab" checked={source === 'gitlab'} onChange={() => choose('gitlab')} />
+              GitLab milestones
+            </label>
+          )}
         </fieldset>
         {source === 'jira' && (
           <div className="mt-3">

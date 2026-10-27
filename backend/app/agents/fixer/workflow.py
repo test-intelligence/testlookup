@@ -148,17 +148,14 @@ async def _github_ctx(project_id: uuid.UUID) -> Optional[dict[str, Any]]:
         return None
     try:
         async with AsyncSessionLocal() as db:
-            from app.services import secret_service
-            from app.services.github_checks_service import (
-                SECRET_SCOPE,
-                _secret_key,
-                get_integration,
-            )
+            from app.services import github_auth
+            from app.services.github_checks_service import get_integration
 
             integration = await get_integration(db, project_id)
             if integration is None or not integration.enabled:
                 return None
-            pat = await secret_service.read_secret(db, SECRET_SCOPE, _secret_key(project_id))
+            _cred = await github_auth.get_github_token(db, project_id, integration=integration)
+            pat = _cred.token if _cred else None
             if not pat:
                 return None
             api_base_url = integration.api_base_url

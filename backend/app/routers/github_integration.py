@@ -80,6 +80,7 @@ async def upsert_github_integration(
         api_base_url=payload.api_base_url,
         pat=payload.pat,
         pr_comment_mode=payload.pr_comment_mode,
+        auth_kind=payload.auth_kind,
     )
     return row
 

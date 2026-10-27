@@ -75,6 +75,36 @@ async def _fetch_github_commits(target: GitHubTarget, since: str, until: str) ->
         return []
 
 
+async def _fetch_gitlab_commits(base_url: str, project_path: str, pat: str, since: str, until: str) -> list[dict]:
+    """W19 INT-05: the GitLab branch — ``/repository/commits?since=&until=``; same shape, any failure ``[]``."""
+    from app.services.gitlab_integration_service import _api_root, _project_ref
+
+    url = f"{_api_root(base_url)}/projects/{_project_ref(project_path)}/repository/commits"
+    try:
+        block = await egress_block_reason(url)
+        if block:
+            logger.info("GitLab commits refused: target host is not allowed (%s)", block)
+            return []
+        client = get_http_client()
+        resp = await client.get(url, headers={"PRIVATE-TOKEN": pat, "Accept": "application/json"},
+                                params={"since": since, "until": until, "per_page": 20}, timeout=15.0)
+        if resp.status_code != 200:
+            return []
+        return [
+            {
+                "sha": str(c.get("id") or "")[:8],
+                "message": str(c.get("title") or c.get("message") or "").split("\n")[0][:200],
+                "author": c.get("author_name"),
+                "timestamp": c.get("committed_date") or c.get("created_at"),
+                "files_changed": [],
+            }
+            for c in resp.json() if isinstance(c, dict)
+        ]
+    except Exception as exc:
+        logger.debug("GitLab API call failed: %s", type(exc).__name__)
+        return []
+
+
 def _project_uuid(project_id: str) -> Optional[uuid.UUID]:
     try:
         return uuid.UUID(str(project_id))
@@ -114,6 +144,7 @@ async def fetch_build_changes(params_json: str) -> str:
     from app.models.postgres import TestRun
     runs: list[Any] = []
     target: Optional[GitHubTarget] = None
+    gitlab: Optional[tuple[str, str, str]] = None  # W19 INT-05: (base_url, project_path, pat)
     github_status: Optional[str] = "no_integration"
     async with AsyncSessionLocal() as db:
         if pid is not None:
@@ -129,6 +160,14 @@ async def fetch_build_changes(params_json: str) -> str:
             ci_repo = getattr(flaky, "ci_repo", None) or getattr(stable, "ci_repo", None)
             resolution = await resolve_github_target(db, pid, ci_repo=ci_repo)
             target, github_status = resolution.target, resolution.reason
+            if target is None:
+                # W19 INT-05: no usable GitHub target -> the project's GitLab (its own gate).
+                from app.services import gitlab_integration_service as gl
+
+                if await gl._post_allowed(db, project_id=pid):
+                    t = await gl.load_gitlab_target(db, pid)
+                    if not t.reason and t.pat and t.base_url and t.project_path:
+                        gitlab = (t.base_url, t.project_path, t.pat)
 
     stable_run = next((r for r in runs if r.build_number == stable_build), None)
     flaky_run = next((r for r in runs if r.build_number == flaky_build), None)
@@ -137,6 +176,9 @@ async def fetch_build_changes(params_json: str) -> str:
     until_ts = flaky_run.created_at.isoformat() if flaky_run else datetime.now(timezone.utc).isoformat()
 
     commits: list[dict] = await _fetch_github_commits(target, since_ts, until_ts) if target else []
+    if not target and gitlab:
+        commits = await _fetch_gitlab_commits(*gitlab, since_ts, until_ts)
+        github_status = None if commits else github_status
 
     # Build change summary from available data
     if commits:
