@@ -6,13 +6,21 @@ export interface SSOConfig {
   id: string;
   display_name: string;
   provider_type: 'SAML' | 'OIDC';
-  idp_entity_id: string;
-  idp_sso_url: string;
+  /** SAML fields — null on an OIDC configuration. */
+  idp_entity_id: string | null;
+  idp_sso_url: string | null;
   idp_slo_url: string | null;
   idp_certificate_fingerprint: string;
-  sp_entity_id: string;
-  sp_acs_url: string;
+  sp_entity_id: string | null;
+  sp_acs_url: string | null;
   audience: string | null;
+  /** W20 ADM-08b: OIDC fields — null on a SAML configuration. The client secret is never returned. */
+  oidc_issuer?: string | null;
+  oidc_client_id?: string | null;
+  oidc_scopes?: string | null;
+  oidc_groups_claim?: string | null;
+  oidc_client_secret_set?: boolean;
+  oidc_redirect_uri?: string | null;
   role_mapping: Record<string, string> | null;
   default_role: string;
   group_attribute: string | null;
@@ -28,13 +36,18 @@ export interface SSOConfig {
 export interface SSOConfigCreate {
   display_name: string;
   provider_type?: 'SAML' | 'OIDC';
-  idp_entity_id: string;
-  idp_sso_url: string;
+  idp_entity_id?: string;
+  idp_sso_url?: string;
   idp_slo_url?: string;
-  idp_certificate: string;
-  sp_entity_id: string;
-  sp_acs_url: string;
+  idp_certificate?: string;
+  sp_entity_id?: string;
+  sp_acs_url?: string;
   audience?: string;
+  oidc_issuer?: string;
+  oidc_client_id?: string;
+  oidc_client_secret?: string;
+  oidc_scopes?: string;
+  oidc_groups_claim?: string;
   role_mapping?: Record<string, string>;
   default_role?: string;
   group_attribute?: string;
@@ -50,6 +63,12 @@ export interface SSOConfigUpdate {
   sp_entity_id?: string;
   sp_acs_url?: string;
   audience?: string;
+  oidc_issuer?: string;
+  oidc_client_id?: string;
+  /** Write-only: a non-empty value replaces the stored secret. */
+  oidc_client_secret?: string;
+  oidc_scopes?: string;
+  oidc_groups_claim?: string;
   role_mapping?: Record<string, string>;
   default_role?: string;
   group_attribute?: string;
@@ -69,6 +88,9 @@ export interface SSOStatus {
   sso_enabled: boolean;
   has_active_config: boolean;
   enforcement_mode: string | null;
+  /** W20 ADM-08b: the active configuration's type and name ("Sign in with <display_name>"). */
+  provider_type?: 'SAML' | 'OIDC' | null;
+  display_name?: string | null;
 }
 
 export interface SCIMToken {

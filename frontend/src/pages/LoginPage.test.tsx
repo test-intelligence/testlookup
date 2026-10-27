@@ -391,6 +391,21 @@ describe('LoginPage — single sign-on', () => {
     )
     expect(await screen.findByRole('alert')).toHaveTextContent(/single sign-on did not complete/i)
   })
+
+  it('W20 ADM-08b: the button names the active identity provider (SAML or OIDC alike)', async () => {
+    mockSSOStatus.mockResolvedValue({
+      sso_enabled: true, has_active_config: true, enforcement_mode: null, provider_type: 'OIDC', display_name: 'Keycloak',
+    })
+    mockApiGet.mockResolvedValue({ data: { redirect_url: 'https://keycloak.example/realms/t/auth?state=s' } })
+    render(
+      <MemoryRouter initialEntries={['/login']}>
+        <LoginPage />
+      </MemoryRouter>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in with Keycloak' }))
+    await waitFor(() => expect(mockApiGet).toHaveBeenCalledWith('/api/v1/sso/login-url', expect.anything()))
+    expect(screen.queryByRole('button', { name: /sign in with sso/i })).toBeNull()
+  })
 })
 
 describe('LoginPage — register password confirmation', () => {

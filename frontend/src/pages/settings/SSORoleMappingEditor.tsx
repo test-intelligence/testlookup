@@ -31,7 +31,9 @@ export default function SSORoleMappingEditor({ config, onSaved }: { config: SSOC
     Object.entries(config.role_mapping ?? {}).map(([group, role]) => ({ group, role })),
   )
   const [defaultRole, setDefaultRole] = useState(config.default_role || 'VIEWER')
-  const [groupAttribute, setGroupAttribute] = useState(config.group_attribute ?? '')
+  // W20 ADM-08b: an OIDC config reads its groups from an ID-token claim (oidc_groups_claim), SAML from an attribute.
+  const isOidc = config.provider_type === 'OIDC'
+  const [groupAttribute, setGroupAttribute] = useState((isOidc ? config.oidc_groups_claim : config.group_attribute) ?? '')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null)
   const [groupsInput, setGroupsInput] = useState('')
@@ -58,7 +60,11 @@ export default function SSORoleMappingEditor({ config, onSaved }: { config: SSOC
     setSaving(true)
     setMessage(null)
     try {
-      await updateSSOConfig(config.id, { role_mapping: mapping(), default_role: defaultRole, group_attribute: groupAttribute.trim() })
+      await updateSSOConfig(config.id, {
+        role_mapping: mapping(),
+        default_role: defaultRole,
+        ...(isOidc ? { oidc_groups_claim: groupAttribute.trim() } : { group_attribute: groupAttribute.trim() }),
+      })
       setMessage({ ok: true, text: 'Role mapping saved.' })
       onSaved()
     } catch (err) {
@@ -117,8 +123,8 @@ export default function SSORoleMappingEditor({ config, onSaved }: { config: SSOC
           </select>
         </label>
         <label className="text-xs text-[var(--color-text-secondary)] flex items-center gap-2 whitespace-nowrap">
-          Group attribute
-          <input aria-label="Group attribute" placeholder="memberOf" value={groupAttribute} onChange={(e) => setGroupAttribute(e.target.value)} className={`${field} !w-48`} />
+          {isOidc ? 'Groups claim' : 'Group attribute'}
+          <input aria-label={isOidc ? 'Groups claim' : 'Group attribute'} placeholder={isOidc ? 'groups' : 'memberOf'} value={groupAttribute} onChange={(e) => setGroupAttribute(e.target.value)} className={`${field} !w-48`} />
         </label>
         <button type="button" onClick={save} disabled={saving || !!duplicate}
           className="btn-primary btn-sm disabled:opacity-50">

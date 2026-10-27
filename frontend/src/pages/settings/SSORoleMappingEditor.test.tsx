@@ -75,4 +75,17 @@ describe('SSORoleMappingEditor (W20 ADM-08a)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove group 1' }))
     expect(screen.getByText(/everyone gets the default role/)).toBeInTheDocument()
   })
+
+  it('W20 ADM-08b: an OIDC config edits its groups CLAIM, not the SAML attribute', async () => {
+    update.mockResolvedValue({})
+    const oidc = { ...CONFIG, provider_type: 'OIDC', group_attribute: null, oidc_groups_claim: 'roles' } as unknown as SSOConfig
+    render(<SSORoleMappingEditor config={oidc} onSaved={vi.fn()} />)
+    expect(screen.getByLabelText('Groups claim')).toHaveValue('roles')
+    expect(screen.queryByLabelText('Group attribute')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /save role mapping/i }))
+    await waitFor(() => expect(update).toHaveBeenCalled())
+    expect(update).toHaveBeenCalledWith('cfg-1', {
+      role_mapping: { 'qa-leads': 'QA_LEAD' }, default_role: 'VIEWER', oidc_groups_claim: 'roles',
+    })
+  })
 })
