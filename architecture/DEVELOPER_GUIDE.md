@@ -40,8 +40,8 @@ API endpoint, a pipeline agent, a UI page and a migration.
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **64 guards**.
-25 are *ratchets*: pre-existing violations are baselined in
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **65 guards**.
+26 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
 fail CI. The other 39 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
