@@ -206,13 +206,15 @@ async def get_sso_login_url(next: Optional[str] = None, db: AsyncSession = Depen
     # request via InResponseTo and reject replays / unsolicited responses.
     request_id = "_" + uuid.uuid4().hex
     await remember_saml_request(request_id)
+    # A SAML row always has these (ck_sso_config_fields_by_provider); the columns are NULL-able for OIDC rows.
+    idp_sso_url = config.idp_sso_url or ""
     authn_request = build_authn_request(
         request_id=request_id,
-        destination=config.idp_sso_url,
-        acs_url=config.sp_acs_url,
-        sp_entity_id=config.sp_entity_id,
+        destination=idp_sso_url,
+        acs_url=config.sp_acs_url or "",
+        sp_entity_id=config.sp_entity_id or "",
     )
-    redirect_url = saml_redirect_url(config.idp_sso_url, authn_request, safe_relay_state(next))
+    redirect_url = saml_redirect_url(idp_sso_url, authn_request, safe_relay_state(next))
 
     return {
         "redirect_url": redirect_url,

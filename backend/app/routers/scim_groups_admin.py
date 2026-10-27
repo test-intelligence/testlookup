@@ -34,8 +34,8 @@ class GroupMappingsIn(BaseModel):
 
 async def _groups(db: AsyncSession) -> list[dict]:
     groups = (await db.execute(select(SCIMGroup).order_by(SCIMGroup.display_name))).scalars().all()
-    counts = dict((await db.execute(
-        select(SCIMGroupMember.group_id, func.count()).group_by(SCIMGroupMember.group_id))).all())
+    counts: dict[uuid.UUID, int] = {gid: n for gid, n in (await db.execute(
+        select(SCIMGroupMember.group_id, func.count()).group_by(SCIMGroupMember.group_id))).all()}
     maps = (await db.execute(
         select(SCIMGroupMapping.group_id, SCIMGroupMapping.project_id, SCIMGroupMapping.project_role, Project.name)
         .join(Project, Project.id == SCIMGroupMapping.project_id).order_by(Project.name))).all()
@@ -82,7 +82,8 @@ async def put_scim_group_mappings(
         ip_address=request.client.host if request.client else None,
     )
     if changes:
-        names = dict((await db.execute(select(User.id, User.username).where(User.id.in_(list({c[2] for c in changes}))))).all())
+        names: dict[uuid.UUID, str] = {uid: name for uid, name in (await db.execute(
+            select(User.id, User.username).where(User.id.in_(list({c[2] for c in changes}))))).all()}
         for event, project_id, user_id, role in changes:
             await record_activity(
                 db, project_id=project_id, event_type=event, actor=ActorRef.from_user(current_user),

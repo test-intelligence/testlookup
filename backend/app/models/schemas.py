@@ -5896,6 +5896,7 @@ class SSOConfigCreate(BaseModel):
 
     @model_validator(mode="after")
     def _fields_for_provider(self) -> "SSOConfigCreate":
+        required: tuple[str, ...]
         if self.provider_type == SSOProviderType.OIDC:
             required = ("oidc_issuer", "oidc_client_id", "oidc_client_secret")
         else:

@@ -69,7 +69,7 @@ async def reconcile_user(db: AsyncSession, user_id: uuid.UUID, changes: Optional
         elif (member.role, member.source) != grant:
             if member.role != grant[0]:
                 log.append(("member.role_changed", member.project_id, user_id, grant[0]))
-            member.role, member.source = grant[0], grant[1]
+            member.role, member.source = UserRole(grant[0]), grant[1]
             counts["updated"] += 1
     for project_id, (role, source) in want.items():
         if project_id not in seen:
