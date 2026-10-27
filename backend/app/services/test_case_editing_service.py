@@ -404,6 +404,7 @@ def _first_error(exc: ValidationError) -> str:
     return f"{where}: {message}" if where else message
 
 
+@activity_summarised_elsewhere  # its own test_case.restored row; the edit's audit row is not mirrored as well
 async def restore_case_version(
     db: AsyncSession,
     test_case: ManagedTestCase,

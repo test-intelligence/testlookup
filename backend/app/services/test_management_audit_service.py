@@ -61,10 +61,11 @@ _F = TypeVar("_F", bound=Callable[..., Awaitable[Any]])
 
 
 def activity_summarised_elsewhere(func: _F) -> _F:
-    """Decorate a bulk path that records ONE summary activity row itself
-    (``test_case.bulk_changed``, ``test_case.imported``): inside it the
-    per-case audit rows are still written, but not mirrored into the feed,
-    so a 500-case bulk edit is one feed row, not 501."""
+    """Decorate a path that records its OWN activity row: a bulk path's one
+    summary (``test_case.bulk_changed``, ``test_case.imported``) or a more
+    specific single row (``test_case.restored``). Inside it the audit rows are
+    still written, but not mirrored into the feed, so a 500-case bulk edit is
+    one feed row, not 501, and a restore is not also a "changed" row."""
 
     @functools.wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
