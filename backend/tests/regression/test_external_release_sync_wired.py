@@ -57,6 +57,9 @@ class _Session:
             def scalar_one_or_none(self_inner):
                 return None
 
+            def all(self_inner):  # W21 ACT-01: the synced-release read-back
+                return []
+
         return _R()
 
 

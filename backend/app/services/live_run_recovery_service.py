@@ -373,6 +373,19 @@ async def auto_recover_completed_runs(
                 priority=7,
             )
             counts["recovered"] += 1
+            # W21 ACT-01. Attempt mode (own session): this function never
+            # commits, and the dispatch above is the event.
+            from app.services.activity.service import ActorRef, record as record_activity
+
+            await record_activity(
+                None,
+                project_id=run.project_id,
+                event_type="run.live_recovered",
+                actor=ActorRef.system("live_run_recovery"),
+                entity_id=run.id,
+                entity_label=f"Build {run.build_number or run_id_str[:8]}",
+                context={"source": source, "buffered_events": staged},
+            )
             logger.info(
                 "auto_recover_queued",
                 run_id=run_id_str,

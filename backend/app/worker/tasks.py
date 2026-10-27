@@ -380,6 +380,42 @@ async def _release_duplicate_lock(key: str, owner: str) -> None:
         await redis.delete(key)
 
 
+async def _record_worker_activity(
+    event_type: str,
+    *,
+    project_id: str,
+    run_id: str,
+    build_number: str | None,
+    actor_ref: str,
+    context: dict | None = None,
+) -> None:
+    """Put one run-level event from a worker in the activity ledger. Never raises.
+
+    W21 ACT-01. A worker holds no request session, and ``record(None, ...)`` of
+    an OUTCOME event is dropped and counted -- the producer would be wired up
+    and the feed still empty. So this opens its own short session and commits
+    the one row. It runs only after the work it describes has finished (or
+    finally failed), so there is no caller transaction for it to share.
+    """
+    try:
+        from app.db.postgres import AsyncSessionLocal
+        from app.services.activity.service import ActorRef, record
+
+        async with AsyncSessionLocal() as db:
+            await record(
+                db,
+                project_id=project_id,
+                event_type=event_type,
+                actor=ActorRef.system(actor_ref),
+                entity_id=run_id,
+                entity_label=f"Build {build_number or str(run_id)[:8]}",
+                context=context,
+            )
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001 -- the ledger never fails the work
+        logger.warning("worker_activity_failed event=%s (%s)", event_type, type(exc).__name__)
+
+
 def _count_ingestion_run(status: str, elapsed: float) -> None:
     """Record one run-ingestion outcome and its wall-clock time. Never raises.
 
@@ -1345,9 +1381,19 @@ def ingest_uploaded_file(
 
         _t0 = _time.monotonic()
 
-        def _emit_failed(code: str) -> None:
+        async def _emit_failed(code: str) -> None:
             _m.uploads_total.labels(state="failed", format=file_format).inc()
             _m.upload_failures_total.labels(code=code).inc()
+            # W21 ACT-01: a refused upload left a status row nobody but the
+            # uploader polls; the project's feed now says it happened.
+            await _record_worker_activity(
+                "run.ingest_failed",
+                project_id=project_id,
+                run_id=run_id,
+                build_number=build_number,
+                actor_ref="upload_ingestion",
+                context={"error": code, "file_name": file_name, "format": file_format},
+            )
 
         await upload_status.set_status(
             task_id, run_id=run_id, project_id=project_id,
@@ -1381,7 +1427,7 @@ def ingest_uploaded_file(
                 state=upload_status.STATE_FAILED,
                 error={"code": exc.code, "message": exc.message},
             )
-            _emit_failed(exc.code)
+            await _emit_failed(exc.code)
             return False
         except TooManyResults as exc:
             # Refused whole, before the run row is created -- like a parse error.
@@ -1391,7 +1437,7 @@ def ingest_uploaded_file(
                 state=upload_status.STATE_FAILED,
                 error={"code": exc.code, "message": exc.message},
             )
-            _emit_failed(exc.code)
+            await _emit_failed(exc.code)
             return False
         except Exception as exc:  # noqa: BLE001
             logger.warning("upload_parse_error task=%s file=%s error=%s", task_id, file_name, exc)
@@ -1401,7 +1447,7 @@ def ingest_uploaded_file(
                 error={"code": "parse_error",
                        "message": f"Could not parse the {file_format} report: {str(exc)[:300]}"},
             )
-            _emit_failed("parse_error")
+            await _emit_failed("parse_error")
             return False
 
         if not results:
@@ -1412,7 +1458,7 @@ def ingest_uploaded_file(
                        "message": "No test results were found in the file. "
                                   "Check that the format matches the file contents."},
             )
-            _emit_failed("empty_report")
+            await _emit_failed("empty_report")
             return False
 
         await upload_status.set_status(
@@ -1491,7 +1537,7 @@ def ingest_uploaded_file(
                 error={"code": "ingest_error",
                        "message": "Parsed the report but no test results could be stored."},
             )
-            _emit_failed("ingest_error")
+            await _emit_failed("ingest_error")
             return False
 
         # Counts reflect accepted rows only; attempted/rejected make a partial
@@ -2282,6 +2328,15 @@ def run_agent_pipeline(
             return {"completed_stages": [], "error_count": 0, "duplicate": True}
 
         if workflow_type == "deep" and not source_outbox_id:
+            # W21 ACT-01: past the duplicate check, so a re-delivered task that
+            # does no work writes no "started" row.
+            await _record_worker_activity(
+                "investigation.started",
+                project_id=project_id,
+                run_id=test_run_id,
+                build_number=build_number,
+                actor_ref="deep_investigation",
+            )
             return await run_deep_pipeline(
                 test_run_id=test_run_id,
                 project_id=project_id,
@@ -2343,6 +2398,15 @@ def run_agent_pipeline(
         # AI compare report against the previous run. Never fails the pipeline.
         if not final_state.get("duplicate"):
             _capture_ai_history_after_pipeline(self.request.id, test_run_id, project_id, final_state)
+            if workflow_type == "deep" and not source_outbox_id:
+                _run_async(_record_worker_activity(
+                    "investigation.completed",
+                    project_id=project_id,
+                    run_id=test_run_id,
+                    build_number=build_number,
+                    actor_ref="deep_investigation",
+                    context={"stages": len(stages_done), "errors": len(errors)},
+                ))
 
         # BL-03: Invalidate cached intelligence snapshot so next read recomputes
         try:
@@ -2418,6 +2482,16 @@ def run_agent_pipeline(
         # Retries exhausted (or nothing to retry): release the admission lock so
         # a manual re-trigger can start a fresh run, park the failure in the
         # DLQ, and let the exception propagate as a real task failure.
+        # W21 ACT-01: only here, not on a scheduled retry -- the run is not
+        # failed while a retry is pending. The class name only, never str(exc).
+        _run_async(_record_worker_activity(
+            "analysis.failed",
+            project_id=project_id,
+            run_id=test_run_id,
+            build_number=build_number,
+            actor_ref="ai_pipeline",
+            context={"error": type(exc).__name__, "workflow_type": workflow_type},
+        ))
         try:
             _run_async(_release_duplicate_lock(dedup_key, dedup_owner))
             _run_async(_release_requested_admission(

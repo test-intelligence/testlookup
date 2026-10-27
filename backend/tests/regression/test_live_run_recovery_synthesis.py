@@ -160,7 +160,7 @@ async def test_recover_live_falls_back_to_synthesis_when_no_buffer_no_archive():
          patch("app.worker.ingestion_routing.queue_for_project",
                return_value="ingestion.shard.0"):
         task.apply_async = _apply_async
-        result = await recover_live_run_from_buffer(run_id=run_id, db=db, _=None)
+        result = await recover_live_run_from_buffer(run_id=run_id, db=db, current_user=None)
 
     assert queued.get("fired") is True, (
         "Recovery must queue the persist task even when buffer + "
@@ -196,7 +196,7 @@ async def test_recover_live_still_422s_when_aggregates_are_zero():
 
     with patch("app.db.redis_client.get_redis", return_value=fake_redis):
         with pytest.raises(HTTPException) as exc:
-            await recover_live_run_from_buffer(run_id=run_id, db=db, _=None)
+            await recover_live_run_from_buffer(run_id=run_id, db=db, current_user=None)
     assert exc.value.status_code == 422
 
 
@@ -216,6 +216,6 @@ async def test_recover_live_still_422s_for_already_populated_run():
     ])
 
     with pytest.raises(HTTPException) as exc:
-        await recover_live_run_from_buffer(run_id=run_id, db=db, _=None)
+        await recover_live_run_from_buffer(run_id=run_id, db=db, current_user=None)
     assert exc.value.status_code == 422
     assert "already has" in exc.value.detail.lower()

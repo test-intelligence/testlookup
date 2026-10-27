@@ -48,8 +48,22 @@ def _audits(db):
     return [row for row in db.added if isinstance(row, AccessAuditLog)]
 
 
+#: W21 ACT-01: every real phase change also stages a ``release.phase_updated``
+#: row (and ``release.phase_advanced`` into in_progress). These tests are about
+#: the GATE's rows, so the CRUD rows are set aside here and asserted in
+#: ``tests/integration/test_activity_ledger_slice_a_postgres.py``.
+_PHASE_CRUD_EVENTS = {"release.phase_updated", "release.phase_advanced"}
+
+
+def _gate_rows(db):
+    return [
+        row for row in db.added
+        if not (isinstance(row, ProjectActivityEvent) and row.event_type in _PHASE_CRUD_EVENTS)
+    ]
+
+
 def _ledger(db):
-    return [row for row in db.added if isinstance(row, ProjectActivityEvent)]
+    return [row for row in _gate_rows(db) if isinstance(row, ProjectActivityEvent)]
 
 
 class _Phase:
@@ -142,7 +156,7 @@ async def test_with_the_flag_off_a_phase_completes_exactly_as_before():
             PhaseUpdate(status="completed"), actor=_actor(),
         )
     assert phase.status == "completed"
-    assert db.added == [], "an audit row was written with enforcement off"
+    assert _gate_rows(db) == [], "an audit row was written with enforcement off"
 
 
 @pytest.mark.asyncio
@@ -228,7 +242,7 @@ async def test_a_passing_gate_completes_without_ceremony():
             PhaseUpdate(status="completed"), actor=_actor(),
         )
     assert phase.status == "completed"
-    assert db.added == [], "a clean pass should not write an override audit row"
+    assert _gate_rows(db) == [], "a clean pass should not write an override audit row"
 
 
 # ── The override, and the audit that makes it honest ─────────────────────────
@@ -372,7 +386,7 @@ async def test_resubmitting_an_existing_status_is_not_gated():
             PhaseUpdate(status="completed", notes="typo fix"), actor=_actor(),
         )
     assert phase.status == "completed"
-    assert db.added == []
+    assert _gate_rows(db) == []
 
 
 @pytest.mark.asyncio

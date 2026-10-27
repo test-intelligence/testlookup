@@ -730,7 +730,7 @@ async def delete_release(db: AsyncSession, release_id: str) -> None:
         await sync_primary_release(db, run_id)
 
 
-async def add_phase(db: AsyncSession, release_id: str, body) -> ReleasePhase:
+async def add_phase(db: AsyncSession, release_id: str, body, actor=None) -> ReleasePhase:
     """Stage a new phase under an existing release. Handler commits."""
     release = await get_release_or_404(db, release_id)
 
@@ -770,6 +770,8 @@ async def add_phase(db: AsyncSession, release_id: str, body) -> ReleasePhase:
     )
     db.add(phase)
     await db.flush()  # materialize phase.id for any follow-up queries
+    # W21 ACT-01: outcome mode, so it commits with the phase or not at all.
+    await _record_phase_crud(db, actor, release_id, "release.phase_added", {"phase": phase.name})
     return phase
 
 
@@ -1112,6 +1114,32 @@ def _audit_phase(db, actor, project_id, action: str, phase, after: dict) -> None
     )
 
 
+async def _record_phase_crud(db: AsyncSession, actor, release_id: str, event_type: str, context: dict, **extra) -> None:
+    """W21 ACT-01: a phase CRUD row on the request session (outcome mode).
+
+    One ``db.get(Release)`` gives both the project and the label, and it is an
+    identity-map hit whenever the request already loaded the release -- the
+    phase-gate path counts its statements, and this adds no query of its own.
+    No actor (an internal caller) records nothing, like ``_record_phase_event``.
+    """
+    if actor is None:
+        return
+    release = await db.get(Release, uuid.UUID(str(release_id)))
+    if release is None:
+        return
+    await record_activity(
+        db,
+        project_id=release.project_id,
+        event_type=event_type,
+        actor=ActorRef.from_user(actor),
+        entity_id=str(release.id),
+        entity_label=release.name,
+        release_id=release.id,
+        context=context,
+        **extra,
+    )
+
+
 async def _project_of_release(db: AsyncSession, release_id: str):
     return (
         await db.execute(
@@ -1192,8 +1220,30 @@ async def update_phase(
     updates.pop("gate_override_reason", None)
     updates.pop("skip_reason", None)
 
+    before = {field: getattr(phase, field, None) for field in updates}
     for field, value in updates.items():
         setattr(phase, field, value)
+
+    # W21 ACT-01: only fields that actually DIFFER (a re-sent value is not a
+    # change), staged on this session with the update itself.
+    changed = sorted(f for f, v in updates.items() if before[f] != v)
+    if changed:
+        status_diff = (
+            {"before": {"status": before["status"]}, "after": {"status": updates["status"]}}
+            if "status" in changed
+            else {}
+        )
+        await _record_phase_crud(
+            db, actor, release_id, "release.phase_updated",
+            {"phase": phase.name, "changed": ", ".join(changed)},
+            changed_fields=changed, **status_diff,
+        )
+        if "status" in changed and updates["status"] == "in_progress":
+            # The release moved INTO this phase: the lifecycle step the feed's
+            # "advanced to" filter is for.
+            await _record_phase_crud(
+                db, actor, release_id, "release.phase_advanced", {"phase": phase.name},
+            )
 
     # Check if all phases of this release are now completed/skipped. Count the
     # NOT-done phases instead of fetching every row and scanning in Python
@@ -1216,9 +1266,12 @@ async def update_phase(
     return phase, all_done
 
 
-async def delete_phase(db: AsyncSession, release_id: str, phase_id: str) -> None:
+async def delete_phase(db: AsyncSession, release_id: str, phase_id: str, actor=None) -> None:
     """Stage deletion of a phase. Handler commits."""
     phase = await get_phase_or_404(db, release_id, phase_id)
+    # W21 ACT-01: the phase name is read before the delete -- afterwards the
+    # row could only say that "a phase" went. Outcome mode, same commit.
+    await _record_phase_crud(db, actor, release_id, "release.phase_deleted", {"phase": phase.name})
     await db.delete(phase)
 
 
@@ -1227,6 +1280,7 @@ async def link_test_run(
     release_id: str,
     body,
     linked_by_id: uuid.UUID | None = None,
+    actor=None,
 ) -> tuple[ReleaseTestRunLink, bool]:
     """Stage a release↔run link. Returns (link, is_new).
 
@@ -1288,10 +1342,36 @@ async def link_test_run(
     # Third of the four paths that change which link is primary — see
     # release_linker.sync_primary_release for why there is no single writer.
     await sync_primary_release(db, run_uuid)
+    # W21 ACT-01: one act, seen from both ends -- the release's timeline and
+    # the run's. Outcome mode, committed with the link.
+    if actor is not None:
+        run_label = f"Build {run.build_number or str(run.id)[:8]}"
+        await record_activity(
+            db,
+            project_id=release.project_id,
+            event_type="release.linked_run",
+            actor=ActorRef.from_user(actor),
+            entity_id=release.id,
+            entity_label=release.name,
+            release_id=release.id,
+            target_type="run",
+            target_id=str(run.id),
+            context={"run": run_label},
+        )
+        await record_activity(
+            db,
+            project_id=release.project_id,
+            event_type="run.release_attached",
+            actor=ActorRef.from_user(actor),
+            entity_id=run.id,
+            entity_label=run_label,
+            release_id=release.id,
+            context={"release_name": release.name},
+        )
     return link, True
 
 
-async def unlink_test_run(db: AsyncSession, release_id: str, run_id: str) -> None:
+async def unlink_test_run(db: AsyncSession, release_id: str, run_id: str, actor=None) -> None:
     """Stage deletion of a release↔run link. Handler commits."""
     link = (
         await db.execute(
@@ -1350,6 +1430,24 @@ async def unlink_test_run(db: AsyncSession, release_id: str, run_id: str) -> Non
     # ``ix_rtr_links_primary`` would reject it — deterministically, every time
     # the primary link of a multi-linked run is removed. The endpoint 500s,
     # the DELETE never runs, and the run keeps both the link and the flag.
+    # W21 ACT-01: before the delete, while the run's label is still readable.
+    if actor is not None:
+        release = await get_release_or_404(db, release_id)
+        build_number = await db.scalar(
+            select(TestRun.build_number).where(TestRun.id == link.test_run_id)
+        )
+        await record_activity(
+            db,
+            project_id=release.project_id,
+            event_type="release.unlinked_run",
+            actor=ActorRef.from_user(actor),
+            entity_id=release.id,
+            entity_label=release.name,
+            release_id=release.id,
+            target_type="run",
+            target_id=str(link.test_run_id),
+            context={"run": f"Build {build_number or str(link.test_run_id)[:8]}"},
+        )
     await db.delete(link)
     await db.flush()
 

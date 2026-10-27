@@ -744,7 +744,7 @@ async def set_run_release(
 async def recover_live_run_from_buffer(
     run_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_run_access()),
+    current_user: User = Depends(require_run_access()),
 ):
     """Re-enqueue ``persist_live_session`` for a live-stream run whose
     per-test rows never landed in PostgreSQL.
@@ -895,6 +895,19 @@ async def recover_live_run_from_buffer(
             f"Persistence task queued. {buffer_len} buffered events will "
             "be materialised into TestCase rows."
         )
+    # W21 ACT-01. Attempt mode: the dispatch was issued; the persist task's own
+    # outcome is the run's row counts, not this entry.
+    from app.services.activity.service import ActorRef, record as record_activity
+
+    await record_activity(
+        None,
+        project_id=run.project_id,
+        event_type="run.live_recovered",
+        actor=ActorRef.from_user(current_user),
+        entity_id=run_id,
+        entity_label=f"Build {getattr(run, 'build_number', None) or str(run_id)[:8]}",
+        context={"source": source, "buffered_events": buffer_len},
+    )
     return {
         "queued": True,
         "run_id": str(run_id),
@@ -1005,6 +1018,20 @@ async def delete_run(
         str(job_id) if job_id else None,
         body.reason,
         str(current_user.id),
+    )
+
+    # W21 ACT-01. Attempt mode: the row has its own session, so it outlives the
+    # run it names -- the label is the only thing left to read afterwards.
+    from app.services.activity.service import ActorRef, record as record_activity
+
+    await record_activity(
+        None,
+        project_id=run.project_id,
+        event_type="run.deleted",
+        actor=ActorRef.from_user(current_user),
+        entity_id=run_id,
+        entity_label=f"Build {getattr(run, 'build_number', None) or str(run_id)[:8]}",
+        context={"reason": body.reason} if body.reason else None,
     )
 
     return DeleteRunAcceptedResponse(

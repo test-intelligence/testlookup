@@ -16,6 +16,7 @@ from typing import Annotated, AsyncGenerator, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -27,7 +28,7 @@ from app.core.deps import (
     get_streaming_api_key_context,
 )
 from app.db.postgres import get_db
-from app.models.postgres import User
+from app.models.postgres import TestRun, User
 from app.models.schemas import (
     ActiveSessionsResponse,
     LiveEventBatch,
@@ -36,6 +37,7 @@ from app.models.schemas import (
 )
 from app.models.viz_contracts import MAX_SUITE_NAME_LENGTH, MAX_SUITES
 from app.services import stream_service
+from app.services.activity.service import ActorRef, record as record_activity
 from app.services.analytics_scope import parse_suite_filter
 from app.services.ingestion_backpressure import enforce_redis_memory_backpressure
 from app.services.ingestion_rate_limit import enforce_ingest_rate_limit
@@ -63,6 +65,17 @@ async def create_session(
     # be a name or a UUID.
     response = await stream_service.create_session(
         db, payload, bound_project_id=bound_project_id, user=current_user,
+    )
+    # W21 ACT-01. Outcome mode: staged on this session, so it commits with the
+    # session and its run stub or not at all.
+    await record_activity(
+        db,
+        project_id=response.project_id,
+        event_type="run.live_started",
+        actor=ActorRef.from_user(current_user),
+        entity_id=response.run_id,
+        entity_label=f"Build {payload.build_number or str(response.run_id)[:8]}",
+        context={"framework": getattr(payload, "framework", None)},
     )
     await db.commit()
     # VIZ-212: the session start commits an IN_PROGRESS TestRun stub, which
@@ -101,6 +114,20 @@ async def close_session(
     closed_project_id = await stream_service.close_session(
         db, session_id, bound_project_id=bound_project_id, user=current_user,
     )
+    if closed_project_id is not None:
+        # W21 ACT-01. The run's id IS the session id (the stub is written with
+        # it). Outcome mode, committed with the close.
+        build_number = await db.scalar(
+            select(TestRun.build_number).where(TestRun.id == uuid.UUID(session_id))
+        )
+        await record_activity(
+            db,
+            project_id=closed_project_id,
+            event_type="run.live_finalized",
+            actor=ActorRef.from_user(current_user),
+            entity_id=session_id,
+            entity_label=f"Build {build_number or session_id[:8]}",
+        )
     await db.commit()
     if closed_project_id is not None:
         # VIZ-212: the close created/updated the TestRun analytics reads.
