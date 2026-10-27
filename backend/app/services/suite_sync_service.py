@@ -297,11 +297,12 @@ async def _record_sync_deletions(
     from app.models.postgres import TestSuite  # noqa: PLC0415
     from app.services.activity.service import ActorRef, record as record_activity  # noqa: PLC0415
 
-    ids = dict((await db.execute(
+    rows = (await db.execute(
         select(TestSuite.name, TestSuite.id).where(
             TestSuite.project_id == project_id, TestSuite.name.in_([s["suite_name"] for s in lost]),
         )
-    )).all())
+    )).all()
+    ids: dict[str, uuid.UUID] = {str(row[0]): row[1] for row in rows}
     for s in lost:
         name = s["suite_name"]
         await record_activity(
