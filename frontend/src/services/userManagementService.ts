@@ -28,6 +28,8 @@ export interface ProjectMember {
    */
   is_service_account?: boolean
   is_synthetic?: boolean
+  /** W20 ADM-09: null = granted by a person; `scim:<group>` = granted through that SCIM group. */
+  source?: string | null
   is_active?: boolean
 }
 

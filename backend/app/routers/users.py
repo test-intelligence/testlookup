@@ -144,6 +144,7 @@ def _build_project_member_response(member: ProjectMember, user: User) -> Project
         is_service_account=bool(getattr(user, "is_service_account", False)),
         is_synthetic=bool(getattr(user, "is_synthetic", False)),
         is_active=getattr(user, "is_active", True) is not False,
+        source=getattr(member, "source", None) if isinstance(getattr(member, "source", None), str) else None,
     )
 
 

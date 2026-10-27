@@ -5509,6 +5509,8 @@ class ProjectMemberResponse(BaseModel):
     is_service_account: bool = False
     is_synthetic: bool = False
     is_active: bool = True
+    # W20 ADM-09: NULL = granted by a person; "scim:<group>" = granted through that SCIM group.
+    source: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
 
