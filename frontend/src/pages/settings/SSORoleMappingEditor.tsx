@@ -93,9 +93,9 @@ export default function SSORoleMappingEditor({ config, onSaved }: { config: SSOC
         {rows.map((r, i) => (
           <div key={i} className="flex items-center gap-2" data-testid="sso-role-row">
             <input aria-label={`IdP group ${i + 1}`} placeholder="IdP group (e.g. qa-leads)" value={r.group}
-              onChange={(e) => setRow(i, { group: e.target.value })} className={`${field} flex-1`} />
+              onChange={(e) => setRow(i, { group: e.target.value })} className={`${field} flex-1 min-w-0`} />
             <span className="text-xs text-[var(--color-text-muted)]">→</span>
-            <select aria-label={`Role for group ${i + 1}`} value={r.role} onChange={(e) => setRow(i, { role: e.target.value })} className={field}>
+            <select aria-label={`Role for group ${i + 1}`} value={r.role} onChange={(e) => setRow(i, { role: e.target.value })} className={`${field} !w-44 shrink-0`}>
               {ROLES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             <button type="button" aria-label={`Remove group ${i + 1}`} onClick={() => { setRows((rs) => rs.filter((_, k) => k !== i)); setPreview(null) }}
@@ -110,15 +110,15 @@ export default function SSORoleMappingEditor({ config, onSaved }: { config: SSOC
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <label className="text-xs text-[var(--color-text-secondary)] flex items-center gap-2">
+        <label className="text-xs text-[var(--color-text-secondary)] flex items-center gap-2 whitespace-nowrap">
           Default role
-          <select aria-label="Default role" value={defaultRole} onChange={(e) => { setDefaultRole(e.target.value); setPreview(null) }} className={field}>
+          <select aria-label="Default role" value={defaultRole} onChange={(e) => { setDefaultRole(e.target.value); setPreview(null) }} className={`${field} !w-40`}>
             {ROLES.filter((o) => o.value !== 'ADMIN').map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </label>
-        <label className="text-xs text-[var(--color-text-secondary)] flex items-center gap-2">
+        <label className="text-xs text-[var(--color-text-secondary)] flex items-center gap-2 whitespace-nowrap">
           Group attribute
-          <input aria-label="Group attribute" placeholder="memberOf" value={groupAttribute} onChange={(e) => setGroupAttribute(e.target.value)} className={field} />
+          <input aria-label="Group attribute" placeholder="memberOf" value={groupAttribute} onChange={(e) => setGroupAttribute(e.target.value)} className={`${field} !w-48`} />
         </label>
         <button type="button" onClick={save} disabled={saving || !!duplicate}
           className="btn-primary btn-sm disabled:opacity-50">
