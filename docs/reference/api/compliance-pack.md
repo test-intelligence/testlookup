@@ -381,7 +381,7 @@ S9 adds the legal-hold check alongside this. It is deliberately absent
 rather than stubbed: a hold check against a table that does not exist
 reads as a working guard while never firing.
 
-Source: [backend/app/routers/compliance_packs.py:430](../../../backend/app/routers/compliance_packs.py#L430).
+Source: [backend/app/routers/compliance_packs.py:438](../../../backend/app/routers/compliance_packs.py#L438).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -466,7 +466,7 @@ Enforces tenant isolation via the pack's ``project_id``. The response
 includes the SHA-256 of the manifest in the ``X-Manifest-Sha256``
 header so automated verifiers can assert before reading the body.
 
-Source: [backend/app/routers/compliance_packs.py:269](../../../backend/app/routers/compliance_packs.py#L269).
+Source: [backend/app/routers/compliance_packs.py:277](../../../backend/app/routers/compliance_packs.py#L277).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -569,7 +569,7 @@ ADMIN, typed confirmation, and a reason — a pack is audit evidence
 generated with a seven-year default, so shortening that is a deliberate
 act and is recorded as one.
 
-Source: [backend/app/routers/compliance_packs.py:377](../../../backend/app/routers/compliance_packs.py#L377).
+Source: [backend/app/routers/compliance_packs.py:385](../../../backend/app/routers/compliance_packs.py#L385).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -674,7 +674,7 @@ writes nothing. The request's connection is handed back before the storage
 read; a storage failure answers 200 ``unreadable`` (absence is not health,
 and not a 502 toast either).
 
-Source: [backend/app/routers/compliance_packs.py:319](../../../backend/app/routers/compliance_packs.py#L319).
+Source: [backend/app/routers/compliance_packs.py:327](../../../backend/app/routers/compliance_packs.py#L327).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -860,7 +860,7 @@ List Compliance Packs
 
 List every historical pack ever generated for a release.
 
-Source: [backend/app/routers/compliance_packs.py:252](../../../backend/app/routers/compliance_packs.py#L252).
+Source: [backend/app/routers/compliance_packs.py:260](../../../backend/app/routers/compliance_packs.py#L260).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`.
 

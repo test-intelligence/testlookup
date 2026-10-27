@@ -143,6 +143,27 @@ async def create_action_proposal(
     )
     db.add(row)
     await db.flush()
+    # W21 ACT-01 slice (c): an agent's NEW proposal is the feed's "proposed a
+    # fix" row (an idempotent replay returned above records nothing). Outcome
+    # mode on the caller's session; a person's own proposal is not an agent's.
+    proposer = payload.get("proposing_agent_id")
+    if proposer and actor_user_id is None:
+        from app.services.activity.service import ActorRef  # noqa: PLC0415
+        from app.services.activity.service import record as record_activity  # noqa: PLC0415
+
+        spec = resolve_action_type(action_type)
+        await record_activity(
+            db,
+            project_id=project_id,
+            event_type="agent.fix_proposed",
+            actor=ActorRef.agent(proposer_label(proposer) or "Agent"),
+            entity_id=row.id,
+            entity_label=activity_entity_label(spec, payload),
+            entity_type="agent_action",
+            target_type=target_type,
+            target_id=target_id,
+            context={"canonical_type": spec.action_type if spec else action_type, "approval_required": approval_required},
+        )
     if not approval_required:
         await enqueue_action_dispatch(db, action=row)
     return row, True

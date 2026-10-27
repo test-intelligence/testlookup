@@ -1177,8 +1177,11 @@ async def update_test_plan(
     current_user: User,
 ) -> TestPlan:
     plan = await get_plan_or_404(db, plan_id, for_update=True)
-    apply_model_updates(plan, payload.model_dump(exclude_unset=True))
-    await audit_event(db, "test_plan", plan.id, plan.project_id, "updated", current_user)
+    updates = payload.model_dump(exclude_unset=True)
+    apply_model_updates(plan, updates)
+    await audit_event(
+        db, "test_plan", plan.id, plan.project_id, "updated", current_user, new_values=_audit_values(updates),
+    )
     return plan
 
 

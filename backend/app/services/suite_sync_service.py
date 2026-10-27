@@ -128,6 +128,7 @@ async def sync_suite_membership(
         )
         summaries.append(summary)
 
+    await _record_sync_deletions(db, project_id, run_id, summaries)
     try:
         await db.commit()
     except Exception:
@@ -282,6 +283,32 @@ def _sync_one_suite(
             ))
 
     return summary
+
+
+async def _record_sync_deletions(
+    db: AsyncSession, project_id: uuid.UUID, run_id: uuid.UUID, summaries: list[dict],
+) -> None:
+    """W21 ACT-01 slice (c): ONE ``suite.sync_deleted`` row per suite that lost
+    tests in this sync (not one per test), committed with the sync itself. The
+    entity is the catalogue suite when one exists, so the feed links to it."""
+    lost = [s for s in summaries if s["deleted_count"]]
+    if not lost:
+        return
+    from app.models.postgres import TestSuite  # noqa: PLC0415
+    from app.services.activity.service import ActorRef, record as record_activity  # noqa: PLC0415
+
+    rows = (await db.execute(
+        select(TestSuite.name, TestSuite.id).where(
+            TestSuite.project_id == project_id, TestSuite.name.in_([s["suite_name"] for s in lost]),
+        )
+    )).all()
+    ids: dict[str, uuid.UUID] = {str(row[0]): row[1] for row in rows}
+    for s in lost:
+        name = s["suite_name"]
+        await record_activity(
+            db, project_id=project_id, event_type="suite.sync_deleted", actor=ActorRef.system("suite_sync"),
+            entity_id=ids.get(name) or name, entity_label=name, context={"count": s["deleted_count"], "run_id": str(run_id)},
+        )
 
 
 def _add_event(

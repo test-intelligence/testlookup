@@ -57,6 +57,7 @@ from app.services.test_case_lifecycle_service import (
     transition,
 )
 from app.services.test_case_parameters import mask_parameters
+from app.services.test_management_audit_service import activity_summarised_elsewhere
 from app.services.test_management_service import (
     require_assignable,
     update_managed_test_case,
@@ -233,6 +234,7 @@ _CHANGED_FIELDS = {
 }
 
 
+@activity_summarised_elsewhere
 async def apply_bulk_action(
     db: AsyncSession,
     payload: TestCaseBulkRequest,
@@ -402,6 +404,7 @@ def _first_error(exc: ValidationError) -> str:
     return f"{where}: {message}" if where else message
 
 
+@activity_summarised_elsewhere  # its own test_case.restored row; the edit's audit row is not mirrored as well
 async def restore_case_version(
     db: AsyncSession,
     test_case: ManagedTestCase,

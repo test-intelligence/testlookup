@@ -501,8 +501,8 @@ async def test_report_proposals_carry_the_frozen_mode_only_when_given():
         with_mode, **ids, proposed_actions=[item], proposing_agent_mode="suggest",
     )
     await service.persist_report_action_proposals(without, **ids, proposed_actions=[item])
-    assert with_mode.add.call_args.args[0].request_payload["proposing_agent_mode"] == "suggest"
-    assert "proposing_agent_mode" not in without.add.call_args.args[0].request_payload
+    assert _ledger_row(with_mode).request_payload["proposing_agent_mode"] == "suggest"
+    assert "proposing_agent_mode" not in _ledger_row(without).request_payload
 
 
 @pytest.mark.parametrize(("metadata", "expected"), [
@@ -536,3 +536,10 @@ async def test_the_pipeline_passes_the_decision_reports_frozen_mode(monkeypatch,
 
     persist.assert_awaited_once()
     assert persist.await_args.kwargs["proposing_agent_mode"] == expected
+
+
+def _ledger_row(db):
+    """The ledger row the service added (W21 ACT-01: an agent's proposal also adds its activity row)."""
+    from app.models.postgres import AgentActionLedger
+
+    return [c.args[0] for c in db.add.call_args_list if isinstance(c.args[0], AgentActionLedger)][-1]
