@@ -11,7 +11,8 @@
  *  - `GET` / `PUT …/retention-policy` (with `keep_last_runs`), `POST …/retention-policy/preview` (with `holds`,
  *    `floor`, `references_broken`, `references_measured`), `GET …/storage`, `GET /api/v1/admin/storage/deleted-projects`,
  *    `GET /api/v1/auth/me/dismissals`, `POST …/deletion/preview` (a held run in `blocked[]` with `Held: …` first,
- *    `references_broken`, `floor_applies: false`, `floor_note`);
+ *    `references_broken`, `floor_applies: false`, `floor_note`), and (W22b) the jobs card's `GET
+ *    …/deletion/jobs` → `{jobs: [], total: 0}` (ADMIN) and `candidates.export_archives_expired: 0`;
  *  - when `release` / `packs` / `base` is given: `GET /api/v1/releases/{id}` (+ `holds`), `GET
  *    /api/v1/releases/{id}/compliance-packs` (+ per-pack `holds`), `POST /api/v1/compliance-packs/{id}/retire`
  *    and `DELETE /api/v1/compliance-packs/{id}` — both 409 `{"detail": {"blockers": ["Held: …", …]}}` while a
@@ -182,6 +183,8 @@ export function worldCandidates(overrides: Record<string, unknown> = {}): Record
     ai_history_versions: 0,
     search_usage_rows: 0,
     shadow_pairs_unlabelled: 0,
+    // W22b E-12: retained deletion archives that leave with their job rows.
+    export_archives_expired: 0,
     ...overrides,
   }
 }
@@ -567,6 +570,8 @@ function retentionPageRoutes(ctx: WorldContext): ApiHandlers {
     [`/api/v1/projects/${projectId}/storage`, () => STORAGE],
     ['/api/v1/admin/storage/deleted-projects', () => DELETED_PROJECTS],
     ['/api/v1/auth/me/dismissals', () => ({ dismissed: [] })],
+    // W22b: the deletion-jobs card's one read (ADMIN, like the server) — an empty list WITH its total.
+    [`/api/v1/projects/${projectId}/deletion/jobs`, () => (atLeast(role, 'ADMIN') ? { jobs: [], total: 0 } : roleRefusal('ADMIN'))],
     [`/api/v1/projects/${projectId}/deletion/preview`, (request) => {
       const body = record(request)
       if (!atLeast(role, 'ADMIN')) return roleRefusal('ADMIN')

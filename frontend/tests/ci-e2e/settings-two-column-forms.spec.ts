@@ -158,6 +158,8 @@ const HANDLERS: ApiHandlers = [
   [`/api/v1/projects/${PROJECT_ID}/retention-policy`, () => RETENTION_POLICY],
   // W22a: the Holds card's one read, in the REAL shape (no hold here).
   [`/api/v1/projects/${PROJECT_ID}/retention-holds`, () => ({ items: [], total: 0, counts: { live: 0, expired: 0, released: 0 } })],
+  // W22b: the deletion-jobs card's one read, in the REAL shape (no job here).
+  [`/api/v1/projects/${PROJECT_ID}/deletion/jobs`, () => ({ jobs: [], total: 0 })],
   [`/api/v1/projects/${PROJECT_ID}/storage`, () => PROJECT_STORAGE],
   ['/api/v1/admin/storage/deleted-projects', () => DELETED_PROJECTS_STORAGE],
   ['/api/v1/auth/me/dismissals', () => ({ dismissed: [] })],

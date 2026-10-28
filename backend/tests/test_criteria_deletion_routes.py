@@ -68,7 +68,9 @@ def test_execute_accepts_a_job_id_and_not_a_criteria_body():
     from app.models.schemas import DeletionExecuteRequest
 
     fields = set(DeletionExecuteRequest.model_fields)
-    assert fields == {"job_id", "confirmation_name"}, (
+    # W22b ACT-03: ``export`` ({tier, target}) says what to do with the FROZEN
+    # set before it is deleted; it is not a criterion and selects nothing.
+    assert fields == {"job_id", "confirmation_name", "export"}, (
         f"execute takes {fields}; a criteria field here re-opens the drift "
         "the freeze closes"
     )

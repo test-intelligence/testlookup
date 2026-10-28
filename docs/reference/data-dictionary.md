@@ -46,7 +46,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [deep_findings](#deep_findings) | DeepFinding | 13 |
 | [defect_candidates](#defect_candidates) | DefectCandidate | 19 |
 | [defects](#defects) | Defect | 35 |
-| [deletion_jobs](#deletion_jobs) | DeletionJob | 16 |
+| [deletion_jobs](#deletion_jobs) | DeletionJob | 28 |
 | [digest_subscriptions](#digest_subscriptions) | DigestSubscription | 20 |
 | [dismissed_duplicate_pairs](#dismissed_duplicate_pairs) | DismissedDuplicatePair | 6 |
 | [duplicate_test_case_candidates](#duplicate_test_case_candidates) | DuplicateTestCaseCandidate | 11 |
@@ -66,6 +66,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [github_integrations](#github_integrations) | GitHubIntegration | 16 |
 | [gitlab_integrations](#gitlab_integrations) | GitLabIntegration | 14 |
 | [identity_events](#identity_events) | IdentityEvent | 11 |
+| [instance_retention_policy](#instance_retention_policy) | InstanceRetentionPolicy | 12 |
 | [integration_health_checks](#integration_health_checks) | IntegrationHealthCheck | 8 |
 | [integration_probe_results](#integration_probe_results) | IntegrationProbeResult | 9 |
 | [knowledge_chunks](#knowledge_chunks) | KnowledgeChunk | 12 |
@@ -89,7 +90,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [project_llm_quota](#project_llm_quota) | ProjectLlmQuota | 12 |
 | [project_llm_usage](#project_llm_usage) | ProjectLlmUsage | 10 |
 | [project_members](#project_members) | ProjectMember | 6 |
-| [project_retention_policies](#project_retention_policies) | ProjectRetentionPolicy | 13 |
+| [project_retention_policies](#project_retention_policies) | ProjectRetentionPolicy | 15 |
 | [project_workflow_defaults](#project_workflow_defaults) | ProjectWorkflowDefault | 6 |
 | [projects](#projects) | Project | 23 |
 | [quality_gates](#quality_gates) | QualityGate | 6 |
@@ -1751,10 +1752,19 @@ fingerprints that set. Today that is an audit detail; criteria deletion
 if the world moved underneath it.
 
 Status vocabulary is limited to states something can actually reach:
-``queued|previewed|running|completed|failed|partial``. ``previewed`` was
-withheld until S5's preview endpoint gave it a producer. ``cancelled`` is
-still NOT declared, because nothing can produce it — shipping a state
-nothing writes is the defect this epic catalogues elsewhere.
+``queued|previewed|running|awaiting_collection|completed|failed|partial|expired``.
+``previewed`` was withheld until S5's preview endpoint gave it a producer;
+``awaiting_collection`` (the criteria worker, after a verified ``collect``
+export) and ``expired`` (the export janitor beat) arrived with W22b's
+export-before-delete. ``cancelled`` is still NOT declared, because nothing
+can produce it — shipping a state nothing writes is the defect this epic
+catalogues elsewhere.
+
+Export before delete (W22b ACT-03, migration 0241): a criteria deletion
+may build an archive first (``export_tier`` / ``export_target``); nothing
+is deleted until ``export_verified_at`` is set (the stored archive was
+re-read and verified) and, for ``collect``, until an acknowledgement with
+the exact ``export_manifest_sha256`` arrives before ``collect_expires_at``.
 
 | Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
 |---|---|---|---|---|---|
@@ -1774,11 +1784,27 @@ nothing writes is the defect this epic catalogues elsewhere.
 | `requested_at` | `DATETIME` | False | False | `server=now()` |  |
 | `started_at` | `DATETIME` | True | False | `—` |  |
 | `finished_at` | `DATETIME` | True | False | `—` |  |
+| `export_tier` | `VARCHAR(10)` | True | False | `—` |  |
+| `export_target` | `VARCHAR(10)` | True | False | `—` |  |
+| `export_bytes` | `BIGINT` | True | False | `—` |  |
+| `export_manifest_sha256` | `VARCHAR(64)` | True | False | `—` |  |
+| `export_archive_sha256` | `VARCHAR(64)` | True | False | `—` |  |
+| `export_location` | `VARCHAR(500)` | True | False | `—` |  |
+| `export_verified_at` | `DATETIME` | True | False | `—` |  |
+| `export_meta` | `JSONB` | True | False | `—` |  |
+| `collect_expires_at` | `DATETIME` | True | False | `—` |  |
+| `collected_at` | `DATETIME` | True | False | `—` |  |
+| `acknowledged_at` | `DATETIME` | True | False | `—` |  |
+| `acknowledged_by_id` | `UUID` | True | False | `—` | users.id / SET NULL |
 
 Constraints and indexes:
 
+- `CheckConstraint` `ck_deletion_jobs_export_pair`: `(export_tier IS NULL) = (export_target IS NULL)`
+- `CheckConstraint` `ck_deletion_jobs_export_target`: `export_target IS NULL OR export_target IN ('collect', 'retain')`
+- `CheckConstraint` `ck_deletion_jobs_export_tier`: `export_tier IS NULL OR export_tier IN ('summary', 'evidence', 'full')`
 - `ForeignKeyConstraint` `unnamed`: `project_id`
 - `ForeignKeyConstraint` `unnamed`: `requested_by_id`
+- `ForeignKeyConstraint` `fk_deletion_jobs_acknowledged_by`: `acknowledged_by_id`
 - `PrimaryKeyConstraint` `unnamed`: `id`
 - Index `ix_deletion_jobs_project_started` (unique=False): `deletion_jobs.project_id, deletion_jobs.started_at`; options `{}`
 - Index `ix_deletion_jobs_status` (unique=False): `deletion_jobs.status`; options `{}`
@@ -2471,6 +2497,47 @@ Constraints and indexes:
 - Index `ix_identity_event_type` (unique=False): `identity_events.event_type`; options `{}`
 - Index `ix_identity_event_user` (unique=False): `identity_events.user_id`; options `{}`
 
+## instance_retention_policy
+
+[backend/app/models/postgres.py:7865](../../backend/app/models/postgres.py#L7865)
+
+The instance-wide retention defaults (W22b ACT-06, migration 0242).
+
+ONE row (``id = 1``, CHECK ``ck_instance_retention_single_row``; inserted
+by the migration). A project that leaves a field NULL (or has no policy
+row) inherits the field from here, per field; a NULL here means the code
+default (``retention_service.EffectiveRetentionPolicy``).
+
+``enabled`` ships ``false`` (the owner's D12) and is switched on ONLY by
+the previewed, typed, audited admin action
+(``retention_instance_service.enable_instance_policy``); a project's
+explicit ``enabled = false`` is never overridden. ``enabled_at`` /
+``enabled_by_id`` record the last enable. The AI caps are NOT inherited.
+
+| Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
+|---|---|---|---|---|---|
+| `id` | `SMALLINT` | False | True | `application=1` |  |
+| `enabled` | `BOOLEAN` | False | False | `server=false; application=False` |  |
+| `raw_events_days` | `INTEGER` | True | False | `—` |  |
+| `runs_days` | `INTEGER` | True | False | `—` |  |
+| `artifacts_days` | `INTEGER` | True | False | `—` |  |
+| `audit_days` | `INTEGER` | True | False | `—` |  |
+| `keep_last_runs` | `INTEGER` | True | False | `—` |  |
+| `purge_window_start_utc` | `SMALLINT` | True | False | `—` |  |
+| `enabled_at` | `DATETIME` | True | False | `—` |  |
+| `enabled_by_id` | `UUID` | True | False | `—` | users.id / SET NULL |
+| `updated_at` | `DATETIME` | False | False | `server=now(); onupdate=now()` |  |
+| `updated_by_user_id` | `UUID` | True | False | `—` | users.id / SET NULL |
+
+Constraints and indexes:
+
+- `CheckConstraint` `ck_instance_retention_keep_last`: `keep_last_runs IS NULL OR keep_last_runs BETWEEN 0 AND 1000`
+- `CheckConstraint` `ck_instance_retention_single_row`: `id = 1`
+- `CheckConstraint` `ck_instance_retention_window`: `purge_window_start_utc IS NULL OR purge_window_start_utc BETWEEN 0 AND 23`
+- `ForeignKeyConstraint` `unnamed`: `enabled_by_id`
+- `ForeignKeyConstraint` `unnamed`: `updated_by_user_id`
+- `PrimaryKeyConstraint` `unnamed`: `id`
+
 ## integration_health_checks
 
 [backend/app/models/postgres.py:4474](../../backend/app/models/postgres.py#L4474)
@@ -3107,7 +3174,7 @@ Constraints and indexes:
 
 ## project_activity_events
 
-[backend/app/models/postgres.py:7836](../../backend/app/models/postgres.py#L7836)
+[backend/app/models/postgres.py:7956](../../backend/app/models/postgres.py#L7956)
 
 Append-only, project-scoped product feed of everything that happens.
 
@@ -3213,7 +3280,7 @@ Constraints and indexes:
 
 ## project_llm_usage
 
-[backend/app/models/postgres.py:7796](../../backend/app/models/postgres.py#L7796)
+[backend/app/models/postgres.py:7916](../../backend/app/models/postgres.py#L7916)
 
 Running per-period LLM cost meter for a project.
 
@@ -3266,14 +3333,19 @@ Constraints and indexes:
 
 ## project_retention_policies
 
-[backend/app/models/postgres.py:7710](../../backend/app/models/postgres.py#L7710)
+[backend/app/models/postgres.py:7764](../../backend/app/models/postgres.py#L7764)
 
 Per-project data retention policy (PMF US-11.4, migration 0113).
 
-One row per project; a MISSING row resolves to the code defaults in
+One row per project; a MISSING row — and, since W22b (migration 0242),
+every NULL column of the seven inheritable fields (``enabled``, the four
+day windows, ``keep_last_runs``, ``purge_window_start_utc``) — inherits,
+PER FIELD: the instance policy (``InstanceRetentionPolicy``) when it sets
+the field, else the code defaults in
 ``retention_service.EffectiveRetentionPolicy`` (disabled; raw events
-90 d, runs 365 d, artifacts 180 d, audit 2555 d ≈ 7 y) — no
-project-creation hook needed (``ValueMetricAssumptions`` pattern).
+90 d, runs 365 d, artifacts 180 d, audit 2555 d ≈ 7 y; keep 10; window
+02:00 UTC) — no project-creation hook needed (``ValueMetricAssumptions``
+pattern). Explicit project values always win.
 
 Four retention classes, each with its own clock:
 
@@ -3288,8 +3360,15 @@ Four retention classes, each with its own clock:
   outlive the runs they describe. ``settings_audit_log`` (which holds
   the purge-audit records themselves) is NEVER purged.
 
-Every defaulted column carries a matching ``server_default`` so the
-migration DDL and the ORM cannot drift (the #433 lesson).
+The six policy columns (``enabled``, the four windows, ``keep_last_runs``)
+carry NO ``default`` and NO ``server_default`` since migration 0242,
+because NULL means "inherit" — DDL and ORM dropped them together so they
+cannot drift (the #433 lesson). The resolver is the ONLY reader of a NULL.
+
+Schedule (W22b ACT-06, migration 0242): ``purge_window_start_utc``
+(0-23, NULL = inherit) is the UTC hour the hourly beat purges the project
+in; ``purge_paused_until`` skips the scheduled purge until then
+(project-only, never inherited).
 
 AI history caps (AIH-06, migration 0206): ``ai_versions_per_run`` (per
 kind) and ``ai_versions_per_test``; NULL = the code defaults 20 / 10
@@ -3298,7 +3377,7 @@ apply at write time whatever ``enabled`` says; ``enabled`` only gates the
 scheduled sweep.
 
 Keep-last floor (W22a ACT-04, migration 0240): ``keep_last_runs`` (0-1000,
-NOT NULL, default 10) — the scheduled purge always keeps the newest N runs
+NULL = inherit, code default 10) — the scheduled purge always keeps the newest N runs
 of the project, plus its newest PASSED run and the newest PASSED run of
 each suite; ``0`` keeps only the PASSED runs. The runs clock only.
 
@@ -3306,14 +3385,16 @@ each suite; ``0`` keeps only the PASSED runs. The runs clock only.
 |---|---|---|---|---|---|
 | `id` | `UUID` | False | True | `application=uuid4` |  |
 | `project_id` | `UUID` | False | False | `—` | projects.id / CASCADE |
-| `enabled` | `BOOLEAN` | False | False | `server=false; application=False` |  |
-| `raw_events_days` | `INTEGER` | False | False | `server=90; application=90` |  |
-| `runs_days` | `INTEGER` | False | False | `server=365; application=365` |  |
-| `artifacts_days` | `INTEGER` | False | False | `server=180; application=180` |  |
-| `audit_days` | `INTEGER` | False | False | `server=2555; application=2555` |  |
+| `enabled` | `BOOLEAN` | True | False | `—` |  |
+| `raw_events_days` | `INTEGER` | True | False | `—` |  |
+| `runs_days` | `INTEGER` | True | False | `—` |  |
+| `artifacts_days` | `INTEGER` | True | False | `—` |  |
+| `audit_days` | `INTEGER` | True | False | `—` |  |
 | `ai_versions_per_run` | `INTEGER` | True | False | `—` |  |
 | `ai_versions_per_test` | `INTEGER` | True | False | `—` |  |
-| `keep_last_runs` | `INTEGER` | False | False | `server=10; application=10` |  |
+| `keep_last_runs` | `INTEGER` | True | False | `—` |  |
+| `purge_window_start_utc` | `SMALLINT` | True | False | `—` |  |
+| `purge_paused_until` | `DATETIME` | True | False | `—` |  |
 | `created_at` | `DATETIME` | False | False | `server=now()` |  |
 | `updated_at` | `DATETIME` | False | False | `server=now(); onupdate=now()` |  |
 | `updated_by_user_id` | `UUID` | True | False | `—` | users.id / SET NULL |
@@ -3323,6 +3404,7 @@ Constraints and indexes:
 - `CheckConstraint` `ck_retention_ai_versions_per_run`: `ai_versions_per_run IS NULL OR ai_versions_per_run BETWEEN 1 AND 100`
 - `CheckConstraint` `ck_retention_ai_versions_per_test`: `ai_versions_per_test IS NULL OR ai_versions_per_test BETWEEN 1 AND 100`
 - `CheckConstraint` `ck_retention_keep_last_runs`: `keep_last_runs >= 0 AND keep_last_runs <= 1000`
+- `CheckConstraint` `ck_retention_purge_window`: `purge_window_start_utc IS NULL OR purge_window_start_utc BETWEEN 0 AND 23`
 - `ForeignKeyConstraint` `unnamed`: `project_id`
 - `ForeignKeyConstraint` `unnamed`: `updated_by_user_id`
 - `PrimaryKeyConstraint` `unnamed`: `id`
@@ -3837,7 +3919,7 @@ test_run_links: Mapped[list['ReleaseTestRunLink']] = relationship('ReleaseTestRu
 
 ## report_exports
 
-[backend/app/models/postgres.py:7659](../../backend/app/models/postgres.py#L7659)
+[backend/app/models/postgres.py:7713](../../backend/app/models/postgres.py#L7713)
 
 VIZ-607: one background export of a report (migration 0194).
 
@@ -3940,7 +4022,7 @@ Constraints and indexes:
 
 ## retention_holds
 
-[backend/app/models/postgres.py:7573](../../backend/app/models/postgres.py#L7573)
+[backend/app/models/postgres.py:7627](../../backend/app/models/postgres.py#L7627)
 
 A retention hold on a project, a release, a run or a compliance pack (W22a ACT-05, migration 0239).
 

@@ -6,7 +6,9 @@
   migration must not import application code, so the copy is pinned here);
 * each downgrade undoes exactly what its upgrade did, in reverse order;
 * 0240 builds no index; neither migration imports ``app``;
-* the ORM is in step with the DDL (CHECK texts, server default, partial index).
+* the ORM is in step with the DDL (CHECK texts, server default, partial index);
+  ``keep_last_runs``' nullability / default is pinned against 0242 by
+  ``tests/test_migrations_0241_0242.py`` (W22b made it NULL = inherit).
 
 The real DDL is exercised against Postgres in
 ``tests/integration/test_migrations_0239_0240_postgres.py``.
@@ -202,9 +204,9 @@ def test_the_orm_matches_0240():
     from app.models.postgres import ProjectRetentionPolicy, RunBaseline
 
     policy = ProjectRetentionPolicy.__table__
-    assert not policy.c.keep_last_runs.nullable
-    assert str(policy.c.keep_last_runs.server_default.arg) == "10"
-    assert policy.c.keep_last_runs.default.arg == vocab.KEEP_LAST_RUNS_DEFAULT
+    # 0240's DDL (NOT NULL, DEFAULT 10) is pinned above; the ORM column became
+    # nullable with no default in 0242 (W22b: NULL = inherit, per field), and
+    # tests/test_migrations_0241_0242.py pins the ORM against 0242 now.
     assert _check_texts(policy)["ck_retention_keep_last_runs"] == "keep_last_runs >= 0 AND keep_last_runs <= 1000"
     baselines = RunBaseline.__table__
     assert baselines.c.baseline_purged_at.nullable and baselines.c.baseline_purged_at.server_default is None

@@ -894,6 +894,10 @@ async def test_retention_sweep_bumps_each_purged_project_once(journal, monkeypat
         return {"counts": {"postgres": {"runs": 2}}, "cutoffs": {}}
 
     monkeypatch.setattr(retention_service, "run_purge", _purge)
+    # W22b W-3: the per-project Redis purge lock (no Redis in the unit suite).
+    from app.worker import tasks as _tasks
+    monkeypatch.setattr(_tasks, "_claim_retention_purge_lock", AsyncMock(return_value="acquired"))
+    monkeypatch.setattr(_tasks, "_release_retention_purge_lock", AsyncMock(return_value=None))
 
     summary = await _retention_purge_sweep(None)
 

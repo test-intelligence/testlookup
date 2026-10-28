@@ -35,6 +35,8 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `MINIO_SECRET_KEY` | `str` | `''` |
 | `MINIO_BUCKET_NAME` | `str` | `'test-telemetry'` |
 | `MINIO_USE_SSL` | `bool` | `False` |
+| `RETENTION_EXPORT_MAX_BYTES` | `int` | `Field(default=EXPORT_MAX_BYTES_DEFAULT, ge=1048576)` |
+| `RETENTION_EXPORT_COLLECT_TTL_HOURS` | `int` | `Field(default=EXPORT_COLLECT_TTL_HOURS_DEFAULT, ge=1, le=720)` |
 | `REDIS_PASSWORD` | `str` | `''` |
 | `REDIS_URL` | `str` | `'redis://localhost:6379/0'` |
 | `CELERY_BROKER_URL` | `str` | `'redis://localhost:6379/0'` |

@@ -6888,8 +6888,44 @@ async def _record_retention_purge(project_id: Any, out: dict[str, Any]) -> None:
         logger.warning("[retention] activity write failed for project %s: %s", project_id, exc)
 
 
-async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any]:
-    """Execute-mode retention purge — one project or the nightly sweep.
+async def _claim_retention_purge_lock(project_id: Any, owner: str) -> str:
+    """The per-project purge lock (W22b W-3, D-14): ``"acquired"`` | ``"held"`` | ``"unavailable"``.
+
+    The existing dedup lock (Redis ``SET NX`` with an owner, TTL longer than
+    the task's hard limit). It RAISES when Redis is unreachable; that is
+    ``"unavailable"`` here and the caller skips the project -- fail CLOSED:
+    with no proof that no other purge of it runs, no purge. Module-level so
+    the sweep's unit tests patch it.
+    """
+    from app.services.retention_vocab import PURGE_LOCK_KEY, PURGE_LOCK_TTL_SECONDS
+
+    try:
+        held = await _is_duplicate(
+            PURGE_LOCK_KEY.format(project_id=project_id), ttl=PURGE_LOCK_TTL_SECONDS, owner=owner,
+        )
+    except Exception as exc:  # noqa: BLE001 - fail closed, never a purge without the lock
+        _slog.warning("retention_purge_lock_unavailable", project_id=str(project_id),
+                      error_type=type(exc).__name__)
+        return "unavailable"
+    return "held" if held else "acquired"
+
+
+async def _release_retention_purge_lock(project_id: Any, owner: str) -> None:
+    """Release the purge lock if this sweep still owns it; a failure is left
+    to the TTL (never raised over the purge's own outcome)."""
+    from app.services.retention_vocab import PURGE_LOCK_KEY
+
+    try:
+        await _release_duplicate_lock(PURGE_LOCK_KEY.format(project_id=project_id), owner)
+    except Exception as exc:  # noqa: BLE001
+        _slog.warning("retention_purge_lock_release_failed", project_id=str(project_id),
+                      error_type=type(exc).__name__)
+
+
+async def _retention_purge_sweep(
+    project_id: str | None = None, *, owner: str | None = None,
+) -> dict[str, Any]:
+    """Execute-mode retention purge — one project or the hourly sweep.
 
     Kept as a module-level coroutine (not a closure) so the beat-sweep
     behavior — per-project isolation, audit-after-commit — is directly
@@ -6912,115 +6948,129 @@ async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any
     import time as _time
     import uuid as _uuid_mod
 
-    from sqlalchemy import select as _select
-
     from app.db.postgres import AsyncSessionLocal
-    from app.models.postgres import ProjectRetentionPolicy, SettingsAuditLog
+    from app.models.postgres import SettingsAuditLog
     from app.services import retention_service
     from app.services.cache_service import bump_analytics_epoch
 
+    lock_owner = owner or str(_uuid_mod.uuid4())
     if project_id:
+        # The manual "Purge now" (ADMIN + typed name + effective enabled) is
+        # explicit: it ignores the window AND the pause (D-6), not the lock.
         targets = [_uuid_mod.UUID(str(project_id))]
     else:
+        # W22b W-3: the projects whose effective policy is enabled, whose
+        # (inherited) window hour is now, and that are not paused -- ONE
+        # statement, the one selector (retention_service.due_project_ids).
         async with AsyncSessionLocal() as db:
             targets = list(
-                (
-                    await db.execute(
-                        _select(ProjectRetentionPolicy.project_id).where(
-                            ProjectRetentionPolicy.enabled == True  # noqa: E712
-                        )
-                    )
-                ).scalars().all()
+                await retention_service.due_project_ids(db, now=datetime.now(timezone.utc))
             )
 
-    summary: dict[str, Any] = {"projects": len(targets), "errors": 0, "results": {}}
+    summary: dict[str, Any] = {
+        "projects": len(targets), "errors": 0, "results": {}, "skipped": {},
+    }
     from app.services import deletion_job_service
 
     for pid in targets:
-        started = _time.monotonic()
-        errors: list[str] = []
-        out: dict[str, Any] | None = None
-
-        # Opened BEFORE the purge and on its own session, so a job that dies
-        # mid-flight still leaves a `running` row rather than no trace at all.
-        # The audit row below is written after the fact and cannot express
-        # "started but never finished".
-        job_id = await deletion_job_service.open_job(
-            project_id=pid, job_kind=deletion_job_service.KIND_SCHEDULED
-        )
-        try:
-            async with AsyncSessionLocal() as db:
-                out = await retention_service.run_purge(
-                    db, project_id=pid, mode="execute"
-                )
-                await db.commit()
-            # VIZ-212: once per project, after THIS project's commit. A purge
-            # that raised above never reaches it.
-            await bump_analytics_epoch(pid)
-        except Exception as exc:
-            errors.append(str(exc)[:500])
-            summary["errors"] += 1
-            logger.warning(
-                "[retention] purge failed for project %s: %s", pid, exc,
+        # W22b W-3 / D-14: one purge per project at a time, taken BEFORE its job
+        # is opened. "held" = another purge of the project runs; "unavailable" =
+        # Redis cannot say -- fail CLOSED: no proof, no purge.
+        lock = await _claim_retention_purge_lock(pid, lock_owner)
+        if lock != "acquired":
+            summary["skipped"][str(pid)] = (
+                "already_running" if lock == "held" else "lock_unavailable"
             )
-        duration_ms = int((_time.monotonic() - started) * 1000)
-
-        # Closed on its own session too — a `failed` written on the session
-        # that just rolled back would be rolled back with it, so the only
-        # outcome such a writer could ever record is success.
-        # W22a H-11: what the live holds kept and the links the purge broke,
-        # passed only when the purge produced them (NULL = none applied).
-        job_record: dict[str, Any] = {}
-        if (out or {}).get("holds_honoured") is not None:
-            job_record["holds_honoured"] = (out or {})["holds_honoured"]
-        if (out or {}).get("references_job") is not None:
-            job_record["references_broken"] = (out or {})["references_job"]
-        await deletion_job_service.close_job(
-            job_id,
-            status=(
-                deletion_job_service.FAILED
-                if errors
-                else deletion_job_service.COMPLETED
-            ),
-            counts=(out or {}).get("counts"),
-            error=errors[0] if errors else None,
-            **job_record,
-        )
-
-        # Purge-audit record — settings_audit_log is itself NEVER purged,
-        # which is what keeps these records durable past every window.
+            if lock == "unavailable":
+                logger.warning("[retention] purge skipped for project %s: lock unavailable", pid)
+            continue
         try:
-            async with AsyncSessionLocal() as audit_db:
-                audit_db.add(
-                    SettingsAuditLog(
-                        setting_key=(
-                            f"{retention_service.PURGE_AUDIT_KEY_PREFIX}{pid}"
-                        ),
-                        action="purge",
-                        actor_name="retention-scheduler",
-                        changed_fields={
-                            "project_id": str(pid),
-                            "mode": "execute",
-                            "cutoffs": (out or {}).get("cutoffs"),
-                            "counts": (out or {}).get("counts"),
-                            "duration_ms": duration_ms,
-                            "errors": errors,
-                        },
+            started = _time.monotonic()
+            errors: list[str] = []
+            out: dict[str, Any] | None = None
+
+            # Opened BEFORE the purge and on its own session, so a job that dies
+            # mid-flight still leaves a `running` row rather than no trace at all.
+            # The audit row below is written after the fact and cannot express
+            # "started but never finished".
+            job_id = await deletion_job_service.open_job(
+                project_id=pid, job_kind=deletion_job_service.KIND_SCHEDULED
+            )
+            try:
+                async with AsyncSessionLocal() as db:
+                    out = await retention_service.run_purge(
+                        db, project_id=pid, mode="execute"
                     )
+                    await db.commit()
+                # VIZ-212: once per project, after THIS project's commit. A purge
+                # that raised above never reaches it.
+                await bump_analytics_epoch(pid)
+            except Exception as exc:
+                errors.append(str(exc)[:500])
+                summary["errors"] += 1
+                logger.warning(
+                    "[retention] purge failed for project %s: %s", pid, exc,
                 )
-                await audit_db.commit()
-        except Exception as exc:
-            logger.warning(
-                "[retention] purge-audit write failed for project %s: %s",
-                pid, exc,
-            )
-        if not errors and out is not None:
-            await _record_retention_purge(pid, out)
+            duration_ms = int((_time.monotonic() - started) * 1000)
 
-        summary["results"][str(pid)] = {
-            "counts": (out or {}).get("counts"),
-            "errors": errors,
-        }
+            # Closed on its own session too — a `failed` written on the session
+            # that just rolled back would be rolled back with it, so the only
+            # outcome such a writer could ever record is success.
+            # W22a H-11: what the live holds kept and the links the purge broke,
+            # passed only when the purge produced them (NULL = none applied).
+            job_record: dict[str, Any] = {}
+            if (out or {}).get("holds_honoured") is not None:
+                job_record["holds_honoured"] = (out or {})["holds_honoured"]
+            if (out or {}).get("references_job") is not None:
+                job_record["references_broken"] = (out or {})["references_job"]
+            await deletion_job_service.close_job(
+                job_id,
+                status=(
+                    deletion_job_service.FAILED
+                    if errors
+                    else deletion_job_service.COMPLETED
+                ),
+                counts=(out or {}).get("counts"),
+                error=errors[0] if errors else None,
+                **job_record,
+            )
+
+            # Purge-audit record — settings_audit_log is itself NEVER purged,
+            # which is what keeps these records durable past every window.
+            try:
+                async with AsyncSessionLocal() as audit_db:
+                    audit_db.add(
+                        SettingsAuditLog(
+                            setting_key=(
+                                f"{retention_service.PURGE_AUDIT_KEY_PREFIX}{pid}"
+                            ),
+                            action="purge",
+                            actor_name="retention-scheduler",
+                            changed_fields={
+                                "project_id": str(pid),
+                                "mode": "execute",
+                                "cutoffs": (out or {}).get("cutoffs"),
+                                "counts": (out or {}).get("counts"),
+                                "duration_ms": duration_ms,
+                                "errors": errors,
+                            },
+                        )
+                    )
+                    await audit_db.commit()
+            except Exception as exc:
+                logger.warning(
+                    "[retention] purge-audit write failed for project %s: %s",
+                    pid, exc,
+                )
+            if not errors and out is not None:
+                await _record_retention_purge(pid, out)
+
+            summary["results"][str(pid)] = {
+                "counts": (out or {}).get("counts"),
+                "errors": errors,
+            }
+        finally:
+            await _release_retention_purge_lock(pid, lock_owner)
     return summary
 
 
@@ -7422,16 +7472,20 @@ def sweep_report_exports() -> dict:
     max_retries=0,
 )
 def run_retention_purges(self, project_id: str | None = None) -> dict:
-    """Nightly retention purge sweep (02:00 UTC beat), or a single-project
+    """Hourly retention purge sweep (the ``:00`` beat), or a single-project
     execute-mode purge when enqueued from the router with ``project_id``.
 
-    The beat path only touches projects whose policy row is ``enabled``;
-    the explicit-project path was already gated by the router (ADMIN +
-    typed-name confirmation + 409-when-disabled).
+    The beat path purges the projects whose EFFECTIVE policy is enabled, in
+    their own window hour, unless paused (W22b ACT-06); the explicit-project
+    path was already gated by the router (ADMIN + typed-name confirmation +
+    409-when-disabled) and ignores the window and the pause. Both take the
+    per-project lock (owner = this task's id).
     """
+    owner = str(getattr(self.request, "id", None) or uuid.uuid4())
+
     async def _run():
         with _beat_span("run_retention_purges") as span:
-            out = await _retention_purge_sweep(project_id)
+            out = await _retention_purge_sweep(project_id, owner=owner)
             span.set_attribute("result.projects", int(out.get("projects", 0)))
             span.set_attribute("result.errors", int(out.get("errors", 0)))
             span.set_attribute("explicit_project", bool(project_id))
@@ -7865,6 +7919,7 @@ def delete_run_everywhere(
     from app.models.postgres import TestRun
     from app.services import (
         deletion_job_service,
+        retention_export_service,
         retention_hold_service,
         retention_references,
         run_deletion_service,
@@ -7872,7 +7927,8 @@ def delete_run_everywhere(
     )
     from app.services.cache_service import bump_analytics_epoch
 
-    # W22a: the job record's extra facts — the links the delete broke (F-6).
+    # W22a: the job record's extra facts — the links the delete broke (F-6);
+    # W22b E-9: the bytes it reclaimed.
     job_record: dict[str, Any] = {}
 
     async def _run() -> dict[str, Any]:
@@ -7908,6 +7964,21 @@ def delete_run_everywhere(
                     ),
                 )
 
+            # W22b E-9: the exact object bytes this run holds, from ONE listing
+            # of the project's two roots (storage only, no statement). Any
+            # failure is "not measured" (NULL), never 0.
+            storage = get_storage_provider()
+            try:
+                listing = await retention_export_service.list_project_objects(
+                    storage, project_id=project_uuid
+                )
+                job_record["bytes_reclaimed"] = retention_export_service.bytes_under_run(
+                    listing, project_id=project_uuid, run_id=run.id,
+                    minio_prefix=getattr(run, "minio_prefix", None),
+                )
+            except Exception as exc:  # noqa: BLE001 - not measured
+                logger.warning("[delete-run] %s bytes not measured: %s", run_id, type(exc).__name__)
+
             # Scoped to the RUN, never the project (RET-D8). None means the
             # store could not be reached — it must not be reported as 0.
             index_documents = await semantic_search.purge_run_documents(
@@ -7923,7 +7994,7 @@ def delete_run_everywhere(
                 db,
                 run=run,
                 mongo=mongo,
-                storage=get_storage_provider(),
+                storage=storage,
                 search_index_documents=index_documents,
                 reason=reason,
                 deleted_by_id=(
@@ -7979,6 +8050,150 @@ def delete_run_everywhere(
     return result
 
 
+# ── Export before delete (W22b ACT-03): the worker's own-session outcomes ─────
+
+
+def _export_audit_row(project_id: Any, action: str, fields: dict[str, Any], *, actor: str | None = None) -> Any:
+    """ONE ``settings_audit_log`` row per export step (E-11). Never the storage key."""
+    from app.models.postgres import SettingsAuditLog
+    from app.services.retention_vocab import EXPORT_AUDIT_KEY_PREFIX
+
+    name = actor or "retention-export-worker"
+    return SettingsAuditLog(
+        setting_key=f"{EXPORT_AUDIT_KEY_PREFIX}{project_id}",
+        action=action,
+        actor_name=name,
+        changed_fields={**fields, "actor": name},
+    )
+
+
+async def _close_failed_export(job_uuid: uuid.UUID, project_uuid: uuid.UUID, plan: Any, failed: Any) -> None:
+    """A failed export ends the job ``failed``: nothing was deleted. The
+    ``export_failed`` audit row is written on its own session after the close."""
+    from app.db.postgres import AsyncSessionLocal
+    from app.services import deletion_job_service, retention_hold_service
+
+    record: dict[str, Any] = {}
+    held = retention_hold_service.holds_honoured_record(
+        list(getattr(failed, "holds", []) or []), run_ids_kept=list(getattr(failed, "held_run_ids", []) or []),
+    )
+    if held is not None:
+        record["holds_honoured"] = held
+    await deletion_job_service.close_job(
+        job_uuid,
+        status=deletion_job_service.FAILED,
+        expected_status=deletion_job_service.RUNNING,
+        error=failed.message,
+        export_meta={**plan.meta, "failure": failed.code},
+        **record,
+    )
+    try:
+        async with AsyncSessionLocal() as audit_db:
+            audit_db.add(_export_audit_row(project_uuid, "export_failed", {
+                "job_id": str(job_uuid), "tier": plan.tier, "target": plan.target, "code": failed.code,
+            }))
+            await audit_db.commit()
+    except Exception as exc:  # noqa: BLE001 - the job row already says failed
+        _slog.warning("deletion_export_audit_failed", job_id=str(job_uuid), error_type=type(exc).__name__)
+    _slog.warning("deletion_export_failed", job_id=str(job_uuid), tier=plan.tier,
+                  target=plan.target, code=failed.code)
+
+
+async def _remove_collected_archive(job_uuid: uuid.UUID, location: str, storage: Any) -> bool:
+    """Remove a collected archive once its deletion finished (D-8); the
+    location is cleared only when the object is gone (else the janitor retries)."""
+    from app.db.postgres import AsyncSessionLocal
+    from app.services import deletion_job_service, retention_export_service
+
+    if not await retention_export_service.remove_archive(storage, key=location):
+        return False
+    try:
+        async with AsyncSessionLocal() as db:
+            await deletion_job_service.stage_clear_export_location(db, job_id=job_uuid)
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001 - the janitor clears it next time
+        _slog.warning("deletion_export_clear_failed", job_id=str(job_uuid), error_type=type(exc).__name__)
+        return False
+    return True
+
+
+#: A RUNNING export older than the task's hard limit plus a margin died
+#: between writing and verifying (E-10).
+EXPORT_INTERRUPTED_AFTER = timedelta(seconds=1860 + 300)
+
+
+async def _sweep_deletion_exports(*, now: datetime, storage: Any = None) -> dict[str, int]:
+    """The export janitor's body (E-10). Own sessions, each step committed on
+    its own; every UPDATE is guarded by the state it leaves (idempotent).
+    Nothing here deletes a run."""
+    from app.core.config import settings
+    from app.db.postgres import AsyncSessionLocal
+    from app.db.storage import get_storage_provider
+    from app.services import deletion_job_service, retention_export_service
+    from app.services.retention_vocab import EXPORT_JOB_ERRORS, EXPORT_JOB_EXPIRED_ONE
+
+    summary = {"expired": 0, "interrupted": 0, "removed": 0, "remove_failed": 0}
+    janitor = "retention-export-janitor"
+    ttl_hours = settings.RETENTION_EXPORT_COLLECT_TTL_HOURS
+    error = EXPORT_JOB_EXPIRED_ONE if ttl_hours == 1 else EXPORT_JOB_ERRORS["expired"].format(hours=ttl_hours)
+    async with AsyncSessionLocal() as db:
+        expired = await deletion_job_service.expire_overdue(db, now=now, error=error)
+        for job_id, project_id, tier, target in expired:
+            db.add(_export_audit_row(project_id, "export_expired", {
+                "job_id": str(job_id), "tier": tier, "target": target,
+            }, actor=janitor))
+        await db.commit()
+    summary["expired"] = len(expired)
+
+    async with AsyncSessionLocal() as db:
+        interrupted = await deletion_job_service.fail_interrupted(
+            db, now=now, older_than=EXPORT_INTERRUPTED_AFTER
+        )
+        for job_id, project_id in interrupted:
+            db.add(_export_audit_row(project_id, "export_failed", {
+                "job_id": str(job_id), "code": "interrupted",
+            }, actor=janitor))
+        await db.commit()
+    summary["interrupted"] = len(interrupted)
+
+    async with AsyncSessionLocal() as db:
+        doomed = await deletion_job_service.archives_to_remove(db, limit=50)
+    store = storage or get_storage_provider()
+    removed: list[tuple] = []
+    for job_id, project_id, location in doomed:
+        if await retention_export_service.remove_archive(store, key=location):
+            removed.append((job_id, project_id))
+        else:
+            summary["remove_failed"] += 1
+    if removed:
+        async with AsyncSessionLocal() as db:
+            for job_id, project_id in removed:
+                await deletion_job_service.stage_clear_export_location(db, job_id=job_id)
+                db.add(_export_audit_row(project_id, "archive_removed", {"job_id": str(job_id)}, actor=janitor))
+            await db.commit()
+    summary["removed"] = len(removed)
+    _slog.info("deletion_exports_swept", **summary)
+    return summary
+
+
+@celery_app.task(
+    name="app.worker.tasks.sweep_deletion_exports",
+    bind=True,
+    queue="default",
+    max_retries=0,
+)
+def sweep_deletion_exports(self) -> dict:
+    """The export janitor (W22b ACT-03 E-10, every 15 minutes): expire
+    uncollected archives (their jobs end ``expired``, nothing deleted), fail
+    exports a dead worker left unverified, remove the archives no job may keep.
+    It deletes NO run."""
+    async def _run():
+        with _beat_span("sweep_deletion_exports"):
+            return await _sweep_deletion_exports(now=datetime.now(timezone.utc))
+
+    return cast(dict, _run_async(_run()))
+
+
 @celery_app.task(
     name="app.worker.tasks.execute_criteria_deletion_task",
     bind=True,
@@ -8012,12 +8227,70 @@ def execute_criteria_deletion_task(
     from app.models.postgres import TestRun
     from app.services import (
         deletion_job_service,
+        retention_export_service,
         retention_hold_service,
         retention_references,
         run_deletion_service,
         semantic_search,
     )
     from app.services.cache_service import bump_analytics_epoch
+
+    async def _export_phase(job_uuid: uuid.UUID, project_uuid: uuid.UUID,
+                            run_ids: list[uuid.UUID], plan: Any) -> Any:
+        """W22b E-5/E-6: build, write, re-read and verify the archive on the
+        worker's own sessions. Returns the ``ExportOutcome`` (``retain``: the
+        loop follows) or the task's answer (``failed`` / ``awaiting_collection``:
+        nothing deleted, no epoch bump)."""
+        from app.core.config import settings
+
+        now = datetime.now(timezone.utc)
+        storage = get_storage_provider()
+
+        async def _on_written(key: str) -> None:
+            # Committed BEFORE verification: a crash after the upload leaves a
+            # location the janitor can remove.
+            async with AsyncSessionLocal() as written_db:
+                await deletion_job_service.stage_export_written(written_db, job_id=job_uuid, location=key)
+                await written_db.commit()
+
+        try:
+            async with AsyncSessionLocal() as export_db:
+                outcome = await retention_export_service.run_export(
+                    export_db, job_id=job_uuid, project_id=project_uuid, run_ids=run_ids,
+                    choice={"tier": plan.tier, "target": plan.target}, mongo=get_mongo_db(),
+                    storage=storage, now=now, on_written=_on_written,
+                )
+                # A signing key the archive created is durable before the
+                # verification that relies on it is.
+                await export_db.commit()
+        except Exception as exc:  # noqa: BLE001 - any export failure deletes nothing
+            failed = exc if isinstance(exc, retention_export_service.ExportFailed) else (
+                retention_export_service.ExportFailed("build", error_type=type(exc).__name__)
+            )
+            await _close_failed_export(job_uuid, project_uuid, plan, failed)
+            return {"executed": False, "status": deletion_job_service.FAILED}
+
+        meta = {**plan.meta, **outcome.export_meta()}
+        async with AsyncSessionLocal() as verified_db:
+            recorded = await deletion_job_service.stage_export_verified(
+                verified_db, job_id=job_uuid, outcome=outcome, target=plan.target,
+                ttl_hours=settings.RETENTION_EXPORT_COLLECT_TTL_HOURS, now=now, meta=meta,
+            )
+            if recorded:
+                verified_db.add(_export_audit_row(project_uuid, "export_verified", {
+                    "job_id": str(job_uuid), "tier": plan.tier, "target": plan.target,
+                    "run_count": len(outcome.run_ids_archived), "bytes": outcome.bytes,
+                    "manifest_sha256": outcome.manifest_sha256,
+                }))
+            await verified_db.commit()
+        if not recorded:
+            # The job left RUNNING underneath the export (the janitor failed it
+            # as interrupted): never delete on a record that was not written.
+            logger.warning("[criteria-delete] job %s left running during its export", job_uuid)
+            return {"executed": False, "status": deletion_job_service.FAILED}
+        if plan.target == "collect":
+            return {"executed": False, "status": deletion_job_service.AWAITING_COLLECTION}
+        return outcome
 
     async def _run() -> dict[str, Any]:
         job_uuid = uuid.UUID(job_id)
@@ -8041,6 +8314,39 @@ def execute_criteria_deletion_task(
             # W22a F-6: the links the job breaks, counted ONCE before the
             # per-run loop on this start session (SAVEPOINT, fail soft).
             references = await retention_references.references_broken(db, run_ids)
+            # W22b E-6: ONE read on this start session; None = no export
+            # (byte-for-byte today's path below).
+            plan = await deletion_job_service.get_export_plan(db, job_uuid)
+
+        # W22b ACT-03: export before delete. Nothing below the loop's lock runs
+        # until the archive was written, re-read and verified (and, for
+        # ``collect``, acknowledged with its exact manifest digest).
+        export_refs: list[Any] = []
+        export_excluded: list[str] = []
+        export_meta: dict[str, Any] | None = None
+        collect_archive: str | None = None
+        if plan is not None:
+            if not plan.verified:
+                phase = await _export_phase(job_uuid, project_uuid, run_ids, plan)
+                if isinstance(phase, dict):
+                    return phase          # failed or awaiting collection: nothing deleted
+                run_ids = list(phase.run_ids_archived)
+                export_refs = list(phase.holds)
+                export_excluded = [str(r) for r in phase.run_ids_excluded]
+                export_meta = {**plan.meta, **phase.export_meta()}
+            elif plan.acknowledged:
+                # The delivery after the acknowledgement: the frozen set minus
+                # the runs the export excluded (D-22); the loop re-checks holds.
+                export_excluded = list(plan.run_ids_excluded)
+                run_ids = [r for r in run_ids if str(r) not in set(export_excluded)]
+                export_refs = retention_export_service.hold_refs_from_meta(plan.meta)
+                export_meta = dict(plan.meta)
+                collect_archive = plan.location if plan.target == "collect" else None
+            else:
+                logger.warning(
+                    "[criteria-delete] job %s awaits collection; delivery ignored", job_id,
+                )
+                return {"executed": False, "status": deletion_job_service.AWAITING_COLLECTION}
 
         # W22a H-8: runs a live hold covers are refused per run; their holds
         # are aggregated into the job's holds_honoured.
@@ -8052,6 +8358,20 @@ def execute_criteria_deletion_task(
         failures: list[str] = []
         totals: dict[str, Any] = {}
         committed_deletions = 0
+        # W22b E-9: the exact object bytes the deleted runs held, from ONE
+        # listing of the project's two roots (storage only, no statement);
+        # None = not measured, never 0.
+        reclaimed: int | None = None
+        listing: list[dict] | None = None
+        try:
+            listing = await retention_export_service.list_project_objects(
+                storage, project_id=project_uuid
+            )
+            reclaimed = 0
+        except Exception as exc:  # noqa: BLE001 - not measured
+            logger.warning(
+                "[criteria-delete] job %s bytes not measured: %s", job_id, type(exc).__name__,
+            )
 
         for run_id in run_ids:
             try:
@@ -8080,6 +8400,15 @@ def execute_criteria_deletion_task(
                             ),
                         )
 
+                    # W22b E-9: this run's bytes from the in-memory listing
+                    # (the locked row gives its prefix; no statement).
+                    run_bytes = (
+                        retention_export_service.bytes_under_run(
+                            listing, project_id=project_uuid, run_id=run_id,
+                            minio_prefix=getattr(run, "minio_prefix", None),
+                        )
+                        if listing is not None else 0
+                    )
                     index_documents = await semantic_search.purge_run_documents(
                         str(project_uuid), str(run_id), execute=True
                     )
@@ -8097,6 +8426,8 @@ def execute_criteria_deletion_task(
                     )
                     await db.commit()
                     committed_deletions += 1
+                    if reclaimed is not None:
+                        reclaimed += run_bytes
                 deleted.append(str(run_id))
                 for store, value in (counts or {}).items():
                     if isinstance(value, dict):
@@ -8127,13 +8458,18 @@ def execute_criteria_deletion_task(
             requested=len(run_ids), deleted=len(deleted)
         )
         job_record: dict[str, Any] = {}
+        # W22b D-17: the runs the export excluded are kept by the same holds.
         held = retention_hold_service.holds_honoured_record(
-            held_refs, run_ids_kept=held_run_ids
+            export_refs + held_refs, run_ids_kept=export_excluded + held_run_ids
         )
         if held is not None:
             job_record["holds_honoured"] = held
         if references.job_record() is not None:
             job_record["references_broken"] = references.job_record()
+        if reclaimed is not None:
+            job_record["bytes_reclaimed"] = reclaimed
+        if export_meta is not None:
+            job_record["export_meta"] = export_meta
         await deletion_job_service.close_job(
             job_uuid,
             status=status,
@@ -8143,6 +8479,10 @@ def execute_criteria_deletion_task(
             error="; ".join(failures[:5]) if failures else None,
             **job_record,
         )
+        if collect_archive:
+            # D-8: a collected archive leaves once its deletion finished; a
+            # failure here is left to the janitor (the location stays set).
+            await _remove_collected_archive(job_uuid, collect_archive, storage)
         return {
             "executed": True,
             "status": status,

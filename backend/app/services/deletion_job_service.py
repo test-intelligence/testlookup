@@ -24,12 +24,14 @@ and the audit log still has the truth.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import uuid
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 
 from app.models.postgres import DeletionJob
 
@@ -48,9 +50,15 @@ RUNNING = "running"
 COMPLETED = "completed"
 FAILED = "failed"
 PARTIAL = "partial"
+#: W22b ACT-03 (export before delete). Producer of ``awaiting_collection``:
+#: the criteria worker after a verified ``collect`` export. Producer of
+#: ``expired``: the janitor beat (``sweep_deletion_exports``) when no
+#: acknowledgement arrived inside the collection window.
+AWAITING_COLLECTION = "awaiting_collection"
+EXPIRED = "expired"
 
 REACHABLE_STATUSES: frozenset[str] = frozenset(
-    {QUEUED, PREVIEWED, RUNNING, COMPLETED, FAILED, PARTIAL}
+    {QUEUED, PREVIEWED, RUNNING, COMPLETED, FAILED, PARTIAL, AWAITING_COLLECTION, EXPIRED}
 )
 
 #: Jobs that have stopped. Retention purges only these: a row still marked
@@ -58,9 +66,11 @@ REACHABLE_STATUSES: frozenset[str] = frozenset(
 #: clock would erase the only evidence that it hung.
 #: ``previewed`` IS terminal for retention: a preview nobody executed is
 #: abandoned, not in flight, and holding those forever would make the table
-#: grow with every dry run an operator ever cancelled.
+#: grow with every dry run an operator ever cancelled. ``expired`` is terminal
+#: (nothing was deleted and the archive is gone); ``awaiting_collection`` is
+#: NOT -- a job waiting for its archive to be collected is not abandoned.
 TERMINAL_STATUSES: frozenset[str] = frozenset(
-    {COMPLETED, FAILED, PARTIAL, PREVIEWED}
+    {COMPLETED, FAILED, PARTIAL, PREVIEWED, EXPIRED}
 )
 
 #: Job kinds. Only ``scheduled`` has a producer in this slice; the rest arrive
@@ -133,8 +143,12 @@ async def close_job(
     expected_status: Optional[str] = None,
     holds_honoured: Optional[dict] = None,
     references_broken: Optional[dict] = None,
+    export_meta: Optional[dict] = None,
 ) -> bool:
     """Finish a job record, on its own session.
+
+    ``export_meta`` (W22b) is written WHOLE when given -- the caller merges
+    the facts it read with the ones it produced.
 
     ``job_id`` may be None when :func:`open_job` could not write — the call is
     then a no-op rather than an error, so a caller never has to branch.
@@ -179,6 +193,8 @@ async def close_job(
         values["holds_honoured"] = holds_honoured
     if references_broken is not None:
         values["references_broken"] = references_broken
+    if export_meta is not None:
+        values["export_meta"] = export_meta
 
     try:
         async with AsyncSessionLocal() as db:
@@ -224,6 +240,17 @@ async def list_jobs(db, project_id: uuid.UUID, *, limit: int = 50) -> list[Delet
     return list(result.scalars().all())
 
 
+async def count_jobs(db, project_id: uuid.UUID) -> int:
+    """Every job of the project, ignoring any list limit (W22b: a top-N
+    length is not a count)."""
+    from sqlalchemy import func
+
+    total = await db.scalar(
+        select(func.count()).select_from(DeletionJob).where(DeletionJob.project_id == project_id)
+    )
+    return int(total or 0)
+
+
 def stage_frozen_candidate_set(
     db,
     *,
@@ -231,8 +258,13 @@ def stage_frozen_candidate_set(
     run_ids: list[uuid.UUID],
     criteria: dict,
     requested_by_id: Optional[uuid.UUID] = None,
+    export_estimates: Optional[dict] = None,
 ) -> uuid.UUID:
     """Stage a ``previewed`` job holding the materialized ids and their hash.
+
+    ``export_estimates`` (W22b): the preview's three tier estimates, kept in
+    ``export_meta`` so execute can refuse an over-cap tier without
+    recomputing them.
 
     This is the freeze half of N4. Execute replays this set rather than
     re-running the resolver, because criteria read columns other code rewrites
@@ -260,6 +292,9 @@ def stage_frozen_candidate_set(
             resolved_run_ids=resolved,
             candidate_hash=candidate_hash(resolved),
             requested_by_id=requested_by_id,
+            export_meta=(
+                {"estimates": export_estimates} if export_estimates is not None else None
+            ),
         )
     )
     return job_id
@@ -279,8 +314,14 @@ async def claim_frozen_set(
     *,
     job_id: uuid.UUID,
     project_id: uuid.UUID,
+    export: Any = None,
 ) -> list[uuid.UUID]:
     """Atomically claim a previewed job for queueing and return its run ids.
+
+    ``export`` (W22b): an ``ExportChoice`` -- its tier and target are set on
+    the locked row before it becomes QUEUED (the route validated the
+    vocabulary first and refuses an over-cap choice before its commit, so a
+    refusal rolls this claim back and the job stays ``previewed``).
 
     Refuses, with the status the caller should return:
 
@@ -322,8 +363,17 @@ async def claim_frozen_set(
     # The caller commits this transition before dispatch. Because the row is
     # locked until then, a concurrent execute request cannot also observe
     # PREVIEWED and queue a second destructive task.
+    if export is not None:
+        job.export_tier = _choice_field(export, "tier")
+        job.export_target = _choice_field(export, "target")
     job.status = QUEUED
     return [uuid.UUID(str(r)) for r in resolved]
+
+
+def _choice_field(choice: Any, name: str) -> Any:
+    if isinstance(choice, dict):
+        return choice.get(name)
+    return getattr(choice, name, None)
 
 
 async def start_frozen_set(
@@ -426,3 +476,234 @@ def outcome_status(*, requested: int, deleted: int) -> str:
     if deleted < requested:
         return PARTIAL
     return COMPLETED
+
+
+# ── Export before delete (W22b ACT-03): ALL STAGE-ONLY ──────────────────────
+#
+# Every function below takes the caller's session and never commits: this
+# module keeps exactly its two allow-listed commits (open_job, close_job). The
+# worker / janitor in ``worker/tasks.py`` open their own sessions and commit
+# each outcome; the routes commit on the request session.
+
+
+@dataclass(frozen=True)
+class ExportPlan:
+    """What the worker needs to know about a job's export before it deletes."""
+
+    tier: str
+    target: str
+    verified: bool
+    acknowledged: bool
+    run_ids_excluded: tuple[str, ...]
+    location: Optional[str]
+    meta: dict = field(default_factory=dict)
+
+
+class CollectRefused(Exception):
+    """A collect / acknowledge refusal: ``code`` is an ``EXPORT_ERROR_SENTENCES`` key."""
+
+    def __init__(self, code: str, status_code: int) -> None:
+        from app.services.retention_vocab import EXPORT_ERROR_SENTENCES
+
+        super().__init__(EXPORT_ERROR_SENTENCES[code])
+        self.code = code
+        self.status_code = status_code
+        self.message = EXPORT_ERROR_SENTENCES[code]
+
+    def detail(self) -> dict[str, str]:
+        return {"code": self.code, "message": self.message}
+
+
+async def get_export_plan(db, job_id: uuid.UUID) -> Optional[ExportPlan]:
+    """ONE ``select(DeletionJob)`` read; ``None`` when the job has no export
+    (every scripted worker session answers ``None`` here -> today's path)."""
+    job = (
+        await db.execute(select(DeletionJob).where(DeletionJob.id == job_id))
+    ).scalar_one_or_none()
+    if job is None or not isinstance(getattr(job, "export_tier", None), str):
+        return None
+    meta = job.export_meta if isinstance(job.export_meta, dict) else {}
+    excluded = meta.get("run_ids_excluded") or []
+    return ExportPlan(
+        tier=job.export_tier,
+        target=str(job.export_target),
+        verified=job.export_verified_at is not None,
+        acknowledged=job.acknowledged_at is not None,
+        run_ids_excluded=tuple(str(r) for r in excluded),
+        location=job.export_location,
+        meta=dict(meta),
+    )
+
+
+async def stage_export_written(db, *, job_id: uuid.UUID, location: str) -> bool:
+    """Record where the archive was written BEFORE it is verified, so a crash
+    leaves a location for the janitor. Guarded: only a RUNNING job."""
+    result = await db.execute(
+        update(DeletionJob)
+        .where(DeletionJob.id == job_id, DeletionJob.status == RUNNING)
+        .values(export_location=location)
+    )
+    return bool(result.rowcount == 1)
+
+
+async def stage_export_verified(
+    db, *, job_id: uuid.UUID, outcome: Any, target: str, ttl_hours: int, now: datetime,
+    meta: Optional[dict] = None,
+) -> bool:
+    """The stored archive was re-read and verified. ``retain`` stays RUNNING
+    (the delete loop follows); ``collect`` waits in AWAITING_COLLECTION until
+    ``now + ttl_hours``. Guarded: only a RUNNING job."""
+    values: dict[str, Any] = {
+        "export_bytes": int(outcome.bytes),
+        "export_manifest_sha256": outcome.manifest_sha256,
+        "export_archive_sha256": outcome.archive_sha256,
+        "export_location": outcome.location,
+        "export_verified_at": now,
+        "export_meta": meta if meta is not None else outcome.export_meta(),
+    }
+    if target == "collect":
+        values.update(status=AWAITING_COLLECTION, collect_expires_at=now + timedelta(hours=int(ttl_hours)))
+    result = await db.execute(
+        update(DeletionJob)
+        .where(DeletionJob.id == job_id, DeletionJob.status == RUNNING)
+        .values(**values)
+    )
+    return bool(result.rowcount == 1)
+
+
+def _aware(value: Optional[datetime]) -> Optional[datetime]:
+    if value is not None and value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
+
+
+async def _awaiting_job(db, *, job_id: uuid.UUID, project_id: uuid.UUID, now: datetime) -> DeletionJob:
+    """Lock the job (``WHERE id AND project_id`` -- another project's job is
+    the same 404, no oracle) and require it to be collectable NOW: an expired
+    job, or one past its window the beat has not reached yet, is
+    ``collect_expired``; any other state is ``not_awaiting``."""
+    job: Optional[DeletionJob] = (
+        await db.execute(
+            select(DeletionJob)
+            .where(DeletionJob.id == job_id, DeletionJob.project_id == project_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        raise CollectRefused("job_not_found", 404)
+    expires = _aware(job.collect_expires_at)
+    if job.status == EXPIRED or (
+        job.status == AWAITING_COLLECTION and expires is not None and expires <= now
+    ):
+        raise CollectRefused("collect_expired", 409)
+    if job.status != AWAITING_COLLECTION:
+        raise CollectRefused("not_awaiting", 409)
+    return job
+
+
+async def mark_collected(db, *, job_id: uuid.UUID, project_id: uuid.UUID, now: datetime) -> DeletionJob:
+    """Stamp the FIRST collect (``collected_at = COALESCE(collected_at, now)``).
+    Stage-only: the route commits it only once the archive's first chunk was read."""
+    job = await _awaiting_job(db, job_id=job_id, project_id=project_id, now=now)
+    if job.collected_at is None:
+        job.collected_at = now
+    return job
+
+
+async def acknowledge_collection(
+    db, *, job_id: uuid.UUID, project_id: uuid.UUID, manifest_sha256: str,
+    actor_id: Optional[uuid.UUID], now: datetime,
+) -> DeletionJob:
+    """The administrator saved the archive: back to QUEUED (the existing relay
+    and worker claim deliver it exactly once). Requires a recorded collect and
+    the EXACT manifest digest (constant-time compare)."""
+    job = await _awaiting_job(db, job_id=job_id, project_id=project_id, now=now)
+    if job.collected_at is None:
+        raise CollectRefused("not_collected", 409)
+    if not hmac.compare_digest(
+        str(manifest_sha256 or "").lower().encode("ascii", "replace"),
+        str(job.export_manifest_sha256 or "").lower().encode("ascii", "replace"),
+    ) or not job.export_manifest_sha256:
+        raise CollectRefused("manifest_mismatch", 409)
+    job.acknowledged_at = now
+    job.acknowledged_by_id = actor_id
+    job.status = QUEUED
+    return job
+
+
+async def expire_overdue(db, *, now: datetime, error: str, limit: int = 100) -> list[tuple]:
+    """AWAITING_COLLECTION past ``collect_expires_at`` -> EXPIRED (nothing was
+    deleted). Guarded by the state it leaves, so it is idempotent and loses
+    cleanly to a concurrent acknowledgement. RETURNING id, project_id, tier, target."""
+    due = (
+        select(DeletionJob.id)
+        .where(
+            DeletionJob.status == AWAITING_COLLECTION,
+            DeletionJob.collect_expires_at <= now,
+        )
+        .order_by(DeletionJob.collect_expires_at)
+        .limit(limit)
+        .with_for_update(skip_locked=True)
+        .scalar_subquery()
+    )
+    result = await db.execute(
+        update(DeletionJob)
+        .where(DeletionJob.id.in_(due), DeletionJob.status == AWAITING_COLLECTION)
+        .values(status=EXPIRED, finished_at=now, error=error[:2000])
+        .returning(DeletionJob.id, DeletionJob.project_id, DeletionJob.export_tier, DeletionJob.export_target)
+        .execution_options(synchronize_session=False)
+    )
+    return [tuple(row) for row in result.all()]
+
+
+async def fail_interrupted(db, *, now: datetime, older_than: timedelta) -> list[tuple]:
+    """A worker died between writing and verifying: RUNNING, an export chosen,
+    never verified, started long ago -> FAILED (nothing was deleted: deletion
+    requires ``export_verified_at``). RETURNING id, project_id."""
+    from app.services.retention_vocab import EXPORT_JOB_ERRORS
+
+    result = await db.execute(
+        update(DeletionJob)
+        .where(
+            DeletionJob.status == RUNNING,
+            DeletionJob.export_tier.is_not(None),
+            DeletionJob.export_verified_at.is_(None),
+            DeletionJob.started_at < now - older_than,
+        )
+        .values(status=FAILED, finished_at=now, error=EXPORT_JOB_ERRORS["interrupted"])
+        .returning(DeletionJob.id, DeletionJob.project_id)
+        .execution_options(synchronize_session=False)
+    )
+    return [tuple(row) for row in result.all()]
+
+
+async def archives_to_remove(db, *, limit: int = 50) -> list[tuple]:
+    """``(id, project_id, export_location)`` of jobs whose archive must not be
+    kept: expired or failed, or a ``collect`` job whose deletion finished. A
+    ``retain`` archive of a finished job stays (it leaves with its row on the
+    audit clock)."""
+    rows = (
+        await db.execute(
+            select(DeletionJob.id, DeletionJob.project_id, DeletionJob.export_location)
+            .where(
+                DeletionJob.export_location.is_not(None),
+                or_(
+                    DeletionJob.status.in_((EXPIRED, FAILED)),
+                    and_(
+                        DeletionJob.export_target == "collect",
+                        DeletionJob.status.in_((COMPLETED, PARTIAL)),
+                    ),
+                ),
+            )
+            .order_by(DeletionJob.requested_at)
+            .limit(limit)
+        )
+    ).all()
+    return [tuple(row) for row in rows]
+
+
+async def stage_clear_export_location(db, *, job_id: uuid.UUID) -> None:
+    """The archive object is gone; forget where it was."""
+    await db.execute(
+        update(DeletionJob).where(DeletionJob.id == job_id).values(export_location=None)
+    )

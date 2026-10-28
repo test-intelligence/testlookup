@@ -46,6 +46,19 @@ no signature and is tamper-evident only.
 
 This service is feature-flagged behind ``release_compliance_pack`` so
 deployments that haven't enabled it see zero behaviour change.
+
+Retention archives (W22b, ACT-03). A criteria deletion may first build an
+archive of the runs it is about to delete. It is the SAME chain, the SAME
+signature and the SAME verifier: ``build_archive`` below is the one function
+that assembles a ZIP (the release pack reaches it through
+``_build_pack_payload``, the retention export through
+``retention_export_service.run_export``), ``_sign_pack`` the one signer
+(bytes or a spooled file) and ``compliance_pack_verify.verify_archive_file``
+the one check. A run archive streams: members are written as they are
+generated and hashed while writing, so ``manifest.json`` is its LAST member.
+It is stored under ``exports/`` in this bucket and verified by re-reading it
+from storage before anything is deleted. **An archive, not a backup -- it
+cannot be re-imported** (D23): nothing in TestLookup reads it back.
 """
 from __future__ import annotations
 
@@ -56,7 +69,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Collection, Optional
+from typing import IO, Any, AsyncIterator, Collection, Mapping, Optional, cast
 
 import structlog
 from sqlalchemy import func, select
@@ -560,7 +573,7 @@ def _build_readme(
 
 
 def _build_manifest(
-    files: dict[str, bytes],
+    files: Mapping[str, bytes | tuple[int, str]],
     generated_at: datetime,
     scope: "ExportScope",
     run: Optional[TestRun],
@@ -568,10 +581,13 @@ def _build_manifest(
 ) -> bytes:
     """Build the tamper-evidence manifest (checksum chain root — unsigned).
 
-    ``files`` is a dict of filename → bytes for every file in the ZIP
-    **except** the manifest itself. We compute SHA-256 of each, attach
-    metadata, and return the encoded JSON. The caller hashes the result
-    and stores the digest on the ``compliance_packs`` row.
+    ``files`` maps every filename in the ZIP **except** the manifest itself
+    to its bytes (a release pack: we compute the SHA-256 here) or to the
+    ``(size, sha256)`` already taken while the member streamed into the ZIP
+    (a retention archive, W22b: the member bytes are gone by now). Either way
+    the entry is the same ``{name, bytes, sha256}``. The caller hashes the
+    result and stores the digest on the ``compliance_packs`` /
+    ``deletion_jobs`` row.
 
     No key material is involved here: the manifest is built exactly as it was
     before W11. ``generate_pack`` signs its digest afterwards, in
@@ -579,11 +595,15 @@ def _build_manifest(
     """
     entries = []
     for name, data in sorted(files.items()):
+        if isinstance(data, (bytes, bytearray)):
+            size, digest = len(data), _sha256(bytes(data))
+        else:
+            size, digest = data
         entries.append(
             {
                 "name": name,
-                "bytes": len(data),
-                "sha256": _sha256(data),
+                "bytes": size,
+                "sha256": digest,
             }
         )
     manifest: dict[str, Any] = {
@@ -621,6 +641,144 @@ def _build_manifest(
             }
         )
     return _serialize(manifest)
+
+
+# ── The ONE archive builder (W22b, ACT-03) ────────────────────────────────
+
+
+#: A run archive's fixed member timestamp: two builds of the same data must
+#: produce the same member bytes (only manifest.json's ``generated_at`` and
+#: signature.json differ), so no entry carries the wall clock.
+_FIXED_ZIP_DATE_TIME = (1980, 1, 1, 0, 0, 0)
+
+
+@dataclass(frozen=True)
+class ArchiveResult:
+    """What ``build_archive`` wrote. ``archive_sha256`` is the digest of the
+    sink as built -- NOT final until ``_sign_pack`` appends signature.json."""
+
+    manifest_sha256: str
+    archive_sha256: str
+    bytes: int
+    file_count: int
+
+
+class ArchiveTooLarge(Exception):
+    """The archive passed ``max_bytes`` while it was being written."""
+
+    def __init__(self, *, limit: int, written: int) -> None:
+        super().__init__(f"archive passed its byte limit ({written} > {limit})")
+        self.limit = limit
+        self.written = written
+
+
+class _CountingSink:
+    """The sink ``zipfile`` writes to, refusing to grow past ``max_bytes``.
+
+    Raises ``ArchiveTooLarge`` ONCE, the moment the furthest written position
+    passes the limit; every later write is discarded so ``zipfile``'s own
+    clean-up (closing the member, the central directory) cannot raise a second
+    error over the first. A tripped sink holds a partial archive the caller
+    throws away.
+    """
+
+    def __init__(self, raw: IO[bytes], max_bytes: Optional[int]) -> None:
+        self._raw = raw
+        self._max = max_bytes
+        self.high_water = raw.tell()
+        self.tripped = False
+
+    def write(self, data: bytes) -> int:
+        if self.tripped:
+            return len(data)
+        written = self._raw.write(data)
+        self.high_water = max(self.high_water, self._raw.tell())
+        if self._max is not None and self.high_water > self._max:
+            self.tripped = True
+            raise ArchiveTooLarge(limit=self._max, written=self.high_water)
+        return written
+
+    def tell(self) -> int:
+        return self._raw.tell()
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._raw.seek(offset, whence)
+
+    def flush(self) -> None:
+        self._raw.flush()
+
+    def seekable(self) -> bool:
+        return True
+
+
+def sha256_of_file(fileobj: IO[bytes], *, chunk: int = 1 << 20) -> str:
+    """SHA-256 of a whole file object, read from its start in chunks."""
+    fileobj.seek(0)
+    digest = hashlib.sha256()
+    for block in iter(lambda: fileobj.read(chunk), b""):
+        digest.update(block)
+    return digest.hexdigest()
+
+
+def _member_info(name: str) -> zipfile.ZipInfo:
+    info = zipfile.ZipInfo(filename=name, date_time=_FIXED_ZIP_DATE_TIME)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = 0o600 << 16
+    return info
+
+
+async def build_archive(
+    scope: "ExportScope",
+    *,
+    members: Mapping[str, bytes] | AsyncIterator[tuple[str, bytes]],
+    sink: IO[bytes],
+    generated_at: datetime,
+    run: Optional[TestRun] = None,
+    decision: Optional[ReleaseDecision] = None,
+    max_bytes: Optional[int] = None,
+) -> ArchiveResult:
+    """Assemble ONE archive into ``sink`` -- the release pack AND the retention export.
+
+    This is the only code in the module that opens a ZIP for writing; both
+    kinds share ``_build_manifest`` (the chain root) and, afterwards,
+    ``_sign_pack`` (the signature) and ``compliance_pack_verify`` (the check).
+
+    * ``members`` a ``Mapping[str, bytes]`` (the release pack): the manifest
+      is written FIRST, then the members in sorted order, each through
+      ``zf.writestr`` exactly as before W22b -- the release ZIP's member bytes
+      and its manifest are unchanged.
+    * ``members`` an async iterator of ``(name, bytes)`` (a run archive):
+      each member is written as it arrives, with a fixed timestamp, and its
+      SHA-256 is taken while writing; nothing keeps it afterwards, so peak
+      memory is one member. ``manifest.json`` is the LAST member (it can only
+      list what was already written).
+
+    ``max_bytes``: the sink refuses to grow past it (``ArchiveTooLarge``).
+    """
+    counted = _CountingSink(sink, max_bytes)
+    entries: dict[str, bytes | tuple[int, str]] = {}
+    with zipfile.ZipFile(cast(IO[bytes], counted), "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        if isinstance(members, Mapping):
+            entries.update(members)
+            manifest_bytes = _build_manifest(entries, generated_at, scope, run, decision)
+            zf.writestr(_MANIFEST_FILENAME, manifest_bytes)
+            for name, data in sorted(members.items()):
+                zf.writestr(name, data)
+        else:
+            async for name, data in members:
+                if name == _MANIFEST_FILENAME or name in entries:
+                    raise ValueError(f"duplicate or reserved archive member {name!r}")
+                zf.writestr(_member_info(name), data)
+                entries[name] = (len(data), _sha256(data))
+            manifest_bytes = _build_manifest(entries, generated_at, scope, run, decision)
+            zf.writestr(_member_info(_MANIFEST_FILENAME), manifest_bytes)
+    size = counted.high_water
+    return ArchiveResult(
+        manifest_sha256=_sha256(manifest_bytes),
+        archive_sha256=sha256_of_file(sink),
+        bytes=size,
+        file_count=len(entries) + 1,   # +1 for the manifest itself
+    )
 
 
 async def _build_pack_payload(
@@ -688,16 +846,15 @@ async def _build_pack_payload(
     scope = ExportScope.for_release(
         release_id=release.id, project_id=release.project_id, run_ids=[run.id]
     )
-    manifest_bytes = _build_manifest(files, generated_at, scope, run, decision)
-    manifest_hash = _sha256(manifest_bytes)
-
-    # Now write the ZIP with manifest.json first so consumers who scan
-    # sequentially can verify the payload before reading the full archive.
+    # The ONE builder (W22b): manifest.json first so consumers who scan
+    # sequentially can verify the payload before reading the full archive,
+    # then the sorted members -- byte for byte what this function wrote before.
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(_MANIFEST_FILENAME, manifest_bytes)
-        for name, data in sorted(files.items()):
-            zf.writestr(name, data)
+    archive = await build_archive(
+        scope, members=files, sink=buffer, generated_at=generated_at,
+        run=run, decision=decision,
+    )
+    manifest_hash = archive.manifest_sha256
 
     zip_bytes = buffer.getvalue()
 
@@ -948,14 +1105,19 @@ async def generate_pack(
 
 async def _sign_pack(
     db: AsyncSession,
-    zip_bytes: bytes,
+    zip_bytes: Any,
     *,
     pack_id: uuid.UUID,
     manifest_sha256: str,
     actor: Optional[User],
     signed_at: datetime,
-) -> tuple[bytes, Optional[str], Optional[str], dict[str, Any]]:
+) -> tuple[Any, Optional[str], Optional[str], dict[str, Any]]:
     """Append ``signature.json`` to the ZIP (W11 REL-11, D14).
+
+    ``zip_bytes`` is the archive as ``bytes`` (a compliance pack) or as a
+    seekable file object (a retention archive, W22b, spooled -- never one
+    ``bytes``). ONE signing body: bytes in -> new bytes out, exactly as
+    before; a file object in -> the SAME file object, appended in place.
 
     Returns ``(zip_bytes, signature, signing_key_id, metadata_snapshot["signing"])``.
     The first pack of a deployment creates the key (under the advisory lock).
@@ -984,11 +1146,13 @@ async def _sign_pack(
     document = compliance_signing.signature_document(
         key, pack_id=pack_id, manifest_sha256=manifest_sha256, signed_at=signed_at,
     )
-    buffer = io.BytesIO(zip_bytes)
+    in_memory = isinstance(zip_bytes, (bytes, bytearray))
+    buffer = io.BytesIO(zip_bytes) if in_memory else zip_bytes
+    buffer.seek(0)
     with zipfile.ZipFile(buffer, "a", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(compliance_signing.SIGNATURE_FILENAME, _serialize(document))
     return (
-        buffer.getvalue(),
+        buffer.getvalue() if in_memory else buffer,
         document["signature"],
         key.key_id,
         {"state": "signed", "key_id": key.key_id},

@@ -29,6 +29,7 @@ import { SWRConfig } from 'swr'
 
 import type { RetentionPolicy } from '@/types/retention'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import { policyWithSources } from '@/test/retentionExportMocks'
 
 // ── mocks ───────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,17 @@ vi.mock('@/hooks/useRetentionHolds', () => ({
     }
   },
   refreshRetentionHolds: vi.fn(),
+}))
+// W22b (deliberate): the Deletion jobs card's one read (its own tests are
+// DeletionJobsCard.test.tsx). Recorded so the refusal / All-Projects pages can
+// be shown to ask nothing. The collapsed Instance defaults card issues no
+// request, so its hook is NOT mocked (the network guard would catch one).
+const jobsHookCalls: Array<string | null> = []
+vi.mock('@/hooks/useDeletionJobs', () => ({
+  useDeletionJobs: (projectId: string | null) => {
+    jobsHookCalls.push(projectId)
+    return { data: { jobs: [], total: 0 }, error: undefined, isLoading: false, mutate: vi.fn() }
+  },
 }))
 vi.mock('@/hooks/useUIDismissals', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useUIDismissals')>(),
@@ -378,6 +390,8 @@ describe('RetentionPage', () => {
         ai_history_versions: 3,
         search_usage_rows: 0,
         shadow_pairs_unlabelled: 0,
+        // W22b (deliberate): a current server counts the retained deletion archives too.
+        export_archives_expired: 0,
       },
       unmeasured: ['analysis_cache_entries', 'search_index_documents'],
     })
@@ -418,6 +432,8 @@ describe('RetentionPage', () => {
         ai_history_versions: 0,
         search_usage_rows: 0,
         shadow_pairs_unlabelled: 0,
+        // W22b (deliberate): a current server counts the retained deletion archives too.
+        export_archives_expired: 0,
       },
       unmeasured: [],
     })
@@ -747,6 +763,8 @@ describe('RetentionPage', () => {
         provenance_rows: 6, compliance_packs_expired: 7, evidence_artifact_rows: 8, memory_entries_expired: 9,
         analysis_cache_entries: 10, search_index_documents: 11, ai_history_versions: 12, search_usage_rows: 1234,
         shadow_pairs_unlabelled: 56,
+        // W22b (deliberate): a current server counts the retained deletion archives too.
+        export_archives_expired: 0,
       },
       unmeasured: [],
     }
@@ -983,5 +1001,139 @@ describe('RetentionPage — W22a holds and the keep-last floor', () => {
     expect(within(kept).getByText('Kept by hold: Audit Q4 sentinel — 5 runs, 0 packs')).toBeTruthy()
     expect(within(kept).getByText('Kept by the floor: 10 runs (the newest 10, the latest passing run, the latest passing run of 2 suites)')).toBeTruthy()
     expect(within(kept).getByText('3 runs lose their baseline link')).toBeTruthy()
+  })
+})
+
+// ── W22b: markers, the window / pause, the jobs card, the instance card ─────
+
+describe('RetentionPage — W22b inheritance, schedule and jobs', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    jobsHookCalls.length = 0
+    mockIsAdmin = true
+    storeState.activeProjectId = 'proj-1'
+    storeState.activeProject = { id: 'proj-1', name: 'Checkout' }
+    mockGet.mockResolvedValue(policyWithSources())
+    mockUpdate.mockResolvedValue(policyWithSources())
+  })
+
+  async function ready() {
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+  }
+
+  function markerOf(field: string): HTMLElement {
+    const el = document.querySelector(`[data-retention-inherited="${field}"]`)
+    if (!(el instanceof HTMLElement)) throw new Error(`no marker for ${field}`)
+    return el
+  }
+
+  async function save() {
+    await act(async () => {
+      fireEvent.click(saveButton())
+    })
+  }
+
+  it('a QA lead gets the refusal page and NO jobs request', async () => {
+    mockIsAdmin = false
+    await renderPage()
+    expect(await screen.findByText('Admin access required')).toBeTruthy()
+    expect(jobsHookCalls).toEqual([])
+    expect(document.querySelector('[data-deletion-jobs]')).toBeNull()
+    expect(document.querySelector('[data-retention-instance-defaults]')).toBeNull()
+  })
+
+  it('mounts the jobs card between Delete by criteria and the Danger zone, and the instance card last', async () => {
+    await ready()
+    expect(jobsHookCalls[0]).toBe('proj-1')
+    const jobs = document.querySelector('[data-deletion-jobs]') as HTMLElement
+    const criteria = screen.getByText('Delete by criteria').closest('section') as HTMLElement
+    const danger = document.querySelector('section[aria-labelledby="retention-danger-heading"]') as HTMLElement
+    const instance = document.querySelector('[data-retention-instance-defaults]') as HTMLElement
+    expect(criteria.compareDocumentPosition(jobs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(jobs.compareDocumentPosition(danger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(danger.compareDocumentPosition(instance) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('shows no marker and no schedule field without field_sources (an older server)', async () => {
+    mockGet.mockResolvedValue(basePolicy())
+    await ready()
+    expect(document.querySelector('[data-retention-inherited]')).toBeNull()
+    expect(document.querySelector('[data-retention-schedule]')).toBeNull()
+    expect(dayInput('runs_days').disabled).toBe(false)
+  })
+
+  it('marks each field by its source; an inherited input shows the value, disabled', async () => {
+    await ready()
+    expect(within(markerOf('runs_days')).getByText('180 days (instance default)')).toBeTruthy()
+    expect(within(markerOf('raw_events_days')).getByText('Project value')).toBeTruthy()
+    expect(within(markerOf('keep_last_runs')).getByText('10 runs (default)')).toBeTruthy()
+    expect(within(markerOf('enabled')).getByText('Off (default)')).toBeTruthy()
+    expect(dayInput('runs_days').value).toBe('180')
+    expect(dayInput('runs_days').disabled).toBe(true)
+    expect(dayInput('raw_events_days').disabled).toBe(false)
+    expect(dayInput('keep_last_runs').disabled).toBe(true)
+    expect(saveButton().disabled).toBe(true)
+  })
+
+  it('Reset to inherited sends the field in inherit, never as a value', async () => {
+    mockGet.mockResolvedValue(policyWithSources({ raw_events_days: 30 }))
+    await ready()
+    fireEvent.click(within(markerOf('raw_events_days')).getByRole('button', { name: 'Reset to inherited' }))
+    expect(dayInput('raw_events_days').value).toBe('90')
+    expect(dayInput('raw_events_days').disabled).toBe(true)
+    await save()
+    expect(mockUpdate.mock.calls[0]).toEqual(['proj-1', { inherit: ['raw_events_days'] }])
+  })
+
+  it('Override sends the inherited value as the project value, even unchanged', async () => {
+    await ready()
+    fireEvent.click(within(markerOf('runs_days')).getByRole('button', { name: 'Override' }))
+    expect(dayInput('runs_days').disabled).toBe(false)
+    await save()
+    expect(mockUpdate.mock.calls[0]).toEqual(['proj-1', { runs_days: 180 }])
+  })
+
+  it('sends the window only when it changed', async () => {
+    const own = policyWithSources()
+    own.field_sources = { ...own.field_sources, purge_window_start_utc: 'project' }
+    mockGet.mockResolvedValue(own)
+    mockUpdate.mockResolvedValue(own)
+    await ready()
+    const select = document.getElementById('retention-purge_window_start_utc') as HTMLSelectElement
+    expect(select.disabled).toBe(false)
+    fireEvent.change(dayInput('raw_events_days'), { target: { value: '60' } })
+    await save()
+    expect(mockUpdate.mock.calls[0]).toEqual(['proj-1', { raw_events_days: 60 }])
+    fireEvent.change(select, { target: { value: '3' } })
+    await save()
+    expect(mockUpdate.mock.calls[1]).toEqual(['proj-1', { purge_window_start_utc: 3 }])
+  })
+
+  it('pauses with its own PUT, disabled while the form has unsaved changes', async () => {
+    await ready()
+    const pause = screen.getByRole('button', { name: 'Pause 7 days' })
+    fireEvent.change(dayInput('raw_events_days'), { target: { value: '60' } })
+    expect(pause).toBeDisabled()
+    fireEvent.change(dayInput('raw_events_days'), { target: { value: '90' } })
+    expect(pause).toBeEnabled()
+    await act(async () => {
+      fireEvent.click(pause)
+    })
+    expect(mockUpdate.mock.calls[0]).toEqual(['proj-1', { pause_days: 7 }])
+  })
+
+  it('the preview lists the retained deletion archives, "not measured" from an older server', async () => {
+    mockPreview.mockResolvedValue({
+      cutoffs: { raw_events: '2026-05-04T00:00:00Z', runs: '2025-08-02T00:00:00Z', artifacts: '2026-02-03T00:00:00Z', audit: '2019-08-05T00:00:00Z' },
+      candidates: { runs: 1, test_cases: 2, mongo_docs: {}, minio_objects: 0, event_archive_rows: 0, audit_rows: 0, provenance_rows: 0, compliance_packs_expired: 0, export_archives_expired: 2 },
+    })
+    await ready()
+    await act(async () => {
+      fireEvent.click(screen.getByText('Preview purge'))
+    })
+    const label = 'Retained deletion archives'
+    await waitFor(() => expect(screen.getByText(label)).toBeTruthy())
+    expect((screen.getByText(label).closest('tr') as HTMLElement).textContent).toBe(`${label}2`)
   })
 })

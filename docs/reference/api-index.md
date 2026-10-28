@@ -298,6 +298,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/projects/{project_id}/deletion/execute` | Execute Criteria Deletion | [Retention](api/retention.md) |
 | GET | `/api/v1/projects/{project_id}/deletion/jobs` | List Deletion Jobs | [Retention](api/retention.md) |
 | GET | `/api/v1/projects/{project_id}/deletion/jobs/{job_id}` | Get Deletion Job | [Retention](api/retention.md) |
+| POST | `/api/v1/projects/{project_id}/deletion/jobs/{job_id}/acknowledge` | Acknowledge Deletion Archive | [Retention](api/retention.md) |
+| POST | `/api/v1/projects/{project_id}/deletion/jobs/{job_id}/collect` | Collect Deletion Archive | [Retention](api/retention.md) |
 | POST | `/api/v1/projects/{project_id}/deletion/preview` | Preview Criteria Deletion | [Retention](api/retention.md) |
 | GET | `/api/v1/projects/{project_id}/duplicate-candidates` | List Duplicate Candidates | [Duplicate Detection](api/duplicate-detection.md) |
 | POST | `/api/v1/projects/{project_id}/duplicate-candidates/detect` | Run Duplicate Detection | [Duplicate Detection](api/duplicate-detection.md) |
@@ -540,6 +542,10 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/settings/integrations/health` | Get Integration Health | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/mfa-policy` | Get Mfa Policy | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/mfa-policy` | Update Mfa Policy | [Settings](api/settings.md) |
+| GET | `/api/v1/settings/retention-defaults` | Get Retention Defaults | [Settings](api/settings.md) |
+| PUT | `/api/v1/settings/retention-defaults` | Update Retention Defaults | [Settings](api/settings.md) |
+| POST | `/api/v1/settings/retention-defaults/enable` | Enable Retention Defaults | [Settings](api/settings.md) |
+| GET | `/api/v1/settings/retention-defaults/enable-preview` | Preview Retention Defaults Enable | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/secret-providers` | Get Secret Providers | [Secret providers](api/secret-providers.md) |
 | GET | `/api/v1/settings/smtp` | Get Smtp Config | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/smtp` | Update Smtp Config | [Settings](api/settings.md) |
@@ -694,4 +700,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **685 HTTP operations**, **579 paths**, **88 domain pages**.
+Total: **691 HTTP operations**, **584 paths**, **88 domain pages**.

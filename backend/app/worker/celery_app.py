@@ -112,12 +112,6 @@ celery_app.conf.update(
             "task": "app.worker.tasks.take_coverage_snapshot",
             "schedule": crontab(hour=0, minute=5),
         },
-        # PMF US-11.4: per-project retention purge. 02:00 UTC — the slot is
-        # free (coverage snapshot 00:05, training export Sundays 02:00 is
-        # queue-parallel, finetune check 03:00). Only projects whose
-        # project_retention_policies row is enabled are touched; per-project
-        # try/except inside the task so one failure can't stop the sweep;
-        # each project gets a settings_audit_log purge record.
         # F-11: the only scheduled quality reading. Every other eval path is
         # event-driven (the gate fires on a prompt change and never otherwise),
         # so drift between changes was invisible. 04:00 UTC keeps it clear of
@@ -134,9 +128,18 @@ celery_app.conf.update(
             "schedule": crontab(hour=6, minute=0, day_of_week="monday"),
             "options": {"queue": "default"},
         },
-        "nightly-retention-purge": {
+        # PMF US-11.4 + W22b ACT-06: the per-project retention purge, HOURLY.
+        # Each project is purged in its own window hour (purge_window_start_utc,
+        # inherited from the instance default, else 02:00 UTC -- so a deployment
+        # that sets nothing purges at the hour it always did), and skipped while
+        # paused. Only projects whose EFFECTIVE policy is enabled are touched;
+        # each takes a per-project Redis lock (fail closed: Redis down -> that
+        # project is skipped this hour); per-project try/except inside the task
+        # so one failure can't stop the sweep; each purge gets a
+        # settings_audit_log purge record.
+        "hourly-retention-purge": {
             "task": "app.worker.tasks.run_retention_purges",
-            "schedule": crontab(hour=2, minute=0),
+            "schedule": crontab(minute=0),
         },
         # W12 SRCH-05: search_query_events keep a FIXED 30-day window
         # (deployment-wide, NULL-project rows included), after the 02:00 purge.
@@ -317,6 +320,14 @@ celery_app.conf.update(
         "relay-queued-criteria-deletions": {
             "task": "app.worker.tasks.relay_queued_criteria_deletions",
             "schedule": crontab(minute="*"),
+        },
+        # W22b ACT-03: the export janitor. Expires uncollected archives (their
+        # jobs end `expired`, nothing deleted), fails exports a dead worker left
+        # unverified, and removes archives no job may keep. It deletes no run.
+        "sweep-deletion-exports": {
+            "task": "app.worker.tasks.sweep_deletion_exports",
+            "schedule": crontab(minute="*/15"),
+            "options": {"queue": "default"},
         },
         "recover-waiting-run-finalizations": {
             "task": "app.worker.tasks.recover_waiting_run_finalizations",

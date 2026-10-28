@@ -9,6 +9,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import CriteriaDeletionPanel from './CriteriaDeletionPanel'
 import { buildCriteria, EMPTY_CRITERIA_FORM, narrowsNothing } from './criteriaForm'
+import { exportEstimate } from '@/test/retentionExportMocks'
+import { ARCHIVE_NOT_BACKUP, EXPORT_ERROR_SENTENCES } from '@/types/retentionExport'
 
 const preview = vi.fn()
 const execute = vi.fn()
@@ -427,5 +429,72 @@ describe('W22a — holds, floor note, reference warnings', () => {
     const panel = await previewWith({ references_broken: [], references_measured: true, floor_note: FLOOR_NOTE })
     expect(within(panel).getByText(FLOOR_NOTE)).toBeInTheDocument()
     expect(panel.querySelector('[data-retention-reference-warnings]')).toBeNull()
+  })
+})
+
+// ── W22b ACT-03: the export step ────────────────────────────────────────────
+
+describe('W22b — the export step', () => {
+  async function previewWith(overrides: Record<string, unknown>) {
+    preview.mockResolvedValue(frozen(overrides))
+    renderPanel()
+    fireEvent.change(screen.getByLabelText(/older than days/i), { target: { value: '90' } })
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }))
+    return screen.findByTestId('criteria-preview')
+  }
+
+  function typeAndDelete() {
+    fireEvent.click(screen.getByRole('button', { name: /delete 3 runs/i }))
+    fireEvent.change(screen.getByLabelText(/type.*to confirm/i), { target: { value: 'Checkout' } })
+    fireEvent.click(screen.getByRole('button', { name: /delete permanently/i }))
+  }
+
+  it('sends the chosen archive in the execute body and says so in the confirmation', async () => {
+    execute.mockResolvedValue({ job_id: 'job-1', run_count: 3, status: 'accepted', export_tier: 'evidence', export_target: 'collect' })
+    const panel = await previewWith({ export_estimate: exportEstimate({ run_count: 3 }) })
+    expect(within(panel).getByText(ARCHIVE_NOT_BACKUP)).toBeInTheDocument()
+    fireEvent.click(within(panel).getByRole('radio', { name: 'Download an archive first' }))
+    fireEvent.click(within(panel).getByRole('radio', { name: /^Evidence — archive/ }))
+    fireEvent.click(screen.getByRole('button', { name: /delete 3 runs/i }))
+    expect(
+      screen.getByText(
+        'An evidence archive is built and verified first. Nothing is deleted until you download it and confirm you have saved it.',
+      ),
+    ).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText(/type.*to confirm/i), { target: { value: 'Checkout' } })
+    fireEvent.click(screen.getByRole('button', { name: /delete permanently/i }))
+    await waitFor(() => expect(execute).toHaveBeenCalledTimes(1))
+    expect(execute).toHaveBeenCalledWith('p1', 'job-1', 'Checkout', { tier: 'evidence', target: 'collect' })
+  })
+
+  it('"Delete without an archive" (the default) keeps today\'s execute call', async () => {
+    execute.mockResolvedValue({ job_id: 'job-1', run_count: 3, status: 'accepted' })
+    await previewWith({ export_estimate: exportEstimate({ run_count: 3 }) })
+    typeAndDelete()
+    await waitFor(() => expect(execute).toHaveBeenCalledTimes(1))
+    expect(execute).toHaveBeenCalledWith('p1', 'job-1', 'Checkout')
+  })
+
+  it('offers no export step without export_estimate (an older server)', async () => {
+    const panel = await previewWith({})
+    expect(panel.querySelector('[data-criteria-export]')).toBeNull()
+    expect(within(panel).queryByText(ARCHIVE_NOT_BACKUP)).toBeNull()
+  })
+
+  it('shows an execute refusal inline in the export step; the confirmation stays open', async () => {
+    const sentence = EXPORT_ERROR_SENTENCES.over_cap
+    execute.mockRejectedValue(
+      Object.assign(new Error('request failed'), {
+        isAxiosError: true,
+        response: { status: 409, data: { detail: { code: 'over_cap', message: sentence } } },
+      }),
+    )
+    const panel = await previewWith({ export_estimate: exportEstimate({ run_count: 3 }) })
+    fireEvent.click(within(panel).getByRole('radio', { name: 'Keep an archive in storage' }))
+    typeAndDelete()
+    const alert = await within(panel).findByRole('alert')
+    expect(alert).toHaveTextContent(sentence)
+    expect(alert.closest('[data-criteria-export]')).not.toBeNull()
+    expect(screen.getByRole('button', { name: /delete permanently/i })).toBeInTheDocument()
   })
 })

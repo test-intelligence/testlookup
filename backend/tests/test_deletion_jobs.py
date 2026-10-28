@@ -493,9 +493,12 @@ def test_a_hung_job_is_not_purged_on_the_clock():
     assert svc.TERMINAL_STATUSES < svc.REACHABLE_STATUSES
     # ``previewed`` IS terminal: a preview nobody executed is abandoned, not
     # in flight, and keeping those forever grows the table with every dry run.
+    # W22b: ``expired`` (an archive never collected — nothing was deleted) is
+    # terminal too; ``awaiting_collection`` is in flight, like ``running``.
     assert svc.TERMINAL_STATUSES == {
-        svc.COMPLETED, svc.FAILED, svc.PARTIAL, svc.PREVIEWED
+        svc.COMPLETED, svc.FAILED, svc.PARTIAL, svc.PREVIEWED, svc.EXPIRED
     }
+    assert svc.AWAITING_COLLECTION not in svc.TERMINAL_STATUSES
 
 
 def test_the_purge_filter_scopes_by_project_and_terminal_status():

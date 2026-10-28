@@ -16,6 +16,13 @@
  * box right under its Delete button (no modal); the page around it stays
  * usable, so editing a criterion or previewing again closes it (the set it
  * would delete is no longer the one on screen).
+ *
+ * W22b ACT-03: when the preview carries `export_estimate`, the export step
+ * (ExportChoiceSection) sits before the Delete button — "Delete without an
+ * archive" by default; an archive choice adds a paragraph to the typed
+ * confirmation and rides the execute body as `export`. A refusal (unknown
+ * tier, too many runs, over the size limit) leaves the job previewed and is
+ * shown inline in the export step, so a smaller tier can be chosen.
  */
 import { useState } from 'react'
 import { AlertTriangle, Loader2, Search, Trash2 } from 'lucide-react'
@@ -23,8 +30,18 @@ import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import { criteriaDeletionService } from '@/services/retentionService'
+import { extractErrorMessage } from '@/services/apiErrors'
 import { ReferenceWarnings } from './PreviewKeptLines'
+import ExportChoiceSection from './ExportChoiceSection'
+import {
+  ARCHIVE_NOT_BACKUP,
+  executeParagraph,
+  executeToast,
+  type TargetChoice,
+  type TierKey,
+} from './exportModel'
 import { RUN_STATUSES, type DeletionPreview, type RunStatus } from '@/types/retention'
+import type { ExportChoice } from '@/types/retentionExport'
 import {
   buildCriteria,
   EMPTY_CRITERIA_FORM,
@@ -45,9 +62,24 @@ export default function CriteriaDeletionPanel({ projectId, projectName, onExecut
   const [preview, setPreview] = useState<DeletionPreview | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  // W22b: the export step's choice ("none" = delete without an archive, the default).
+  const [exportTarget, setExportTarget] = useState<TargetChoice>('none')
+  const [exportTier, setExportTier] = useState<TierKey>('summary')
+  const [exportError, setExportError] = useState<string | null>(null)
 
   const criteria = buildCriteria(form)
   const empty = narrowsNothing(criteria)
+  const exportChoice: ExportChoice | null =
+    preview?.export_estimate && exportTarget !== 'none'
+      ? { tier: exportTier, target: exportTarget }
+      : null
+
+  /** A new (or no) preview starts the export step over at its default. */
+  function resetExport() {
+    setExportTarget('none')
+    setExportTier('summary')
+    setExportError(null)
+  }
 
   /**
    * Any edit invalidates a preview. The frozen set on screen was resolved from
@@ -57,6 +89,7 @@ export default function CriteriaDeletionPanel({ projectId, projectName, onExecut
   function update<K extends keyof CriteriaFormState>(key: K, value: CriteriaFormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
     setPreview(null)
+    resetExport()
   }
 
   function toggleStatus(status: RunStatus) {
@@ -72,6 +105,7 @@ export default function CriteriaDeletionPanel({ projectId, projectName, onExecut
     if (empty || previewing) return
     // A new preview freezes a new set: the open confirmation described the old one.
     setConfirmOpen(false)
+    resetExport()
     setPreviewing(true)
     try {
       setPreview(await criteriaDeletionService.preview(projectId, criteria))
@@ -303,6 +337,21 @@ export default function CriteriaDeletionPanel({ projectId, projectName, onExecut
             </div>
           )}
 
+          {/* W22b ACT-03: the export step (only from a server that sends estimates). */}
+          {preview.export_estimate && (
+            <ExportChoiceSection
+              estimate={preview.export_estimate}
+              target={exportTarget}
+              tier={exportTier}
+              error={exportError}
+              onChange={(next) => {
+                setExportTarget(next.target)
+                setExportTier(next.tier)
+                setExportError(null)
+              }}
+            />
+          )}
+
           <button
             type="button"
             onClick={() => setConfirmOpen(true)}
@@ -319,11 +368,14 @@ export default function CriteriaDeletionPanel({ projectId, projectName, onExecut
               projectId={projectId}
               projectName={projectName}
               preview={preview}
+              exportChoice={exportChoice}
               onClose={() => setConfirmOpen(false)}
+              onRefused={setExportError}
               onExecuted={() => {
                 setConfirmOpen(false)
                 // The frozen set has been consumed — a second execute would 409.
                 setPreview(null)
+                resetExport()
                 onExecuted?.()
               }}
             />
@@ -338,7 +390,11 @@ interface ModalProps {
   projectId: string
   projectName: string
   preview: DeletionPreview
+  /** W22b: the archive to build first; null = delete without an archive. */
+  exportChoice: ExportChoice | null
   onClose: () => void
+  /** W22b: an export refusal's sentence, shown inline in the export step. */
+  onRefused: (message: string | null) => void
   onExecuted: () => void
 }
 
@@ -346,23 +402,40 @@ function ExecuteConfirmModal({
   projectId,
   projectName,
   preview,
+  exportChoice,
   onClose,
+  onRefused,
   onExecuted,
 }: ModalProps) {
   const [typed, setTyped] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const matches = typed === projectName
+  const archiveParagraph = executeParagraph(exportChoice)
 
   async function handleConfirm() {
     if (!matches || submitting) return
     setSubmitting(true)
+    onRefused(null)
     try {
       // The JOB ID, never the criteria — execute replays the frozen set.
-      await criteriaDeletionService.execute(projectId, preview.job_id, typed)
-      toast.success(`Deleting ${preview.run_count} runs — track it in the job list`)
+      if (exportChoice) {
+        await criteriaDeletionService.execute(projectId, preview.job_id, typed, exportChoice)
+      } else {
+        await criteriaDeletionService.execute(projectId, preview.job_id, typed)
+      }
+      toast.success(
+        executeToast(preview.run_count, exportChoice) ??
+          `Deleting ${preview.run_count} runs — track it in the job list`,
+      )
       onExecuted()
     } catch (err: unknown) {
-      if (!isAxiosError(err)) toast.error(`Delete failed: ${(err as Error).message}`)
+      if (!isAxiosError(err)) {
+        toast.error(`Delete failed: ${(err as Error).message}`)
+      } else if (exportChoice && err.response) {
+        // The interceptor toasts it too; the export step keeps it beside the tier to change.
+        const detail = (err.response.data as { detail?: unknown } | undefined)?.detail
+        onRefused(extractErrorMessage(detail, 'The archive was refused.'))
+      }
     } finally {
       setSubmitting(false)
     }
@@ -416,6 +489,12 @@ function ExecuteConfirmModal({
         preview across every store — results, raw events, artifacts and analysis. It cannot be
         undone. Only the set that was previewed will go; nothing is re-selected at delete time.
       </p>
+      {archiveParagraph && (
+        <div data-criteria-delete-archive="" className="mt-2 space-y-1 text-sm text-[var(--color-text-secondary)]">
+          <p>{archiveParagraph}</p>
+          <p className="text-xs text-[var(--color-text-muted)]">{ARCHIVE_NOT_BACKUP}</p>
+        </div>
+      )}
 
       <div className="mt-4">
         <label

@@ -11,6 +11,12 @@ from typing import List, Literal, Optional
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Constants-only module (no app import), so config stays a leaf.
+from app.services.retention_vocab import (
+    EXPORT_COLLECT_TTL_HOURS_DEFAULT,
+    EXPORT_MAX_BYTES_DEFAULT,
+)
+
 #: The Redis client's socket timeout (app.db.redis_client). One Redis call --
 #: an LLM slot renew, say -- can hang this long before it fails.
 REDIS_SOCKET_TIMEOUT_SECONDS = 5
@@ -167,6 +173,13 @@ class Settings(BaseSettings):
     MINIO_SECRET_KEY: str = ""  # Must be set via .env — no default
     MINIO_BUCKET_NAME: str = "test-telemetry"
     MINIO_USE_SSL: bool = False
+
+    # ── Retention export before delete (W22b ACT-03) ─────────
+    # A criteria deletion may first build a verified archive. The byte cap is
+    # checked at preview (estimate), at execute and while writing; a `collect`
+    # archive not confirmed within the TTL expires and nothing is deleted.
+    RETENTION_EXPORT_MAX_BYTES: int = Field(default=EXPORT_MAX_BYTES_DEFAULT, ge=1_048_576)
+    RETENTION_EXPORT_COLLECT_TTL_HOURS: int = Field(default=EXPORT_COLLECT_TTL_HOURS_DEFAULT, ge=1, le=720)
 
     # ── Redis ─────────────────────────────────────────────────
     # Redis is the Celery broker + JWT-revocation store + membership authz

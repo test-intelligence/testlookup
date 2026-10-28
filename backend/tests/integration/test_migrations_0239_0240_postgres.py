@@ -301,6 +301,9 @@ async def test_the_shared_database_at_head_carries_both_migrations(conn):
     assert await _checks(conn, base, "retention_holds") == HOLD_CHECKS
     live = (await _index_defs(conn, base, "retention_holds"))["ix_retention_holds_live"]
     assert "WHERE (released_at IS NULL)" in live
-    assert (await _columns(conn, base, "project_retention_policies"))["keep_last_runs"] == ("integer", "NO", "10")
+    # W22b's 0242 made the column nullable with no default (NULL = inherit the
+    # instance default, else 10 in code); 0240's NOT NULL DEFAULT 10 is
+    # asserted on the scratch schema above.
+    assert (await _columns(conn, base, "project_retention_policies"))["keep_last_runs"] == ("integer", "YES", None)
     assert "ck_retention_keep_last_runs" in await _checks(conn, base, "project_retention_policies")
     assert (await _columns(conn, base, "run_baselines"))["baseline_purged_at"][1] == "YES"

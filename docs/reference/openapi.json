@@ -12142,8 +12142,47 @@
         "title": "DeletedProjectsStorageResponse",
         "type": "object"
       },
+      "DeletionAcknowledgeRequest": {
+        "description": "Confirms a collected archive was saved; the route answers ``DeletionJobResponse``.",
+        "properties": {
+          "manifest_sha256": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-fA-F]{64}$",
+            "title": "Manifest Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "manifest_sha256"
+        ],
+        "title": "DeletionAcknowledgeRequest",
+        "type": "object"
+      },
       "DeletionExecuteAcceptedResponse": {
         "properties": {
+          "export_target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Target"
+          },
+          "export_tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Tier"
+          },
           "job_id": {
             "format": "uuid",
             "title": "Job Id",
@@ -12177,6 +12216,16 @@
             "title": "Confirmation Name",
             "type": "string"
           },
+          "export": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportChoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "job_id": {
             "format": "uuid",
             "title": "Job Id",
@@ -12198,6 +12247,11 @@
             },
             "title": "Jobs",
             "type": "array"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
           }
         },
         "title": "DeletionJobListResponse",
@@ -12206,6 +12260,18 @@
       "DeletionJobResponse": {
         "description": "One deletion that ran (or is running).\n\n`bytes_reclaimed` is nullable and is NOT defaulted to 0 — \"reclaimed\nnothing\" and \"nobody measured\" are opposite findings, and this is the\nsurface that tells an operator whether a purge was worth running.",
         "properties": {
+          "acknowledged_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acknowledged At"
+          },
           "bytes_reclaimed": {
             "anyOf": [
               {
@@ -12216,6 +12282,30 @@
               }
             ],
             "title": "Bytes Reclaimed"
+          },
+          "collect_expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collect Expires At"
+          },
+          "collected_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collected At"
           },
           "counts": {
             "anyOf": [
@@ -12251,6 +12341,74 @@
               }
             ],
             "title": "Error"
+          },
+          "export_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Bytes"
+          },
+          "export_manifest_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Manifest Sha256"
+          },
+          "export_summary": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Summary"
+          },
+          "export_target": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Target"
+          },
+          "export_tier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Tier"
+          },
+          "export_verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Export Verified At"
           },
           "finished_at": {
             "anyOf": [
@@ -12349,6 +12507,16 @@
           "candidate_hash": {
             "title": "Candidate Hash",
             "type": "string"
+          },
+          "export_estimate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ExportEstimate"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "floor_applies": {
             "default": false,
@@ -15869,6 +16037,150 @@
         "title": "ExecutionTotals",
         "type": "object"
       },
+      "ExportChoice": {
+        "description": "``DeletionExecuteRequest.export``. Validated in the service (fixed 422 sentence), not by ``Literal``.",
+        "properties": {
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier",
+          "target"
+        ],
+        "title": "ExportChoice",
+        "type": "object"
+      },
+      "ExportEstimate": {
+        "description": "What archiving the DELETABLE runs of a criteria preview would cost and reclaim.",
+        "properties": {
+          "collect_ttl_hours": {
+            "title": "Collect Ttl Hours",
+            "type": "integer"
+          },
+          "exportable": {
+            "title": "Exportable",
+            "type": "boolean"
+          },
+          "max_bytes": {
+            "title": "Max Bytes",
+            "type": "integer"
+          },
+          "note": {
+            "default": "Archive, not a backup — it cannot be re-imported.",
+            "title": "Note",
+            "type": "string"
+          },
+          "reclaim_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reclaim Bytes"
+          },
+          "reclaim_measured": {
+            "default": false,
+            "title": "Reclaim Measured",
+            "type": "boolean"
+          },
+          "reclaim_mongo_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reclaim Mongo Bytes"
+          },
+          "reclaim_object_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reclaim Object Bytes"
+          },
+          "refusal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refusal"
+          },
+          "run_count": {
+            "title": "Run Count",
+            "type": "integer"
+          },
+          "tiers": {
+            "items": {
+              "$ref": "#/components/schemas/ExportTierEstimate"
+            },
+            "title": "Tiers",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_count",
+          "exportable",
+          "max_bytes",
+          "collect_ttl_hours"
+        ],
+        "title": "ExportEstimate",
+        "type": "object"
+      },
+      "ExportTierEstimate": {
+        "description": "One tier's archive size estimate. ``None`` = not measured, never 0.",
+        "properties": {
+          "archive_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Bytes"
+          },
+          "measured": {
+            "default": false,
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "over_cap": {
+            "default": false,
+            "title": "Over Cap",
+            "type": "boolean"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier"
+        ],
+        "title": "ExportTierEstimate",
+        "type": "object"
+      },
       "FailureCategory": {
         "enum": [
           "PRODUCT_BUG",
@@ -18857,6 +19169,373 @@
           "status"
         ],
         "title": "IngestTestResult",
+        "type": "object"
+      },
+      "InstanceEnablePreviewItem": {
+        "properties": {
+          "effective_after": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Effective After",
+            "type": "object"
+          },
+          "has_policy_row": {
+            "title": "Has Policy Row",
+            "type": "boolean"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "runs_past_window": {
+            "title": "Runs Past Window",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "name",
+          "is_active",
+          "has_policy_row",
+          "effective_after",
+          "runs_past_window"
+        ],
+        "title": "InstanceEnablePreviewItem",
+        "type": "object"
+      },
+      "InstanceEnablePreviewResponse": {
+        "properties": {
+          "already_enabled": {
+            "title": "Already Enabled",
+            "type": "boolean"
+          },
+          "confirmation_phrase": {
+            "title": "Confirmation Phrase",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/InstanceEnablePreviewItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "preview_hash": {
+            "title": "Preview Hash",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total",
+          "truncated",
+          "preview_hash",
+          "confirmation_phrase",
+          "already_enabled"
+        ],
+        "title": "InstanceEnablePreviewResponse",
+        "type": "object"
+      },
+      "InstanceEnableRequest": {
+        "properties": {
+          "confirmation": {
+            "maxLength": 200,
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "preview_hash": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Preview Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation",
+          "preview_hash"
+        ],
+        "title": "InstanceEnableRequest",
+        "type": "object"
+      },
+      "InstanceRetentionPolicyRead": {
+        "description": "GET/PUT ``/api/v1/settings/retention-defaults``. A NULL value = the code default.",
+        "properties": {
+          "artifacts_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifacts Days"
+          },
+          "audit_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audit Days"
+          },
+          "code_defaults": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Code Defaults",
+            "type": "object"
+          },
+          "effective": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Effective",
+            "type": "object"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "enabled_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled At"
+          },
+          "enabled_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled By Name"
+          },
+          "inheriting_projects": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Inheriting Projects",
+            "type": "object"
+          },
+          "keep_last_runs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keep Last Runs"
+          },
+          "purge_window_start_utc": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purge Window Start Utc"
+          },
+          "raw_events_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Events Days"
+          },
+          "runs_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs Days"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "enabled",
+          "code_defaults",
+          "effective",
+          "inheriting_projects"
+        ],
+        "title": "InstanceRetentionPolicyRead",
+        "type": "object"
+      },
+      "InstanceRetentionPolicyWrite": {
+        "description": "PUT body. ``enabled: true`` is refused (422 ``enable_via_flow``); ``false`` switches it off.",
+        "properties": {
+          "artifacts_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 7.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifacts Days"
+          },
+          "audit_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 365.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audit Days"
+          },
+          "clear": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 6,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Clear"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "keep_last_runs": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keep Last Runs"
+          },
+          "purge_window_start_utc": {
+            "anyOf": [
+              {
+                "maximum": 23.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purge Window Start Utc"
+          },
+          "raw_events_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 7.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Events Days"
+          },
+          "runs_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 30.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs Days"
+          }
+        },
+        "title": "InstanceRetentionPolicyWrite",
         "type": "object"
       },
       "IntegrationHealthRow": {
@@ -31920,6 +32599,27 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "field_sources": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Field Sources",
+            "type": "object"
+          },
+          "inherit_values": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Inherit Values",
+            "type": "object"
+          },
           "keep_last_runs": {
             "default": 10,
             "title": "Keep Last Runs",
@@ -31934,6 +32634,35 @@
                 "type": "null"
               }
             ]
+          },
+          "next_scheduled_purge_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Scheduled Purge At"
+          },
+          "purge_paused_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purge Paused Until"
+          },
+          "purge_window_start_utc": {
+            "default": 2,
+            "title": "Purge Window Start Utc",
+            "type": "integer"
           },
           "raw_events_days": {
             "title": "Raw Events Days",
@@ -32025,6 +32754,21 @@
             ],
             "title": "Enabled"
           },
+          "inherit": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 7,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inherit"
+          },
           "keep_last_runs": {
             "anyOf": [
               {
@@ -32038,6 +32782,32 @@
             ],
             "title": "Keep Last Runs"
           },
+          "pause_days": {
+            "anyOf": [
+              {
+                "maximum": 90.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pause Days"
+          },
+          "purge_window_start_utc": {
+            "anyOf": [
+              {
+                "maximum": 23.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purge Window Start Utc"
+          },
           "raw_events_days": {
             "anyOf": [
               {
@@ -32050,6 +32820,17 @@
               }
             ],
             "title": "Raw Events Days"
+          },
+          "resume": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume"
           },
           "runs_days": {
             "anyOf": [
@@ -32102,6 +32883,11 @@
           "evidence_artifact_rows": {
             "default": 0,
             "title": "Evidence Artifact Rows",
+            "type": "integer"
+          },
+          "export_archives_expired": {
+            "default": 0,
+            "title": "Export Archives Expired",
             "type": "integer"
           },
           "memory_entries_expired": {
@@ -47689,7 +48475,7 @@
     },
     "/api/v1/admin/storage/deleted-projects": {
       "get": {
-        "description": "What deleted projects still cost, and what will never reclaim it.\n\nDeleting a project sets ``is_active = False`` and revokes its credentials;\nnothing reconciles the data. Because ``ProjectRetentionPolicy.enabled``\ndefaults to ``False``, a project deleted without retention turned on is\npurged by **nothing, ever** — across all five stores, invisible on every\nother screen.\n\n``reachable_by_retention`` is the distinction that matters: the nightly\nbeat selects on ``enabled`` alone and does **not** filter ``is_active``, so\na project that opted in before deletion still gets swept. One that did not\nis stranded, and ``unreachable_by_retention`` counts those.\n\nDeployment-wide, so it is ADMIN-only and not project-scoped — there is no\n``{project_id}`` here to guard, and a per-project footprint already exists\nat ``GET /api/v1/projects/{project_id}/storage``.\n\nBounded by ``limit``: each footprint costs at least one paginated\nobject-store listing. ``truncated`` and ``projects_measured`` say when the\nanswer is partial, so a capped total cannot quietly understate the number\nthis endpoint exists to surface.",
+        "description": "What deleted projects still cost, and what will never reclaim it.\n\nDeleting a project sets ``is_active = False`` and revokes its credentials;\nnothing reconciles the data. Because retention defaults to off (the\nproject's ``enabled`` and the instance default alike), a project deleted\nwithout retention turned on is purged by **nothing, ever** — across all\nfive stores, invisible on every other screen.\n\n``reachable_by_retention`` is the distinction that matters: the scheduled\nbeat selects on the EFFECTIVE ``enabled`` alone (the project's own, else\nthe instance default — W22b) and does **not** filter ``is_active``, so a\nproject that opted in before deletion (or inherits an enabled instance\ndefault) still gets swept. One that did not is stranded, and\n``unreachable_by_retention`` counts those.\n\nDeployment-wide, so it is ADMIN-only and not project-scoped — there is no\n``{project_id}`` here to guard, and a per-project footprint already exists\nat ``GET /api/v1/projects/{project_id}/storage``.\n\nBounded by ``limit``: each footprint costs at least one paginated\nobject-store listing. ``truncated`` and ``projects_measured`` say when the\nanswer is partial, so a capped total cannot quietly understate the number\nthis endpoint exists to surface.",
         "operationId": "get_deleted_project_storage_api_v1_admin_storage_deleted_projects_get",
         "parameters": [
           {
@@ -69969,6 +70755,164 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/deletion/jobs/{job_id}/acknowledge": {
+      "post": {
+        "description": "Confirm a collected archive was saved -> the job is queued for deletion.\n\nNeeds a recorded collect and the EXACT manifest SHA-256, inside the\ncollection window. The transition, its audit row and the ledger row commit\ntogether; the worker is dispatched after the commit (the minute relay\nrepublishes a lost message).",
+        "operationId": "acknowledge_deletion_archive_api_v1_projects__project_id__deletion_jobs__job_id__acknowledge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeletionAcknowledgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Acknowledge Deletion Archive",
+        "tags": [
+          "Retention"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/deletion/jobs/{job_id}/collect": {
+      "post": {
+        "description": "Download a verified archive while its job awaits collection.\n\nStamps the FIRST collect and stages an ``export_collected`` audit row,\nthen opens the stored stream: a storage failure on the first chunk is a\n502 and rolls the stamp back (nothing recorded). Commits BEFORE returning\nthe stream; the stream touches storage only, never the session.",
+        "operationId": "collect_deletion_archive_api_v1_projects__project_id__deletion_jobs__job_id__collect_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Collect Deletion Archive",
+        "tags": [
+          "Retention"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/deletion/preview": {
       "post": {
         "description": "Resolve a criteria set and FREEZE it for execution.\n\nThe freeze is the whole point (N3/N4). The nightly purge's candidate set is\na pure function of ``(policy, now)``, so re-resolving gives the same answer.\nCriteria are not: they read columns other code rewrites while the job sits\nqueued — ``TestRun.status`` by ``_update_run_aggregates`` and by\nlive-session close, ``primary_suite_name`` at session close. Execute is\nasynchronous, so re-resolving there would delete a different set from the\none an ADMIN reviewed. This materializes the ids and hashes them; execute\nreplays that set.\n\nRuns that cannot be deleted are reported HERE rather than discovered\nmid-execution, so the count an ADMIN authorises is the count that will go.",
@@ -73886,7 +74830,7 @@
     },
     "/api/v1/projects/{project_id}/retention-policy": {
       "get": {
-        "description": "Effective retention policy for a project (defaults when no row\nexists — the UI always renders the form) plus the latest purge.",
+        "description": "Effective retention policy for a project (defaults when no row\nexists — the UI always renders the form) plus the latest purge.\n\nW22b ACT-06: every inheritable field is the EFFECTIVE per-field value\n(project, else the instance default, else the code default), with its\nsource, what it would read if inherited, the window, the pause and the\nnext scheduled purge.",
         "operationId": "get_retention_policy_api_v1_projects__project_id__retention_policy_get",
         "parameters": [
           {
@@ -73949,7 +74893,7 @@
         ]
       },
       "put": {
-        "description": "Upsert the project's retention policy. ADMIN-only — retention drives\na destructive scheduled purge. Omitted fields keep their current (or\ndefault) value; returns the effective policy.",
+        "description": "Upsert the project's retention policy. ADMIN-only — retention drives\na destructive scheduled purge. Omitted fields keep their current (or\ndefault) value; returns the effective policy.\n\nW22b ACT-06: ``purge_window_start_utc``, ``pause_days`` / ``resume`` and\n``inherit`` (the fields to reset to the inherited value); their refusals\nare 422 ``{\"code\", \"message\"}`` beside the existing plain-string 422.",
         "operationId": "put_retention_policy_api_v1_projects__project_id__retention_policy_put",
         "parameters": [
           {
@@ -88012,6 +88956,244 @@
           }
         ],
         "summary": "Update Mfa Policy",
+        "tags": [
+          "Settings"
+        ]
+      }
+    },
+    "/api/v1/settings/retention-defaults": {
+      "get": {
+        "description": "The instance retention defaults: the stored values (NULL = the code\ndefault), the code defaults, the effective values, how many projects\ninherit each field, and who switched the default on. Reads only.",
+        "operationId": "get_retention_defaults_api_v1_settings_retention_defaults_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceRetentionPolicyRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Retention Defaults",
+        "tags": [
+          "Settings"
+        ]
+      },
+      "put": {
+        "description": "Save the instance defaults (``clear`` resets a field to the code\ndefault). ``enabled: true`` is refused (422 ``enable_via_flow``);\n``enabled: false`` switches the default off at once. Interactive login only.",
+        "operationId": "update_retention_defaults_api_v1_settings_retention_defaults_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstanceRetentionPolicyWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceRetentionPolicyRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Update Retention Defaults",
+        "tags": [
+          "Settings"
+        ]
+      }
+    },
+    "/api/v1/settings/retention-defaults/enable": {
+      "post": {
+        "description": "Switch the instance default ON for every project without its own\n``enabled`` (D12): the preview's hash must still match (409\n``preview_stale``) and the confirmation must be the exact phrase (422\n``confirmation_mismatch``). Interactive login only.",
+        "operationId": "enable_retention_defaults_api_v1_settings_retention_defaults_enable_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstanceEnableRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceRetentionPolicyRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Enable Retention Defaults",
+        "tags": [
+          "Settings"
+        ]
+      }
+    },
+    "/api/v1/settings/retention-defaults/enable-preview": {
+      "get": {
+        "description": "Every project switching the default on would affect (no policy row, or\nno explicit ``enabled``), the hash ``POST …/enable`` must echo and the phrase\nit must type. An instance administrator's deployment-wide view. Writes\nNOTHING.",
+        "operationId": "preview_retention_defaults_enable_api_v1_settings_retention_defaults_enable_preview_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceEnablePreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Preview Retention Defaults Enable",
         "tags": [
           "Settings"
         ]

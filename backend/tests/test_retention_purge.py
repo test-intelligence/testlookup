@@ -103,8 +103,15 @@ class _FakeDB:
         delete_rowcounts=None,
         events=None,
         holds=(),
+        instance=None,
+        retained_archives=(),
     ):
         self.policy = policy
+        # W22b (deliberate): the instance retention policy row the resolver
+        # reads (none by default = the code defaults), and the
+        # ``(job_id, export_location)`` rows of the retained-archive select (E-12).
+        self.instance = instance
+        self.retained_archives = list(retained_archives)
         # W22a: the rows a read of ``retention_holds`` alone answers (none by
         # default — every existing test runs without a hold).
         self.holds = list(holds)
@@ -156,6 +163,9 @@ class _FakeDB:
             return _Dml(self.counts.get("event_archive_update", 0))
 
         s = str(stmt)
+        # W22b (deliberate): the resolver's instance read (ACT-06 W-1).
+        if "instance_retention_policy" in s:
+            return _Rows([self.instance] if self.instance is not None else [])
         if "project_retention_policies" in s:
             return _Rows([self.policy] if self.policy is not None else [])
         if "count(" in s:
@@ -168,6 +178,9 @@ class _FakeDB:
             if "test_runs" in s:
                 return _Rows([self.counts.get("event_archive", 0)])
             return _Rows([0])
+        # W22b (deliberate): the retained-archive select of the audit clock (E-12).
+        if "deletion_jobs" in s:
+            return _Rows(self.retained_archives)
         if "compliance_packs" in s:
             return _Rows(self.packs)
         if "live_sessions" in s:
@@ -428,6 +441,9 @@ async def test_preview_writes_nothing_and_returns_all_count_keys():
         "provenance_rows",
         "compliance_packs_expired", "evidence_artifact_rows",
         "analysis_cache_entries", "memory_entries_expired",
+        # W22b E-12 (a deliberate key): retained deletion archives leaving with
+        # their job rows on the audit clock (tests/test_retention_retained_archives.py).
+        "export_archives_expired",
         # SEARCH-009. Reported separately from analysis_cache_entries on
         # purpose: that counter is the AI ANALYSIS cache
         # (``ai_analysis_cache_*``), this one is the test-case SEARCH index
@@ -885,6 +901,17 @@ class _SweepSession:
         self.store["commits"] += 1
 
 
+def _patch_purge_lock(monkeypatch):
+    """W22b (deliberate): the sweep takes a per-project Redis lock first (no
+    Redis in the unit suite) — every project's lock is acquired here."""
+    from unittest.mock import AsyncMock
+
+    from app.worker import tasks
+
+    monkeypatch.setattr(tasks, "_claim_retention_purge_lock", AsyncMock(return_value="acquired"))
+    monkeypatch.setattr(tasks, "_release_retention_purge_lock", AsyncMock(return_value=None))
+
+
 async def test_sweep_isolates_failing_project_and_writes_zero_count_audit(monkeypatch):
     from app.worker.tasks import _retention_purge_sweep
 
@@ -895,6 +922,7 @@ async def test_sweep_isolates_failing_project_and_writes_zero_count_audit(monkey
     import app.db.postgres as pg_mod
 
     monkeypatch.setattr(pg_mod, "AsyncSessionLocal", lambda: _SweepSession(store))
+    _patch_purge_lock(monkeypatch)
 
     zero_counts = {
         "postgres": {"runs": 0},
@@ -953,6 +981,7 @@ async def test_sweep_explicit_project_skips_enabled_query(monkeypatch):
     import app.db.postgres as pg_mod
 
     monkeypatch.setattr(pg_mod, "AsyncSessionLocal", lambda: _SweepSession(store))
+    _patch_purge_lock(monkeypatch)
 
     seen: list[uuid.UUID] = []
 

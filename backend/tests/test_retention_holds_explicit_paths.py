@@ -512,6 +512,9 @@ async def test_h11_the_sweep_passes_what_the_purge_kept_and_broke(produced, monk
     mocker.patch.object(deletion_job_service, "open_job", AsyncMock(return_value=uuid.uuid4()))
     close = mocker.patch.object(deletion_job_service, "close_job", AsyncMock(return_value=True))
     mocker.patch("app.services.cache_service.bump_analytics_epoch", AsyncMock())
+    # W22b W-3: the per-project Redis purge lock (no Redis in the unit suite).
+    mocker.patch("app.worker.tasks._claim_retention_purge_lock", AsyncMock(return_value="acquired"))
+    mocker.patch("app.worker.tasks._release_retention_purge_lock", AsyncMock(return_value=None))
 
     await _retention_purge_sweep(str(project_id))
 

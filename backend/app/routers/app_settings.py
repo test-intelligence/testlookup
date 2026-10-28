@@ -3,9 +3,12 @@
 Security model:
   - GET endpoints: QA_LEAD or higher (secrets are never returned raw — only *_set booleans)
   - PUT endpoints: ADMIN only (audit-logged, secrets stored in secret_refs table)
+  - Retention defaults (W22b): ADMIN for every route, reads included; the writes
+    need an interactive login (an API key can only read them)
 """
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 import aiosmtplib
@@ -14,15 +17,22 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import CREDENTIAL_KIND_JWT, credential_kind, get_current_active_user, require_role
 from app.db.postgres import get_db
 from app.models.postgres import AppSetting, User, UserRole
+from app.services import retention_instance_service
+from app.services.retention_instance_service import InstancePolicyError
+from app.services.retention_service import RetentionValidationError
 from app.services.secret_service import extract_secrets_from_config, store_secret, strip_secrets_from_config
 from app.services.settings_audit_service import get_settings_audit_log, log_settings_change
 from app.models.schemas import (
     AIConfigRead,
     AIConfigUpdate,
     EmbeddingIndexRead,
+    InstanceEnablePreviewResponse,
+    InstanceEnableRequest,
+    InstanceRetentionPolicyRead,
+    InstanceRetentionPolicyWrite,
     IntegrationsConfigRead,
     IntegrationsConfigUpdate,
     MfaPolicyRead,
@@ -1540,3 +1550,107 @@ async def get_integration_health(
         }
         for h in result.scalars().all()
     ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Retention defaults — the single-row instance retention policy (W22b ACT-06)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# Every retention field a project leaves unset inherits these, field by field
+# (``retention_service.get_effective_policy``). ADMIN only — the instance
+# default drives the scheduled purge of every inheriting project. The two reads
+# answer any ADMIN credential; the two writes need an interactive (JWT) login:
+# an API key can read the defaults but never change them. Switching the default
+# ON is ONLY ``POST …/enable`` with the preview's hash and the typed phrase
+# (D12); switching it off is a plain audited PUT. Every write is audited in
+# ``settings_audit_log`` by the service; this router is unscoped (no ledger row).
+
+
+def _instance_policy_error(exc: InstancePolicyError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message})
+
+
+def _require_interactive_admin(current_user: User) -> None:
+    if credential_kind(current_user) != CREDENTIAL_KIND_JWT:
+        raise _instance_policy_error(InstancePolicyError("instance_interactive_only", 403))
+
+
+@router.get("/retention-defaults", response_model=InstanceRetentionPolicyRead)
+async def get_retention_defaults(
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> InstanceRetentionPolicyRead:
+    """The instance retention defaults: the stored values (NULL = the code
+    default), the code defaults, the effective values, how many projects
+    inherit each field, and who switched the default on. Reads only."""
+    return InstanceRetentionPolicyRead.model_validate(
+        await retention_instance_service.instance_policy_read(db)
+    )
+
+
+@router.get("/retention-defaults/enable-preview", response_model=InstanceEnablePreviewResponse)
+async def preview_retention_defaults_enable(
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> InstanceEnablePreviewResponse:
+    """Every project switching the default on would affect (no policy row, or
+    no explicit ``enabled``), the hash ``POST …/enable`` must echo and the phrase
+    it must type. An instance administrator's deployment-wide view. Writes
+    NOTHING."""
+    payload = await retention_instance_service.instance_enable_preview(db, now=datetime.now(timezone.utc))
+    return InstanceEnablePreviewResponse.model_validate(payload)
+
+
+@router.put("/retention-defaults", response_model=InstanceRetentionPolicyRead)
+async def update_retention_defaults(
+    payload: InstanceRetentionPolicyWrite,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> InstanceRetentionPolicyRead:
+    """Save the instance defaults (``clear`` resets a field to the code
+    default). ``enabled: true`` is refused (422 ``enable_via_flow``);
+    ``enabled: false`` switches the default off at once. Interactive login only."""
+    _require_interactive_admin(current_user)
+    try:
+        await retention_instance_service.upsert_instance_policy(
+            db,
+            actor=current_user,
+            values=payload.model_dump(exclude={"enabled", "clear"}),
+            clear=payload.clear or (),
+            enabled=payload.enabled,
+        )
+    except InstancePolicyError as exc:
+        raise _instance_policy_error(exc) from exc
+    except RetentionValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    await db.commit()
+    return InstanceRetentionPolicyRead.model_validate(
+        await retention_instance_service.instance_policy_read(db)
+    )
+
+
+@router.post("/retention-defaults/enable", response_model=InstanceRetentionPolicyRead)
+async def enable_retention_defaults(
+    payload: InstanceEnableRequest,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> InstanceRetentionPolicyRead:
+    """Switch the instance default ON for every project without its own
+    ``enabled`` (D12): the preview's hash must still match (409
+    ``preview_stale``) and the confirmation must be the exact phrase (422
+    ``confirmation_mismatch``). Interactive login only."""
+    _require_interactive_admin(current_user)
+    try:
+        await retention_instance_service.enable_instance_policy(
+            db,
+            actor=current_user,
+            confirmation=payload.confirmation,
+            preview_hash=payload.preview_hash,
+            now=datetime.now(timezone.utc),
+        )
+    except InstancePolicyError as exc:
+        raise _instance_policy_error(exc) from exc
+    await db.commit()
+    return InstanceRetentionPolicyRead.model_validate(
+        await retention_instance_service.instance_policy_read(db)
+    )

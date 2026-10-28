@@ -52,6 +52,39 @@ locally by default.
 
 ### Added
 
+- **Export before delete, a purge window and pause, and instance-wide
+  retention defaults** (wave W22b, ACT-03 + ACT-06; branch
+  `feat/df-retention-b-20261028`). A **criteria deletion** can first build an
+  archive of the selected runs — `summary`, `evidence` (failure text and
+  decision reports, sanitized) or `full` (raw documents and text
+  attachments after secret redaction; binary attachments are listed, never
+  copied) — sign it, write it to the object store, read it back and verify
+  it; only then is anything deleted, and a failed or unverifiable archive
+  deletes nothing. "Download an archive first" hands it to an administrator:
+  **nothing is deleted until they download it and confirm with its
+  manifest checksum**; an archive not collected within 72 hours
+  (`RETENTION_EXPORT_COLLECT_TTL_HOURS`) expires, is removed, and nothing is
+  deleted. "Keep an archive in storage" keeps it in the deployment's object
+  store (only the difference is reclaimed). Archives are capped at 512 MiB
+  (`RETENTION_EXPORT_MAX_BYTES`) and 2000 runs, verify with
+  `testlookup compliance-pack verify`, honour retention holds, and are
+  **an archive, not a backup — they cannot be re-imported**. The archive is
+  downloaded through the API (no storage link is exposed). Deletion jobs now
+  record the bytes reclaimed and are listed on Settings › Retention.
+  **Behaviour change for existing installs:** the scheduled purge now runs
+  **hourly** and purges each project in its own window hour (default 02:00
+  UTC, so nothing changes for a project that sets none); a project can be
+  **paused for 7 days**; a project another purge is already running for is
+  skipped (and so is every project while Redis is unreachable). **Instance
+  defaults** (Settings › Retention › Instance defaults): every retention
+  field a project leaves unset now inherits an instance default, resolved
+  field by field and marked "(instance default)"; explicit project values
+  are untouched by the upgrade. The instance default ships **off** and is
+  switched on only through a preview of every affected project and the typed
+  phrase "enable retention for N projects"; an explicit project "off" stays
+  off. Migrations `0241` (deletion-job export columns) and `0242` (policy
+  columns nullable, window, pause, the single-row instance policy; no row
+  rewritten).
 - **Retention holds, a keep-last-runs floor, and warnings for the links a
   deletion breaks** (wave W22a, ACT-05 + ACT-04; branch
   `feat/df-retention-a-20261028`). A **retention hold** keeps evidence from
