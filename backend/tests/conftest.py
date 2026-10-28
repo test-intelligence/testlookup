@@ -211,22 +211,35 @@ def ns():
     return SimpleNamespace
 
 
-@pytest.fixture(autouse=True)
-def _activity_live_publish_off(monkeypatch):
-    """The activity live tail is OFF in every test unless the test turns it on.
+@pytest.fixture(autouse=True, scope="session")
+def _activity_live_publish_off():
+    """The activity live tail is OFF for the whole session unless a test turns it on.
 
     ``service.record`` stages each outcome row for a publish after its
     session's commit, and an attempt row publishes after its own commit
     (W21d ACT-02). Off here, no existing test gains a session listener, a
     scheduled task or a Redis call; the live tests set
     ``app.services.activity.live.PUBLISH_ENABLED`` back to True inside the
-    test (and assert the positive: the recorder saw the row).
+    test with ``monkeypatch`` (restored to False after it) and assert the
+    positive: the recorder saw the row.
+
+    SESSION scope, not function scope: a function fixture is undone between
+    tests, so module-scoped fixtures (set up before the first test, torn down
+    after the last) ran with publishing ON. In CI, with Redis configured, their
+    commits published from the module's loop, which bound the cached Redis pool
+    to a loop that then closed; the next fixture's ``close_redis()`` raised
+    before it disposed the app engine, and later modules got "Event loop is
+    closed" (PR #296's integration job).
     """
     try:
         import app.services.activity.live as live
     except Exception:  # pragma: no cover - an import-broken tree fails elsewhere
+        yield
         return
-    monkeypatch.setattr(live, "PUBLISH_ENABLED", False, raising=False)
+    previous = getattr(live, "PUBLISH_ENABLED", True)
+    live.PUBLISH_ENABLED = False
+    yield
+    live.PUBLISH_ENABLED = previous
 
 
 @pytest.fixture(autouse=True)

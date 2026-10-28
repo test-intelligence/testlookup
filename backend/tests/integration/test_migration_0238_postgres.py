@@ -72,9 +72,9 @@ def _migration():
 
 @pytest.fixture
 async def conn():
-    from app.db.mongo import close_mongo
+    # Redis and Mongo are never bound here, so they are not closed here either: closing a client an earlier
+    # module bound on its own (closed) loop raised "Event loop is closed" in this teardown on CI.
     from app.db.postgres import dispose_engine_for_loop
-    from app.db.redis_client import close_redis
 
     await dispose_engine_for_loop()
     engine = create_async_engine(_dsn(), pool_size=1, max_overflow=0)
@@ -93,8 +93,6 @@ async def conn():
     finally:
         await engine.dispose()
         await dispose_engine_for_loop()
-        await close_redis()
-        await close_mongo()
 
 
 #: What 0238 reads of each table (the columns its two indexes name).
