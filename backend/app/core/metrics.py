@@ -774,6 +774,18 @@ activity_events_dropped_total = Counter(
     ["reason"],
 )
 
+# W21d ACT-02: the live tail publishes a committed ledger row to Redis AFTER
+# its transaction commits, and drops it (never fails the mutation) when Redis
+# is down, slow or the row is too large. This counter is how an operator tells
+# a dead tail from a quiet one. Incremented in services/activity/live.py.
+activity_live_published_total = Counter(
+    "testlookup_activity_live_published_total",
+    "Activity rows offered to the live tail after commit, by result",
+    # published | dropped_error | dropped_oversize | dropped_no_loop
+    # | skipped_rolled_back
+    ["result"],
+)
+
 # E9.5: fraction of candidate workflow steps backed by an exact replay-cache
 # key during the latest dry-run. Project/workflow labels are bounded by stored
 # definitions and let operators distinguish a safe regression result from an

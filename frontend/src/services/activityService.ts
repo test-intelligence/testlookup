@@ -1,3 +1,5 @@
+import type { Involvement, MineView } from '@/types/activityLive'
+
 import { api } from './api'
 
 /**
@@ -114,6 +116,41 @@ export async function getActivityEvent(
   const { data } = await api.get<ActivityEventDetail>(
     `/api/v1/projects/${projectId}/activity/${eventId}`,
   )
+  return data
+}
+
+/**
+ * The caller's activity, GET /activity/mine (W21d ACT-02): their own rows and the
+ * rows that involve them, across every project they can reach (or the one
+ * `project_id` pins). Each item is the feed's item plus why it is listed.
+ */
+export interface MyActivityItem extends ActivityEvent {
+  involvement: Involvement
+}
+
+export interface MyActivityPage {
+  items: MyActivityItem[]
+  /** Distinct rows of this view in the window; ignores the cursor. */
+  total: number
+  next_cursor: string | null
+  window: { since: string; until: string | null }
+  view: MineView
+  /** Projects the read covered; null = every project (admin); 0 = no membership. */
+  projects: number | null
+}
+
+export interface MyActivityQuery {
+  view?: MineView
+  since?: string
+  until?: string
+  limit?: number
+  cursor?: string
+  /** Pins the read to one project (the Inbox's active project); omitted = every reachable project. */
+  project_id?: string
+}
+
+export async function listMyActivity(query: MyActivityQuery = {}): Promise<MyActivityPage> {
+  const { data } = await api.get<MyActivityPage>('/api/v1/activity/mine', { params: query })
   return data
 }
 

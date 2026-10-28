@@ -2067,8 +2067,9 @@ class NotificationLogResponse(BaseModel):
     sent_at: Optional[datetime]
     created_at: datetime
     # W09 NTF-01: an in-app path the bell may link to, set by the history route
-    # from ``gate_notifications.app_link(row.delivery_metadata)``: one of two
-    # allow-listed shapes (``/releases/<uuid>``, ``/release-gate/<uuid>``), else None.
+    # from ``gate_notifications.app_link(row.delivery_metadata)``: one of the
+    # allow-listed shapes (``/releases/<uuid>``, ``/release-gate/<uuid>``,
+    # ``/test-management?case=<uuid>``), else None.
     link: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -3879,6 +3880,17 @@ class TestCaseCommentCreate(BaseModel):
     step_number: Optional[int] = None
 
 
+class CommentMention(BaseModel):
+    """A project member an ``@username`` in a test-case comment resolved to (W21d ACT-02).
+
+    Ids and display names only: never an e-mail.
+    """
+
+    user_id: uuid.UUID
+    username: str
+    display_name: str
+
+
 class TestCaseCommentResponse(BaseModel):
     id: uuid.UUID
     test_case_id: uuid.UUID
@@ -3890,6 +3902,10 @@ class TestCaseCommentResponse(BaseModel):
     is_resolved: bool
     created_at: datetime
     updated_at: datetime
+    # Filled by POST .../comments from the members it notified; [] on every
+    # list read (mentions are not stored on the comment). The default keeps
+    # every existing caller and hand-built row validating.
+    mentions: List[CommentMention] = []
 
     model_config = ConfigDict(from_attributes=True)
 
