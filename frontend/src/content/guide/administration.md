@@ -100,11 +100,20 @@ Self-registration is off unless the deployment turns it on (`REGISTRATION_ENABLE
 
 ### Retention and purge
 
-**Retention & purge** (`/settings/retention`, administrators, one project): how long the project keeps raw events, runs and their analysis, artifacts, and audit records (each in days; audit must be at least as long as runs). Nothing is purged until you tick **Enable scheduled purging for this project** and **Save policy**; the purge then runs nightly at 02:00 UTC.
+**Retention & purge** (`/settings/retention`, administrators, one project): how long the project keeps raw events, runs and their analysis, artifacts, and audit records (each in days; audit must be at least as long as runs). Nothing is purged until you tick **Enable scheduled purging for this project** and **Save policy**; the purge then runs once a day in the project's **Purge window (UTC)** (02:00 unless you pick another hour).
 
 - **Preview purge** is a dry run: it shows what would be deleted now, without deleting anything.
-- **Purge now** (policy enabled) asks you to type the project's name, then queues the purge.
+- **Purge now** (policy enabled) asks you to type the project's name, then queues the purge. It ignores the window and a pause.
+- **Pause 7 days** stops the scheduled purge for a week (**Paused until …**); **Resume** ends the pause. The line beside it says when the next scheduled purge runs.
 - **Delete by criteria** removes a selected subset.
+
+**Instance defaults**: a field the project does not set uses the instance default, field by field. The card marks each one — **180 days (instance default) · Override**, **365 days (default) · Override**, or **Project value · Reset to inherited**. **Override** makes the inherited value the project's own when you save; **Reset to inherited** goes back to the instance default. Administrators set the defaults in the **Instance defaults** card at the bottom of the page (**Open**; an empty field means the built-in default; **Used by N projects** shows who inherits it). The instance default ships **off**: **Turn on for every project without its own setting…** lists every project it would switch on, and you type the phrase shown (for example **enable retention for 7 projects**) before **Turn on**. A project that explicitly turned scheduled purging off stays off. **Turn off** asks once, inline.
+
+**Export before delete**: after a **Delete by criteria** preview, choose **Delete without an archive** (the default), **Download an archive first**, or **Keep an archive in storage**, and a tier — **Summary** (runs and test results), **Evidence** (plus failure details and reports) or **Full** (plus raw payloads and text attachments after secret redaction; binary attachments are listed, not copied). Each shows its estimated size and what the deletion reclaims. **Archive, not a backup — it cannot be re-imported.** An archive is built and verified before anything is deleted; a failed archive deletes nothing.
+
+- **Deletion jobs** lists every deletion: status, archive (tier, verified) and bytes reclaimed.
+- A **Download an archive first** job waits as **Awaiting collection**: **Collect** → **Download archive** → **I have saved it** (enabled once the whole archive has downloaded). Only then are the runs deleted. Collect within 72 hours; after that nothing is deleted and the archive is removed.
+- Archives cover at most 2000 runs and 512 MB; a tier over the limit is disabled.
 
 **Search usage rows** (the per-search records behind the Search page's usage tiles: no query text, no user) are not on a clock you set: every deployment keeps them 30 days and deletes older ones nightly, whatever the policy. The preview lists the project's rows older than that as **Search usage rows (kept 30 days)**, and a purge deletes them with the rest.
 

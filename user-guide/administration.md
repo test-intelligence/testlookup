@@ -354,12 +354,12 @@ Bounds: raw events/artifacts 7–3650, runs 30–3650, audit 365–3650 days.
 | `ai_versions_per_run` | 20 | 1–100 | Versions kept per run, per kind (analysis digest, run summary) |
 | `ai_versions_per_test` | 10 | 1–100 | Versions kept per test result |
 
-When a cap is exceeded the **oldest** versions go first, with two exceptions that are never pruned: **version 1** (the first answer) and **any version a published decision report cites**. If the decision reports cannot be read at that moment, nothing is pruned (the next sweep tries again). The caps apply as versions are written, whether or not the policy is enabled; the nightly sweep (enabled projects only) catches up on versions over the cap, for example after you lower one. The preview counts them as **AI history versions**: the versions of runs past the runs window, plus the versions over a cap. Set a cap back to 20 / 10 to restore the defaults.
+When a cap is exceeded the **oldest** versions go first, with two exceptions that are never pruned: **version 1** (the first answer) and **any version a published decision report cites**. If the decision reports cannot be read at that moment, nothing is pruned (the next sweep tries again). The caps apply as versions are written, whether or not the policy is enabled; the scheduled purge (enabled projects only) catches up on versions over the cap, for example after you lower one. The preview counts them as **AI history versions**: the versions of runs past the runs window, plus the versions over a cap. Set a cap back to 20 / 10 to restore the defaults.
 
 **Preview-first workflow (recommended):**
 1. **Preview purge** (`POST .../retention-policy/preview`) — a dry run returning the per-class cutoffs and exactly what a purge would delete now. It works while the policy is still disabled and writes nothing.
 2. Tune the windows and enable the policy (**Save policy**).
-3. Wait for the nightly sweep (02:00 UTC, enabled projects only) or **Purge now**, typing the project's name to confirm (`confirmation_name`; a mismatch is `422`, a disabled policy `409`). The purge runs in the background worker.
+3. Wait for the scheduled purge (hourly, each enabled project in its own [purge window](#purge-window-and-pause) — 02:00 UTC unless you change it) or **Purge now**, typing the project's name to confirm (`confirmation_name`; a mismatch is `422`, a disabled policy `409`). The purge runs in the background worker.
 
 Every purge — scheduled or manual — writes a **purge-audit record** (`settings_audit_log`, key `retention_purge:<project_id>`) with the cutoffs, per-store deletion counts, duration and errors; the latest is `last_purge` on the policy.
 
@@ -399,6 +399,43 @@ The scheduled purge always keeps the newest **`keep_last_runs`** runs of the pro
 ### Links a deletion breaks
 
 Some rows point at a run with a link that is **cleared, not deleted**, when the run goes — a later run's baseline link, a run diff's baseline, a compliance pack's run link, and the other such links in the schema. The purge preview, the criteria preview and `DELETE /api/v1/runs/{id}` list them (`references_broken`, e.g. `3 runs lose their baseline link`). They are **warnings, never blocks**; when the count cannot be taken the answer says *not measured* (`references_measured: false`), never "none". The deletion job records them (`references_broken`). A run whose baseline was purged says so on its **Changes** tab (`Baseline build 4471 was purged on …`), keeping the build number.
+
+### Purge window and pause
+
+The scheduled purge runs **every hour** and purges each enabled project only in its **purge window** — one UTC hour, **Purge window (UTC)** on the policy card (`purge_window_start_utc`, 0–23, default **02:00**; a deployment that changes nothing purges at the same hour as before). The status line under it reads `Next scheduled purge Oct 29, 2026, 03:00 UTC`, or `Scheduled purging is off for this project.` while the policy is disabled.
+
+- **Pause 7 days** stops the scheduled purge of the project for a week (`{"pause_days": 7}`, 1–90 through the API); the card shows `Paused until …` and **Resume** (`{"resume": true}`) ends it early. Pause and Resume save at once; finish or discard other edits first. Pausing and resuming are audited (who and when).
+- **Purge now** ignores the window and the pause — it is explicit, typed and admin-only.
+- Only one purge of a project runs at a time: a purge that finds another one of the same project still running is **skipped** (`already_running`), not failed. If the lock store (Redis) cannot be reached, the scheduled purge **skips** the project (`lock_unavailable`) rather than risk two purges at once; the next window retries.
+
+### Instance defaults
+
+Every retention field a project leaves unset — **enabled**, the four windows, the keep-last floor and the purge window — reads the **instance default**, resolved field by field: the project's own value, else the instance default, else the built-in default. Explicit project values always win; the AI-history caps and the pause are per project only.
+
+- The policy card marks each field by where its value comes from: `180 days (instance default) · Override`, `365 days (default) · Override`, or `Project value · Reset to inherited`. An inherited field shows its value disabled; **Override** makes it the project's own value on **Save policy**; **Reset to inherited** clears the project's value (the PUT's `"inherit": ["runs_days"]`).
+- **Settings → Retention & purge → Instance defaults** (administrators; it loads nothing until you **Open** it) sets the instance values — an empty field means the built-in default — and shows how many projects use each (`Used by 4 projects`). API: `GET` / `PUT /api/v1/settings/retention-defaults`.
+- **The instance default ships off.** Turning it on (**Turn on for every project without its own setting…**) first lists every project it would switch on — projects with no policy, or no explicit **enabled** (an explicit *off* stays off), active or not — with the runs past their window (before the keep-last floor and holds). You then type the phrase shown, e.g. `enable retention for 7 projects`, and **Turn on**. If the set of projects changed since the preview, you are asked to preview again. API: `GET /api/v1/settings/retention-defaults/enable-preview`, then `POST /api/v1/settings/retention-defaults/enable` with `{"confirmation", "preview_hash"}`. **Turn off** is a plain, audited save. Every instance change is audited (`retention_instance_policy`); API keys can only read it.
+- Changing an instance window moves the purge of every project that inherits it; check `Used by N projects` before saving.
+
+### Export before delete
+
+A **Delete by criteria** can build an archive of the runs first. After **Preview**, the export step offers:
+
+| Choice | What happens |
+|---|---|
+| **Delete without an archive** (default) | Today's deletion. |
+| **Download an archive first** (`collect`) | The archive is built, stored, read back and verified; the job then waits as **Awaiting collection**. Nothing is deleted until an administrator downloads it and confirms. |
+| **Keep an archive in storage** (`retain`) | The archive is built and verified, kept in this deployment's object store, then the runs are deleted. Only the difference is reclaimed. |
+
+Three tiers, each with a size estimate (`not measured` when a store could not be read, never 0) beside **Reclaims ≈ …**:
+
+- **Summary** — the runs and their test results (names, statuses, durations); no error text.
+- **Evidence** — Summary plus failure messages and stack traces, decision reports, evidence metadata and the AI run report, sanitised.
+- **Full** — Evidence plus raw payloads and text attachments after secret redaction; binary attachments such as screenshots and ZIP files are listed, not copied. It can be large.
+
+**Archive, not a backup — it cannot be re-imported.** An archive is a signed record of what was deleted (verify it offline with `testlookup compliance-pack verify <zip> --manifest-sha256 <digest>`), not something TestLookup can restore from. Limits: 2000 runs and 512 MB per archive (a larger tier is disabled with `Over the 512 MB limit`; narrow the criteria or choose a smaller tier). Runs under a live [hold](#retention-holds) are left out of the archive and the deletion.
+
+**Collecting.** The **Deletion jobs** card (same page) lists every deletion with its status, archive (tier · target, verified), and the bytes reclaimed (`not measured` when the store could not be listed; for a retained archive also the net and the archive-to-reclaimed ratio). On an **Awaiting collection** job: **Collect** → **Download archive** (the archive streams through TestLookup; there is no shareable link) → **I have saved it**, which is enabled only once the whole archive has downloaded, and sends the archive's manifest checksum. The deletion then runs. Collect within **72 hours**: after that the job reads `Not collected within 72 hours — nothing was deleted; the archive was removed.` Collecting and confirming need a signed-in administrator; API keys cannot. A failed or unverifiable archive ends the job **Failed** (`Export failed — nothing was deleted: …`). Every step is audited (`deletion_export:<project_id>`), and the confirmation appears in the activity log.
 
 ## Backup, restore & upgrades
 

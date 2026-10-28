@@ -13,16 +13,26 @@
  *     as "not reported" and never sent.
  *     Plus the keep-last floor (W22a ACT-04): `keep_last_runs` 0–1000, sent
  *     only when changed (RetentionFloorField).
+ *     Plus (W22b ACT-06) the purge window hour and the 7-day pause
+ *     (RetentionScheduleField), and per inheritable field an InheritedMarker
+ *     (`180 days (instance default) · Override` / `Project value · Reset to
+ *     inherited`) — only when the policy GET carries `field_sources`; a reset
+ *     field is sent in `inherit`, never as a value.
  *   • Retention holds (W22a ACT-05) — HoldsCard: list / place a project hold
  *     / release, inline; its one read is issued only in this admin branch.
  *   • Preview — dry-run POST that renders the cutoff timestamps and the
- *     purge-candidate counts (computed now; the nightly job may differ), then
+ *     purge-candidate counts (computed now; the scheduled job may differ), then
  *     what holds and the floor keep and the links a purge breaks
  *     (PreviewKeptLines).
+ *   • Delete by criteria (S5; W22b ACT-03 adds the export step) and the
+ *     Deletion jobs card (W22b: status, archive, reclaimed bytes, collect /
+ *     acknowledge) — the jobs read is issued only in this admin branch.
  *   • Danger zone — "Purge now" behind a typed-project-name confirmation
  *     (GitHub repo-delete UX, mirrors ProjectDataPage), opened in the page
  *     right under the Manual purge row (W27b PAN-06: no modal). Disabled while
  *     the saved policy is disabled — the backend 409s in that state anyway.
+ *   • Instance defaults (W22b ACT-06, G-C's InstanceDefaultsCard) — no request
+ *     until it is opened.
  *
  * The in-component ADMIN gate is a forcing function against autopilot
  * clicks, not a security check: the backend enforces ADMIN on every write.
@@ -47,6 +57,19 @@ import HoldsCard from '@/components/retention/HoldsCard'
 import PreviewKeptLines from '@/components/retention/PreviewKeptLines'
 import RetentionFloorField from '@/components/retention/RetentionFloorField'
 import { KEEP_LAST_RUNS_DEFAULT, validateKeepLastRuns } from '@/components/retention/holdsModel'
+import InheritedMarker from '@/components/retention/InheritedMarker'
+import RetentionScheduleField from '@/components/retention/RetentionScheduleField'
+import DeletionJobsCard from '@/components/retention/DeletionJobsCard'
+import InstanceDefaultsCard from '@/components/retention/InstanceDefaultsCard'
+import {
+  inheritedValue,
+  inheritPayload,
+  modesFromPolicy,
+  PURGE_WINDOW_DEFAULT_HOUR,
+  type FieldMode,
+  type FieldModes,
+  type InheritableField,
+} from '@/components/retention/scheduleModel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
@@ -143,6 +166,8 @@ const CANDIDATE_ROWS: Array<{
   { key: 'search_usage_rows', label: 'Search usage rows (kept 30 days)' },
   // W16 AGT-13: pending shadow pairs, the same kind of fixed window; labelled pairs stay.
   { key: 'shadow_pairs_unlabelled', label: 'Unlabelled shadow pairs (kept 30 days)' },
+  // W22b ACT-03: a retained archive leaves with its deletion job on the audit clock.
+  { key: 'export_archives_expired', label: 'Retained deletion archives' },
 ]
 
 /** Editable form shape — counts as strings so typing is never fought. */
@@ -157,17 +182,33 @@ interface FormState {
   ai_versions_per_test: string
   /** W22a ACT-04: the keep-last floor, 0–1000 (the server default 10 when not reported). */
   keep_last_runs: string
+  /** W22b ACT-06: the purge window hour, '0'–'23' (sent only when the server reports it and it changed). */
+  purge_window_start_utc: string
+  /** W22b ACT-06: per inheritable field, own value or inherited (`{}` when the server sends no sources). */
+  modes: FieldModes
 }
 
-type FormField = RetentionDayField | RetentionCapField | 'keep_last_runs'
+type FormField = RetentionDayField | RetentionCapField | 'keep_last_runs' | 'purge_window_start_utc'
 
 /** The saved floor; a server that does not report it applies the default. */
 function savedFloor(policy: RetentionPolicy): number {
   return policy.keep_last_runs ?? KEEP_LAST_RUNS_DEFAULT
 }
 
+/** The saved window; null on an older server (no schedule field, nothing sent). */
+function savedWindow(policy: RetentionPolicy): number | null {
+  return typeof policy.purge_window_start_utc === 'number' ? policy.purge_window_start_utc : null
+}
+
+/** The extra input classes of an inheritable field (none without sources: the DOM stays as it was). */
+function inheritClasses(mode: FieldMode | undefined): string {
+  return mode ? ' disabled:cursor-not-allowed disabled:opacity-60' : ''
+}
+
 function toFormState(policy: RetentionPolicy): FormState {
   return {
+    purge_window_start_utc: String(savedWindow(policy) ?? PURGE_WINDOW_DEFAULT_HOUR),
+    modes: modesFromPolicy(policy),
     enabled: policy.enabled,
     raw_events_days: String(policy.raw_events_days),
     runs_days: String(policy.runs_days),
@@ -258,13 +299,25 @@ function validate(
   return errors
 }
 
-/** Build the partial PUT body — only fields that differ from the saved policy. */
+/**
+ * Build the partial PUT body — only fields that differ from the saved policy.
+ *
+ * W22b ACT-06: a field still inherited is never sent; a field reset to
+ * inherited goes in `inherit` (never also as a value); an inherited field the
+ * admin overrode is sent with its value even when it is unchanged (it becomes
+ * the project's own). A policy without sources keeps today's diff.
+ */
 function diffPayload(form: FormState, saved: RetentionPolicy): RetentionPolicyWrite {
   const payload: RetentionPolicyWrite = {}
-  if (form.enabled !== saved.enabled) payload.enabled = form.enabled
+  const plan = inheritPayload(form, saved)
+  const skip = new Set<InheritableField>([...plan.inherited, ...plan.inherit])
+  const force = new Set<InheritableField>(plan.override)
+  const send = (field: InheritableField, changed: boolean) =>
+    !skip.has(field) && (force.has(field) || changed)
+  if (send('enabled', form.enabled !== saved.enabled)) payload.enabled = form.enabled
   for (const { field } of DAY_FIELDS) {
     const value = parseDays(form[field])
-    if (value !== saved[field]) payload[field] = value
+    if (send(field, value !== saved[field])) payload[field] = value
   }
   // A cap the server does not report is never sent.
   for (const field of reportedCaps(saved)) {
@@ -273,7 +326,14 @@ function diffPayload(form: FormState, saved: RetentionPolicy): RetentionPolicyWr
   }
   // The floor is sent only when it changed.
   const floor = parseDays(form.keep_last_runs)
-  if (floor !== savedFloor(saved)) payload.keep_last_runs = floor
+  if (send('keep_last_runs', floor !== savedFloor(saved))) payload.keep_last_runs = floor
+  // The window: only when the server reports it, and only when it changed.
+  const savedHour = savedWindow(saved)
+  if (savedHour !== null) {
+    const hour = parseDays(form.purge_window_start_utc)
+    if (send('purge_window_start_utc', hour !== savedHour)) payload.purge_window_start_utc = hour
+  }
+  if (plan.inherit.length > 0) payload.inherit = plan.inherit
   return payload
 }
 
@@ -401,6 +461,8 @@ export default function RetentionPage() {
   const [preview, setPreview] = useState<RetentionPreview | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  // W22b: bumped after a criteria execute so the jobs card re-reads its list.
+  const [jobsRefresh, setJobsRefresh] = useState(0)
 
   const [purgeOpen, setPurgeOpen] = useState(false)
 
@@ -489,6 +551,48 @@ export default function RetentionPage() {
   function editDay(field: FormField, value: string) {
     setForm((f) => (f ? { ...f, [field]: value } : f))
     setDirty(true)
+  }
+
+  /** W22b: `Override` — the inherited field becomes editable and is sent on Save. */
+  function overrideField(field: InheritableField) {
+    setForm((f) => (f ? { ...f, modes: { ...f.modes, [field]: 'own' } } : f))
+    setDirty(true)
+  }
+
+  /** W22b: `Reset to inherited` — the inherited value, disabled, sent in `inherit` on Save. */
+  function resetField(field: InheritableField) {
+    const inherited = seededPolicy ? inheritedValue(field, seededPolicy) : null
+    setForm((f) => {
+      if (!f) return f
+      const next: FormState = { ...f, modes: { ...f.modes, [field]: 'inherit' } }
+      if (inherited === null) return next
+      if (field === 'enabled') return { ...next, enabled: Boolean(inherited) }
+      return { ...next, [field]: String(inherited) }
+    })
+    setDirty(true)
+  }
+
+  /** The marker of one inheritable field (renders nothing without sources). */
+  function marker(field: InheritableField) {
+    if (!seededPolicy) return null
+    return (
+      <InheritedMarker
+        field={field}
+        policy={seededPolicy}
+        mode={form?.modes[field]}
+        onOverride={() => overrideField(field)}
+        onReset={() => resetField(field)}
+        disabled={saving}
+      />
+    )
+  }
+
+  /** Pause / Resume saved their own PUT: re-seed from the answer. */
+  async function scheduleSaved(saved: RetentionPolicy) {
+    setSeededPolicy(saved)
+    setForm(toFormState(saved))
+    setDirty(false)
+    await mutate(saved, { revalidate: false })
   }
 
   async function save() {
@@ -581,21 +685,23 @@ export default function RetentionPage() {
           <input
             type="checkbox"
             checked={form.enabled}
+            disabled={form.modes.enabled === 'inherit' || undefined}
             onChange={(e) => editEnabled(e.target.checked)}
-            className="mt-0.5"
+            className={`mt-0.5${inheritClasses(form.modes.enabled)}`}
           />
           <span>
             <span className="block text-[var(--color-text)]">
               Enable scheduled purging for this project
             </span>
             <span className="mt-0.5 block text-[var(--color-text-faint)]">
-              The nightly purge only runs for projects where this is enabled. Leaving it off keeps
+              The scheduled purge only runs for projects where this is enabled. Leaving it off keeps
               everything forever; you can still preview what a purge would remove.
             </span>
+            {marker('enabled')}
           </span>
         </label>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div data-retention-day-fields="" className="grid gap-3 sm:grid-cols-2">
           {DAY_FIELDS.map(({ field, label, help }) => {
             const { min, max } = RETENTION_BOUNDS[field]
             const fieldError = errors[field]
@@ -614,17 +720,19 @@ export default function RetentionPage() {
                   min={min}
                   max={max}
                   value={form[field]}
+                  disabled={form.modes[field] === 'inherit' || undefined}
                   onChange={(e) => editDay(field, e.target.value)}
                   aria-invalid={Boolean(fieldError)}
                   className={`mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border rounded ${
                     fieldError ? 'border-[var(--status-failed-bd)]/60' : 'border-[var(--color-border)]'
-                  }`}
+                  }${inheritClasses(form.modes[field])}`}
                 />
                 {fieldError ? (
                   <span className="mt-1 block text-[var(--status-failed)]">{fieldError}</span>
                 ) : (
                   <span className="mt-1 block text-[var(--color-text-faint)]">{help}</span>
                 )}
+                {marker(field)}
               </label>
             )
           })}
@@ -635,7 +743,27 @@ export default function RetentionPage() {
           value={form.keep_last_runs}
           error={errors.keep_last_runs}
           onChange={(value) => editDay('keep_last_runs', value)}
+          marker={
+            form.modes.keep_last_runs
+              ? { node: marker('keep_last_runs'), inherited: form.modes.keep_last_runs === 'inherit' }
+              : undefined
+          }
         />
+
+        {/* ── Purge window + pause (W22b ACT-06) — only when the server reports the window. */}
+        {savedWindow(seededPolicy) !== null && (
+          <RetentionScheduleField
+            projectId={activeProjectId}
+            policy={seededPolicy}
+            value={form.purge_window_start_utc}
+            mode={form.modes.purge_window_start_utc}
+            dirty={hasChanges}
+            onChange={(value) => editDay('purge_window_start_utc', value)}
+            onOverride={() => overrideField('purge_window_start_utc')}
+            onReset={() => resetField('purge_window_start_utc')}
+            onSaved={(saved) => void scheduleSaved(saved)}
+          />
+        )}
 
         {/* ── AI history caps (W03 AIH-06) ─────────────────────────────
             Versions kept, not days. Enforced whenever a version is stored,
@@ -831,7 +959,7 @@ export default function RetentionPage() {
             <PreviewKeptLines preview={preview} />
 
             <p className="text-[11px] text-[var(--color-text-faint)]">
-              Counts are computed right now; the nightly job runs later against live data, so its
+              Counts are computed right now; the scheduled job runs later against live data, so its
               numbers may differ slightly.
             </p>
           </div>
@@ -840,8 +968,17 @@ export default function RetentionPage() {
 
       {/* ── Danger zone ─────────────────────────────────────────────── */}
       {activeProjectId && activeProjectId !== ALL_PROJECTS_ID && (
-        <CriteriaDeletionPanel projectId={activeProjectId} projectName={projectName} />
+        <CriteriaDeletionPanel
+          projectId={activeProjectId}
+          projectName={projectName}
+          onExecuted={() => setJobsRefresh((n) => n + 1)}
+        />
       )}
+
+      {/* ── Deletion jobs (W22b ACT-03) ────────────────────────────────
+          Mounted only in this admin branch: its one read is never issued
+          for a QA lead's refusal page. */}
+      <DeletionJobsCard projectId={activeProjectId} refreshSignal={jobsRefresh} />
 
       <section className="card space-y-4 border-[var(--status-failed-bd)]/40" aria-labelledby="retention-danger-heading">
         <header className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--status-failed)]">
@@ -853,7 +990,7 @@ export default function RetentionPage() {
             <h3 className="text-sm font-medium text-[var(--color-text)]">Manual purge</h3>
             <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">
               Queue an immediate purge with the saved retention windows instead of waiting for the
-              nightly run. Deletions are permanent; every purge writes an audit record.
+              scheduled run. Deletions are permanent; every purge writes an audit record.
             </p>
           </div>
           <button
@@ -904,6 +1041,10 @@ export default function RetentionPage() {
           </div>
         )}
       </section>
+
+      {/* ── Instance defaults (W22b ACT-06, G-C's card) ────────────────
+          Admin branch only; it issues NO request until it is opened. */}
+      <InstanceDefaultsCard />
     </div>
   )
 }
