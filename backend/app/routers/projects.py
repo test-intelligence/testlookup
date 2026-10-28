@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, false, func, not_, null, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,6 +17,7 @@ from app.core.deps import (
 from app.db.postgres import get_db
 from app.services.activity.service import ActorRef, record as record_activity
 from app.models.postgres import (
+    InstanceRetentionPolicy,
     Project,
     ProjectMember,
     ProjectRetentionPolicy,
@@ -38,17 +39,20 @@ from app.services.project_reset_service import (
     reset_project,
 )
 from app.services import retention_hold_service
+from app.services.retention_service import effective_enabled_expr
 
 router = APIRouter(prefix="/api/v1/projects", tags=["Projects"])
 
 
 def _retention_status(enabled: bool | None) -> str:
-    """Map the LEFT-JOINed policy flag onto the three-state posture.
+    """Map the LEFT-JOINed effective policy flag onto the three-state posture.
 
-    ``None`` is not "disabled": the column is NOT NULL, so a NULL can only
-    come from the outer join finding no row — i.e. retention was never
-    configured for this project at all. That is the population S1's nudge
-    targets, and folding it into "disabled" would make it invisible.
+    ``None`` is not "disabled": ``list_projects`` selects NULL only when the
+    project has NO policy row AND no enabling instance default (W22b) — i.e.
+    retention was never configured for this project at all. That is the
+    population S1's nudge targets, and folding it into "disabled" would make it
+    invisible. Otherwise the value is the EFFECTIVE ``enabled`` (the project's
+    own, else the instance default's).
     """
     if enabled is None:
         return "unconfigured"
@@ -65,18 +69,31 @@ async def list_projects(
     ),
 ):
     # S1: the retention posture rides along on a LEFT JOIN rather than a
-    # per-project lookup. `enabled` is NOT NULL on the policy table, so a NULL
-    # here means exactly one thing — no policy row has ever existed — which is
-    # the state the activation nudge exists to catch.
+    # per-project lookup. W22b: the column is the EFFECTIVE enabled (the
+    # project's own, else the instance default — one more LEFT JOIN on the
+    # single instance row), and it reads NULL in exactly one case — no policy
+    # row AND no enabling instance default — the state the activation nudge
+    # exists to catch.
     # W17 ADM-04: the archiver's name rides on the same query (a second LEFT
     # JOIN), so the list stays ONE execute whatever the number of projects.
     archiver = aliased(User)
+    retention_enabled = case(
+        (
+            and_(
+                ProjectRetentionPolicy.id.is_(None),
+                not_(func.coalesce(InstanceRetentionPolicy.enabled, false())),
+            ),
+            null(),
+        ),
+        else_=effective_enabled_expr(ProjectRetentionPolicy, InstanceRetentionPolicy),
+    )
     stmt = (
-        select(Project, ProjectRetentionPolicy.enabled, archiver.full_name, archiver.username)
+        select(Project, retention_enabled, archiver.full_name, archiver.username)
         .outerjoin(
             ProjectRetentionPolicy,
             ProjectRetentionPolicy.project_id == Project.id,
         )
+        .outerjoin(InstanceRetentionPolicy, InstanceRetentionPolicy.id == 1)
         .outerjoin(archiver, archiver.id == Project.archived_by_user_id)
         .order_by(Project.name)
     )

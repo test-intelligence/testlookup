@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.mongo import Collections, get_mongo_db
 from app.db.storage import get_storage_provider
-from app.models.postgres import Project, ProjectRetentionPolicy, TestCase, TestRun
+from app.models.postgres import InstanceRetentionPolicy, Project, ProjectRetentionPolicy, TestCase, TestRun
 
 logger = structlog.get_logger(__name__)
 
@@ -333,11 +333,12 @@ MAX_DELETED_PROJECTS_SCANNED = 25
 class DeletedProjectFootprint:
     project_id: str
     name: str
-    #: True when the nightly beat would eventually purge this project anyway.
-    #: The beat selects on ``ProjectRetentionPolicy.enabled`` **alone** and does
-    #: not filter ``is_active``, so a deleted project that opted in before
-    #: deletion still gets swept. One that never opted in — the default, since
-    #: ``enabled`` defaults False — is purged by nothing, ever.
+    #: True when the scheduled beat would eventually purge this project anyway.
+    #: The beat selects on the EFFECTIVE ``enabled`` alone (the project's own,
+    #: else the instance default — W22b) and does not filter ``is_active``, so a
+    #: deleted project that opted in before deletion (or inherits an enabled
+    #: instance default) still gets swept. One that never opted in — the
+    #: default, since both levels default off — is purged by nothing, ever.
     reachable_by_retention: bool
     footprint: ProjectStorageFootprint
 
@@ -478,17 +479,24 @@ async def deleted_project_footprints(
     that column first.
     """
     computed_at = now or datetime.now(timezone.utc)
+    from app.services.retention_service import effective_enabled_expr
 
     # One query for the deleted projects and their retention posture — the
     # per-project lookup this endpoint exists to avoid is the object-store
-    # listing, not this.
+    # listing, not this. W22b: the posture is the EFFECTIVE enabled (the
+    # project's own, else the instance default), still three columns.
     rows = (
         await db.execute(
-            select(Project.id, Project.name, ProjectRetentionPolicy.enabled)
+            select(
+                Project.id,
+                Project.name,
+                effective_enabled_expr(ProjectRetentionPolicy, InstanceRetentionPolicy),
+            )
             .outerjoin(
                 ProjectRetentionPolicy,
                 ProjectRetentionPolicy.project_id == Project.id,
             )
+            .outerjoin(InstanceRetentionPolicy, InstanceRetentionPolicy.id == 1)
             .where(Project.is_active.is_(False))
             .order_by(Project.name)
         )

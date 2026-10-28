@@ -99,9 +99,11 @@ async def test_dismissal_insert_is_idempotent_by_construction(mocker):
 def test_retention_status_mapping(enabled, expected):
     """``None`` means "never configured", NOT "disabled".
 
-    ``project_retention_policies.enabled`` is NOT NULL, so a NULL can only come
-    from the LEFT JOIN finding no row. Collapsing that into "disabled" would
-    hide exactly the projects the activation nudge exists to surface.
+    W22b (deliberate docstring edit): ``list_projects`` selects NULL only when
+    the project has NO policy row AND no enabling instance default; otherwise
+    it selects the EFFECTIVE ``enabled`` (the project's own, else the instance
+    default's). Collapsing that NULL into "disabled" would hide exactly the
+    projects the activation nudge exists to surface.
     """
     assert _retention_status(enabled) == expected
 

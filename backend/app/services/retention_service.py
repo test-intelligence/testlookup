@@ -91,6 +91,18 @@ on the injected session and returns; the caller (router for preview, the
 Celery worker task for execute) owns the commit. The purge-audit row is
 written by the worker AFTER the purge commit, on its own session (the
 ``flaky_quarantine_service`` audit-after-commit pattern).
+
+W22b ACT-06 — inheritance and the schedule. Every policy column of the seven
+``INHERITABLE_FIELDS`` is nullable: NULL = inherit. ``get_effective_policy`` is
+the ONE place a NULL is read, per field ``project ▸ instance ▸ code default``
+(the instance row: ``retention_instance_service``), with the audit window
+clamped to the runs window; ``effective_policy_columns`` /
+``effective_enabled_expr`` are its SQL twins for set-based reads (the project
+list, the deleted-project report, the D12 preview) and ``due_project_ids`` is
+the hourly beat's one target select (window hour + not paused). The AI caps are
+not inherited. W22b E-12: a retained deletion archive (``deletion_jobs
+.export_location``) leaves with its job row on the audit clock — object first,
+row second.
 """
 from __future__ import annotations
 
@@ -98,10 +110,10 @@ import uuid
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Iterator, Optional
+from typing import Any, Iterable, Iterator, Optional, Sequence
 
 import structlog
-from sqlalchemy import and_, any_, bindparam, case, delete, exists, func, select, true, update
+from sqlalchemy import and_, any_, bindparam, case, delete, exists, false, func, literal, or_, select, true, update
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -118,6 +130,7 @@ from app.models.postgres import (
     CompliancePack,
     DeletionJob,
     EvidenceArtifact,
+    InstanceRetentionPolicy,
     LaunchStatus,
     LiveSession,
     Project,
@@ -131,7 +144,7 @@ from app.models.postgres import (
     TestCaseAuditLog,
     TestRun,
 )
-from app.services import ai_history_retention, deletion_job_service, retention_references
+from app.services import ai_history_retention, deletion_job_service, retention_instance_service, retention_references
 from app.services.ai_eval_vocab import SHADOW_PAIR_RETENTION_DAYS
 from app.services.search_usage_service import usage_cutoff
 from app.services.ai_history_core import (
@@ -143,9 +156,16 @@ from app.services.ai_history_core import (
     clamp_cap,
 )
 from app.services.retention_vocab import (
+    INHERITABLE_FIELDS,
     KEEP_LAST_RUNS_DEFAULT,
     KEEP_LAST_RUNS_MAX,
     KEEP_LAST_RUNS_MIN,
+    PAUSE_DAYS_MAX,
+    PAUSE_DAYS_MIN,
+    POLICY_ERROR_SENTENCES,
+    PURGE_WINDOW_DEFAULT_HOUR,
+    PURGE_WINDOW_MAX,
+    PURGE_WINDOW_MIN,
 )
 
 logger = structlog.get_logger(__name__)
@@ -172,6 +192,21 @@ CAP_FIELDS: dict[str, int] = {
     "ai_versions_per_run": DEFAULT_CAP_PER_RUN,
     "ai_versions_per_test": DEFAULT_CAP_PER_TEST,
 }
+
+#: W22b ACT-06: the code default of each INHERITABLE field — the third step of
+#: the per-field resolution ``project ▸ instance ▸ code default`` (what a NULL
+#: means at both levels). The AI caps are NOT inherited (D-12): their NULL
+#: already means the code default above.
+CODE_DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "raw_events_days": DEFAULT_RAW_EVENTS_DAYS,
+    "runs_days": DEFAULT_RUNS_DAYS,
+    "artifacts_days": DEFAULT_ARTIFACTS_DAYS,
+    "audit_days": DEFAULT_AUDIT_DAYS,
+    "keep_last_runs": KEEP_LAST_RUNS_DEFAULT,
+    "purge_window_start_utc": PURGE_WINDOW_DEFAULT_HOUR,
+}
+
 
 def deletion_job_purge_filter(project_id: uuid.UUID, cutoff: datetime) -> tuple:
     """WHERE clause for retiring `deletion_jobs` on the audit clock.
@@ -357,6 +392,24 @@ class PolicyDisabled(Exception):
     """Raised when an execute-mode purge is requested for a disabled policy."""
 
 
+class PolicyFieldError(Exception):
+    """A structured policy-write refusal (W22b): ``code`` is a
+    ``POLICY_ERROR_SENTENCES`` key; the route answers 422 ``{"code","message"}``.
+
+    Deliberately NOT a :class:`RetentionValidationError` subclass, so the
+    route's existing ``except svc.RetentionValidationError`` (a plain-string
+    422) keeps its meaning and a separate ``except`` maps this one.
+    """
+
+    def __init__(self, code: str) -> None:
+        super().__init__(POLICY_ERROR_SENTENCES[code])
+        self.code = code
+
+    @property
+    def message(self) -> str:
+        return POLICY_ERROR_SENTENCES[self.code]
+
+
 @dataclass(frozen=True)
 class EffectiveRetentionPolicy:
     """Resolved per-project retention policy (missing row → defaults)."""
@@ -374,6 +427,18 @@ class EffectiveRetentionPolicy:
     #: project (plus the newest PASSED run of the project and of each suite).
     #: The RUNS clock only; explicit deletions are not limited by it.
     keep_last_runs: int = KEEP_LAST_RUNS_DEFAULT
+    #: W22b ACT-06: the UTC hour the hourly beat purges this project in
+    #: (inheritable; 02:00 by default, so a deployment that sets none purges at
+    #: the hour it always did).
+    purge_window_start_utc: int = PURGE_WINDOW_DEFAULT_HOUR
+    #: Project-only (never inherited); kept only while still in the future.
+    purge_paused_until: Optional[datetime] = None
+    #: Per inheritable field, where its value came from ("project" | "instance"
+    #: | "default"), and what it would read if it inherited. Tuples keep the
+    #: frozen dataclass hashable; ``compare=False`` keeps
+    #: ``EffectiveRetentionPolicy() == <no row, no instance>`` true.
+    field_sources: tuple[tuple[str, str], ...] = dc_field(default=(), compare=False)
+    inherit_values: tuple[tuple[str, Any], ...] = dc_field(default=(), compare=False)
 
     def as_dict(self) -> dict:
         return {
@@ -385,7 +450,18 @@ class EffectiveRetentionPolicy:
             "ai_versions_per_run": self.ai_versions_per_run,
             "ai_versions_per_test": self.ai_versions_per_test,
             "keep_last_runs": self.keep_last_runs,
+            "purge_window_start_utc": self.purge_window_start_utc,
         }
+
+    @property
+    def sources(self) -> dict[str, str]:
+        """``field_sources`` as a dict (the policy GET's ``field_sources``)."""
+        return dict(self.field_sources)
+
+    @property
+    def inherited(self) -> dict[str, Any]:
+        """``inherit_values`` as a dict (the policy GET's ``inherit_values``)."""
+        return dict(self.inherit_values)
 
     @property
     def ai_history_caps(self) -> AIHistoryCaps:
@@ -398,14 +474,66 @@ def _stored_cap(row: Any, field: str) -> int:
     return clamp_cap(getattr(row, field, None), CAP_FIELDS[field])
 
 
-def _stored_keep_last(row: Any) -> int:
-    """The keep-last floor of a policy row (W22a). ``getattr`` keeps the
-    ``SimpleNamespace`` policy fakes valid; a missing / NULL value is the
-    default 10 (the column is NOT NULL with server default 10)."""
-    value = getattr(row, "keep_last_runs", None) if row is not None else None
-    if value is None:
-        return KEEP_LAST_RUNS_DEFAULT
-    return int(value)
+def _coerce(field: str, value: Any) -> Any:
+    return bool(value) if field == "enabled" else int(value)
+
+
+def _inherited_value(field: str, inst: Any) -> tuple[Any, str]:
+    """What ``field`` reads when the project does not set it: the instance
+    value when stored (for ``enabled``: when the instance default is ON), else
+    the code default."""
+    if field == "enabled":
+        if bool(getattr(inst, "enabled", False)):
+            return True, "instance"
+        return False, "default"
+    value = getattr(inst, field, None)
+    if value is not None:
+        return int(value), "instance"
+    return CODE_DEFAULTS[field], "default"
+
+
+@dataclass(frozen=True)
+class _Resolution:
+    values: dict[str, Any]
+    sources: dict[str, str]
+    inherit_values: dict[str, Any]
+
+
+def _resolve(row: Any, inst: Any) -> _Resolution:
+    """The per-field resolution ``project ▸ instance ▸ code default`` — the ONE
+    place a NULL policy column is read (W22b W-1). ``getattr(row, field,
+    None)`` keeps the ``SimpleNamespace`` policy fakes valid (a fake without a
+    column inherits it). Then the audit clamp (D-9): a mix of sources never
+    resolves an audit window shorter than the runs window."""
+    values: dict[str, Any] = {}
+    sources: dict[str, str] = {}
+    inherit_values: dict[str, Any] = {}
+    for field in INHERITABLE_FIELDS:
+        inherited, inherited_source = _inherited_value(field, inst)
+        inherit_values[field] = inherited
+        project_value = getattr(row, field, None) if row is not None else None
+        if project_value is not None:
+            values[field], sources[field] = _coerce(field, project_value), "project"
+        else:
+            values[field], sources[field] = inherited, inherited_source
+    values["audit_days"] = max(values["audit_days"], values["runs_days"])
+    return _Resolution(values=values, sources=sources, inherit_values=inherit_values)
+
+
+def _effective_from(row: Any, inst: Any, *, now: datetime) -> EffectiveRetentionPolicy:
+    resolution = _resolve(row, inst)
+    paused = getattr(row, "purge_paused_until", None) if row is not None else None
+    if paused is not None and paused <= now:
+        paused = None
+    return EffectiveRetentionPolicy(
+        **resolution.values,
+        ai_versions_per_run=_stored_cap(row, "ai_versions_per_run"),
+        ai_versions_per_test=_stored_cap(row, "ai_versions_per_test"),
+        source="custom" if row is not None else "default",
+        purge_paused_until=paused,
+        field_sources=tuple(resolution.sources.items()),
+        inherit_values=tuple(resolution.inherit_values.items()),
+    )
 
 
 # ── Policy resolution + upsert ───────────────────────────────────────────────
@@ -425,23 +553,17 @@ async def get_policy_row(
 
 
 async def get_effective_policy(
-    db: AsyncSession, project_id: uuid.UUID,
+    db: AsyncSession, project_id: uuid.UUID, *, now: Optional[datetime] = None,
 ) -> EffectiveRetentionPolicy:
-    """Load the project's policy, resolving a missing row to the defaults."""
+    """The project's EFFECTIVE policy, per field ``project ▸ instance ▸ code
+    default`` (W22b W-1). Two statements, in this order: ``get_policy_row``
+    (unchanged) and the instance policy (ONE select; a missing row = the code
+    defaults; a read ERROR propagates — fail closed, never a silent code
+    default that may be shorter than the instance's). ``source`` keeps its
+    meaning: ``custom`` = a project row exists."""
     row = await get_policy_row(db, project_id)
-    if row is None:
-        return EffectiveRetentionPolicy()
-    return EffectiveRetentionPolicy(
-        enabled=bool(row.enabled),
-        raw_events_days=int(row.raw_events_days or DEFAULT_RAW_EVENTS_DAYS),
-        runs_days=int(row.runs_days or DEFAULT_RUNS_DAYS),
-        artifacts_days=int(row.artifacts_days or DEFAULT_ARTIFACTS_DAYS),
-        audit_days=int(row.audit_days or DEFAULT_AUDIT_DAYS),
-        ai_versions_per_run=_stored_cap(row, "ai_versions_per_run"),
-        ai_versions_per_test=_stored_cap(row, "ai_versions_per_test"),
-        source="custom",
-        keep_last_runs=_stored_keep_last(row),
-    )
+    inst = await retention_instance_service.get_instance_policy(db)
+    return _effective_from(row, inst, now=now or datetime.now(timezone.utc))
 
 
 def _validate_merged(merged: dict[str, int]) -> None:
@@ -475,12 +597,30 @@ async def upsert_policy(
     ai_versions_per_test: Optional[int] = None,
     actor: Any = None,
     keep_last_runs: Optional[int] = None,
+    purge_window_start_utc: Optional[int] = None,
+    pause_days: Optional[int] = None,
+    resume: Optional[bool] = None,
+    inherit: Sequence[str] = (),
+    now: Optional[datetime] = None,
 ) -> EffectiveRetentionPolicy:
     """Upsert the project's policy row from a PARTIAL update.
 
-    Omitted (``None``) fields keep their current (or default) value.
-    Validates bounds AND the audit≥runs cross-check on the merged result —
-    raises :class:`RetentionValidationError` (router maps to 422).
+    Omitted (``None``) fields keep their current value. W22b W-2: ``inherit``
+    names the inheritable fields to reset (each column set NULL = inherit the
+    instance, else the code default); ``pause_days`` sets
+    ``purge_paused_until = now + days`` and ``resume`` clears it. Refusals in
+    order, each a :class:`PolicyFieldError` (router: 422 ``{"code","message"}``):
+    an unknown ``inherit`` field, a field both given and inherited,
+    ``pause_days`` with ``resume``. Then the bounds AND the audit≥runs
+    cross-check on the MERGED EFFECTIVE values (given ▸ the inherited value of
+    an ``inherit`` field ▸ the current effective value) — raises
+    :class:`RetentionValidationError` (router maps to a plain-string 422).
+
+    A NEW row stores ONLY the fields the admin sent (every other column NULL =
+    inherit), so its effective policy is what it was before the save. The audit
+    ``changed`` dict records ``{"old", "new", "source_old", "source_new"}`` per
+    field whose effective value OR source changed (an inherit that keeps the
+    value still changes its source), plus ``purge_paused_until``.
 
     The two AI-history caps (AIH-06) are 1-100 versions; omitted keeps the
     current value, and there is no reset-to-NULL: sending 20 / 10 restores the
@@ -491,22 +631,33 @@ async def upsert_policy(
     ``settings_audit_log`` row records the change (``changed_fields`` is a
     dict by house convention despite the ``list`` annotation).
     """
-    row = await get_policy_row(db, project_id)
-    current = {
-        "raw_events_days": int(row.raw_events_days) if row else DEFAULT_RAW_EVENTS_DAYS,
-        "runs_days": int(row.runs_days) if row else DEFAULT_RUNS_DAYS,
-        "artifacts_days": int(row.artifacts_days) if row else DEFAULT_ARTIFACTS_DAYS,
-        "audit_days": int(row.audit_days) if row else DEFAULT_AUDIT_DAYS,
-    }
-    provided = {
+    now = now or datetime.now(timezone.utc)
+    inherit_fields = list(inherit or ())
+    if any(field not in INHERITABLE_FIELDS for field in inherit_fields):
+        raise PolicyFieldError("unknown_inherit_field")
+    provided: dict[str, Any] = {
+        "enabled": enabled,
         "raw_events_days": raw_events_days,
         "runs_days": runs_days,
         "artifacts_days": artifacts_days,
         "audit_days": audit_days,
+        "keep_last_runs": keep_last_runs,
+        "purge_window_start_utc": purge_window_start_utc,
     }
-    merged = {
-        field: (value if value is not None else current[field])
-        for field, value in provided.items()
+    given = {field: _coerce(field, value) for field, value in provided.items() if value is not None}
+    if set(given) & set(inherit_fields):
+        raise PolicyFieldError("inherit_conflict")
+    if pause_days is not None and resume is not None:
+        raise PolicyFieldError("pause_conflict")
+
+    row = await get_policy_row(db, project_id)
+    inst = await retention_instance_service.get_instance_policy(db)
+    before = _resolve(row, inst)
+    merged: dict[str, Any] = {
+        field: given[field] if field in given
+        else before.inherit_values[field] if field in inherit_fields
+        else before.values[field]
+        for field in INHERITABLE_FIELDS
     }
     _validate_merged(merged)
     caps_provided = {
@@ -526,46 +677,77 @@ async def upsert_policy(
         raise RetentionValidationError(
             f"keep_last_runs must be between {KEEP_LAST_RUNS_MIN} and {KEEP_LAST_RUNS_MAX} (got {keep_last_runs})"
         )
-    keep_last_current = _stored_keep_last(row)
+    # W22b: the window hour and the pause length (the schema bounds them too).
+    if purge_window_start_utc is not None and not (
+        PURGE_WINDOW_MIN <= int(purge_window_start_utc) <= PURGE_WINDOW_MAX
+    ):
+        raise RetentionValidationError(
+            f"purge_window_start_utc must be between {PURGE_WINDOW_MIN} and {PURGE_WINDOW_MAX} "
+            f"(got {purge_window_start_utc})"
+        )
+    if pause_days is not None and not (PAUSE_DAYS_MIN <= int(pause_days) <= PAUSE_DAYS_MAX):
+        raise RetentionValidationError(
+            f"pause_days must be between {PAUSE_DAYS_MIN} and {PAUSE_DAYS_MAX} (got {pause_days})"
+        )
 
     changed: dict[str, Any] = {}
     if row is None:
+        # D-19: ONLY the fields the admin sent; every other column stays NULL
+        # (= inherit), so the new row's effective policy is unchanged.
         row = ProjectRetentionPolicy(
             project_id=project_id,
-            enabled=bool(enabled) if enabled is not None else False,
             updated_by_user_id=actor_id,
-            **merged,
+            **given,
             # NULL (= the code default) unless the admin set the cap.
             **{field: value for field, value in caps_provided.items() if value is not None},
-            # Server default 10 unless the admin set the floor.
-            **({"keep_last_runs": int(keep_last_runs)} if keep_last_runs is not None else {}),
         )
         db.add(row)
         action = "created"
-        changed = {
-            "enabled": row.enabled,
-            **merged,
-            **{field: (value if value is not None else caps_current[field])
-               for field, value in caps_provided.items()},
-            "keep_last_runs": int(keep_last_runs) if keep_last_runs is not None else keep_last_current,
-        }
     else:
         action = "updated"
-        if enabled is not None and bool(enabled) != bool(row.enabled):
-            changed["enabled"] = {"old": bool(row.enabled), "new": bool(enabled)}
-            row.enabled = bool(enabled)
-        for field, new_value in merged.items():
-            if new_value != current[field]:
-                changed[field] = {"old": current[field], "new": new_value}
-                setattr(row, field, new_value)
+        for field in INHERITABLE_FIELDS:
+            if field in given:
+                setattr(row, field, given[field])
+            elif field in inherit_fields:
+                setattr(row, field, None)
+        row.updated_by_user_id = actor_id
+    paused_old = getattr(row, "purge_paused_until", None)
+    paused_new = paused_old
+    if pause_days is not None:
+        paused_new = now + timedelta(days=int(pause_days))
+    elif resume:
+        paused_new = None
+    if paused_new != paused_old:
+        row.purge_paused_until = paused_new
+
+    def _iso(value: Optional[datetime]) -> Optional[str]:
+        return value.isoformat() if value is not None else None
+
+    if action == "created":
+        # A created row's audit keeps its shape: the stored values, flat.
+        changed.update(given)
+        changed.update({field: int(value) for field, value in caps_provided.items() if value is not None})
+        if paused_new is not None:
+            changed["purge_paused_until"] = _iso(paused_new)
+    else:
         for field, cap_value in caps_provided.items():
             if cap_value is not None and int(cap_value) != caps_current[field]:
                 changed[field] = {"old": caps_current[field], "new": int(cap_value)}
                 setattr(row, field, int(cap_value))
-        if keep_last_runs is not None and int(keep_last_runs) != keep_last_current:
-            changed["keep_last_runs"] = {"old": keep_last_current, "new": int(keep_last_runs)}
-            row.keep_last_runs = int(keep_last_runs)
-        row.updated_by_user_id = actor_id
+        # Per field: the effective value OR its source changed (resolved on the
+        # in-memory row, before the flush). The source pair rides along only
+        # when the source moved, so a plain value change keeps {"old", "new"}.
+        after = _resolve(row, inst)
+        for field in INHERITABLE_FIELDS:
+            old, new = before.values[field], after.values[field]
+            source_old, source_new = before.sources[field], after.sources[field]
+            if old != new or source_old != source_new:
+                entry: dict[str, Any] = {"old": old, "new": new}
+                if source_old != source_new:
+                    entry.update(source_old=source_old, source_new=source_new)
+                changed[field] = entry
+        if paused_new != paused_old:
+            changed["purge_paused_until"] = {"old": _iso(paused_old), "new": _iso(paused_new)}
 
     db.add(
         SettingsAuditLog(
@@ -599,7 +781,77 @@ async def upsert_policy(
         changed=changed,
         actor_id=str(actor_id) if actor_id else None,
     )
-    return await get_effective_policy(db, project_id)
+    return await get_effective_policy(db, project_id, now=now)
+
+
+# ── W22b ACT-06: the SQL twins, the due-project selector, the next purge ─────
+
+
+def effective_policy_columns(prp: Any, inst: Any) -> dict[str, ColumnElement]:
+    """The resolver's SQL twin for set-based reads: ``COALESCE(prp.x, inst.x,
+    code default)`` per inheritable field, over a statement that LEFT JOINs the
+    project's policy (``prp``) and the instance row (``inst``, on ``id = 1``).
+    ``audit_days`` carries the resolver's clamp (``GREATEST(audit, runs)``,
+    D-9); ``enabled`` is :func:`effective_enabled_expr`."""
+    columns: dict[str, ColumnElement] = {"enabled": effective_enabled_expr(prp, inst)}
+    for field in INHERITABLE_FIELDS[1:]:
+        columns[field] = func.coalesce(getattr(prp, field), getattr(inst, field), literal(CODE_DEFAULTS[field]))
+    columns["audit_days"] = func.greatest(columns["audit_days"], columns["runs_days"])
+    return columns
+
+
+def effective_enabled_expr(prp: Any, inst: Any) -> ColumnElement[bool]:
+    """``COALESCE(prp.enabled, inst.enabled, false)``: an explicit project value
+    wins (``false`` stays off); a NULL / missing row follows the instance
+    default; no instance row = off."""
+    return func.coalesce(prp.enabled, inst.enabled, false())
+
+
+def due_project_ids_statement(*, now: datetime) -> Any:
+    """The hourly beat's target select (W-3): projects whose effective
+    ``enabled`` is on, whose effective window hour is the current UTC hour, and
+    that are not paused. No ``is_active`` filter — the beat never filtered it
+    and the deleted-project report relies on that."""
+    prp, inst = ProjectRetentionPolicy, InstanceRetentionPolicy
+    hour = now.astimezone(timezone.utc).hour
+    window = func.coalesce(
+        prp.purge_window_start_utc, inst.purge_window_start_utc, literal(PURGE_WINDOW_DEFAULT_HOUR),
+    )
+    return (
+        select(Project.id)
+        .select_from(Project)
+        .outerjoin(prp, prp.project_id == Project.id)
+        .outerjoin(inst, inst.id == retention_instance_service.INSTANCE_ID)
+        .where(
+            effective_enabled_expr(prp, inst),
+            window == bindparam("purge_hour", hour),
+            or_(prp.purge_paused_until.is_(None), prp.purge_paused_until <= now),
+        )
+        .order_by(Project.id)
+    )
+
+
+async def due_project_ids(db: AsyncSession, *, now: datetime) -> list[uuid.UUID]:
+    """The projects the hourly beat purges at ``now``: ONE statement read with
+    ``.scalars().all()`` (the sweep's fakes answer exactly that shape)."""
+    result = await db.execute(due_project_ids_statement(now=now))
+    return list(result.scalars().all())
+
+
+def next_scheduled_purge_at(policy: EffectiveRetentionPolicy, *, now: datetime) -> Optional[datetime]:
+    """When the beat next purges this project: ``None`` while disabled; else the
+    first ``HH:00`` UTC (``HH`` = the effective window hour) strictly after
+    ``max(now, purge_paused_until)``."""
+    if not policy.enabled:
+        return None
+    start = now.astimezone(timezone.utc)
+    paused = policy.purge_paused_until
+    if paused is not None and paused > start:
+        start = paused.astimezone(timezone.utc)
+    candidate = start.replace(hour=int(policy.purge_window_start_utc), minute=0, second=0, microsecond=0)
+    if candidate <= start:
+        candidate += timedelta(days=1)
+    return candidate
 
 
 async def get_last_purge(
@@ -788,6 +1040,10 @@ class _ExecutionPlan:
     provenance_where: tuple
     memory_expired_ids: list
     expired_packs: list
+    #: W22b E-12: ``(job_id, export_location)`` of the retained deletion
+    #: archives whose job rows leave on the AUDIT clock (object first, row
+    #: second). Explicit deletes pass an empty list (never project-wide rows).
+    retained_archives: list = dc_field(default_factory=list)
 
 
 @dataclass
@@ -1127,7 +1383,7 @@ async def run_purge(
             select(Project.id).where(Project.id == project_id).with_for_update(key_share=True)
         )
     external_stores_injected = mongo is not None or storage is not None
-    policy = await get_effective_policy(db, project_id)
+    policy = await get_effective_policy(db, project_id, now=now)
     cutoffs = compute_cutoffs(policy, now)
     mongo = mongo if mongo is not None else get_mongo_db()
     storage = storage if storage is not None else get_storage_provider()
@@ -1249,6 +1505,20 @@ async def run_purge(
         )
     ).scalars().all()
 
+    # W22b E-12: a `retain` deletion archive rides its job row — it leaves when
+    # the row does, on the AUDIT clock. ONE statement, both modes (the preview
+    # counts them; execute deletes each object before its row).
+    retained_archives = list(
+        (
+            await db.execute(
+                select(DeletionJob.id, DeletionJob.export_location).where(
+                    *deletion_job_where,
+                    DeletionJob.export_location.is_not(None),
+                )
+            )
+        ).all()
+    )
+
     plan = _ExecutionPlan(
         event_archive_where=event_archive_where,
         access_audit_where=access_audit_where,
@@ -1259,6 +1529,7 @@ async def run_purge(
         provenance_where=provenance_where,
         memory_expired_ids=memory_expired_ids,
         expired_packs=expired_packs,
+        retained_archives=retained_archives,
     )
 
     # AIH-06. Both counted BEFORE any delete and in BOTH modes, so the preview
@@ -1375,6 +1646,8 @@ async def run_purge(
             ),
             "provenance_rows": await _count(AIProvenanceRecord.id, provenance_where),
             "compliance_packs_expired": len(expired_packs),
+            # W22b E-12: retained deletion archives leaving with their job rows.
+            "export_archives_expired": len(retained_archives),
             "analysis_cache_entries": _sum_measured(cache_counts.values()),
             "search_index_documents": search_index_documents,
             "memory_entries_expired": len(memory_expired_ids),
@@ -1563,6 +1836,7 @@ async def resolve_run_candidates(
         provenance_where=never,
         memory_expired_ids=[],
         expired_packs=[],
+        retained_archives=[],
     )
     return candidates, plan
 
@@ -1714,9 +1988,27 @@ async def execute_candidates(
     activity_result = await db.execute(
         delete(ProjectActivityEvent).where(*plan.activity_where)
     )
-    deletion_job_result = await db.execute(
-        delete(DeletionJob).where(*plan.deletion_job_where)
-    )
+    # W22b E-12: a retained deletion archive leaves with its job row — object
+    # FIRST, row second (the expired-pack rule below): a row whose object
+    # delete failed survives, so the next sweep retries. Never logs the key.
+    archives_deleted = 0
+    archive_delete_failed: list[uuid.UUID] = []
+    for job_id, location in plan.retained_archives:
+        try:
+            await storage.delete_object(location, bucket=_COMPLIANCE_BUCKET)
+            archives_deleted += 1
+        except Exception as exc:  # noqa: BLE001 — per-archive isolation
+            archive_delete_failed.append(job_id)
+            logger.warning(
+                "retention_export_archive_delete_failed",
+                project_id=str(project_id),
+                job_id=str(job_id),
+                error_type=type(exc).__name__,
+            )
+    deletion_job_delete = delete(DeletionJob).where(*plan.deletion_job_where)
+    if archive_delete_failed:
+        deletion_job_delete = deletion_job_delete.where(DeletionJob.id.not_in(archive_delete_failed))
+    deletion_job_result = await db.execute(deletion_job_delete)
     revoked_link_result = await db.execute(
         delete(ReportShareLink).where(*plan.revoked_share_link_where)
     )
@@ -1767,6 +2059,8 @@ async def execute_candidates(
         # NOT under "postgres": those values are summed as "records removed";
         # a marked baseline row is updated, not removed.
         "baselines": {"marked_purged": baselines_marked},
+        # W22b E-12: object-store archives, not rows — kept out of "postgres".
+        "exports": {"archives_deleted": archives_deleted},
     }
 
     return counts
