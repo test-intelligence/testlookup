@@ -85,6 +85,8 @@ from app.models.postgres import (
     TestStatus,
     UserRole,
 )
+# W22a: constants only (no app.* import inside), so a module-level import is safe.
+from app.services.retention_vocab import FLOOR_NOTE_EXPLICIT, KEEP_LAST_RUNS_DEFAULT
 
 
 # Generous upper bound for long-form free-text fields backed by a Postgres
@@ -176,6 +178,31 @@ class CompliancePackLifecycleResponse(BaseModel):
     purgeable_now: bool
 
 
+# ── Retention holds / reference warnings (W22a ACT-05 / ACT-04) ──
+# Shared by the deletion answers below and the retention section further down.
+# Enum-like fields are plain ``str`` (``retention_vocab``); every field added
+# to an EXISTING answer is defaulted so old callers, fakes and rows validate.
+
+class HoldRefRead(BaseModel):
+    """A live retention hold as it appears inside another answer."""
+
+    hold_id: uuid.UUID
+    entity_type: str
+    entity_id: Optional[uuid.UUID] = None
+    entity_label: Optional[str] = None
+    reason: str
+    expires_at: Optional[datetime] = None
+
+
+class ReferenceBrokenRead(BaseModel):
+    """A link a deletion breaks (a SET NULL foreign key to ``test_runs``) — a warning, never a block."""
+
+    table: str
+    column: str
+    count: int
+    label: str  # REFERENCE_LABELS / the fallback, rendered
+
+
 class DeletionPreviewResponse(BaseModel):
     """A frozen candidate set an ADMIN authorises from.
 
@@ -207,6 +234,11 @@ class DeletionPreviewResponse(BaseModel):
             "so an ADMIN sees them before authorising, not after."
         ),
     )
+    # W22a: reference warnings over the deletable runs, and the floor note.
+    references_broken: List[ReferenceBrokenRead] = Field(default_factory=list)
+    references_measured: bool = True
+    floor_applies: bool = False
+    floor_note: str = FLOOR_NOTE_EXPLICIT
 
 
 class DeletionExecuteRequest(BaseModel):
@@ -248,6 +280,10 @@ class DeletionJobResponse(BaseModel):
     criteria: Optional[dict] = None
     counts: Optional[dict] = None
     bytes_reclaimed: Optional[int] = None
+    # W22a: NULL on every job written before 0239/0240, and whenever no hold
+    # applied / nothing broke (see deletion_job_service.close_job).
+    holds_honoured: Optional[dict] = None
+    references_broken: Optional[dict] = None
     error: Optional[str] = None
     requested_at: datetime
     started_at: Optional[datetime] = None
@@ -682,6 +718,12 @@ class DeleteRunAcceptedResponse(BaseModel):
             "that does not fall needs an explanation."
         ),
     )
+    # W22a: the links this deletion breaks (warnings), and the floor note —
+    # an explicit delete is not limited by the keep-last floor.
+    references_broken: List[ReferenceBrokenRead] = Field(default_factory=list)
+    references_measured: bool = True
+    floor_applies: bool = False
+    floor_note: str = FLOOR_NOTE_EXPLICIT
 
 
 class DeleteRunRefusedResponse(BaseModel):
@@ -8363,6 +8405,10 @@ class CompliancePackRead(BaseModel):
     # W11 REL-11 (from_attributes: a hand-built row lacking it reads None).
     # None = unsigned (every pack generated before 0225, or a signing failure).
     signing_key_id: Optional[str] = None
+    # W22a ACT-05: every LIVE hold covering the pack (project ∪ pack ∪ its
+    # release's), filled by the per-release pack list only; an ORM row has no
+    # such attribute and reads [].
+    holds: List[HoldRefRead] = Field(default_factory=list)
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -9011,6 +9057,8 @@ class RetentionPolicyWrite(BaseModel):
     # defaults (there is no null-reset).
     ai_versions_per_run: Optional[int] = Field(None, ge=1, le=100)
     ai_versions_per_test: Optional[int] = Field(None, ge=1, le=100)
+    # W22a ACT-04: the keep-last floor of the scheduled purge (runs clock only).
+    keep_last_runs: Optional[int] = Field(None, ge=0, le=1000)
 
 
 class RetentionLastPurge(BaseModel):
@@ -9032,6 +9080,8 @@ class RetentionPolicyRead(BaseModel):
     # AIH-06: the effective caps (code defaults when the row holds NULL).
     ai_versions_per_run: int = 20
     ai_versions_per_test: int = 10
+    # W22a ACT-04: the effective keep-last floor (10 when no row exists).
+    keep_last_runs: int = KEEP_LAST_RUNS_DEFAULT
     source: str = "default"
     last_purge: Optional[RetentionLastPurge] = None
 
@@ -9087,6 +9137,27 @@ class RetentionPreviewCandidates(BaseModel):
     shadow_pairs_unlabelled: int = 0
 
 
+# W22a: hold / floor / reference facts are TOP-LEVEL preview fields, never
+# ``candidates`` keys (the preview guard reads that dict for class counts only).
+class RetentionPreviewHold(HoldRefRead):
+    runs_kept: int = 0   # runs past the RUNS cutoff this hold pins (a run pinned twice counts under both)
+    packs_kept: int = 0  # expired packs this hold pins
+
+
+class RetentionPreviewHolds(BaseModel):
+    project_held: bool = False  # a live project hold: every held class counts 0
+    runs_kept: int = 0          # DISTINCT runs past the runs cutoff kept by any hold
+    packs_kept: int = 0
+    active: List[RetentionPreviewHold] = Field(default_factory=list)  # every LIVE hold, placed_at order
+
+
+class RetentionPreviewFloor(BaseModel):
+    keep_last_runs: int
+    runs_kept: int             # runs past the runs cutoff the floor keeps and no hold already keeps
+    latest_passed_kept: bool   # the project's newest PASSED run was a candidate and is kept
+    suites_kept: int           # distinct suites whose newest PASSED run was a candidate and is kept
+
+
 class RetentionPreviewResponse(BaseModel):
     """POST ``.../retention-policy/preview`` — dry-run, writes nothing."""
     cutoffs: dict[str, datetime]
@@ -9095,6 +9166,13 @@ class RetentionPreviewResponse(BaseModel):
     #: ignores this still sees ``null`` rather than a wrong zero; a client that
     #: reads it can say "not measured" and explain why the total is short.
     unmeasured: List[str] = Field(default_factory=list)
+    # W22a ACT-05 / ACT-04 (every field defaulted: an older payload validates).
+    holds: RetentionPreviewHolds = Field(default_factory=RetentionPreviewHolds)
+    floor: Optional[RetentionPreviewFloor] = None
+    #: Only FKs with count > 0, highest count first.
+    references_broken: List[ReferenceBrokenRead] = Field(default_factory=list)
+    #: False = the count failed; the UI says "not measured", never "none".
+    references_measured: bool = True
 
 
 class RetentionPurgeRequest(BaseModel):
@@ -9106,3 +9184,48 @@ class RetentionPurgeRequest(BaseModel):
 class RetentionPurgeQueued(BaseModel):
     """202 body — the execute-mode purge was enqueued to Celery."""
     queued: bool = True
+
+
+# ── Retention holds (W22a ACT-05) ────────────────────────────────────────────
+# ``entity_type`` / ``state`` are plain ``str``: the vocabularies live in
+# ``services/retention_vocab.py`` and the service refuses a value outside them
+# with one fixed sentence (``HOLD_ERROR_SENTENCES``), not Pydantic's 422.
+
+
+class RetentionHoldCreate(BaseModel):
+    """POST ``/projects/{id}/retention-holds`` body."""
+    entity_type: str
+    entity_id: Optional[uuid.UUID] = None
+    reason: str = Field(..., max_length=2000)  # trimmed length 3-500 checked in the service
+    expires_at: Optional[datetime] = None
+
+
+class RetentionHoldRelease(BaseModel):
+    """POST ``/projects/{id}/retention-holds/{hold_id}/release`` body."""
+    reason: str = Field(..., max_length=2000)
+
+
+class RetentionHoldRead(BaseModel):
+    """One hold; ``state`` (live / expired / released) is computed by the service for ``now``."""
+    id: uuid.UUID
+    project_id: uuid.UUID
+    entity_type: str
+    entity_id: Optional[uuid.UUID] = None
+    entity_label: Optional[str] = None
+    reason: str
+    expires_at: Optional[datetime] = None
+    state: str
+    placed_by_name: Optional[str] = None
+    placed_at: datetime
+    released_at: Optional[datetime] = None
+    released_by_name: Optional[str] = None
+    release_reason: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RetentionHoldListResponse(BaseModel):
+    items: List[RetentionHoldRead] = Field(default_factory=list)
+    total: int = 0  # rows matching the filter, ignoring limit
+    #: {"live", "expired", "released"} for the project (entity filters applied,
+    #: state ignored) — every key present, 0 when none.
+    counts: Dict[str, int] = Field(default_factory=dict)

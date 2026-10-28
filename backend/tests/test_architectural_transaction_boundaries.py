@@ -110,6 +110,15 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "mine.py",
     "mentions.py",
     "live_vocab.py",
+    # ── W22a ACT-05 / ACT-04 retention holds + keep-last floor: new modules,
+    # commit-free from birth ──
+    # The hold service (the hold routes commit in routers/retention.py; the
+    # explicit paths' routers and workers commit their own transactions), the
+    # SET NULL reference resolver (counts inside a SAVEPOINT on the caller's
+    # session) and the wire vocabulary (constants only).
+    "retention_hold_service.py",
+    "retention_references.py",
+    "retention_vocab.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

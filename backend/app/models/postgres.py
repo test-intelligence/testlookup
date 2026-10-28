@@ -4411,6 +4411,11 @@ class RunBaseline(Base):
     commit_range: Mapped[Optional[dict]] = mapped_column(JSON)
     config_drift: Mapped[Optional[list]] = mapped_column(JSON)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    #: W22a ACT-04 (migration 0240): stamped by the purge executor before it
+    #: deletes the baseline run (the FIRST purge date sticks); the SET NULL then
+    #: clears ``baseline_run_id`` while ``baseline_build_number`` is kept, so
+    #: the run page can say "Baseline build N was purged on D.".
+    baseline_purged_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RunDiff(Base):
@@ -7565,6 +7570,81 @@ class DeletionJob(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
+class RetentionHold(Base):
+    """A retention hold on a project, a release, a run or a compliance pack (W22a ACT-05, migration 0239).
+
+    While a hold is LIVE (``released_at IS NULL AND (expires_at IS NULL OR
+    expires_at > now)``) nothing it covers is purged or deleted: every purge
+    and deletion path excludes it with a ``NOT EXISTS`` anti-join
+    (``services/retention_hold_service.py``). A project hold has
+    ``entity_id IS NULL`` and covers the whole project; a release hold also
+    pins the release's runs, packs and their decision reports; a run hold (and
+    every run a release hold pins) also pins its baseline run, one hop.
+
+    ``entity_id`` deliberately has NO foreign key: the entity is polymorphic
+    (``entity_type`` says which table), and it cannot be deleted while the
+    hold lives. ``entity_label`` and the two ``*_by_name`` columns are
+    snapshots taken when the row is written. A hold is never deleted —
+    releasing it stamps ``released_at`` with a required ``release_reason``.
+    The state (live / expired / released, ``retention_vocab.HOLD_STATES``) is
+    derived on read and never stored.
+
+    Every CHECK uses only ``length`` / ``trim`` / ``IN`` / boolean logic, so a
+    SQLite ``create_all`` still builds the table; ``postgresql_where`` is
+    ignored there.
+    """
+
+    __tablename__ = "retention_holds"
+    __table_args__ = (
+        CheckConstraint(
+            "entity_type IN ('project', 'release', 'run', 'compliance_pack')",
+            name="ck_retention_holds_entity_type",
+        ),
+        CheckConstraint(
+            "(entity_type = 'project' AND entity_id IS NULL) OR (entity_type <> 'project' AND entity_id IS NOT NULL)",
+            name="ck_retention_holds_entity_id",
+        ),
+        CheckConstraint("length(trim(reason)) >= 3", name="ck_retention_holds_reason"),
+        CheckConstraint(
+            "released_at IS NULL OR release_reason IS NOT NULL",
+            name="ck_retention_holds_release_reason",
+        ),
+        Index(
+            "ix_retention_holds_live", "project_id", "entity_type", "entity_id",
+            postgresql_where=text("released_at IS NULL"),
+        ),
+        Index("ix_retention_holds_project_placed", "project_id", "placed_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    #: project | release | run | compliance_pack — ``retention_vocab.HOLD_ENTITY_TYPES``.
+    entity_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: NULL = the whole project. Deliberately no FK (polymorphic).
+    entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    #: Snapshot at placement ("release 2026.10", "Build 4471", "pack of
+    #: 2026-10-02", "the whole project") — survives a later rename.
+    entity_label: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    placed_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: Snapshot: full name, else the username — never an e-mail.
+    placed_by_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    placed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    released_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    released_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    released_by_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    release_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
 class ReportExportStatus(str, PyEnum):
     """VIZ-607: a background report export's life. No ``cancelled``: nothing
     can produce it, and a state nothing writes is a filter that matches
@@ -7656,6 +7736,11 @@ class ProjectRetentionPolicy(Base):
     (``ai_history_core.DEFAULT_CAP_PER_RUN`` / ``DEFAULT_CAP_PER_TEST``). They
     apply at write time whatever ``enabled`` says; ``enabled`` only gates the
     scheduled sweep.
+
+    Keep-last floor (W22a ACT-04, migration 0240): ``keep_last_runs`` (0-1000,
+    NOT NULL, default 10) — the scheduled purge always keeps the newest N runs
+    of the project, plus its newest PASSED run and the newest PASSED run of
+    each suite; ``0`` keeps only the PASSED runs. The runs clock only.
     """
     __tablename__ = "project_retention_policies"
     __table_args__ = (
@@ -7666,6 +7751,10 @@ class ProjectRetentionPolicy(Base):
         CheckConstraint(
             "ai_versions_per_test IS NULL OR ai_versions_per_test BETWEEN 1 AND 100",
             name="ck_retention_ai_versions_per_test",
+        ),
+        CheckConstraint(
+            "keep_last_runs >= 0 AND keep_last_runs <= 1000",
+            name="ck_retention_keep_last_runs",
         ),
     )
 
@@ -7691,6 +7780,9 @@ class ProjectRetentionPolicy(Base):
     )
     ai_versions_per_run: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ai_versions_per_test: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    keep_last_runs: Mapped[int] = mapped_column(
+        Integer, default=10, server_default=text("10"), nullable=False,
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

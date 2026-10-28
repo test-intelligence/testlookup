@@ -70,4 +70,16 @@ export interface RegressionDiff {
   status?: string
   diff_available?: boolean
   reason?: string
+  /**
+   * W22a ACT-04: set when this run's stored baseline was later purged (the
+   * build number survives the purge). Both answers (baseline found or not)
+   * carry it; absent on an older server, `null` when nothing was purged.
+   */
+  baseline_purged?: RegressionDiffBaselinePurged | null
+}
+
+/** `baseline_purged`: the purged baseline's build (may be null) and when the purge removed it. */
+export interface RegressionDiffBaselinePurged {
+  build_number: string | null
+  purged_at: string
 }

@@ -99,6 +99,9 @@ ENTITY_TYPES: Final[tuple[str, ...]] = (
     # W28 TCM-03: a project's test-case library as a whole (the entity id is
     # the project's), for a bulk edit across many cases.
     "test_library",
+    # W22a ACT-05: one retention hold (retention_holds.id) on a project, a
+    # release, a run or a compliance pack.
+    "retention_hold",
 )
 
 #: Where a row of each entity type lives in the SPA. Used to build
@@ -146,6 +149,9 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     # W28: /test-management opens a case from ``?case=`` (the Cases tab).
     "test_case": "/test-management?case={id}",
     "test_library": "/test-management",
+    # W22a ACT-05: the Holds card of Settings › Retention lists every hold of
+    # the project; there is no per-hold page.
+    "retention_hold": "/settings/retention",
 }
 
 _EVENT_NAME_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z_]+\.[a-z_]+$")
@@ -370,6 +376,11 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("notification_policy.updated", "configuration", "notification_policy", "Notification policy changed: {changed}"),
     _spec("quarantine_policy.updated", "configuration", "quarantine_policy", "Quarantine policy changed: {changed}"),
     _spec("retention.purge_executed", "configuration", "retention_policy", "Retention purge removed {count} records"),
+    # W22a ACT-05: staged by the two hold routes on the request session beside
+    # the hold row (outcome: a rolled-back place records nothing). JWT only —
+    # an API key can never place or release a hold.
+    _spec("retention_hold.placed", "configuration", "retention_hold", "{actor_name} placed a retention hold on {entity_label}: {reason}", "outcome", frozenset({"user"})),
+    _spec("retention_hold.released", "configuration", "retention_hold", "{actor_name} released the retention hold on {entity_label}", "outcome", frozenset({"user"})),
     _spec("saved_view.created", "configuration", "saved_view", "Saved view {entity_label} was created"),
     _spec("saved_view.updated", "configuration", "saved_view", "Saved view {entity_label} changed: {changed}"),
     _spec("saved_view.deleted", "configuration", "saved_view", "Saved view {entity_label} was deleted"),

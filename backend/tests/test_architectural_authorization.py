@@ -92,6 +92,9 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     # require_shadow_pair_access() loads it and checks its OWN project against
     # get_accessible_project_ids; another project's pair is the missing-id 404.
     "shadow_pair_id",
+    # W22a ACT-05: a retention hold, nested under project_id; loaded WHERE id
+    # AND project_id (another project's hold is the unknown-id 404).
+    "hold_id",
 })
 
 # ── Known backlog of unprotected scoped routes ──────────────────────────────
