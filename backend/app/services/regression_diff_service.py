@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.postgres import TestCase, TestRun
+from app.models.postgres import RunBaseline, TestCase, TestRun
 from app.models.schemas import CommitRangeStatus, RegressionDiffCommit
 
 logger = logging.getLogger("services.regression_diff")
@@ -135,6 +135,33 @@ async def commit_range_status(db: AsyncSession, run: TestRun, serialized: dict) 
     )
 
 
+async def baseline_purged(db: AsyncSession, run_id: uuid.UUID) -> Optional[dict]:
+    """The run's purged-baseline fact (W22a F-7), or None.
+
+    The retention executor stamps ``run_baselines.baseline_purged_at`` (the
+    FIRST purge date) before it deletes a run other runs used as their
+    baseline; the SET NULL then clears ``baseline_run_id`` while the plain-text
+    ``baseline_build_number`` survives. ONE read of THIS run's row (``run_id``
+    is unique), read-only: ``{"build_number", "purged_at"}`` when stamped.
+    """
+    result = await db.execute(
+        select(RunBaseline.baseline_build_number, RunBaseline.baseline_purged_at).where(
+            RunBaseline.run_id == run_id,
+            RunBaseline.baseline_purged_at.is_not(None),
+        )
+    )
+    rows = list(result.all())
+    if not rows:
+        return None
+    build_number, purged_at = rows[0][0], rows[0][1]
+    if purged_at is None:
+        return None
+    return {
+        "build_number": str(build_number) if build_number is not None else None,
+        "purged_at": purged_at.isoformat(),
+    }
+
+
 def _listed(commits: list[dict]) -> list[dict]:
     return [
         RegressionDiffCommit(
@@ -154,11 +181,19 @@ async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
 
     Returns a dict with new failing tests, resolved count, pass rate delta,
     the run's stored commit range (``commit_range``, ``commit_count``) and
-    ``commit_range_status`` saying why no commits are listed. Read-only.
+    ``commit_range_status`` saying why no commits are listed. Both answers
+    (baseline found or not) carry ``baseline_purged`` — ``{"build_number",
+    "purged_at"}`` when the retention purge removed this run's baseline, else
+    None (W22a F-7). Read-only.
     """
     from app.services import commit_attribution_service
 
     run_id = run.id
+
+    # Read ONCE, before choosing a baseline: the comparison below may find an
+    # older surviving baseline, but the run page still says the original one
+    # was purged.
+    purged = await baseline_purged(db, run_id)
 
     # Find last passing baseline run (pass_rate >= threshold * 0.85) before this run
     baseline_result = await db.execute(
@@ -180,6 +215,7 @@ async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
             "baseline_run_id": None,
             "baseline_available": False,
             "message": "No recent passing baseline run found for this project",
+            "baseline_purged": purged,
         }
 
     # Get failing test fingerprints in current run
@@ -234,4 +270,5 @@ async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
         # not a count).
         "commit_count": len(commits),
         "commit_range_status": status.model_dump(mode="json"),
+        "baseline_purged": purged,
     }

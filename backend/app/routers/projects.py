@@ -34,8 +34,10 @@ from app.models.schemas import (
 from app.services.project_reset_service import (
     ConfirmationMismatch,
     ProjectNotFound,
+    ResetBlockedByHold,
     reset_project,
 )
+from app.services import retention_hold_service
 
 router = APIRouter(prefix="/api/v1/projects", tags=["Projects"])
 
@@ -432,6 +434,16 @@ async def reset_project_data(
         and payload.confirmation_name == target.name
         and payload.mode in ("runs", "full")
     ):
+        # W22a ACT-05: a held project refuses BEFORE the attempt row, so a
+        # refused reset never leaves "Project data reset was issued" in the
+        # ledger. The service checks again under its row lock.
+        held = await retention_hold_service.any_live_hold(
+            db, project_id=project_id, now=datetime.now(timezone.utc)
+        )
+        if held:
+            raise HTTPException(
+                status_code=409, detail={"blockers": [h.sentence() for h in held]}
+            )
         await record_activity(
             None,
             project_id=project_id,
@@ -454,6 +466,8 @@ async def reset_project_data(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ConfirmationMismatch as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ResetBlockedByHold as exc:
+        raise HTTPException(status_code=409, detail={"blockers": exc.reasons}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return result

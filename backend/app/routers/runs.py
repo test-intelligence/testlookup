@@ -22,6 +22,7 @@ from app.models.schemas import (
     DeleteRunRequest,
     DurationRegressionsResponse,
     EnrichedTestCaseDetailResponse,
+    ReferenceBrokenRead,
     RunBranchListResponse,
     RunSignatureBatchResponse,
     RunVerdictBatchResponse,
@@ -950,9 +951,16 @@ async def delete_run(
     * **Prefix scope.** ``minio_prefix`` is uploader-derived and unvalidated
       beyond non-empty. Prefixes outside the project's scope are refused and
       REPORTED, never deleted.
+
+    **Retention holds (W22a).** A run covered by a live hold — directly, by its
+    release, as a held run's baseline, or by a project hold — is refused 409
+    with ``Held: <reason>`` FIRST in ``blockers`` (the hold read lives in
+    ``citation_blockers``); whatever the credential, no flag bypasses it. The
+    202 also lists the links the delete breaks (``references_broken``, a
+    warning) and says the keep-last floor does not apply to explicit deletes.
     """
     from app.db.mongo import get_mongo_db
-    from app.services import deletion_job_service, run_deletion_service
+    from app.services import deletion_job_service, retention_references, run_deletion_service
     from app.services.run_tombstone_service import run_is_tombstoned
     from app.worker.tasks import delete_run_everywhere
 
@@ -1002,6 +1010,9 @@ async def delete_run(
             detail={"run_id": str(run_id), "blockers": blockers},
         )
 
+    # W22a F-6: a WARNING, counted in a SAVEPOINT and failing soft.
+    references = await retention_references.references_broken(db, [run_id])
+
     _safe, refused = run_deletion_service.safe_artifact_prefixes(
         run.project_id, run_id, run.minio_prefix
     )
@@ -1038,4 +1049,7 @@ async def delete_run(
         job_id=job_id,
         run_id=run_id,
         refused_prefixes=refused,
+        references_broken=[ReferenceBrokenRead(**item) for item in references.items],
+        references_measured=references.measured,
+        floor_applies=False,
     )

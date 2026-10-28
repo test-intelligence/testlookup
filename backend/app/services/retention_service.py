@@ -96,12 +96,16 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from dataclasses import field as dc_field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Iterator, Optional
 
 import structlog
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, any_, bindparam, case, delete, exists, func, select, true, update
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.db.mongo import Collections, get_mongo_db
 from app.db.storage import get_storage_provider
@@ -114,10 +118,12 @@ from app.models.postgres import (
     CompliancePack,
     DeletionJob,
     EvidenceArtifact,
+    LaunchStatus,
     LiveSession,
     Project,
     ProjectRetentionPolicy,
     ReportShareLink,
+    RunBaseline,
     SearchQueryEvent,
     SettingsAuditLog,
     TestCase,
@@ -125,7 +131,7 @@ from app.models.postgres import (
     TestCaseAuditLog,
     TestRun,
 )
-from app.services import ai_history_retention, deletion_job_service
+from app.services import ai_history_retention, deletion_job_service, retention_references
 from app.services.ai_eval_vocab import SHADOW_PAIR_RETENTION_DAYS
 from app.services.search_usage_service import usage_cutoff
 from app.services.ai_history_core import (
@@ -135,6 +141,11 @@ from app.services.ai_history_core import (
     DEFAULT_CAP_PER_TEST,
     AIHistoryCaps,
     clamp_cap,
+)
+from app.services.retention_vocab import (
+    KEEP_LAST_RUNS_DEFAULT,
+    KEEP_LAST_RUNS_MAX,
+    KEEP_LAST_RUNS_MIN,
 )
 
 logger = structlog.get_logger(__name__)
@@ -177,6 +188,129 @@ def deletion_job_purge_filter(project_id: uuid.UUID, cutoff: datetime) -> tuple:
         DeletionJob.project_id == project_id,
         DeletionJob.requested_at < cutoff,
         DeletionJob.status.in_(sorted(deletion_job_service.TERMINAL_STATUSES)),
+    )
+
+
+def _hold_service() -> Any:
+    """The retention-hold service (W22a ACT-05), imported on use.
+
+    Every held class of the policy purge appends one of its ``NOT EXISTS``
+    clause builders (``run_not_held`` / ``project_not_held`` /
+    ``pack_not_held`` / ``activity_not_held``) to its WHERE; the reads
+    (``live_holds``, ``held_run_ids``, ``pinned_*``) feed the preview and the
+    job record. Imported here rather than at module import so this module's
+    import never depends on the hold service's own import graph; tests patch
+    the reads on the module object.
+    """
+    from app.services import retention_hold_service
+
+    return retention_hold_service
+
+
+def _latest_passed_subquery(project_id: uuid.UUID) -> Any:
+    """Floor arm 2: the project's newest PASSED run — the next run's baseline
+    (``run_diff_service`` chooses exactly that)."""
+    return (
+        select(TestRun.id.label("id"))
+        .where(TestRun.project_id == project_id, TestRun.status == LaunchStatus.PASSED.value)
+        .order_by(TestRun.created_at.desc(), TestRun.id.desc())
+        .limit(1)
+        .subquery("floor_latest_passed")
+    )
+
+
+def _suite_latest_passed_subquery(project_id: uuid.UUID) -> Any:
+    """Floor arm 3: the newest PASSED run of EACH suite, read from the RUN's
+    ``suite_names`` (else ``primary_suite_name``) — the effective suite at run
+    level (§7.2 D-6). The ``json_typeof`` guard keeps a scalar / NULL
+    ``suite_names`` (old rows) from raising "cannot extract elements from a
+    scalar"; such a run is covered by its ``primary_suite_name`` or by arm 2."""
+    suites = (
+        func.json_array_elements_text(
+            case(
+                (func.json_typeof(TestRun.suite_names) == "array", TestRun.suite_names),
+                else_=func.json_build_array(TestRun.primary_suite_name),
+            )
+        )
+        .table_valued("suite")
+        .render_derived(name="s")
+        .lateral()
+    )
+    suite_key = func.lower(func.trim(suites.c.suite))
+    # ``row_number() … = 1`` per suite is DISTINCT ON (suite_key) … ORDER BY
+    # suite_key, created_at DESC, id DESC, spelled portably (no dialect
+    # warning when a statement-routing fake renders it).
+    rows = (
+        select(
+            TestRun.id.label("id"),
+            suite_key.label("suite_key"),
+            func.row_number()
+            .over(partition_by=suite_key, order_by=(TestRun.created_at.desc(), TestRun.id.desc()))
+            .label("suite_rank"),
+        )
+        .select_from(TestRun)
+        .join(suites, true())
+        .where(
+            TestRun.project_id == project_id,
+            TestRun.status == LaunchStatus.PASSED.value,
+            func.nullif(func.trim(suites.c.suite), "").is_not(None),
+        )
+        .subquery("floor_suite_rows")
+    )
+    return (
+        select(rows.c.id, rows.c.suite_key)
+        .where(rows.c.suite_rank == 1)
+        .subquery("floor_suite_latest_passed")
+    )
+
+
+def floor_not_kept(
+    run_id_col: Any, project_id: uuid.UUID, *, keep_last_runs: int,
+) -> ColumnElement[bool]:
+    """The keep-last floor as anti-joins (W22a ACT-04, contract §2.2 F-2).
+
+    Module-level so tests compile the predicate the purge actually uses (the
+    ``deletion_job_purge_filter`` precedent). The AND of ``NOT EXISTS`` against
+    uncorrelated derived tables, each matched on ``id = run_id_col``:
+
+    1. the project's newest ``keep_last_runs`` runs — omitted when N = 0;
+    2. the project's newest PASSED run;
+    3. the newest PASSED run of each suite.
+
+    The RUNS clock only: it is appended to the runs-clock select, never to the
+    raw-events / artifacts / audit selections.
+    """
+    arms: list[Any] = []
+    if int(keep_last_runs) > 0:
+        newest = (
+            select(TestRun.id.label("id"))
+            .where(TestRun.project_id == project_id)
+            .order_by(TestRun.created_at.desc(), TestRun.id.desc())
+            .limit(int(keep_last_runs))
+            .subquery("floor_newest")
+        )
+        arms.append(~exists().where(newest.c.id == run_id_col))
+    latest = _latest_passed_subquery(project_id)
+    arms.append(~exists().where(latest.c.id == run_id_col))
+    per_suite = _suite_latest_passed_subquery(project_id)
+    arms.append(~exists().where(per_suite.c.id == run_id_col))
+    return and_(*arms)
+
+
+def _floor_kept_detail_statement(project_id: uuid.UUID, kept_ids: list[uuid.UUID]) -> Any:
+    """ONE statement classifying the floor-kept runs: is the project's newest
+    PASSED run among them, and how many suites' newest PASSED runs are."""
+    kept = bindparam("floor_kept_ids", value=list(kept_ids), type_=ARRAY(PG_UUID(as_uuid=True)))
+    latest = _latest_passed_subquery(project_id)
+    per_suite = _suite_latest_passed_subquery(project_id)
+    suites_kept = (
+        select(func.count(func.distinct(per_suite.c.suite_key)))
+        .where(per_suite.c.id == any_(kept))
+        .scalar_subquery()
+    )
+    return select(
+        exists().where(latest.c.id == any_(kept)).label("latest_passed_kept"),
+        suites_kept.label("suites_kept"),
     )
 
 
@@ -236,6 +370,10 @@ class EffectiveRetentionPolicy:
     ai_versions_per_run: int = DEFAULT_CAP_PER_RUN
     ai_versions_per_test: int = DEFAULT_CAP_PER_TEST
     source: str = "default"  # "default" | "custom"
+    #: W22a ACT-04: the scheduled purge always keeps the newest N runs of the
+    #: project (plus the newest PASSED run of the project and of each suite).
+    #: The RUNS clock only; explicit deletions are not limited by it.
+    keep_last_runs: int = KEEP_LAST_RUNS_DEFAULT
 
     def as_dict(self) -> dict:
         return {
@@ -246,6 +384,7 @@ class EffectiveRetentionPolicy:
             "audit_days": self.audit_days,
             "ai_versions_per_run": self.ai_versions_per_run,
             "ai_versions_per_test": self.ai_versions_per_test,
+            "keep_last_runs": self.keep_last_runs,
         }
 
     @property
@@ -257,6 +396,16 @@ def _stored_cap(row: Any, field: str) -> int:
     """The effective cap of a policy row: its stored value, or the default when
     NULL (the column is nullable; the CHECK keeps a stored value in 1-100)."""
     return clamp_cap(getattr(row, field, None), CAP_FIELDS[field])
+
+
+def _stored_keep_last(row: Any) -> int:
+    """The keep-last floor of a policy row (W22a). ``getattr`` keeps the
+    ``SimpleNamespace`` policy fakes valid; a missing / NULL value is the
+    default 10 (the column is NOT NULL with server default 10)."""
+    value = getattr(row, "keep_last_runs", None) if row is not None else None
+    if value is None:
+        return KEEP_LAST_RUNS_DEFAULT
+    return int(value)
 
 
 # ── Policy resolution + upsert ───────────────────────────────────────────────
@@ -291,6 +440,7 @@ async def get_effective_policy(
         ai_versions_per_run=_stored_cap(row, "ai_versions_per_run"),
         ai_versions_per_test=_stored_cap(row, "ai_versions_per_test"),
         source="custom",
+        keep_last_runs=_stored_keep_last(row),
     )
 
 
@@ -324,6 +474,7 @@ async def upsert_policy(
     ai_versions_per_run: Optional[int] = None,
     ai_versions_per_test: Optional[int] = None,
     actor: Any = None,
+    keep_last_runs: Optional[int] = None,
 ) -> EffectiveRetentionPolicy:
     """Upsert the project's policy row from a PARTIAL update.
 
@@ -368,6 +519,14 @@ async def upsert_policy(
                 f"{field} must be between {CAP_MIN} and {CAP_MAX} versions (got {value})"
             )
     caps_current = {field: _stored_cap(row, field) for field in CAP_FIELDS}
+    # W22a ACT-04: the keep-last floor, 0-1000 (0 = only the PASSED keeps).
+    if keep_last_runs is not None and not (
+        KEEP_LAST_RUNS_MIN <= int(keep_last_runs) <= KEEP_LAST_RUNS_MAX
+    ):
+        raise RetentionValidationError(
+            f"keep_last_runs must be between {KEEP_LAST_RUNS_MIN} and {KEEP_LAST_RUNS_MAX} (got {keep_last_runs})"
+        )
+    keep_last_current = _stored_keep_last(row)
 
     changed: dict[str, Any] = {}
     if row is None:
@@ -378,6 +537,8 @@ async def upsert_policy(
             **merged,
             # NULL (= the code default) unless the admin set the cap.
             **{field: value for field, value in caps_provided.items() if value is not None},
+            # Server default 10 unless the admin set the floor.
+            **({"keep_last_runs": int(keep_last_runs)} if keep_last_runs is not None else {}),
         )
         db.add(row)
         action = "created"
@@ -386,6 +547,7 @@ async def upsert_policy(
             **merged,
             **{field: (value if value is not None else caps_current[field])
                for field, value in caps_provided.items()},
+            "keep_last_runs": int(keep_last_runs) if keep_last_runs is not None else keep_last_current,
         }
     else:
         action = "updated"
@@ -400,6 +562,9 @@ async def upsert_policy(
             if cap_value is not None and int(cap_value) != caps_current[field]:
                 changed[field] = {"old": caps_current[field], "new": int(cap_value)}
                 setattr(row, field, int(cap_value))
+        if keep_last_runs is not None and int(keep_last_runs) != keep_last_current:
+            changed["keep_last_runs"] = {"old": keep_last_current, "new": int(keep_last_runs)}
+            row.keep_last_runs = int(keep_last_runs)
         row.updated_by_user_id = actor_id
 
     db.add(
@@ -649,40 +814,75 @@ class _Candidates:
     #: outlives it, so purging it on the runs clock would destroy the evidence
     #: at the moment its subject went.
     audit_run_strs: list[str]
+    #: W22a: every run past the RUNS cutoff that no hold keeps (the superset
+    #: select's rows). ``runs_window_ids - purge_run_ids`` = what the floor kept.
+    runs_window_ids: list[uuid.UUID] = dc_field(default_factory=list)
 
 
 async def _collect_candidates(
     db: AsyncSession,
     project_id: uuid.UUID,
     cutoffs: dict[str, datetime],
+    *,
+    now: datetime,
+    keep_last_runs: int = KEEP_LAST_RUNS_DEFAULT,
+    held_run_ids: frozenset[uuid.UUID] = frozenset(),
 ) -> _Candidates:
+    holds = _hold_service()
     # One pass over test_runs older than the NEWEST cutoff (superset of every
-    # class), classified in Python against each clock.
+    # class), classified in Python against each clock. W22a: held runs never
+    # enter it (P-1/P-2/P-4/P-6 — every list derived from it inherits that).
     newest_cutoff = max(cutoffs.values())
-    artifact_boundary = max(cutoffs["artifacts"], cutoffs["runs"])
 
     run_rows = (
         await db.execute(
             select(TestRun.id, TestRun.minio_prefix, TestRun.created_at).where(
                 TestRun.project_id == project_id,
                 TestRun.created_at < newest_cutoff,
+                holds.run_not_held(TestRun.id, project_id, now=now),
             )
         )
     ).all()
 
-    purge_run_ids: list[uuid.UUID] = []
+    runs_window_ids: list[uuid.UUID] = []
     raw_run_ids: list[uuid.UUID] = []
     audit_run_ids: list[uuid.UUID] = []
-    artifact_run_ids: list[uuid.UUID] = []
-    artifact_prefixes: set[str] = set()
-    for run_id, minio_prefix, created_at in run_rows:
+    for run_id, _minio_prefix, created_at in run_rows:
         if created_at < cutoffs["runs"]:
-            purge_run_ids.append(run_id)
+            runs_window_ids.append(run_id)
         if created_at < cutoffs["raw_events"]:
             raw_run_ids.append(run_id)
         if created_at < cutoffs["audit"]:
             audit_run_ids.append(run_id)
-        if created_at < artifact_boundary:
+
+    # W22a F-2: the RUNS clock is its own select carrying BOTH exclusions in
+    # SQL (holds and the keep-last floor, as anti-joins) — same three columns
+    # as the superset, so hand-built rows keep their shape. Issued only when
+    # the window holds a candidate. The Python cutoff re-check is a no-op on
+    # Postgres; it keeps a statement-routing fake (which answers every run
+    # select with all its rows) meaningful.
+    purge_run_ids: list[uuid.UUID] = []
+    if runs_window_ids:
+        purge_rows = (
+            await db.execute(
+                select(TestRun.id, TestRun.minio_prefix, TestRun.created_at).where(
+                    TestRun.project_id == project_id,
+                    TestRun.created_at < cutoffs["runs"],
+                    holds.run_not_held(TestRun.id, project_id, now=now),
+                    floor_not_kept(TestRun.id, project_id, keep_last_runs=keep_last_runs),
+                )
+            )
+        ).all()
+        purge_run_ids = [rid for rid, _prefix, created_at in purge_rows if created_at < cutoffs["runs"]]
+    purge_set = set(purge_run_ids)
+
+    # Artifacts clock ∪ the runs actually purged: a deleted run's objects must
+    # die with it, but a FLOOR-kept run keeps its objects until the artifacts
+    # clock itself expires them (D-21).
+    artifact_run_ids: list[uuid.UUID] = []
+    artifact_prefixes: set[str] = set()
+    for run_id, minio_prefix, created_at in run_rows:
+        if created_at < cutoffs["artifacts"] or run_id in purge_set:
             artifact_run_ids.append(run_id)
             artifact_prefixes.add(f"uploads/{project_id}/{run_id}/")
             if minio_prefix:
@@ -734,21 +934,32 @@ async def _collect_candidates(
     # live_execution_events are written with the CLIENT's run_id — a
     # LiveSession slug on the webhook path, a TestRun UUID string elsewhere.
     # Cover both key shapes.
+    # W22a P-3: a project hold empties the select; a slug whose canonical run
+    # id is held (a run / release hold, or a held run's baseline) is dropped
+    # here — the slug -> uuid mapping is uuid5 in Python, not SQL.
     live_slugs = (
         await db.execute(
             select(LiveSession.run_id).where(
                 LiveSession.project_id == project_id,
                 LiveSession.started_at < cutoffs["raw_events"],
+                holds.project_not_held(project_id, now=now),
             )
         )
     ).scalars().all()
+    if held_run_ids:
+        from app.services.stream_service import canonical_test_run_uuid
+
+        live_slugs = [s for s in live_slugs if s and canonical_test_run_uuid(str(s)) not in held_run_ids]
     raw_run_strs = [str(r) for r in raw_run_ids]
     raw_live_run_keys = list({*raw_run_strs, *[s for s in live_slugs if s]})
+    # W22a P-5: an artifact of a held run stays; a NULL run_id falls to the
+    # project arm of the clause.
     evidence_artifact_ids = list((
         await db.execute(
             select(EvidenceArtifact.id).where(
                 EvidenceArtifact.project_id == project_id,
                 EvidenceArtifact.created_at < cutoffs["artifacts"],
+                holds.run_not_held(EvidenceArtifact.run_id, project_id, now=now),
             )
         )
     ).scalars().all())
@@ -765,6 +976,7 @@ async def _collect_candidates(
         evidence_artifact_ids=evidence_artifact_ids,
         audit_pipeline_strs=audit_pipeline_strs,
         audit_run_strs=[str(r) for r in audit_run_ids],
+        runs_window_ids=runs_window_ids,
     )
 
 
@@ -795,6 +1007,88 @@ _MONGO_PLANS: tuple[tuple[str, str, str], ...] = (
     (Collections.DECISION_REPORT_ATTEMPTS, "test_run_id", "audit_run_strs"),
 )
 
+#: ``DeletionJob.holds_honoured.run_ids_kept`` is a sample, not a list of record.
+_RUN_IDS_KEPT_MAX = 200
+
+
+async def _holds_report(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    now: datetime,
+    runs_cutoff: datetime,
+    active_holds: list[Any],
+    project_held: bool,
+) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
+    """The preview's ``holds`` block and the job's ``holds_honoured`` record.
+
+    ``active`` lists EVERY live hold (one that keeps nothing today shows
+    ``runs_kept: 0``); the per-hold counts come from the hold service's
+    ``pinned_*`` reads, made only when a hold exists, before any delete.
+    ``holds_honoured`` is ``None`` unless a hold covered something this purge
+    would otherwise have deleted — a live PROJECT hold always does (every held
+    class was skipped for it), any other hold when it kept a run past the runs
+    cutoff or an expired pack. Fail closed: a raising read propagates.
+    """
+    block: dict[str, Any] = {"project_held": project_held, "runs_kept": 0, "packs_kept": 0, "active": []}
+    if not active_holds:
+        return block, None
+    holds = _hold_service()
+    runs_by_hold = await holds.pinned_runs_before(
+        db, project_id=project_id, created_before=runs_cutoff, now=now,
+    )
+    packs_by_hold = await holds.pinned_expired_packs(db, project_id=project_id, now=now)
+    all_runs: set[uuid.UUID] = set()
+    all_packs: set[uuid.UUID] = set()
+    covering: list[dict[str, Any]] = []
+    for hold in active_holds:
+        run_ids = set(runs_by_hold.get(hold.id, ()) or ())
+        pack_ids = set(packs_by_hold.get(hold.id, ()) or ())
+        all_runs |= run_ids
+        all_packs |= pack_ids
+        block["active"].append({**hold.as_json(), "runs_kept": len(run_ids), "packs_kept": len(pack_ids)})
+        if hold.entity_type == "project" or run_ids or pack_ids:
+            covering.append(hold.as_json())
+    block["runs_kept"] = len(all_runs)
+    block["packs_kept"] = len(all_packs)
+    if not (project_held or all_runs or all_packs):
+        return block, None
+    honoured = {
+        "project_held": project_held,
+        "holds": covering,
+        "runs_kept": len(all_runs),
+        "packs_kept": len(all_packs),
+        "run_ids_kept": sorted(str(r) for r in all_runs)[:_RUN_IDS_KEPT_MAX],
+    }
+    return block, honoured
+
+
+async def _floor_report(
+    db: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    keep_last_runs: int,
+    cand: _Candidates,
+) -> dict[str, Any]:
+    """The preview's ``floor`` block. ``runs_kept`` comes from the two run
+    selects already made (window minus purged — no statement); ONLY when the
+    floor kept something, ONE statement classifies the kept runs for the two
+    detail fields."""
+    purged = set(cand.purge_run_ids)
+    kept = [run_id for run_id in cand.runs_window_ids if run_id not in purged]
+    block: dict[str, Any] = {
+        "keep_last_runs": int(keep_last_runs),
+        "runs_kept": len(kept),
+        "latest_passed_kept": False,
+        "suites_kept": 0,
+    }
+    if kept:
+        rows = (await db.execute(_floor_kept_detail_statement(project_id, kept))).all()
+        if rows:
+            block["latest_passed_kept"] = bool(rows[0][0])
+            block["suites_kept"] = int(rows[0][1] or 0)
+    return block
+
 
 async def run_purge(
     db: AsyncSession,
@@ -824,14 +1118,35 @@ async def run_purge(
         raise ValueError(f"Unknown purge mode: {mode!r}")
 
     now = now or datetime.now(timezone.utc)
+    if mode == "execute":
+        # W22a D-14: FIRST, FOR NO KEY UPDATE on the project row. It conflicts
+        # with place_hold's FOR SHARE (a hold placed mid-purge waits, then
+        # finds what is left) but not with ingestion's FK KEY SHARE. SQLAlchemy
+        # spells it key_share=True without read=True. The preview takes no lock.
+        await db.execute(
+            select(Project.id).where(Project.id == project_id).with_for_update(key_share=True)
+        )
     external_stores_injected = mongo is not None or storage is not None
     policy = await get_effective_policy(db, project_id)
     cutoffs = compute_cutoffs(policy, now)
     mongo = mongo if mongo is not None else get_mongo_db()
     storage = storage if storage is not None else get_storage_provider()
 
+    # W22a ACT-05: the live holds, read BEFORE any candidate. FAIL CLOSED — a
+    # failed read raises (the sweep records the job failed, nothing deleted;
+    # the preview 500s); it never proceeds as "no holds".
+    holds = _hold_service()
+    active_holds = list(await holds.live_holds(db, project_id, now=now))
+    project_held = any(h.entity_type == "project" for h in active_holds)
+    held_ids: frozenset[uuid.UUID] = frozenset()
+    if active_holds and not project_held:
+        held_ids = frozenset(await holds.held_run_ids(db, project_id=project_id, now=now))
+
     # ── (1) Materialize BEFORE any delete ────────────────────────────────
-    cand = await _collect_candidates(db, project_id, cutoffs)
+    cand = await _collect_candidates(
+        db, project_id, cutoffs,
+        now=now, keep_last_runs=policy.keep_last_runs, held_run_ids=held_ids,
+    )
     protected_artifacts = await _published_report_artifact_ids(
         mongo,
         project_id,
@@ -844,19 +1159,25 @@ async def run_purge(
             if artifact_id not in protected_artifacts
         ]
 
-    # Shared Postgres-side candidate counts / filters.
+    # Shared Postgres-side candidate counts / filters. W22a: every HELD class
+    # appends its hold clause (contract §2.1 P-8 … P-14, P-16) — always a
+    # NOT EXISTS anti-join, never NOT IN (a NULL entity_id would make NOT IN
+    # match nothing and the purge would silently report success).
     event_archive_where = (
         TestRun.project_id == project_id,
         TestRun.event_archive_at < cutoffs["raw_events"],
         TestRun.event_archive.is_not(None),
+        holds.run_not_held(TestRun.id, project_id, now=now),
     )
     access_audit_where = (
         AccessAuditLog.project_id == project_id,
         AccessAuditLog.created_at < cutoffs["audit"],
+        holds.project_not_held(project_id, now=now),
     )
     tc_audit_where = (
         TestCaseAuditLog.project_id == project_id,
         TestCaseAuditLog.created_at < cutoffs["audit"],
+        holds.project_not_held(project_id, now=now),
     )
     # Epic ACT. The activity ledger rides the AUDIT clock, not the runs clock:
     # audit_days is validated to be >= runs_days precisely so a record of what
@@ -864,12 +1185,17 @@ async def run_purge(
     activity_where = (
         ProjectActivityEvent.project_id == project_id,
         ProjectActivityEvent.occurred_at < cutoffs["audit"],
+        holds.activity_not_held(project_id, now=now),
     )
     provenance_where = (
         AIProvenanceRecord.project_id == project_id,
         AIProvenanceRecord.created_at < cutoffs["audit"],
+        holds.run_not_held(AIProvenanceRecord.run_id, project_id, now=now),
     )
-    deletion_job_where = deletion_job_purge_filter(project_id, cutoffs["audit"])
+    deletion_job_where = (
+        *deletion_job_purge_filter(project_id, cutoffs["audit"]),
+        holds.project_not_held(project_id, now=now),
+    )
     # S4 — a revoked share link is dead the moment it is revoked, but the row
     # only ever died via the run CASCADE, so a revoked link on a run that is
     # still inside its window lingered forever. Artifacts clock: the link is a
@@ -878,7 +1204,10 @@ async def run_purge(
         ReportShareLink.project_id == project_id,
         ReportShareLink.is_revoked.is_(True),
         ReportShareLink.created_at < cutoffs["artifacts"],
+        holds.run_not_held(ReportShareLink.run_id, project_id, now=now),
     )
+    # P-15, P-21, P-22 (and the caches / search index below) are NOT held
+    # (§7.2 D-7): derived, rebuildable, or fixed-window telemetry.
     memory_expired_where = (
         AgentMemoryEntry.project_id == project_id,
         AgentMemoryEntry.lifecycle_status == "active",
@@ -915,6 +1244,7 @@ async def run_purge(
             select(CompliancePack).where(
                 CompliancePack.project_id == project_id,
                 CompliancePack.retention_expires_at < now,
+                holds.pack_not_held(CompliancePack.id, CompliancePack.release_id, project_id, now=now),
             )
         )
     ).scalars().all()
@@ -937,13 +1267,34 @@ async def run_purge(
     # out — their versions go with them). An unreadable citation store yields
     # an empty plan: nothing is pruned over the cap until the next sweep.
     ai_cascaded = await ai_history_retention.count_cascaded(db, cand.purge_run_ids)
-    ai_plan = await ai_history_retention.plan_over_cap(
-        db,
-        mongo,
-        project_id=project_id,
-        caps=policy.ai_history_caps,
-        exclude_run_ids=cand.purge_run_ids,
+    # W22a P-18: held runs join the exclusions; a live project hold skips the
+    # over-cap sweep entirely (an empty plan deletes nothing).
+    if project_held:
+        ai_plan = ai_history_retention.OverCapPlan()
+    else:
+        ai_exclude: list[uuid.UUID] = cand.purge_run_ids
+        if held_ids:
+            purge_set = set(cand.purge_run_ids)
+            ai_exclude = [*cand.purge_run_ids, *sorted((r for r in held_ids if r not in purge_set), key=str)]
+        ai_plan = await ai_history_retention.plan_over_cap(
+            db,
+            mongo,
+            project_id=project_id,
+            caps=policy.ai_history_caps,
+            exclude_run_ids=ai_exclude,
+        )
+
+    # W22a: what the holds, the floor and the SET NULL references mean for
+    # THIS purge — computed in both modes, BEFORE any delete, so the preview
+    # reports exactly what the execute records.
+    holds_block, holds_honoured = await _holds_report(
+        db, project_id=project_id, now=now, runs_cutoff=cutoffs["runs"],
+        active_holds=active_holds, project_held=project_held,
     )
+    floor_block = await _floor_report(
+        db, project_id=project_id, keep_last_runs=policy.keep_last_runs, cand=cand,
+    )
+    references = await retention_references.references_broken(db, cand.purge_run_ids)
 
     cutoffs_iso = {k: v.isoformat() for k, v in cutoffs.items()}
     # None, not 0 — these stores are SKIPPED entirely when external stores are
@@ -1044,6 +1395,12 @@ async def run_purge(
             # infer it from a null. A caller that ignores this still sees null
             # rather than a wrong zero.
             "unmeasured": sorted(k for k, v in candidates.items() if v is None),
+            # W22a: top-level facts, never inside ``candidates`` (whose keys
+            # are class COUNTS only — the preview guard).
+            "holds": holds_block,
+            "floor": floor_block,
+            "references_broken": references.items,
+            "references_measured": references.measured,
         }
 
     # ── EXECUTE ──────────────────────────────────────────────────────────
@@ -1083,8 +1440,21 @@ async def run_purge(
         project_id=str(project_id),
         cutoffs=cutoffs_iso,
         counts=counts,
+        holds_honoured=holds_honoured is not None,
+        floor_runs_kept=floor_block["runs_kept"],
     )
-    return {"mode": "execute", "cutoffs": cutoffs_iso, "counts": counts}
+    return {
+        "mode": "execute",
+        "cutoffs": cutoffs_iso,
+        "counts": counts,
+        "holds": holds_block,
+        "floor": floor_block,
+        "references_broken": references.items,
+        "references_measured": references.measured,
+        # For the sweep to pass to close_job unchanged (contract §1.4).
+        "holds_honoured": holds_honoured,
+        "references_job": references.job_record(),
+    }
 
 
 
@@ -1303,6 +1673,24 @@ async def execute_candidates(
             .values(project_id=project_id)
         )
 
+    # (3.8) W22a ACT-04 F-5 — mark the runs that lose their BASELINE before the
+    # delete NULLs the link (``run_baselines.baseline_run_id`` is SET NULL;
+    # ``baseline_build_number`` is plain text and stays). The FIRST purge date
+    # sticks. Rows whose own run is purged in the same chunk cascade away a
+    # moment later — harmless. This is the ONE executor, so explicit deletes
+    # stamp too (D-19).
+    baselines_marked = 0
+    for chunk in _chunks(cand.purge_run_ids, _PG_DELETE_CHUNK):
+        result = await db.execute(
+            update(RunBaseline)
+            .where(
+                RunBaseline.baseline_run_id.in_(chunk),
+                RunBaseline.baseline_purged_at.is_(None),
+            )
+            .values(baseline_purged_at=now)
+        )
+        baselines_marked += int(getattr(result, "rowcount", 0) or 0)
+
     # (4) Postgres run delete — CASCADE covers all 22 direct children plus
     # the second hop via test_cases (zero RESTRICT children).
     runs_deleted = 0
@@ -1376,6 +1764,9 @@ async def execute_candidates(
         "analysis_cache": cache_counts,
         "search_index": {"documents_deleted": search_index_documents},
         "memory": {"vectors_deleted": memory_vectors_deleted},
+        # NOT under "postgres": those values are summed as "records removed";
+        # a marked baseline row is updated, not removed.
+        "baselines": {"marked_purged": baselines_marked},
     }
 
     return counts

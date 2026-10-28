@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
@@ -67,9 +68,11 @@ from app.models.schemas import (
     RetireCompliancePackRequest,
     CompliancePackGenerateRequest,
     CompliancePackRead,
+    HoldRefRead,
 )
 from app.services import compliance_pack_service as svc
 from app.services import compliance_pack_verify, compliance_signing
+from app.services import retention_hold_service
 
 router = APIRouter(tags=["Compliance Pack"])
 logger = structlog.get_logger("routers.compliance_packs")
@@ -267,8 +270,28 @@ async def list_compliance_packs(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_release_access()),
 ):
-    """List every historical pack ever generated for a release."""
-    return await svc.list_packs_for_release(db, release_id)
+    """List every historical pack ever generated for a release.
+
+    W22a: each pack carries ``holds`` — every LIVE retention hold covering it
+    (the project's, the pack's own, its release's), from ONE read after the
+    packs, so the release page needs no extra request.
+    """
+    packs = await svc.list_packs_for_release(db, release_id)
+    if not packs:
+        return packs
+    covering = await retention_hold_service.holds_covering_packs(
+        db,
+        project_id=packs[0].project_id,
+        release_id=release_id,
+        pack_ids=[p.id for p in packs],
+        now=datetime.now(timezone.utc),
+    )
+    return [
+        CompliancePackRead.model_validate(pack).model_copy(
+            update={"holds": [HoldRefRead(**ref.as_json()) for ref in covering.get(pack.id, [])]}
+        )
+        for pack in packs
+    ]
 
 
 # ── Download ──────────────────────────────────────────────────────────────
@@ -404,6 +427,11 @@ async def retire_compliance_pack(
     ADMIN, typed confirmation, and a reason — a pack is audit evidence
     generated with a seven-year default, so shortening that is a deliberate
     act and is recorded as one.
+
+    **Refused while a retention hold covers the pack** (W22a: the project, the
+    pack, or its release) — 409 ``{"blockers": ["Held: <reason>", …]}`` BEFORE
+    the confirmation check. A held pack is not retired, so releasing the hold
+    never hands it to the next purge the same instant.
     """
     from app.services import compliance_pack_lifecycle as lifecycle
 
@@ -412,6 +440,14 @@ async def retire_compliance_pack(
         raise HTTPException(status_code=404, detail="Compliance pack not found")
 
     await resolve_project_scope(db, current_user, str(pack.project_id))
+
+    held = await retention_hold_service.holds_covering_pack(
+        db, pack=pack, now=datetime.now(timezone.utc)
+    )
+    if held:
+        raise HTTPException(
+            status_code=409, detail={"blockers": [h.sentence() for h in held]}
+        )
 
     if body.confirmation_id != str(pack.id):
         raise HTTPException(
@@ -450,9 +486,11 @@ async def delete_compliance_pack(
     window was previously enforced only on the way out: nothing could shorten
     it, and with no delete route nothing tested it on the way in either.
 
-    S9 adds the legal-hold check alongside this. It is deliberately absent
-    rather than stubbed: a hold check against a table that does not exist
-    reads as a working guard while never firing.
+    **Refused while a retention hold covers the pack** (W22a ACT-05: a live
+    hold on the project, the pack, or its release). The hold check lives HERE,
+    beside the session-free ``lifecycle.deletion_blockers`` (which cannot read a
+    table): ``retention_hold_service.holds_covering_pack`` names each hold as
+    ``Held: <reason>``, listed first, before any storage call.
     """
     from app.db.storage import get_storage_provider
     from app.services import compliance_pack_lifecycle as lifecycle
@@ -463,7 +501,10 @@ async def delete_compliance_pack(
 
     await resolve_project_scope(db, current_user, str(pack.project_id))
 
-    blockers = lifecycle.deletion_blockers(pack)
+    held = await retention_hold_service.holds_covering_pack(
+        db, pack=pack, now=datetime.now(timezone.utc)
+    )
+    blockers = [h.sentence() for h in held] + lifecycle.deletion_blockers(pack)
     if blockers:
         raise HTTPException(status_code=409, detail={"blockers": blockers})
 

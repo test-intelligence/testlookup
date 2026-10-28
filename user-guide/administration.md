@@ -367,9 +367,38 @@ Every purge — scheduled or manual — writes a **purge-audit record** (`settin
 
 **Unlabelled shadow pairs** (`ai_eval_shadow_pairs` still `pending`: the incumbent and candidate outputs a shadow-mode agent recorded for labelling on **AI evaluation › Tiers**) are also on a fixed 30-day window: a nightly task (02:50 UTC) deletes older pending pairs in every project. A labelled pair is G2 evidence and is never deleted by this rule. A project's preview lists its own as **Unlabelled shadow pairs (kept 30 days)** (`shadow_pairs_unlabelled`), and its purge deletes them.
 
-**What is never purged:** `settings_audit_log` itself; compliance packs before their own `retention_expires_at` (default ~7 years); labelled shadow pairs; anything in a project whose policy is disabled (except search usage rows and unlabelled shadow pairs past 30 days, above).
+**What is never purged:** `settings_audit_log` itself; anything a live [retention hold](#retention-holds) covers; the [keep-last floor](#keep-last-floor)'s runs; compliance packs before their own `retention_expires_at` (default ~7 years); labelled shadow pairs; anything in a project whose policy is disabled (except search usage rows and unlabelled shadow pairs past 30 days, above).
 
 The purge is re-entrant — an interrupted sweep is completed by the next run. Setting the raw-events window below 15 days strips live-run event archives that the live-run recovery safety net could otherwise still replay. For a full, immediate wipe of a project use **Project data** instead — retention is for steady-state ageing, not resets.
+
+### Retention holds
+
+A **retention hold** stops every purge and every deletion of what it covers until an administrator releases it. Holds are absolute: no role, flag or API key gets past a live hold — the only way past one is an administrator releasing it, with a reason.
+
+- **Who.** QA leads and administrators place holds; only administrators release them. Both need a signed-in person — an API key (a CI key included) can only list holds. Any project member can see them.
+- **Where.** A **project** hold from **Settings → Retention & purge** (the **Holds** card); a **release** or **compliance pack** hold from the release page. **Run** holds are API-only: `POST /api/v1/projects/{id}/retention-holds` with `{"entity_type": "run", "entity_id": "<run id>", "reason": "…"}`. List with `GET /api/v1/projects/{id}/retention-holds?state=live|expired|released|all`; release with `POST /api/v1/projects/{id}/retention-holds/{hold_id}/release` and `{"reason": "…"}`.
+- **What a hold covers** (one hop):
+
+| Hold on | Also keeps |
+|---|---|
+| The project | Everything in the project |
+| A release | Every run linked to it (primary or not), its compliance packs, those runs' decision reports, and each linked run's baseline run |
+| A run | The run and its baseline run — not the baseline's own baseline |
+| A compliance pack | That pack only |
+
+- A reason (3–500 characters) is required; an optional expiry is up to 3650 days ahead. An **expired** hold stops applying immediately, moves to **Expired**, and cannot be released. Several holds may cover one thing (two matters can hold one release); each is released on its own.
+- **What refuses while a hold is live** — every refusal names it first as `Held: <reason>`: the scheduled and manual purge (the preview shows what each hold keeps), criteria deletion (the preview lists the held run under blocked; the background job checks again), `DELETE /api/v1/runs/{id}` (`409 {"run_id", "blockers": ["Held: …", …]}`; a hold placed after the `202` fails the job), compliance-pack **Retire** and **Delete**, **deleting a release**, **unlinking a run from a release** (it would drop the run out of the hold), and **Project data** reset — refused while *any* live hold exists in the project.
+- **What a hold does not cover:** analysis caches, search-index documents and expired agent-memory vectors (all rebuildable), search usage rows and unlabelled shadow pairs past their fixed 30 days (above). AI-history versions over a cap are still trimmed as new versions are written (never version 1 or a cited version); the nightly catch-up sweep skips held runs.
+- **Audit.** Placing and releasing each write a settings audit row (`retention_hold:<project_id>`) and an activity entry; hold rows are never deleted. Holds send no notification. A deletion job that met a hold records it (`holds_honoured`: which holds, how many runs and packs they kept).
+- **Fail-closed.** If the holds cannot be read, deletions refuse and the preview fails rather than reporting "no holds".
+
+### Keep-last floor
+
+The scheduled purge always keeps the newest **`keep_last_runs`** runs of the project (**Always keep the last N runs**, default **10**, 0–1000), the project's **newest passing run** (the next run's comparison baseline), and the **newest passing run of each suite**. `0` keeps only the passing runs. The floor applies to the **runs** clock only: a kept run still loses its raw events and audit rows on their own clocks, and its uploads once the artifacts window passes. Existing policies get 10 on upgrade, so purges keep more than before. Explicit deletions (a single run, criteria deletion) are not limited by the floor, and their answers say so (`floor_note`). The preview reports what the floor keeps (`floor`).
+
+### Links a deletion breaks
+
+Some rows point at a run with a link that is **cleared, not deleted**, when the run goes — a later run's baseline link, a run diff's baseline, a compliance pack's run link, and the other such links in the schema. The purge preview, the criteria preview and `DELETE /api/v1/runs/{id}` list them (`references_broken`, e.g. `3 runs lose their baseline link`). They are **warnings, never blocks**; when the count cannot be taken the answer says *not measured* (`references_measured: false`), never "none". The deletion job records them (`references_broken`). A run whose baseline was purged says so on its **Changes** tab (`Baseline build 4471 was purged on …`), keeping the build number.
 
 ## Backup, restore & upgrades
 

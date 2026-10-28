@@ -15,7 +15,7 @@ Not flag-gated, like the per-release list: generating a pack is what
 ``release_compliance_pack`` controls. A project-bound API key is confined
 to its project by ``get_accessible_project_ids``.
 
-Source: [backend/app/routers/compliance_packs.py:175](../../../backend/app/routers/compliance_packs.py#L175).
+Source: [backend/app/routers/compliance_packs.py:178](../../../backend/app/routers/compliance_packs.py#L178).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -118,7 +118,7 @@ Every signing key's PUBLIC half, newest first, retired ones included
 A GET never writes: no key is created here. ``active_key_id`` is ``None``
 until the first signed pack creates the deployment's key.
 
-Source: [backend/app/routers/compliance_packs.py:98](../../../backend/app/routers/compliance_packs.py#L98).
+Source: [backend/app/routers/compliance_packs.py:101](../../../backend/app/routers/compliance_packs.py#L101).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -193,7 +193,7 @@ The retired key's private half is destroyed (its ciphertext cleared): it
 never signs again. Its public key stays, so every pack it signed keeps
 verifying. Typed confirmation, and a reason kept on the retired key.
 
-Source: [backend/app/routers/compliance_packs.py:146](../../../backend/app/routers/compliance_packs.py#L146).
+Source: [backend/app/routers/compliance_packs.py:149](../../../backend/app/routers/compliance_packs.py#L149).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -280,7 +280,7 @@ Download Compliance Signing Key
 
 One public key as ``testlookup-compliance-<id>.pem`` (never a private key).
 
-Source: [backend/app/routers/compliance_packs.py:120](../../../backend/app/routers/compliance_packs.py#L120).
+Source: [backend/app/routers/compliance_packs.py:123](../../../backend/app/routers/compliance_packs.py#L123).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -377,11 +377,13 @@ it first if it really should go now. That two-step exists because the
 window was previously enforced only on the way out: nothing could shorten
 it, and with no delete route nothing tested it on the way in either.
 
-S9 adds the legal-hold check alongside this. It is deliberately absent
-rather than stubbed: a hold check against a table that does not exist
-reads as a working guard while never firing.
+**Refused while a retention hold covers the pack** (W22a ACT-05: a live
+hold on the project, the pack, or its release). The hold check lives HERE,
+beside the session-free ``lifecycle.deletion_blockers`` (which cannot read a
+table): ``retention_hold_service.holds_covering_pack`` names each hold as
+``Held: <reason>``, listed first, before any storage call.
 
-Source: [backend/app/routers/compliance_packs.py:438](../../../backend/app/routers/compliance_packs.py#L438).
+Source: [backend/app/routers/compliance_packs.py:474](../../../backend/app/routers/compliance_packs.py#L474).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -466,7 +468,7 @@ Enforces tenant isolation via the pack's ``project_id``. The response
 includes the SHA-256 of the manifest in the ``X-Manifest-Sha256``
 header so automated verifiers can assert before reading the body.
 
-Source: [backend/app/routers/compliance_packs.py:277](../../../backend/app/routers/compliance_packs.py#L277).
+Source: [backend/app/routers/compliance_packs.py:300](../../../backend/app/routers/compliance_packs.py#L300).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -569,7 +571,12 @@ ADMIN, typed confirmation, and a reason — a pack is audit evidence
 generated with a seven-year default, so shortening that is a deliberate
 act and is recorded as one.
 
-Source: [backend/app/routers/compliance_packs.py:385](../../../backend/app/routers/compliance_packs.py#L385).
+**Refused while a retention hold covers the pack** (W22a: the project, the
+pack, or its release) — 409 ``{"blockers": ["Held: <reason>", …]}`` BEFORE
+the confirmation check. A held pack is not retired, so releasing the hold
+never hands it to the next purge the same instant.
+
+Source: [backend/app/routers/compliance_packs.py:408](../../../backend/app/routers/compliance_packs.py#L408).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -583,6 +590,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=404, detail='Compliance pack not found')
+HTTPException(status_code=409, detail={'blockers': [h.sentence() for h in held]})
 HTTPException(status_code=422, detail='confirmation_id must match the pack id exactly')
 ```
 
@@ -674,7 +682,7 @@ writes nothing. The request's connection is handed back before the storage
 read; a storage failure answers 200 ``unreadable`` (absence is not health,
 and not a 502 toast either).
 
-Source: [backend/app/routers/compliance_packs.py:327](../../../backend/app/routers/compliance_packs.py#L327).
+Source: [backend/app/routers/compliance_packs.py:350](../../../backend/app/routers/compliance_packs.py#L350).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -761,7 +769,7 @@ Generate Compliance Pack
 
 Generate a new compliance pack for a release. QA_LEAD+ only.
 
-Source: [backend/app/routers/compliance_packs.py:209](../../../backend/app/routers/compliance_packs.py#L209).
+Source: [backend/app/routers/compliance_packs.py:212](../../../backend/app/routers/compliance_packs.py#L212).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -860,7 +868,11 @@ List Compliance Packs
 
 List every historical pack ever generated for a release.
 
-Source: [backend/app/routers/compliance_packs.py:260](../../../backend/app/routers/compliance_packs.py#L260).
+W22a: each pack carries ``holds`` — every LIVE retention hold covering it
+(the project's, the pack's own, its release's), from ONE read after the
+packs, so the release page needs no extra request.
+
+Source: [backend/app/routers/compliance_packs.py:263](../../../backend/app/routers/compliance_packs.py#L263).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_release_access.<locals>._check`.
 

@@ -19,7 +19,7 @@ double-submitted form deleting twice) and 409 on hash drift. The queued
 transition is committed before dispatch so a second request cannot race
 through the same preview.
 
-Source: [backend/app/routers/retention.py:382](../../../backend/app/routers/retention.py#L382).
+Source: [backend/app/routers/retention.py:426](../../../backend/app/routers/retention.py#L426).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -122,7 +122,7 @@ The purge already writes a never-purged record to ``settings_audit_log``,
 but that row is written after the fact — it cannot say a job is running
 now, and it cannot exist for one that failed. This is that view.
 
-Source: [backend/app/routers/retention.py:163](../../../backend/app/routers/retention.py#L163).
+Source: [backend/app/routers/retention.py:180](../../../backend/app/routers/retention.py#L180).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -218,7 +218,7 @@ One deletion job — the endpoint a 202 caller polls.
 404s when the job belongs to another project, rather than leaking that the
 id exists somewhere else.
 
-Source: [backend/app/routers/retention.py:187](../../../backend/app/routers/retention.py#L187).
+Source: [backend/app/routers/retention.py:204](../../../backend/app/routers/retention.py#L204).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -327,7 +327,7 @@ replays that set.
 Runs that cannot be deleted are reported HERE rather than discovered
 mid-execution, so the count an ADMIN authorises is the count that will go.
 
-Source: [backend/app/routers/retention.py:275](../../../backend/app/routers/retention.py#L275).
+Source: [backend/app/routers/retention.py:307](../../../backend/app/routers/retention.py#L307).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -418,6 +418,355 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/projects/{project_id}/retention-holds`
+
+List Retention Holds
+
+The project's retention holds — any member (and a key bound to the
+project, read only). Writes nothing.
+
+Every statement carries ``project_id``, so a QUERY ``entity_id`` of another
+project matches nothing (200, empty) — no existence oracle. ``total`` is a
+COUNT of the filter; ``counts`` the per-state totals (state filter ignored).
+
+Source: [backend/app/routers/retention.py:535](../../../backend/app/routers/retention.py#L535).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: uuid.UUID, state: str=Query('live'), entity_type: Optional[str]=Query(None), entity_id: Optional[uuid.UUID]=Query(None), limit: int=Query(HOLD_LIST_DEFAULT_LIMIT, ge=1, le=HOLD_LIST_MAX_LIMIT), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _: User=Depends(require_project_access())
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "list_retention_holds_api_v1_projects__project_id__retention_holds_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "query",
+      "name": "state",
+      "required": false,
+      "schema": {
+        "default": "live",
+        "title": "State",
+        "type": "string"
+      }
+    },
+    {
+      "in": "query",
+      "name": "entity_type",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Entity Type"
+      }
+    },
+    {
+      "in": "query",
+      "name": "entity_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Entity Id"
+      }
+    },
+    {
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+        "default": 50,
+        "maximum": 200,
+        "minimum": 1,
+        "title": "Limit",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/RetentionHoldListResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/projects/{project_id}/retention-holds`
+
+Place Retention Hold
+
+Place a retention hold on the project, a release, a run or a compliance pack.
+
+The BODY ``entity_id`` is resolved ``WHERE id AND project_id``: a release,
+run or pack of another project is the same 404 as a missing one. One
+``retention_hold.placed`` ledger row and one ``settings_audit_log`` row are
+committed with the hold (a rolled-back place records nothing).
+
+Source: [backend/app/routers/retention.py:572](../../../backend/app/routers/retention.py#L572).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: uuid.UUID, payload: RetentionHoldCreate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD)), _: User=Depends(require_project_access())
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=404, detail='Project not found')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "place_retention_hold_api_v1_projects__project_id__retention_holds_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/RetentionHoldCreate"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "201": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/RetentionHoldRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/projects/{project_id}/retention-holds/{hold_id}/release`
+
+Release Retention Hold
+
+Release a live hold — ADMIN only, with a reason, audited.
+
+``hold_id`` is loaded ``WHERE id AND project_id … FOR UPDATE``: another
+project's hold is the same 404. A released or expired hold is 409 (an
+expired hold needs no release). One ``retention_hold.released`` ledger row
+and one ``settings_audit_log`` row are committed with the release.
+
+Source: [backend/app/routers/retention.py:639](../../../backend/app/routers/retention.py#L639).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+project_id: uuid.UUID, hold_id: uuid.UUID, payload: RetentionHoldRelease, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.ADMIN)), _: User=Depends(require_project_access())
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "release_retention_hold_api_v1_projects__project_id__retention_holds__hold_id__release_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "path",
+      "name": "hold_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Hold Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/RetentionHoldRelease"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/RetentionHoldRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/projects/{project_id}/retention-policy`
 
 Get Retention Policy
@@ -425,7 +774,7 @@ Get Retention Policy
 Effective retention policy for a project (defaults when no row
 exists — the UI always renders the form) plus the latest purge.
 
-Source: [backend/app/routers/retention.py:66](../../../backend/app/routers/retention.py#L66).
+Source: [backend/app/routers/retention.py:82](../../../backend/app/routers/retention.py#L82).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -508,7 +857,7 @@ Upsert the project's retention policy. ADMIN-only — retention drives
 a destructive scheduled purge. Omitted fields keep their current (or
 default) value; returns the effective policy.
 
-Source: [backend/app/routers/retention.py:85](../../../backend/app/routers/retention.py#L85).
+Source: [backend/app/routers/retention.py:101](../../../backend/app/routers/retention.py#L101).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -606,7 +955,13 @@ Preview Retention Purge
 Dry-run the purge NOW (synchronous, read-only): per-class cutoffs and
 candidate counts. Deliberately available while the policy is disabled.
 
-Source: [backend/app/routers/retention.py:210](../../../backend/app/routers/retention.py#L210).
+W22a: also what the purge would KEEP — the live holds and what each pins
+(``holds``), the keep-last floor (``floor``) — and the links the deletion
+would break (``references_broken``, a warning; ``references_measured``
+false = not measured, never "none"). A hold read that fails fails the
+preview (500) rather than under-reporting what is kept.
+
+Source: [backend/app/routers/retention.py:227](../../../backend/app/routers/retention.py#L227).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -691,7 +1046,7 @@ Two-step confirmation: ``confirmation_name`` must equal the project's
 name exactly (422 on mismatch — the project-reset convention). 409
 while the policy is disabled.
 
-Source: [backend/app/routers/retention.py:232](../../../backend/app/routers/retention.py#L232).
+Source: [backend/app/routers/retention.py:264](../../../backend/app/routers/retention.py#L264).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -798,7 +1153,7 @@ figures rather than a zero — the endpoint degrades per store instead of
 500-ing, because a page whose whole job is reporting is more useful
 partially right than absent.
 
-Source: [backend/app/routers/retention.py:123](../../../backend/app/routers/retention.py#L123).
+Source: [backend/app/routers/retention.py:140](../../../backend/app/routers/retention.py#L140).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

@@ -61,6 +61,7 @@ from app.services import (
     release_portfolio_service,
     release_schedule_export,
     release_service,
+    retention_hold_service,
 )
 from app.services.ai_config_resolver import get_effective_ai_config
 from app.services.release_phase_generator import (
@@ -357,13 +358,38 @@ async def get_release_portfolio_trend(
     return {"project_id": scoped, **trend}
 
 
+async def _live_release_holds(db: AsyncSession, release_id: str) -> list:
+    """Every LIVE retention hold covering the release: its own and its project's."""
+    return await retention_hold_service.holds_covering_release(
+        db, release_id=uuid.UUID(release_id), now=datetime.now(timezone.utc)
+    )
+
+
+async def _refuse_while_held(db: AsyncSession, release_id: str) -> None:
+    """W22a H-13 / H-14: a held release (or a release of a held project) is
+    neither deleted nor stripped of a run — an unlink would silently drop the
+    run out of the hold. 409 ``{"blockers": ["Held: <reason>", …]}``, whatever
+    the credential. Reads the PATH id."""
+    held = await _live_release_holds(db, release_id)
+    if held:
+        raise HTTPException(
+            status_code=409, detail={"blockers": [h.sentence() for h in held]}
+        )
+
+
 @router.get("/{release_id}")
 async def get_release(
     release_id: str,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_release_access()),
 ):
-    return await release_service.get_release_details(db, release_id)
+    details = await release_service.get_release_details(db, release_id)
+    # W22a: the live holds covering the release ride the detail answer (read
+    # LAST), so the release page needs no new request.
+    held = await _live_release_holds(db, release_id)
+    if isinstance(details, dict):
+        return {**details, "holds": [h.as_json() for h in held]}
+    return details
 
 
 @router.get("/{release_id}/gate")
@@ -685,6 +711,7 @@ async def delete_release(
     doomed = await release_service.get_release_or_404(db, release_id)
     project_id = getattr(doomed, "project_id", None)
     label = getattr(doomed, "name", None)
+    await _refuse_while_held(db, release_id)
 
     await release_service.delete_release(db, release_id)
 
@@ -1154,6 +1181,7 @@ async def unlink_test_run(
     # could unlink it from a release in a project they cannot reach.
     ___: User = Depends(require_release_access()),
 ):
+    await _refuse_while_held(db, release_id)
     # Read before the unlink: the run's project is what the bump invalidates.
     project_id = await db.scalar(
         select(TestRun.project_id).where(TestRun.id == uuid.UUID(run_id))

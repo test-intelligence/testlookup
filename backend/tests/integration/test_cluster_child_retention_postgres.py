@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 pytest.importorskip("asyncpg")
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -68,6 +68,27 @@ async def test_retention_purges_old_run_and_all_child_runtime_rows():
             if authority is None:
                 pytest.skip("homelab database has no active project fixture")
             project_id = authority
+            # W22a: the keep-last floor (default 10 runs) would keep this aged
+            # run in a sparse project; keep_last_runs = 0 for THIS transaction
+            # only (the project is shared, so the prior state is restored
+            # before the transaction commits — see the end of the block).
+            prior_keep_last = (
+                await db.execute(
+                    text("SELECT keep_last_runs FROM project_retention_policies WHERE project_id=:p"),
+                    {"p": project_id},
+                )
+            ).scalar_one_or_none()
+            floor_policy_id = uuid.uuid4()
+            if prior_keep_last is None:
+                await db.execute(
+                    text("INSERT INTO project_retention_policies (id, project_id, keep_last_runs) VALUES (:i, :p, 0)"),
+                    {"i": floor_policy_id, "p": project_id},
+                )
+            else:
+                await db.execute(
+                    text("UPDATE project_retention_policies SET keep_last_runs = 0 WHERE project_id=:p"),
+                    {"p": project_id},
+                )
 
             await db.execute(
                 text(
@@ -163,14 +184,19 @@ async def test_retention_purges_old_run_and_all_child_runtime_rows():
                 },
             )
 
+            # W22a: a session joined to this connection's transaction — with a
+            # policy row present, the policy read needs ORM rows, which a bare
+            # AsyncConnection does not return (it answered the row's first column).
+            purge_session = AsyncSession(bind=db)
             result = await run_purge(
-                db,
+                purge_session,
                 project_id=project_id,
                 mode="execute",
                 now=datetime.now(timezone.utc),
                 mongo=_Mongo(),
                 storage=_Storage(),
             )
+            await purge_session.close()
             assert result["counts"]["postgres"]["runs"] == 1
             assert (
                 await db.execute(
@@ -192,6 +218,16 @@ async def test_retention_purges_old_run_and_all_child_runtime_rows():
                     {"id": child_pipeline_id},
                 )
             ).scalar_one() == 0
+            # W22a: restore the shared project's policy (see the top of the block).
+            if prior_keep_last is None:
+                await db.execute(
+                    text("DELETE FROM project_retention_policies WHERE id=:i"), {"i": floor_policy_id}
+                )
+            else:
+                await db.execute(
+                    text("UPDATE project_retention_policies SET keep_last_runs=:k WHERE project_id=:p"),
+                    {"k": prior_keep_last, "p": project_id},
+                )
     finally:
         async with engine.begin() as db:
             await db.execute(

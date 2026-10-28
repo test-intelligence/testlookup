@@ -1,6 +1,7 @@
-import { getData, postData } from './http'
+import { deleteData, getData, postData } from './http'
 import { api } from './api'
 import { downloadBlob } from '@/utils/download'
+import type { HoldRef } from '@/types/retentionHolds'
 
 export interface CompliancePackRead {
   id: string
@@ -22,6 +23,26 @@ export interface CompliancePackRead {
    * fixtures still type-check: an ABSENT field means the server did not say.
    */
   signing_key_id?: string | null
+  /**
+   * W22a ACT-05: every LIVE retention hold covering the pack (the project's,
+   * the pack's own, its release's). Absent (an older server or fixture) = none.
+   */
+  holds?: HoldRef[]
+}
+
+/** `POST /api/v1/compliance-packs/{id}/retire` body (`RetireCompliancePackRequest`). */
+export interface CompliancePackRetireBody {
+  /** 3-500 characters. */
+  reason: string
+  /** Must equal the pack id exactly (the server's typed confirmation). */
+  confirmation_id: string
+}
+
+/** The retire answer (`CompliancePackLifecycleResponse`). */
+export interface CompliancePackLifecycle {
+  pack_id: string
+  retention_expires_at: string
+  purgeable_now: boolean
 }
 
 /** One file of a verification (`CompliancePackFileCheck`). */
@@ -159,6 +180,18 @@ export const compliancePackService = {
       undefined,
       { suppressToast: true },
     ),
+
+  /**
+   * W22a (C-01's UI half): bring the pack's retention window forward to now —
+   * ADMIN, a reason and the pack id typed back. Quiet on failure: the row lists
+   * a 409's `detail.blockers` (`Held: …`) or the server's sentence inline.
+   */
+  retire: (packId: string, body: CompliancePackRetireBody) =>
+    postData<CompliancePackLifecycle>(`/api/v1/compliance-packs/${packId}/retire`, body, { suppressToast: true }),
+
+  /** W22a: delete a pack past its window (ADMIN). 204; a held pack / an open window answer 409 `detail.blockers`. */
+  remove: (packId: string) =>
+    deleteData<void>(`/api/v1/compliance-packs/${packId}`, { suppressToast: true }),
 
   /** Every signing key's public half (deployment-wide); never creates one. */
   signingKeys: () => getData<CompliancePackSigningKeys>('/api/v1/compliance-packs/signing-keys'),

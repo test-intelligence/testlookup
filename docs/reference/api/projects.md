@@ -10,7 +10,7 @@ List Projects
 
 
 
-Source: [backend/app/routers/projects.py:56](../../../backend/app/routers/projects.py#L56).
+Source: [backend/app/routers/projects.py:58](../../../backend/app/routers/projects.py#L58).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -103,7 +103,7 @@ Create Project
 
 
 
-Source: [backend/app/routers/projects.py:107](../../../backend/app/routers/projects.py#L107).
+Source: [backend/app/routers/projects.py:109](../../../backend/app/routers/projects.py#L109).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -195,7 +195,7 @@ revoked nothing: the auto-provisioned QA-lead account stayed live, and
 any API key bound to the project kept authenticating and kept accepting
 ingestion. See ``project_access_revocation_service`` for the measurements.
 
-Source: [backend/app/routers/projects.py:285](../../../backend/app/routers/projects.py#L285).
+Source: [backend/app/routers/projects.py:287](../../../backend/app/routers/projects.py#L287).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -275,7 +275,7 @@ Get Project
 
 
 
-Source: [backend/app/routers/projects.py:201](../../../backend/app/routers/projects.py#L201).
+Source: [backend/app/routers/projects.py:203](../../../backend/app/routers/projects.py#L203).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -362,7 +362,7 @@ Update Project
 
 Update a project's attributes. Only non-None fields are applied. Requires QA_LEAD or higher.
 
-Source: [backend/app/routers/projects.py:214](../../../backend/app/routers/projects.py#L214).
+Source: [backend/app/routers/projects.py:216](../../../backend/app/routers/projects.py#L216).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -469,7 +469,7 @@ yet (covers projects created before this feature shipped). Returns
 the new password so the operator can hand it off; the response is
 not persisted anywhere else.
 
-Source: [backend/app/routers/projects.py:462](../../../backend/app/routers/projects.py#L462).
+Source: [backend/app/routers/projects.py:476](../../../backend/app/routers/projects.py#L476).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -577,7 +577,7 @@ Two-step confirmation: ``payload.confirmation_name`` must equal
 the project's ``name`` exactly (case-sensitive). A mismatch
 returns 422 and nothing is deleted.
 
-Source: [backend/app/routers/projects.py:383](../../../backend/app/routers/projects.py#L383).
+Source: [backend/app/routers/projects.py:385](../../../backend/app/routers/projects.py#L385).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -591,6 +591,8 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=404, detail=str(exc))
+HTTPException(status_code=409, detail={'blockers': [h.sentence() for h in held]})
+HTTPException(status_code=409, detail={'blockers': exc.reasons})
 HTTPException(status_code=422, detail=str(exc))
 ```
 
@@ -681,7 +683,7 @@ QA lead is re-enabled by resetting its password from Members). Members
 keep their memberships; runs and history are untouched. 409 when the
 project is not archived.
 
-Source: [backend/app/routers/projects.py:338](../../../backend/app/routers/projects.py#L338).
+Source: [backend/app/routers/projects.py:340](../../../backend/app/routers/projects.py#L340).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

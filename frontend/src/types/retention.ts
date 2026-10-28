@@ -12,6 +12,11 @@
  *        (body {confirmation_name}; 409 when the policy is disabled;
  *         422 on confirmation-name mismatch)
  */
+import {
+  KEEP_LAST_RUNS_MAX,
+  KEEP_LAST_RUNS_MIN,
+  type HoldRef,
+} from './retentionHolds'
 
 /** Summary of the most recent purge run for this project, or null if never. */
 export interface RetentionLastPurge {
@@ -45,6 +50,12 @@ export interface RetentionPolicy {
    */
   ai_versions_per_run?: number
   ai_versions_per_test?: number
+  /**
+   * W22a ACT-04: the scheduled purge always keeps the newest N runs (plus the
+   * latest passing run of the project and of each suite). 0-1000, default 10.
+   * Absent on an older server.
+   */
+  keep_last_runs?: number
   source: RetentionPolicySource
   last_purge: RetentionLastPurge | null
 }
@@ -62,6 +73,8 @@ export interface RetentionPolicyWrite {
   /** W03 AIH-06: 1-100. There is no null reset: send 20 / 10 to restore the defaults. */
   ai_versions_per_run?: number
   ai_versions_per_test?: number
+  /** W22a ACT-04: 0-1000 (`KEEP_LAST_RUNS_BOUNDS`). Sent only when changed. */
+  keep_last_runs?: number
 }
 
 /** POST …/preview response — cutoff timestamps per data class. */
@@ -111,11 +124,57 @@ export interface RetentionPreviewCandidates {
   shadow_pairs_unlabelled?: number
 }
 
+/** W22a ACT-05: one live hold in the preview, with what it keeps past the cutoffs. */
+export interface RetentionPreviewHold extends HoldRef {
+  /** Runs past the RUNS cutoff this hold pins (a run pinned twice counts under both). */
+  runs_kept: number
+  /** Expired packs this hold pins. */
+  packs_kept: number
+}
+
+/** W22a ACT-05: what the live holds keep out of this purge. */
+export interface RetentionPreviewHolds {
+  /** A live project hold: every held class counts 0. */
+  project_held: boolean
+  /** DISTINCT runs past the runs cutoff kept by any hold. */
+  runs_kept: number
+  packs_kept: number
+  /** Every LIVE hold of the project, in placed order (one that keeps nothing today shows 0). */
+  active: RetentionPreviewHold[]
+}
+
+/** W22a ACT-04: what the keep-last floor keeps (runs clock only). */
+export interface RetentionPreviewFloor {
+  keep_last_runs: number
+  /** Runs past the runs cutoff the floor keeps and no hold already keeps. */
+  runs_kept: number
+  /** The project's newest PASSED run was a candidate and is kept. */
+  latest_passed_kept: boolean
+  /** Distinct suites whose newest PASSED run was a candidate and is kept. */
+  suites_kept: number
+}
+
+/** W22a ACT-04: a link a deletion breaks — a warning, never a block. */
+export interface ReferenceBroken {
+  table: string
+  column: string
+  count: number
+  /** Rendered server-side (`REFERENCE_LABELS` / the fallback). React text. */
+  label: string
+}
+
 export interface RetentionPreview {
   cutoffs: RetentionPreviewCutoffs
   candidates: RetentionPreviewCandidates
   /** Candidate classes whose store could not be reached. */
   unmeasured?: string[]
+  /** W22a: absent on an older server (read as no holds). */
+  holds?: RetentionPreviewHolds
+  floor?: RetentionPreviewFloor | null
+  /** Only links with count > 0, highest first. */
+  references_broken?: ReferenceBroken[]
+  /** False = the count failed: say "not measured", never "none". Absent = true. */
+  references_measured?: boolean
 }
 
 /** POST …/purge 202 response. */
@@ -150,6 +209,12 @@ export type RetentionCapField = 'ai_versions_per_run' | 'ai_versions_per_test'
 export const CAP_BOUNDS: Record<RetentionCapField, { min: number; max: number }> = Object.freeze({
   ai_versions_per_run: { min: 1, max: 100 },
   ai_versions_per_test: { min: 1, max: 100 },
+})
+
+/** W22a ACT-04: inclusive bounds of `keep_last_runs` (the backend validates them too, 422). */
+export const KEEP_LAST_RUNS_BOUNDS: { min: number; max: number } = Object.freeze({
+  min: KEEP_LAST_RUNS_MIN,
+  max: KEEP_LAST_RUNS_MAX,
 })
 
 /** Contract defaults returned by the backend when unconfigured. */
@@ -237,7 +302,14 @@ export interface DeletionPreview {
   truncated: boolean
   /** Object prefixes outside the project scope — NOT deleted, reported here. */
   refused_prefixes: string[]
+  /** A held run lists `Held: <reason>` FIRST in its reasons (W22a). */
   blocked: DeletionBlocker[]
+  /** W22a ACT-04: links deleting the deletable runs breaks (warnings). Absent on an older server. */
+  references_broken?: ReferenceBroken[]
+  references_measured?: boolean
+  /** Always false: an explicit deletion is not limited by the keep-last floor. */
+  floor_applies?: boolean
+  floor_note?: string
 }
 
 export interface DeletionExecuteAccepted {
@@ -255,6 +327,16 @@ export type DeletionJobStatus =
   | 'failed'
   | 'partial'
 
+/** `DeletionJob.holds_honoured` — ONE shape for every job kind (W22a). */
+export interface DeletionJobHoldsHonoured {
+  project_held: boolean
+  holds: HoldRef[]
+  runs_kept: number
+  packs_kept: number
+  /** At most 200, sorted. */
+  run_ids_kept: string[]
+}
+
 export interface DeletionJob {
   id: string
   project_id: string
@@ -264,6 +346,16 @@ export interface DeletionJob {
   counts?: Record<string, unknown> | null
   /** NULL means NOT MEASURED. Never render it as 0. */
   bytes_reclaimed?: number | null
+  /**
+   * W22a ACT-05: set only when a live hold covered something the job would
+   * otherwise have deleted; NULL on every older job and when no hold applied.
+   */
+  holds_honoured?: DeletionJobHoldsHonoured | null
+  /**
+   * W22a ACT-04: a flat record `{measured, total, "<table>.<column>": n}`,
+   * `{measured: false}` when the count failed, NULL when nothing broke.
+   */
+  references_broken?: Record<string, number | boolean> | null
   error?: string | null
   requested_at: string
   started_at?: string | null

@@ -1,3 +1,5 @@
+import type { HoldRef } from './retentionHolds'
+
 export interface ReleasePhase {
   id: string
   release_id: string
@@ -191,6 +193,11 @@ export interface ReleaseDetail extends Release {
   linked_runs: LinkedRun[]
   metrics: ReleaseMetrics
   outcomes: ReleaseOutcome[]
+  /**
+   * W22a ACT-05: every LIVE retention hold covering the release (its own and
+   * the project's). Absent on an older server or fixture: read as `[]`.
+   */
+  holds?: HoldRef[]
 }
 
 // ── W11 release planning (REL-05 / REL-07 / REL-03). Every field the server may

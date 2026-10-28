@@ -131,6 +131,8 @@ async def close_job(
     bytes_reclaimed: Optional[int] = None,
     error: Optional[str] = None,
     expected_status: Optional[str] = None,
+    holds_honoured: Optional[dict] = None,
+    references_broken: Optional[dict] = None,
 ) -> bool:
     """Finish a job record, on its own session.
 
@@ -141,6 +143,10 @@ async def close_job(
     "reclaimed nothing" and "nobody measured" are opposite findings, and this
     column is read by the surface that tells an operator whether a purge was
     worth running.
+
+    ``holds_honoured`` / ``references_broken`` (W22a) are written ONLY when
+    given: NULL means "no live hold covered anything this job would have
+    deleted" / "measured, nothing broke" — absence stays a truthful answer.
     """
     if job_id is None:
         return False
@@ -169,6 +175,10 @@ async def close_job(
         # Bounded: a stack trace from a cross-store failure can be enormous,
         # and this column is rendered in a list view.
         values["error"] = error[:2000]
+    if holds_honoured is not None:
+        values["holds_honoured"] = holds_honoured
+    if references_broken is not None:
+        values["references_broken"] = references_broken
 
     try:
         async with AsyncSessionLocal() as db:

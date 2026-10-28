@@ -1031,6 +1031,8 @@ export function retentionInPageWorld() {
       return respond(202, { job_id: CRITERIA_PREVIEW.job_id, status: 'queued', run_count: CRITERIA_PREVIEW.run_count })
     }, 'POST'],
     [`/api/v1/projects/${PROJECT_ID}/retention-policy`, () => policy],
+    // W22a: the Holds card's one read, in the REAL shape (no hold in this world).
+    [`/api/v1/projects/${PROJECT_ID}/retention-holds`, () => ({ items: [], total: 0, counts: { live: 0, expired: 0, released: 0 } })],
     [`/api/v1/projects/${PROJECT_ID}/storage`, () => ({
       project_id: PROJECT_ID,
       computed_at: '2026-09-18T11:00:00Z',

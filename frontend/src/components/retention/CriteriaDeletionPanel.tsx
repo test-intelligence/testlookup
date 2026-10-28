@@ -23,6 +23,7 @@ import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import { criteriaDeletionService } from '@/services/retentionService'
+import { ReferenceWarnings } from './PreviewKeptLines'
 import { RUN_STATUSES, type DeletionPreview, type RunStatus } from '@/types/retention'
 import {
   buildCriteria,
@@ -262,6 +263,16 @@ export default function CriteriaDeletionPanel({ projectId, projectName, onExecut
               Narrow the criteria and preview again.
             </p>
           )}
+
+          {/* W22a ACT-04: an explicit deletion is not limited by the keep-last
+              floor, and the links it breaks are warnings, never blocks. Each
+              line renders only when the server sent its field. */}
+          {preview.floor_note && (
+            <p data-criteria-floor-note="" className="text-[var(--color-text-muted)]">
+              {preview.floor_note}
+            </p>
+          )}
+          <ReferenceWarnings refs={preview.references_broken} measured={preview.references_measured} />
 
           {preview.blocked.length > 0 && (
             <div data-testid="preview-blocked">

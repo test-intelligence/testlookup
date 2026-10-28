@@ -347,6 +347,9 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/projects/{project_id}/reports/analysis` | Download Analysis Report | [Analysis Report](api/analysis-report.md) |
 | POST | `/api/v1/projects/{project_id}/reset` | Reset Project Data | [Projects](api/projects.md) |
 | POST | `/api/v1/projects/{project_id}/restore` | Restore Project | [Projects](api/projects.md) |
+| GET | `/api/v1/projects/{project_id}/retention-holds` | List Retention Holds | [Retention](api/retention.md) |
+| POST | `/api/v1/projects/{project_id}/retention-holds` | Place Retention Hold | [Retention](api/retention.md) |
+| POST | `/api/v1/projects/{project_id}/retention-holds/{hold_id}/release` | Release Retention Hold | [Retention](api/retention.md) |
 | GET | `/api/v1/projects/{project_id}/retention-policy` | Get Retention Policy | [Retention](api/retention.md) |
 | PUT | `/api/v1/projects/{project_id}/retention-policy` | Put Retention Policy | [Retention](api/retention.md) |
 | POST | `/api/v1/projects/{project_id}/retention-policy/preview` | Preview Retention Purge | [Retention](api/retention.md) |
@@ -691,4 +694,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **682 HTTP operations**, **577 paths**, **88 domain pages**.
+Total: **685 HTTP operations**, **579 paths**, **88 domain pages**.

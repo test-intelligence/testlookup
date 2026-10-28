@@ -12,6 +12,7 @@ import {
 } from '@/services/compliancePackService'
 import { usePermissions } from '@/hooks/usePermissions'
 import { formatCompactDateTime } from '@/utils/formatters'
+import PackLifecycleControls, { PackHoldChip } from './PackLifecycleControls'
 import {
   chipText,
   nonOkLines,
@@ -204,6 +205,7 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
                           {chip.text}
                         </span>
                       )}
+                      <PackHoldChip pack={pack} />
                     </div>
                     <div
                       className="font-mono text-[10px] text-[var(--color-text-muted)] truncate"
@@ -242,6 +244,13 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
                       >
                         <Download className="h-3 w-3" /> ZIP
                       </button>
+                      <PackLifecycleControls
+                        pack={pack}
+                        onChanged={() => {
+                          void refresh()
+                          void refreshProjectCompliancePacks()
+                        }}
+                      />
                     </div>
                   </div>
                 </div>

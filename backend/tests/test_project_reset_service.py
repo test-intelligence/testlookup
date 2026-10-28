@@ -43,6 +43,11 @@ class _Result:
         # free one; after a full reset there are none.
         return SimpleNamespace(all=lambda: list(self._scalars))
 
+    def all(self):
+        # W22a (deliberate): the retention-hold read
+        # (``retention_hold_service.any_live_hold``, ``.all()``) — no live hold.
+        return []
+
 
 def _project(name: str = "GoogleSearch", *, active: bool = True):
     return SimpleNamespace(
@@ -57,6 +62,8 @@ def _fake_db(*, project, run_count=0, full_table_counts=None):
 
     Sequence of ``execute`` calls inside reset_project:
       1. SELECT project by id   → _Result(scalar=project)
+      1b. SELECT live retention holds (W22a, after the confirmation check)
+                                → _Result() — ``.all()`` is ``[]``, nothing held
       2. SELECT COUNT test_runs → _Result(scalar=run_count)
       3. DELETE test_runs       → return value not read
       [if mode == "full"]
@@ -69,6 +76,7 @@ def _fake_db(*, project, run_count=0, full_table_counts=None):
     """
     results: list[object] = [
         _Result(scalar=project),
+        _Result(),
         _Result(scalar=run_count),
         MagicMock(),
     ]

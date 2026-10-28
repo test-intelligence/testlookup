@@ -64,6 +64,7 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import Disclosure from '@/components/ui/Disclosure'
 import CompliancePackPanel from '@/components/compliance/CompliancePackPanel'
+import ReleaseHoldStrip from '@/components/retention/ReleaseHoldStrip'
 import { buildReleaseWorkflow } from '@/components/workflow/workflowPresets'
 import { useReleases, useRelease } from '@/hooks/useReleases'
 import { usePhaseGates } from '@/hooks/useReleaseGate'
@@ -722,6 +723,13 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
     // a viewport breakpoint) left ~16 px of slack at 1280 on Windows fonts: a
     // "100.0%" overflows its tile on CI's wider DejaVu. Two columns there.
     <div className={inPane ? 'space-y-5 [&_[data-gate-scorecard]>div:first-child]:grid-cols-2' : 'space-y-5'}>
+      <ReleaseHoldStrip
+        projectId={detail.project_id}
+        releaseId={releaseId}
+        releaseName={detail.name}
+        holds={detail.holds}
+        onChanged={() => void refetch()}
+      />
       {/* Metrics strip */}
       {/* In the pane: as many tiles a row as fit at 140 px (a "100.0%" in
           text-xl keeps ≥ 40 px of slack on DejaVu): two at 1280, three at 1440. */}

@@ -71,6 +71,13 @@ export function extractErrorMessage(detail: unknown, fallback: string): string {
   }
   if (detail && typeof detail === 'object') {
     const report = detail as Record<string, unknown>
+    // A `{ blockers: [...] }` refusal (a held entity — "Held: Audit 2026-Q4" — a cited run, a pack still in its
+    // retention window) reads as its sentences: the list is not a scalar, so the key: value form below dropped it
+    // and the toast said only "Request failed with status code 409".
+    if (Array.isArray(report.blockers)) {
+      const sentences = report.blockers.filter((b): b is string => typeof b === 'string' && b.trim() !== '')
+      if (sentences.length) return sentences.join(' · ')
+    }
     // A `{ code, message }` refusal reads as its sentence — "The person who requested this run cannot
     // review its act-mode proposals." — not "message: The person …". Any other field keeps the
     // key: value form below (a tier-gate report needs every one of its fields).

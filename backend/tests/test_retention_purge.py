@@ -102,8 +102,12 @@ class _FakeDB:
         audit_rows=(),
         delete_rowcounts=None,
         events=None,
+        holds=(),
     ):
         self.policy = policy
+        # W22a: the rows a read of ``retention_holds`` alone answers (none by
+        # default — every existing test runs without a hold).
+        self.holds = list(holds)
         self.project = project
         self.run_rows = list(run_rows)
         self.tc_rows = list(tc_rows)
@@ -135,6 +139,11 @@ class _FakeDB:
         self.commits += 1
 
     async def execute(self, stmt):
+        # W22a (deliberate): a statement whose FROM is ``retention_holds`` alone
+        # (the hold service's ``live_holds`` read) answers the configured holds.
+        final_froms = getattr(stmt, "get_final_froms", None)
+        if final_froms is not None and [getattr(f, "name", None) for f in final_froms()] == ["retention_holds"]:
+            return _Rows(self.holds)
         kind = type(stmt).__name__
         if kind == "Delete":
             table = stmt.table.name
