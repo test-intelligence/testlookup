@@ -11,15 +11,17 @@ Get Deleted Project Storage
 What deleted projects still cost, and what will never reclaim it.
 
 Deleting a project sets ``is_active = False`` and revokes its credentials;
-nothing reconciles the data. Because ``ProjectRetentionPolicy.enabled``
-defaults to ``False``, a project deleted without retention turned on is
-purged by **nothing, ever** — across all five stores, invisible on every
-other screen.
+nothing reconciles the data. Because retention defaults to off (the
+project's ``enabled`` and the instance default alike), a project deleted
+without retention turned on is purged by **nothing, ever** — across all
+five stores, invisible on every other screen.
 
-``reachable_by_retention`` is the distinction that matters: the nightly
-beat selects on ``enabled`` alone and does **not** filter ``is_active``, so
-a project that opted in before deletion still gets swept. One that did not
-is stranded, and ``unreachable_by_retention`` counts those.
+``reachable_by_retention`` is the distinction that matters: the scheduled
+beat selects on the EFFECTIVE ``enabled`` alone (the project's own, else
+the instance default — W22b) and does **not** filter ``is_active``, so a
+project that opted in before deletion (or inherits an enabled instance
+default) still gets swept. One that did not is stranded, and
+``unreachable_by_retention`` counts those.
 
 Deployment-wide, so it is ADMIN-only and not project-scoped — there is no
 ``{project_id}`` here to guard, and a per-project footprint already exists

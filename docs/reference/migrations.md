@@ -248,3 +248,5 @@ Alembic revisions extracted without executing migrations. An inventory is not ev
 | [backend/migrations/versions/0238_activity_mine_indexes.py](../../backend/migrations/versions/0238_activity_mine_indexes.py) | `'0238'` | `'0237'` | Two indexes for ``GET /api/v1/activity/mine`` (W21d ACT-02). |
 | [backend/migrations/versions/0239_retention_holds.py](../../backend/migrations/versions/0239_retention_holds.py) | `'0239'` | `'0238'` | Retention holds (W22a ACT-05). |
 | [backend/migrations/versions/0240_retention_floor.py](../../backend/migrations/versions/0240_retention_floor.py) | `'0240'` | `'0239'` | The keep-last floor and the purged-baseline stamp (W22a ACT-04). |
+| [backend/migrations/versions/0241_deletion_job_exports.py](../../backend/migrations/versions/0241_deletion_job_exports.py) | `'0241'` | `'0240'` | Deletion-job export columns (W22b ACT-03, export before delete). |
+| [backend/migrations/versions/0242_retention_schedule_instance_policy.py](../../backend/migrations/versions/0242_retention_schedule_instance_policy.py) | `'0242'` | `'0241'` | The purge window, the pause, per-field inheritance and the instance policy (W22b ACT-06). |

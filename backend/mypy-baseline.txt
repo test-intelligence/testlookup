@@ -31,7 +31,7 @@
 1 app/routers/my_failures.py
 1 app/routers/ownership.py
 1 app/routers/rag_generation.py
-2 app/routers/retention.py
+1 app/routers/retention.py
 1 app/routers/saved_views.py
 1 app/routers/sso.py
 1 app/routers/test_management_cases.py

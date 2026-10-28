@@ -12992,11 +12992,55 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## DeletionAcknowledgeRequest
+
+```json
+{
+  "description": "Confirms a collected archive was saved; the route answers ``DeletionJobResponse``.",
+  "properties": {
+    "manifest_sha256": {
+      "maxLength": 64,
+      "minLength": 64,
+      "pattern": "^[0-9a-fA-F]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "manifest_sha256"
+  ],
+  "title": "DeletionAcknowledgeRequest",
+  "type": "object"
+}
+```
+
 ## DeletionExecuteAcceptedResponse
 
 ```json
 {
   "properties": {
+    "export_target": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Export Target"
+    },
+    "export_tier": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Export Tier"
+    },
     "job_id": {
       "format": "uuid",
       "title": "Job Id",
@@ -13035,6 +13079,16 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Confirmation Name",
       "type": "string"
     },
+    "export": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ExportChoice"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "job_id": {
       "format": "uuid",
       "title": "Job Id",
@@ -13061,6 +13115,11 @@ These are the full generated JSON Schema definitions, including required fields,
       },
       "title": "Jobs",
       "type": "array"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
     }
   },
   "title": "DeletionJobListResponse",
@@ -13074,6 +13133,18 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "One deletion that ran (or is running).\n\n`bytes_reclaimed` is nullable and is NOT defaulted to 0 — \"reclaimed\nnothing\" and \"nobody measured\" are opposite findings, and this is the\nsurface that tells an operator whether a purge was worth running.",
   "properties": {
+    "acknowledged_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Acknowledged At"
+    },
     "bytes_reclaimed": {
       "anyOf": [
         {
@@ -13084,6 +13155,30 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Bytes Reclaimed"
+    },
+    "collect_expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Collect Expires At"
+    },
+    "collected_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Collected At"
     },
     "counts": {
       "anyOf": [
@@ -13119,6 +13214,74 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Error"
+    },
+    "export_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Export Bytes"
+    },
+    "export_manifest_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Export Manifest Sha256"
+    },
+    "export_summary": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Export Summary"
+    },
+    "export_target": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Export Target"
+    },
+    "export_tier": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Export Tier"
+    },
+    "export_verified_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Export Verified At"
     },
     "finished_at": {
       "anyOf": [
@@ -13222,6 +13385,16 @@ These are the full generated JSON Schema definitions, including required fields,
     "candidate_hash": {
       "title": "Candidate Hash",
       "type": "string"
+    },
+    "export_estimate": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ExportEstimate"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "floor_applies": {
       "default": false,
@@ -16994,6 +17167,165 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ExportChoice
+
+```json
+{
+  "description": "``DeletionExecuteRequest.export``. Validated in the service (fixed 422 sentence), not by ``Literal``.",
+  "properties": {
+    "target": {
+      "title": "Target",
+      "type": "string"
+    },
+    "tier": {
+      "title": "Tier",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tier",
+    "target"
+  ],
+  "title": "ExportChoice",
+  "type": "object"
+}
+```
+
+## ExportEstimate
+
+```json
+{
+  "description": "What archiving the DELETABLE runs of a criteria preview would cost and reclaim.",
+  "properties": {
+    "collect_ttl_hours": {
+      "title": "Collect Ttl Hours",
+      "type": "integer"
+    },
+    "exportable": {
+      "title": "Exportable",
+      "type": "boolean"
+    },
+    "max_bytes": {
+      "title": "Max Bytes",
+      "type": "integer"
+    },
+    "note": {
+      "default": "Archive, not a backup — it cannot be re-imported.",
+      "title": "Note",
+      "type": "string"
+    },
+    "reclaim_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reclaim Bytes"
+    },
+    "reclaim_measured": {
+      "default": false,
+      "title": "Reclaim Measured",
+      "type": "boolean"
+    },
+    "reclaim_mongo_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reclaim Mongo Bytes"
+    },
+    "reclaim_object_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reclaim Object Bytes"
+    },
+    "refusal": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Refusal"
+    },
+    "run_count": {
+      "title": "Run Count",
+      "type": "integer"
+    },
+    "tiers": {
+      "items": {
+        "$ref": "#/components/schemas/ExportTierEstimate"
+      },
+      "title": "Tiers",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_count",
+    "exportable",
+    "max_bytes",
+    "collect_ttl_hours"
+  ],
+  "title": "ExportEstimate",
+  "type": "object"
+}
+```
+
+## ExportTierEstimate
+
+```json
+{
+  "description": "One tier's archive size estimate. ``None`` = not measured, never 0.",
+  "properties": {
+    "archive_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Archive Bytes"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "over_cap": {
+      "default": false,
+      "title": "Over Cap",
+      "type": "boolean"
+    },
+    "tier": {
+      "title": "Tier",
+      "type": "string"
+    }
+  },
+  "required": [
+    "tier"
+  ],
+  "title": "ExportTierEstimate",
+  "type": "object"
+}
+```
+
 ## FailureCategory
 
 ```json
@@ -20220,6 +20552,398 @@ These are the full generated JSON Schema definitions, including required fields,
     "status"
   ],
   "title": "IngestTestResult",
+  "type": "object"
+}
+```
+
+## InstanceEnablePreviewItem
+
+```json
+{
+  "properties": {
+    "effective_after": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Effective After",
+      "type": "object"
+    },
+    "has_policy_row": {
+      "title": "Has Policy Row",
+      "type": "boolean"
+    },
+    "is_active": {
+      "title": "Is Active",
+      "type": "boolean"
+    },
+    "name": {
+      "title": "Name",
+      "type": "string"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "runs_past_window": {
+      "title": "Runs Past Window",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "project_id",
+    "name",
+    "is_active",
+    "has_policy_row",
+    "effective_after",
+    "runs_past_window"
+  ],
+  "title": "InstanceEnablePreviewItem",
+  "type": "object"
+}
+```
+
+## InstanceEnablePreviewResponse
+
+```json
+{
+  "properties": {
+    "already_enabled": {
+      "title": "Already Enabled",
+      "type": "boolean"
+    },
+    "confirmation_phrase": {
+      "title": "Confirmation Phrase",
+      "type": "string"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/InstanceEnablePreviewItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "preview_hash": {
+      "title": "Preview Hash",
+      "type": "string"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    },
+    "truncated": {
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "total",
+    "truncated",
+    "preview_hash",
+    "confirmation_phrase",
+    "already_enabled"
+  ],
+  "title": "InstanceEnablePreviewResponse",
+  "type": "object"
+}
+```
+
+## InstanceEnableRequest
+
+```json
+{
+  "properties": {
+    "confirmation": {
+      "maxLength": 200,
+      "title": "Confirmation",
+      "type": "string"
+    },
+    "preview_hash": {
+      "maxLength": 64,
+      "minLength": 64,
+      "title": "Preview Hash",
+      "type": "string"
+    }
+  },
+  "required": [
+    "confirmation",
+    "preview_hash"
+  ],
+  "title": "InstanceEnableRequest",
+  "type": "object"
+}
+```
+
+## InstanceRetentionPolicyRead
+
+```json
+{
+  "description": "GET/PUT ``/api/v1/settings/retention-defaults``. A NULL value = the code default.",
+  "properties": {
+    "artifacts_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Artifacts Days"
+    },
+    "audit_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Audit Days"
+    },
+    "code_defaults": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer"
+          }
+        ]
+      },
+      "title": "Code Defaults",
+      "type": "object"
+    },
+    "effective": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer"
+          }
+        ]
+      },
+      "title": "Effective",
+      "type": "object"
+    },
+    "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "enabled_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Enabled At"
+    },
+    "enabled_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Enabled By Name"
+    },
+    "inheriting_projects": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Inheriting Projects",
+      "type": "object"
+    },
+    "keep_last_runs": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Keep Last Runs"
+    },
+    "purge_window_start_utc": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Purge Window Start Utc"
+    },
+    "raw_events_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Raw Events Days"
+    },
+    "runs_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Runs Days"
+    },
+    "updated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Updated At"
+    }
+  },
+  "required": [
+    "enabled",
+    "code_defaults",
+    "effective",
+    "inheriting_projects"
+  ],
+  "title": "InstanceRetentionPolicyRead",
+  "type": "object"
+}
+```
+
+## InstanceRetentionPolicyWrite
+
+```json
+{
+  "description": "PUT body. ``enabled: true`` is refused (422 ``enable_via_flow``); ``false`` switches it off.",
+  "properties": {
+    "artifacts_days": {
+      "anyOf": [
+        {
+          "maximum": 3650.0,
+          "minimum": 7.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Artifacts Days"
+    },
+    "audit_days": {
+      "anyOf": [
+        {
+          "maximum": 3650.0,
+          "minimum": 365.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Audit Days"
+    },
+    "clear": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 6,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Clear"
+    },
+    "enabled": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Enabled"
+    },
+    "keep_last_runs": {
+      "anyOf": [
+        {
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Keep Last Runs"
+    },
+    "purge_window_start_utc": {
+      "anyOf": [
+        {
+          "maximum": 23.0,
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Purge Window Start Utc"
+    },
+    "raw_events_days": {
+      "anyOf": [
+        {
+          "maximum": 3650.0,
+          "minimum": 7.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Raw Events Days"
+    },
+    "runs_days": {
+      "anyOf": [
+        {
+          "maximum": 3650.0,
+          "minimum": 30.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Runs Days"
+    }
+  },
+  "title": "InstanceRetentionPolicyWrite",
   "type": "object"
 }
 ```
@@ -34228,6 +34952,27 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Enabled",
       "type": "boolean"
     },
+    "field_sources": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Field Sources",
+      "type": "object"
+    },
+    "inherit_values": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer"
+          }
+        ]
+      },
+      "title": "Inherit Values",
+      "type": "object"
+    },
     "keep_last_runs": {
       "default": 10,
       "title": "Keep Last Runs",
@@ -34242,6 +34987,35 @@ These are the full generated JSON Schema definitions, including required fields,
           "type": "null"
         }
       ]
+    },
+    "next_scheduled_purge_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Next Scheduled Purge At"
+    },
+    "purge_paused_until": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Purge Paused Until"
+    },
+    "purge_window_start_utc": {
+      "default": 2,
+      "title": "Purge Window Start Utc",
+      "type": "integer"
     },
     "raw_events_days": {
       "title": "Raw Events Days",
@@ -34338,6 +35112,21 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Enabled"
     },
+    "inherit": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 7,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Inherit"
+    },
     "keep_last_runs": {
       "anyOf": [
         {
@@ -34351,6 +35140,32 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Keep Last Runs"
     },
+    "pause_days": {
+      "anyOf": [
+        {
+          "maximum": 90.0,
+          "minimum": 1.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pause Days"
+    },
+    "purge_window_start_utc": {
+      "anyOf": [
+        {
+          "maximum": 23.0,
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Purge Window Start Utc"
+    },
     "raw_events_days": {
       "anyOf": [
         {
@@ -34363,6 +35178,17 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Raw Events Days"
+    },
+    "resume": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Resume"
     },
     "runs_days": {
       "anyOf": [
@@ -34420,6 +35246,11 @@ These are the full generated JSON Schema definitions, including required fields,
     "evidence_artifact_rows": {
       "default": 0,
       "title": "Evidence Artifact Rows",
+      "type": "integer"
+    },
+    "export_archives_expired": {
+      "default": 0,
+      "title": "Export Archives Expired",
       "type": "integer"
     },
     "memory_entries_expired": {

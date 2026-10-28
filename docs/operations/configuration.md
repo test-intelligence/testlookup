@@ -429,7 +429,12 @@ Setup steps for each integration are in [Integrations](integrations.md). Values 
 
 ## Retention
 
-Data retention (runs, results, artifacts) is configured per project at `/settings/retention` and purged nightly at 02:00 UTC; it is not an environment setting. See the administration guide's "Data retention & purge" section in [user-guide/administration.md](../../user-guide/administration.md). The only retention setting in the environment is `AGENT_MEMORY_RETENTION_DAYS` ([Agent pipeline](#agent-pipeline-and-investigations)).
+Data retention (runs, results, artifacts) is configured per project at `/settings/retention`, with instance-wide defaults a project inherits field by field; each project is purged once a day in its purge-window hour (02:00 UTC unless set otherwise) and can be paused. It is not an environment setting. See the administration guide's "Data retention & purge" section in [user-guide/administration.md](../../user-guide/administration.md). The retention settings in the environment are `AGENT_MEMORY_RETENTION_DAYS` ([Agent pipeline](#agent-pipeline-and-investigations)) and the two limits on a deletion archive:
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `RETENTION_EXPORT_MAX_BYTES` | int | `536870912` | Byte cap of a deletion archive (512 MiB; ≥ 1 MiB): checked at preview, at execute and while writing. |
+| `RETENTION_EXPORT_COLLECT_TTL_HOURS` | int | `72` | Hours an administrator has to download and confirm a "collect" deletion archive (1-720); after that the job expires and nothing is deleted. |
 
 ## Workers and reports
 

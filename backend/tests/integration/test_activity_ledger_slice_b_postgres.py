@@ -25,7 +25,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import delete, select
+from sqlalchemy import delete, literal_column, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 pytest.importorskip("asyncpg")
@@ -109,7 +109,14 @@ async def _rows(w, prefix: str = ""):
         stmt = select(ProjectActivityEvent).where(ProjectActivityEvent.project_id == w.project.id)
         if prefix:
             stmt = stmt.where(ProjectActivityEvent.event_type.startswith(prefix))
-        rows = (await db.execute(stmt.order_by(ProjectActivityEvent.occurred_at))).scalars().all()
+        # ``occurred_at`` is a Python now(): on Windows' clock two rows written back to back tie, and the
+        # order they came back in flipped (W22a / W22b local runs). Ties go to the inserting transaction
+        # (``xmin``), then to the row's position (``ctid``) — insertion order for this append-only table.
+        rows = (await db.execute(stmt.order_by(
+            ProjectActivityEvent.occurred_at,
+            literal_column("project_activity_events.xmin::text::bigint"),
+            literal_column("project_activity_events.ctid"),
+        ))).scalars().all()
     for row in rows:
         # A template whose context key no producer supplies renders an em dash.
         assert "—" not in row.summary, f"unfilled placeholder in {row.event_type}: {row.summary}"
