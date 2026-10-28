@@ -40,6 +40,13 @@ vi.mock('@/services/testManagementService', () => ({ testManagementService: case
 const defects = vi.hoisted(() => ({ listPendingDefects: vi.fn(), reviewDefect: vi.fn() }))
 vi.mock('@/services/defectPromotionService', () => ({ defectPromotionService: defects }))
 
+// W21d ACT-02: Inbox › Activity's one read (`/activity/mine`).
+const activity = vi.hoisted(() => ({ listMyActivity: vi.fn() }))
+vi.mock('@/services/activityService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/activityService')>(),
+  listMyActivity: activity.listMyActivity,
+}))
+
 vi.mock('@/hooks/useFeatureFlags', () => ({ useFeatureEnabled: () => false }))
 vi.mock('@/hooks/useAgentActions', async () => (await import('@/test/agentActionMocks')).agentActionHookMocks())
 
@@ -67,6 +74,7 @@ vi.mock('@/store/authStore', () => ({
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
 import MyFailuresPage from './MyFailuresPage'
+import { makeMyActivityItem, makeMyActivityPage } from '@/test/activityLiveMocks'
 
 const FAILURE = {
   id: 'cc1',
@@ -462,5 +470,49 @@ describe('Inbox — Approvals (?tab=approvals)', () => {
     const help = screen.getByRole('button', { name: 'Help: Inbox' })
     expect(help).toHaveAttribute('data-help-topic', 'reports')
     expect(help).toHaveAttribute('data-help-anchor', 'the-decision-report-is-verified-before-publication')
+  })
+})
+
+// W21d ACT-02: Inbox › Activity, for EVERY role. Its read happens only while
+// the tab is open, so the default tab issues no new request.
+describe('Inbox — the Activity tab (ACT-02)', () => {
+  beforeEach(() => {
+    activity.listMyActivity.mockResolvedValue(makeMyActivityPage({
+      items: [makeMyActivityItem({
+        involvement: 'mentioned',
+        project_id: 'p1',
+        summary: 'Ana commented on test case Login works',
+      })],
+      total: 3,
+      projects: 1,
+    }))
+  })
+
+  it('is the third tab, has no count, and nothing reads /activity/mine until it is opened', async () => {
+    renderPage()
+    await screen.findByText('test_checkout_pays')
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs).toHaveLength(3)
+    expect(tabs[2]).toHaveTextContent(/^Activity$/)
+    expect(activity.listMyActivity).not.toHaveBeenCalled()
+
+    fireEvent.click(tab(/^Activity/))
+    expect(await screen.findByText('Ana commented on test case Login works')).toBeInTheDocument()
+    expect(currentUrl()).toBe('/my-failures?tab=activity')
+    expect(activity.listMyActivity).toHaveBeenCalledWith(expect.objectContaining({ view: 'all', project_id: 'p1' }))
+    expect(screen.getByText(/^3 events in the last /)).toBeInTheDocument()
+    expect(within(screen.getByRole('feed')).getByText('Mentioned you')).toBeInTheDocument()
+    expect(screen.getByText(/^What you did and what involves you .* across Checkout\.$/)).toBeInTheDocument()
+    expect(tabs[2]).toHaveTextContent(/^Activity$/)
+  })
+
+  it('every role opens it: a non-lead in All Projects reads every project and sees each row\'s project', async () => {
+    state.isQaLead = false
+    state.projectId = '__ALL__'
+    renderPage('/my-failures?tab=activity')
+    expect(await screen.findByText('Ana commented on test case Login works')).toBeInTheDocument()
+    expect(activity.listMyActivity.mock.calls[0][0]).not.toHaveProperty('project_id')
+    expect(document.querySelector('[data-activity-project]')?.textContent).toBe('Checkout')
+    expect(screen.getByText(/across all your projects\.$/)).toBeInTheDocument()
   })
 })

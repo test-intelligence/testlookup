@@ -51,8 +51,13 @@ export interface NotificationPreferencePayload {
 
 export interface NotificationLog {
   id: string
-  channel: NotificationChannel
-  event_type: NotificationEventType
+  /**
+   * W21d ACT-02: a mention is an in-app row (`in_app`, `test_case.mentioned`).
+   * Only the LOG is widened: the preference vocabularies above are not, so no
+   * preferences form offers either value (mentions are never mailed yet).
+   */
+  channel: NotificationChannel | 'in_app'
+  event_type: NotificationEventType | 'test_case.mentioned'
   title: string
   body: string
   status: 'pending' | 'sent' | 'failed'
@@ -61,7 +66,7 @@ export interface NotificationLog {
   created_at: string
   /**
    * NTF-01: the in-app path the entry opens, from the server's allow-list
-   * (`/releases/<uuid>` or `/release-gate/<uuid>`), else null. The bell
+   * (`/releases/<uuid>`, `/release-gate/<uuid>` or `/test-management?case=<uuid>`), else null. The bell
    * re-checks it by shape and role (`components/layout/notificationHref.ts`).
    */
   link?: string | null

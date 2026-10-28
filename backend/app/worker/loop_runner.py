@@ -98,6 +98,8 @@ def run_async(coro: Awaitable[T]) -> T:
             _discard(loop)
         raise
     finally:
+        if not loop.is_closed():
+            _settle_activity_publishes(loop)
         if not loop.is_closed() and not _cancel_stragglers(loop):
             logger.warning("worker_loop_discarded_after_stuck_straggler")
             _discard(loop, cancel=False)
@@ -113,6 +115,7 @@ def shutdown_worker_loop() -> None:
     if loop is None or loop.is_closed():
         return
     try:
+        _settle_activity_publishes(loop)
         _cancel_stragglers(loop)
     finally:
         _teardown(loop)
@@ -129,6 +132,28 @@ def forget_inherited_loop() -> None:
     if _loop is not None:
         _inherited.append(_loop)
     _loop = None
+
+
+def _settle_activity_publishes(loop: asyncio.AbstractEventLoop) -> None:
+    """Let the activity live tail's in-flight publishes finish (W21d ACT-02).
+
+    A ledger row's publish is a task its session's commit scheduled; a run a
+    worker finalizes commits as its LAST statement, so without this the
+    straggler cancel below would drop every worker-produced row from the
+    tail. Bounded (``SETTLE_TIMEOUT_SECONDS``) and a no-op -- one dict lookup
+    -- unless the live module is loaded with publishes in flight on ``loop``.
+    Never raises.
+    """
+    import sys
+
+    live = sys.modules.get("app.services.activity.live")
+    if live is None:
+        return
+    try:
+        if live.inflight_count(loop) > 0:
+            loop.run_until_complete(live.drain(live.SETTLE_TIMEOUT_SECONDS))
+    except Exception as exc:  # noqa: BLE001 -- the settle must never fail a task
+        logger.warning("worker_loop_activity_settle_failed error=%r", exc)
 
 
 def _cancel_stragglers(loop: asyncio.AbstractEventLoop) -> bool:

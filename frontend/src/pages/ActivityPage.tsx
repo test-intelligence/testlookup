@@ -5,6 +5,7 @@ import toast from 'react-hot-toast'
 
 import ActivityDrawer from '@/components/activity/ActivityDrawer'
 import ActivityRow from '@/components/activity/ActivityRow'
+import LiveToggle, { LiveStatusLine } from '@/components/activity/LiveToggle'
 import EmptyState from '@/components/ui/EmptyState'
 import { isDetailToken } from '@/components/ui/inPage/ids'
 import { useDetailParam } from '@/components/ui/inPage/useDetailParam'
@@ -13,6 +14,7 @@ import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState
 import { SectionErrorBoundary } from '@/components/ui/SectionErrorBoundary'
 import { windowLabel } from '@/components/ui/WindowPicker'
 import { useActivityEventTypes, useActivityFeed } from '@/hooks/useActivityFeed'
+import { readLivePreference, useActivityLive, writeLivePreference } from '@/hooks/useActivityLive'
 import { exportActivity } from '@/services/activityService'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
@@ -72,6 +74,15 @@ export default function ActivityPage() {
     [activeCategory, actorType, q, days],
   )
 
+  // ACT-02 Live: OFF until this viewer turns it on (the choice is remembered
+  // in this browser). The feed stops polling only while the stream is LIVE —
+  // the live hook reports that status below, the feed learns it on the next
+  // render (adjusted during render, not in an effect).
+  const [liveOn, setLiveOn] = useState(readLivePreference)
+  const [streaming, setStreaming] = useState(false)
+  const feedProjectId = isAllProjects ? null : activeProjectId
+  const feedEnabled = !isAllProjects && !categoryPending
+
   const {
     events,
     ledgerStartedAt,
@@ -80,7 +91,22 @@ export default function ActivityPage() {
     isLoading,
     isValidating,
     error,
-  } = useActivityFeed(isAllProjects ? null : activeProjectId, query, !isAllProjects && !categoryPending)
+    refresh,
+    insertLive,
+  } = useActivityFeed(feedProjectId, query, feedEnabled, { live: streaming })
+
+  const live = useActivityLive({
+    projectId: feedProjectId,
+    enabled: liveOn && feedEnabled,
+    query,
+    onInsert: insertLive,
+    onRefresh: refresh,
+  })
+  if ((live.status === 'live') !== streaming) setStreaming(live.status === 'live')
+  const toggleLive = (next: boolean) => {
+    setLiveOn(next)
+    writeLivePreference(next)
+  }
 
   // W27b: the open event rides `?event=` through useDetailParam: opening one
   // from closed PUSHES (Back closes it), another row REPLACES, Close pops our
@@ -165,7 +191,7 @@ export default function ActivityPage() {
           <button
             type="button"
             onClick={() => handleExport('csv')}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--color-bg-card)] px-4 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-hover)]"
+            className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-[var(--color-bg-card)] px-4 py-2 text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-hover)]"
           >
             <Download className="h-4 w-4" />
             Export CSV
@@ -239,7 +265,11 @@ export default function ActivityPage() {
             </button>
           ))}
         </div>
+
+        <LiveToggle on={liveOn} status={live.status} onToggle={toggleLive} />
       </div>
+
+      <LiveStatusLine status={live.status} message={live.message} />
 
       {!openUnderRow && eventDetail}
 

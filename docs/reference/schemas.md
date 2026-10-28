@@ -10132,6 +10132,36 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## CommentMention
+
+```json
+{
+  "description": "A project member an ``@username`` in a test-case comment resolved to (W21d ACT-02).\n\nIds and display names only: never an e-mail.",
+  "properties": {
+    "display_name": {
+      "title": "Display Name",
+      "type": "string"
+    },
+    "user_id": {
+      "format": "uuid",
+      "title": "User Id",
+      "type": "string"
+    },
+    "username": {
+      "title": "Username",
+      "type": "string"
+    }
+  },
+  "required": [
+    "user_id",
+    "username",
+    "display_name"
+  ],
+  "title": "CommentMention",
+  "type": "object"
+}
+```
+
 ## CompliancePackFileCheck
 
 ```json
@@ -42737,6 +42767,14 @@ These are the full generated JSON Schema definitions, including required fields,
     "is_resolved": {
       "title": "Is Resolved",
       "type": "boolean"
+    },
+    "mentions": {
+      "default": [],
+      "items": {
+        "$ref": "#/components/schemas/CommentMention"
+      },
+      "title": "Mentions",
+      "type": "array"
     },
     "parent_id": {
       "anyOf": [

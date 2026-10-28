@@ -42,9 +42,11 @@ def test_every_project_scoped_activity_route_takes_project_id_on_the_path():
 
 def test_the_only_unscoped_route_is_the_global_registry():
     """`/activity/event-types` is the event vocabulary, which is global by
-    nature. Everything else must be scoped."""
+    nature. `/activity/mine` (W21d) is the caller's own rows, scoped by
+    resolve_project_scope (its optional project_id is a QUERY id that helper
+    authorizes). Everything else must be scoped."""
     unscoped = [r.path for r in _routes() if "/projects/" not in r.path]
-    assert unscoped == ["/api/v1/activity/event-types"]
+    assert unscoped == ["/api/v1/activity/event-types", "/api/v1/activity/mine"]
 
 
 def test_literal_segment_routes_are_registered_before_the_uuid_pattern():
@@ -59,6 +61,7 @@ def test_literal_segment_routes_are_registered_before_the_uuid_pattern():
     for literal in (
         "/api/v1/projects/{project_id}/activity/export",
         "/api/v1/projects/{project_id}/activity/entity/{entity_type}/{entity_id}",
+        "/api/v1/projects/{project_id}/activity/stream",
     ):
         assert paths.index(literal) < catch_all, f"{literal} is shadowed"
 

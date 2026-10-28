@@ -285,6 +285,8 @@ SSO also has to be enabled in the deployment's configuration; the operator guide
 
 **Activity log** (`/activity`, one project): everything that happened in the project, in order — runs, analysis, releases, quality, configuration, membership, test management, integrations and agent actions. Search it (three characters or more), filter by category, by who did it (a user, an API key, a service account, the system or an agent) and by window, and open an event to see what changed. **Export CSV** needs `QA_LEAD` on the project.
 
+**Live** (the last button of the filter row) shows new events as they happen: each one appears at the top of the list about a second after it is saved, if it matches your filters, without a reload. It is off until you turn it on, and your browser remembers the choice. While it is connecting or reconnecting, or when live updates are unavailable, a line under the filters says so and the list keeps refreshing every 30 seconds. A live view reconnects by itself every 15 minutes (sooner when your sign-in token runs out) and picks up where it stopped; you can have 3 live views open at once. Your own activity across projects, and what involves you, is in the Inbox's **Activity** tab ([Inbox](/docs/inbox#activity)).
+
 ## System
 
 ### Data and storage

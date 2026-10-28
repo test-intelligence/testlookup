@@ -1,6 +1,6 @@
 # Your inbox and approvals
 
-**Inbox** (`/my-failures`) is your personal queue: the failures assigned to you, and the decisions waiting for you. It has two tabs, **Assigned to me** and **Approvals**. The badge on **Inbox** in the sidebar counts your assigned failures. The old `/reviews` address opens the **Approvals** tab.
+**Inbox** (`/my-failures`) is your personal queue: the failures assigned to you, and the decisions waiting for you. It has three tabs, **Assigned to me**, **Approvals** and **Activity**. The badge on **Inbox** in the sidebar counts your assigned failures. The old `/reviews` address opens the **Approvals** tab.
 
 ## How failures get assigned
 
@@ -79,6 +79,16 @@ A defect promoted from a failure cluster waits here when it needs approval: it n
 - **Reject** asks for a reason (recorded in the activity log) and closes the defect as **Invalid**, so it stops counting toward the release gate.
 
 The queue reads one project at a time and only QA leads and administrators see it. See [Promoting to a defect](/docs/failure-analysis#promoting-to-a-defect).
+
+## Activity
+
+**Activity** (`/my-failures?tab=activity`) is what happened in your projects that has to do with you, newest first, for the window you pick (24h, 7d, 14d or 30d; 7 days to start with), with the number of events above the list. **Show** picks which:
+
+- **Mine** — what you did while signed in. Runs sent by your API keys stay in each project's [Activity log](/docs/administration#activity-log).
+- **Involving me** — what other people did that concerns you: a test-case comment that mentions you (`@your-username`), changes to test cases you are assigned to or wrote, and changes to defects assigned to you.
+- **All** — both (the default).
+
+Each row says why it is there — **You**, **Mentioned you**, **Assigned to you** or **Your test case** — and, while **All Projects** is selected in the top bar, which project it belongs to. With one project selected, the tab shows that project only. A row's link opens the thing it is about, switching to its project first. Every role has this tab, and it only ever lists projects you are a member of. **Load older** goes further back within the window.
 
 ## Related
 

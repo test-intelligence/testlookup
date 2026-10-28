@@ -157,7 +157,7 @@ async def list_history(
     db: AsyncSession = Depends(get_db),
 ):
     rows = await list_notification_history(db, current_user, unread_only=unread_only, limit=limit)
-    # W09 NTF-01: ``link`` is one of the two allow-listed in-app paths a
+    # W09 NTF-01: ``link`` is one of the allow-listed in-app paths a
     # notification may open (``gate_notifications.APP_PATH_RE``), else None.
     return [
         NotificationLogResponse.model_validate(row).model_copy(

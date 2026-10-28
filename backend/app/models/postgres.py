@@ -2864,6 +2864,9 @@ class ManagedTestCase(Base):
         Index("ix_mtc_project_fingerprint", "project_id", "test_fingerprint"),
         Index("ix_mtc_project_last_executed", "project_id", "last_executed_at"),
         Index("ix_mtc_author", "author_id"),
+        # "Test cases assigned to me" across projects (/activity/mine part C,
+        # beside ix_mtc_author); most cases are unassigned (migration 0238).
+        Index("ix_mtc_assignee", "assignee_id", postgresql_where=text("assignee_id IS NOT NULL")),
         Index("ix_mtc_fingerprint", "test_fingerprint"),
         Index("ix_mtc_dup_fingerprint", "dup_fingerprint"),
     )
@@ -7780,6 +7783,16 @@ class ProjectActivityEvent(Base):
         Index("ix_pae_project_category_time", "project_id", "category", "occurred_at", "id"),
         Index("ix_pae_project_entity", "project_id", "entity_type", "entity_id", "occurred_at"),
         Index("ix_pae_project_actor", "project_id", "actor_id", "occurred_at"),
+        # What one person did while signed in, across every project
+        # (/activity/mine part A, keyset order). Partial: an API key's rows
+        # carry its owner's actor_id and would fill it (migration 0238).
+        Index(
+            "ix_pae_actor_time",
+            "actor_id",
+            text("occurred_at DESC"),
+            text("id DESC"),
+            postgresql_where=text("actor_type = 'user'"),
+        ),
         Index(
             "ix_pae_project_release",
             "project_id",

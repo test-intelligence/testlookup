@@ -399,6 +399,13 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # saved a new version (context: from_version, to_version).
     _spec("test_case.bulk_changed", "test_management", "test_library", "Bulk edit of {count} test cases: {change}"),
     _spec("test_case.restored", "test_management", "test_case", "Test case {entity_label} restored from v{from_version}"),
+    # W21d ACT-02: recorded by routers/test_management_cases.py add_comment on
+    # the request session, one row per comment (outcome: it commits with the
+    # comment or not at all). context: comment_id, mentions (user IDS, never
+    # usernames or e-mails), mention_count, step_number; source_table
+    # test_case_comments.
+    _spec("test_case.commented", "test_management", "test_case",
+          "{actor_name} commented on test case {entity_label}", "outcome", _HUMAN_OR_KEY),
     # W13 (outcome rows, staged on the request session and committed by the
     # router). ``suite.updated``: routers/suites.py update_suite, only when a
     # field changed (context: changed; before / after of the changed fields).

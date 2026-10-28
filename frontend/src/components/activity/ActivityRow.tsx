@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { Bot, Cog, KeyRound, Server, User as UserIcon } from 'lucide-react'
@@ -49,9 +50,13 @@ interface Props {
   onOpen?: (event: ActivityEvent) => void
   /** Compact form for the Overview panel: no category chip, tighter padding. */
   compact?: boolean
+  /** Extra facts at the END of the meta line (Inbox › Activity: the involvement, the project). */
+  meta?: ReactNode
+  /** Runs before the entity link navigates (Inbox › Activity switches to the row's project first). */
+  onEntityClick?: (event: ActivityEvent) => void
 }
 
-export default function ActivityRow({ event, onOpen, compact = false }: Props) {
+export default function ActivityRow({ event, onOpen, compact = false, meta, onEntityClick }: Props) {
   const ActorIcon = ACTOR_ICON[event.actor.type] ?? UserIcon
   const when = event.occurred_at
 
@@ -116,6 +121,7 @@ export default function ActivityRow({ event, onOpen, compact = false }: Props) {
           {event.entity.href ? (
             <Link
               to={event.entity.href}
+              onClick={onEntityClick ? () => onEntityClick(event) : undefined}
               className="text-[var(--color-accent)] hover:underline"
             >
               {event.entity.label || event.entity.type}
@@ -130,6 +136,8 @@ export default function ActivityRow({ event, onOpen, compact = false }: Props) {
               </span>
             )
           )}
+
+          {meta}
         </div>
       </div>
     </li>

@@ -30,6 +30,7 @@ import { useDetailParam } from '@/components/ui/inPage/useDetailParam'
 import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import CommentComposer from '@/components/testManagement/CommentComposer'
 import EvidenceGapLists from '@/components/testManagement/EvidenceGapLists'
 import LifecyclePanel from '@/components/testManagement/LifecyclePanel'
 import PromotionAction from '@/components/testManagement/PromotionAction'
@@ -430,8 +431,6 @@ function CaseDetailPanel({
   requirementTraceability = false, onFilterRequirement = () => undefined,
 }: CaseDetailPanelProps) {
   const [activeTab, setActiveTab] = useState<DetailTab>('details')
-  const [comment, setComment] = useState('')
-  const [addingComment, setAddingComment] = useState(false)
   const [runningAiReview, setRunningAiReview] = useState(false)
   const [aiResult, setAiResult] = useState<AIReviewResult | null>(caseItem.ai_review_notes ?? null)
   const [requestingReview, setRequestingReview] = useState(false)
@@ -481,21 +480,6 @@ function CaseDetailPanel({
     { id: 'comments',  label: 'Comments',   icon: <MessageSquare className="h-3.5 w-3.5" /> },
     { id: 'ai_review', label: 'AI Review',  icon: <Sparkles className="h-3.5 w-3.5" /> },
   ]
-
-  const handleAddComment = async () => {
-    if (!comment.trim()) return
-    setAddingComment(true)
-    try {
-      await testManagementService.addComment(caseItem.id, { content: comment.trim(), comment_type: 'general' })
-      setComment('')
-      mutateComments()
-      toast.success('Comment added')
-    } catch {
-      toast.error('Failed to add comment')
-    } finally {
-      setAddingComment(false)
-    }
-  }
 
   const handleAiReview = async () => {
     setRunningAiReview(true)
@@ -844,20 +828,8 @@ function CaseDetailPanel({
                )
               }
               {canWrite ? (
-                <div className="border-t border-[var(--color-border)] pt-3">
-                  <textarea
-                    className="input w-full h-20 resize-none text-sm"
-                    value={comment}
-                    onChange={e => setComment(e.target.value)}
-                    placeholder="Add a comment…"
-                  />
-                  <div className="flex justify-end mt-2">
-                    <button onClick={handleAddComment} disabled={addingComment || !comment.trim()} className="btn-primary text-sm flex items-center gap-2">
-                      {addingComment && <LoadingSpinner size="sm" />}
-                      Post Comment
-                    </button>
-                  </div>
-                </div>
+                // W21d ACT-02: the comment box with @mention suggestions (it reads the page's members key).
+                <CommentComposer caseId={caseItem.id} projectId={projectId ?? ''} onPosted={() => { void mutateComments() }} />
               ) : (
                 <p data-comments-read-only="" className="border-t border-[var(--color-border)] pt-3 m-0 text-xs text-[var(--color-text-muted)]">
                   {isTesterUp ? 'Choose a project to add a comment.' : 'Viewers can read comments.'}

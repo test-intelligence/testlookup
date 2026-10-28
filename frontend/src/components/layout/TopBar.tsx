@@ -13,7 +13,7 @@ import PresentationToggle from '@/components/ui/PresentationToggle'
 import HelpMenu from './HelpMenu'
 import { HeaderPopover } from '@/components/ui/HeaderPopover'
 import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
-import { notificationHref } from './notificationHref'
+import { notificationChannelLabel, notificationHref } from './notificationHref'
 import { avatarColor } from '@/components/ui/avatarColors'
 import SearchTypeahead from '@/components/search/SearchTypeahead'
 
@@ -426,7 +426,7 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
                             className="text-xs text-[var(--color-text-muted)] mt-0.5"
                             title={new Date(log.created_at).toISOString()}
                           >
-                            {log.channel.toUpperCase()} · {formatCompactDateTime(log.created_at)}
+                            {notificationChannelLabel(log.channel)} · {formatCompactDateTime(log.created_at)}
                           </p>
                         </div>
                         {!log.is_read && (

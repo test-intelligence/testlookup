@@ -52,6 +52,24 @@ locally by default.
 
 ### Added
 
+- **Activity goes live, every role gets Inbox › Activity, and @mentions in
+  test-case comments** (wave W21d, ACT-02; branch
+  `feat/df-activity-live-20261027`). **Activity** gains a **Live** toggle
+  (off until a viewer turns it on; QA leads and admins, like the page): new
+  rows stream in within about a second over a signed-in connection — the
+  token travels in the request header, never in the URL — and the feed falls
+  back to its 30-second refresh, saying so, when live updates are
+  unavailable. Rows are published only after their change commits, so a
+  rolled-back change never appears. Every role gets **Inbox › Activity**:
+  what you did and what involves you (mentions, test cases you are assigned
+  to or wrote, defects assigned to you) across your projects, as **Mine**,
+  **Involving me** or **All**, with the window and a total. Typing `@` in a
+  test-case comment suggests the case's project members; `@username` of a
+  member notifies them in the app (the bell; never by e-mail yet), and the
+  comment shows as **Mentioned you** in their Inbox. Every test-case comment
+  is now an activity row. A comment's reply-to must belong to the same case
+  (one from another case is refused with 404). One migration (`0238`) builds
+  two indexes concurrently.
 - **Activity feed: test management, agent proposals and exports now appear;
   every filter matches something** (wave W21c, ACT-01 slice (c); branch
   `feat/df-activity-ledger-c-20261027`; no migration). Test-case changes
@@ -1395,6 +1413,9 @@ locally by default.
 
 ### Security
 
+- **pymongo 4.18.3.** The backend's MongoDB driver moves from 4.18.2
+  (CVE-2026-106435, high: a denial of service through an out-of-bounds read);
+  still below 5.0 for motor 3.7.1.
 - **pypdf 6.21.2.** The backend's PDF text extraction (knowledge RAG) moves
   from 6.19.0 (CVE-2026-115572, CVE-2026-115580, CVE-2026-115585: long runtimes
   on crafted PDFs).

@@ -1,9 +1,11 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import useSWR from 'swr'
 import useSWRInfinite from 'swr/infinite'
 
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
+import { prependLive } from '@/hooks/useActivityLive'
 import {
+  type ActivityEvent,
   type ActivityEventDetail,
   type ActivityEventTypes,
   type ActivityPage,
@@ -12,6 +14,12 @@ import {
   listActivity,
   listActivityEventTypes,
 } from '@/services/activityService'
+
+/** A first page, stamped with when its request STARTED (client-side only). */
+type StampedPage = ActivityPage & { fetchedFrom?: number }
+
+/** Streamed rows kept on screen at most (the server's stream holds 1,000). */
+const MAX_LIVE_ROWS = 1_000
 
 /**
  * SWR hooks for the activity ledger.
@@ -38,6 +46,13 @@ export function useActivityFeed(
   projectId: string | null,
   query: ActivityQuery & { days?: number },
   enabled = true,
+  /**
+   * `live` (ACT-02): the page's live tail is streaming, so the 30 s polling
+   * stops; any other state of the tail (connecting, reconnecting,
+   * unavailable, refused) keeps polling — a missing stream is never shown as
+   * a quiet project.
+   */
+  options: { live?: boolean } = {},
 ) {
   // Serialised so the key is stable across renders that rebuild the object.
   const queryKey = useMemo(() => JSON.stringify(query), [query])
@@ -59,9 +74,10 @@ export function useActivityFeed(
   )
 
   const { data, error, isLoading, isValidating, size, setSize, mutate } =
-    useSWRInfinite<ActivityPage>(
+    useSWRInfinite<StampedPage>(
       getKey,
-      ([, id, rawQuery, cursor]) => {
+      async ([, id, rawQuery, cursor]) => {
+        const startedAt = Date.now()
         const parsed = JSON.parse(rawQuery as string) as ActivityQuery & {
           days?: number
         }
@@ -71,21 +87,52 @@ export function useActivityFeed(
         // purity rule rejects it), and it is also wrong: a page left open for
         // hours would keep asking for a window anchored to its first render,
         // so newly-arrived events would silently fall outside it.
-        return listActivity(id as string, {
+        const page = await listActivity(id as string, {
           ...rest,
           ...(days
             ? { since: new Date(Date.now() - days * 86_400_000).toISOString() }
             : {}),
           ...(cursor ? { cursor: cursor as string } : {}),
         })
+        // The first page carries when its read began: a streamed row that
+        // arrived before that is in this answer (or belongs to a later page).
+        return cursor || !page ? page : { ...page, fetchedFrom: startedAt }
       },
-      { ...OPTS, refreshInterval: REFRESH_INTERVALS.POLLING, revalidateFirstPage: true },
+      { ...OPTS, refreshInterval: options.live ? 0 : REFRESH_INTERVALS.POLLING, revalidateFirstPage: true },
     )
+
+  // Rows the live tail delivered, newest first, each with when it arrived.
+  // They are laid over page 0 at READ time (prependLive), not written into the
+  // SWR cache: SWR discards a revalidation that started before a mutate, so a
+  // frame landing during a page-0 re-read or a "Load older" would have thrown
+  // that answer away. A row stays on top until a first-page read that began
+  // after it arrived has answered (that read holds it, or it now belongs to an
+  // older page); a row already on a loaded page is never shown twice.
+  const liveScope = `${projectId ?? ''}\n${queryKey}`
+  const [live, setLive] = useState<{ scope: string; rows: { row: ActivityEvent; at: number }[] }>(
+    () => ({ scope: liveScope, rows: [] }),
+  )
+  const insertLive = useCallback((row: ActivityEvent) => {
+    const at = Date.now()
+    setLive((prev) => {
+      const rows = prev.scope === liveScope ? prev.rows : []
+      if (rows.some((r) => r.row.id === row.id)) return prev
+      return { scope: liveScope, rows: [{ row, at }, ...rows].slice(0, MAX_LIVE_ROWS) }
+    })
+  }, [liveScope])
 
   // Memoised on `data` rather than on a `data ?? []` expression: the fallback
   // builds a NEW array every render, so the dependency would never compare
   // equal and every consumer would re-render on every tick.
-  const pages = useMemo(() => data ?? [], [data])
+  const pages = useMemo(() => {
+    const loaded: ActivityPage[] = data ?? []
+    const covered = data?.[0]?.fetchedFrom ?? Number.NEGATIVE_INFINITY
+    // `>=`: a row that arrived in the read's own millisecond is kept (shown
+    // once either way: prependLive skips an id the answer already holds).
+    const fresh = live.scope === liveScope ? live.rows.filter((r) => r.at >= covered) : []
+    // Oldest first, so the newest ends on top.
+    return fresh.reduceRight((acc, r) => prependLive(acc, r.row), loaded)
+  }, [data, live, liveScope])
   const events = useMemo(() => pages.flatMap(p => p.items), [pages])
   const lastPage = pages[pages.length - 1]
 
@@ -105,6 +152,8 @@ export function useActivityFeed(
     error,
     size,
     refresh: mutate,
+    /** ACT-02: a streamed row that matched the page's filters (de-duplicated by id). */
+    insertLive,
   }
 }
 

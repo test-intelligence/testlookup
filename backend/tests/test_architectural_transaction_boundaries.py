@@ -101,6 +101,15 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "ai_eval_scorers.py",
     "ai_eval_runner.py",
     "shadow_pair_service.py",
+    # ── W21d ACT-02 activity live tail: new modules, commit-free from birth ──
+    # services/activity/: the publish-after-commit hook (Redis only, from an
+    # after_commit listener), the cross-project /activity/mine read, the
+    # mention parser + in-app notification staging (the comment route
+    # commits), and the wire vocabulary (constants only).
+    "live.py",
+    "mine.py",
+    "mentions.py",
+    "live_vocab.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

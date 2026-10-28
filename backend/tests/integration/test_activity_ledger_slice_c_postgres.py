@@ -132,7 +132,8 @@ async def test_audit_event_mirrors_test_case_and_plan_rows(world):
             await db.commit()
 
     rows = await _rows(w, "test_")
-    assert [(x.event_type, x.summary) for x in rows] == [
+    # Which rows, not their order: occurred_at is a Python now(), and back-to-back calls tie on Windows' clock.
+    assert sorted((x.event_type, x.summary) for x in rows) == sorted([
         ("test_case.created", f"Test case {w.case.title} was created"),
         ("test_case.updated", f"Test case {w.case.title} changed: priority, title"),
         ("test_case.status_changed", f"Test case {w.case.title} moved to in review"),
@@ -140,7 +141,7 @@ async def test_audit_event_mirrors_test_case_and_plan_rows(world):
         ("test_case.deleted", f"Test case {w.case.title} was deleted"),
         ("test_plan.created", f"Test plan {w.plan.name} was created"),
         ("test_plan.updated", f"Test plan {w.plan.name} changed: name"),
-    ]
+    ])
     async with w.factory() as db:
         audit_ids = set((await db.execute(select(TestCaseAuditLog.id).where(
             TestCaseAuditLog.project_id == pid))).scalars().all())
@@ -217,8 +218,12 @@ async def test_suite_sync_deletions_write_one_row_per_suite(world):
         await db.commit()
 
     rows = await _rows(w, "suite.")
-    assert [x.summary for x in rows] == [
-        f"3 tests were removed from suite {w.suite.name}",
+    # Keyed by summary, not position: the two rows share a Python now(), which ties on Windows' clock.
+    by_summary = {x.summary: x for x in rows}
+    suite_row_summary = f"3 tests were removed from suite {w.suite.name}"
+    assert len(rows) == 2 and set(by_summary) == {
+        suite_row_summary,
         "1 tests were removed from suite no-catalogue-suite",
-    ]
-    assert rows[0].entity_id == str(w.suite.id) and rows[0].actor_type == "system"
+    }
+    suite_row = by_summary[suite_row_summary]
+    assert suite_row.entity_id == str(w.suite.id) and suite_row.actor_type == "system"
