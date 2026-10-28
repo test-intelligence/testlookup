@@ -212,6 +212,24 @@ def ns():
 
 
 @pytest.fixture(autouse=True)
+def _activity_live_publish_off(monkeypatch):
+    """The activity live tail is OFF in every test unless the test turns it on.
+
+    ``service.record`` stages each outcome row for a publish after its
+    session's commit, and an attempt row publishes after its own commit
+    (W21d ACT-02). Off here, no existing test gains a session listener, a
+    scheduled task or a Redis call; the live tests set
+    ``app.services.activity.live.PUBLISH_ENABLED`` back to True inside the
+    test (and assert the positive: the recorder saw the row).
+    """
+    try:
+        import app.services.activity.live as live
+    except Exception:  # pragma: no cover - an import-broken tree fails elsewhere
+        return
+    monkeypatch.setattr(live, "PUBLISH_ENABLED", False, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _close_the_worker_loop_after_each_test():
     """Close the Celery worker loop, and drain what it holds, after each test.
 

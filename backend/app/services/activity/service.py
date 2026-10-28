@@ -418,7 +418,17 @@ async def record(
         if group_key and await _is_duplicate(db, pid, spec.event_type, group_key):
             _count_dropped("duplicate")
             return
-        db.add(_make_row())
+        row = _make_row()
+        db.add(row)
+        # The live tail (W21d): held on the session, published only after its
+        # commit. Imported here, not at module level, so every patch of this
+        # module's names keeps working; it never raises and never counts.
+        try:
+            from app.services.activity import live as _live
+
+            _live.stage(db, row)
+        except Exception:  # pragma: no cover - the live tail never fails a write
+            pass
         _count_written(spec.category)
     except Exception as exc:
         # Infrastructure, not misuse — never re-raised, whatever `strict` says.
@@ -444,21 +454,36 @@ async def _write_attempt(
     from app.db.postgres import AsyncSessionLocal
     from app.services.resilience import DB_RETRYABLE_EXCEPTIONS, async_retry
 
-    async def _do_write() -> None:
+    async def _do_write() -> Optional[dict]:
+        """The committed row's feed payload, or None when nothing was written.
+
+        Serialized BEFORE the commit: after it, an async session's expired
+        attributes would lazy-load outside the greenlet (MissingGreenlet).
+        Each retry builds a fresh row, so the payload is the committed row's.
+        """
         async with AsyncSessionLocal() as own_db:
             try:
                 if group_key and await _is_duplicate(
                     own_db, project_id, spec.event_type, group_key
                 ):
-                    return
-                own_db.add(make_row())
+                    return None
+                row = make_row()
+                payload: Optional[dict] = None
+                try:
+                    from app.services.activity.query import serialize as _serialize
+
+                    payload = _serialize(row)
+                except Exception:  # pragma: no cover - never fails the write
+                    payload = None
+                own_db.add(row)
                 await own_db.commit()
+                return payload
             except Exception:
                 await own_db.rollback()
                 raise
 
     try:
-        await async_retry(
+        payload = await async_retry(
             _do_write,
             max_retries=2,
             retryable_exceptions=DB_RETRYABLE_EXCEPTIONS,
@@ -478,3 +503,14 @@ async def _write_attempt(
             error_type=type(exc).__name__,
             error=str(exc),
         )
+        return
+
+    # The live tail (W21d), after this row's own commit; a group-key duplicate
+    # wrote nothing and publishes nothing. Bounded at 1 s, never raises.
+    if isinstance(payload, dict):
+        try:
+            from app.services.activity import live as _live
+
+            await _live.publish_committed_attempt(payload)
+        except Exception:  # pragma: no cover - the live tail never fails a write
+            pass
