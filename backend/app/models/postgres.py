@@ -7518,16 +7518,39 @@ class DeletionJob(Base):
     if the world moved underneath it.
 
     Status vocabulary is limited to states something can actually reach:
-    ``queued|previewed|running|completed|failed|partial``. ``previewed`` was
-    withheld until S5's preview endpoint gave it a producer. ``cancelled`` is
-    still NOT declared, because nothing can produce it — shipping a state
-    nothing writes is the defect this epic catalogues elsewhere.
+    ``queued|previewed|running|awaiting_collection|completed|failed|partial|expired``.
+    ``previewed`` was withheld until S5's preview endpoint gave it a producer;
+    ``awaiting_collection`` (the criteria worker, after a verified ``collect``
+    export) and ``expired`` (the export janitor beat) arrived with W22b's
+    export-before-delete. ``cancelled`` is still NOT declared, because nothing
+    can produce it — shipping a state nothing writes is the defect this epic
+    catalogues elsewhere.
+
+    Export before delete (W22b ACT-03, migration 0241): a criteria deletion
+    may build an archive first (``export_tier`` / ``export_target``); nothing
+    is deleted until ``export_verified_at`` is set (the stored archive was
+    re-read and verified) and, for ``collect``, until an acknowledgement with
+    the exact ``export_manifest_sha256`` arrives before ``collect_expires_at``.
     """
 
     __tablename__ = "deletion_jobs"
     __table_args__ = (
         Index("ix_deletion_jobs_project_started", "project_id", "started_at"),
         Index("ix_deletion_jobs_status", "status"),
+        # W22b (migration 0241): the export vocabularies of retention_vocab
+        # (EXPORT_TIERS / EXPORT_TARGETS), NULL together = no export.
+        CheckConstraint(
+            "export_tier IS NULL OR export_tier IN ('summary', 'evidence', 'full')",
+            name="ck_deletion_jobs_export_tier",
+        ),
+        CheckConstraint(
+            "export_target IS NULL OR export_target IN ('collect', 'retain')",
+            name="ck_deletion_jobs_export_target",
+        ),
+        CheckConstraint(
+            "(export_tier IS NULL) = (export_target IS NULL)",
+            name="ck_deletion_jobs_export_pair",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -7538,7 +7561,8 @@ class DeletionJob(Base):
     #: No other kind is declared: a value nothing writes is a filter that
     #: matches nothing forever.
     job_kind: Mapped[str] = mapped_column(String(20), nullable=False)
-    #: queued | running | completed | failed | partial
+    #: queued | previewed | running | awaiting_collection | completed |
+    #: failed | partial | expired — deletion_job_service.REACHABLE_STATUSES.
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
 
     #: The validated criteria this job ran on. NULL for the scheduled purge,
@@ -7551,10 +7575,11 @@ class DeletionJob(Base):
     #: NULL = not measured. Never 0 — an unmeasured reclamation and a
     #: reclamation of nothing are opposite findings.
     #:
-    #: NOTHING POPULATES THIS YET. The purge counts objects deleted, not
-    #: bytes; storage accounting (S3) is what will measure it. Every row
-    #: therefore reads "not measured", which is true — unlike a 0 default,
-    #: which would report every purge as having reclaimed nothing.
+    #: Since W22b the criteria and single-run deletion workers write the
+    #: EXACT object-store bytes under the deleted runs' safe prefixes (NULL
+    #: when the listing failed). The scheduled purge lists no sizes and keeps
+    #: NULL ("not measured") — unlike a 0 default, which would report every
+    #: purge as having reclaimed nothing.
     bytes_reclaimed: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     holds_honoured: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     references_broken: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
@@ -7568,6 +7593,35 @@ class DeletionJob(Base):
     )
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # ── Export before delete (W22b ACT-03, migration 0241) ──────────────────
+    # Every column nullable with no default: a job written before 0241 (and
+    # every job without an export) reads NULL.
+    #: retention_vocab.EXPORT_TIERS; NULL = no export.
+    export_tier: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    #: retention_vocab.EXPORT_TARGETS; NULL together with export_tier.
+    export_target: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    #: The stored ZIP's size (after verification).
+    export_bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    #: A collect acknowledgement must carry exactly this digest.
+    export_manifest_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    #: SHA-256 of the whole stored object (the re-read compare; a header).
+    export_archive_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    #: The storage key in the compliance bucket. NEVER in a response or a log line.
+    export_location: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    #: Set by the worker after the stored archive was re-read and verified;
+    #: deletion requires it.
+    export_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: {"estimates": {...} (staged at preview), "run_ids_excluded", "missing_run_ids",
+    #: "file_count", "objects_not_archived", "signing": {"state", "key_id"?}, "verify_attempts"}
+    export_meta: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    collect_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: The FIRST collect POST.
+    collected_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    acknowledged_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    acknowledged_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_deletion_jobs_acknowledged_by"), nullable=True,
+    )
 
 
 class RetentionHold(Base):
@@ -7710,10 +7764,15 @@ class ReportExport(Base):
 class ProjectRetentionPolicy(Base):
     """Per-project data retention policy (PMF US-11.4, migration 0113).
 
-    One row per project; a MISSING row resolves to the code defaults in
+    One row per project; a MISSING row — and, since W22b (migration 0242),
+    every NULL column of the seven inheritable fields (``enabled``, the four
+    day windows, ``keep_last_runs``, ``purge_window_start_utc``) — inherits,
+    PER FIELD: the instance policy (``InstanceRetentionPolicy``) when it sets
+    the field, else the code defaults in
     ``retention_service.EffectiveRetentionPolicy`` (disabled; raw events
-    90 d, runs 365 d, artifacts 180 d, audit 2555 d ≈ 7 y) — no
-    project-creation hook needed (``ValueMetricAssumptions`` pattern).
+    90 d, runs 365 d, artifacts 180 d, audit 2555 d ≈ 7 y; keep 10; window
+    02:00 UTC) — no project-creation hook needed (``ValueMetricAssumptions``
+    pattern). Explicit project values always win.
 
     Four retention classes, each with its own clock:
 
@@ -7728,8 +7787,15 @@ class ProjectRetentionPolicy(Base):
       outlive the runs they describe. ``settings_audit_log`` (which holds
       the purge-audit records themselves) is NEVER purged.
 
-    Every defaulted column carries a matching ``server_default`` so the
-    migration DDL and the ORM cannot drift (the #433 lesson).
+    The six policy columns (``enabled``, the four windows, ``keep_last_runs``)
+    carry NO ``default`` and NO ``server_default`` since migration 0242,
+    because NULL means "inherit" — DDL and ORM dropped them together so they
+    cannot drift (the #433 lesson). The resolver is the ONLY reader of a NULL.
+
+    Schedule (W22b ACT-06, migration 0242): ``purge_window_start_utc``
+    (0-23, NULL = inherit) is the UTC hour the hourly beat purges the project
+    in; ``purge_paused_until`` skips the scheduled purge until then
+    (project-only, never inherited).
 
     AI history caps (AIH-06, migration 0206): ``ai_versions_per_run`` (per
     kind) and ``ai_versions_per_test``; NULL = the code defaults 20 / 10
@@ -7738,7 +7804,7 @@ class ProjectRetentionPolicy(Base):
     scheduled sweep.
 
     Keep-last floor (W22a ACT-04, migration 0240): ``keep_last_runs`` (0-1000,
-    NOT NULL, default 10) — the scheduled purge always keeps the newest N runs
+    NULL = inherit, code default 10) — the scheduled purge always keeps the newest N runs
     of the project, plus its newest PASSED run and the newest PASSED run of
     each suite; ``0`` keeps only the PASSED runs. The runs clock only.
     """
@@ -7756,37 +7822,91 @@ class ProjectRetentionPolicy(Base):
             "keep_last_runs >= 0 AND keep_last_runs <= 1000",
             name="ck_retention_keep_last_runs",
         ),
+        CheckConstraint(
+            "purge_window_start_utc IS NULL OR purge_window_start_utc BETWEEN 0 AND 23",
+            name="ck_retention_purge_window",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, unique=True,
     )
-    # Purges only run for projects that explicitly opted in.
-    enabled: Mapped[bool] = mapped_column(
-        Boolean, default=False, server_default=text("false"), nullable=False,
-    )
-    raw_events_days: Mapped[int] = mapped_column(
-        Integer, default=90, server_default=text("90"), nullable=False,
-    )
-    runs_days: Mapped[int] = mapped_column(
-        Integer, default=365, server_default=text("365"), nullable=False,
-    )
-    artifacts_days: Mapped[int] = mapped_column(
-        Integer, default=180, server_default=text("180"), nullable=False,
-    )
-    audit_days: Mapped[int] = mapped_column(
-        Integer, default=2555, server_default=text("2555"), nullable=False,
-    )
+    # NULL = inherit (W22b, migration 0242): the effective value is this
+    # column, else the instance policy's, else the code default — resolved per
+    # field ONLY in ``retention_service.get_effective_policy`` (and its SQL
+    # twin). No ``default`` / ``server_default`` on purpose. Purges only run
+    # for projects whose EFFECTIVE ``enabled`` is true; an explicit ``false``
+    # is never overridden by the instance default.
+    enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    raw_events_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    runs_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    artifacts_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    audit_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ai_versions_per_run: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ai_versions_per_test: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    keep_last_runs: Mapped[int] = mapped_column(
-        Integer, default=10, server_default=text("10"), nullable=False,
-    )
+    keep_last_runs: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    #: The UTC hour (0-23) the hourly beat purges this project in; NULL =
+    #: inherit (the instance's hour, else 02:00).
+    purge_window_start_utc: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
+    #: The scheduled purge skips the project until then. Project-only (never
+    #: inherited); the manual "Purge now" ignores it.
+    purge_paused_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(),
+    )
+    updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+
+
+class InstanceRetentionPolicy(Base):
+    """The instance-wide retention defaults (W22b ACT-06, migration 0242).
+
+    ONE row (``id = 1``, CHECK ``ck_instance_retention_single_row``; inserted
+    by the migration). A project that leaves a field NULL (or has no policy
+    row) inherits the field from here, per field; a NULL here means the code
+    default (``retention_service.EffectiveRetentionPolicy``).
+
+    ``enabled`` ships ``false`` (the owner's D12) and is switched on ONLY by
+    the previewed, typed, audited admin action
+    (``retention_instance_service.enable_instance_policy``); a project's
+    explicit ``enabled = false`` is never overridden. ``enabled_at`` /
+    ``enabled_by_id`` record the last enable. The AI caps are NOT inherited.
+    """
+    __tablename__ = "instance_retention_policy"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_instance_retention_single_row"),
+        CheckConstraint(
+            "purge_window_start_utc IS NULL OR purge_window_start_utc BETWEEN 0 AND 23",
+            name="ck_instance_retention_window",
+        ),
+        CheckConstraint(
+            "keep_last_runs IS NULL OR keep_last_runs BETWEEN 0 AND 1000",
+            name="ck_instance_retention_keep_last",
+        ),
+    )
+
+    #: Always 1 — no sequence; the migration inserts the row.
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=False, default=1)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false"), nullable=False,
+    )
+    raw_events_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    runs_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    artifacts_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    audit_days: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    keep_last_runs: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    #: NULL = 02:00 UTC (the code default window).
+    purge_window_start_utc: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
+    enabled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    enabled_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False,
     )
     updated_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True,

@@ -381,6 +381,9 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # an API key can never place or release a hold.
     _spec("retention_hold.placed", "configuration", "retention_hold", "{actor_name} placed a retention hold on {entity_label}: {reason}", "outcome", frozenset({"user"})),
     _spec("retention_hold.released", "configuration", "retention_hold", "{actor_name} released the retention hold on {entity_label}", "outcome", frozenset({"user"})),
+    # W22b ACT-03: the acknowledge route stages it beside the job's transition
+    # to queued (the acknowledgement starts a deletion). JWT only.
+    _spec("retention.export_acknowledged", "configuration", "retention_policy", "{actor_name} confirmed the deletion archive was saved; deleting {count} runs", "outcome", frozenset({"user"})),
     _spec("saved_view.created", "configuration", "saved_view", "Saved view {entity_label} was created"),
     _spec("saved_view.updated", "configuration", "saved_view", "Saved view {entity_label} changed: {changed}"),
     _spec("saved_view.deleted", "configuration", "saved_view", "Saved view {entity_label} was deleted"),

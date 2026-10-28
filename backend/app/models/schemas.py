@@ -86,7 +86,12 @@ from app.models.postgres import (
     UserRole,
 )
 # W22a: constants only (no app.* import inside), so a module-level import is safe.
-from app.services.retention_vocab import FLOOR_NOTE_EXPLICIT, KEEP_LAST_RUNS_DEFAULT
+from app.services.retention_vocab import (
+    ARCHIVE_NOT_BACKUP,
+    FLOOR_NOTE_EXPLICIT,
+    KEEP_LAST_RUNS_DEFAULT,
+    PURGE_WINDOW_DEFAULT_HOUR,
+)
 
 
 # Generous upper bound for long-form free-text fields backed by a Postgres
@@ -203,6 +208,46 @@ class ReferenceBrokenRead(BaseModel):
     label: str  # REFERENCE_LABELS / the fallback, rendered
 
 
+# ── Export before delete (W22b ACT-03) ──
+# Enum-like fields (``tier``, ``target``) are plain ``str``: the vocabulary is
+# ``retention_vocab.EXPORT_TIERS`` / ``EXPORT_TARGETS`` and the service refuses
+# a value outside it with one fixed sentence (``EXPORT_ERROR_SENTENCES``).
+
+class ExportTierEstimate(BaseModel):
+    """One tier's archive size estimate. ``None`` = not measured, never 0."""
+
+    tier: str  # EXPORT_TIERS
+    archive_bytes: Optional[int] = None  # an ESTIMATE before compression; None = not measured
+    measured: bool = False
+    # archive_bytes > max_bytes (False when not measured: the build enforces the cap)
+    over_cap: bool = False
+
+
+class ExportEstimate(BaseModel):
+    """What archiving the DELETABLE runs of a criteria preview would cost and reclaim."""
+
+    run_count: int
+    exportable: bool  # 0 < run_count <= EXPORT_MAX_RUNS
+    # EXPORT_ERROR_SENTENCES["too_many_runs" | "nothing_to_export"] when not exportable
+    refusal: Optional[str] = None
+    # object bytes (exact) + Mongo bytes (estimate); None = not measured
+    reclaim_bytes: Optional[int] = None
+    reclaim_object_bytes: Optional[int] = None  # exact, from the two object-root listings
+    reclaim_mongo_bytes: Optional[int] = None  # docs × collStats.avgObjSize (estimate)
+    reclaim_measured: bool = False  # the object listing succeeded (Mongo may still be None)
+    tiers: List[ExportTierEstimate] = Field(default_factory=list)  # always the three tiers, EXPORT_TIERS order
+    max_bytes: int  # settings.RETENTION_EXPORT_MAX_BYTES
+    collect_ttl_hours: int
+    note: str = ARCHIVE_NOT_BACKUP
+
+
+class ExportChoice(BaseModel):
+    """``DeletionExecuteRequest.export``. Validated in the service (fixed 422 sentence), not by ``Literal``."""
+
+    tier: str
+    target: str
+
+
 class DeletionPreviewResponse(BaseModel):
     """A frozen candidate set an ADMIN authorises from.
 
@@ -239,6 +284,9 @@ class DeletionPreviewResponse(BaseModel):
     references_measured: bool = True
     floor_applies: bool = False
     floor_note: str = FLOOR_NOTE_EXPLICIT
+    # W22b: archive estimates for all three tiers over the deletable runs
+    # (absent = an older server; the SPA then offers no export).
+    export_estimate: Optional[ExportEstimate] = None
 
 
 class DeletionExecuteRequest(BaseModel):
@@ -258,12 +306,16 @@ class DeletionExecuteRequest(BaseModel):
             "a checkbox, because this is irreversible across five stores."
         ),
     )
+    # W22b: build (and verify) an archive first; None = today's path.
+    export: Optional[ExportChoice] = None
 
 
 class DeletionExecuteAcceptedResponse(BaseModel):
     job_id: uuid.UUID
     run_count: int
     status: Literal["accepted"] = "accepted"
+    export_tier: Optional[str] = None
+    export_target: Optional[str] = None
 
 
 class DeletionJobResponse(BaseModel):
@@ -288,12 +340,34 @@ class DeletionJobResponse(BaseModel):
     requested_at: datetime
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
+    # W22b export before delete: NULL on every job written before 0241 and on
+    # every job without an export. ``export_location`` is NEVER part of this
+    # answer; ``export_summary`` is filled by the ROUTE from ``export_meta``
+    # with only {"run_count", "file_count", "objects_not_archived",
+    # "missing_runs", "excluded_runs", "signing_state"}.
+    export_tier: Optional[str] = None
+    export_target: Optional[str] = None
+    export_bytes: Optional[int] = None
+    export_manifest_sha256: Optional[str] = None
+    export_verified_at: Optional[datetime] = None
+    collect_expires_at: Optional[datetime] = None
+    collected_at: Optional[datetime] = None
+    acknowledged_at: Optional[datetime] = None
+    export_summary: Optional[dict] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class DeletionJobListResponse(BaseModel):
     jobs: List[DeletionJobResponse] = Field(default_factory=list)
+    # The jobs in the project, ignoring `limit` — a top-N length is not a count.
+    total: int = 0
+
+
+class DeletionAcknowledgeRequest(BaseModel):
+    """Confirms a collected archive was saved; the route answers ``DeletionJobResponse``."""
+
+    manifest_sha256: str = Field(..., min_length=64, max_length=64, pattern="^[0-9a-fA-F]{64}$")
 
 
 class StoreFootprintResponse(BaseModel):
@@ -333,10 +407,12 @@ class ProjectStorageResponse(BaseModel):
 class DeletedProjectStorageEntry(BaseModel):
     project_id: str
     name: str
-    #: True when the nightly beat would eventually sweep this project anyway.
-    #: The beat selects on `ProjectRetentionPolicy.enabled` alone and does NOT
-    #: filter `is_active`, so a project that opted in before deletion is still
-    #: reachable. One that never opted in — the default — is not.
+    #: True when the scheduled beat would eventually sweep this project anyway.
+    #: The beat selects on the EFFECTIVE `enabled` (the project's own value,
+    #: else the instance default) and does NOT filter `is_active`, so a
+    #: project that opted in — or inherits an enabled instance default —
+    #: before deletion is still reachable. One that never opted in — the
+    #: default — is not.
     reachable_by_retention: bool
     footprint: ProjectStorageResponse
 
@@ -9059,6 +9135,14 @@ class RetentionPolicyWrite(BaseModel):
     ai_versions_per_test: Optional[int] = Field(None, ge=1, le=100)
     # W22a ACT-04: the keep-last floor of the scheduled purge (runs clock only).
     keep_last_runs: Optional[int] = Field(None, ge=0, le=1000)
+    # W22b ACT-06: the purge window (UTC hour), the pause and per-field inherit.
+    # A JSON ``null`` still means "keep"; ``inherit`` names the fields to reset
+    # (⊆ retention_vocab.INHERITABLE_FIELDS; each column set NULL) and is
+    # validated in the service with a fixed sentence.
+    purge_window_start_utc: Optional[int] = Field(None, ge=0, le=23)
+    pause_days: Optional[int] = Field(None, ge=1, le=90)  # server sets purge_paused_until = now + days
+    resume: Optional[bool] = None  # true clears purge_paused_until
+    inherit: Optional[List[str]] = Field(None, max_length=7)
 
 
 class RetentionLastPurge(BaseModel):
@@ -9084,6 +9168,73 @@ class RetentionPolicyRead(BaseModel):
     keep_last_runs: int = KEEP_LAST_RUNS_DEFAULT
     source: str = "default"
     last_purge: Optional[RetentionLastPurge] = None
+    # W22b ACT-06: every value above is the EFFECTIVE per-field value
+    # (project, else instance, else code default).
+    purge_window_start_utc: int = PURGE_WINDOW_DEFAULT_HOUR
+    purge_paused_until: Optional[datetime] = None  # only when still in the future
+    next_scheduled_purge_at: Optional[datetime] = None  # None while disabled; after the pause when paused
+    # each INHERITABLE_FIELDS key -> "project" | "instance" | "default" (FIELD_SOURCES)
+    field_sources: Dict[str, str] = Field(default_factory=dict)
+    # what each field reads if inherited
+    inherit_values: Dict[str, Union[bool, int]] = Field(default_factory=dict)
+
+
+# ── Instance retention defaults (W22b ACT-06) ──
+
+
+class InstanceRetentionPolicyRead(BaseModel):
+    """GET/PUT ``/api/v1/settings/retention-defaults``. A NULL value = the code default."""
+
+    enabled: bool
+    raw_events_days: Optional[int] = None
+    runs_days: Optional[int] = None
+    artifacts_days: Optional[int] = None
+    audit_days: Optional[int] = None
+    keep_last_runs: Optional[int] = None
+    purge_window_start_utc: Optional[int] = None
+    code_defaults: Dict[str, Union[bool, int]]  # the seven code defaults (what a NULL means)
+    effective: Dict[str, Union[bool, int]]  # COALESCE(instance, code default) per field
+    inheriting_projects: Dict[str, int]  # per field: projects whose value comes from the instance
+    enabled_at: Optional[datetime] = None
+    enabled_by_name: Optional[str] = None
+    updated_at: Optional[datetime] = None
+
+
+class InstanceRetentionPolicyWrite(BaseModel):
+    """PUT body. ``enabled: true`` is refused (422 ``enable_via_flow``); ``false`` switches it off."""
+
+    enabled: Optional[bool] = None
+    raw_events_days: Optional[int] = Field(None, ge=7, le=3650)
+    runs_days: Optional[int] = Field(None, ge=30, le=3650)
+    artifacts_days: Optional[int] = Field(None, ge=7, le=3650)
+    audit_days: Optional[int] = Field(None, ge=365, le=3650)
+    keep_last_runs: Optional[int] = Field(None, ge=0, le=1000)
+    purge_window_start_utc: Optional[int] = Field(None, ge=0, le=23)
+    # reset an instance field to the code default (NULL); not "enabled"
+    clear: Optional[List[str]] = Field(None, max_length=6)
+
+
+class InstanceEnablePreviewItem(BaseModel):
+    project_id: uuid.UUID
+    name: str
+    is_active: bool
+    has_policy_row: bool
+    effective_after: Dict[str, int]  # the windows / floor / window hour it would run with
+    runs_past_window: int  # runs older than its runs window (before the floor and holds)
+
+
+class InstanceEnablePreviewResponse(BaseModel):
+    items: List[InstanceEnablePreviewItem] = Field(default_factory=list)
+    total: int
+    truncated: bool
+    preview_hash: str  # sha256 of the sorted affected ids + the instance values
+    confirmation_phrase: str  # INSTANCE_ENABLE_PHRASE(_ONE) for `total`
+    already_enabled: bool
+
+
+class InstanceEnableRequest(BaseModel):
+    confirmation: str = Field(..., max_length=200)
+    preview_hash: str = Field(..., min_length=64, max_length=64)
 
 
 class RetentionPreviewCandidates(BaseModel):
@@ -9135,6 +9286,10 @@ class RetentionPreviewCandidates(BaseModel):
     #: ``SHADOW_PAIR_RETENTION_DAYS`` (30, a fixed window). Labelled pairs are
     #: G2 evidence and are kept.
     shadow_pairs_unlabelled: int = 0
+    #: W22b ACT-03 (E-12): retained deletion archives (``retain`` exports)
+    #: that leave with their ``deletion_jobs`` rows on the AUDIT clock. An
+    #: ``int = 0``: a Postgres count, always measurable.
+    export_archives_expired: int = 0
 
 
 # W22a: hold / floor / reference facts are TOP-LEVEL preview fields, never

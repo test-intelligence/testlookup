@@ -17,6 +17,7 @@ import {
   KEEP_LAST_RUNS_MIN,
   type HoldRef,
 } from './retentionHolds'
+import type { ExportEstimate, ExportTarget, ExportTier, FieldSource, InheritableField } from './retentionExport'
 
 /** Summary of the most recent purge run for this project, or null if never. */
 export interface RetentionLastPurge {
@@ -58,6 +59,21 @@ export interface RetentionPolicy {
   keep_last_runs?: number
   source: RetentionPolicySource
   last_purge: RetentionLastPurge | null
+  /**
+   * W22b ACT-06: every value above is the EFFECTIVE per-field value (the
+   * project's own, else the instance default, else the code default). All
+   * absent on an older server (then no marker and no schedule line renders).
+   */
+  /** The UTC hour (0-23) the hourly beat purges this project in; default 2. */
+  purge_window_start_utc?: number
+  /** Only while still in the future. */
+  purge_paused_until?: string | null
+  /** null while disabled; after the pause when paused. */
+  next_scheduled_purge_at?: string | null
+  /** Each inheritable field -> 'project' | 'instance' | 'default'. */
+  field_sources?: Partial<Record<InheritableField, FieldSource>>
+  /** What each field reads when inherited. */
+  inherit_values?: Partial<Record<InheritableField, boolean | number>>
 }
 
 /**
@@ -75,6 +91,14 @@ export interface RetentionPolicyWrite {
   ai_versions_per_test?: number
   /** W22a ACT-04: 0-1000 (`KEEP_LAST_RUNS_BOUNDS`). Sent only when changed. */
   keep_last_runs?: number
+  /** W22b ACT-06: 0-23. Sent only when changed. */
+  purge_window_start_utc?: number
+  /** 1-90; the server sets the pause end to now + days. Not with `resume`. */
+  pause_days?: number
+  /** true clears the pause. Not with `pause_days`. */
+  resume?: boolean
+  /** The fields to reset to their inherited value (each column set NULL). Never also sent as a value. */
+  inherit?: InheritableField[]
 }
 
 /** POST …/preview response — cutoff timestamps per data class. */
@@ -122,6 +146,11 @@ export interface RetentionPreviewCandidates {
    * pairs are G2 evidence and stay). Absent on an older server: render "not measured", never 0.
    */
   shadow_pairs_unlabelled?: number
+  /**
+   * W22b ACT-03: retained deletion archives that leave with their deletion-job rows on the audit
+   * clock. Absent on an older server: render "not measured", never 0.
+   */
+  export_archives_expired?: number
 }
 
 /** W22a ACT-05: one live hold in the preview, with what it keeps past the cutoffs. */
@@ -310,22 +339,45 @@ export interface DeletionPreview {
   /** Always false: an explicit deletion is not limited by the keep-last floor. */
   floor_applies?: boolean
   floor_note?: string
+  /** W22b ACT-03: archive estimates for the three tiers. Absent on an older server: offer no export. */
+  export_estimate?: ExportEstimate | null
 }
 
 export interface DeletionExecuteAccepted {
   job_id: string
   run_count: number
   status: 'accepted'
+  /** W22b ACT-03: echoed when the execute body carried `export`. */
+  export_tier?: ExportTier | null
+  export_target?: ExportTarget | null
 }
 
-/** Job states the backend can actually produce. There is no `cancelled`. */
+/**
+ * Job states the backend can actually produce (`deletion_job_service.REACHABLE_STATUSES`, pinned by
+ * `backend/tests/test_retention_export_vocab_frontend_parity.py`). There is no `cancelled`.
+ */
 export type DeletionJobStatus =
   | 'queued'
   | 'previewed'
   | 'running'
+  | 'awaiting_collection'
   | 'completed'
   | 'failed'
   | 'partial'
+  | 'expired'
+
+/**
+ * `DeletionJob.export_summary` — the route's projection of the job's export metadata (no storage key). A type
+ * alias (not an interface) so it stays assignable to `Record<string, unknown>`.
+ */
+export type DeletionJobExportSummary = {
+  run_count?: number
+  file_count?: number
+  objects_not_archived?: number
+  missing_runs?: number
+  excluded_runs?: number
+  signing_state?: string
+}
 
 /** `DeletionJob.holds_honoured` — ONE shape for every job kind (W22a). */
 export interface DeletionJobHoldsHonoured {
@@ -360,4 +412,23 @@ export interface DeletionJob {
   requested_at: string
   started_at?: string | null
   finished_at?: string | null
+  /** W22b ACT-03 export before delete: NULL on every job without an export (and every older job). */
+  export_tier?: ExportTier | null
+  export_target?: ExportTarget | null
+  /** The stored archive's size; the collect download must match it before "I have saved it". */
+  export_bytes?: number | null
+  export_manifest_sha256?: string | null
+  /** Set once the stored archive was re-read and verified; nothing is deleted before it. */
+  export_verified_at?: string | null
+  collect_expires_at?: string | null
+  collected_at?: string | null
+  acknowledged_at?: string | null
+  export_summary?: DeletionJobExportSummary | null
+}
+
+/** `GET …/deletion/jobs` — `total` counts every job of the project, ignoring the list's limit. */
+export interface DeletionJobList {
+  jobs: DeletionJob[]
+  /** Absent on an older server. */
+  total?: number
 }

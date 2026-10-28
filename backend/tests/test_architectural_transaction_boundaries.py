@@ -119,6 +119,15 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "retention_hold_service.py",
     "retention_references.py",
     "retention_vocab.py",
+    # ── W22b ACT-03 / ACT-06 export before delete + purge window / instance
+    # default: new modules, commit-free from birth ──
+    # The export engine and its per-tier content (the worker / beat in
+    # worker/tasks.py open their own sessions and commit; the collect /
+    # acknowledge / execute routes commit in routers/retention.py) and the
+    # instance-policy service (its routes commit in routers/app_settings.py).
+    "retention_export_service.py",
+    "retention_export_content.py",
+    "retention_instance_service.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

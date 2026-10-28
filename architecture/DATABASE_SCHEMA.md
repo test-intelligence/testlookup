@@ -3411,6 +3411,7 @@ The older per-domain sections omitted these tables. Their full field definitions
 | `run_tombstones` | `RunTombstone` | [Fields and constraints](../docs/reference/data-dictionary.md#run_tombstones) |
 | `deletion_jobs` | `DeletionJob` | [Fields and constraints](../docs/reference/data-dictionary.md#deletion_jobs) |
 | `retention_holds` | `RetentionHold` | [Fields and constraints](../docs/reference/data-dictionary.md#retention_holds) |
+| `instance_retention_policy` | `InstanceRetentionPolicy` | [Fields and constraints](../docs/reference/data-dictionary.md#instance_retention_policy) |
 | `project_activity_events` | `ProjectActivityEvent` | [Fields and constraints](../docs/reference/data-dictionary.md#project_activity_events) |
 | `suite_executions` | `SuiteExecution` | [Fields and constraints](../docs/reference/data-dictionary.md#suite_executions) |
 | `ai_analysis_versions` | `AIAnalysisVersion` | [Fields and constraints](../docs/reference/data-dictionary.md#ai_analysis_versions) |
