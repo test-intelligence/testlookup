@@ -29,8 +29,10 @@ vi.mock('@/hooks/useProjectCompliancePacks', () => ({
   refreshProjectCompliancePacks: () => mocks.refreshRail(),
 }))
 
+// W22a: role flags the pack row's Hold / Retire / Delete read; the existing cases keep their single flag.
+const perms = vi.hoisted(() => ({ extra: {} as Record<string, boolean> }))
 vi.mock('@/hooks/usePermissions', () => ({
-  usePermissions: () => ({ canAccessManagement: true }),
+  usePermissions: () => ({ canAccessManagement: true, ...perms.extra }),
 }))
 
 vi.mock('@/services/compliancePackService', async () => {
@@ -222,5 +224,39 @@ describe('CompliancePackPanel — signing and verification (W11 REL-11)', () => 
     fireEvent.click(screen.getByRole('button', { name: /Public key/ }))
 
     await waitFor(() => expect(mocks.downloadPublicKey).toHaveBeenCalledWith('k-1a2b3c4d5e6f7a8b'))
+  })
+
+  // ── W22a: the pack row's hold chip and lifecycle controls ──────────────────
+
+  const heldPack = {
+    id: 'pack-held', release_id: 'rel-1', project_id: 'proj-1', generated_at: '2026-10-01T12:00:00Z',
+    bytes: 2048, file_count: 9, manifest_sha256: 'cd'.repeat(32), notes: null,
+    retention_expires_at: '2001-01-01T00:00:00Z',
+    holds: [{ hold_id: 'h-1', entity_type: 'release', entity_id: 'rel-1', entity_label: 'release 2026.10',
+      reason: 'Audit Q4 sentinel', expires_at: null }],
+  }
+
+  it('marks a held pack On hold and disables Retire / Delete with the Held sentence (ADMIN)', () => {
+    perms.extra = { isQaLead: true, isAdmin: true }
+    packsState.packs = [heldPack]
+    render(<CompliancePackPanel releaseId="rel-1" />)
+
+    expect(screen.getByText('On hold')).toHaveAttribute('title', 'Held: Audit Q4 sentinel')
+    expect(screen.getByRole('button', { name: 'Hold' })).toBeEnabled()
+    for (const name of ['Retire', 'Delete']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+      expect(screen.getByRole('button', { name })).toHaveAttribute('title', 'Held: Audit Q4 sentinel')
+    }
+    perms.extra = {}
+  })
+
+  it('shows no lifecycle control below QA lead and no chip on an unheld pack', () => {
+    perms.extra = { isQaLead: false, isAdmin: false }
+    packsState.packs = [{ ...heldPack, holds: [] }]
+    render(<CompliancePackPanel releaseId="rel-1" />)
+
+    expect(screen.queryByText('On hold')).toBeNull()
+    for (const name of ['Hold', 'Retire', 'Delete']) expect(screen.queryByRole('button', { name })).toBeNull()
+    perms.extra = {}
   })
 })

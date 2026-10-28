@@ -120,9 +120,11 @@ async def _seed(sessions, mongo, *, caps=(3, 3), cited=(2,)):
     async with sessions() as db:
         db.add(Project(id=w["project"], name=f"aihr-{tag}", slug=f"aihr-{tag}", is_active=True))
         await db.flush()
+        # W22a: keep_last_runs = 0 — the keep-last floor (default 10) would
+        # otherwise keep the old run these counts assume purged.
         db.add(ProjectRetentionPolicy(
             project_id=w["project"], enabled=True, raw_events_days=7, runs_days=30, artifacts_days=7,
-            audit_days=365, ai_versions_per_run=caps[0], ai_versions_per_test=caps[1],
+            audit_days=365, ai_versions_per_run=caps[0], ai_versions_per_test=caps[1], keep_last_runs=0,
         ))
         for run_id, age, label in ((w["keep"], timedelta(hours=1), "keep"), (w["old"], timedelta(days=4000), "old")):
             run = TestRun(id=run_id, project_id=w["project"], build_number=f"aihr-{tag}-{label}", jenkins_job="aihr",

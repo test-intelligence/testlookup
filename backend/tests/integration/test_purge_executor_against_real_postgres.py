@@ -113,19 +113,22 @@ async def test_the_executor_resolves_cross_store_ids_before_the_cascade():
                 ),
                 {"i": project_id, "n": f"s2a-{project_id}", "s": f"s2a-{project_id}"},
             )
+            # W22a: keep_last_runs = 0 and a FAILED run — the keep-last floor
+            # (default 10, plus the newest PASSED run) would otherwise keep
+            # this project's only run; its status is immaterial to the test.
             await conn.execute(
                 text(
                     "INSERT INTO project_retention_policies "
                     "(id, project_id, enabled, raw_events_days, runs_days, "
-                    " artifacts_days, audit_days, created_at, updated_at) "
-                    "VALUES (:i, :p, true, 7, 30, 7, 365, now(), now())"
+                    " artifacts_days, audit_days, keep_last_runs, created_at, updated_at) "
+                    "VALUES (:i, :p, true, 7, 30, 7, 365, 0, now(), now())"
                 ),
                 {"i": uuid.uuid4(), "p": project_id},
             )
             await conn.execute(
                 text(
                     "INSERT INTO test_runs (id, project_id, build_number, status, created_at) "
-                    "VALUES (:i, :p, :b, 'PASSED', :c)"
+                    "VALUES (:i, :p, :b, 'FAILED', :c)"
                 ),
                 {"i": run_id, "p": project_id, "b": f"ci-{run_id.hex[:8]}", "c": aged},
             )
@@ -188,10 +191,20 @@ async def test_a_preview_against_a_real_database_writes_nothing():
                 ),
                 {"i": project_id, "n": f"s2a-p-{project_id}", "s": f"s2a-p-{project_id}"},
             )
+            # W22a: a policy row with ONLY keep_last_runs = 0 (every other
+            # column keeps its default) and a FAILED run, so the keep-last
+            # floor does not keep the project's only run out of the preview.
+            await conn.execute(
+                text(
+                    "INSERT INTO project_retention_policies (id, project_id, keep_last_runs) "
+                    "VALUES (:i, :p, 0)"
+                ),
+                {"i": uuid.uuid4(), "p": project_id},
+            )
             await conn.execute(
                 text(
                     "INSERT INTO test_runs (id, project_id, build_number, status, created_at) "
-                    "VALUES (:i, :p, :b, 'PASSED', :c)"
+                    "VALUES (:i, :p, :b, 'FAILED', :c)"
                 ),
                 {"i": run_id, "p": project_id, "b": f"ci-{run_id.hex[:8]}", "c": aged},
             )
