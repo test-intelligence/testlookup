@@ -1,6 +1,6 @@
 /**
  * Inbox (`/my-failures`, UX redesign P4 item 5, owner decision D4): what is
- * waiting on the reader, in two tabs (`?tab=`):
+ * waiting on the reader, in three tabs (`?tab=`):
  *
  *   Assigned to me (default) → the auto-assigned failures (migration 0080),
  *       from /api/v1/me/assigned-failures, polled every 30 s. Toolbar: the
@@ -15,6 +15,9 @@
  *       quarantine proposals and test-case approvals, filtered by source
  *       (`inbox/ApprovalsTab.tsx`). It needs one project; in All Projects
  *       mode it shows the project prompt. Its count is in the tab label.
+ *   Activity (W21d ACT-02, every role) → what the reader did and what
+ *       involves them across their projects (`inbox/ActivityTab.tsx`), read
+ *       only while the tab is open; no count in the tab label.
  *
  * Project scope is driven by the project store (ALL_PROJECTS_ID = "all").
  */
@@ -49,6 +52,7 @@ import {
 } from '@/services/myFailuresService'
 import { appMutate } from '@/utils/swrCacheMutate'
 import type { MyFailureItem, TriageStatus } from '@/types/myFailures'
+import ActivityTab from './inbox/ActivityTab'
 import ApprovalsTab, { ApprovalsCountBadge } from './inbox/ApprovalsTab'
 import ChipFilter from './inbox/ChipFilter'
 
@@ -56,7 +60,7 @@ import ChipFilter from './inbox/ChipFilter'
 // (14d since WIN-01, so a fortnight picked on another page stays a fortnight).
 const DAYS_OPTIONS = [1, 7, 14, 30] as const
 
-const INBOX_TABS = ['assigned', 'approvals'] as const
+const INBOX_TABS = ['assigned', 'approvals', 'activity'] as const
 
 function relativeAge(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime()
@@ -141,7 +145,9 @@ export default function MyFailuresPage() {
   const scopeLabel = isAllProjects ? 'all your projects' : (project?.name ?? 'the selected project')
 
   const subtitle =
-    tab === 'approvals'
+    tab === 'activity'
+      ? `What you did and what involves you (mentions, your test cases, defects assigned to you) across ${scopeLabel}.`
+      : tab === 'approvals'
       ? singleProjectId
         ? `AI reports, quarantine proposals and test-case reviews waiting for a decision in ${project?.name ?? 'the selected project'}.`
         : 'Approvals belong to one project: pick it to see what is waiting for a decision.'
@@ -179,6 +185,8 @@ export default function MyFailuresPage() {
                   <ApprovalsCountBadge projectId={singleProjectId} active={tab === 'approvals'} />
                 ) : undefined,
               },
+              // W21d ACT-02: no count — its read happens only while it is open.
+              { id: 'activity', label: 'Activity' },
             ]}
           />
         }
@@ -186,6 +194,8 @@ export default function MyFailuresPage() {
 
       {tab === 'approvals' ? (
         <ApprovalsTab />
+      ) : tab === 'activity' ? (
+        <ActivityTab daysOptions={DAYS_OPTIONS} />
       ) : (
         <>
           {/* Toolbar: one row */}

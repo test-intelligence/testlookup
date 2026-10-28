@@ -1,11 +1,16 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ActivityPage from './ActivityPage'
+import { LIVE_PREFERENCE_KEY } from '@/hooks/useActivityLive'
+import { backendUrl } from '@/services/api'
+import { useAuthStore } from '@/store/authStore'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { useTimeWindowStore } from '@/store/timeWindowStore'
+import { encodeSseFrame, makeActivityEvent, mockStreamResponse, type SseFrame } from '@/test/activityLiveMocks'
+import { STREAM_ERROR_SENTENCES } from '@/types/activityLive'
 import type { ActivityEvent, ActivityPage as Page } from '@/services/activityService'
 
 vi.mock('@/services/activityService', () => ({
@@ -373,5 +378,127 @@ describe('ActivityPage — ?category= pre-selects the filter', () => {
 
     await screen.findByRole('feed')
     for (const [, params] of vi.mocked(listActivity).mock.calls) expect(params).not.toHaveProperty('category')
+  })
+})
+
+// W21d ACT-02: the Live toggle. OFF by default (no stream request at all); ON
+// opens ONE fetch stream with the bearer header (no token in the URL), lays a
+// streamed row on top of the feed, and pauses polling only while LIVE.
+describe('ActivityPage — Live (ACT-02)', () => {
+  const STREAM_URL = backendUrl(`/api/v1/projects/${PROJECT_ID}/activity/stream`)
+  const READY: SseFrame = {
+    event: 'ready',
+    id: '1730000000000-0',
+    data: { project_id: PROJECT_ID, last_event_id: '1730000000000-0', heartbeat_seconds: 15, max_seconds: 900 },
+  }
+  const fetchMock = vi.fn<typeof fetch>()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    window.localStorage.clear()
+    vi.mocked(listActivityEventTypes).mockResolvedValue({
+      categories: ['runs', 'configuration'],
+      actor_types: ['user', 'system'],
+      entity_types: ['run'],
+      events: {},
+    })
+    vi.mocked(listActivity).mockResolvedValue(page([event()]))
+    useProjectStore.setState({ activeProjectId: PROJECT_ID })
+    useAuthStore.setState({ token: 'live-token' })
+    fetchMock.mockReset()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+    window.localStorage.clear()
+    useAuthStore.setState({ token: null })
+  })
+
+  it('is OFF by default: the toggle is unpressed and no stream is requested', async () => {
+    renderPage()
+    expect(await screen.findByText('Build 4312 completed — 3 failed of 812')).toBeInTheDocument()
+    const toggle = screen.getByRole('button', { name: 'Live' })
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-activity-live-status]')).toBeNull()
+  })
+
+  it('ON opens the project stream with the bearer header and puts a streamed row on top', async () => {
+    const streamed = makeActivityEvent({
+      project_id: PROJECT_ID,
+      category: 'configuration',
+      summary: 'Retention policy changed to 90 days',
+    })
+    // A body held open: the row is sent once the fresh stream's page-0
+    // re-read has answered (that answer, like the mock, does not hold it).
+    const encoder = new TextEncoder()
+    let body: ReadableStreamDefaultController<Uint8Array> | undefined
+    fetchMock.mockImplementation(() => Promise.resolve(new Response(
+      new ReadableStream<Uint8Array>({ start(c) { body = c } }),
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    )))
+    renderPage()
+    await screen.findByText('Build 4312 completed — 3 failed of 812')
+    fireEvent.click(screen.getByRole('button', { name: 'Live' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    body?.enqueue(encoder.encode(encodeSseFrame(READY)))
+    await waitFor(() => expect(vi.mocked(listActivity)).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByRole('feed')).toHaveAttribute('aria-busy', 'false'))
+    body?.enqueue(encoder.encode(encodeSseFrame({ event: 'activity', id: '1730000000001-0', data: streamed })))
+
+    expect(await screen.findByText('Retention policy changed to 90 days')).toBeInTheDocument()
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe(STREAM_URL)
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer live-token')
+    await waitFor(() => expect(screen.getAllByTestId('activity-row').map((row) => row.textContent)).toEqual([
+      expect.stringContaining('Retention policy changed to 90 days'),
+      expect.stringContaining('Build 4312 completed'),
+    ]))
+    expect(screen.getByRole('button', { name: 'Live' })).toHaveAttribute('aria-pressed', 'true')
+    expect(window.localStorage.getItem(LIVE_PREFERENCE_KEY)).toBe('on')
+  })
+
+  it('a streamed row the filters exclude is not prepended', async () => {
+    const other = makeActivityEvent({ project_id: PROJECT_ID, category: 'configuration', summary: 'Flag turned on' })
+    fetchMock.mockImplementation(() => Promise.resolve(mockStreamResponse({
+      frames: [READY, { event: 'activity', id: '1730000000001-0', data: other }],
+    })))
+    renderPage()
+    await screen.findByText('Build 4312 completed — 3 failed of 812')
+    fireEvent.change(screen.getByRole('combobox', { name: 'Filter by category' }), { target: { value: 'runs' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Live' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Live' })).toHaveAttribute('data-live-status', 'live'))
+    expect(screen.queryByText('Flag turned on')).toBeNull()
+  })
+
+  it('pauses the 30 s polling only while LIVE, and polls again once live updates are unavailable', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] })
+    window.localStorage.setItem(LIVE_PREFERENCE_KEY, 'on')
+    let available = true
+    fetchMock.mockImplementation(() => Promise.resolve(available
+      ? mockStreamResponse({ frames: [READY] })
+      : mockStreamResponse({ status: 503, code: 'live_unavailable' })))
+    // One act per second: React commits (and SWR re-arms its timer) between
+    // steps, as it would in a browser, instead of once at the end of an act.
+    const tick = async (ms: number) => {
+      for (let done = 0; done < Math.max(ms, 1); done += 1_000) {
+        await act(async () => { await vi.advanceTimersByTimeAsync(Math.min(1_000, ms - done)) })
+      }
+    }
+    renderPage()
+    for (let i = 0; i < 10; i += 1) await tick(0)
+    expect(screen.getByRole('button', { name: 'Live' })).toHaveAttribute('data-live-status', 'live')
+    expect(document.querySelector('[data-activity-live-status]')).toBeNull()
+
+    const settled = vi.mocked(listActivity).mock.calls.length
+    await tick(65_000)
+    expect(vi.mocked(listActivity).mock.calls.length).toBe(settled)
+
+    available = false
+    await tick(65_000)
+    expect(screen.getByRole('status')).toHaveTextContent(STREAM_ERROR_SENTENCES.live_unavailable)
+    expect(vi.mocked(listActivity).mock.calls.length).toBeGreaterThan(settled)
   })
 })
