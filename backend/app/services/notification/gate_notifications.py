@@ -26,8 +26,9 @@ Stage-only: nothing here commits or opens a session. A row staged here is a
 ``notification_logs`` delivery child (``status = 'pending'``), which is also the
 in-app entry the bell lists from the commit on, before the relay sends it. Each
 row's ``delivery_metadata.app_path`` is the one in-app path the bell may link
-to: ``APP_PATH_RE`` allows two shapes and ``app_link`` re-checks them when the
-history is read.
+to: ``APP_PATH_RE`` allows three shapes (``/releases/<uuid>``,
+``/release-gate/<uuid>``, ``/test-management?case=<uuid>``) and ``app_link``
+re-checks them when the history is read.
 
 A notification never fails the user's action: the two request-path stages run
 in a SAVEPOINT, log one warning and return False on any error.
@@ -68,7 +69,9 @@ MAX_REASONS = 3              # reasons quoted in a body
 REASON_MAX_CHARS = 300       # each reason clipped with "…"
 TITLE_MAX_CHARS = 200        # NotificationLog.title is String(500); the bell truncates at its width anyway
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-APP_PATH_RE = re.compile(rf"^/(?:releases|release-gate)/{_UUID}$")   # the ONLY two shapes a notification may link to
+# The ONLY three shapes a notification may link to: a release, a run's release
+# decision, and (W21d ACT-02, a comment mention) a test case on /test-management.
+APP_PATH_RE = re.compile(rf"^(?:/(?:releases|release-gate)/{_UUID}|/test-management\?case={_UUID})$")
 
 TRIGGER_AGENT = "agent"
 TRIGGER_OVERRIDE = "override"
@@ -109,7 +112,11 @@ def run_delivery_scope(run_id: uuid.UUID | str, *, override_ordinal: int | None 
 
 
 def app_link(metadata: Mapping[str, Any] | None) -> str | None:
-    """``metadata["app_path"]`` when it is one of the two allowed in-app shapes, else None. Never raises."""
+    """``metadata["app_path"]`` when it is one of the allowed in-app shapes, else None. Never raises.
+
+    The shapes (``APP_PATH_RE``, whole value, lower-case uuid): ``/releases/<uuid>``,
+    ``/release-gate/<uuid>`` and ``/test-management?case=<uuid>`` (a mention's case).
+    """
     try:
         if not isinstance(metadata, Mapping):
             return None

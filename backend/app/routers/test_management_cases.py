@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Body, Depends, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +19,7 @@ from app.models.postgres import (
 )
 from app.models.schemas import (
     AllowedTransitionResponse,
+    CommentMention,
     ManagedTestCaseCreate,
     ManagedTestCaseListResponse,
     ManagedTestCaseResponse,
@@ -590,7 +591,53 @@ async def add_comment(
     current_user: User = Depends(require_role(UserRole.TESTER)),
     _case=Depends(require_case_access),
 ):
+    # W21d ACT-02: one commit covers the comment, its ``test_case.commented``
+    # ledger row and one in-app bell row per resolved ``@mention`` (members of
+    # the CASE's project only; ``status="sent"``, so the delivery relay never
+    # claims one and nothing is mailed). A body without ``@`` / ``parent_id``
+    # adds no query to the path.
+    from app.services.activity.mentions import (  # noqa: PLC0415
+        resolve_mentions,
+        stage_mention_notifications,
+    )
+    from app.services.activity.service import ActorRef, record as record_activity  # noqa: PLC0415
+
+    if payload.parent_id is not None:
+        # A BODY id: the parent must be a comment of THIS case (one sentence for
+        # missing and foreign, so the answer is no oracle for other tenants).
+        parent = await db.execute(
+            select(TestCaseComment.id)
+            .where(TestCaseComment.id == payload.parent_id, TestCaseComment.test_case_id == case_id)
+            .limit(1)
+        )
+        if parent.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Parent comment not found on this test case.")
     comment = await add_test_case_comment(db, case_id, payload, current_user)
+    members = await resolve_mentions(db, project_id=_case.project_id, text=comment.content, author_id=current_user.id)
+    await record_activity(
+        db,
+        project_id=_case.project_id,
+        event_type="test_case.commented",
+        actor=ActorRef.from_user(current_user),
+        entity_id=_case.id,
+        entity_label=_case.title,
+        context={
+            "comment_id": str(comment.id),
+            "mentions": [str(m.user_id) for m in members],
+            "mention_count": len(members),
+            "step_number": comment.step_number,
+        },
+        source_table="test_case_comments",
+        source_id=comment.id,
+    )
+    await stage_mention_notifications(db, members=members, case=_case, comment=comment, author=current_user)
     await db.commit()
     await db.refresh(comment)
-    return row(comment, TestCaseCommentResponse)
+    return row(comment, TestCaseCommentResponse).model_copy(
+        update={
+            "mentions": [
+                CommentMention(user_id=m.user_id, username=m.username, display_name=m.display_name)
+                for m in members
+            ]
+        }
+    )
