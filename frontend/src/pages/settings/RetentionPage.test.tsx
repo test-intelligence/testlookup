@@ -52,6 +52,24 @@ vi.mock('@/hooks/useStorage', () => ({
   useProjectStorage: () => ({ data: undefined, error: undefined, isLoading: false, mutate: vi.fn() }),
   useDeletedProjectStorage: () => ({ data: undefined, mutate: vi.fn() }),
 }))
+// W22a: the Holds card's one read (its own tests are HoldsCard.test.tsx). The
+// calls are recorded so the refusal / All-Projects pages can be shown to ask
+// nothing (the hook's key stays null: the card is not mounted there).
+const holdsHookCalls: Array<[string | null, string | undefined]> = []
+vi.mock('@/hooks/useRetentionHolds', () => ({
+  useRetentionHolds: (projectId: string | null, state?: string) => {
+    holdsHookCalls.push([projectId, state])
+    return {
+      holds: [],
+      total: 0,
+      counts: { live: 0, expired: 0, released: 0 },
+      isLoading: false,
+      error: undefined,
+      mutate: vi.fn(),
+    }
+  },
+  refreshRetentionHolds: vi.fn(),
+}))
 vi.mock('@/hooks/useUIDismissals', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useUIDismissals')>(),
   useUIDismissals: () => ({ data: undefined, mutate: vi.fn() }),
@@ -847,5 +865,123 @@ describe('RetentionPage', () => {
     expect(mockPurge).toHaveBeenCalledTimes(1)
     expect(mockPurge).toHaveBeenCalledWith('proj-1', 'Checkout')
     expect(mockToastSuccess).toHaveBeenCalledWith('Purge queued — check back for the audit record')
+  })
+})
+
+// ── W22a: the keep-last floor, the Holds card, the preview's kept lines ──────
+
+describe('RetentionPage — W22a holds and the keep-last floor', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    holdsHookCalls.length = 0
+    mockIsAdmin = true
+    storeState.activeProjectId = 'proj-1'
+    storeState.activeProject = { id: 'proj-1', name: 'Checkout' }
+    mockGet.mockResolvedValue(basePolicy({ keep_last_runs: 10 }))
+    mockUpdate.mockResolvedValue(basePolicy({ keep_last_runs: 25, source: 'custom' }))
+  })
+
+  it('a QA lead (non-admin) gets the refusal page and the Holds card asks nothing', async () => {
+    mockIsAdmin = false
+    await renderPage()
+    expect(await screen.findByText('Admin access required')).toBeTruthy()
+    expect(holdsHookCalls).toEqual([])
+    expect(document.querySelector('[data-retention-holds-card]')).toBeNull()
+  })
+
+  it('All-Projects mode mounts no Holds card', async () => {
+    storeState.activeProjectId = 'all'
+    storeState.activeProject = null
+    await renderPage()
+    expect(await screen.findByText('Select a project')).toBeTruthy()
+    expect(holdsHookCalls).toEqual([])
+  })
+
+  it('mounts the Holds card between the policy form and the preview, for the project', async () => {
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+    const card = document.querySelector('[data-retention-holds-card]') as HTMLElement
+    expect(card).toBeTruthy()
+    expect(holdsHookCalls[0]).toEqual(['proj-1', 'live'])
+    const policyForm = screen.getByText('Save policy').closest('section') as HTMLElement
+    const previewSection = screen.getByText('Purge preview').closest('section') as HTMLElement
+    expect(policyForm.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(card.compareDocumentPosition(previewSection) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(card).getByText('No live holds.')).toBeTruthy()
+  })
+
+  it('shows the floor field with the saved value, between the day windows and the AI caps', async () => {
+    mockGet.mockResolvedValue(basePolicy({ keep_last_runs: 25 }))
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+    expect(dayInput('keep_last_runs').value).toBe('25')
+    const floor = document.querySelector('[data-retention-floor]') as HTMLElement
+    const caps = document.querySelector('[data-retention-ai-caps]') as HTMLElement
+    expect(dayInput('audit_days').compareDocumentPosition(floor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(floor.compareDocumentPosition(caps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(within(floor).getByText(/0 keeps only those/)).toBeTruthy()
+  })
+
+  it('an older server without keep_last_runs shows the default 10 and never sends it unchanged', async () => {
+    mockGet.mockResolvedValue(basePolicy())
+    mockUpdate.mockResolvedValue(basePolicy({ runs_days: 400, source: 'custom' }))
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+    expect(dayInput('keep_last_runs').value).toBe('10')
+    fireEvent.change(dayInput('runs_days'), { target: { value: '400' } })
+    await act(async () => {
+      fireEvent.click(saveButton())
+    })
+    expect(mockUpdate.mock.calls[0][1]).toEqual({ runs_days: 400 })
+  })
+
+  it('PUTs keep_last_runs only when it changed', async () => {
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+    expect(saveButton().disabled).toBe(true)
+
+    fireEvent.change(dayInput('keep_last_runs'), { target: { value: '25' } })
+    await act(async () => {
+      fireEvent.click(saveButton())
+    })
+    expect(mockUpdate).toHaveBeenCalledTimes(1)
+    expect(mockUpdate.mock.calls[0]).toEqual(['proj-1', { keep_last_runs: 25 }])
+    await waitFor(() => expect(dayInput('keep_last_runs').value).toBe('25'))
+  })
+
+  it('accepts 0 and refuses 1001 / a fraction with the bounds sentence', async () => {
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+    fireEvent.change(dayInput('keep_last_runs'), { target: { value: '1001' } })
+    expect(screen.getByText('Keep the last 0 to 1000 runs (a whole number).')).toBeTruthy()
+    expect(saveButton().disabled).toBe(true)
+    fireEvent.change(dayInput('keep_last_runs'), { target: { value: '2.5' } })
+    expect(saveButton().disabled).toBe(true)
+    fireEvent.change(dayInput('keep_last_runs'), { target: { value: '0' } })
+    expect(screen.queryByText('Keep the last 0 to 1000 runs (a whole number).')).toBeNull()
+    expect(saveButton().disabled).toBe(false)
+  })
+
+  it("the preview lists what holds and the floor keep, and the reference warnings", async () => {
+    mockPreview.mockResolvedValue({
+      cutoffs: { raw_events: '2026-05-04T00:00:00Z', runs: '2025-08-02T00:00:00Z', artifacts: '2026-02-03T00:00:00Z', audit: '2019-08-05T00:00:00Z' },
+      candidates: { runs: 4, test_cases: 9, mongo_docs: {}, minio_objects: 0, event_archive_rows: 0, audit_rows: 0, provenance_rows: 0, compliance_packs_expired: 0 },
+      holds: {
+        project_held: false, runs_kept: 5, packs_kept: 0,
+        active: [{ hold_id: 'h1', entity_type: 'release', entity_id: 'r1', entity_label: 'release 2026-Q4', reason: 'Audit Q4 sentinel', expires_at: null, runs_kept: 5, packs_kept: 0 }],
+      },
+      floor: { keep_last_runs: 10, runs_kept: 10, latest_passed_kept: true, suites_kept: 2 },
+      references_broken: [{ table: 'run_baselines', column: 'baseline_run_id', count: 3, label: '3 runs lose their baseline link' }],
+      references_measured: true,
+    })
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Preview purge')).toBeTruthy())
+    await act(async () => {
+      fireEvent.click(screen.getByText('Preview purge'))
+    })
+    const kept = await waitFor(() => document.querySelector('[data-retention-preview-kept]') as HTMLElement)
+    expect(within(kept).getByText('Kept by hold: Audit Q4 sentinel — 5 runs, 0 packs')).toBeTruthy()
+    expect(within(kept).getByText('Kept by the floor: 10 runs (the newest 10, the latest passing run, the latest passing run of 2 suites)')).toBeTruthy()
+    expect(within(kept).getByText('3 runs lose their baseline link')).toBeTruthy()
   })
 })

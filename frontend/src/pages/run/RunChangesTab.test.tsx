@@ -12,6 +12,7 @@ import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CommitRangeStatus, RegressionDiff } from '@/types/regressionDiff'
+import { formatDay } from '@/utils/formatters'
 
 const getData = vi.fn()
 vi.mock('@/services/http', () => ({ getData: (...a: unknown[]) => getData(...a) }))
@@ -196,5 +197,58 @@ describe('RunChangesTab — an older server (no commit_range_status)', () => {
     expect(container.querySelector('a[data-commit-link]')).toBeNull()
     const li = screen.getByText('abc1234').closest('li') as HTMLElement
     expect(li.innerHTML).toContain('<span class="font-mono text-[var(--color-text)] mr-1">abc1234</span><span>Change the gateway timeout</span><span class="text-[var(--color-text-faint)]">— dev</span>')
+  })
+})
+
+describe('RunChangesTab — the purged baseline (W22a ACT-04)', () => {
+  beforeEach(() => getData.mockReset())
+
+  const purgedEl = () => document.querySelector('[data-baseline-purged]') as HTMLElement | null
+  // Built inside each test; the date is shown with the app's `formatDay`.
+  const purgedAt = () => '2026-03-02T10:00:00Z'
+  const expectedDate = (iso: string) => formatDay(iso)
+
+  async function renderNoBaseline(diff: RegressionDiff) {
+    getData.mockResolvedValue(diff)
+    render(
+      <SWRConfig value={{ provider: () => new Map() }}>
+        <MemoryRouter>
+          <RunChangesTab runId="run-1" run={undefined} onCompareWithPrevious={() => {}} />
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+    await screen.findByText('No recent passing baseline run found for comparison.')
+  }
+
+  it('says the baseline was purged under the baseline line when one was found', async () => {
+    const at = purgedAt()
+    await renderWith({ ...BASE, baseline_purged: { build_number: '4471', purged_at: at } })
+    const line = purgedEl() as HTMLElement
+    expect(line.textContent).toBe(`Baseline build 4471 was purged on ${expectedDate(at)}.`)
+    const baselineLine = screen.getByText('Baseline: Build #41')
+    expect(baselineLine.nextElementSibling).toBe(line)
+  })
+
+  it('says it under "No recent passing baseline…" when none was found', async () => {
+    const at = purgedAt()
+    await renderNoBaseline({ baseline_available: false, baseline_purged: { build_number: '4471', purged_at: at } } as RegressionDiff)
+    const line = purgedEl() as HTMLElement
+    expect(line.textContent).toBe(`Baseline build 4471 was purged on ${expectedDate(at)}.`)
+    expect(screen.getByText('No recent passing baseline run found for comparison.').nextElementSibling).toBe(line)
+  })
+
+  it('reads without a build number', async () => {
+    const at = purgedAt()
+    await renderNoBaseline({ baseline_available: false, baseline_purged: { build_number: null, purged_at: at } } as RegressionDiff)
+    expect((purgedEl() as HTMLElement).textContent).toBe(`The baseline run was purged on ${expectedDate(at)}.`)
+  })
+
+  it('shows nothing when baseline_purged is null or absent (both branches)', async () => {
+    await renderWith({ ...BASE, baseline_purged: null })
+    expect(purgedEl()).toBeNull()
+    await renderWith({ ...BASE })
+    expect(purgedEl()).toBeNull()
+    await renderNoBaseline({ baseline_available: false, baseline_purged: null } as RegressionDiff)
+    expect(purgedEl()).toBeNull()
   })
 })

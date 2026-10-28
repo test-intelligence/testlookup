@@ -11,8 +11,14 @@
  *     run (per kind) and per test result, 1–100, applied whenever a version is
  *     stored whatever `enabled` says; a cap the server does not report is shown
  *     as "not reported" and never sent.
+ *     Plus the keep-last floor (W22a ACT-04): `keep_last_runs` 0–1000, sent
+ *     only when changed (RetentionFloorField).
+ *   • Retention holds (W22a ACT-05) — HoldsCard: list / place a project hold
+ *     / release, inline; its one read is issued only in this admin branch.
  *   • Preview — dry-run POST that renders the cutoff timestamps and the
- *     purge-candidate counts (computed now; the nightly job may differ).
+ *     purge-candidate counts (computed now; the nightly job may differ), then
+ *     what holds and the floor keep and the links a purge breaks
+ *     (PreviewKeptLines).
  *   • Danger zone — "Purge now" behind a typed-project-name confirmation
  *     (GitHub repo-delete UX, mirrors ProjectDataPage), opened in the page
  *     right under the Manual purge row (W27b PAN-06: no modal). Disabled while
@@ -37,6 +43,10 @@ import PageHeader from '@/components/ui/PageHeader'
 import RetentionActivationNudge from '@/components/retention/RetentionActivationNudge'
 import StoragePanel from '@/components/retention/StoragePanel'
 import CriteriaDeletionPanel from '@/components/retention/CriteriaDeletionPanel'
+import HoldsCard from '@/components/retention/HoldsCard'
+import PreviewKeptLines from '@/components/retention/PreviewKeptLines'
+import RetentionFloorField from '@/components/retention/RetentionFloorField'
+import { KEEP_LAST_RUNS_DEFAULT, validateKeepLastRuns } from '@/components/retention/holdsModel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
@@ -145,9 +155,16 @@ interface FormState {
   /** '' when the server does not report the cap (the input is then disabled). */
   ai_versions_per_run: string
   ai_versions_per_test: string
+  /** W22a ACT-04: the keep-last floor, 0–1000 (the server default 10 when not reported). */
+  keep_last_runs: string
 }
 
-type FormField = RetentionDayField | RetentionCapField
+type FormField = RetentionDayField | RetentionCapField | 'keep_last_runs'
+
+/** The saved floor; a server that does not report it applies the default. */
+function savedFloor(policy: RetentionPolicy): number {
+  return policy.keep_last_runs ?? KEEP_LAST_RUNS_DEFAULT
+}
 
 function toFormState(policy: RetentionPolicy): FormState {
   return {
@@ -158,6 +175,7 @@ function toFormState(policy: RetentionPolicy): FormState {
     audit_days: String(policy.audit_days),
     ai_versions_per_run: policy.ai_versions_per_run == null ? '' : String(policy.ai_versions_per_run),
     ai_versions_per_test: policy.ai_versions_per_test == null ? '' : String(policy.ai_versions_per_test),
+    keep_last_runs: String(savedFloor(policy)),
   }
 }
 
@@ -234,6 +252,9 @@ function validate(
     else if (value < min || value > max)
       errors[field] = `${label} must be between ${min} and ${max} versions`
   }
+  // W22a ACT-04: the keep-last floor, a whole number of runs 0–1000.
+  const floorError = validateKeepLastRuns(form.keep_last_runs)
+  if (floorError) errors.keep_last_runs = floorError
   return errors
 }
 
@@ -250,6 +271,9 @@ function diffPayload(form: FormState, saved: RetentionPolicy): RetentionPolicyWr
     const value = parseDays(form[field])
     if (value !== saved[field]) payload[field] = value
   }
+  // The floor is sent only when it changed.
+  const floor = parseDays(form.keep_last_runs)
+  if (floor !== savedFloor(saved)) payload.keep_last_runs = floor
   return payload
 }
 
@@ -606,6 +630,13 @@ export default function RetentionPage() {
           })}
         </div>
 
+        {/* ── Keep-last floor (W22a ACT-04) — the scheduled purge only. */}
+        <RetentionFloorField
+          value={form.keep_last_runs}
+          error={errors.keep_last_runs}
+          onChange={(value) => editDay('keep_last_runs', value)}
+        />
+
         {/* ── AI history caps (W03 AIH-06) ─────────────────────────────
             Versions kept, not days. Enforced whenever a version is stored,
             whether or not scheduled purging is on; the purge also removes
@@ -684,6 +715,11 @@ export default function RetentionPage() {
           </span>
         </div>
       </section>
+
+      {/* ── Retention holds (W22a ACT-05) ──────────────────────────────
+          Mounted only here, in the admin branch: its one read (the hook's
+          key) is never issued for a QA lead's refusal page. */}
+      <HoldsCard projectId={activeProjectId} projectName={projectName} />
 
       {/* ── Preview ─────────────────────────────────────────────────── */}
       <section className="card space-y-3">
@@ -789,6 +825,10 @@ export default function RetentionPage() {
                 ))}
               </tbody>
             </table>
+
+            {/* W22a: what holds and the keep-last floor keep, and the links
+                the purge would break (warnings, never blocks). */}
+            <PreviewKeptLines preview={preview} />
 
             <p className="text-[11px] text-[var(--color-text-faint)]">
               Counts are computed right now; the nightly job runs later against live data, so its

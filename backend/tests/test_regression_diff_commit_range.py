@@ -90,6 +90,9 @@ class _DiffSession:
             failing = w.failing if params["test_run_id_1"] == w.run.id else []
             return _Rows(rows=[SimpleNamespace(test_fingerprint=f, test_name=f"t-{f}", suite_name="s")
                                for f in failing])
+        if "FROM run_baselines" in sql:
+            # W22a F-7: the diff's purged-baseline read; no baseline was purged in these worlds.
+            return _Rows()
         raise AssertionError(f"unexpected statement: {sql}")
 
     async def close(self):

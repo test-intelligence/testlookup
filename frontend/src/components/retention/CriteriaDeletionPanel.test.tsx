@@ -372,3 +372,60 @@ describe('the typed confirmation opens in the preview box', () => {
     expect(execute).not.toHaveBeenCalled()
   })
 })
+
+// ── W22a: holds, the floor note and the reference warnings ─────────────────
+
+describe('W22a — holds, floor note, reference warnings', () => {
+  const FLOOR_NOTE =
+    'Explicit deletions are not limited by the keep-last floor; it applies to the scheduled purge only.'
+
+  async function previewWith(overrides: Record<string, unknown>) {
+    preview.mockResolvedValue(frozen(overrides))
+    renderPanel()
+    fireEvent.change(screen.getByLabelText(/older than days/i), { target: { value: '90' } })
+    fireEvent.click(screen.getByRole('button', { name: /preview/i }))
+    return screen.findByTestId('criteria-preview')
+  }
+
+  it('lists a held run with its Held: reason first', async () => {
+    const panel = await previewWith({
+      run_count: 2,
+      blocked: [{ run_id: 'held-run-0001', reasons: ['Held: Audit Q4 sentinel', 'linked to 1 release(s) — unlink the run first'] }],
+    })
+    const item = within(within(panel).getByTestId('preview-blocked')).getByRole('listitem')
+    expect(item.textContent).toContain('— Held: Audit Q4 sentinel; linked to 1 release(s)')
+  })
+
+  it('shows the floor note and the reference warnings when the server sends them', async () => {
+    const panel = await previewWith({
+      floor_applies: false,
+      floor_note: FLOOR_NOTE,
+      references_broken: [
+        { table: 'run_baselines', column: 'baseline_run_id', count: 3, label: '3 runs lose their baseline link' },
+      ],
+      references_measured: true,
+    })
+    expect(within(panel).getByText(FLOOR_NOTE)).toBeInTheDocument()
+    expect(within(panel).getByText('Reference warnings:')).toBeInTheDocument()
+    expect(within(panel).getByText('3 runs lose their baseline link')).toBeInTheDocument()
+  })
+
+  it('says the warnings were not measured when the count failed', async () => {
+    const panel = await previewWith({ references_broken: [], references_measured: false, floor_note: FLOOR_NOTE })
+    expect(within(panel).getByText('Reference warnings were not measured.')).toBeInTheDocument()
+    expect(within(panel).queryByText('Reference warnings:')).toBeNull()
+  })
+
+  it('shows nothing new when the fields are absent (an older server)', async () => {
+    const panel = await previewWith({})
+    expect(panel.querySelector('[data-criteria-floor-note]')).toBeNull()
+    expect(panel.querySelector('[data-retention-reference-warnings]')).toBeNull()
+    expect(within(panel).queryByText(/reference warnings/i)).toBeNull()
+  })
+
+  it('shows no warning lines when measured and nothing breaks', async () => {
+    const panel = await previewWith({ references_broken: [], references_measured: true, floor_note: FLOOR_NOTE })
+    expect(within(panel).getByText(FLOOR_NOTE)).toBeInTheDocument()
+    expect(panel.querySelector('[data-retention-reference-warnings]')).toBeNull()
+  })
+})

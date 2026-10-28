@@ -11,6 +11,10 @@
  * W10 FAIL-09: the commits are the project's GitHub / GHE range (the Suspects
  * panel's); when there are none the tab says why (`commit_range_status`). A
  * server without that status renders exactly the markup from before.
+ *
+ * W22a ACT-04: when the retention purge removed the run's stored baseline,
+ * one muted line says `Baseline build N was purged on <date>.` — under the
+ * baseline line when a baseline was found, else under "No recent passing …".
  */
 import { Link } from 'react-router-dom'
 import { GitCommit, GitCompare } from 'lucide-react'
@@ -20,7 +24,9 @@ import ScopedLink from '@/components/ui/ScopedLink'
 import DurationRegressionsCard from '@/components/runs/DurationRegressionsCard'
 import { useRegressionDiff } from '@/hooks/useRegressionDiff'
 import { usePermissions } from '@/hooks/usePermissions'
-import type { CommitRangeStatus } from '@/types/regressionDiff'
+import type { CommitRangeStatus, RegressionDiffBaselinePurged } from '@/types/regressionDiff'
+import { baselinePurgedLine } from '@/components/retention/holdsModel'
+import { formatDay } from '@/utils/formatters'
 import type { TestRun } from '@/types/runs'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
 import {
@@ -66,7 +72,10 @@ export default function RunChangesTab({
           <p className="mt-3 text-sm text-[var(--status-failed)]">Could not load the regression diff for this run.</p>
         )}
         {!isLoading && !error && data && !data.baseline_available && (
-          <p className="mt-3 text-sm text-[var(--color-text-muted)]">No recent passing baseline run found for comparison.</p>
+          <>
+            <p className="mt-3 text-sm text-[var(--color-text-muted)]">No recent passing baseline run found for comparison.</p>
+            {data.baseline_purged && <BaselinePurgedLine purged={data.baseline_purged} className="mt-1" />}
+          </>
         )}
         {!isLoading && !error && data && data.baseline_available && (
           <div className="mt-4 space-y-4">
@@ -87,7 +96,10 @@ export default function RunChangesTab({
               </div>
             </div>
 
-            <p className="text-xs text-[var(--color-text-muted)]">Baseline: Build #{data.baseline_build_number}</p>
+            <div>
+              <p className="text-xs text-[var(--color-text-muted)]">Baseline: Build #{data.baseline_build_number}</p>
+              {data.baseline_purged && <BaselinePurgedLine purged={data.baseline_purged} className="mt-0.5" />}
+            </div>
 
             {(data.new_failing_tests?.length ?? 0) > 0 && (
               <div>
@@ -174,6 +186,19 @@ export default function RunChangesTab({
         </Link>
       </section>
     </div>
+  )
+}
+
+/**
+ * W22a ACT-04: the retention purge removed this run's stored baseline — say
+ * so, with its build number (which survives the purge) and the purge date
+ * (`formatDay`, the app's date format). React text only.
+ */
+function BaselinePurgedLine({ purged, className }: { purged: RegressionDiffBaselinePurged; className?: string }) {
+  return (
+    <p data-baseline-purged="" className={clsx('text-xs text-[var(--color-text-muted)]', className)}>
+      {baselinePurgedLine(purged, formatDay)}
+    </p>
   )
 }
 

@@ -156,6 +156,8 @@ const HANDLERS: ApiHandlers = [
   ['/api/v1/settings/secret-providers', () => ({ providers: [{ name: 'vault', configured: false, address_host: null, auth_method: 'token', healthy: false, message: 'Not configured: set SECRET_PROVIDER_VAULT_ADDR on the deployment.', references: 0 }], reference_syntax: 'vault:<path>#<key>' })],
   ['/api/v1/settings/mfa-policy', () => MFA_POLICY],
   [`/api/v1/projects/${PROJECT_ID}/retention-policy`, () => RETENTION_POLICY],
+  // W22a: the Holds card's one read, in the REAL shape (no hold here).
+  [`/api/v1/projects/${PROJECT_ID}/retention-holds`, () => ({ items: [], total: 0, counts: { live: 0, expired: 0, released: 0 } })],
   [`/api/v1/projects/${PROJECT_ID}/storage`, () => PROJECT_STORAGE],
   ['/api/v1/admin/storage/deleted-projects', () => DELETED_PROJECTS_STORAGE],
   ['/api/v1/auth/me/dismissals', () => ({ dismissed: [] })],
