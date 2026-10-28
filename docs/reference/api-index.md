@@ -10,6 +10,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 |---|---|---|---|
 | GET | `/` | Root | [System](api/system.md) |
 | GET | `/api/v1/activity/event-types` | The activity event registry, grouped by category | [Activity](api/activity.md) |
+| GET | `/api/v1/activity/mine` | What I did and what involves me, across my projects (keyset paginated) | [Activity](api/activity.md) |
 | GET | `/api/v1/admin/dlq` | List Dead Letters | [Admin DLQ](api/admin-dlq.md) |
 | POST | `/api/v1/admin/dlq/{entry_id}/replay` | Replay Dead Letter | [Admin DLQ](api/admin-dlq.md) |
 | GET | `/api/v1/admin/maintenance/ai-cache` | Read Ai Cache Stats | [Admin Maintenance](api/admin-maintenance.md) |
@@ -267,6 +268,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/projects/{project_id}/activity` | Project activity feed (keyset paginated) | [Activity](api/activity.md) |
 | GET | `/api/v1/projects/{project_id}/activity/entity/{entity_type}/{entity_id}` | Everything that happened to one entity | [Activity](api/activity.md) |
 | GET | `/api/v1/projects/{project_id}/activity/export` | Export the filtered activity history (QA_LEAD+) | [Activity](api/activity.md) |
+| GET | `/api/v1/projects/{project_id}/activity/stream` | Live tail of the project's activity (text/event-stream; signed-in sessions only) | [Activity](api/activity.md) |
 | GET | `/api/v1/projects/{project_id}/activity/{event_id}` | One activity event, with its before/after diff | [Activity](api/activity.md) |
 | GET | `/api/v1/projects/{project_id}/agent-actions` | List Agent Actions | [Agent Actions](api/agent-actions.md) |
 | PATCH | `/api/v1/projects/{project_id}/agent-actions/{action_id}` | Transition Agent Action | [Agent Actions](api/agent-actions.md) |
@@ -689,4 +691,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **680 HTTP operations**, **575 paths**, **88 domain pages**.
+Total: **682 HTTP operations**, **577 paths**, **88 domain pages**.

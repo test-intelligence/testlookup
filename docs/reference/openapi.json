@@ -9497,6 +9497,31 @@
         "title": "CodeownersImportResponse",
         "type": "object"
       },
+      "CommentMention": {
+        "description": "A project member an ``@username`` in a test-case comment resolved to (W21d ACT-02).\n\nIds and display names only: never an e-mail.",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "display_name"
+        ],
+        "title": "CommentMention",
+        "type": "object"
+      },
       "CompliancePackFileCheck": {
         "properties": {
           "actual_sha256": {
@@ -39830,6 +39855,14 @@
             "title": "Is Resolved",
             "type": "boolean"
           },
+          "mentions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CommentMention"
+            },
+            "title": "Mentions",
+            "type": "array"
+          },
           "parent_id": {
             "anyOf": [
               {
@@ -46458,6 +46491,172 @@
           }
         ],
         "summary": "The activity event registry, grouped by category",
+        "tags": [
+          "Activity"
+        ]
+      }
+    },
+    "/api/v1/activity/mine": {
+      "get": {
+        "description": "The caller's own rows and the rows involving them (Inbox › Activity).\n\nEvery role. The QUERY ``project_id`` is authorized by\n``resolve_project_scope`` (a non-member's id → 403) BEFORE any ledger read;\nwithout it the read covers every project the caller can reach (ADMIN:\nall; a project-bound key: its project). Part B (mentions) never reads\nbeyond the caller's OWN memberships. A read: nothing is written.",
+        "operationId": "list_my_activity_api_v1_activity_mine_get",
+        "parameters": [
+          {
+            "description": "Pin one project (the Inbox's active project)",
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Pin one project (the Inbox's active project)",
+              "title": "Project Id"
+            }
+          },
+          {
+            "description": "all|mine|involving (default all)",
+            "in": "query",
+            "name": "view",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "all|mine|involving (default all)",
+              "title": "View"
+            }
+          },
+          {
+            "description": "Default 7 days ago; at most 90",
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Default 7 days ago; at most 90",
+              "title": "Since"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Until"
+            }
+          },
+          {
+            "description": "1-100 (default 50)",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "1-100 (default 50)",
+              "title": "Limit"
+            }
+          },
+          {
+            "description": "Opaque keyset cursor from a previous page",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque keyset cursor from a previous page",
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List My Activity Api V1 Activity Mine Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "What I did and what involves me, across my projects (keyset paginated)",
         "tags": [
           "Activity"
         ]
@@ -66821,6 +67020,69 @@
           }
         ],
         "summary": "Export the filtered activity history (QA_LEAD+)",
+        "tags": [
+          "Activity"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/activity/stream": {
+      "get": {
+        "description": "New ledger rows of this project as Server-Sent Events, after their commit.\n\nDeclared ABOVE ``/{event_id}`` (else ``stream`` would 422 as a UUID). JWT\nonly: an API key polls the feed. Resume with the ``Last-Event-ID`` HEADER.\nThe request's pooled connection is released BEFORE the response starts and\nthe generator never touches Postgres: a held session per open tab would\nstarve the 2 + 1 pool. Redis is read with short non-blocking ``XRANGE``.",
+        "operationId": "stream_activity_api_v1_projects__project_id__activity_stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Live tail of the project's activity (text/event-stream; signed-in sessions only)",
         "tags": [
           "Activity"
         ]
