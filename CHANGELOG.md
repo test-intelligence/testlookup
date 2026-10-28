@@ -1413,6 +1413,9 @@ locally by default.
 
 ### Security
 
+- **pymongo 4.18.3.** The backend's MongoDB driver moves from 4.18.2
+  (CVE-2026-106435, high: a denial of service through an out-of-bounds read);
+  still below 5.0 for motor 3.7.1.
 - **pypdf 6.21.2.** The backend's PDF text extraction (knowledge RAG) moves
   from 6.19.0 (CVE-2026-115572, CVE-2026-115580, CVE-2026-115585: long runtimes
   on crafted PDFs).
