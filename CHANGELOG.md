@@ -52,6 +52,36 @@ locally by default.
 
 ### Added
 
+- **Retention holds, a keep-last-runs floor, and warnings for the links a
+  deletion breaks** (wave W22a, ACT-05 + ACT-04; branch
+  `feat/df-retention-a-20261028`). A **retention hold** keeps evidence from
+  being purged or deleted: QA leads place one on a release (Releases › the
+  release › **Place hold**) or on a compliance pack (**Hold** on its row);
+  admins place one on the whole project from **Settings › Retention**
+  (Holds card) and are the only ones who release a hold, always with a
+  reason. Holds can expire. While a hold is live, nothing it covers is
+  purged or deleted: the scheduled purge, criteria deletion, single-run
+  delete, compliance-pack retire and delete, release delete, run unlink and
+  project reset all refuse with `Held: <reason>`, whatever the credential —
+  a project-bound CI key included; no API key can place or release a hold.
+  A release hold covers its linked runs, its packs, those runs' decision
+  reports and their baselines. Placing and releasing are recorded in the
+  activity feed and the settings audit log. Analysis caches, search-index
+  documents, search usage rows, unlabelled shadow pairs and expired agent
+  memory are not covered (the preview says so). **Behaviour change for
+  existing installs:** the scheduled purge now always keeps **the newest 10
+  runs, the latest passing run, and the latest passing run of each suite**
+  of every project (`keep_last_runs`, 0–1000, default 10 for every existing
+  policy; `0` keeps only the passing runs) — purges keep more than before.
+  The purge preview, criteria deletion and single-run delete list the links
+  a deletion breaks (`3 runs lose their baseline link`) without blocking;
+  the deletion job records them and the holds it honoured. A run whose
+  baseline was purged says so on its **Changes** tab (`Baseline build 15
+  was purged on …`). Compliance packs can now be retired and deleted from
+  the release page (admins). A refusal toast now shows a `blockers` list's
+  sentences instead of `Request failed with status code 409`. Migrations
+  `0239` (the `retention_holds` table) and `0240` (two columns,
+  metadata-only).
 - **Activity goes live, every role gets Inbox › Activity, and @mentions in
   test-case comments** (wave W21d, ACT-02; branch
   `feat/df-activity-live-20261027`). **Activity** gains a **Live** toggle

@@ -246,3 +246,5 @@ Alembic revisions extracted without executing migrations. An inventory is not ev
 | [backend/migrations/versions/0236_scim_groups.py](../../backend/migrations/versions/0236_scim_groups.py) | `'0236'` | `'0235'` | SCIM groups and group → project-role mappings (W20 ADM-09). |
 | [backend/migrations/versions/0237_sso_oidc.py](../../backend/migrations/versions/0237_sso_oidc.py) | `'0237'` | `'0236'` | OIDC identity providers on ``sso_configurations`` (W20 ADM-08b). |
 | [backend/migrations/versions/0238_activity_mine_indexes.py](../../backend/migrations/versions/0238_activity_mine_indexes.py) | `'0238'` | `'0237'` | Two indexes for ``GET /api/v1/activity/mine`` (W21d ACT-02). |
+| [backend/migrations/versions/0239_retention_holds.py](../../backend/migrations/versions/0239_retention_holds.py) | `'0239'` | `'0238'` | Retention holds (W22a ACT-05). |
+| [backend/migrations/versions/0240_retention_floor.py](../../backend/migrations/versions/0240_retention_floor.py) | `'0240'` | `'0239'` | The keep-last floor and the purged-baseline stamp (W22a ACT-04). |

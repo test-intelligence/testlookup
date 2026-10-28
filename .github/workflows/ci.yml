@@ -824,6 +824,10 @@ jobs:
           tests/integration/test_activity_stream_pool_postgres_redis.py
           tests/integration/test_activity_mine_postgres.py
           tests/integration/test_test_case_mentions_postgres.py
+          tests/integration/test_migrations_0239_0240_postgres.py
+          tests/integration/test_retention_holds_postgres.py
+          tests/integration/test_retention_purge_holds_postgres.py
+          tests/integration/test_retention_floor_postgres.py
           tests/integration/test_defects_list_fields_postgres.py
           tests/integration/test_analytics_scope_postgres.py
           tests/integration/test_analytics_epoch_redis_postgres.py

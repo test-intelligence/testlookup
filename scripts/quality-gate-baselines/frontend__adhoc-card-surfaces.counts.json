@@ -81,7 +81,7 @@
     "frontend/src/pages/settings/MyNotificationsPage.tsx": 1,
     "frontend/src/pages/settings/OutboundWebhooksPage.tsx": 2,
     "frontend/src/pages/settings/PersonalKeysPage.tsx": 5,
-    "frontend/src/pages/settings/SSOSettingsPage.tsx": 13,
+    "frontend/src/pages/settings/SSOSettingsPage.tsx": 12,
     "frontend/src/pages/settings/StoragePage.tsx": 9,
     "frontend/src/pages/settings/TeamChannelsPage.tsx": 2,
     "frontend/src/pages/suite/SuiteParts.tsx": 1,

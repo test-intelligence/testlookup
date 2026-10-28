@@ -82,6 +82,19 @@ describe('extractErrorMessage', () => {
     )
   })
 
+  it('reads a { blockers } refusal as its sentences (a held release, a cited run)', () => {
+    expect(extractErrorMessage({ blockers: ['Held: Audit 2026-Q4'] }, 'Request failed with status code 409')).toBe(
+      'Held: Audit 2026-Q4',
+    )
+    expect(extractErrorMessage(
+      { run_id: 'r-1', blockers: ['Held: Litigation', 'linked to 1 release(s) — unlink the run first'] },
+      'Request failed',
+    )).toBe('Held: Litigation · linked to 1 release(s) — unlink the run first')
+    // An empty or non-string list falls through to the old forms.
+    expect(extractErrorMessage({ blockers: [] }, 'Request failed')).toBe('Request failed')
+    expect(extractErrorMessage({ blockers: [3], run_id: 'r-1' }, 'Request failed')).toBe('run_id: r-1')
+  })
+
   it('falls back when detail is empty, missing, or unusable', () => {
     expect(extractErrorMessage(undefined, 'Request failed')).toBe('Request failed')
     expect(extractErrorMessage('', 'Request failed')).toBe('Request failed')
