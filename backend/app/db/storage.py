@@ -2,10 +2,11 @@
 import asyncio
 import logging
 import os
+import shutil
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, AsyncGenerator, cast
+from typing import Any, AsyncGenerator, BinaryIO, cast
 
 from app.core.config import settings
 
@@ -13,6 +14,8 @@ logger = logging.getLogger("db.storage")
 
 # Read granularity for ``stream_object`` on every provider.
 _STREAM_CHUNK_SIZE = 65536
+# Copy granularity for ``LocalStorageProvider.put_object_stream`` (1 MiB).
+_COPY_CHUNK_SIZE = 1 << 20
 
 class StorageProvider(ABC):
     """Abstract base class for storage operations."""
@@ -33,6 +36,28 @@ class StorageProvider(ABC):
     @abstractmethod
     async def put_object(self, key: str, content: bytes, content_type: str = "application/json", bucket: str | None = None) -> None:
         raise NotImplementedError()
+
+    async def put_object_stream(
+        self,
+        key: str,
+        fileobj: BinaryIO,
+        *,
+        size: int,
+        content_type: str = "application/zip",
+        bucket: str | None = None,
+    ) -> None:
+        """Write ``fileobj`` (from its start) as ``key`` (W22b, ACT-03).
+
+        NOT abstract on purpose: this default reads the file object whole and
+        hands it to ``put_object``, so every existing provider double that
+        implements only ``put_object`` keeps working (correct for small test
+        payloads). The real providers override it to stream: S3 through a
+        multipart ``upload_fileobj``, the local provider with a chunked copy.
+        ``size`` is the caller's byte count (the overrides do not need it; it
+        is part of the contract so a provider can pre-size an upload).
+        """
+        fileobj.seek(0)
+        await self.put_object(key, fileobj.read(), content_type, bucket)
 
     @abstractmethod
     async def get_presigned_url(self, key: str, expiry: int = 3600, bucket: str | None = None) -> str:
@@ -171,6 +196,24 @@ class S3StorageProvider(StorageProvider):
                 ContentType=content_type,
             )
 
+    async def put_object_stream(
+        self,
+        key: str,
+        fileobj: BinaryIO,
+        *,
+        size: int,
+        content_type: str = "application/zip",
+        bucket: str | None = None,
+    ) -> None:
+        """Multipart upload straight from the file object (bounded memory):
+        a retention archive may be hundreds of MiB and is never one ``bytes``."""
+        bucket = bucket or self._default_bucket
+        fileobj.seek(0)
+        async with self.get_client_context() as s3:
+            await s3.upload_fileobj(
+                fileobj, bucket, key, ExtraArgs={"ContentType": content_type},
+            )
+
     async def get_presigned_url(self, key: str, expiry: int = 3600, bucket: str | None = None) -> str:
         bucket = bucket or self._default_bucket
         async with self.get_client_context() as s3:
@@ -296,6 +339,27 @@ class LocalStorageProvider(StorageProvider):
 
         await asyncio.to_thread(_write)
 
+    async def put_object_stream(
+        self,
+        key: str,
+        fileobj: BinaryIO,
+        *,
+        size: int,
+        content_type: str = "application/zip",
+        bucket: str | None = None,
+    ) -> None:
+        """Chunked copy (1 MiB) in a worker thread; the traversal guard of
+        ``_get_full_path`` applies as for ``put_object``."""
+        full_path = self._get_full_path(key, bucket)
+
+        def _copy() -> None:
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            fileobj.seek(0)
+            with open(full_path, "wb") as f:
+                shutil.copyfileobj(fileobj, f, _COPY_CHUNK_SIZE)
+
+        await asyncio.to_thread(_copy)
+
     async def get_presigned_url(self, key: str, expiry: int = 3600, bucket: str | None = None) -> str:
         # Local storage doesn't really have presigned URLs in the same way,
         # but could return a generic local path or API route representing it.
@@ -384,6 +448,19 @@ class DynamicStorageProvider(StorageProvider):
         bucket: str | None = None,
     ) -> None:
         await (await self._provider()).put_object(key, content, content_type, bucket)
+
+    async def put_object_stream(
+        self,
+        key: str,
+        fileobj: BinaryIO,
+        *,
+        size: int,
+        content_type: str = "application/zip",
+        bucket: str | None = None,
+    ) -> None:
+        await (await self._provider()).put_object_stream(
+            key, fileobj, size=size, content_type=content_type, bucket=bucket,
+        )
 
     async def get_presigned_url(
         self,

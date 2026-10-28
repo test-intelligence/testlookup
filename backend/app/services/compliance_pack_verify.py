@@ -4,7 +4,10 @@ Pure over bytes (no database, no storage, no network): the verify route reads
 the row, the public keys and the ZIP, then hands them here in a thread. The
 CLI's offline verifier (``cli/testlookup_cli/pack_verify.py``) restates the
 same algorithm without importing the backend; ``tests/test_compliance_pack_cli_parity.py``
-pins that the two agree.
+pins that the two agree. ``verify_archive_file`` is the algorithm over a
+seekable file object; ``verify_pack_bytes`` hands it a ``BytesIO``, and the
+retention export (W22b) hands it the archive re-read from storage into a
+spooled file -- one algorithm for packs and archives.
 
 The algorithm:
 
@@ -38,7 +41,7 @@ import uuid
 import zipfile
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import IO, Any, Mapping, Optional
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
@@ -231,12 +234,42 @@ def verify_pack_bytes(
     record_signing_key_id: Optional[str] = None,
     checked_at: Optional[datetime] = None,
 ) -> dict[str, Any]:
-    """Verify one pack. ``pack_id`` given = the server path (the row's fields are checked too)."""
+    """Verify one pack held in memory -- ``verify_archive_file`` over a ``BytesIO``."""
+    return verify_archive_file(
+        io.BytesIO(zip_bytes),
+        recorded_manifest_sha256=recorded_manifest_sha256,
+        public_keys=public_keys,
+        pack_id=pack_id,
+        record_signature=record_signature,
+        record_signing_key_id=record_signing_key_id,
+        checked_at=checked_at,
+    )
+
+
+def verify_archive_file(
+    fileobj: IO[bytes],
+    *,
+    recorded_manifest_sha256: Optional[str],
+    public_keys: Mapping[str, str],
+    pack_id: uuid.UUID | str | None = None,
+    record_signature: Optional[str] = None,
+    record_signing_key_id: Optional[str] = None,
+    checked_at: Optional[datetime] = None,
+) -> dict[str, Any]:
+    """Verify one pack or retention archive read from a seekable file object.
+
+    The ONE algorithm (module docstring): a compliance pack's bytes reach it
+    through ``verify_pack_bytes``; a retention archive (W22b, ACT-03) is
+    re-read from storage into a spooled file and verified here without ever
+    being one ``bytes`` object. ``pack_id`` given = the server path (the row's
+    fields are checked too).
+    """
     checked_at = checked_at or datetime.now(timezone.utc)
     server_path = pack_id is not None
     pack_id_text = str(pack_id) if server_path else None
     try:
-        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+        fileobj.seek(0)
+        zf = zipfile.ZipFile(fileobj)
         infos = zf.infolist()
     except Exception:  # noqa: BLE001 - BadZipFile, a truncated archive, a non-ZIP
         return unreadable_result(

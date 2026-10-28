@@ -46,6 +46,7 @@ from app.core.deps import (
 )
 from app.models.postgres import Project, TestRun, User, UserRole
 from app.models.schemas import (
+    DeletionAcknowledgeRequest,
     DeletionExecuteAcceptedResponse,
     DeletionExecuteRequest,
     DeletionPreviewResponse,
@@ -90,11 +91,30 @@ async def get_retention_policy(
     _: User = Depends(require_project_access()),
 ):
     """Effective retention policy for a project (defaults when no row
-    exists — the UI always renders the form) plus the latest purge."""
+    exists — the UI always renders the form) plus the latest purge.
+
+    W22b ACT-06: every inheritable field is the EFFECTIVE per-field value
+    (project, else the instance default, else the code default), with its
+    source, what it would read if inherited, the window, the pause and the
+    next scheduled purge."""
     effective = await svc.get_effective_policy(db, project_id)
     last_purge = await svc.get_last_purge(db, project_id)
+    return _policy_read(effective, last_purge=last_purge, now=datetime.now(timezone.utc))
+
+
+def _policy_read(effective: Any, *, last_purge: Any, now: datetime) -> RetentionPolicyRead:
+    """The policy answer of GET and PUT (W-5): the schedule fields beside the values."""
+    paused = getattr(effective, "purge_paused_until", None)
+    if paused is not None and paused.tzinfo is None:
+        paused = paused.replace(tzinfo=timezone.utc)
     return RetentionPolicyRead(
-        **effective.as_dict(), source=effective.source, last_purge=last_purge,
+        **effective.as_dict(),
+        source=effective.source,
+        last_purge=last_purge,
+        purge_paused_until=paused if paused is not None and paused > now else None,
+        next_scheduled_purge_at=svc.next_scheduled_purge_at(effective, now=now),
+        field_sources=dict(getattr(effective, "field_sources", ()) or ()),
+        inherit_values=dict(getattr(effective, "inherit_values", ()) or ()),
     )
 
 
@@ -112,7 +132,12 @@ async def put_retention_policy(
 ):
     """Upsert the project's retention policy. ADMIN-only — retention drives
     a destructive scheduled purge. Omitted fields keep their current (or
-    default) value; returns the effective policy."""
+    default) value; returns the effective policy.
+
+    W22b ACT-06: ``purge_window_start_utc``, ``pause_days`` / ``resume`` and
+    ``inherit`` (the fields to reset to the inherited value); their refusals
+    are 422 ``{"code", "message"}`` beside the existing plain-string 422."""
+    now = datetime.now(timezone.utc)
     try:
         effective = await svc.upsert_policy(
             db,
@@ -128,13 +153,20 @@ async def put_retention_policy(
             ai_versions_per_test=payload.ai_versions_per_test,
             keep_last_runs=payload.keep_last_runs,
             actor=current_user,
+            purge_window_start_utc=payload.purge_window_start_utc,
+            pause_days=payload.pause_days,
+            resume=payload.resume,
+            inherit=tuple(payload.inherit or ()),
+            now=now,
         )
+    except svc.PolicyFieldError as exc:
+        raise HTTPException(
+            status_code=422, detail={"code": exc.code, "message": exc.message}
+        ) from exc
     except svc.RetentionValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     last_purge = await svc.get_last_purge(db, project_id)
-    return RetentionPolicyRead(
-        **effective.as_dict(), source=effective.source, last_purge=last_purge,
-    )
+    return _policy_read(effective, last_purge=last_purge, now=now)
 
 
 @router.get(
@@ -196,9 +228,33 @@ async def list_deletion_jobs(
     now, and it cannot exist for one that failed. This is that view.
     """
     jobs = await deletion_job_service.list_jobs(db, project_id, limit=limit)
-    return DeletionJobListResponse(
-        jobs=[DeletionJobResponse.model_validate(j) for j in jobs]
-    )
+    total = await deletion_job_service.count_jobs(db, project_id)
+    return DeletionJobListResponse(jobs=[_job_response(j) for j in jobs], total=total)
+
+
+#: The ONLY export facts a job answer carries (W22b): never ``estimates``
+#: internals, never the storage key.
+def _export_summary(meta: Any) -> Optional[dict]:
+    if not isinstance(meta, dict) or not any(
+        key in meta for key in ("run_count", "file_count", "signing")
+    ):
+        return None
+    signing = meta.get("signing")
+    return {
+        "run_count": meta.get("run_count"),
+        "file_count": meta.get("file_count"),
+        "objects_not_archived": meta.get("objects_not_archived"),
+        "missing_runs": len(meta.get("missing_run_ids") or []),
+        "excluded_runs": len(meta.get("run_ids_excluded") or []),
+        "signing_state": signing.get("state") if isinstance(signing, dict) else None,
+    }
+
+
+def _job_response(job: Any) -> DeletionJobResponse:
+    """A job as the API shows it: ``export_summary`` filled from ``export_meta``."""
+    answer = DeletionJobResponse.model_validate(job)
+    answer.export_summary = _export_summary(getattr(job, "export_meta", None))
+    return answer
 
 
 @router.get(
@@ -221,7 +277,7 @@ async def get_deletion_job(
     job = await deletion_job_service.get_job(db, job_id)
     if job is None or job.project_id != project_id:
         raise HTTPException(status_code=404, detail="Deletion job not found")
-    return DeletionJobResponse.model_validate(job)
+    return _job_response(job)
 
 
 @router.post(
@@ -330,8 +386,15 @@ async def preview_criteria_deletion(
     Runs that cannot be deleted are reported HERE rather than discovered
     mid-execution, so the count an ADMIN authorises is the count that will go.
     """
+    from app.core.config import settings
     from app.db.mongo import get_mongo_db
-    from app.services import deletion_criteria, retention_references, run_deletion_service
+    from app.db.storage import get_storage_provider
+    from app.services import (
+        deletion_criteria,
+        retention_export_service,
+        retention_references,
+        run_deletion_service,
+    )
 
     foreign = await deletion_criteria.foreign_run_ids(
         db, project_id=project_id, run_ids=criteria.run_ids or []
@@ -395,12 +458,26 @@ async def preview_criteria_deletion(
     # blocker. Explicit deletions are not limited by the keep-last floor.
     references = await retention_references.references_broken(db, deletable)
 
+    # W22b E-2: what an archive of the DELETABLE runs would weigh per tier and
+    # what deleting them reclaims. Every part fails soft ("not measured", never
+    # 0); staged into the frozen job so execute can refuse an over-cap tier.
+    export_estimate = await retention_export_service.estimate_export(
+        db,
+        project_id=project_id,
+        run_ids=deletable,
+        mongo=mongo,
+        storage=get_storage_provider(),
+        max_bytes=settings.RETENTION_EXPORT_MAX_BYTES,
+        prefixes={run_id: by_id[run_id][2] for run_id in deletable},
+    )
+
     job_id = deletion_job_service.stage_frozen_candidate_set(
         db,
         project_id=project_id,
         run_ids=deletable,
         criteria=criteria.model_dump(mode="json", exclude_none=True),
         requested_by_id=current_user.id,
+        export_estimates=export_estimate,
     )
     # The router owns the commit, per the transaction-boundary rule. A preview
     # that failed after this point must NOT leave an executable job behind.
@@ -420,6 +497,7 @@ async def preview_criteria_deletion(
         references_broken=[ReferenceBrokenRead(**item) for item in references.items],
         references_measured=references.measured,
         floor_applies=False,
+        export_estimate=export_estimate,
     )
 
 
@@ -462,14 +540,20 @@ async def execute_criteria_deletion(
             detail="confirmation_name must match the project name exactly",
         )
 
-    try:
-        run_ids = await deletion_job_service.claim_frozen_set(
-            db, job_id=body.job_id, project_id=project_id
+    choice = getattr(body, "export", None)
+    if choice is None:
+        try:
+            run_ids = await deletion_job_service.claim_frozen_set(
+                db, job_id=body.job_id, project_id=project_id
+            )
+        except deletion_job_service.FrozenSetRejected as rejected:
+            raise HTTPException(
+                status_code=rejected.status_code, detail=rejected.detail
+            ) from rejected
+    else:
+        run_ids = await _claim_with_export(
+            db, job_id=body.job_id, project_id=project_id, choice=choice, actor=current_user,
         )
-    except deletion_job_service.FrozenSetRejected as rejected:
-        raise HTTPException(
-            status_code=rejected.status_code, detail=rejected.detail
-        ) from rejected
 
     await db.commit()
     try:
@@ -486,9 +570,223 @@ async def execute_criteria_deletion(
             error_type=type(exc).__name__,
         )
 
+    if choice is None:
+        return DeletionExecuteAcceptedResponse(
+            job_id=body.job_id, run_count=len(run_ids)
+        )
     return DeletionExecuteAcceptedResponse(
-        job_id=body.job_id, run_count=len(run_ids)
+        job_id=body.job_id, run_count=len(run_ids),
+        export_tier=choice.tier, export_target=choice.target,
     )
+
+
+async def _claim_with_export(
+    db: AsyncSession, *, job_id: uuid.UUID, project_id: uuid.UUID, choice: Any, actor: Any,
+) -> list[uuid.UUID]:
+    """E-8: execute WITH an export. The vocabulary is checked before the claim
+    (an unknown value never reaches the row's CHECK); the run cap and the
+    staged estimate after it, BEFORE the route's commit -- a refusal rolls the
+    claim back and the job stays ``previewed``. Then the ``export_requested``
+    audit row, staged on this session."""
+    from app.core.config import settings
+    from app.services import retention_export_service
+
+    try:
+        retention_export_service.validate_vocabulary(choice)
+        run_ids = await deletion_job_service.claim_frozen_set(
+            db, job_id=job_id, project_id=project_id, export=choice
+        )
+        job = await deletion_job_service.get_job(db, job_id)   # the identity-mapped locked row
+        meta = getattr(job, "export_meta", None)
+        retention_export_service.validate_choice(
+            choice,
+            estimate=meta.get("estimates") if isinstance(meta, dict) else None,
+            run_count=len(run_ids),
+            max_bytes=settings.RETENTION_EXPORT_MAX_BYTES,
+        )
+    except deletion_job_service.FrozenSetRejected as rejected:
+        raise HTTPException(status_code=rejected.status_code, detail=rejected.detail) from rejected
+    except retention_export_service.ExportRefused as refused:
+        # get_db rolls the claim back: the job stays ``previewed``.
+        raise HTTPException(status_code=refused.status_code, detail=refused.detail()) from refused
+    _stage_export_audit(
+        db, project_id=project_id, action="export_requested", actor=actor,
+        fields={"job_id": str(job_id), "tier": choice.tier, "target": choice.target,
+                "run_count": len(run_ids)},
+    )
+    logger.info("criteria_deletion_export_requested", job_id=str(job_id), tier=choice.tier,
+                target=choice.target, runs=len(run_ids))
+    return run_ids
+
+
+def _stage_export_audit(
+    db: AsyncSession, *, project_id: uuid.UUID, action: str, actor: Any, fields: dict,
+) -> None:
+    """ONE ``settings_audit_log`` row per export step (E-11), staged on the
+    session that commits the step. Never the storage key."""
+    from app.models.postgres import SettingsAuditLog
+    from app.services.retention_vocab import EXPORT_AUDIT_KEY_PREFIX
+
+    name = (getattr(actor, "full_name", None) or getattr(actor, "email", None)) if actor else None
+    db.add(SettingsAuditLog(
+        setting_key=f"{EXPORT_AUDIT_KEY_PREFIX}{project_id}",
+        action=action,
+        actor_id=getattr(actor, "id", None),
+        actor_name=name,
+        changed_fields={**fields, "actor": name},
+    ))
+
+
+def _export_refusal(code: str, status_code: int) -> HTTPException:
+    from app.services.retention_vocab import EXPORT_ERROR_SENTENCES
+
+    return HTTPException(
+        status_code=status_code, detail={"code": code, "message": EXPORT_ERROR_SENTENCES[code]}
+    )
+
+
+def _require_interactive_admin(user: Any) -> None:
+    """D-2: an archive is collected and confirmed by a signed-in administrator --
+    an API key can neither take an archive nor confirm a deletion."""
+    if credential_kind(user) != CREDENTIAL_KIND_JWT:
+        raise _export_refusal("interactive_login_required", 403)
+
+
+# ── Export before delete: collect + acknowledge (W22b ACT-03, E-7) ────────────
+#
+# No presigned URL leaves the server (the local provider's is file://, MinIO's
+# endpoint is in-cluster): the archive streams through this authenticated,
+# project-scoped POST. The storage key is never in a response or a log line.
+
+
+# activity: none - streams an existing archive; the collection is recorded in settings_audit_log
+@router.post("/{project_id}/deletion/jobs/{job_id}/collect")
+async def collect_deletion_archive(
+    project_id: uuid.UUID,
+    job_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
+):
+    """Download a verified archive while its job awaits collection.
+
+    Stamps the FIRST collect and stages an ``export_collected`` audit row,
+    then opens the stored stream: a storage failure on the first chunk is a
+    502 and rolls the stamp back (nothing recorded). Commits BEFORE returning
+    the stream; the stream touches storage only, never the session.
+    """
+    from fastapi.responses import StreamingResponse
+
+    from app.db.storage import get_storage_provider
+    from app.services import retention_export_service
+
+    _require_interactive_admin(current_user)
+    now = datetime.now(timezone.utc)
+    try:
+        job = await deletion_job_service.mark_collected(
+            db, job_id=job_id, project_id=project_id, now=now
+        )
+    except deletion_job_service.CollectRefused as refused:
+        raise HTTPException(status_code=refused.status_code, detail=refused.detail()) from refused
+    location, size = job.export_location, job.export_bytes
+    manifest_sha256, archive_sha256 = job.export_manifest_sha256, job.export_archive_sha256
+    _stage_export_audit(
+        db, project_id=project_id, action="export_collected", actor=current_user,
+        fields={"job_id": str(job_id), "tier": job.export_tier, "target": job.export_target,
+                "bytes": size, "manifest_sha256": manifest_sha256},
+    )
+    if not location:
+        raise _export_refusal("archive_unreadable", 502)
+    chunks = retention_export_service.stream_archive(get_storage_provider(), key=location)
+    try:
+        first = await anext(chunks)
+    except StopAsyncIteration:
+        first = b""
+    except Exception as exc:  # noqa: BLE001 - any storage failure: nothing recorded
+        logger.warning("deletion_archive_unreadable", job_id=str(job_id), error_type=type(exc).__name__)
+        raise _export_refusal("archive_unreadable", 502) from exc
+    await db.commit()
+    logger.info("deletion_archive_collected", job_id=str(job_id), bytes=size)
+
+    async def _body():
+        yield first
+        async for chunk in chunks:
+            yield chunk
+
+    headers = {
+        "Content-Disposition": (
+            f'attachment; filename="testlookup-deletion-archive-{str(job_id)[:8]}-{now:%Y%m%d}.zip"'
+        ),
+        "X-Manifest-Sha256": str(manifest_sha256 or ""),
+        "X-Archive-Sha256": str(archive_sha256 or ""),
+        "Cache-Control": "no-store",
+    }
+    if size is not None:
+        headers["Content-Length"] = str(size)
+    return StreamingResponse(_body(), media_type="application/zip", headers=headers)
+
+
+@router.post(
+    "/{project_id}/deletion/jobs/{job_id}/acknowledge",
+    response_model=DeletionJobResponse,
+)
+async def acknowledge_deletion_archive(
+    project_id: uuid.UUID,
+    job_id: uuid.UUID,
+    body: DeletionAcknowledgeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    _: User = Depends(require_project_access()),
+):
+    """Confirm a collected archive was saved -> the job is queued for deletion.
+
+    Needs a recorded collect and the EXACT manifest SHA-256, inside the
+    collection window. The transition, its audit row and the ledger row commit
+    together; the worker is dispatched after the commit (the minute relay
+    republishes a lost message).
+    """
+    from app.worker.tasks import execute_criteria_deletion_task
+
+    _require_interactive_admin(current_user)
+    now = datetime.now(timezone.utc)
+    try:
+        job = await deletion_job_service.acknowledge_collection(
+            db, job_id=job_id, project_id=project_id, manifest_sha256=body.manifest_sha256,
+            actor_id=current_user.id, now=now,
+        )
+    except deletion_job_service.CollectRefused as refused:
+        raise HTTPException(status_code=refused.status_code, detail=refused.detail()) from refused
+    excluded = (job.export_meta or {}).get("run_ids_excluded") if isinstance(job.export_meta, dict) else None
+    run_count = max(len(job.resolved_run_ids or []) - len(excluded or []), 0)
+    requested_by = job.requested_by_id
+    _stage_export_audit(
+        db, project_id=project_id, action="export_acknowledged", actor=current_user,
+        fields={"job_id": str(job_id), "tier": job.export_tier, "target": job.export_target,
+                "run_count": run_count, "bytes": job.export_bytes,
+                "manifest_sha256": job.export_manifest_sha256},
+    )
+    await record_activity(
+        db,
+        project_id=project_id,
+        event_type="retention.export_acknowledged",
+        actor=ActorRef.from_user(current_user),
+        entity_id=job_id,
+        entity_label="Deletion archive",
+        context={"count": run_count, "tier": job.export_tier},
+        source_table="deletion_jobs",
+        source_id=job_id,
+    )
+    await db.commit()
+    await db.refresh(job)
+    try:
+        execute_criteria_deletion_task.delay(
+            str(job_id), str(project_id), str(requested_by) if requested_by else None
+        )
+    except Exception as exc:  # noqa: BLE001 - QUEUED is the outbox; the relay republishes
+        logger.warning("criteria_deletion_fast_dispatch_failed", job_id=str(job_id),
+                       error_type=type(exc).__name__)
+    logger.info("deletion_archive_acknowledged", job_id=str(job_id), runs=run_count)
+    return _job_response(job)
 
 
 # ── Retention holds (W22a ACT-05) ────────────────────────────────────────────
