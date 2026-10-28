@@ -14,11 +14,13 @@ sweep to retry). ``deletion_blockers`` refuses an immediate delete while the
 pack is still inside its window — retire it first, deliberately, and the
 refusal names why.
 
-**On holds.** The epic's criterion is "refused while a hold covers it", but
-legal holds are S9 and no hold table exists. A hold check written now would be
-a branch nothing could ever trigger — the same defect this epic catalogues
-elsewhere. The retention window is a real, already-enforced constraint and is
-the guard until S9 adds the hold check alongside it.
+**On holds (W22a ACT-05).** A pack covered by a live retention hold (on the
+project, the pack, or its release) can be neither deleted nor retired. That
+check needs a session, and ``deletion_blockers`` is deliberately sync and
+session-free, so it lives in the ROUTES (``routers/compliance_packs.py``):
+they call ``retention_hold_service.holds_covering_pack`` and put its
+``Held: <reason>`` sentences ahead of the window blocker below. The policy
+purge excludes held packs through ``retention_hold_service.pack_not_held``.
 """
 from __future__ import annotations
 
@@ -40,9 +42,10 @@ def deletion_blockers(pack: Any, *, now: Optional[datetime] = None) -> list[str]
     Every blocker is collected rather than returning on the first, so clearing
     one does not reveal another on the next attempt.
 
-    S9 adds the hold check here. It is deliberately absent rather than stubbed:
-    an ``if hold: ...`` against a table that does not exist reads as a working
-    guard while never firing once.
+    The retention-WINDOW blocker only. The retention-HOLD check (W22a) is not
+    here: this function is sync and session-free, so the delete / retire routes
+    read ``retention_hold_service.holds_covering_pack`` and list its
+    ``Held: <reason>`` sentences first, ahead of these.
     """
     now = now or datetime.now(timezone.utc)
     blockers: list[str] = []

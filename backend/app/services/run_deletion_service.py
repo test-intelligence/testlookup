@@ -7,11 +7,21 @@ be purged, and a run old enough to purge is not one an auditor is reading.
 
 A DELETE endpoint has neither bound. An ADMIN names one run, now, and the
 executor does what the row says. These are the checks that difference requires.
+
+**Retention holds (W22a ACT-05) live in** :func:`citation_blockers`, as its
+LAST read: every explicit path already calls it — the single-run DELETE route,
+the criteria preview, and both workers through :func:`execution_blockers` — so
+a run covered by a live hold (directly, through its release, as a held run's
+baseline, or by a project hold) is refused everywhere with ``Held: <reason>``
+listed first. A hold read that fails refuses (``HOLDS_UNREADABLE``), like an
+unreachable decision-report store. The policy purge reads the same hold service
+through its anti-join clauses instead (``retention_service``).
 """
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Any, Iterable, Optional, Sequence
 
 import structlog
 from sqlalchemy import func, select
@@ -22,8 +32,31 @@ from app.models.postgres import (
     LaunchStatus,
     ReleaseTestRunLink,
 )
+from app.services import retention_hold_service
+from app.services.retention_vocab import HELD_SENTENCE
 
 logger = structlog.get_logger(__name__)
+
+#: The blocker a failed hold read adds — fail CLOSED, like the Mongo branch.
+HOLDS_UNREADABLE = (
+    "could not read retention holds — refusing rather than deleting evidence "
+    "that may be held"
+)
+#: Every hold refusal starts with this (``HELD_SENTENCE`` up to its reason).
+HELD_PREFIX = HELD_SENTENCE.split("{", 1)[0]
+
+
+def held_first(reasons: Iterable[str]) -> list[str]:
+    """The same reasons with every ``Held: …`` sentence first (stable otherwise)."""
+    items = list(reasons)
+    return [r for r in items if r.startswith(HELD_PREFIX)] + [
+        r for r in items if not r.startswith(HELD_PREFIX)
+    ]
+
+
+def has_hold_blocker(reasons: Iterable[str]) -> bool:
+    """True when a live retention hold is among the reasons (the worker then reads the refs)."""
+    return any(r.startswith(HELD_PREFIX) for r in reasons)
 
 #: Statuses that refuse deletion. A run still executing has writers pointed at
 #: it; deleting it races them and produces a half-run.
@@ -106,6 +139,11 @@ async def citation_blockers(db, *, run_id: uuid.UUID, mongo) -> list[str]:
     evidence that a published report cites, which nothing can undo. When the
     citation store cannot be reached, the honest answer is "cannot prove this
     is uncited", not "it is uncited".
+
+    **Retention holds are read LAST** (one statement, ``.all()``) and their
+    ``Held: <reason>`` sentences are PREPENDED, one per distinct live hold
+    covering the run. A failing hold read appends ``HOLDS_UNREADABLE``: no
+    route, flag or role deletes a run whose holds could not be read.
     """
     blockers: list[str] = []
 
@@ -148,6 +186,20 @@ async def citation_blockers(db, *, run_id: uuid.UUID, mongo) -> list[str]:
                 "outlive its subject"
             )
 
+    try:
+        holds = await retention_hold_service.holds_covering_run(
+            db, run_id=run_id, now=datetime.now(timezone.utc)
+        )
+    except Exception as exc:  # noqa: BLE001 — fail closed: an unread hold must block
+        logger.warning(
+            "run_delete_hold_check_failed",
+            run_id=str(run_id),
+            error_type=type(exc).__name__,
+        )
+        blockers.append(HOLDS_UNREADABLE)
+    else:
+        blockers = [hold.sentence() for hold in holds] + blockers
+
     return blockers
 
 
@@ -156,22 +208,55 @@ async def execution_blockers(db, *, run, mongo) -> list[str]:
 
     Preview and task execution are separated by a queue. During that gap a run
     can resume or become cited by a release, compliance pack, or decision
-    report. Deleting from the frozen set without checking again turns an
-    approved preview into permission to destroy newly protected evidence.
+    report — or become HELD (W22a). Deleting from the frozen set without
+    checking again turns an approved preview into permission to destroy newly
+    protected evidence. A ``Held: …`` reason is returned first.
     """
     reasons: list[str] = []
     if status_blocks_deletion(run.status):
         reasons.append("run is still executing")
     reasons.extend(await citation_blockers(db, run_id=run.id, mongo=mongo))
-    return reasons
+    return held_first(reasons)
+
+
+async def hold_refs_for_refusal(db, *, run_id: uuid.UUID, reasons: Iterable[str]) -> list:
+    """The structured live holds behind a refusal, for the job's ``holds_honoured``.
+
+    Reads ONLY when a reason is a ``Held: …`` sentence (one more statement); a
+    refusal for any other reason reads nothing. The run is refused either way,
+    so a failure here costs the job record its detail, never the refusal.
+    """
+    if not has_hold_blocker(reasons):
+        return []
+    try:
+        return await retention_hold_service.holds_covering_run(
+            db, run_id=run_id, now=datetime.now(timezone.utc)
+        )
+    except Exception as exc:  # noqa: BLE001 — the refusal stands without the detail
+        logger.warning(
+            "run_delete_hold_refs_unreadable",
+            run_id=str(run_id),
+            error_type=type(exc).__name__,
+        )
+        return []
 
 
 class RunDeletionBlocked(RuntimeError):
-    """A run gained a mutable protection after the request was accepted."""
+    """A run gained a mutable protection after the request was accepted.
 
-    def __init__(self, run_id: uuid.UUID, reasons: list[str]):
+    ``holds`` (W22a) carries the structured live holds (``HoldRef``) when a
+    ``Held: …`` reason is among ``reasons``, for the job's ``holds_honoured``.
+    """
+
+    def __init__(
+        self,
+        run_id: uuid.UUID,
+        reasons: list[str],
+        holds: Sequence[Any] = (),
+    ):
         self.run_id = run_id
         self.reasons = reasons
+        self.holds = list(holds)
         super().__init__(f"run {run_id} is protected: {'; '.join(reasons)}")
 
 

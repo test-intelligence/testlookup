@@ -21,15 +21,22 @@ the value doesn't match exactly.
 
 Audit: every reset writes a ``settings_audit_log`` row with the mode,
 the actor, and the per-table deletion counts in ``changed_fields``.
+
+Retention holds (W22a ACT-05): a reset is refused (:class:`ResetBlockedByHold`)
+while ANY live hold of the project exists — read under the project row lock,
+after the confirmation check and before any count or delete.
 """
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.services import retention_hold_service
 
 from app.models.postgres import (
     CanonicalTestCase,
@@ -106,6 +113,20 @@ class ProjectNotFound(Exception):
     """Raised when the project_id doesn't resolve to an active project."""
 
 
+class ResetBlockedByHold(Exception):
+    """A live retention hold of the project refuses the reset (W22a ACT-05, D-4).
+
+    ANY live hold refuses — project, release, run or pack: a ``runs`` reset
+    deletes held runs, a ``full`` reset held releases, and a held pack would
+    lose its release link. ``reasons`` are the ``Held: <reason>`` sentences.
+    Raised after the confirmation check and BEFORE any count or delete.
+    """
+
+    def __init__(self, reasons: list[str]):
+        self.reasons = list(reasons)
+        super().__init__("; ".join(self.reasons))
+
+
 async def reset_project(
     db: AsyncSession,
     *,
@@ -152,6 +173,15 @@ async def reset_project(
         raise ConfirmationMismatch(
             "confirmation_name must match the project name exactly"
         )
+
+    # W22a: read UNDER the project row lock, so a hold placed concurrently
+    # (place_hold takes FOR SHARE on this row) either commits first and is
+    # seen here, or waits until this reset has committed or rolled back.
+    held = await retention_hold_service.any_live_hold(
+        db, project_id=project_id, now=datetime.now(timezone.utc)
+    )
+    if held:
+        raise ResetBlockedByHold([hold.sentence() for hold in held])
 
     # Count first, then delete in a single transaction. Pre-counting
     # serves two purposes: (1) the audit log captures real numbers even

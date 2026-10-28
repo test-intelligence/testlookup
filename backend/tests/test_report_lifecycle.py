@@ -217,6 +217,12 @@ class _PackResult:
     def scalar_one_or_none(self):
         return self._value
 
+    def all(self):
+        # W22a (deliberate): the routes' retention-hold read
+        # (``retention_hold_service.holds_covering_pack``, ``.all()``) — no
+        # live hold covers the pack in these tests.
+        return []
+
 
 class _PackDB:
     def __init__(self, pack):
@@ -252,12 +258,14 @@ def _pack(expires_in_days=365, project_id=None):
 
 @pytest.mark.asyncio
 async def test_a_pack_inside_its_retention_window_is_refused():
-    """The window is the guard.
+    """The window is one guard; a retention hold is the other.
 
-    Holds are S9 and do not exist; shipping a hold check now would be a branch
-    nothing can trigger. `retention_expires_at` already exists, is already
-    enforced by the nightly purge, and until now was decorative on the way in —
-    nothing stopped a delete ignoring it.
+    `retention_expires_at` is enforced by the nightly purge, and until S4 was
+    decorative on the way in — nothing stopped a delete ignoring it. The hold
+    check (W22a) is not in this sync, session-free function: the delete and
+    retire routes read `retention_hold_service.holds_covering_pack` and list
+    its `Held: <reason>` sentences ahead of this window blocker
+    (`tests/test_retention_holds_explicit_paths.py` pins that half).
     """
     from app.services import compliance_pack_lifecycle as lifecycle
 

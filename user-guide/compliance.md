@@ -28,6 +28,18 @@ From a release (**Releases** → the release, where the compliance-pack panel li
 
 The same is available programmatically — the MCP server exposes `list_compliance_packs`, `generate_compliance_pack` and `verify_compliance_pack`, so an assistant or pipeline can produce and check the evidence bundle without clicking through the UI ([CLI, SDKs & MCP](cli-sdk-mcp.md#the-mcp-server)).
 
+## Holding, retiring and deleting packs
+
+A pack is kept for its own retention window (`retention_expires_at`, default ~7 years) and the nightly purge deletes it after that. Three controls on each pack row change that, and a **retention hold** on the release keeps the whole release's evidence:
+
+- **Hold** (QA leads and administrators) places a retention hold on that pack, with a reason and an optional expiry. While it is live the pack shows **On hold** and nothing can retire, delete or purge it. Only an administrator releases a hold, with a reason (**Settings → Retention & purge**, the **Retention holds** card, or `POST /api/v1/projects/{id}/retention-holds/{hold_id}/release`).
+- **Retire** (administrators) brings the pack's window forward to now, so the next nightly purge deletes it. It asks for a reason and the pack id typed to confirm (`POST /api/v1/compliance-packs/{pack_id}/retire` with `{"reason": "…", "confirmation_id": "<pack id>"}`). A held pack cannot be retired — releasing a hold never hands a pack to the purge the same instant.
+- **Delete** (administrators) removes the pack's ZIP and its row at once, after a confirmation (`DELETE /api/v1/compliance-packs/{pack_id}`). It is refused while the pack is inside its window (retire it first) and while a hold covers it.
+
+**The release hold.** A QA lead or administrator can put the whole release **on hold** from the release page (**Place hold**, a reason, an optional expiry). The release then shows **On hold** with `Held: <reason>`, and the hold keeps the release, every run linked to it, those runs' decision reports and baseline runs, and every compliance pack of the release — from the nightly purge and from every deletion: deleting the release, unlinking a run from it, deleting one of its runs, criteria deletion, retiring or deleting its packs, and resetting the project are all refused with `Held: <reason>` (`409 {"blockers": ["Held: …"]}` from the API). A whole-project hold (administrators, **Settings → Retention & purge**) does the same for everything in the project. Placing and releasing a hold are recorded in the activity feed and in `settings_audit_log` (`retention_hold:<project_id>`); hold rows are never deleted, and an expired hold simply stops applying. See [Retention holds](administration.md#retention-holds) for exactly what a hold covers and what it does not.
+
+Retiring and deleting a pack are recorded in the application log only, not yet in the activity feed.
+
 ## Resilience by design
 
 Pack assembly is deliberately fault-tolerant: the decision-trail, audit-event and AI-history sections **self-guard** — if one can't be gathered, it embeds an error note in the pack rather than failing the whole generation. You get the pack you can get, with gaps marked, instead of nothing. For AI history the note is `{"available": false, "error": "ai_history_unavailable"}`: the history store could not be read when the pack was generated, which is not the same as "this run has no history".

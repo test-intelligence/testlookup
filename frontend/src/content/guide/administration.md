@@ -112,6 +112,17 @@ Self-registration is off unless the deployment turns it on (`REGISTRATION_ENABLE
 
 **AI history** keeps every AI analysis of a run as a version: up to 20 per run (per kind: the analysis digest and the run summary) and 10 per test result by default, each settable from 1 to 100. The oldest go first; version 1, the newest and any version a published decision report cites never do. The caps apply whenever a version is stored, even with scheduled purging off, and AI history goes with its run.
 
+**Always keep the last N runs** (default 10, 0–1000): the scheduled purge always keeps the project's newest N runs, its latest passing run and the latest passing run of each suite (0 keeps only those passing runs). It protects runs only: a kept run still loses old raw events and audit records on their own clocks. Deleting runs yourself (**Delete by criteria**) is not limited by it, and the preview says so.
+
+**Retention holds** stop every purge and deletion of what they cover until an administrator releases them:
+
+- **Retention holds** card: **Place hold** puts the whole project on hold (a reason, and an optional expiry date); **Release** (with a reason) lifts a live hold. The card lists **Live**, **Expired** and **Released** holds. QA leads place release and compliance-pack holds from the release page; run holds are placed through the API.
+- A release hold also keeps the release's runs, their decision reports and baselines, and its compliance packs; a run hold keeps the run and its baseline.
+- While a hold is live, the purge skips what it covers (the preview shows **Kept by hold**), and every deletion refuses with **Held:** and the hold's reason — **Delete by criteria**, deleting a run through the API, retiring or deleting a compliance pack, deleting a release, unlinking a run from a release, and **Project data** resets.
+- Holds do not cover analysis caches, search-index documents, search usage rows, unlabelled shadow pairs or expired agent memory. An expired hold stops applying on its own.
+
+**Reference warnings**: the preview and **Delete by criteria** list links that the deletion would leave empty, such as **3 runs lose their baseline link**. They never block a deletion. A run whose baseline was purged says so on its **Changes** tab.
+
 Purging is irreversible. The operator guide in the repository (`user-guide/administration.md`) lists exactly what each class covers.
 
 ### Project data
@@ -121,7 +132,7 @@ Purging is irreversible. The operator guide in the repository (`user-guide/admin
 - **Delete test runs** removes every run and what hangs off it, keeping suites, the catalogue, releases, policies, baselines and knowledge sources.
 - **Wipe project data** (**Reset project to fresh state**) also removes the catalogue, releases, policies, baselines, test cases, plans, strategies and knowledge sources. The project, its members, API keys, AI and SSO configuration and flag overrides stay.
 
-Both ask you to type the project's name.
+Both ask you to type the project's name. Both are refused while any retention hold of the project is live.
 
 ## Release governance
 

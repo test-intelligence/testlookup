@@ -6968,6 +6968,13 @@ async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any
         # Closed on its own session too — a `failed` written on the session
         # that just rolled back would be rolled back with it, so the only
         # outcome such a writer could ever record is success.
+        # W22a H-11: what the live holds kept and the links the purge broke,
+        # passed only when the purge produced them (NULL = none applied).
+        job_record: dict[str, Any] = {}
+        if (out or {}).get("holds_honoured") is not None:
+            job_record["holds_honoured"] = (out or {})["holds_honoured"]
+        if (out or {}).get("references_job") is not None:
+            job_record["references_broken"] = (out or {})["references_job"]
         await deletion_job_service.close_job(
             job_id,
             status=(
@@ -6977,6 +6984,7 @@ async def _retention_purge_sweep(project_id: str | None = None) -> dict[str, Any
             ),
             counts=(out or {}).get("counts"),
             error=errors[0] if errors else None,
+            **job_record,
         )
 
         # Purge-audit record — settings_audit_log is itself NEVER purged,
@@ -7857,10 +7865,15 @@ def delete_run_everywhere(
     from app.models.postgres import TestRun
     from app.services import (
         deletion_job_service,
+        retention_hold_service,
+        retention_references,
         run_deletion_service,
         semantic_search,
     )
     from app.services.cache_service import bump_analytics_epoch
+
+    # W22a: the job record's extra facts — the links the delete broke (F-6).
+    job_record: dict[str, Any] = {}
 
     async def _run() -> dict[str, Any]:
         run_uuid = uuid.UUID(run_id)
@@ -7885,13 +7898,26 @@ def delete_run_everywhere(
                 db, run=run, mongo=mongo
             )
             if blockers:
-                raise run_deletion_service.RunDeletionBlocked(run.id, blockers)
+                # W22a H-7: a hold placed after the 202 refuses here; the
+                # structured holds go to the job's holds_honoured.
+                raise run_deletion_service.RunDeletionBlocked(
+                    run.id,
+                    blockers,
+                    holds=await run_deletion_service.hold_refs_for_refusal(
+                        db, run_id=run.id, reasons=blockers
+                    ),
+                )
 
             # Scoped to the RUN, never the project (RET-D8). None means the
             # store could not be reached — it must not be reported as 0.
             index_documents = await semantic_search.purge_run_documents(
                 str(project_uuid), run_id, execute=True
             )
+
+            # W22a F-6: counted BEFORE the delete, in a SAVEPOINT, fail soft.
+            references = await retention_references.references_broken(db, [run.id])
+            if references.job_record() is not None:
+                job_record["references_broken"] = references.job_record()
 
             counts = await run_deletion_service.perform_run_deletion(
                 db,
@@ -7916,14 +7942,29 @@ def delete_run_everywhere(
     try:
         result = _run_async(_run())
     except Exception as exc:
+        refused: dict[str, Any] = {}
+        held = retention_hold_service.holds_honoured_record(
+            getattr(exc, "holds", None) or [], run_ids_kept=[run_id]
+        ) if isinstance(exc, run_deletion_service.RunDeletionBlocked) else None
+        if held is not None:
+            refused["holds_honoured"] = held
         _run_async(
             deletion_job_service.close_job(
                 uuid.UUID(job_id) if job_id else None,
                 status=deletion_job_service.FAILED,
                 error=str(exc)[:500],
+                **refused,
             )
         )
-        logger.warning("[delete-run] %s failed: %s", run_id, exc)
+        if isinstance(exc, run_deletion_service.RunDeletionBlocked):
+            # The reasons may quote a hold's reason: the job row carries them,
+            # the log line carries counts only.
+            logger.warning(
+                "[delete-run] %s refused: %d blocker(s), %d hold(s)",
+                run_id, len(exc.reasons), len(exc.holds),
+            )
+        else:
+            logger.warning("[delete-run] %s failed: %s", run_id, exc)
         raise
 
     _run_async(
@@ -7932,6 +7973,7 @@ def delete_run_everywhere(
             status=deletion_job_service.COMPLETED,
             counts=result.get("counts"),
             resolved_run_ids=[run_id],
+            **job_record,
         )
     )
     return result
@@ -7970,6 +8012,8 @@ def execute_criteria_deletion_task(
     from app.models.postgres import TestRun
     from app.services import (
         deletion_job_service,
+        retention_hold_service,
+        retention_references,
         run_deletion_service,
         semantic_search,
     )
@@ -7994,7 +8038,14 @@ def execute_criteria_deletion_task(
                     job_id, rejected.detail,
                 )
                 return {"executed": False, "reason": rejected.detail}
+            # W22a F-6: the links the job breaks, counted ONCE before the
+            # per-run loop on this start session (SAVEPOINT, fail soft).
+            references = await retention_references.references_broken(db, run_ids)
 
+        # W22a H-8: runs a live hold covers are refused per run; their holds
+        # are aggregated into the job's holds_honoured.
+        held_refs: list[Any] = []
+        held_run_ids: list[str] = []
         mongo = get_mongo_db()
         storage = get_storage_provider()
         deleted: list[str] = []
@@ -8022,7 +8073,11 @@ def execute_criteria_deletion_task(
                     )
                     if blockers:
                         raise run_deletion_service.RunDeletionBlocked(
-                            run.id, blockers
+                            run.id,
+                            blockers,
+                            holds=await run_deletion_service.hold_refs_for_refusal(
+                                db, run_id=run.id, reasons=blockers
+                            ),
                         )
 
                     index_documents = await semantic_search.purge_run_documents(
@@ -8051,7 +8106,17 @@ def execute_criteria_deletion_task(
                                 bucket[key] = bucket.get(key, 0) + num
             except Exception as exc:  # noqa: BLE001 — one run must not stop the rest
                 failures.append(f"{run_id}: {str(exc)[:200]}")
-                logger.warning("[criteria-delete] run %s failed: %s", run_id, exc)
+                if isinstance(exc, run_deletion_service.RunDeletionBlocked):
+                    if exc.holds:
+                        held_refs.extend(exc.holds)
+                        held_run_ids.append(str(run_id))
+                    # The reasons may quote a hold's reason: counts only here.
+                    logger.warning(
+                        "[criteria-delete] run %s refused: %d blocker(s), %d hold(s)",
+                        run_id, len(exc.reasons), len(exc.holds),
+                    )
+                else:
+                    logger.warning("[criteria-delete] run %s failed: %s", run_id, exc)
 
         # VIZ-212: once for the whole job (every run is in this one project),
         # and only if at least one per-run deletion committed.
@@ -8061,6 +8126,14 @@ def execute_criteria_deletion_task(
         status = deletion_job_service.outcome_status(
             requested=len(run_ids), deleted=len(deleted)
         )
+        job_record: dict[str, Any] = {}
+        held = retention_hold_service.holds_honoured_record(
+            held_refs, run_ids_kept=held_run_ids
+        )
+        if held is not None:
+            job_record["holds_honoured"] = held
+        if references.job_record() is not None:
+            job_record["references_broken"] = references.job_record()
         await deletion_job_service.close_job(
             job_uuid,
             status=status,
@@ -8068,6 +8141,7 @@ def execute_criteria_deletion_task(
             counts=totals or None,
             resolved_run_ids=deleted or None,
             error="; ".join(failures[:5]) if failures else None,
+            **job_record,
         )
         return {
             "executed": True,
