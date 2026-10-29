@@ -539,6 +539,30 @@ celery_app.conf.update(
             "task": "app.worker.tasks.run_duplicate_detection",
             "schedule": crontab(hour=6, minute=0),
         },
+        # W23a FAIL-11: cross-run insights, HOURLY at :40 (free of every other
+        # hourly minute: :00 purge, :10, :20, :30, :35, :50 and the */15 /
+        # 5-59/15 sets). Per active project whose cross_run_insights is on:
+        # four read-only detectors, EACH on its own short session and commit
+        # (one failing detector rolls back nothing of the others), never two
+        # sessions open at once; a global Redis lock, fail CLOSED (Redis down
+        # -> the hour is skipped and the next one re-evaluates). Rules only, no
+        # LLM; nobody is notified.
+        "hourly-cross-run-insights": {
+            "task": "app.worker.tasks.detect_cross_run_insights",
+            "schedule": crontab(minute=40),
+            "options": {"queue": "default"},
+        },
+        # W23a TRND-03: the expected-run cadence check, every 15 minutes at
+        # :07 / :22 / :37 / :52 (off the */15 and 5-59/15 sets). Decides each
+        # expected window that ended since the cadence's cursor; one session
+        # and commit per project that HAS a cadence; a global Redis lock, fail
+        # CLOSED (the cursor does not move, the next tick catches up: a miss is
+        # late, never lost or doubled). Observe only: nothing touches CI.
+        "quarter-hourly-run-cadence-check": {
+            "task": "app.worker.tasks.check_run_cadences",
+            "schedule": crontab(minute="7-59/15"),
+            "options": {"queue": "default"},
+        },
     },
     # Prevent memory bloat from stale results
     result_expires=3600,

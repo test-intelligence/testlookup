@@ -32,6 +32,34 @@ The AI verdict for each run is a column of the **Runs** table, and the full anal
 
 > **Tip.** In the **Inbox**, most auto-assignments go to a synthetic project QA-lead account. If it looks empty for a QA lead or administrator, switch the scope to the team view. See [Your inbox and approvals](/docs/inbox).
 
+## Insights
+
+On **Home**, below the main sections, the **Insights** card ("Patterns across runs · checked every hour") lists up to five patterns that no single run shows. It appears only when one project is selected. **24 h** and **7 d** pick the window, and **Open in Inbox** opens the full list. A background check runs every hour and applies four rules to results TestLookup already stored. It makes no AI call and sends no notification.
+
+| Check | Fires when | High when |
+|---|---|---|
+| **Perf drift** (suite) | The suite's newest run of the last 7 days was found slower: the median of its last 5 runs is at least 1.5 × the median of the 20 before, same branch | 2 × slower or more |
+| **Perf drift** (test) | The test ran 3 σ over its baseline in at least 3 runs of the last 7 days, the latest within 48 hours. Needs `perf_regression_detection` | 6 σ, or 5 runs |
+| **Flake rising** | This week the suite has at least 3 flaky tests, twice last week's and at least 2 more. A test is flaky by the [Flaky tests](/docs/flaky) rule. The suite needs 5 runs in each week | 6 or more, and 3 × last week's |
+| **Coverage drop** | The tests exercised in the newest coverage snapshot fell by at least 10 % and 5 tests from the snapshot a week before | A 25 % drop |
+| **AI budget** | This month's AI spend reached the budget's soft warning or its cap | The cap |
+
+An insight stays one row while it keeps firing: **first seen** and **confirmed** say when. It resolves as **Cleared** when a later check finds the suite or test quiet, or as **Not seen for 3 days**. If the pattern returns later, it shows as a new insight.
+
+A check that cannot measure says so under the list, with its reason, for example "No coverage snapshot yet: the first is taken at 00:05 UTC." It is never shown as a ✓. **Dismiss** (QA engineers and above) hides an insight for everyone in the project until that episode ends. See [Insights in the Inbox](/docs/inbox#insights).
+
+## Expected runs
+
+Without a configured expectation, TestLookup does not guess a schedule. On **Trends**, a stretch without runs reads **Run gap in this window** with its silent days, and **No expected cadence configured — Configure**. On **Coverage**, the score's cadence dimension is **Days with runs**.
+
+Once a QA lead sets an expected cadence in [Settings › Expected runs](/docs/administration#expected-runs):
+
+- The Trends callout reads **Expected runs missed** with the exact count and the days. For example: `nightly-regression: 2 expected runs missed (Tue, Wed)`.
+- A paused cadence reads **Expected runs paused**, with the end date, the reason and who set it.
+- Coverage's **Run cadence** becomes met ÷ expected, for example `4 of 5 expected runs`.
+
+A run counts when TestLookup receives it, whatever its result. Paused days are not counted. Daylight-saving changes never cause a false miss.
+
 ## Explorer
 
 **Trends → Explorer** (`/explore`) draws one metric over time as small multiples. See [Charts and visual analysis](/docs/charts) for reading, zooming and exporting its charts.

@@ -16,8 +16,11 @@ Port rules that matter (each pinned by ``tests/test_trend_summary.py::CASES``):
 * the variance is the POPULATION standard deviation over the ACTIVE days, and
   a day with only skipped tests counts as 0 %;
 * the gap is the FIRST longest run of empty days (a strictly longer run
-  replaces it); ``expected_runs_missed`` = its length ("assume nightly";
-  TRND-03's cadence replaces it later); ``ongoing`` = it ends today;
+  replaces it); ``expected_runs_missed`` = its length, i.e. the silent days
+  -- NOT an expectation (kept on the wire for the CLI / MCP / the SPA
+  parser; the Trends callout states expected-run misses only from a
+  configured TRND-03 cadence, ``/run-cadences/status``); ``ongoing`` = it
+  ends today;
 * the arithmetic is done in the page's order so the floats are the page's.
 
 ``null`` is not measured, never 0: ``pass_rate`` with nothing evaluated,
