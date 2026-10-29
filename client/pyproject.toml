@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "testlookup-reporter"
-version = "1.1.0"
+version = "1.2.0"
 description = "Python client SDK for streaming test execution events to TestLookup"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -33,7 +33,7 @@ testlookup = "testlookup_reporter"
 # US-4.3b) and commit_range (local-git commit collection, US-8.1) ship
 # alongside the reporter. If this list grows further, convert to a
 # `[tool.setuptools.packages.find]` block.
-py-modules = ["testlookup_reporter", "ci_context", "commit_range", "testlookup_robot_listener"]
+py-modules = ["testlookup_reporter", "ci_context", "commit_range", "testlookup_robot_listener", "run_context"]
 
 [tool.setuptools.package-data]
 testlookup_reporter = ["testlookup.yaml.example"]

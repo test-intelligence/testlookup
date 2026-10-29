@@ -154,6 +154,12 @@ file, and exits 1 if any file fails.
 | `--ci-provider`, `--repo`, `--pr-number`, `--ci-actor`, `--ci-run-url` | Override the auto-detected CI context |
 | `--commit-range-base <ref>` | Pin the base of the collected commit range |
 | `--no-commit-range` | Do not collect the commit range from local git |
+| `--environment <text>` | The environment the run executed against (`staging`, `prod`, ...); shown on the run and in its configuration drift |
+| `--run-context-root <path>` | Directory whose lockfiles are hashed into the run context (default: the working directory) |
+| `--runtime <KEY=VERSION>` | A runtime the tests ran on, e.g. `--runtime java=21.0.2`; repeatable. Beats `TESTLOOKUP_RUNTIME` per key |
+| `--image-digest <NAME=sha256:...>` | An image the tests ran in, with its 64-hex digest; repeatable. Replaces `TESTLOOKUP_IMAGE_DIGESTS` |
+| `--no-run-context` | Send no run context at all (same as `TESTLOOKUP_RUN_CONTEXT=0`) |
+| `--no-ai` | Skip the AI analysis of the uploaded run (sends `run_ai=false`) |
 | `--wait` / `--no-wait` | Wait until the server has ingested the report and exit non-zero if it refuses it (over the result cap, unparseable, empty). Default `--no-wait`: the command returns once the upload is accepted. |
 | `--wait-timeout <seconds>` | How long `--wait` waits (default 600; for `upload dir` one budget covers every file) |
 | `--profile`, `-o`/`--output` | Profile to use; `table`, `json` or `yaml` output |
@@ -412,6 +418,41 @@ commits that plausibly caused them. Pin the base with `--commit-range-base` or
 never fail an upload. See
 [Getting results in](../user-guide/getting-results-in.md#commit-range-who-changed-what)
 for base selection and the shallow-clone caveat.
+
+## Run context (configuration drift)
+
+Since 0.2.0 `upload` sends a **run context** beside the file, so the run page's
+**Changes** tab can say *Configuration drift: poetry.lock changed · java 21.0.1
+→ 21.0.2* against the baseline build. Nothing is fetched over the network; the
+CLI collects it once per command (`upload dir` stamps every file with the same
+one):
+
+- **Dependency fingerprints**: the sha256 of the raw bytes of each lockfile
+  directly in `--run-context-root` (else `TESTLOOKUP_RUN_CONTEXT_ROOT`, else the
+  working directory) — `poetry.lock`, `package-lock.json`, `yarn.lock`,
+  `pnpm-lock.yaml`, `requirements.txt`, `pom.xml`, `build.gradle`, `go.sum`,
+  `Cargo.lock`, `Gemfile.lock` and the rest of the list in
+  [the client README](../client/README.md#run-context-runtime-and-dependency-drift).
+  No directory walk; regular files of at most 50 MB.
+- **Runtime**: `testlookup-cli` (this CLI's version) plus what you state with
+  `--runtime KEY=VERSION` or `TESTLOOKUP_RUNTIME=java=21.0.2,node=20.11.1`. The
+  CLI never records its own Python: it is not the runtime your tests ran on.
+- **Images**: `--image-digest NAME=sha256:<64 hex>` or `TESTLOOKUP_IMAGE_DIGESTS`.
+- **Environment**: only `TZ`, `LANG`, `LC_ALL`, `PYTHONHASHSEED`, `NODE_ENV`,
+  `ImageOS`, `ImageVersion`, `RUNNER_OS`, `RUNNER_ARCH`, `CI_RUNNER_VERSION`,
+  `CI_SERVER_VERSION` and `BUILD_IMAGE`; a token-shaped value is sent as
+  `[REDACTED]`, a `user:password@` URL loses its password, each value is cut to
+  200 characters.
+
+A `--runtime` / `--image-digest` entry that is not `KEY=VALUE` with a valid
+name and version is named in a warning and left out. If the server refuses the
+context (an older server with a different allowlist), the upload is sent again
+without it, once, with a warning: results are never lost to metadata. Turn it
+off with `--no-run-context` or `TESTLOOKUP_RUN_CONTEXT=0`.
+
+`--environment` labels the run (two uploads with `--environment staging` and
+`--environment prod` show `environment staging → prod` as drift), and `--no-ai`
+uploads without the AI analysis — a CI job that wants no AI cost.
 
 ## Further reading
 

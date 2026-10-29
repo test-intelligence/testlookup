@@ -29,6 +29,7 @@ from app.services.ingestion_sanitization import (
     sanitize_test_result_payload,
     validate_live_identifier,
 )
+from app.services.run_context_service import fold_run_context, stamp_run_context, validated_or_none
 from app.services.run_status import terminal_run_status
 from app.services.run_tombstone_service import run_is_tombstoned
 
@@ -516,7 +517,9 @@ def _with_ci_context(metadata: dict, payload) -> dict:
     # reads it back at persist time and persists the range for the run.
     supplied_range = getattr(payload, "commit_range", None)
     if not ci and not supplied_range:
-        return metadata
+        # FAIL-13: even with no CI field, a caller ``metadata["run_context"]`` is
+        # dropped and the typed, validated ``run_context`` folded in.
+        return fold_run_context(metadata, payload)
     merged = dict(metadata)
     if ci:
         merged["ci_context"] = {**ci, **(merged.get("ci_context") or {})}
@@ -533,7 +536,7 @@ def _with_ci_context(metadata: dict, payload) -> dict:
             merged["commit_range"] = [
                 c.model_dump() if hasattr(c, "model_dump") else c for c in supplied_range
             ]
-    return merged
+    return fold_run_context(merged, payload)
 
 
 async def create_session(
@@ -651,6 +654,9 @@ async def create_session(
                 start_time=started_at,
                 end_time=started_at,
             )
+            # FAIL-13: the typed, validated, redacted context (folded into
+            # extra_metadata above; a caller metadata copy was dropped there).
+            stamp_run_context(stub, (session.extra_metadata or {}).get("run_context"))
             db.add(stub)
             await db.flush()
     except _StubSkipped:
@@ -1496,7 +1502,9 @@ async def ingest_via_api_key(
             release_name=(meta.release_name.strip() if meta and meta.release_name else None),
             launch_name=(meta.launch_name.strip() if meta and meta.launch_name else None),
             started_at=datetime.now(timezone.utc),
-            extra_metadata=(meta.metadata if meta else None) or {},
+            # FAIL-13: a ``metadata["run_context"]`` is dropped; only the typed,
+            # validated ``meta.run_context`` reaches extra_metadata.
+            extra_metadata=fold_run_context((meta.metadata if meta else None) or {}, meta),
         )
         # SAVEPOINT-wrap the insert: a concurrent first-batch for the same
         # (project_id, run_id) hits the partial unique index
@@ -1922,6 +1930,13 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
     # CI context (US-4.3): stashed in extra_metadata["ci_context"] at session
     # create — stamp onto the TestRun (fill-if-null; never overwrite).
     ci_context = (getattr(session, "extra_metadata", None) or {}).get("ci_context") or {}
+    # FAIL-13: the run context stashed at session create, RE-validated here
+    # (defence in depth: an extra_metadata written before W23b or by a path that
+    # skipped the schema is dropped, never stored). Stamped fill-if-null below.
+    raw_context = (getattr(session, "extra_metadata", None) or {}).get("run_context")
+    live_context = (
+        validated_or_none(raw_context, run_id=run_uuid) if raw_context is not None else None
+    )
 
     run = (await db.execute(select(TestRun).where(TestRun.id == run_uuid))).scalar_one_or_none()
     if run is None and await run_is_tombstoned(db, run_uuid):
@@ -1957,6 +1972,7 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
             start_time=session.started_at or now,
             end_time=now,
         )
+        stamp_run_context(run, live_context)
         db.add(run)
         logger.info(
             f"test_run_created_for_live_session run_id={run_uuid} session_id={session.id}"
@@ -1982,6 +1998,8 @@ async def upsert_test_run(db: AsyncSession, session: LiveSession, state: dict) -
             value = ci_context.get(field)
             if value is not None and getattr(run, field) is None:
                 setattr(run, field, value)
+        # FAIL-13: the run context, the same fill-if-null rule.
+        stamp_run_context(run, live_context)
         logger.info(
             f"test_run_updated_for_live_session run_id={run_uuid} session_id={session.id}"
         )

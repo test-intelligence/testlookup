@@ -4,6 +4,113 @@
 
 Generated from tracked source by `scripts/generate_reference.py`. Do not edit by hand. What the checks cover is recorded in [verification](../../maintainers/verification.md).
 
+## GET `/api/v1/runs/{run_id}/bisect`
+
+Get Run Bisect
+
+Narrow one failing test of the run to its own last pass (W23b FAIL-12).
+
+The path run is guarded by ``require_run_access`` (VIEWER included: a
+read); the QUERY ``fingerprint`` is scoped here to a test case OF THAT RUN
+-- another run's, another project's or an unknown fingerprint is the same
+404. A git-host failure, a timeout or Redis being down is a 200 whose
+``compare.state`` / ``compare.reason`` says so, never an error status. A
+GET: no Postgres write, no lazy resolve.
+
+Source: [backend/app/routers/commit_attribution.py:165](../../../backend/app/routers/commit_attribution.py#L165).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+run_id: uuid.UUID, fingerprint: str=Query(..., min_length=1, max_length=64, description='Fingerprint of a test case of THIS run'), db: Any=Depends(get_db), _: Any=Depends(require_run_access())
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=404, detail={'code': 'fingerprint_not_in_run', 'message': BISECT_ERRORS['fingerprint_not_in_run']})
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_run_bisect_api_v1_runs__run_id__bisect_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Run Id",
+        "type": "string"
+      }
+    },
+    {
+      "description": "Fingerprint of a test case of THIS run",
+      "in": "query",
+      "name": "fingerprint",
+      "required": true,
+      "schema": {
+        "description": "Fingerprint of a test case of THIS run",
+        "maxLength": 64,
+        "minLength": 1,
+        "title": "Fingerprint",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/BisectResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/runs/{run_id}/commit-range`
 
 Get Run Commit Range
@@ -16,7 +123,7 @@ connector → unavailable) in a dedicated write session so this GET stays
 read-only, then returns the freshly-resolved range. The cooldown gate
 means repeated GETs on a range-less run do NOT re-run the connector.
 
-Source: [backend/app/routers/commit_attribution.py:105](../../../backend/app/routers/commit_attribution.py#L105).
+Source: [backend/app/routers/commit_attribution.py:119](../../../backend/app/routers/commit_attribution.py#L119).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -106,7 +213,7 @@ Return ranked suspect commits for a newly-failing cluster/test (US-8.2).
 Honest ``available: False`` when there's no commit range for the run.
 Ranking is deterministic + inspectable (per-commit overlapping files).
 
-Source: [backend/app/routers/commit_attribution.py:124](../../../backend/app/routers/commit_attribution.py#L124).
+Source: [backend/app/routers/commit_attribution.py:138](../../../backend/app/routers/commit_attribution.py#L138).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

@@ -171,6 +171,41 @@ Collection ships in the **CLI** and the **Python SDK**. The JavaScript, Java and
 
 How the server uses a range (the `source` and `base_source` it records, and the GitHub connector fallback) is described in [Administration → Commit attribution & TIA readiness](administration.md#commit-attribution--tia-readiness).
 
+## Run context
+
+A test that starts failing without a code change often failed because something around the code changed: a lockfile, the interpreter, a container image, the time zone. The **run context** records those facts with each run, so a run's **Changes** tab can list what differs from its baseline build (**Configuration drift**). It is collected **locally**: the SDK and the CLI read files and the interpreter, and nothing is fetched over the network.
+
+**What is captured** (each part optional; an empty part is not sent):
+
+- **Runtime versions**: the Python SDK records `python`, `implementation`, `os` and its own `testlookup-reporter` version, plus `pytest` when pytest is already loaded. The CLI records only its own `testlookup-cli` version (the CLI's Python is not the Python your tests ran on). Add what the tests really ran on with `TESTLOOKUP_RUNTIME=java=21.0.2,node=20.11.1` (or the CLI's `--runtime`); a value you set wins over a detected one.
+- **Dependency fingerprints**: the SHA-256 of each lockfile found **directly in one folder** (no search below it): `poetry.lock`, `Pipfile.lock`, `uv.lock`, `pdm.lock`, `requirements.txt`, `requirements-dev.txt`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `npm-shrinkwrap.json`, `pom.xml`, `build.gradle`, `build.gradle.kts`, `gradle.lockfile`, `go.sum`, `Cargo.lock`, `Gemfile.lock`, `composer.lock`. Only regular files up to 50 MB; never their contents. The folder is the working directory unless you name another (a monorepo points it at the service's folder). The hash is of the raw bytes, so the same file checked out with Windows (CRLF) and Linux (LF) line endings hashes differently, by design.
+- **Image digests**: `TESTLOOKUP_IMAGE_DIGESTS=app=sha256:<64 hex>,db=sha256:<64 hex>` (or the CLI's `--image-digest`). The SDK cannot see the image it runs in without a network call, so it never guesses.
+- **Environment variables, from a fixed allowlist only**: `TZ`, `LANG`, `LC_ALL`, `PYTHONHASHSEED`, `NODE_ENV`, `ImageOS`, `ImageVersion`, `RUNNER_OS`, `RUNNER_ARCH`, `CI_RUNNER_VERSION`, `CI_SERVER_VERSION` and `BUILD_IMAGE`. No other variable is ever read for the context.
+- The run's **environment** label (`environment` on the REST calls, `--environment` on the CLI) is compared too; it is a field of the run, not of the context.
+
+**Redaction.** The allowlist names no secret, but a value can still hold one (a `BUILD_IMAGE` URL with a password, a token pasted into `LANG` by mistake). The SDK and the CLI therefore replace any value shaped like a token (`ghp_…`, `github_pat_…`, `glpat-…`, `xoxb-…`, `sk-…`, `AKIA…`, or any unbroken run of 40 or more key-like characters) with `[REDACTED]`, replace the password in a `scheme://user:password@host` value, and cut a value to 200 characters. The server applies the same rules again, plus its own credential and PII redaction, **before** the context is stored anywhere (the run row, object storage, the task queue). Versions, hashes, image names and digests are not redacted: they must match strict patterns, and a value that does not is refused rather than stored "cleaned". The run context is never given to the AI analysis.
+
+**What each path carries**:
+
+- **Python SDK 1.2.0** (the pytest plugin, the Robot listener, `TestLookupReporter`, `LiveStream`): sends it with the live session (`POST /api/v1/stream/sessions`, `run_context`) or, for `LiveStream`, in the `meta` it posts to `POST /api/v1/stream/ingest` (`meta.run_context`).
+- **CLI 0.2.0** (`testlookup upload file` / `upload dir`): sends it as the `run_context` form field of `POST /api/v1/ingest/file` (JSON text).
+- **REST**: `run_context` on `POST /api/v1/ingest`, `POST /api/v1/stream/sessions` and `meta.run_context` on `POST /api/v1/stream/ingest`; the `run_context` form field on `POST /api/v1/ingest/file`. The object is `{"v": 1, "runtime": {...}, "dependency_fingerprints": {...}, "image_digests": {...}, "env": {...}}`, at most 8,192 bytes.
+- **Not carried**: an upload from the dashboard (a person uploading a file has no lockfile to hash), the S3 / MinIO drop folder, and the report file itself (no report format has such a field). The JavaScript, Java and Go SDKs send no context yet. A run without a context reads **Not recorded by this reporter** on its Changes tab, never "no drift".
+
+**A malformed context is refused**, never stored: a key outside the allowlist, a file name that is not a listed lockfile, a hash that is not 64 hex characters, more than 16 runtime entries or 8 images, or more than 8,192 bytes is a `422` naming the rule (`run_context.env may only carry these keys: ...`; on `/ingest/file` the body is `{"code": "bad_json" | "invalid_run_context", "message"}`). The SDK and the CLI build the context under the same rules, so they do not trigger it; if a newer SDK meets an older server, both retry **once without the context** and log a warning, so results are never lost to metadata.
+
+**Options**:
+
+- **Python SDK**: `collect_run_context=False` and `run_context_root="services/payments"` on `TestLookupReporter` and `LiveStream`; the environment variables `TESTLOOKUP_RUN_CONTEXT=0` (also `false`, `no`), `TESTLOOKUP_RUN_CONTEXT_ROOT`, `TESTLOOKUP_RUNTIME` and `TESTLOOKUP_IMAGE_DIGESTS`; `testlookup.run_context` and `testlookup.run_context_root` in `testlookup.properties`.
+- **CLI**: `--no-run-context`, `--run-context-root PATH`, `--runtime KEY=VERSION` and `--image-digest NAME=sha256:...` (both repeatable), `--environment TEXT`, and `--no-ai` (uploads without the AI analysis, for a CI step that wants no AI cost). `TESTLOOKUP_RUN_CONTEXT`, `TESTLOOKUP_RUN_CONTEXT_ROOT`, `TESTLOOKUP_RUNTIME` and `TESTLOOKUP_IMAGE_DIGESTS` work as for the SDK.
+
+```bash
+testlookup upload file results.xml --project "$PROJECT_ID" --build "$BUILD_ID" \
+  --environment staging --runtime java=21.0.2 --run-context-root services/payments
+```
+
+Collecting the context **cannot fail your test run**: an unreadable file or any other problem leaves that part out (logged at debug level), and an over-large context drops the environment variables first, then the image digests, then the extra runtime entries, until it fits.
+
 ## After ingest: what happens automatically
 
 1. Per-test rows are stored and each test gets its cross-run **fingerprint**.

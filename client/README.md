@@ -151,6 +151,8 @@ testlookup.launch=Smoke suite
 | `testlookup.insecure` | `TESTLOOKUP_INSECURE` | `true` disables certificate verification (logs a warning; never in CI) |
 | `testlookup.ci_provider`, `testlookup.ci_repo`, `testlookup.pr_number`, `testlookup.ci_actor`, `testlookup.ci_run_url` | `TESTLOOKUP_CI_PROVIDER`, `TESTLOOKUP_CI_REPO`, `TESTLOOKUP_PR_NUMBER`, `TESTLOOKUP_CI_ACTOR`, `TESTLOOKUP_CI_RUN_URL` | Override the detected CI context |
 | `testlookup.commit_range`, `testlookup.commit_range_base` | `TESTLOOKUP_COMMIT_RANGE`, `TESTLOOKUP_COMMIT_RANGE_BASE` | Commit-range collection (see below) |
+| `testlookup.run_context`, `testlookup.run_context_root` | `TESTLOOKUP_RUN_CONTEXT`, `TESTLOOKUP_RUN_CONTEXT_ROOT` | Run context on/off and the lockfile directory (see below) |
+| — | `TESTLOOKUP_RUNTIME`, `TESTLOOKUP_IMAGE_DIGESTS` | Runtimes and image digests to record in the run context (see below) |
 
 Every variable applies the same way to `TestLookupReporter`, the pytest plugin and `LiveStream` (except the token and project, which `LiveStream` does not use). An empty environment variable counts as unset. Keep keys and tokens in environment variables or CI secrets rather than in a committed file.
 
@@ -159,6 +161,19 @@ Every variable applies the same way to `TestLookupReporter`, the pytest plugin a
 The reporter detects the CI provider, repository, pull/merge request number, actor and run URL from the standard variables of GitHub Actions, GitLab CI, Jenkins, Azure DevOps and CircleCI (`ci_context.py`); configuration and `TESTLOOKUP_CI_*` variables override detection, and explicit arguments override both. Branch, build number and commit are not detected; set them yourself.
 
 It also collects the commit range (base..`HEAD`, up to 100 commits with their changed files) from the local git checkout (`commit_range.py`) so the server can attribute failures to commits. Pin the base with `commit_range_base=` / `TESTLOOKUP_COMMIT_RANGE_BASE`, or turn collection off with `collect_commit_range=False` / `TESTLOOKUP_COMMIT_RANGE=0`. Both are best-effort and never fail a run; a shallow clone yields a head-only range. Details: [user-guide/getting-results-in.md](../user-guide/getting-results-in.md#commit-range-who-changed-what).
+
+### Run context (runtime and dependency drift)
+
+Since 1.2.0 every session also carries a **run context** (`run_context.py`): what the run ran on, so the run page's **Changes** tab can say *Configuration drift: poetry.lock changed · python 3.11.8 → 3.11.9* against the baseline build. A run sent by an older reporter reads "Not recorded by this reporter", never "no drift".
+
+What is captured — nothing is fetched over the network:
+
+- **Runtime**: `python`, `implementation`, `os`, `testlookup-reporter` and, when pytest is running, `pytest`. `TESTLOOKUP_RUNTIME=java=21.0.2,node=20.11.1` adds (or overrides, per key) the versions your tests really use; an entry that is not a lower-case name and a version string is dropped.
+- **Dependency fingerprints**: the sha256 of the raw bytes of each lockfile found **directly** in one root directory — `poetry.lock`, `Pipfile.lock`, `uv.lock`, `pdm.lock`, `requirements.txt`, `requirements-dev.txt`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `npm-shrinkwrap.json`, `pom.xml`, `build.gradle`, `build.gradle.kts`, `gradle.lockfile`, `go.sum`, `Cargo.lock`, `Gemfile.lock`, `composer.lock`. No directory walk, no glob; regular files of at most 50 MB; symlinks are skipped. The root is `run_context_root=` / `TESTLOOKUP_RUN_CONTEXT_ROOT` / `testlookup.run_context_root`, else the working directory (point it at the service directory in a monorepo). A CRLF checkout hashes differently from an LF one: the bytes differ, by design.
+- **Image digests**: only what you state — `TESTLOOKUP_IMAGE_DIGESTS=app=sha256:<64 hex>,db=sha256:<64 hex>`.
+- **Environment**: only these 12 variables, when set: `TZ`, `LANG`, `LC_ALL`, `PYTHONHASHSEED`, `NODE_ENV`, `ImageOS`, `ImageVersion`, `RUNNER_OS`, `RUNNER_ARCH`, `CI_RUNNER_VERSION`, `CI_SERVER_VERSION`, `BUILD_IMAGE`. Each value is cut to 200 characters; a value shaped like a token (`ghp_…`, `glpat-…`, `xoxb-…`, `AKIA…`, any unbroken 40+ character run) is sent as `[REDACTED]`, and `scheme://user:password@` loses its password. The server re-applies both rules and its own redactor before anything is stored.
+
+Turn it off with `collect_run_context=False`, `TESTLOOKUP_RUN_CONTEXT=0` or `testlookup.run_context=false`. Collection never fails a run: any problem omits the field, and if a server refuses the context (an older server with a different allowlist) the reporter logs a warning and sends the session or batch again without it, once. `LiveStream` sends it as the typed `meta.run_context`; a `"run_context"` key inside your own `metadata` is ignored by the server.
 
 ### Replay-safe live identity
 

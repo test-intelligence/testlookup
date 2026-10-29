@@ -12,12 +12,23 @@ Endpoints (both project/run-guarded via ``require_run_access``):
       Deterministic suspect ranking for a newly-failing cluster/test — ranked
       commits with the overlapping-files rationale and the monorepo caveat.
 
+  GET /api/v1/runs/{run_id}/bisect?fingerprint=
+      W23b FAIL-12: one failing test of the run narrowed to its own last pass
+      on the run's branch series (or on main / master, labelled) -- the good
+      and bad builds, the runs in between that did not run it, and, online,
+      the commits between the two builds through the existing gated, SSRF-
+      guarded compare (cached in Redis by the SHA pair). The QUERY fingerprint
+      must be a test case OF THE PATH RUN (any other value: the same 404).
+      Writes no Postgres row and never calls ``lazy_resolve_commit_range``
+      (``services/bisect_service``).
+
 All logic lives in ``services/commit_attribution_service``. The one write --
 the lazy resolve -- lives HERE (``lazy_resolve_commit_range``) because the
 service is stage-only and the services' commit allow-list is at its bound; the
 run's Changes tab (``GET /runs/{id}/regression-diff``) calls the same helper.
 """
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import structlog
@@ -28,7 +39,10 @@ from app.core.config import settings
 from app.core.deps import require_run_access
 from app.db.postgres import AsyncSessionLocal, get_db, release_read_connection
 from app.models.postgres import RunCommitRange, TestRun
+from app.models.schemas import BisectResponse
+from app.services import bisect_service
 from app.services import commit_attribution_service as svc
+from app.services.bisect_vocab import BISECT_ERRORS
 
 logger = structlog.get_logger("routers.commit_attribution")
 
@@ -145,4 +159,35 @@ async def get_run_suspects(
     await lazy_resolve_commit_range(db, run)
     return await svc.rank_suspects(
         db, run, cluster_id=cluster_id, fingerprint=fingerprint,
+    )
+
+
+@router.get("/{run_id}/bisect", response_model=BisectResponse)
+async def get_run_bisect(
+    run_id: uuid.UUID,
+    fingerprint: str = Query(
+        ..., min_length=1, max_length=64, description="Fingerprint of a test case of THIS run",
+    ),
+    db: Any = Depends(get_db),
+    _: Any = Depends(require_run_access()),
+):
+    """Narrow one failing test of the run to its own last pass (W23b FAIL-12).
+
+    The path run is guarded by ``require_run_access`` (VIEWER included: a
+    read); the QUERY ``fingerprint`` is scoped here to a test case OF THAT RUN
+    -- another run's, another project's or an unknown fingerprint is the same
+    404. A git-host failure, a timeout or Redis being down is a 200 whose
+    ``compare.state`` / ``compare.reason`` says so, never an error status. A
+    GET: no Postgres write, no lazy resolve.
+    """
+    run = await _load_run(db, run_id)
+    try:
+        test_name, _outcome = await bisect_service.fingerprint_in_run(db, run, fingerprint)
+    except bisect_service.FingerprintNotInRun:
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "fingerprint_not_in_run", "message": BISECT_ERRORS["fingerprint_not_in_run"]},
+        ) from None
+    return await bisect_service.get_bisect(
+        db, run, fingerprint, now=datetime.now(timezone.utc), test_name=test_name,
     )

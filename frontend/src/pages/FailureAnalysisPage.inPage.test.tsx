@@ -82,6 +82,14 @@ vi.mock('@/hooks/useCommitAttribution', () => ({
     hasLocationSignal: false, isLoading: false, isError: false, refresh: vi.fn(),
   }),
 }))
+// W23b FAIL-12: the narrowing block in the Suspects section reads nothing in a unit test (the network guard).
+vi.mock('@/hooks/useBisectNarrowing', async () => {
+  const { narrowing } = await import('@/test/bisectDriftMocks')
+  return {
+    bisectKey: () => null,
+    useBisectNarrowing: () => ({ data: narrowing(), error: undefined, isLoading: false, retry: vi.fn() }),
+  }
+})
 const toast = vi.hoisted(() => Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), loading: vi.fn(), dismiss: vi.fn() }))
 vi.mock('react-hot-toast', () => ({ default: toast }))
 
@@ -185,6 +193,8 @@ describe('/failures row actions open under their row (W27 PAN-04)', () => {
     const suspects = screen.getByRole('complementary', { name: 'Suspects: checkout_flow' })
     expect((suspects.closest('tr') as HTMLElement).previousElementSibling).toBe(rowOf('checkout_flow'))
     expect(document.querySelectorAll('tr[data-in-page-row]')).toHaveLength(1)
+    // W23b FAIL-12: the narrowing block renders inside the same section (no new row, panel or modal).
+    expect(within(suspects).getByRole('region', { name: 'Narrowed range' })).toBeInTheDocument()
   })
 
   it('a Mute that answers after another form replaced it does not close that form', async () => {

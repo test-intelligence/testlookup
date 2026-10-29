@@ -200,8 +200,11 @@ class TestValidateView:
 #: below, captured from the code BEFORE W09 (sqlalchemy 2.0.51, the pin in
 #: requirements.txt). If a deliberate change to the digest's own SQL moves it,
 #: re-capture it from the unfiltered path -- never from a filtered one.
+#: W23b re-captured it: ``test_runs.run_context`` joined the one statement that
+#: selects whole TestRun rows; with that column removed the text hashes to the
+#: pre-W23b pin 4d938a5379d126fca113cfcd14c1e7c9e234ba556eacf072cd1deda137319e90.
 PRE_W09_STATEMENTS = 14
-PRE_W09_SHA256 = "4d938a5379d126fca113cfcd14c1e7c9e234ba556eacf072cd1deda137319e90"
+PRE_W09_SHA256 = "c4080ae9ffa52fb14501217fb79f004536fa2fc3dbe88064161eba84c2cfe3ef"
 _RUN = SimpleNamespace(id=uuid.uuid4(), pass_rate=80.0, status="FAILED", total_tests=10)
 
 

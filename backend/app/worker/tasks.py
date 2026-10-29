@@ -1270,6 +1270,9 @@ def ingest_uploaded_results(
                     jenkins_job=payload.get("jenkins_job"),
                     environment=payload.get("environment"),
                     commit_range=payload.get("commit_range"),
+                    # FAIL-13: the REDACTED form the router's schema stored;
+                    # re-validated (fill-if-null) by create_run_from_payload.
+                    run_context=payload.get("run_context"),
                 )
                 count = await ingest_test_results(db, run, payload["results"])
                 await db.commit()
@@ -1344,6 +1347,9 @@ def ingest_uploaded_file(
     # deserialize. None means "not supplied" and ingest time is used.
     executed_at: str = None,
     commit_range=None,  # bare list OR {base, head, commits}; both JSON-safe
+    # FAIL-13: the run context, already validated + redacted by the router.
+    # Defaulted so a task queued before the deploy still binds.
+    run_context: dict | None = None,
 ):
     """
     Parse an uploaded test result file and ingest.
@@ -1492,6 +1498,7 @@ def ingest_uploaded_file(
                         datetime.fromisoformat(executed_at) if executed_at else None
                     ),
                     commit_range=commit_range,
+                    run_context=run_context,
                 )
                 if archive_prefix:
                     run.minio_prefix = archive_prefix  # link the archived raw upload (dir prefix)

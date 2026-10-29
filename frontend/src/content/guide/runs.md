@@ -8,7 +8,7 @@ A **run** is one execution of a suite: a CI job, a local `pytest`, a TestNG sess
 
 **Filters.** The window picker (24h to 90d), a status filter (**All statuses**, **Failed**, **Passed**, **In progress**), a suite filter, a **search** box (a build number, branch or CI job, or the start of a commit hash), a **Branch** select (with one project selected) and an **AI verdict** select (**Any verdict**, **Go**, **Conditional**, **No-Go**, **No verdict**). The search, branch and verdict are kept in the address (`/runs?q=239&branch=main&verdict=NO_GO`), so a reload or a shared link restores them, and old `/intelligence?branch=main` links open the filtered list. When nothing matches, the table says **No runs match these filters.** with **Clear filters**.
 
-**The status banner** sums up the window: **Pipeline broken**, **Mixed**, **Pipeline healthy** or **Pending**, with the **Last green** run, the **Red streak** (how many runs in a row have failed) and the **Avg pass rate**. When the window holds both a green run and a failing one, the banner offers **Bisect from last green** (see [Bisect from last green](#bisect-from-last-green)).
+**The status banner** sums up the window: **Pipeline broken**, **Mixed**, **Pipeline healthy** or **Pending**, with the **Last green** run, the **Red streak** (how many runs in a row have failed) and the **Avg pass rate**. When the window holds a failing run, the banner offers **Bisect from last green** (**Bisect the latest failure** when the window has no green run; see [Bisect from last green](#bisect-from-last-green)).
 
 **The table** shows 25 runs per page, newest first:
 
@@ -108,6 +108,8 @@ Every time the pipeline analyses a run (**Trigger pipeline**, or the analysis th
 
 **What changed since the last good run**: the pass-rate change, **New failures** and **Resolved** tests against the most recent passing run (the baseline), a list of the new failures, and the commits that landed before this run. Buttons open Compare against the last good build, against the previous run, or empty (**Open Compare**). If no passing run exists to compare with, the tab says so.
 
+Each new failure has **Narrow**: it opens, under that test, the build it last passed in and the build it first failed in (see [Narrowing a failure](#narrowing-a-failure)). One is open at a time, and the address keeps it (`?bisect=<test fingerprint>`). A **Configuration drift** card under the main one lists what else changed against the same baseline: lockfiles, runtime versions, images, the environment, allowlisted environment variables, the branch (see [Configuration drift](#configuration-drift)).
+
 **The commits** are the project's own: the range fetched through the project's GitHub or GitHub Enterprise integration (**Settings › GitHub**), the same commits the **Suspects** panel shows, or the commits your CI sent with the run (`Commits supplied with the run (no GitHub call).`). The heading names the build the range starts after, `Commits since build #238 (3)`, and each commit's short hash links to it on GitHub. That build is usually the last green run of the branch; when the branch has none, the range starts at the last completed run and a line says so: `Counted from the last completed run, not the last green one: some of these may predate the failure.` The range is fetched when the tab is first opened, at most once every 6 hours per run, and never while offline mode is on.
 
 When no commits can be listed, one line says why:
@@ -172,16 +174,44 @@ The result leads with what changed: **Pass rate**, **Failed tests**, **New failu
 
 The comparison is in the address (`/runs/compare?mode=manual&left=<run id>&right=<run id>&suite=<suite>`), so you can share it.
 
+## Configuration drift
+
+The **Changes** tab's **Configuration drift** card answers "what else changed besides the code?" against the tab's baseline build, in a fixed order: **dependencies** (lockfile hashes: `poetry.lock changed`, `go.sum added`), **runtime** (`python 3.11.8 → 3.11.9`, `pytest 8.3.2 (added)`), **images** (container digests), the run's **environment** (`environment staging → prod`), allowlisted **environment variables** (`TZ UTC → Europe/Berlin`), and the **run** fields (`branch main → feature/pay`, the OpenShift namespace). The first line sums it up: `Configuration drift: poetry.lock changed · python 3.11.8 → 3.11.9`, then `· and 4 more` when there are more.
+
+The dependencies, runtime, images and variables come from the **run context** the Python SDK (1.2.0) and the CLI (0.2.0) send with a run; what they collect, and how secrets are kept out, is in [Getting results in](/docs/ingestion). A run uploaded from the dashboard, or sent by an older SDK or the JavaScript, Java or Go SDKs, has no context:
+
+- `Not recorded by this reporter: this run sent no runtime or dependency context.` (or the same for the baseline build, or for both) — the environment, branch and namespace are still compared and listed.
+- `No configuration drift against build #238.` appears **only** when both runs recorded a context and nothing differs. A missing context never reads as "no drift".
+
+At most 60 differences are listed, with the total.
+
+## Narrowing a failure
+
+For one failing test, the narrowing names **the build it last passed in** and **the build it first failed in**: `Last passed in build #102 (a1b2c3d), first failed in build #105 (e4f5a6b).` Both builds link to their runs. It opens in two places:
+
+- **Failures** → a failing test's **Suspects**: **Narrowed to this test's last pass**, above the run's suspect commits.
+- A run's **Changes** tab → **Narrow** beside a new failure (and **Bisect from last green** on **Runs**, which opens the run's first new failure there).
+
+How it walks:
+
+- Through the failing run's **branch** (case-insensitive; runs with no branch walk the project's runs with no branch), newest first, **in the order TestLookup received the runs**, at most **200 runs back**. A report uploaded late sorts by when it arrived, not by when it ran.
+- Every earlier failure moves the first failure back; the first pass ends the walk. Runs of the branch that did not run this test (absent, skipped or unknown) are **untested**: `2 run(s) in between did not run this test.` expands to their builds.
+- A branch that never passed in the runs read falls back to the newest pass on **main** or **master** before the first failure, and says so: `Never passed on feature/pay in the runs read; last passed on main in build #98 (…).` A run on main or master has no fallback.
+- `This test never passed on feature/pay: every run of it there failed (14 runs read).` means the walk saw the whole branch; `No pass in the last 200 runs of feature/pay; older history was not searched.` means it stopped at the limit.
+- When the last pass and the first failure ran the **same commit**, no code change explains the failure (a flaky test, data or the environment), and the block says so.
+
+**The commits in between.** With the project's GitHub or GitLab integration (the same one the **Changes** tab's commit list uses) and offline mode off, the block lists the commits between the two builds, ranked for this test as suspects: `Narrowed to 3 commits (the run-level range since the last green run has 17)`. The list is the git host's comparison of the two commits, so with merges or a rebase in between it is not a straight line, and the block says so beside it. The comparison is fetched once and kept for an hour; `The commit list did not arrive within 8 seconds.` offers **Retry**. When the commits cannot be listed, one line says why: offline mode, the integration's reason (the same lines as the commit list above), `The commit list is not fetched right now (the cache is unavailable).`, or `The git host refused or failed the compare`. The two builds are exact either way. Nothing is written and nothing is re-run.
+
 ## Bisect from last green
 
-When a suite goes red, the useful question is what changed since it was last green. **Bisect from last green** (in the Runs status banner, or **Start bisect** under **Build history**) opens Compare with the suite's last green run on the left and the latest failed run on the right, filtered to the failing run's suite. The **New failures** list is then exactly the set of tests that broke between those two builds; the commits between them are the suspects.
+When a suite goes red, the useful question is what changed since it was last green. **Bisect from last green** (in the Runs status banner, or **Start bisect** under **Build history**) opens the latest failed run's **Changes** tab with its first new failure narrowed to its last pass (see [Narrowing a failure](#narrowing-a-failure)); every other new failure there has **Narrow**, and **Compare with build #N (last good)** is one click away. The narrowing reads up to 200 runs of each test's own history, so it needs no green run in the window: when the window has none, the banner reads **Bisect the latest failure** and does the same. When nothing failed, it says "No failing run to bisect — everything is green."
 
-Bisect needs a green run and a failing run in the current window. If there is no green run, the page says "No green run found in this window — widen the window to enable bisect."; widen the window.
+The **Build history** callout names the last green run by its build number (`The last green run is #412 (6 hours ago).`); the commits come from the narrowing, which shows the real ones.
 
 ## A red-build routine
 
 1. **Runs** → the failed run → **Analysis**. Is it one cluster or many? One cluster usually means one cause.
-2. **Bisect from last green** and read the **New failures**.
+2. **Bisect from last green** and read each new failure's last pass and first failure, the commits between them and the **Configuration drift** card.
 3. Genuinely new failures: find the change between the two builds, then file a defect from the failure (see [Investigating failures](/docs/failure-analysis#promoting-to-a-defect)).
 4. Failures that alternate with green runs: treat them as [flaky](/docs/flaky) instead.
 5. A large, messy run: **Analyze failures** on the Analysis tab, or **Deep all failed**, and let the investigation group them.

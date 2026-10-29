@@ -5,7 +5,7 @@ import time
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import typer
 
@@ -13,6 +13,7 @@ from testlookup_cli import client, output
 from testlookup_cli.ci_context import resolve_ci_context
 from testlookup_cli.commit_range import resolve_commit_range
 from testlookup_cli.config import get_profile
+from testlookup_cli.run_context import collect_run_context, locates_run_context, rejected_entries
 from testlookup_cli.errors import exit_code_for, map_connection_error, map_http_error
 
 upload_app = typer.Typer(name="upload", help="Upload test result files")
@@ -136,6 +137,29 @@ def _raise_if_refused(data: dict) -> None:
     raise Exception(f"Ingestion failed ({code}): {message}")
 
 
+#: The W23b run-context flags, shared by ``upload file`` and ``upload dir``.
+_RUN_CONTEXT_ROOT_HELP = "Directory whose lockfiles are hashed into the run context (default: the working directory)"
+_RUNTIME_HELP = "A runtime the tests ran on, KEY=VERSION (repeatable), e.g. --runtime java=21.0.2"
+_IMAGE_DIGEST_HELP = "An image the tests ran in, NAME=sha256:<64 hex> (repeatable)"
+
+
+def _run_context(
+    *, root: Optional[str], disabled: bool, runtime: Optional[List[str]], images: Optional[List[str]],
+) -> Optional[dict]:
+    """The run context the upload sends (W23b FAIL-13), collected locally, or None.
+
+    A ``--runtime`` / ``--image-digest`` entry that is not KEY=VALUE with a valid
+    key and value is named in a warning and left out -- never sent for the
+    server to refuse.
+    """
+    for kind, flag, values in (("runtime", "--runtime", runtime), ("image", "--image-digest", images)):
+        for entry in rejected_entries(values, kind):
+            output.print_warning(f"{flag} {entry!r} ignored: not KEY=VALUE with a valid name and value")
+    return collect_run_context(
+        root=root, enabled=False if disabled else None, runtime=runtime or None, image_digests=images or None,
+    )
+
+
 def _validate_format(value: str) -> str:
     """Reject an unknown ``--format`` locally, before any network call.
 
@@ -174,6 +198,18 @@ def upload_file(
         False, "--no-commit-range",
         help="Skip collecting the commit range from local git",
     ),
+    environment: Optional[str] = typer.Option(
+        None, "--environment", help="Environment the run executed against (e.g. staging)",
+    ),
+    run_context_root: Optional[str] = typer.Option(None, "--run-context-root", help=_RUN_CONTEXT_ROOT_HELP),
+    no_run_context: bool = typer.Option(
+        False, "--no-run-context", help="Send no run context (runtimes, lockfile hashes, images, env)",
+    ),
+    runtime: Optional[List[str]] = typer.Option(None, "--runtime", help=_RUNTIME_HELP),
+    image_digest: Optional[List[str]] = typer.Option(None, "--image-digest", help=_IMAGE_DIGEST_HELP),
+    no_ai: bool = typer.Option(
+        False, "--no-ai", help="Skip the AI analysis of this run (sends run_ai=false)",
+    ),
     format: str = typer.Option(
         "auto",
         "--format",
@@ -210,6 +246,14 @@ def upload_file(
     TESTLOOKUP_COMMIT_RANGE=0) skips collection entirely. Any git problem is
     non-fatal — the range is simply omitted.
 
+    The run context (the sha256 of the lockfiles in --run-context-root or the
+    working directory, --runtime / TESTLOOKUP_RUNTIME versions, --image-digest
+    images and an allowlist of environment values) lets the run page show
+    configuration drift; nothing is fetched over the network, and this CLI's
+    own Python is never recorded as the tests' runtime. --no-run-context (or
+    TESTLOOKUP_RUN_CONTEXT=0) sends none. --environment labels the run;
+    --no-ai skips its AI analysis.
+
     The file is parsed and ingested asynchronously on the server.
     AI analysis is triggered automatically after ingestion completes.
     ``--wait`` waits for that outcome and exits non-zero when the server
@@ -223,11 +267,15 @@ def upload_file(
         testlookup upload file allure.json -p <project-id> -b v2.5.0 --format allure
         testlookup upload file results.xml -p <project-id> -b build-42 --pr-number 421
         testlookup upload file results.xml -p <project-id> -b build-42 --commit-range-base origin/main
+        testlookup upload file results.xml -p <project-id> -b build-42 --runtime java=21.0.2 --environment staging --no-ai
     """
     try:
         commit_range = resolve_commit_range(
             explicit_base=commit_range_base,
             enabled=False if no_commit_range else None,
+        )
+        run_context = _run_context(
+            root=run_context_root, disabled=no_run_context, runtime=runtime, images=image_digest,
         )
         data = asyncio.run(_upload_file(
             path=path, project=project, build=build,
@@ -236,6 +284,7 @@ def upload_file(
             ci_actor=ci_actor, ci_run_url=ci_run_url,
             commit_range=commit_range,
             format=format, profile_name=profile_name,
+            run_context=run_context, environment=environment, run_ai=not no_ai,
         ))
         if wait:
             data = _outcome(data, asyncio.run(_wait_for_upload(
@@ -275,6 +324,18 @@ def upload_dir(
     no_commit_range: bool = typer.Option(
         False, "--no-commit-range",
         help="Skip collecting the commit range from local git",
+    ),
+    environment: Optional[str] = typer.Option(
+        None, "--environment", help="Environment the run executed against (e.g. staging)",
+    ),
+    run_context_root: Optional[str] = typer.Option(None, "--run-context-root", help=_RUN_CONTEXT_ROOT_HELP),
+    no_run_context: bool = typer.Option(
+        False, "--no-run-context", help="Send no run context (runtimes, lockfile hashes, images, env)",
+    ),
+    runtime: Optional[List[str]] = typer.Option(None, "--runtime", help=_RUNTIME_HELP),
+    image_digest: Optional[List[str]] = typer.Option(None, "--image-digest", help=_IMAGE_DIGEST_HELP),
+    no_ai: bool = typer.Option(
+        False, "--no-ai", help="Skip the AI analysis of these runs (sends run_ai=false)",
     ),
     format: str = typer.Option(
         "auto", "--format", "-f",
@@ -322,6 +383,10 @@ def upload_dir(
         explicit_base=commit_range_base,
         enabled=False if no_commit_range else None,
     )
+    # The run context too: one checkout, one runtime, collected once.
+    run_context = _run_context(
+        root=run_context_root, disabled=no_run_context, runtime=runtime, images=image_digest,
+    )
 
     results = []
     names: list[str] = []
@@ -335,6 +400,7 @@ def upload_dir(
                 ci_actor=ci_actor, ci_run_url=ci_run_url,
                 commit_range=commit_range,
                 format=format, profile_name=profile_name,
+                run_context=run_context, environment=environment, run_ai=not no_ai,
             ))
             results.append(data)
             names.append(f.name)
@@ -404,6 +470,9 @@ def _build_form_data(
     ci_run_url: Optional[str] = None,
     commit_range: Optional[list] = None,
     format: str = "auto",
+    run_context: Optional[dict] = None,
+    environment: Optional[str] = None,
+    run_ai: bool = True,
 ) -> dict:
     """Assemble the multipart form fields for POST /api/v1/ingest/file.
 
@@ -412,6 +481,9 @@ def _build_form_data(
 
     ``commit_range`` (US-8.1) is already-collected local-git output; the
     server takes it as a JSON array string on the multipart form.
+
+    ``run_context`` (W23b) goes as compact JSON text; ``environment`` as the
+    form's existing field; ``run_ai=False`` as ``run_ai=false`` (no AI analysis).
     """
     form_data = {
         "project_id": project,
@@ -437,6 +509,12 @@ def _build_form_data(
 
     if commit_range:
         form_data["commit_range"] = json.dumps(commit_range)
+    if run_context:
+        form_data["run_context"] = json.dumps(run_context, separators=(",", ":"))
+    if environment:
+        form_data["environment"] = environment
+    if not run_ai:
+        form_data["run_ai"] = "false"
 
     return form_data
 
@@ -456,8 +534,16 @@ async def _upload_file(
     commit_range: Optional[list] = None,
     format: str = "auto",
     profile_name: Optional[str] = None,
+    run_context: Optional[dict] = None,
+    environment: Optional[str] = None,
+    run_ai: bool = True,
 ) -> dict:
-    """Upload a single file via multipart POST to /api/v1/ingest/file."""
+    """Upload a single file via multipart POST to /api/v1/ingest/file.
+
+    A 422 that blames the ``run_context`` field (a server whose allowlist is
+    older than this CLI) is retried ONCE without it, with a warning: results
+    are never lost to metadata.
+    """
     import httpx
 
     profile = get_profile(profile_name)
@@ -469,6 +555,7 @@ async def _upload_file(
         release=release, ci_provider=ci_provider, ci_repo=ci_repo,
         pr_number=pr_number, ci_actor=ci_actor, ci_run_url=ci_run_url,
         commit_range=commit_range, format=format,
+        run_context=run_context, environment=environment, run_ai=run_ai,
     )
 
     started = _clock()
@@ -498,6 +585,14 @@ async def _upload_file(
                         await _sleep(delay)
                         continue
 
+                if resp.status_code == 422 and "run_context" in form_data and _blames_run_context(resp):
+                    output.print_warning(
+                        f"The server refused the run context for {path.name} (422); "
+                        "uploading without it."
+                    )
+                    form_data.pop("run_context", None)
+                    continue
+
                 if resp.status_code >= 400:
                     try:
                         detail = resp.json().get("detail", resp.text)
@@ -516,6 +611,14 @@ async def _upload_file(
         # (the first thing a new self-hoster runs) — give an actionable hint
         # rather than a raw transport traceback.
         raise map_connection_error(exc, base_url) from exc
+
+
+def _blames_run_context(resp) -> bool:
+    """A 422 whose body locates its error under ``run_context`` (never raises)."""
+    try:
+        return locates_run_context(resp.json())
+    except Exception:
+        return False
 
 
 def _poll_is_transient(status_code: int) -> bool:

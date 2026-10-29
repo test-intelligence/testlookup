@@ -142,6 +142,18 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "run_cadence_service.py",
     "insight_vocab.py",
     "run_cadence_vocab.py",
+    # ── W23b FAIL-12 / FAIL-13 history bisect narrowing + run context and
+    # configuration drift: new modules, commit-free from birth ──
+    # The pure narrowing walk, the read-only bisect service (a GET: one
+    # statement, then Redis for the compare; it writes no Postgres row), the
+    # run-context validation / redaction / staging helpers (every ingest
+    # path's caller owns its commit) and the two wire vocabularies (constants
+    # only).
+    "bisect_narrowing.py",
+    "bisect_service.py",
+    "run_context_service.py",
+    "bisect_vocab.py",
+    "run_context_vocab.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

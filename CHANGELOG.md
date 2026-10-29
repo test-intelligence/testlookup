@@ -52,6 +52,45 @@ locally by default.
 
 ### Added
 
+- **Narrowing a failure to its last pass, and configuration drift** (wave
+  W23b, FAIL-12 + FAIL-13; branch `feat/df-history-drift-20261029`).
+  **Narrowing (observe-only):** a failing test's **Suspects** section on
+  Failures, and **Narrow** on each new failure in the run page's Changes
+  tab, now say "Last passed in build #… (sha), first failed in build #…
+  (sha)" with both runs linked and the runs in between that did not run
+  the test — from one indexed walk of that test's own history on the
+  branch (`main` / `master` as a labelled fallback; "never passed" and "no
+  pass in the last 200 runs" said honestly). With a git-host integration
+  and offline mode off it lists only the commits between those two builds
+  (the host's compare, ranked with the existing scorer, cached per commit
+  pair in Redis); offline it says the commit list is unavailable. Nothing
+  starts, stops or writes to CI. `GET /api/v1/runs/{run_id}/bisect?
+  fingerprint=`. The Runs page's **Bisect** button now opens the latest
+  failed run's Changes tab on its first new failure (it no longer needs a
+  green run), and the Build history callout shows the last green run's
+  build number instead of a run-id prefix. **Configuration drift:** runs
+  can carry a **run context** — runtime versions, the sha256 of named
+  lockfiles in one directory, image digests, and a fixed allowlist of 12
+  non-secret environment variables, redacted on the client and again on
+  the server — through `IngestPayload`, live sessions and `/ingest/file`
+  (`run_context`, migration `0245`); the run page's Changes tab gains a
+  **Configuration drift** card ("poetry.lock changed · python 3.11.8 →
+  3.11.9 · environment staging → prod", plus branch and namespace, which
+  were already compared but never shown), and a run without a context
+  reads "Not recorded by this reporter", never "no drift". **Python SDK
+  1.2.0** records the context on every path (`TESTLOOKUP_RUN_CONTEXT`,
+  `TESTLOOKUP_RUN_CONTEXT_ROOT`, `TESTLOOKUP_RUNTIME`,
+  `TESTLOOKUP_IMAGE_DIGESTS`); **CLI 0.2.0** adds `--run-context-root`,
+  `--runtime`, `--image-digest`, `--environment`, `--no-run-context` and
+  `--no-ai`; both retry once without the context if a server refuses it.
+  Java / JS / Go adopt it later from `sdk-vectors/run_context.json`.
+  Migration `0245` (the column and a concurrently built index). No flag.
+  Tests: `test_bisect_narrowing.py`, `test_bisect_route.py`,
+  `test_config_drift.py`, `test_run_context_schema.py`,
+  `test_run_context_ingest_paths.py`, three `*_postgres.py` modules,
+  `client/tests/test_run_context.py`, `cli/tests/test_upload_run_context.py`,
+  the vitests beside each component and the specs `failures-bisect`,
+  `run-changes-bisect-drift` and `runs-bisect-cta`.
 - **Cross-run insights and expected run cadences** (wave W23a, FAIL-11 +
   TRND-03; branch `feat/df-insights-cadence-20261028`). An hourly check
   (`detect_cross_run_insights`, minute 40) looks across each project's runs

@@ -1254,12 +1254,13 @@ _Constraints:_ Index(`ix_aal_actor`, `actor_user_id`); Index(`ix_aal_target`, `t
 | `suite_names` | `JSON` |  |  |  |
 | `event_archive` | `JSONB` |  |  |  |
 | `event_archive_at` | `DateTime` |  |  |  |
+| `run_context` | `JSONB` |  |  |  |
 | `start_time` | `DateTime` |  |  |  |
 | `end_time` | `DateTime` |  |  |  |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
 
-_Constraints:_ UniqueConstraint(`project_id`, `build_number`, `jenkins_job`); Index(`ix_test_runs_project_status`, `project_id`, `status`); Index(`ix_test_runs_created_at`, `created_at`); Index(`ix_test_runs_project_status_created`, `project_id`, `status`, `created_at`)
+_Constraints:_ UniqueConstraint(`project_id`, `build_number`, `jenkins_job`); Index(`ix_test_runs_project_status`, `project_id`, `status`); Index(`ix_test_runs_created_at`, `created_at`); Index(`ix_test_runs_project_status_created`, `project_id`, `status`, `created_at`); Index(`ix_test_runs_project_branch_created`, `project_id`, `coalesce(lower(branch), '')`, `created_at`)
 
 #### `test_cases`  <sub>(model `TestCase`)</sub>
 
@@ -3459,6 +3460,22 @@ The older per-domain sections omitted these tables. Their full field definitions
 - Deleting a project cascades every row.
 - Every index is a plain build on a table its migration creates.
 - `downgrade()` drops exactly what the upgrade built. 0243 also removes the `cross_run_insights` flag row while it still equals its seed.
+
+## Run context and the branch-series index (migration 0245, W23b)
+
+**`test_runs.run_context`** (0245, FAIL-13): `JSONB NULL`, no default (a catalogue change, no rewrite).
+
+- **Shape.** `{v, runtime{}, dependency_fingerprints{}, image_digests{}, env{}}` exactly as `schemas.RunContext` accepts it: runtime keys / versions, lockfile basenames → sha256 of the raw bytes, image names → `sha256:` digests, and env values from a FIXED 12-key allowlist (`services/run_context_vocab.py`). Empty sections are absent.
+- **Never a secret.** Env values are redacted (`redaction_service.redact_text` plus the `TOKEN_SHAPES` rule) BEFORE the object reaches object storage, a Celery kwarg, `live_sessions.extra_metadata` or this column; every stored copy is re-validated (`run_context_service.validated_or_none`).
+- **Written once.** Fill-if-null on every ingest path (`run_context_service.stamp_run_context`): the JSON batch and the file upload (`create_run_from_payload`), the live session stub and the live close (`stream_service`). No backfill.
+- **NULL means "not recorded by this reporter"**, never "no drift". Read only by the configuration-drift diff (`run_diff_service.config_drift`, in the regression-diff answer). Never a prompt input.
+- **No CHECK.** The schema and the stamping path own the shape.
+
+**`ix_test_runs_project_branch_created`** (0245, FAIL-12): `(project_id, (coalesce(lower(branch), '')), created_at)`.
+
+- One series of a project's runs (a branch, case-insensitive, or the runs with no branch), newest first: the bisect narrowing's walk (`bisect_service.narrow_range_for_test`, ≤ 200 runs, plus the `main` / `master` fallback's two equality ranges). It probes `uq_test_cases_run_fingerprint` once per run.
+- Built `CONCURRENTLY` inside `autocommit_block` on the existing table; an INVALID leftover of a failed build is dropped first (the 0214 pattern). The ORM `Index` carries the same expression (valid in SQLite too).
+- `downgrade()` drops the index (`CONCURRENTLY`) and the column.
 
 ## Systemic cluster membership key (migration 0193, VIZ-207)
 

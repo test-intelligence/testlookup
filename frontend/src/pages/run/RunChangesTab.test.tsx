@@ -6,12 +6,13 @@
  * The real `useRegressionDiff` runs (its read is mocked at `services/http`), so
  * the tab asks for exactly one regression diff.
  */
-import { render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CommitRangeStatus, RegressionDiff } from '@/types/regressionDiff'
+import { drift, driftEntry, narrowing } from '@/test/bisectDriftMocks'
 import { formatDay } from '@/utils/formatters'
 
 const getData = vi.fn()
@@ -250,5 +251,127 @@ describe('RunChangesTab — the purged baseline (W22a ACT-04)', () => {
     expect(purgedEl()).toBeNull()
     await renderNoBaseline({ baseline_available: false, baseline_purged: null } as RegressionDiff)
     expect(purgedEl()).toBeNull()
+  })
+})
+
+// ── W23b FAIL-12 / FAIL-13 (contract §4.4 G-D): `Narrow` on a new failure WITH
+// a fingerprint, the `bisect` URL param, and the separate drift card. The real
+// `useBisectNarrowing` runs; its read goes through the mocked `getData`.
+describe('RunChangesTab — Narrow and the bisect param (W23b FAIL-12)', () => {
+  beforeEach(() => getData.mockReset())
+
+  const NEW_FAILING = [
+    { test_name: 'checkout_sentinel_test', suite_name: 'payments', test_fingerprint: 'fp-sentinel-checkout' },
+    { test_name: 'refund_sentinel_test', suite_name: null, test_fingerprint: 'fp-sentinel-refund' },
+    { test_name: 'legacy_sentinel_test', suite_name: null },
+  ]
+  const DIFF: RegressionDiff = { ...BASE, new_failing_tests: NEW_FAILING, new_failing_count: 3 }
+
+  let seenSearch = ''
+  function LocationProbe() {
+    seenSearch = useLocation().search
+    return null
+  }
+
+  const bisectCalls = () => getData.mock.calls.filter(([url]) => String(url).endsWith('/bisect'))
+
+  async function renderAt(diff: RegressionDiff, path = '/runs/run-1?tab=changes') {
+    getData.mockImplementation((url: unknown) => Promise.resolve(
+      String(url).endsWith('/bisect') ? narrowing({ run_id: 'run-1', fingerprint: 'fp-sentinel-checkout' }) : diff,
+    ))
+    render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter initialEntries={[path]}>
+          <RunChangesTab runId="run-1" run={undefined} onCompareWithPrevious={() => {}} />
+          <LocationProbe />
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+    await screen.findByText('Pass rate delta')
+  }
+
+  it('Narrow only on a new failure WITH a fingerprint; the one without keeps today\'s markup', async () => {
+    await renderAt(DIFF)
+    expect(screen.getAllByRole('button', { name: 'Narrow' })).toHaveLength(2)
+    const legacy = screen.getByText('legacy_sentinel_test').closest('li') as HTMLElement
+    expect(within(legacy).queryByRole('button')).toBeNull()
+    expect(legacy.className).toBe('text-sm text-[var(--color-text-secondary)] flex items-center gap-2')
+  })
+
+  it('NO bisect read without the param: the tab reads the diff once and nothing else', async () => {
+    await renderAt(DIFF)
+    expect(getData).toHaveBeenCalledTimes(1)
+    expect(getData).toHaveBeenCalledWith('/api/v1/runs/run-1/regression-diff')
+    expect(bisectCalls()).toHaveLength(0)
+    expect(document.querySelector('[data-bisect-narrowing]')).toBeNull()
+  })
+
+  it('opening Narrow reads /bisect once, sets ?bisect=<fp> (tab kept) and opens the box under its row', async () => {
+    await renderAt(DIFF)
+    const second = screen.getAllByRole('button', { name: 'Narrow' })[1]
+    fireEvent.click(second)
+    await waitFor(() => expect(bisectCalls()).toHaveLength(1))
+    expect(bisectCalls()[0]).toEqual(['/api/v1/runs/run-1/bisect', { params: { fingerprint: 'fp-sentinel-refund' } }])
+    const params = new URLSearchParams(seenSearch)
+    expect(params.get('bisect')).toBe('fp-sentinel-refund')
+    expect(params.get('tab')).toBe('changes')
+    expect(second).toHaveAttribute('aria-expanded', 'true')
+    const row = screen.getByText('refund_sentinel_test').closest('li') as HTMLElement
+    const block = await within(row).findByRole('region', { name: 'Narrowed range' })
+    expect(within(block).getByRole('heading', { level: 3 })).toHaveTextContent('Narrowed range for refund_sentinel_test')
+    // A second click closes it and drops the param.
+    fireEvent.click(second)
+    await waitFor(() => expect(new URLSearchParams(seenSearch).get('bisect')).toBeNull())
+    expect(document.querySelector('[data-bisect-narrowing]')).toBeNull()
+  })
+
+  it('?bisect=top opens the first new failure once the diff arrives and rewrites the URL to its fingerprint', async () => {
+    await renderAt(DIFF, '/runs/run-1?tab=changes&bisect=top')
+    await waitFor(() => expect(new URLSearchParams(seenSearch).get('bisect')).toBe('fp-sentinel-checkout'))
+    expect(new URLSearchParams(seenSearch).get('tab')).toBe('changes')
+    const row = screen.getByText('checkout_sentinel_test').closest('li') as HTMLElement
+    expect(await within(row).findByRole('region', { name: 'Narrowed range' })).toBeInTheDocument()
+    await waitFor(() => expect(bisectCalls()).toHaveLength(1))
+    expect(bisectCalls()[0][1]).toEqual({ params: { fingerprint: 'fp-sentinel-checkout' } })
+  })
+
+  it('?bisect=top with no new failure carrying a fingerprint: the param is dropped, nothing is read', async () => {
+    await renderAt({ ...BASE, new_failing_tests: [{ test_name: 'legacy_sentinel_test', suite_name: null }], new_failing_count: 1 },
+      '/runs/run-1?tab=changes&bisect=top')
+    await waitFor(() => expect(new URLSearchParams(seenSearch).get('bisect')).toBeNull())
+    expect(bisectCalls()).toHaveLength(0)
+  })
+})
+
+describe('RunChangesTab — the Configuration drift card (W23b FAIL-13)', () => {
+  beforeEach(() => getData.mockReset())
+
+  it('absent when the answer has no config_drift: exactly today\'s tab', async () => {
+    await renderWith({ ...BASE })
+    expect(screen.queryByRole('region', { name: 'Configuration drift' })).toBeNull()
+  })
+
+  it('present, as a separate card after the main one, when the answer carries it', async () => {
+    await renderWith({
+      ...BASE,
+      config_drift: drift({
+        baseline_run_id: 'run-0', baseline_build_number: '41', context_state: 'recorded',
+        entries: [
+          driftEntry('dependencies', 'poetry.lock', 'changed', 'oldhashsenti', 'newhashsenti'),
+          driftEntry('runtime', 'python', 'changed', '3.11.8', '3.11.9'),
+        ],
+        entries_total: 2,
+      }),
+    })
+    const card = await screen.findByRole('region', { name: 'Configuration drift' })
+    expect(card).toHaveTextContent('Configuration drift: poetry.lock changed · python 3.11.8 → 3.11.9')
+    const main = screen.getByRole('region', { name: 'What changed since the last good run' })
+    expect(main.contains(card)).toBe(false)
+    expect(main.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('a malformed config_drift renders no card (and no crash)', async () => {
+    await renderWith({ ...BASE, config_drift: { context_state: 'from_the_future' } })
+    expect(screen.queryByRole('region', { name: 'Configuration drift' })).toBeNull()
   })
 })

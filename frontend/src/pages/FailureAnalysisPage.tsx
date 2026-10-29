@@ -93,6 +93,7 @@ import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { useSuspects } from '@/hooks/useCommitAttribution'
+import BisectNarrowing from '@/components/bisect/BisectNarrowing'
 import CorrectClassificationModal, {
   CATEGORY_CHOICES,
 } from '@/components/ai/CorrectClassificationModal'
@@ -2322,6 +2323,17 @@ export default function FailureAnalysisPage() {
             </Link>
             {row.test.last_failed ? ` (${shortAgo(row.test.last_failed)})` : ''}.
           </p>
+          {/* W23b FAIL-12: this test's own last pass and first failure, above the
+              run-level suspects (read only while this section is open). */}
+          {row.test.test_fingerprint && (
+            <div className="mb-4">
+              <BisectNarrowing
+                runId={runId}
+                fingerprint={row.test.test_fingerprint}
+                runBuild={row.test.last_failed_build ?? null}
+              />
+            </div>
+          )}
           <SuspectsPanel
             runId={runId}
             fingerprint={row.test.test_fingerprint ?? null}

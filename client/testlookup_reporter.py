@@ -66,9 +66,14 @@ from ci_context import resolve_ci_context
 # failures can be attributed to commits offline (US-8.1). Best-effort: any
 # git problem yields None and the field is simply omitted.
 from commit_range import resolve_commit_range
+# Runtime / lockfile / image / allowlisted-env context of this run (W23b
+# FAIL-13). Computed locally, no network; any problem yields None and the
+# field is simply omitted. Aliased: the constructors' ``collect_run_context=``
+# flag would shadow the function's own name.
+from run_context import collect_run_context as _collect_run_context, locates_run_context
 
 # Keep in step with ``version`` in pyproject.toml (pinned by a test).
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __all__ = ["TestLookupReporter", "LiveSession", "LiveStream"]
 
 logger = logging.getLogger("testlookup_reporter")
@@ -243,6 +248,9 @@ class ConfigLoader:
         # Commit range (US-8.1) — collected from local git; see commit_range.py.
         "testlookup.commit_range":      ("ci", "collect_commit_range"),
         "testlookup.commit_range_base": ("ci", "commit_range_base"),
+        # Run context (W23b FAIL-13) — runtime / lockfile hashes; see run_context.py.
+        "testlookup.run_context":       ("ci", "collect_run_context"),
+        "testlookup.run_context_root":  ("ci", "run_context_root"),
         # TLS — homelab / dev convenience. Either point at a custom CA bundle
         # (preferred — preserves verification) or disable verification entirely.
         "testlookup.ca_cert_path": ("auth", "ca_cert_path"),
@@ -280,6 +288,11 @@ class ConfigLoader:
         # Commit-range collection (US-8.1) — opt-out + explicit base.
         "TESTLOOKUP_COMMIT_RANGE":      ("ci", "collect_commit_range"),
         "TESTLOOKUP_COMMIT_RANGE_BASE": ("ci", "commit_range_base"),
+        # Run context (W23b FAIL-13) — opt-out, lockfile root, stated runtimes, images.
+        "TESTLOOKUP_RUN_CONTEXT":       ("ci", "collect_run_context"),
+        "TESTLOOKUP_RUN_CONTEXT_ROOT":  ("ci", "run_context_root"),
+        "TESTLOOKUP_RUNTIME":           ("ci", "runtime"),
+        "TESTLOOKUP_IMAGE_DIGESTS":     ("ci", "image_digests"),
     }
 
     @classmethod
@@ -429,6 +442,25 @@ def _commit_range_overrides_from_config(cfg: dict) -> dict:
     }
 
 
+def _run_context_overrides_from_config(cfg: dict) -> dict:
+    """The user's run-context config (file + env overlay) in the keys
+    ``run_context.collect_run_context`` reads as ``overrides``."""
+    return {
+        "collect_run_context": ConfigLoader.get(cfg, "ci.collect_run_context"),
+        "run_context_root":    ConfigLoader.get(cfg, "ci.run_context_root"),
+        "runtime":             ConfigLoader.get(cfg, "ci.runtime"),
+        "image_digests":       ConfigLoader.get(cfg, "ci.image_digests"),
+    }
+
+
+def _blames_run_context(resp: Any) -> bool:
+    """A 422 whose body locates its error under ``run_context`` (never raises)."""
+    try:
+        return locates_run_context(resp.json())
+    except Exception:
+        return False
+
+
 # ── Credentials and TLS ───────────────────────────────────────────────────────
 
 def _resolve_credentials(
@@ -523,6 +555,13 @@ class TestLookupReporter:
                   Overrides CI detection and the merge-base fallback.
     collect_commit_range : False disables commit collection entirely
                   (same as TESTLOOKUP_COMMIT_RANGE=0 / testlookup.commit_range=false).
+    run_context_root : Directory whose lockfiles (poetry.lock, package-lock.json,
+                  ...) are hashed into the run context (W23b). Default:
+                  TESTLOOKUP_RUN_CONTEXT_ROOT / testlookup.run_context_root, else
+                  the working directory.
+    collect_run_context : False sends no run context at all (same as
+                  TESTLOOKUP_RUN_CONTEXT=0 / testlookup.run_context=false).
+                  Nothing is fetched over the network; see run_context.py.
 
     Every session() and the pytest plugin take build, branch, commit, launch,
     suite and release from config (testlookup.* keys / TESTLOOKUP_* env vars)
@@ -543,6 +582,8 @@ class TestLookupReporter:
         verify_ssl: Any = None,
         commit_range_base: Optional[str] = None,
         collect_commit_range: Optional[bool] = None,
+        run_context_root: Optional[str] = None,
+        collect_run_context: Optional[bool] = None,
     ) -> None:
         # Resolve config from file + env vars, then overlay constructor args
         cfg = ConfigLoader.load()
@@ -589,6 +630,13 @@ class TestLookupReporter:
             overrides=_commit_range_overrides_from_config(cfg),
             enabled=collect_commit_range,
         )
+        # Run context (W23b FAIL-13): computed ONCE per reporter, locally (no
+        # network), and sent on every session-create. None = send nothing.
+        self._run_context = _collect_run_context(
+            root=run_context_root,
+            enabled=collect_run_context,
+            overrides=_run_context_overrides_from_config(cfg),
+        )
         self._batch_size = min(
             batch_size if batch_size != BATCH_SIZE else int(ConfigLoader.get(cfg, "reporting.batch_size", BATCH_SIZE)),
             MAX_BATCH_SIZE,
@@ -626,6 +674,7 @@ class TestLookupReporter:
         ci_actor: Optional[str] = None,
         ci_run_url: Optional[str] = None,
         commit_range: Optional[list] = None,
+        run_context: Optional[dict] = None,
     ):
         """
         Async context manager that manages the full session lifecycle:
@@ -635,7 +684,8 @@ class TestLookupReporter:
 
         ``commit_range`` overrides the reporter-level local-git collection
         (US-8.1) for this session only; leave it None to use what the
-        reporter walked at construction.
+        reporter walked at construction. ``run_context`` likewise replaces
+        the reporter-level run context (W23b) for this session only.
 
         Any of build_number, branch, commit_hash, launch_name, suite_name and
         release_name left as None takes the configured default.
@@ -655,6 +705,7 @@ class TestLookupReporter:
             ci_actor=ci_actor,
             ci_run_url=ci_run_url,
             commit_range=commit_range,
+            run_context=run_context,
         )
         try:
             yield live
@@ -690,6 +741,9 @@ class TestLookupReporter:
         # explicit per-session list wins. Popped so the generic kwargs splat
         # below can't also set it.
         commit_range = kwargs.pop("commit_range", None) or self._commit_range
+        # Run context (W23b FAIL-13): the same rule -- an explicit per-session
+        # value wins over the reporter-level collection.
+        run_context = kwargs.pop("run_context", None) or self._run_context
         payload: dict[str, Any] = {
             "project_id": self._project_id,
             "client_name": self._client_name,
@@ -702,8 +756,19 @@ class TestLookupReporter:
             payload["commit_range"] = commit_range
         if suite_for_session is not None:
             payload["suite_name"] = suite_for_session
+        if run_context:
+            payload["run_context"] = run_context
 
         resp = await self._http.post("/api/v1/stream/sessions", json=payload)
+        if resp.status_code == 422 and "run_context" in payload and _blames_run_context(resp):
+            # Version skew (a server whose allowlist is older than this SDK):
+            # results are never lost to metadata -- retry ONCE without it.
+            logger.warning(
+                "The server refused this run's run_context (422); "
+                "registering the session without it."
+            )
+            payload.pop("run_context", None)
+            resp = await self._http.post("/api/v1/stream/sessions", json=payload)
         resp.raise_for_status()
         data = resp.json()
 
@@ -1084,6 +1149,8 @@ class LiveStream:
     release_name, metadata : Optional CI metadata sent with the first batch.
     commit_range_base, collect_commit_range : Local-git commit collection
         (US-8.1) — pin the base ref, or pass False to skip collection.
+    run_context_root, collect_run_context : The run context (W23b) — the
+        directory whose lockfiles are hashed, or False to send none.
     batch_size, batch_interval_ms, verify_ssl : Batching/transport tuning.
     """
 
@@ -1109,6 +1176,8 @@ class LiveStream:
         ci_run_url: Optional[str] = None,
         commit_range_base: Optional[str] = None,
         collect_commit_range: Optional[bool] = None,
+        run_context_root: Optional[str] = None,
+        collect_run_context: Optional[bool] = None,
         batch_size: int = BATCH_SIZE,
         batch_interval_ms: int = BATCH_INTERVAL_MS,
         verify_ssl: Any = None,
@@ -1206,6 +1275,15 @@ class LiveStream:
             if not meta_md.get("commit_range"):
                 meta_md["commit_range"] = commit_range
                 self._meta["metadata"] = meta_md
+        # Run context (W23b FAIL-13): a TYPED meta field (never inside
+        # meta.metadata, which the server drops a "run_context" from).
+        run_context = _collect_run_context(
+            root=run_context_root,
+            enabled=collect_run_context,
+            overrides=_run_context_overrides_from_config(cfg),
+        )
+        if run_context:
+            self._meta["run_context"] = run_context
         # Cached for record() default — see LiveStream.record below.
         self._default_suite_name = resolved_suite
 
@@ -1446,6 +1524,20 @@ class LiveStream:
             elapsed = time.monotonic() - deadline_started
             try:
                 resp = await self._http.post("/api/v1/stream/ingest", json=payload)
+                if (
+                    resp.status_code == 422
+                    and "run_context" in self._meta
+                    and _blames_run_context(resp)
+                ):
+                    # Version skew (W23b): results are never lost to metadata.
+                    # Dropped from self._meta (== payload["meta"]) so this
+                    # batch's retry and every later batch go without it.
+                    logger.warning(
+                        "LiveStream %s: the server refused the run_context (422); "
+                        "sending without it.", self._run_id,
+                    )
+                    self._meta.pop("run_context", None)
+                    resp = await self._http.post("/api/v1/stream/ingest", json=payload)
                 if resp.status_code in (401, 403):
                     logger.error(
                         "LiveStream auth failed (%s) — stopping flush: %s",
