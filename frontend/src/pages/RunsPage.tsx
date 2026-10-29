@@ -345,27 +345,24 @@ export function resolveUploadBlockedReason(input: {
   return null
 }
 
-/** Construct the deep-link to /runs/compare for the bisect modal. Returns
- *  null when either side is missing (no green run found, or no failing run
- *  to compare against) — call sites should then either disable the button
- *  or surface a helpful "nothing to bisect" toast. */
+/** The Bisect CTA's target (W23b FAIL-12, D-7): the latest failing run's
+ *  Changes tab with the narrowing open on its first new failure
+ *  (`?tab=changes&bisect=top`) — each failing test narrowed to its OWN last
+ *  pass over 200 runs of history, so a green run in this window is no longer
+ *  required. Compare stays one click away on that tab. Returns null only
+ *  when nothing failed (the call site toasts "everything is green"). */
 export function buildBisectHref(model: {
   lastGreen: TestRun | null
   latestFailedRun: TestRun | null
 }): string | null {
-  if (!model.lastGreen || !model.latestFailedRun) return null
-  const params = new URLSearchParams()
-  params.set('mode', 'manual')
-  params.set('left', model.lastGreen.id)
-  params.set('right', model.latestFailedRun.id)
-  // Prefer the failing run's suite (the suite the user is investigating);
-  // fall back to the green run's suite so the suite filter on the compare
-  // page is always populated when we have any signal at all.
-  const suite = model.latestFailedRun.primary_suite_name
-    || model.lastGreen.primary_suite_name
-    || ''
-  if (suite) params.set('suite', suite)
-  return `/runs/compare?${params.toString()}`
+  if (!model.latestFailedRun) return null
+  return `/runs/${encodeURIComponent(model.latestFailedRun.id)}?tab=changes&bisect=top`
+}
+
+/** The banner's Bisect label: "Bisect from last green" while the window has a
+ *  green run, "Bisect the latest failure" when it has none. */
+function bisectActionLabel(model: { lastGreen: TestRun | null }): string {
+  return model.lastGreen ? 'Bisect from last green' : 'Bisect the latest failure'
 }
 
 function hoursSince(iso: string | null | undefined): number | null {
@@ -1325,7 +1322,9 @@ function LastGreenCallout({ model, onBisect }: { model: PipelineModel; onBisect:
   if (!model.lastGreen || model.failedRuns === 0) {
     return null
   }
-  const sha = model.lastGreen.id.slice(0, 7)
+  // W23b (D-8): the build number, never the run's UUID prefix printed as a
+  // SHA — the runs list carries no commit; the narrowing shows the real SHAs.
+  const build = `#${model.lastGreen.build_number}`
   const hours = model.hoursSinceLastGreen ?? 0
   return (
     <section
@@ -1348,14 +1347,14 @@ function LastGreenCallout({ model, onBisect }: { model: PipelineModel; onBisect:
         </span>
       </div>
       <p className="text-sm m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-        The last green Jenkins run is <code className="font-mono text-xs">#{model.lastGreen.build_number}</code>{' '}
-        at SHA <code className="font-mono text-xs">{sha}</code>, {hours} hour{hours === 1 ? '' : 's'} ago.
+        The last green run is <code className="font-mono text-xs">{build}</code>{' '}
+        ({hours} hour{hours === 1 ? '' : 's'} ago).
         {' '}{model.failedRuns} build{model.failedRuns === 1 ? '' : 's'} since{' '}
-        {model.failedRuns === 1 ? 'has failed' : 'have all failed'}. Bisect or revert from that SHA.
+        {model.failedRuns === 1 ? 'has failed' : 'have all failed'}. Bisect narrows each failing test to its own last pass.
       </p>
       {/* The two callout stats are the KPI tile's in-panel size (W29b UIX-09). */}
       <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
-        <MetricCard size="sm" title="Last green" metric={{ value: sha }} tone="good" />
+        <MetricCard size="sm" title="Last green" metric={{ value: build }} tone="good" />
         <MetricCard size="sm" title="Hours ago" metric={{ value: hours }} />
       </div>
       <div className="flex flex-wrap gap-2 mt-3">
@@ -1637,18 +1636,13 @@ export default function RunsPage() {
     return [{ value: '', label: 'All branches' }, ...names.map((name) => ({ value: name, label: name }))]
   }, [branchList?.items, branchFilter])
 
-  // Bisect navigation — the banner's "Bisect from last green" and Build
-  // history's "Start bisect". When either side is missing (no green run in
-  // window, or no failing run to compare against), toast a clear reason
-  // instead of nav'ing to a half-populated compare page.
+  // Bisect navigation — the banner's action and Build history's "Start
+  // bisect" (W23b FAIL-12): the latest failing run's Changes tab, the
+  // narrowing open on its first new failure. Only "nothing failed" blocks it.
   const handleBisect = (): void => {
     const href = buildBisectHref(model)
     if (!href) {
-      if (!model.lastGreen) {
-        toast('No green run found in this window — widen the window to enable bisect.', { icon: '⚠️' })
-      } else {
-        toast('No failing run to bisect — everything is green.', { icon: '✅' })
-      }
+      toast('No failing run to bisect — everything is green.', { icon: '✅' })
       return
     }
     navigate(href)
@@ -2006,7 +2000,7 @@ export default function RunsPage() {
         state={theme.banner}
         title={`${theme.label} · ${verdictSummary(model, verdict)}`}
         facts={runsBannerFacts(model)}
-        action={canBisect ? { label: 'Bisect from last green', onClick: handleBisect } : undefined}
+        action={canBisect ? { label: bisectActionLabel(model), onClick: handleBisect } : undefined}
       />
 
       {/* The failure signatures: read-only, in the page above the table, which

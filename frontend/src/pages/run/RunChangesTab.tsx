@@ -15,15 +15,27 @@
  * W22a ACT-04: when the retention purge removed the run's stored baseline,
  * one muted line says `Baseline build N was purged on <date>.` — under the
  * baseline line when a baseline was found, else under "No recent passing …".
+ *
+ * W23b FAIL-12: each new failure with a `test_fingerprint` gets `Narrow`; the
+ * open one (`?bisect=<fingerprint>`; `?bisect=top` = the first new failure,
+ * rewritten once the diff arrives) renders the bisect narrowing under its row.
+ * No `/bisect` read happens until one is opened. FAIL-13: a separate
+ * "Configuration drift" card under the main one, from the same answer.
  */
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { GitCommit, GitCompare } from 'lucide-react'
 import { clsx } from 'clsx'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ScopedLink from '@/components/ui/ScopedLink'
 import DurationRegressionsCard from '@/components/runs/DurationRegressionsCard'
+import ConfigDriftSection from '@/components/runs/ConfigDriftSection'
+import BisectNarrowing from '@/components/bisect/BisectNarrowing'
+import { inlineHeading } from '@/components/bisect/bisectModel'
+import { INSIGHT_LINK_CLASS } from '@/components/insights/InsightsList'
 import { useRegressionDiff } from '@/hooks/useRegressionDiff'
 import { usePermissions } from '@/hooks/usePermissions'
+import { parseConfigDrift } from '@/types/configDrift'
 import type { CommitRangeStatus, RegressionDiffBaselinePurged } from '@/types/regressionDiff'
 import { baselinePurgedLine } from '@/components/retention/holdsModel'
 import { formatDay } from '@/utils/formatters'
@@ -54,6 +66,36 @@ export default function RunChangesTab({
   const { isAdmin } = usePermissions()
   const status = data?.commit_range_status
   const commits = data?.commit_range ?? []
+
+  // W23b FAIL-13: the drift card renders only when the answer's `config_drift` parses.
+  const drift = useMemo(
+    () => (data?.baseline_available ? parseConfigDrift(data.config_drift) : null),
+    [data],
+  )
+
+  // W23b FAIL-12: the open narrowing lives in the URL (`?bisect=<fingerprint>`, `tab` kept).
+  // `?bisect=top` (the Runs CTA) resolves to the first new failure once the diff arrives.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const bisectParam = searchParams.get('bisect')
+  const openFingerprint = bisectParam && bisectParam !== 'top' ? bisectParam : null
+  const topFingerprint = data?.new_failing_tests?.[0]?.test_fingerprint ?? null
+  useEffect(() => {
+    if (bisectParam !== 'top' || !data) return
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (topFingerprint) next.set('bisect', topFingerprint)
+      else next.delete('bisect')
+      return next
+    }, { replace: true })
+  }, [bisectParam, data, topFingerprint, setSearchParams])
+  const toggleNarrow = (fingerprint: string) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (next.get('bisect') === fingerprint) next.delete('bisect')
+      else next.set('bisect', fingerprint)
+      return next
+    }, { replace: true })
+  }
 
   // The baseline the diff measured against, on the left of Compare.
   const baselineHref = data?.baseline_available && data.baseline_run_id
@@ -105,7 +147,18 @@ export default function RunChangesTab({
               <div>
                 <p className="eyebrow uppercase text-[var(--color-text-muted)] mb-1.5">New failures</p>
                 <ul className="space-y-1">
-                  {data.new_failing_tests?.slice(0, 10).map((t, i) => (
+                  {data.new_failing_tests?.slice(0, 10).map((t, i) => t.test_fingerprint ? (
+                    <NewFailureNarrowRow
+                      key={i}
+                      runId={runId}
+                      runBuild={run?.build_number != null ? String(run.build_number) : null}
+                      testName={t.test_name}
+                      suiteName={t.suite_name}
+                      fingerprint={t.test_fingerprint}
+                      open={openFingerprint === t.test_fingerprint}
+                      onToggle={toggleNarrow}
+                    />
+                  ) : (
                     <li key={i} className="text-sm text-[var(--color-text-secondary)] flex items-center gap-2">
                       <div className="h-1.5 w-1.5 rounded-full bg-[var(--status-failed-bg)] flex-shrink-0" />
                       {t.test_name}
@@ -157,6 +210,9 @@ export default function RunChangesTab({
         )}
       </section>
 
+      {/* W23b FAIL-13: runtime / dependency / environment drift against the baseline above. */}
+      {!isLoading && !error && drift && <ConfigDriftSection drift={drift} />}
+
       {/* EXEC-05: tests slower than their baseline, suites slower than their history. */}
       <DurationRegressionsCard runId={runId} />
 
@@ -199,6 +255,50 @@ function BaselinePurgedLine({ purged, className }: { purged: RegressionDiffBasel
     <p data-baseline-purged="" className={clsx('text-xs text-[var(--color-text-muted)]', className)}>
       {baselinePurgedLine(purged, formatDay)}
     </p>
+  )
+}
+
+/**
+ * W23b FAIL-12: a new failure WITH a fingerprint gets `Narrow`; the open one
+ * renders the narrowing in place under its row (mount = open, so the `/bisect`
+ * read happens only then). Names are React text and wrap.
+ */
+function NewFailureNarrowRow({
+  runId, runBuild, testName, suiteName, fingerprint, open, onToggle,
+}: {
+  runId: string
+  runBuild: string | null
+  testName: string
+  suiteName: string | null
+  fingerprint: string
+  open: boolean
+  onToggle: (fingerprint: string) => void
+}) {
+  const boxId = `narrow-${fingerprint}`
+  return (
+    <li className="text-sm text-[var(--color-text-secondary)]" data-new-failure-narrowable="">
+      <div className="flex items-center gap-2">
+        <div className="h-1.5 w-1.5 rounded-full bg-[var(--status-failed-bg)] flex-shrink-0" />
+        <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+          {testName}
+          {suiteName && <span className="text-[var(--color-text-muted)] text-xs"> · {suiteName}</span>}
+        </span>
+        <button
+          type="button"
+          className={clsx(INSIGHT_LINK_CLASS, 'ml-auto flex-none')}
+          aria-expanded={open}
+          aria-controls={boxId}
+          onClick={() => onToggle(fingerprint)}
+        >
+          Narrow
+        </button>
+      </div>
+      {open && (
+        <div id={boxId} data-narrow-box="" className="ml-3.5 mt-1 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3">
+          <BisectNarrowing runId={runId} fingerprint={fingerprint} heading={inlineHeading(testName)} runBuild={runBuild} />
+        </div>
+      )}
+    </li>
   )
 }
 

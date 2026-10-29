@@ -153,6 +153,16 @@ vi.mock('@/hooks/useCommitAttribution', () => ({
   })),
 }))
 
+// W23b FAIL-12: the narrowing block inside the Suspects section — no SWR fetch in a unit test
+// (the network guard); a narrowed answer from the shared mocks.
+vi.mock('@/hooks/useBisectNarrowing', async () => {
+  const { narrowing } = await import('@/test/bisectDriftMocks')
+  return {
+    bisectKey: vi.fn(() => null),
+    useBisectNarrowing: vi.fn(() => ({ data: narrowing(), error: undefined, isLoading: false, retry: vi.fn() })),
+  }
+})
+
 /** The router's current query string, for the tab-URL tests. */
 function LocationProbe() {
   const location = useLocation()
@@ -941,6 +951,12 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     expect(within(panel).getByText(/No commit range available for this failure yet/)).toBeInTheDocument()
     // The ranking is asked for that run and that row's test.
     expect(useSuspects).toHaveBeenLastCalledWith('run-9', { fingerprint: 'fp-top' })
+    // W23b FAIL-12: the narrowing block renders inside the section, above SuspectsPanel,
+    // read for the same run and fingerprint.
+    const { useBisectNarrowing } = await import('@/hooks/useBisectNarrowing')
+    const block = within(panel).getByRole('region', { name: 'Narrowed range' })
+    expect(block.compareDocumentPosition(within(panel).getByTestId('suspects-panel')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(useBisectNarrowing).toHaveBeenLastCalledWith('run-9', 'fp-top')
     // The table stays on the page beside it.
     expect(screen.getByRole('table', { name: 'Top failing tests' })).toBeInTheDocument()
 

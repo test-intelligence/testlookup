@@ -1,20 +1,14 @@
 /**
  * Tests for ``buildBisectHref`` — the pure helper that powers every
- * "Bisect from last green" / "Start bisect" CTA on the /runs page.
+ * "Bisect from last green" / "Bisect the latest failure" / "Start bisect"
+ * CTA on the /runs page.
  *
- * The CTAs used to toast a "bisect modal later" placeholder; they
- * now navigate to /runs/compare with pre-filled left / right / suite
- * params. Pinning the URL construction here is a cheap regression
- * guard against:
- *
- *   - Stripping the ``suite`` filter when one side has it and the
- *     other doesn't (would silently widen the compare beyond the
- *     suite the user is investigating).
- *   - Reordering left/right (the compare page treats ``left`` as the
- *     baseline; swapping flips every delta's classification).
- *   - Silently returning a partial URL when one side is missing
- *     (would land the user on a half-populated compare page instead
- *     of toasting a clear "no green run found" reason).
+ * The CTAs used to toast a "bisect modal later" placeholder, then opened
+ * /runs/compare with the last green run on the left. Since W23b FAIL-12
+ * they open the latest failing run's Changes tab with the narrowing on its
+ * first new failure (``?tab=changes&bisect=top``): each failing test is
+ * narrowed to its own last pass, so a green run in the window is no
+ * longer required; only "nothing failed" returns null.
  *
  * Below them: the page's parts (the per-build pass rate, the signature
  * split, the build strip, the health meter) and the page itself, laid out on
@@ -170,74 +164,35 @@ function _testRun(overrides: Partial<{
   } as never
 }
 
+// W23b FAIL-12 (D-7): the CTA opens the latest failing run's Changes tab with
+// the narrowing on its first new failure; a green run in the window is no
+// longer required (the walk reads 200 runs of history, not the window).
 describe('buildBisectHref', () => {
-  it('returns null when there is no green run to bisect against', () => {
-    const href = buildBisectHref({
+  it('a failing run WITHOUT a green one: the run page\'s Changes tab, bisect=top', () => {
+    const href = expectHref({
       lastGreen: null,
       latestFailedRun: _testRun({ id: 'failed-1', status: 'FAILED' }),
     })
-    expect(href).toBeNull()
+    expect(href).toBe('/runs/failed-1?tab=changes&bisect=top')
   })
 
-  it('returns null when there is no failing run to bisect', () => {
-    const href = buildBisectHref({
-      lastGreen: _testRun({ id: 'green-1', status: 'PASSED' }),
-      latestFailedRun: null,
-    })
-    expect(href).toBeNull()
-  })
-
-  it('builds a /runs/compare URL with left=lastGreen and right=latestFailed', () => {
+  it('a failing run WITH a green one: the same target (never /runs/compare)', () => {
     const href = expectHref({
       lastGreen: _testRun({ id: 'green-1', primary_suite_name: 'payments-e2e' }),
       latestFailedRun: _testRun({ id: 'failed-1', status: 'FAILED', primary_suite_name: 'payments-e2e' }),
     })
-    expect(href).toContain('/runs/compare?')
-    expect(href).toContain('mode=manual')
-    expect(href).toContain('left=green-1')
-    expect(href).toContain('right=failed-1')
-    expect(href).toContain('suite=payments-e2e')
+    expect(href).toBe('/runs/failed-1?tab=changes&bisect=top')
+    expect(href).not.toContain('/runs/compare')
   })
 
-  it('prefers the failing run\'s suite when both sides have a suite name', () => {
-    // The user is investigating the failing run, so the compare view
-    // should default to the failing run's suite filter — not the
-    // green run's, even if they differ.
-    const href = expectHref({
-      lastGreen: _testRun({ id: 'green-1', primary_suite_name: 'old-suite' }),
-      latestFailedRun: _testRun({ id: 'failed-1', status: 'FAILED', primary_suite_name: 'new-suite' }),
-    })
-    expect(href).toContain('suite=new-suite')
-    expect(href).not.toContain('suite=old-suite')
+  it('returns null only when nothing failed', () => {
+    expect(buildBisectHref({ lastGreen: _testRun({ id: 'green-1', status: 'PASSED' }), latestFailedRun: null })).toBeNull()
+    expect(buildBisectHref({ lastGreen: null, latestFailedRun: null })).toBeNull()
   })
 
-  it('falls back to the green run\'s suite when the failing run has none', () => {
-    const href = expectHref({
-      lastGreen: _testRun({ id: 'green-1', primary_suite_name: 'payments-e2e' }),
-      latestFailedRun: _testRun({ id: 'failed-1', status: 'FAILED', primary_suite_name: null }),
-    })
-    expect(href).toContain('suite=payments-e2e')
-  })
-
-  it('omits the suite param entirely when neither side has a suite name', () => {
-    // Adding ``&suite=`` (empty) would land on the compare page with
-    // a stale empty filter. Cleaner to leave it off so the compare
-    // page falls back to its default behaviour.
-    const href = expectHref({
-      lastGreen: _testRun({ id: 'green-1', primary_suite_name: null }),
-      latestFailedRun: _testRun({ id: 'failed-1', status: 'FAILED', primary_suite_name: null }),
-    })
-    expect(href).not.toContain('suite=')
-  })
-
-  it('URL-encodes special characters in the suite name', () => {
-    const href = expectHref({
-      lastGreen: _testRun({ id: 'g', primary_suite_name: 'Realistic TestNG client examples' }),
-      latestFailedRun: _testRun({ id: 'f', status: 'FAILED', primary_suite_name: 'Realistic TestNG client examples' }),
-    })
-    // Either ``+`` (form-style) or ``%20`` (path-style) are both valid
-    // URL-encodings of a space; URLSearchParams uses ``+``.
-    expect(href).toMatch(/suite=Realistic[+%20]TestNG[+%20]client[+%20]examples/)
+  it('URL-encodes the run id', () => {
+    const href = expectHref({ lastGreen: null, latestFailedRun: _testRun({ id: 'run/with space', status: 'FAILED' }) })
+    expect(href).toBe('/runs/run%2Fwith%20space?tab=changes&bisect=top')
   })
 })
 
@@ -796,6 +751,67 @@ describe('RunsPage — below the table, collapsed (P3 Disclosures)', () => {
     expect(within(callout).getByText('Bisect target')).toBeInTheDocument()
     expect(within(callout).getByText('Hours ago')).toBeInTheDocument()
     expect(within(callout).getAllByRole('button').map(b => b.textContent?.trim())).toEqual(['Start bisect'])
+  })
+
+  it('W23b (D-8): the callout names the last green BUILD — never the run\'s UUID prefix as a SHA, never "Jenkins"', () => {
+    const uuid = '7c9e6679-7425-40de-944b-e07fc1f90ae7'
+    renderRunsPage(newestFirst([
+      run(1, { id: uuid, status: 'PASSED', passed_tests: 10, failed_tests: 0, pass_rate: 100, created_at: hoursAgo(30) }),
+      run(2, { status: 'FAILED', passed_tests: 8, failed_tests: 2, pass_rate: 80, created_at: hoursAgo(20) }),
+      run(3, { status: 'FAILED', passed_tests: 8, failed_tests: 2, pass_rate: 80, created_at: hoursAgo(2) }),
+    ]))
+    fireEvent.click(disclosureButton('Build history'))
+    const callout = screen.getByRole('region', { name: 'Last green build' })
+    expect(callout).not.toHaveTextContent(uuid.slice(0, 7))
+    expect(callout).not.toHaveTextContent(/SHA/)
+    expect(callout).not.toHaveTextContent(/Jenkins/)
+    expect(callout).toHaveTextContent('The last green run is #101 (30 hours ago). 2 builds since have all failed. Bisect narrows each failing test to its own last pass.')
+    const tile = within(callout).getByText('Last green').closest('[data-metric-card]') as HTMLElement
+    expect(tile).toHaveTextContent(/^Last green\s*#101$/)
+  })
+})
+
+describe('RunsPage — the Bisect CTA opens the narrowing (W23b FAIL-12, D-7)', () => {
+  function renderAndTrack(runs: TestRun[]) {
+    vi.mocked(useRuns).mockReturnValue({
+      data: { items: runs, total: runs.length, page: 1, size: 500, pages: 1 },
+      isLoading: false,
+      error: undefined,
+      mutate: vi.fn(),
+    } as never)
+    const seen: string[] = []
+    function Probe() {
+      const where = useLocation()
+      seen.push(`${where.pathname}${where.search}`)
+      return null
+    }
+    render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0, shouldRetryOnError: false }}>
+        <MemoryRouter initialEntries={['/runs']}>
+          <Routes>
+            <Route path="*" element={<><RunsPage /><Probe /></>} />
+          </Routes>
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+    return seen
+  }
+
+  it('"Bisect from last green" navigates to the latest failed run\'s Changes tab with bisect=top', () => {
+    const seen = renderAndTrack(brokenWindow())
+    fireEvent.click(within(banner()).getByRole('button', { name: /^Bisect from last green/ }))
+    expect(seen[seen.length - 1]).toBe('/runs/run-4?tab=changes&bisect=top')
+  })
+
+  it('a window with failures but no green run: "Bisect the latest failure", same target', () => {
+    const seen = renderAndTrack(newestFirst([
+      run(1, { status: 'FAILED', passed_tests: 8, failed_tests: 2, pass_rate: 80, created_at: hoursAgo(20) }),
+      run(2, { status: 'FAILED', passed_tests: 8, failed_tests: 2, pass_rate: 80, created_at: hoursAgo(2) }),
+    ]))
+    expect(within(banner()).queryByRole('button', { name: /^Bisect from last green/ })).toBeNull()
+    fireEvent.click(within(banner()).getByRole('button', { name: /^Bisect the latest failure/ }))
+    expect(seen[seen.length - 1]).toBe('/runs/run-2?tab=changes&bisect=top')
+    expect(toast).not.toHaveBeenCalledWith(expect.stringMatching(/No green run found/), expect.anything())
   })
 })
 
