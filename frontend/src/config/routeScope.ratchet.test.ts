@@ -286,5 +286,7 @@ describe('route scope registry — held to the code', () => {
     // and this is the assertion that notices.
     expect(routes.get('/activity')).toBe('pages/ActivityPage')
     expect(routes.get('/settings/retention')).toBe('pages/settings/RetentionPage')
+    // W23a TRND-03: declared single-project; the page renders the picker prompt in All Projects.
+    expect(routes.get('/settings/expected-runs')).toBe('pages/settings/ExpectedRunsPage')
   })
 })

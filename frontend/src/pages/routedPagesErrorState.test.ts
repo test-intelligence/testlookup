@@ -92,6 +92,8 @@ const REVIEWED: Record<string, ErrorState> = {
   'settings/BillingPage': 'data-unavailable',
   'settings/GitLabIntegrationPage': 'own-error-ui',
   'settings/RetentionPage': 'own-error-ui',
+  // W23a TRND-03: "Could not load the expected runs." + Retry for the cadence list.
+  'settings/ExpectedRunsPage': 'own-error-ui',
   'settings/MfaPolicyPage': 'own-error-ui',
   'settings/AIAgentsPage': 'own-error-ui',
   'settings/AgentActivityPage': 'own-error-ui',

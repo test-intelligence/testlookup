@@ -67,6 +67,7 @@ export const HELP_TOPICS: Readonly<Record<string, HelpTopic>> = {
   '/settings/api-keys': { topic: 'administration', anchor: 'api-keys' },
   '/settings/my-api-keys': { topic: 'administration', anchor: 'api-keys' },
   '/settings/retention': { topic: 'administration', anchor: 'retention-and-purge' },
+  '/settings/expected-runs': { topic: 'administration', anchor: 'expected-runs' },
   '/settings/project-data': { topic: 'administration', anchor: 'project-data' },
   '/settings/storage': { topic: 'administration', anchor: 'data-and-storage' },
   '/settings/performance': { topic: 'administration', anchor: 'performance' },
