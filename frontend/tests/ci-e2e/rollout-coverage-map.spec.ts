@@ -67,6 +67,8 @@ const PAGE_READS = [
   `GET /api/v1/metrics/trends?project_id=${P}&days=30`,
   `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=30`,
   `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,
+  // W23a TRND-03: the score's run dimension reads the expected-run status for the page's window.
+  `GET /api/v1/projects/${P}/run-cadences/status?days=30`,
 ]
 const MAP_LINE = `GET ${COVERAGE_MAP_PATH}?depth=1&project_id=${P}&days=30`
 const ENV_LINE = `GET ${HEATMAP_PATH}?kind=suite_environment&project_id=${P}&days=30`

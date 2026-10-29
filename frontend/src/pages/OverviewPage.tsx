@@ -28,6 +28,8 @@ import { scopeArg } from '@/lib/scopeParams'
 import { suiteSelectOptions } from '@/lib/scopeControls'
 import FirstRunGuide from '@/components/onboarding/FirstRunGuide'
 import RecentActivityPanel from '@/components/activity/RecentActivityPanel'
+import InsightsCard from '@/components/insights/InsightsCard'
+import { LOAD_ERROR as INSIGHTS_LOAD_ERROR } from '@/components/insights/insightsModel'
 import { isFirstRunGuideDismissed, dismissFirstRunGuide } from '@/components/onboarding/firstRunSteps'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { describeEmptyWindow, formatAgeDays } from '@/utils/emptyWindow'
@@ -835,6 +837,13 @@ export default function OverviewPage() {
           )}
         </div>
       </div>
+
+      {/* W23a FAIL-11: cross-run insights, below the home sections and outside
+          their tabs (below the fold). One project only: in All Projects the
+          card renders nothing and asks nothing. */}
+      <SectionErrorBoundary message={INSIGHTS_LOAD_ERROR}>
+        <InsightsCard projectId={isAllProjects ? null : (activeProjectId || null)} projectName={project?.name ?? 'this project'} />
+      </SectionErrorBoundary>
 
       {!kpiLoading && (
         <Disclosure

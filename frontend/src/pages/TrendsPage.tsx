@@ -40,9 +40,11 @@
  *     Volume    (default) Run cadence (a kit `DayStrip`, presence mode,
  *               failing days striped, today and the gap edge marked; a QA
  *               engineer+ drags a range on it, or uses its `Pin a note`, to
- *               pin a note) → the schedule-paused callout (only when the
- *               server's gap is real; `Pin a note for these days`) → Daily
- *               breakdown (kit `StackedColumnChartFrame`).
+ *               pin a note) → the run-gap callout (when the server's gap is
+ *               real, or a CONFIGURED expected cadence (TRND-03) missed or
+ *               paused; its status read is this tab's only;
+ *               `Pin a note for these days`) → Daily breakdown (kit
+ *               `StackedColumnChartFrame`).
  *     By suite  Pass rate by suite and Compare (the catalogue; each has
  *               Customise, TRND-10) beside the Suite pass rates card, whose
  *               rows carry a sparkline of the suite's daily pass rate (the
@@ -125,6 +127,9 @@ import { useCoverage, useDashboardSummary, useTrendData } from '@/hooks/useMetri
 import { usePermissions } from '@/hooks/usePermissions'
 import { useTrendSummary } from '@/hooks/useTrendSummary'
 import { useTimelineNotes } from '@/hooks/useTimelineNotes'
+import { useRunCadenceStatus } from '@/hooks/useRunCadences'
+import { ACTION_NEEDED, calloutModel } from '@/components/runCadence/cadenceStatusModel'
+import ScopedLink from '@/components/ui/ScopedLink'
 import { downloadTrendsPdf, refusalText, trendsPdfFilename } from '@/services/trendsReportService'
 import type { TrendSummary, TrendSummaryDimension, TrendSummaryGap } from '@/types/trends'
 import { noteInputsFor, type TimelineNote } from '@/types/timelineNotes'
@@ -896,12 +901,31 @@ function PassRateTrendAnalysis({
 // ── Schedule-paused callout ───────────────────────────────────────────────
 // The window's longest silence, stated as the dates it covers — the SERVER's
 // gap (TRND-06). The gap is the LONGEST one, not necessarily the trailing one:
-// only a gap that runs up to today says the schedule "has not fired since";
-// an older gap that runs have since ended is a past silence, and is called
-// that. TRND-04: a QA engineer+ can pin a note on those days.
-function SchedulePausedCallout({ gap, onPin }: { gap: TrendSummaryGap | null; onPin?: (from: string, to: string) => void }) {
-  if (!gap) return null
-  const ongoing = gap.ongoing
+// only a gap that runs up to today says "since"; an older gap that runs have
+// since ended is a past silence. TRND-04: a QA engineer+ can pin a note on
+// those days.
+//
+// W23a TRND-03: no schedule is assumed. The server's `expected_runs_missed`
+// (= silent days) is NOT rendered, and "Expected runs missed" / "Action
+// needed" appear only when a CONFIGURED cadence reports misses (the exact
+// count, no `~`). Without one the callout says so and links to Settings ›
+// Expected runs. The status is read here, i.e. on the Volume tab only.
+function SchedulePausedCallout({
+  gap, onPin, projectId, days, canConfigure,
+}: {
+  gap: TrendSummaryGap | null
+  onPin?: (from: string, to: string) => void
+  /** The active project, or null in All Projects (no status read). */
+  projectId: string | null
+  days: number
+  /** Settings › Expected runs is a QA lead's (canAccessManagement). */
+  canConfigure: boolean
+}) {
+  // The hook's `error` covers a failed read AND a malformed answer.
+  const { data: status, error: statusError } = useRunCadenceStatus(projectId, days)
+  const model = calloutModel(gap, status, canConfigure, Boolean(projectId && statusError && !status))
+  if (!model.show) return null
+  const ongoing = gap?.ongoing ?? false
   return (
     <section
       aria-labelledby="schedpaused"
@@ -915,34 +939,50 @@ function SchedulePausedCallout({ gap, onPin }: { gap: TrendSummaryGap | null; on
     >
       <div className="flex items-center justify-between gap-2 mb-1">
         <h3 id="schedpaused" className="text-sm font-semibold m-0 text-[var(--color-text)]">
-          {ongoing ? 'Schedule appears paused' : 'Run gap in this window'}
+          {model.title}
         </h3>
         <div className="flex items-center gap-2">
-          {onPin ? (
+          {gap && onPin ? (
             <button type="button" data-pin-note-open="gap" onClick={() => onPin(gap.start, gap.end)} className={PIN_BUTTON}>
               <StickyNote aria-hidden="true" className="h-3.5 w-3.5" />
               Pin a note for these days
             </button>
           ) : null}
-          {ongoing && (
+          {model.actionNeeded && (
             <span
+              data-callout-action-needed=""
               className="eyebrow uppercase inline-flex items-center px-1.5 py-0.5 rounded-full"
               style={{ background: 'var(--gate-conditional-bg)', color: 'var(--ui-warning-ink)' }}
             >
-              Action needed
+              {ACTION_NEEDED}
             </span>
           )}
         </div>
       </div>
-      <p className="text-sm m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
-        {ongoing
-          ? <>No executions have landed since <code className="font-mono text-xs">{shortDate(gap.start)}</code>.</>
-          : <>No executions landed from <code className="font-mono text-xs">{shortDate(gap.start)}</code> to <code className="font-mono text-xs">{shortDate(gap.end)}</code>.</>}
-      </p>
-      <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
-        <CalloutStat label="Silent days" value={gap.silent_days} />
-        <CalloutStat label="Expected runs missed" value={`~${gap.expected_runs_missed}`} />
-      </div>
+      {gap && (
+        <p className="text-sm m-0 mt-1.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+          {ongoing
+            ? <>No executions have landed since <code className="font-mono text-xs">{shortDate(gap.start)}</code>.</>
+            : <>No executions landed from <code className="font-mono text-xs">{shortDate(gap.start)}</code> to <code className="font-mono text-xs">{shortDate(gap.end)}</code>.</>}
+        </p>
+      )}
+      {model.tiles.length > 0 && (
+        <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+          {model.tiles.map((tile) => <CalloutStat key={tile.label} label={tile.label} value={tile.value} />)}
+        </div>
+      )}
+      {model.lines.length > 0 && (
+        <ul data-callout-cadence="" className="m-0 mt-3 list-none space-y-1 p-0">
+          {model.lines.map((line) => (
+            <li key={line.kind === 'configure' ? line.to : line.text} className="text-sm text-[var(--color-text-secondary)] break-words">
+              {line.kind === 'configure'
+                // Settings › Expected runs is single-project (config/routeScope.ts): the scoped link.
+                ? <>{line.text}<ScopedLink to={line.to} className="text-[var(--color-accent)] hover:underline" hintInTitleOnly>{line.linkLabel}</ScopedLink></>
+                : line.text}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   )
 }
@@ -1583,7 +1623,14 @@ export default function TrendsPage() {
                 onSelectRange={canPin ? pinCadenceRange : undefined}
               />
               {noteForm('cadence')}
-              <SchedulePausedCallout gap={gap} onPin={canPin ? pinGapRange : undefined} />
+              <SchedulePausedCallout
+                gap={gap}
+                onPin={canPin ? pinGapRange : undefined}
+                projectId={isAllProjects ? null : activeProjectId}
+                days={days}
+                // Settings › Expected runs is a QA lead's (isQaLead = canAccessManagement).
+                canConfigure={isQaLead}
+              />
               {noteForm('gap')}
               <DailyBreakdown trend={trend} days={days} model={model} filtersApplied={trendFiltered} />
             </div>

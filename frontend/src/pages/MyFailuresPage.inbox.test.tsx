@@ -47,6 +47,21 @@ vi.mock('@/services/activityService', async (importOriginal) => ({
   listMyActivity: activity.listMyActivity,
 }))
 
+// W23a FAIL-11: Inbox › Insights' one read; `calls` records every (projectId, range, includeDismissed,
+// limit) it was asked with, `answer` builds the reply from them.
+const insights = vi.hoisted(() => ({
+  calls: [] as unknown[][],
+  answer: null as null | ((includeDismissed: boolean) => unknown),
+}))
+vi.mock('@/hooks/useInsights', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useInsights')>()),
+  useInsights: (projectId: string | null, range: string, includeDismissed = false, limit?: number) => {
+    insights.calls.push([projectId, range, includeDismissed, limit])
+    const data = projectId && insights.answer ? insights.answer(includeDismissed) : null
+    return { data, error: undefined, isLoading: false, mutate: async () => undefined }
+  },
+}))
+
 vi.mock('@/hooks/useFeatureFlags', () => ({ useFeatureEnabled: () => false }))
 vi.mock('@/hooks/useAgentActions', async () => (await import('@/test/agentActionMocks')).agentActionHookMocks())
 
@@ -492,7 +507,8 @@ describe('Inbox — the Activity tab (ACT-02)', () => {
     renderPage()
     await screen.findByText('test_checkout_pays')
     const tabs = screen.getAllByRole('tab')
-    expect(tabs).toHaveLength(3)
+    // W23a FAIL-11: four tabs since Insights joined LAST; Activity keeps its place.
+    expect(tabs).toHaveLength(4)
     expect(tabs[2]).toHaveTextContent(/^Activity$/)
     expect(activity.listMyActivity).not.toHaveBeenCalled()
 
@@ -514,5 +530,57 @@ describe('Inbox — the Activity tab (ACT-02)', () => {
     expect(activity.listMyActivity.mock.calls[0][0]).not.toHaveProperty('project_id')
     expect(document.querySelector('[data-activity-project]')?.textContent).toBe('Checkout')
     expect(screen.getByText(/across all your projects\.$/)).toBeInTheDocument()
+  })
+})
+
+// W23a FAIL-11 (contract §2.1 D-2 / §4.1): Inbox › Insights, the fourth tab. Its read happens only
+// while it is open, so an Inbox load issues no new request; it carries no count.
+describe('Inbox — the Insights tab (FAIL-11)', () => {
+  beforeEach(async () => {
+    insights.calls = []
+    const { insight, insightList } = await import('@/test/insightCadenceMocks')
+    const open = insight({ id: 'open-1', title: 'Flaky tests rising in suite Payments sentinel (1 → 4)', kind: 'flake_rising', severity: 'medium', run_path: null })
+    const dismissed = insight({ id: 'gone-1', title: 'Suite Payments sentinel is 2.4× slower than its previous 20 runs',
+      dismissed_at: new Date(Date.now() - 3_600_000).toISOString(), dismissed_by_name: 'Alice Lead' })
+    insights.answer = (includeDismissed) => {
+      const items = includeDismissed ? [open, dismissed] : [open]
+      return { ...insightList(items), total: items.length, dismissed_total: 1 }
+    }
+  })
+
+  it('is the fourth tab, last, with no count; nothing reads insights until it is opened', async () => {
+    renderPage()
+    await screen.findByText('test_checkout_pays')
+    const tabs = screen.getAllByRole('tab')
+    expect(tabs.map((t) => t.textContent?.replace(/\d+$/, ''))).toEqual(['Team failures', 'Approvals', 'Activity', 'Insights'])
+    expect(tabs[3]).toHaveTextContent(/^Insights$/)
+    expect(insights.calls).toEqual([])
+
+    fireEvent.click(tab(/^Insights/))
+    expect(await screen.findByText('Flaky tests rising in suite Payments sentinel (1 → 4)')).toBeInTheDocument()
+    expect(currentUrl()).toBe('/my-failures?tab=insights')
+    expect(insights.calls[insights.calls.length - 1]).toEqual(['p1', '7d', false, 100])
+    expect(document.querySelector('[data-insights-showing]')).toHaveTextContent('Showing 1 of 1')
+    expect(screen.getByText(/^Patterns across runs in Checkout: slower tests and suites/)).toBeInTheDocument()
+    expect(tabs[3]).toHaveTextContent(/^Insights$/)
+  })
+
+  it('Show dismissed (n) asks with include_dismissed and shows who dismissed', async () => {
+    renderPage('/my-failures?tab=insights')
+    await screen.findByText('Flaky tests rising in suite Payments sentinel (1 → 4)')
+    expect(screen.queryByText(/^Dismissed by Alice Lead/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Show dismissed (1)' }))
+    expect(insights.calls[insights.calls.length - 1]).toEqual(['p1', '7d', true, 100])
+    expect(await screen.findByText(/^Dismissed by Alice Lead · /)).toBeInTheDocument()
+    expect(document.querySelector('[data-insights-showing]')).toHaveTextContent('Showing 2 of 2')
+  })
+
+  it('All Projects: the project prompt, and no project read', async () => {
+    state.projectId = '__ALL__'
+    renderPage('/my-failures?tab=insights')
+    expect(await screen.findByText('Select a project')).toBeInTheDocument()
+    // The header's subtitle and the prompt say the same sentence.
+    expect(screen.getAllByText('Insights belong to one project: pick it to see them.')).toHaveLength(2)
+    expect(insights.calls.every(([projectId]) => projectId === null)).toBe(true)
   })
 })

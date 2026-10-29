@@ -166,6 +166,21 @@ vi.mock('@/hooks/useTimelineNotes', () => ({
   useTimelineNoteActions: () => ({ projectId: 'proj-1', create: vi.fn(), update: vi.fn(), remove: vi.fn() }),
 }))
 
+// W23a TRND-03: the expected-run status the Volume tab's callout reads ("no cadence" unless a test says
+// otherwise; `calls` records every (projectId, days) the page asked with).
+const cadences = vi.hoisted(() => ({ status: undefined as unknown, error: null as unknown, calls: [] as unknown[][] }))
+vi.mock('@/hooks/useRunCadences', async () => {
+  const { cadenceStatus } = await import('@/test/insightCadenceMocks')
+  return {
+    useRunCadenceStatus: (projectId: string | null, days: number) => {
+      cadences.calls.push([projectId, days])
+      if (!projectId) return { data: null, error: undefined, isLoading: false, mutate: async () => undefined }
+      const data = cadences.error ? null : (cadences.status ?? cadenceStatus('none'))
+      return { data, error: cadences.error ?? undefined, isLoading: false, mutate: async () => undefined }
+    },
+  }
+})
+
 // Who is reading: a viewer unless a test says otherwise.
 const role = vi.hoisted(() => ({ isQaLead: false, isQaEngineer: false, isAdmin: false }))
 vi.mock('@/hooks/usePermissions', () => ({
@@ -210,6 +225,9 @@ beforeEach(() => {
   timeline.notes = []
   timeline.truncated = false
   timeline.calls = []
+  cadences.status = undefined
+  cadences.error = null
+  cadences.calls = []
   role.isQaLead = false
   role.isQaEngineer = false
   role.isAdmin = false
@@ -966,9 +984,11 @@ describe('TrendsPage P2: no stubs, no invented values', () => {
   // card and the gap callout). Each now EXISTS and has its own tests below;
   // the controls that are still not built stay absent.
   it('has none of the not-built controls: header, verdict, issue rows, schedule callout', async () => {
-    // A trailing 10-day silence: the schedule callout and the gap issue row both render.
+    // A trailing 10-day silence: the gap callout renders (W23a TRND-03: "Run gap in this window" — no
+    // schedule is assumed while none is configured).
     await renderWith(await daysWithRuns([10, 11, 12, 13]))
-    expect(screen.getByRole('heading', { name: 'Schedule appears paused' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Run gap in this window' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Schedule appears paused' })).toBeNull()
     for (const name of [
       /Email this view/, /Resume schedule/, /Resume nightly/, /View schedule/, /Decision trail/, /Customize/,
       /Configure schedule/, /Apply suite labels/, /Open runner config/,
@@ -1399,7 +1419,7 @@ describe('TrendsPage W08', () => {
       expect(scoreToggle()).toHaveTextContent('Score not available')
     })
 
-    it('the callout, its Silent days and its dates are the server’s gap', async () => {
+    it('the callout, its Silent days and its dates are the server’s gap; with no cadence, no expected-run claim', async () => {
       const { utcDayIso, formatDayIso } = await import('@/utils/calendarDay')
       const start = await dayBack(8)
       trendSummary.override = await summaryOf({
@@ -1409,11 +1429,17 @@ describe('TrendsPage W08', () => {
       })
       // The trend itself has no gap at all: what is drawn is the server's.
       await renderPage('/trends', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
-      const callout = screen.getByRole('heading', { name: 'Schedule appears paused' }).closest('section') as HTMLElement
+      const callout = screen.getByRole('heading', { name: 'Run gap in this window' }).closest('section') as HTMLElement
+      expect(callout).toHaveAttribute('aria-labelledby', 'schedpaused')
       expect(within(callout).getByText('Silent days').parentElement).toHaveTextContent('9')
-      expect(within(callout).getByText('Expected runs missed').parentElement).toHaveTextContent('~9')
+      // W23a TRND-03: `expected_runs_missed` (= silent days) is not rendered; nothing claims a schedule.
+      expect(within(callout).queryByText('Expected runs missed')).toBeNull()
+      expect(callout).not.toHaveTextContent('~9')
+      expect(within(callout).queryByText('Action needed')).toBeNull()
+      expect(callout).toHaveTextContent('No expected cadence configured — a QA lead can set one in Settings')
       expect(callout).toHaveTextContent(`No executions have landed since ${formatDayIso(start)}.`)
       expect(document.querySelector('[data-cadence-gap]')).toHaveTextContent('9-day silence')
+      expect(cadences.calls[cadences.calls.length - 1]).toEqual(['proj-1', 14])
     })
 
     it('W29b: the cadence card is a Panel with an h3; the callout stats and the dimensions are sm tiles, no sheen', async () => {
@@ -1431,12 +1457,17 @@ describe('TrendsPage W08', () => {
           ],
         },
       })
+      // W23a: a configured cadence with two misses adds the exact "Expected runs missed" tile.
+      const mocks = await import('@/test/insightCadenceMocks')
+      cadences.status = mocks.cadenceStatus([mocks.statusItem({
+        expected: 5, met: 3, missed: 2, missed_windows: [mocks.missedWindow(2), mocks.missedWindow(1)],
+      })])
       await renderPage('/trends', [0, 1, 2, 3, 4])
       const cadence = screen.getByRole('heading', { level: 3, name: /^Run cadence — last/ })
       expect(cadence.closest('[data-panel]')).toHaveClass('card')
       expect(cadence).toHaveAttribute('title', expect.stringMatching(/^Each cell is one day/))
-      // The callout's two stats: in-panel tiles in the danger ink, never a page-made 20 px number.
-      const callout = screen.getByRole('heading', { name: 'Schedule appears paused' }).closest('section') as HTMLElement
+      // The callout's stats: in-panel tiles in the danger ink, never a page-made 20 px number.
+      const callout = screen.getByRole('heading', { name: 'Expected runs missed' }).closest('section') as HTMLElement
       const stats = [...callout.querySelectorAll('[data-metric-card="stat"]')]
       expect(stats.map((t) => t.querySelector('p')?.textContent)).toEqual(['Silent days', 'Expected runs missed'])
       for (const stat of stats) expect(stat.querySelector('p.tabular-nums')).toHaveClass('text-[var(--ui-danger-ink)]')
@@ -1459,6 +1490,82 @@ describe('TrendsPage W08', () => {
       await renderPage()
       expect(screen.getByRole('heading', { name: 'Run gap in this window' })).toBeInTheDocument()
       expect(screen.queryByRole('heading', { name: 'Schedule appears paused' })).toBeNull()
+    })
+  })
+
+  // W23a TRND-03: the callout reads the expected-run status (Volume tab only); no schedule is assumed.
+  describe('TRND-03 the callout and the expected runs', () => {
+    async function withGap() {
+      const { utcDayIso } = await import('@/utils/calendarDay')
+      const { summaryFromTrend } = await import('@/test/trendSummaryFixture')
+      trendSummary.override = Object.assign(summaryFromTrend([], 14), {
+        days_with_runs: 5,
+        gap: { silent_days: 9, start: await dayBack(8), end: utcDayIso(), ongoing: true, expected_runs_missed: 9 },
+        confidence: { score: 40, verdict: 'MIXED', band: 'Moderate', dimensions: [] },
+      })
+    }
+    const callout = (name: string) => screen.getByRole('heading', { name }).closest('section') as HTMLElement
+
+    it('no cadence: a QA lead gets the Configure link to Settings › Expected runs; no Action needed', async () => {
+      role.isQaLead = true
+      await withGap()
+      await renderPage()
+      const box = callout('Run gap in this window')
+      expect(box).toHaveTextContent('No expected cadence configured — Configure')
+      expect(within(box).getByRole('link', { name: 'Configure' })).toHaveAttribute('href', '/settings/expected-runs')
+      expect(within(box).queryByText('Action needed')).toBeNull()
+      expect(within(box).queryByText('Expected runs missed')).toBeNull()
+    })
+
+    it('a configured cadence with two misses: the exact tile, the scoped miss line, Action needed', async () => {
+      const { missedLine } = await import('@/types/runCadence')
+      const mocks = await import('@/test/insightCadenceMocks')
+      const item = mocks.statusItem({ expected: 5, met: 3, missed: 2, missed_windows: [mocks.missedWindow(2), mocks.missedWindow(1)] })
+      cadences.status = mocks.cadenceStatus([item])
+      await withGap()
+      await renderPage()
+      const box = callout('Expected runs missed')
+      expect(within(box).getAllByText('Expected runs missed')[1].parentElement).toHaveTextContent(/^Expected runs missed2$/)
+      expect(box).not.toHaveTextContent('~')
+      expect(box).toHaveTextContent(`nightly-regression: ${missedLine(item)}`)
+      expect(within(box).getByText('Action needed')).toBeInTheDocument()
+      expect(box).not.toHaveTextContent('No expected cadence configured')
+    })
+
+    it('only a pause (no gap): "Expected runs paused" with who and why; no Action needed', async () => {
+      const mocks = await import('@/test/insightCadenceMocks')
+      cadences.status = mocks.cadenceStatus([mocks.statusItem({
+        cadence: mocks.cadence({ paused: true, paused_until: '2026-10-30T22:59:00Z', paused_reason: 'release freeze', paused_by_name: 'Alice Lead' }),
+        expected: 0, met: 0, missed: 0, paused: 3,
+      })])
+      // Runs every day of the window: no gap.
+      await renderPage('/trends', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+      const box = callout('Expected runs paused')
+      expect(box).toHaveTextContent('nightly-regression: Paused until Fri Oct 30 (release freeze) — set by Alice Lead')
+      expect(within(box).queryByText('Action needed')).toBeNull()
+      expect(within(box).queryByText('Silent days')).toBeNull()
+      expect(box.querySelector('[data-pin-note-open]')).toBeNull()
+    })
+
+    it('a failed status read says so beside the gap', async () => {
+      cadences.error = new Error('503')
+      await withGap()
+      await renderPage()
+      expect(callout('Run gap in this window')).toHaveTextContent('Could not load the expected runs.')
+    })
+
+    it('a failed status read and no gap: no callout at all', async () => {
+      cadences.error = new Error('503')
+      await renderPage('/trends', [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+      expect(screen.queryByRole('heading', { name: 'Run gap in this window' })).toBeNull()
+      expect(screen.queryByText('Could not load the expected runs.')).toBeNull()
+    })
+
+    it('the status is read on the Volume tab only', async () => {
+      await renderPage('/trends?tab=by-suite')
+      expect(cadences.calls).toEqual([])
+      openTab('Volume')
+      expect(cadences.calls[cadences.calls.length - 1]).toEqual(['proj-1', 14])
     })
   })
 

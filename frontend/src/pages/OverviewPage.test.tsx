@@ -67,6 +67,20 @@ vi.mock('@/hooks/useValueMetrics', () => ({ useValueMetrics }))
 vi.mock('@/components/activity/RecentActivityPanel', () => ({
   default: ({ days }: { days: number }) => <div data-testid="recent-activity" data-days={days} />,
 }))
+// W23a FAIL-11: the Insights card's one read (no rows, four measured detectors unless a test says
+// otherwise); `calls` records every (projectId, range, includeDismissed, limit) the card asked with.
+const insights = vi.hoisted(() => ({ calls: [] as unknown[][], data: undefined as unknown }))
+vi.mock('@/hooks/useInsights', async (importOriginal) => {
+  const { insightList } = await import('@/test/insightCadenceMocks')
+  return {
+    ...(await importOriginal<typeof import('@/hooks/useInsights')>()),
+    useInsights: (projectId: string | null, range: string, includeDismissed = false, limit?: number) => {
+      insights.calls.push([projectId, range, includeDismissed, limit])
+      const data = projectId ? (insights.data ?? insightList([])) : null
+      return { data, error: undefined, isLoading: false, mutate: async () => undefined }
+    },
+  }
+})
 // P2: the page no longer reads the saved widget selection — the seven KPI
 // cards always render. The hook stays mocked with an EMPTY selection, so a
 // re-introduced `widgetIds` gate would hide every card and fail the KPI tests;
@@ -1654,5 +1668,56 @@ describe('OverviewPage — the verdict names the policy that decided it (W11 GAT
     })
     expect(details.querySelector('img')).toBeNull()
     expect(details).toHaveTextContent('Decided by <img src=x onerror=alert(1)> v4 (project policy)')
+  })
+})
+
+// W23a FAIL-11 (contract §4.1): the Insights card sits below the home sections, outside their tabs, for
+// ONE project; All Projects renders no card and asks nothing.
+describe('OverviewPage — the Insights card (W23a FAIL-11)', () => {
+  beforeEach(async () => {
+    insights.calls = []
+    insights.data = undefined
+    runsState.windowed = [{ id: 'r-1', created_at: new Date().toISOString() }]
+    runsState.newest = runsState.windowed
+    runsState.everHad = undefined
+    const { useDashboardSummary } = await import('@/hooks/useMetrics')
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: { release_readiness: 'GREEN', total_executions_7d: { value: 12 }, avg_pass_rate_7d: { value: 90 } },
+      isLoading: false,
+    })
+  })
+
+  const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+  it('below [data-home-sections], outside the home tabs, before the verdict disclosure; one read: 7 d, no dismissed rows', async () => {
+    const { insight, insightList } = await import('@/test/insightCadenceMocks')
+    insights.data = insightList([insight({ title: 'Suite Payments sentinel is 2.4× slower than its previous 20 runs' })])
+    render(<MemoryRouter><OverviewPage /></MemoryRouter>)
+    const card = await screen.findByRole('region', { name: 'Insights' })
+    const sections = document.querySelector('[data-home-sections]') as HTMLElement
+    expect(follows(sections, card)).toBe(true)
+    expect(sections.contains(card)).toBe(false)
+    expect(follows(card, screen.getByRole('button', { name: /How this verdict is decided/ }))).toBe(true)
+    expect(within(card).getByText('Suite Payments sentinel is 2.4× slower than its previous 20 runs')).toBeInTheDocument()
+    expect(insights.calls.every(([projectId, range, dismissed, limit]) =>
+      projectId === 'proj-1' && range === '7d' && dismissed === false && limit === undefined)).toBe(true)
+  })
+
+  it('All Projects: no card, and the hook gets no project (no key, no request)', async () => {
+    const store = await import('@/store/projectStore')
+    const mocked = vi.mocked(store.useProjectStore)
+    const original = mocked.getMockImplementation()
+    mocked.mockImplementation(((selector: (s: unknown) => unknown) =>
+      selector({ activeProjectId: '__ALL__', activeProject: null })) as never)
+    try {
+      render(<MemoryRouter><OverviewPage /></MemoryRouter>)
+      await screen.findByRole('heading', { level: 1 })
+      expect(screen.queryByRole('region', { name: 'Insights' })).toBeNull()
+      expect(document.querySelector('[data-insights-card]')).toBeNull()
+      expect(insights.calls.length).toBeGreaterThan(0)
+      expect(insights.calls.every(([projectId]) => projectId === null)).toBe(true)
+    } finally {
+      if (original) mocked.mockImplementation(original)
+    }
   })
 })
