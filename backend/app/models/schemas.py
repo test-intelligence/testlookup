@@ -6,6 +6,7 @@ from typing import Any, ClassVar, Dict, List, Literal, Optional, Union
 
 from pydantic import (
     AliasChoices,
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     EmailStr,
@@ -7101,6 +7102,196 @@ class TimelineNoteList(BaseModel):
     #: The window asked, YYYY-MM-DD.
     start: str
     end: str
+
+
+# ── Cross-run insights (W23a FAIL-11) ────────────────────────────────────────
+# Enum-like fields are plain ``str`` over ``app.services.insight_vocab``; the
+# routes refuse a value outside it with one fixed sentence.
+
+
+class InsightLink(BaseModel):
+    #: One of ``insight_vocab.INSIGHT_LINKS`` (server-built; the SPA re-checks).
+    path: str = ""
+    label: str = ""
+
+
+class InsightItem(BaseModel):
+    id: uuid.UUID
+    #: ``insight_vocab.INSIGHT_KINDS``.
+    kind: str
+    #: ``insight_vocab.INSIGHT_SEVERITIES``.
+    severity: str
+    #: "open" (``resolved_at IS NULL``) | "resolved".
+    status: str = "open"
+    #: "cleared" | "stale".
+    resolved_reason: Optional[str] = None
+    #: ``insights_service.render_title(...)`` — a sentence; React text.
+    title: str = ""
+    subject_label: str = ""
+    window_key: str = ""
+    #: Per kind (numbers, ids, names).
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+    first_seen_at: datetime
+    last_seen_at: datetime
+    resolved_at: Optional[datetime] = None
+    detection_count: int = 1
+    dismissed_at: Optional[datetime] = None
+    dismissed_by_name: Optional[str] = None
+    link: InsightLink = Field(default_factory=InsightLink)
+    #: perf_drift only: "/runs/<uuid>?tab=changes".
+    run_path: Optional[str] = None
+
+
+class InsightDetectorStatus(BaseModel):
+    kind: str
+    measured: bool = False
+    #: A ``NOT_MEASURED`` sentence; ``None`` when measured.
+    reason: Optional[str] = None
+    #: ``None`` = never evaluated ("not_evaluated").
+    evaluated_at: Optional[datetime] = None
+    subjects_measured: int = 0
+    firing: int = 0
+
+
+class InsightListResponse(BaseModel):
+    #: The project's ``cross_run_insights``.
+    enabled: bool = False
+    range: str = "7d"
+    items: List[InsightItem] = Field(default_factory=list)
+    #: Every row matching the filter (``items`` ≤ limit).
+    total: int = 0
+    #: Dismissed rows in the range (the "Show dismissed (n)" link).
+    dismissed_total: int = 0
+    #: ALWAYS four, in ``INSIGHT_KINDS`` order.
+    detectors: List[InsightDetectorStatus] = Field(default_factory=list)
+    generated_at: datetime
+
+
+# ── Expected run cadences (W23a TRND-03) ─────────────────────────────────────
+# TestLookup's own expectation (observe only). Enum-like fields are plain
+# ``str`` over ``app.services.run_cadence_vocab``; the service refuses a value
+# outside it with ``CADENCE_ERRORS`` (``{"code", "message"}``).
+
+_HHMM_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
+class RunCadenceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: Blank -> ``None`` (any run of the project).
+    suite_name: Optional[str] = Field(None, max_length=500)
+    #: ``run_cadence_vocab.CADENCE_MODES``.
+    mode: str = "weekly"
+    #: ``WEEKDAYS`` literals, any order, de-duplicated by the service.
+    weekdays: Optional[List[str]] = Field(None, max_length=7)
+    #: "HH:MM", 24 h, local to ``timezone``.
+    expected_by: Optional[str] = Field(None, pattern=_HHMM_PATTERN)
+    cron: Optional[str] = Field(None, max_length=100)
+    #: IANA name (validated against ``zoneinfo.available_timezones()``).
+    timezone: str = Field(..., min_length=1, max_length=64)
+    grace_minutes: int = Field(60, ge=0, le=720)
+
+
+class RunCadencePatch(BaseModel):
+    """Every field optional; an empty PATCH changes nothing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: JSON null keeps meaning "keep"; ``clear_suite`` sets "any run".
+    suite_name: Optional[str] = Field(None, max_length=500)
+    mode: Optional[str] = None
+    weekdays: Optional[List[str]] = Field(None, max_length=7)
+    expected_by: Optional[str] = Field(None, pattern=_HHMM_PATTERN)
+    cron: Optional[str] = Field(None, max_length=100)
+    timezone: Optional[str] = Field(None, min_length=1, max_length=64)
+    grace_minutes: Optional[int] = Field(None, ge=0, le=720)
+    #: True -> ``suite_name`` NULL ("any run"); with a ``suite_name`` too -> 422 ``suite_conflict``.
+    clear_suite: bool = False
+
+
+class RunCadencePauseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    #: tz-aware (a naive value is FastAPI's 422); in (now, now + 90 d].
+    until: AwareDatetime
+    #: Stripped by the service; empty -> ``CADENCE_ERRORS["pause_reason_required"]``.
+    reason: str = Field(..., max_length=200)
+
+
+class RunCadenceRead(BaseModel):
+    id: uuid.UUID
+    project_id: uuid.UUID
+    suite_name: Optional[str] = None
+    mode: str = "weekly"
+    weekdays: Optional[List[str]] = None
+    expected_by: Optional[str] = None
+    cron: Optional[str] = None
+    timezone: str = "UTC"
+    grace_minutes: int = 60
+    #: ``run_cadence_schedule.describe(...)``: "Mon–Fri by 06:00 (Europe/Berlin) · grace 60 min".
+    summary: str = ""
+    effective_from: datetime
+    #: ``paused_until > now``.
+    paused: bool = False
+    paused_at: Optional[datetime] = None
+    paused_until: Optional[datetime] = None
+    paused_reason: Optional[str] = None
+    paused_by_name: Optional[str] = None
+    #: The next expected-by instant (UTC), pause ignored.
+    next_deadline: Optional[datetime] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class RunCadenceList(BaseModel):
+    items: List[RunCadenceRead] = Field(default_factory=list)
+    total: int = 0
+
+
+class CadenceWindowStatus(BaseModel):
+    deadline: datetime
+    window_start: datetime
+    window_end: datetime
+    #: ``run_cadence_vocab.STATUS_OUTCOMES``.
+    outcome: str
+    #: True = the beat decided it (a ``run_cadence_windows`` row); False = computed now.
+    recorded: bool = False
+    run_count: Optional[int] = None
+    #: "Wed 28 Oct" in the cadence's zone.
+    local_label: str = ""
+
+
+class RunCadenceStatusItem(BaseModel):
+    cadence: RunCadenceRead
+    #: False only when nothing could be judged (``reason`` says so); never "all met".
+    measured: bool = False
+    reason: Optional[str] = None
+    #: ``expected`` = ``met`` + ``missed`` (paused / pending excluded).
+    expected: int = 0
+    met: int = 0
+    missed: int = 0
+    paused: int = 0
+    pending: int = 0
+    #: Newest first, ≤ ``MISSED_LIST_MAX``; ``missed`` is the full count.
+    missed_windows: List[CadenceWindowStatus] = Field(default_factory=list)
+    #: The newest matching run in the status window.
+    last_run_at: Optional[datetime] = None
+
+
+class RunCadenceStatusResponse(BaseModel):
+    #: False = the project has no cadence ("No expected cadence configured").
+    configured: bool = False
+    days: int = 14
+    window_start: datetime
+    window_end: datetime
+    items: List[RunCadenceStatusItem] = Field(default_factory=list)
+    total: int = 0
+    #: Sums over ``items``.
+    expected: int = 0
+    met: int = 0
+    missed: int = 0
+    paused: int = 0
 
 
 class DigestSubscriptionCreate(BaseModel):

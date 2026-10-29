@@ -102,6 +102,11 @@ ENTITY_TYPES: Final[tuple[str, ...]] = (
     # W22a ACT-05: one retention hold (retention_holds.id) on a project, a
     # release, a run or a compliance pack.
     "retention_hold",
+    # W23a FAIL-11: one cross-run insight (project_insights.id), an episode of
+    # one detector firing on one subject.
+    "insight",
+    # W23a TRND-03: one expected run cadence (run_cadences.id).
+    "run_cadence",
 )
 
 #: Where a row of each entity type lives in the SPA. Used to build
@@ -152,6 +157,12 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     # W22a ACT-05: the Holds card of Settings › Retention lists every hold of
     # the project; there is no per-hold page.
     "retention_hold": "/settings/retention",
+    # W23a FAIL-11: Inbox › Insights lists every insight of the project (the
+    # Overview card shows five); there is no per-insight page.
+    "insight": "/my-failures?tab=insights",
+    # W23a TRND-03: Settings › Project › Expected runs lists every cadence of
+    # the project; there is no per-cadence page.
+    "run_cadence": "/settings/expected-runs",
 }
 
 _EVENT_NAME_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z_]+\.[a-z_]+$")
@@ -223,6 +234,11 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("run.live_started", "runs", "run", "Live run {entity_label} started"),
     _spec("run.live_finalized", "runs", "run", "Live run {entity_label} finalized"),
     _spec("run.live_recovered", "runs", "run", "Live run {entity_label} was recovered", "attempt"),
+    # W23a TRND-03: staged by run_cadence_service._stage_missed_alerts on the
+    # cadence beat's session (outcome: the row commits with the decided
+    # windows), ONE row per cadence per check naming every newly missed window.
+    # ``days`` is the local labels ("Tue 27 Oct, Wed 28 Oct"). System only.
+    _spec("run_cadence.missed", "runs", "run_cadence", "{count} expected run(s) of {entity_label} missed ({days})", "outcome", frozenset({"system"})),
     # ── analysis ────────────────────────────────────────────────────────────
     # AIH-01/06: emitted by ai_history_service.capture_analysis_digest once per
     # NEW digest version (never on an idempotent pipeline replay), as outcome
@@ -315,6 +331,10 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("timeline_note.created", "quality", "timeline_note", 'Note "{entity_label}" was pinned'),
     _spec("timeline_note.updated", "quality", "timeline_note", 'Note "{entity_label}" changed: {changed}'),
     _spec("timeline_note.deleted", "quality", "timeline_note", 'Note "{entity_label}" was removed'),
+    # W23a FAIL-11: staged by routers/insights.py's dismiss on the request
+    # session (outcome), only when the insight was not dismissed already.
+    # ``entity_label`` is the insight's subject label.
+    _spec("insight.dismissed", "quality", "insight", "{actor_name} dismissed the insight: {entity_label}", "outcome", _HUMAN_OR_KEY),
     # ── configuration ───────────────────────────────────────────────────────
     _spec("project.created", "configuration", "project", "Project {entity_label} was created"),
     _spec("project.updated", "configuration", "project", "Project settings changed: {changed}"),
@@ -384,6 +404,16 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # W22b ACT-03: the acknowledge route stages it beside the job's transition
     # to queued (the acknowledgement starts a deletion). JWT only.
     _spec("retention.export_acknowledged", "configuration", "retention_policy", "{actor_name} confirmed the deletion archive was saved; deleting {count} runs", "outcome", frozenset({"user"})),
+    # W23a TRND-03: staged by routers/run_cadences.py on the request session
+    # (outcome: a rolled-back write leaves no row). ``entity_label`` is the
+    # scope ("nightly-regression" / "any run"); ``updated`` only when a field
+    # really changed, ``changed`` naming them; ``paused`` carries the until /
+    # reason the person typed.
+    _spec("run_cadence.created", "configuration", "run_cadence", "Expected runs for {entity_label} set: {summary}", "outcome", _HUMAN_OR_KEY),
+    _spec("run_cadence.updated", "configuration", "run_cadence", "Expected runs for {entity_label} changed: {changed}", "outcome", _HUMAN_OR_KEY),
+    _spec("run_cadence.deleted", "configuration", "run_cadence", "Expected runs for {entity_label} removed", "outcome", _HUMAN_OR_KEY),
+    _spec("run_cadence.paused", "configuration", "run_cadence", "Expected runs for {entity_label} paused until {until}: {reason}", "outcome", _HUMAN_OR_KEY),
+    _spec("run_cadence.resumed", "configuration", "run_cadence", "Expected runs for {entity_label} resumed", "outcome", _HUMAN_OR_KEY),
     _spec("saved_view.created", "configuration", "saved_view", "Saved view {entity_label} was created"),
     _spec("saved_view.updated", "configuration", "saved_view", "Saved view {entity_label} changed: {changed}"),
     _spec("saved_view.deleted", "configuration", "saved_view", "Saved view {entity_label} was deleted"),

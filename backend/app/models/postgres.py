@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models — all PostgreSQL tables."""
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from enum import Enum as PyEnum
 from typing import Optional
 
@@ -19,6 +19,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    Time,
     UniqueConstraint,
     func,
     text,
@@ -166,6 +167,9 @@ class NotificationEventType(str, PyEnum):
     # (the subscription's last editor and the project's QA leads) when a
     # subscription is paused after N consecutive failed deliveries.
     WEBHOOK_CIRCUIT_OPENED = "webhook.circuit_opened"
+    # TRND-03: an expected run did not arrive (run_cadence_service; opt-in, no
+    # default preference subscribes to it).
+    RUN_MISSED = "run.missed"
 
 
 # ── Models ───────────────────────────────────────────────────
@@ -1869,6 +1873,235 @@ class TimelineNote(Base):
     # Last: the attribute named ``text`` shadows sqlalchemy's ``text()`` for the
     # rest of this class body.
     text: Mapped[str] = mapped_column(String(280), nullable=False)
+
+
+class ProjectInsight(Base):
+    """One EPISODE of one detector firing on one subject (W23a FAIL-11, migration 0243).
+
+    Opened the first time an evaluation fires; CONFIRMED by every later
+    evaluation that still fires (``last_seen_at`` / ``severity`` /
+    ``evidence`` refreshed, ``detection_count`` + 1); RESOLVED once —
+    ``cleared`` (a measured evaluation judged the subject quiet) or ``stale``
+    (not confirmed for ``insight_vocab.STALE_AFTER_HOURS``). A resolved row is
+    never reopened: the next firing of the subject is a new row.
+
+    ``kind`` / ``severity`` / ``resolved_reason`` are plain strings over
+    ``insight_vocab`` (the CHECKs list the same literals, pinned by the
+    vocabulary parity test). The upsert identity is the partial unique index
+    over the OPEN rows; both partial indexes carry a ``sqlite_where`` twin, and
+    every CHECK uses only ``IN`` / ``=`` / boolean logic, so a SQLite
+    ``create_all`` still builds the table. No FK targets ``test_runs``: the
+    evidence carries run ids as values.
+    """
+
+    __tablename__ = "project_insights"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('perf_drift', 'flake_rising', 'coverage_drop', 'cost_budget')",
+            name="ck_project_insights_kind",
+        ),
+        CheckConstraint("severity IN ('low', 'medium', 'high')", name="ck_project_insights_severity"),
+        CheckConstraint(
+            "resolved_reason IS NULL OR resolved_reason IN ('cleared', 'stale')",
+            name="ck_project_insights_resolved_reason",
+        ),
+        CheckConstraint("(resolved_at IS NULL) = (resolved_reason IS NULL)", name="ck_project_insights_resolved_pair"),
+        Index(
+            "uq_project_insights_open", "project_id", "kind", "subject_key", "window_key",
+            unique=True,
+            postgresql_where=text("resolved_at IS NULL"),
+            sqlite_where=text("resolved_at IS NULL"),
+        ),
+        Index("ix_project_insights_project_last_seen", "project_id", "last_seen_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    #: ``insight_vocab.INSIGHT_KINDS``.
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: "suite:<lower(trim(suite))>" | "test:<fingerprint>" | "project" | "budget".
+    subject_key: Mapped[str] = mapped_column(String(600), nullable=False)
+    #: The display name (suite / test name as stored); rendered as React text only.
+    subject_label: Mapped[str] = mapped_column(String(1000), nullable=False)
+    #: "7d" | "month:YYYY-MM" — the comparison the detector makes.
+    window_key: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: The latest evaluation's; ``insight_vocab.INSIGHT_SEVERITIES``.
+    severity: Mapped[str] = mapped_column(String(10), nullable=False)
+    #: Per kind (numbers, ids, names; no user free text).
+    evidence: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    #: The last evaluation that confirmed it.
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: Confirmations in this episode (not a dedup key).
+    detection_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: ``insight_vocab.INSIGHT_RESOLVE_REASONS``; set iff ``resolved_at`` is.
+    resolved_reason: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    dismissed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    dismissed_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: Snapshot at dismissal (full name, else the username — never an e-mail);
+    #: still says who after the user is gone.
+    dismissed_by_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+
+class InsightDetectorState(Base):
+    """The last evaluation of each detector for each project (W23a FAIL-11, migration 0243).
+
+    Absence is not health: a detector that could not measure stores
+    ``measured = False`` with a ``reason_code`` (an ``insight_vocab.NOT_MEASURED``
+    key), and the list shows that sentence instead of "no insights".
+    """
+
+    __tablename__ = "insight_detector_states"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('perf_drift', 'flake_rising', 'coverage_drop', 'cost_budget')",
+            name="ck_insight_detector_states_kind",
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    kind: Mapped[str] = mapped_column(String(20), primary_key=True)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    measured: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    #: A ``NOT_MEASURED`` key; NULL when measured (``perf_tests_flag_off`` for perf's half-measured case).
+    reason_code: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    #: Subjects the detector could judge.
+    subjects_measured: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    #: Subjects firing (before the ``MAX_SUBJECTS_PER_DETECTOR`` cap).
+    firing: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+
+
+class RunCadence(Base):
+    """One expected run cadence: "a run of <suite | any> arrives by <time>" (W23a TRND-03, migration 0244).
+
+    TestLookup's own EXPECTATION — nothing reads or writes CI; pausing it
+    pauses the expectation and its alerts, nothing else. ``mode`` is
+    ``weekly`` (``weekdays`` bitmask, bit i = ``run_cadence_vocab.WEEKDAYS[i]``,
+    + ``expected_by``, the LOCAL wall-clock deadline) or ``cron`` (a
+    normalised ``m h * * dow``); the CHECKs keep the two shapes exclusive.
+    ``suite_key`` is the lower + trimmed suite (NULL = any run of the
+    project); the two partial unique indexes allow one "any run" cadence and
+    one cadence per suite per project, each with a ``sqlite_where`` twin.
+    ``effective_from`` is when the CURRENT definition took effect;
+    ``checked_through`` is the beat's cursor (the last decided window end).
+    """
+
+    __tablename__ = "run_cadences"
+    __table_args__ = (
+        CheckConstraint("mode IN ('weekly', 'cron')", name="ck_run_cadences_mode"),
+        CheckConstraint(
+            "(mode = 'weekly' AND weekdays BETWEEN 1 AND 127 AND expected_by IS NOT NULL AND cron IS NULL) "
+            "OR (mode = 'cron' AND cron IS NOT NULL AND weekdays IS NULL AND expected_by IS NULL)",
+            name="ck_run_cadences_mode_fields",
+        ),
+        CheckConstraint("grace_minutes BETWEEN 0 AND 720", name="ck_run_cadences_grace"),
+        CheckConstraint(
+            "(paused_until IS NULL) = (paused_reason IS NULL) AND (paused_until IS NULL) = (paused_at IS NULL)",
+            name="ck_run_cadences_pause_fields",
+        ),
+        CheckConstraint("(suite_name IS NULL) = (suite_key IS NULL)", name="ck_run_cadences_suite_pair"),
+        Index(
+            "uq_run_cadences_project_any", "project_id",
+            unique=True,
+            postgresql_where=text("suite_key IS NULL"),
+            sqlite_where=text("suite_key IS NULL"),
+        ),
+        Index(
+            "uq_run_cadences_project_suite", "project_id", "suite_key",
+            unique=True,
+            postgresql_where=text("suite_key IS NOT NULL"),
+            sqlite_where=text("suite_key IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    #: As typed (trimmed); NULL = any run of the project.
+    suite_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    #: ``analytics_scope.suite_keys([suite_name])[0]`` (lower + trim); NULL iff ``suite_name`` is.
+    suite_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    #: ``run_cadence_vocab.CADENCE_MODES``.
+    mode: Mapped[str] = mapped_column(String(10), nullable=False)
+    #: Weekly only: bitmask 1..127, bit i = ``WEEKDAYS[i]`` (Mon = bit 0).
+    weekdays: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)
+    #: Weekly only: the LOCAL wall-clock deadline (no tz), minute precision.
+    expected_by: Mapped[Optional[time]] = mapped_column(Time, nullable=True)
+    #: Cron only: normalised "m h * * dow" (single spaces).
+    cron: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    grace_minutes: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=60, server_default=text("60"))
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    checked_through: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    paused_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    paused_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    paused_reason: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    paused_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    # Last: the attribute named ``timezone`` shadows ``datetime.timezone`` for
+    # the rest of this class body. IANA name, validated with ``ZoneInfo``.
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class RunCadenceWindow(Base):
+    """What the cadence beat DECIDED for one expected window (W23a TRND-03, migration 0244).
+
+    The window of deadline *k* is ``(deadline[k-1] + grace, deadline[k] +
+    grace]`` (UTC). ``outcome`` is ``met`` / ``missed`` / ``paused``
+    (``run_cadence_vocab.WINDOW_OUTCOMES``); unique on ``(cadence_id,
+    window_start)``, so a redelivered tick decides nothing twice and a later
+    resume never rewrites history. ``project_id`` is denormalised for the
+    status read.
+    """
+
+    __tablename__ = "run_cadence_windows"
+    __table_args__ = (
+        CheckConstraint("outcome IN ('met', 'missed', 'paused')", name="ck_run_cadence_windows_outcome"),
+        CheckConstraint("window_end > window_start", name="ck_run_cadence_windows_range"),
+        UniqueConstraint("cadence_id", "window_start", name="uq_run_cadence_windows_cadence_start"),
+        Index("ix_run_cadence_windows_project_deadline", "project_id", "deadline"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cadence_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("run_cadences.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    #: Exclusive lower bound (UTC).
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: Inclusive upper bound = deadline + grace (UTC).
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    #: The expected-by instant, grace excluded (UTC).
+    deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(10), nullable=False)
+    #: Matching runs in the window.
+    run_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    #: The earliest matching run's ``created_at``.
+    first_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
 
 
 class NotificationPreference(Base):
