@@ -9,6 +9,12 @@ No LLM calls — uses existing AIAnalysis records + FailureCluster data.
 Consumed by:
   - GET /api/v1/runs/{run_id}/baseline-diff   (direct endpoint)
   - run_intelligence_service.get_run_intelligence()  (inline widget)
+
+W23b FAIL-13: the drift rule lives in two PURE functions. ``legacy_config_drift``
+is ``/baseline-diff``'s unchanged branch / namespace list; ``config_drift`` is the
+Changes tab's answer (``regression_diff_service`` calls it against the tab's own
+baseline): the run context's dependencies, runtime, images and allowlisted env,
+the ``environment`` column and the run fields, with an honest ``context_state``.
 """
 from __future__ import annotations
 
@@ -30,6 +36,7 @@ from app.models.postgres import (
     TestStatus,
 )
 from app.services.cluster_snapshot import is_current_snapshot
+from app.services.run_context_vocab import DRIFT_ENTRIES_MAX, DRIFT_HASH_PREFIX, DRIFT_SECTIONS
 
 logger = logging.getLogger("services.run_diff")
 
@@ -92,6 +99,115 @@ def _classify_cluster(
     if product_bug_count > 0:
         return RegressionClassification.PRODUCT_BUG
     return RegressionClassification.NEW_REGRESSION
+
+
+# ── Configuration drift (pure; every field read through getattr) ─────────────
+
+
+def legacy_config_drift(run: Any, baseline: Any) -> list[dict]:
+    """``/baseline-diff``'s drift list, exactly as before W23b: branch and OCP
+    namespace, ``{field, old_value, new_value}`` (its stored ``RunBaseline`` row
+    keeps this shape)."""
+    config_drift: list[dict] = []
+    run_branch, base_branch = getattr(run, "branch", None), getattr(baseline, "branch", None)
+    if run_branch != base_branch and (run_branch or base_branch):
+        config_drift.append({
+            "field": "branch",
+            "old_value": base_branch,
+            "new_value": run_branch,
+        })
+    run_ns, base_ns = getattr(run, "ocp_namespace", None), getattr(baseline, "ocp_namespace", None)
+    if run_ns != base_ns and (run_ns or base_ns):
+        config_drift.append({
+            "field": "ocp_namespace",
+            "old_value": base_ns,
+            "new_value": run_ns,
+        })
+    return config_drift
+
+
+def _context_of(obj: Any) -> Optional[dict]:
+    value = getattr(obj, "run_context", None)
+    return value if isinstance(value, dict) else None
+
+
+def _present(value: Any) -> Optional[str]:
+    """A compared value as text; ``None`` and ``""`` are both absent."""
+    if value is None:
+        return None
+    text = str(value)
+    return text if text != "" else None
+
+
+def _section(ctx: Optional[dict], name: str) -> dict:
+    value = (ctx or {}).get(name)
+    return value if isinstance(value, dict) else {}
+
+
+def _diff_pairs(section: str, old_map: dict, new_map: dict, *, prefix: Optional[int] = None) -> list[dict]:
+    """Entries for one section: keys ascending; old = the baseline's, new = the run's.
+    Values are compared in full; a ``prefix`` shortens only what is shown."""
+    entries: list[dict] = []
+    for key in sorted({str(k) for k in (*old_map, *new_map)}):
+        old, new = _present(old_map.get(key)), _present(new_map.get(key))
+        if old == new:
+            continue
+        change = "changed" if old is not None and new is not None else ("added" if new is not None else "removed")
+        if prefix is not None:
+            old, new = (old[:prefix] if old else old), (new[:prefix] if new else new)
+        entries.append({"section": section, "key": key, "change": change, "old": old, "new": new})
+    return entries
+
+
+def config_drift(run: Any, baseline: Any) -> dict:
+    """The ``ConfigDrift`` body of the Changes tab: this run against the tab's own baseline.
+
+    ``context_state`` says whose run context was recorded; the four context
+    sections (dependencies, runtime, images, env) are compared only when BOTH
+    were. The ``environment`` column and the run fields (branch, OCP namespace)
+    are always compared. A run or baseline without a context is "not recorded
+    by this reporter", never "no drift". At most ``DRIFT_ENTRIES_MAX`` entries;
+    ``entries_total`` is the full count."""
+    run_ctx, base_ctx = _context_of(run), _context_of(baseline)
+    if run_ctx is not None and base_ctx is not None:
+        state = "recorded"
+    elif base_ctx is not None:
+        state = "run_missing"
+    elif run_ctx is not None:
+        state = "baseline_missing"
+    else:
+        state = "both_missing"
+
+    by_section: dict[str, list[dict]] = {}
+    if state == "recorded":
+        by_section["dependencies"] = _diff_pairs(
+            "dependencies", _section(base_ctx, "dependency_fingerprints"), _section(run_ctx, "dependency_fingerprints"),
+            prefix=DRIFT_HASH_PREFIX,
+        )
+        by_section["runtime"] = _diff_pairs("runtime", _section(base_ctx, "runtime"), _section(run_ctx, "runtime"))
+        by_section["images"] = _diff_pairs(
+            "images", _section(base_ctx, "image_digests"), _section(run_ctx, "image_digests"),
+        )
+        by_section["env"] = _diff_pairs("env", _section(base_ctx, "env"), _section(run_ctx, "env"))
+    by_section["environment"] = _diff_pairs(
+        "environment",
+        {"environment": getattr(baseline, "environment", None)},
+        {"environment": getattr(run, "environment", None)},
+    )
+    by_section["run"] = _diff_pairs(
+        "run",
+        {"branch": getattr(baseline, "branch", None), "ocp_namespace": getattr(baseline, "ocp_namespace", None)},
+        {"branch": getattr(run, "branch", None), "ocp_namespace": getattr(run, "ocp_namespace", None)},
+    )
+    entries = [entry for section in DRIFT_SECTIONS for entry in by_section.get(section, [])]
+    build_number = getattr(baseline, "build_number", None)
+    return {
+        "baseline_run_id": str(getattr(baseline, "id", "")),
+        "baseline_build_number": str(build_number) if build_number is not None else None,
+        "context_state": state,
+        "entries": entries[:DRIFT_ENTRIES_MAX],
+        "entries_total": len(entries),
+    }
 
 
 async def get_baseline_diff(
@@ -252,20 +368,9 @@ async def get_baseline_diff(
             "same_commit": False,
         }
 
-    # ── Config/environment drift ─────────────────────────────────────────────
-    config_drift: list[dict] = []
-    if run.branch != baseline.branch and (run.branch or baseline.branch):
-        config_drift.append({
-            "field": "branch",
-            "old_value": baseline.branch,
-            "new_value": run.branch,
-        })
-    if run.ocp_namespace != baseline.ocp_namespace and (run.ocp_namespace or baseline.ocp_namespace):
-        config_drift.append({
-            "field": "ocp_namespace",
-            "old_value": baseline.ocp_namespace,
-            "new_value": run.ocp_namespace,
-        })
+    # ── Config/environment drift (the legacy two fields; the Changes tab's
+    # richer drift is config_drift(), in the regression-diff answer) ─────────
+    legacy_drift = legacy_config_drift(run, baseline)
 
     # ── Selection reason ─────────────────────────────────────────────────────
     selection_reason = "latest_passing"
@@ -283,7 +388,7 @@ async def get_baseline_diff(
         "current_suite_count": len(current_suites),
         "baseline_suite_count": len(baseline_suites),
         "commit_range": commit_range,
-        "config_drift": config_drift,
+        "config_drift": legacy_drift,
         "selection_reason": selection_reason,
     }
 
@@ -315,7 +420,7 @@ async def get_baseline_diff(
                     baseline_build_number=baseline.build_number,
                     pass_rate_delta=pass_rate_delta,
                     commit_range=commit_range,
-                    config_drift=config_drift if config_drift else None,
+                    config_drift=legacy_drift if legacy_drift else None,
                 ))
 
             existing_diff = await write_db.execute(

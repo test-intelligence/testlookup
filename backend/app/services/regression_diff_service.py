@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.postgres import RunBaseline, TestCase, TestRun
 from app.models.schemas import CommitRangeStatus, RegressionDiffCommit
+from app.services.run_diff_service import config_drift
 
 logger = logging.getLogger("services.regression_diff")
 
@@ -184,7 +185,9 @@ async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
     ``commit_range_status`` saying why no commits are listed. Both answers
     (baseline found or not) carry ``baseline_purged`` — ``{"build_number",
     "purged_at"}`` when the retention purge removed this run's baseline, else
-    None (W22a F-7). Read-only.
+    None (W22a F-7). The baseline-found answer also carries ``config_drift``
+    (``run_diff_service.config_drift`` against that baseline) and each new
+    failure's ``test_fingerprint`` (W23b). Read-only.
     """
     from app.services import commit_attribution_service
 
@@ -236,9 +239,10 @@ async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
     )
     baseline_failed_fps = {r.test_fingerprint for r in baseline_failed.all() if r.test_fingerprint}
 
-    # New failures = in current but not in baseline
+    # New failures = in current but not in baseline. The fingerprint travels
+    # with each (W23b FAIL-12: the tab's "Narrow" opens the bisect read for it).
     new_failing = [
-        {"test_name": info["test_name"], "suite_name": info["suite_name"]}
+        {"test_name": info["test_name"], "suite_name": info["suite_name"], "test_fingerprint": fp}
         for fp, info in current_failed_fps.items()
         if fp not in baseline_failed_fps
     ][:50]
@@ -271,4 +275,7 @@ async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
         "commit_count": len(commits),
         "commit_range_status": status.model_dump(mode="json"),
         "baseline_purged": purged,
+        # W23b FAIL-13: the run context / environment / run-field drift against
+        # THIS baseline (the one the tab prints); pure, no read.
+        "config_drift": config_drift(run, baseline),
     }
