@@ -7404,6 +7404,346 @@
         "title": "BillingOverviewResponse",
         "type": "object"
       },
+      "BisectCommit": {
+        "properties": {
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "commit_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Url"
+          },
+          "committed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Committed At"
+          },
+          "message": {
+            "default": "",
+            "title": "Message",
+            "type": "string"
+          },
+          "rationale": {
+            "additionalProperties": true,
+            "title": "Rationale",
+            "type": "object"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha"
+          }
+        },
+        "required": [
+          "sha",
+          "score",
+          "rationale"
+        ],
+        "title": "BisectCommit",
+        "type": "object"
+      },
+      "BisectCompare": {
+        "properties": {
+          "cached": {
+            "default": false,
+            "title": "Cached",
+            "type": "boolean"
+          },
+          "caveat": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Caveat"
+          },
+          "commit_count": {
+            "default": 0,
+            "title": "Commit Count",
+            "type": "integer"
+          },
+          "commits": {
+            "items": {
+              "$ref": "#/components/schemas/BisectCommit"
+            },
+            "title": "Commits",
+            "type": "array"
+          },
+          "has_location_signal": {
+            "default": false,
+            "title": "Has Location Signal",
+            "type": "boolean"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "run_level_commit_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Level Commit Count"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "BisectCompare",
+        "type": "object"
+      },
+      "BisectResponse": {
+        "properties": {
+          "anchor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anchor"
+          },
+          "bad": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BisectRunRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bounded": {
+            "default": false,
+            "title": "Bounded",
+            "type": "boolean"
+          },
+          "compare": {
+            "$ref": "#/components/schemas/BisectCompare"
+          },
+          "fallback_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Branch"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "good": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BisectRunRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "narrowed_from": {
+            "default": "unavailable",
+            "title": "Narrowed From",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "runs_read": {
+            "default": 0,
+            "title": "Runs Read",
+            "type": "integer"
+          },
+          "series_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Series Branch"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "streak_length": {
+            "default": 0,
+            "title": "Streak Length",
+            "type": "integer"
+          },
+          "test_name": {
+            "title": "Test Name",
+            "type": "string"
+          },
+          "untested_count": {
+            "default": 0,
+            "title": "Untested Count",
+            "type": "integer"
+          },
+          "untested_runs": {
+            "items": {
+              "$ref": "#/components/schemas/BisectRunRef"
+            },
+            "title": "Untested Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "run_id",
+          "fingerprint",
+          "test_name",
+          "state",
+          "compare",
+          "generated_at"
+        ],
+        "title": "BisectResponse",
+        "type": "object"
+      },
+      "BisectRunRef": {
+        "properties": {
+          "branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch"
+          },
+          "build_number": {
+            "title": "Build Number",
+            "type": "string"
+          },
+          "ci_run_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ci Run Url"
+          },
+          "commit_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Hash"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "build_number",
+          "created_at",
+          "outcome"
+        ],
+        "title": "BisectRunRef",
+        "type": "object"
+      },
       "Body_draft_release_phases_api_v1_releases__release_id__phases_generate_post": {
         "properties": {
           "file": {
@@ -7532,6 +7872,11 @@
             "default": true,
             "title": "Run Ai",
             "type": "boolean"
+          },
+          "run_context": {
+            "maxLength": 16384,
+            "title": "Run Context",
+            "type": "string"
           }
         },
         "required": [
@@ -18995,6 +19340,16 @@
             "title": "Results",
             "type": "array"
           },
+          "run_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "trigger_source": {
             "anyOf": [
               {
@@ -22668,6 +23023,16 @@
             ],
             "title": "Release Name"
           },
+          "run_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "suite_name": {
             "anyOf": [
               {
@@ -23092,6 +23457,16 @@
               }
             ],
             "title": "Release Name"
+          },
+          "run_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "total_tests": {
             "anyOf": [
@@ -35697,6 +36072,74 @@
           "count"
         ],
         "title": "RunCompareTransition",
+        "type": "object"
+      },
+      "RunContext": {
+        "description": "``run_context`` on ``IngestPayload`` / ``LiveSessionCreate`` / ``LiveStreamMeta`` and the\n``/ingest/file`` form (W23b FAIL-13). An unknown future SECTION is dropped, never stored;\ninside a section the rules are strict. Keys are compared EXACTLY (``ENV_ALLOWLIST`` is\ncase-sensitive, as environments are on Linux). ``model_dump(exclude_none=True)`` is the\nstored form (env values already redacted).",
+        "properties": {
+          "dependency_fingerprints": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dependency Fingerprints"
+          },
+          "env": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Env"
+          },
+          "image_digests": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Digests"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime"
+          },
+          "v": {
+            "default": 1,
+            "title": "V",
+            "type": "integer"
+          }
+        },
+        "title": "RunContext",
         "type": "object"
       },
       "RunSignatureBatchResponse": {
@@ -84705,6 +85148,84 @@
         "summary": "Get Run Baseline Diff",
         "tags": [
           "Run Intelligence"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/bisect": {
+      "get": {
+        "description": "Narrow one failing test of the run to its own last pass (W23b FAIL-12).\n\nThe path run is guarded by ``require_run_access`` (VIEWER included: a\nread); the QUERY ``fingerprint`` is scoped here to a test case OF THAT RUN\n-- another run's, another project's or an unknown fingerprint is the same\n404. A git-host failure, a timeout or Redis being down is a 200 whose\n``compare.state`` / ``compare.reason`` says so, never an error status. A\nGET: no Postgres write, no lazy resolve.",
+        "operationId": "get_run_bisect_api_v1_runs__run_id__bisect_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Fingerprint of a test case of THIS run",
+            "in": "query",
+            "name": "fingerprint",
+            "required": true,
+            "schema": {
+              "description": "Fingerprint of a test case of THIS run",
+              "maxLength": 64,
+              "minLength": 1,
+              "title": "Fingerprint",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BisectResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Run Bisect",
+        "tags": [
+          "Commit Attribution"
         ]
       }
     },

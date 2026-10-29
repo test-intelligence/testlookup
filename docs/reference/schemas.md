@@ -7834,6 +7834,366 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## BisectCommit
+
+```json
+{
+  "properties": {
+    "author": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Author"
+    },
+    "commit_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Commit Url"
+    },
+    "committed_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Committed At"
+    },
+    "message": {
+      "default": "",
+      "title": "Message",
+      "type": "string"
+    },
+    "rationale": {
+      "additionalProperties": true,
+      "title": "Rationale",
+      "type": "object"
+    },
+    "score": {
+      "title": "Score",
+      "type": "number"
+    },
+    "sha": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Sha"
+    }
+  },
+  "required": [
+    "sha",
+    "score",
+    "rationale"
+  ],
+  "title": "BisectCommit",
+  "type": "object"
+}
+```
+
+## BisectCompare
+
+```json
+{
+  "properties": {
+    "cached": {
+      "default": false,
+      "title": "Cached",
+      "type": "boolean"
+    },
+    "caveat": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Caveat"
+    },
+    "commit_count": {
+      "default": 0,
+      "title": "Commit Count",
+      "type": "integer"
+    },
+    "commits": {
+      "items": {
+        "$ref": "#/components/schemas/BisectCommit"
+      },
+      "title": "Commits",
+      "type": "array"
+    },
+    "has_location_signal": {
+      "default": false,
+      "title": "Has Location Signal",
+      "type": "boolean"
+    },
+    "host": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Host"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "run_level_commit_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Run Level Commit Count"
+    },
+    "state": {
+      "title": "State",
+      "type": "string"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "state"
+  ],
+  "title": "BisectCompare",
+  "type": "object"
+}
+```
+
+## BisectResponse
+
+```json
+{
+  "properties": {
+    "anchor": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Anchor"
+    },
+    "bad": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/BisectRunRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "bounded": {
+      "default": false,
+      "title": "Bounded",
+      "type": "boolean"
+    },
+    "compare": {
+      "$ref": "#/components/schemas/BisectCompare"
+    },
+    "fallback_branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Fallback Branch"
+    },
+    "fingerprint": {
+      "title": "Fingerprint",
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "good": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/BisectRunRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "narrowed_from": {
+      "default": "unavailable",
+      "title": "Narrowed From",
+      "type": "string"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "runs_read": {
+      "default": 0,
+      "title": "Runs Read",
+      "type": "integer"
+    },
+    "series_branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Series Branch"
+    },
+    "state": {
+      "title": "State",
+      "type": "string"
+    },
+    "streak_length": {
+      "default": 0,
+      "title": "Streak Length",
+      "type": "integer"
+    },
+    "test_name": {
+      "title": "Test Name",
+      "type": "string"
+    },
+    "untested_count": {
+      "default": 0,
+      "title": "Untested Count",
+      "type": "integer"
+    },
+    "untested_runs": {
+      "items": {
+        "$ref": "#/components/schemas/BisectRunRef"
+      },
+      "title": "Untested Runs",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "fingerprint",
+    "test_name",
+    "state",
+    "compare",
+    "generated_at"
+  ],
+  "title": "BisectResponse",
+  "type": "object"
+}
+```
+
+## BisectRunRef
+
+```json
+{
+  "properties": {
+    "branch": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Branch"
+    },
+    "build_number": {
+      "title": "Build Number",
+      "type": "string"
+    },
+    "ci_run_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ci Run Url"
+    },
+    "commit_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Commit Hash"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "outcome": {
+      "title": "Outcome",
+      "type": "string"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "build_number",
+    "created_at",
+    "outcome"
+  ],
+  "title": "BisectRunRef",
+  "type": "object"
+}
+```
+
 ## Body_draft_release_phases_api_v1_releases__release_id__phases_generate_post
 
 ```json
@@ -7975,6 +8335,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "default": true,
       "title": "Run Ai",
       "type": "boolean"
+    },
+    "run_context": {
+      "maxLength": 16384,
+      "title": "Run Context",
+      "type": "string"
     }
   },
   "required": [
@@ -20373,6 +20738,16 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Results",
       "type": "array"
     },
+    "run_context": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/RunContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "trigger_source": {
       "anyOf": [
         {
@@ -24301,6 +24676,16 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Release Name"
     },
+    "run_context": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/RunContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "suite_name": {
       "anyOf": [
         {
@@ -24750,6 +25135,16 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Release Name"
+    },
+    "run_context": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/RunContext"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "total_tests": {
       "anyOf": [
@@ -38275,6 +38670,79 @@ These are the full generated JSON Schema definitions, including required fields,
     "count"
   ],
   "title": "RunCompareTransition",
+  "type": "object"
+}
+```
+
+## RunContext
+
+```json
+{
+  "description": "``run_context`` on ``IngestPayload`` / ``LiveSessionCreate`` / ``LiveStreamMeta`` and the\n``/ingest/file`` form (W23b FAIL-13). An unknown future SECTION is dropped, never stored;\ninside a section the rules are strict. Keys are compared EXACTLY (``ENV_ALLOWLIST`` is\ncase-sensitive, as environments are on Linux). ``model_dump(exclude_none=True)`` is the\nstored form (env values already redacted).",
+  "properties": {
+    "dependency_fingerprints": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Dependency Fingerprints"
+    },
+    "env": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Env"
+    },
+    "image_digests": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Image Digests"
+    },
+    "runtime": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Runtime"
+    },
+    "v": {
+      "default": 1,
+      "title": "V",
+      "type": "integer"
+    }
+  },
+  "title": "RunContext",
   "type": "object"
 }
 ```

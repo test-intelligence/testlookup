@@ -117,7 +117,7 @@ Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_current_us
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-file: UploadFile=File(...), project_id: str=Form(...), build_number: str=Form(..., min_length=1, max_length=BUILD_NUMBER_MAX_LENGTH), branch: str=Form(None, max_length=255), commit_hash: str=Form(None, max_length=64), release_name: str=Form(None, max_length=255), format: str=Form('auto'), run_ai: bool=Form(True), ci_provider: str=Form(None, max_length=30), ci_repo: str=Form(None, max_length=300), pr_number: int=Form(None, ge=1), ci_actor: str=Form(None, max_length=120), ci_run_url: str=Form(None, max_length=1000), jenkins_job: str=Form(None, max_length=500), environment: str=Form(None, max_length=100), executed_at: datetime=Form(None), commit_range: str=Form(None), db: AsyncSession=Depends(get_db), auth: tuple[User, None]=Depends(get_api_key_context)
+file: UploadFile=File(...), project_id: str=Form(...), build_number: str=Form(..., min_length=1, max_length=BUILD_NUMBER_MAX_LENGTH), branch: str=Form(None, max_length=255), commit_hash: str=Form(None, max_length=64), release_name: str=Form(None, max_length=255), format: str=Form('auto'), run_ai: bool=Form(True), ci_provider: str=Form(None, max_length=30), ci_repo: str=Form(None, max_length=300), pr_number: int=Form(None, ge=1), ci_actor: str=Form(None, max_length=120), ci_run_url: str=Form(None, max_length=1000), jenkins_job: str=Form(None, max_length=500), environment: str=Form(None, max_length=100), executed_at: datetime=Form(None), commit_range: str=Form(None), run_context: str=Form(None, max_length=16384), db: AsyncSession=Depends(get_db), auth: tuple[User, None]=Depends(get_api_key_context)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -126,6 +126,7 @@ Direct handler error branches (dependency/service errors can add others):
 HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported format '{format}'. Expected one of: " + ', '.join(sorted(_SUPPORTED_FORMATS)))
 HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='This API key is restricted to a different project')
 HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='build_number must not be empty')
+HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.detail())
 HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Upload could not be queued')
 HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Upload storage is temporarily unavailable')
 HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"{detected_format.title()} ingestion is disabled. Ask an admin to enable the '{flag_key}' feature flag.")
@@ -206,7 +207,7 @@ Project-scoped: 404 if unknown/expired, 403 if the caller can't access the
 run's project (so a leaked/guessed task_id can't reveal another tenant's
 run).
 
-Source: [backend/app/routers/ingest.py:576](../../../backend/app/routers/ingest.py#L576).
+Source: [backend/app/routers/ingest.py:596](../../../backend/app/routers/ingest.py#L596).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_current_user_or_api_key`, `get_db`.
 
