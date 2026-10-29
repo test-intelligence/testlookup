@@ -61,6 +61,8 @@ describe('routeScope', () => {
       // W11 REL-09: a project's attribution rules; the page shows the picker prompt.
       '/releases/attribution-rules',
       '/settings/api-keys',
+      // W23a TRND-03: a project's expected run cadences; the page shows the picker prompt.
+      '/settings/expected-runs',
       '/settings/github',
       '/settings/gitlab',
       '/settings/retention',

@@ -831,6 +831,9 @@ jobs:
           tests/integration/test_migrations_0241_0242_postgres.py
           tests/integration/test_retention_export_postgres.py
           tests/integration/test_retention_inheritance_postgres.py
+          tests/integration/test_migrations_0243_0244_postgres.py
+          tests/integration/test_insights_postgres.py
+          tests/integration/test_run_cadences_postgres.py
           tests/integration/test_defects_list_fields_postgres.py
           tests/integration/test_analytics_scope_postgres.py
           tests/integration/test_analytics_epoch_redis_postgres.py

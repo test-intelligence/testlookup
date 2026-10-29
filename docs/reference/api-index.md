@@ -316,6 +316,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/projects/{project_id}/github-integration` | Get Github Integration | [GitHub Integration](api/github-integration.md) |
 | PUT | `/api/v1/projects/{project_id}/github-integration` | Upsert Github Integration | [GitHub Integration](api/github-integration.md) |
 | POST | `/api/v1/projects/{project_id}/github-integration/test` | Test Github Integration | [GitHub Integration](api/github-integration.md) |
+| GET | `/api/v1/projects/{project_id}/insights` | List Project Insights | [Insights](api/insights.md) |
+| POST | `/api/v1/projects/{project_id}/insights/{insight_id}/dismiss` | Dismiss Project Insight | [Insights](api/insights.md) |
 | GET | `/api/v1/projects/{project_id}/integrations/gitlab` | Get Gitlab Integration | [GitLab Integration](api/gitlab-integration.md) |
 | PUT | `/api/v1/projects/{project_id}/integrations/gitlab` | Upsert Gitlab Integration | [GitLab Integration](api/gitlab-integration.md) |
 | POST | `/api/v1/projects/{project_id}/integrations/gitlab/test` | Test Gitlab Integration | [GitLab Integration](api/gitlab-integration.md) |
@@ -357,6 +359,13 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/projects/{project_id}/retention-policy/preview` | Preview Retention Purge | [Retention](api/retention.md) |
 | POST | `/api/v1/projects/{project_id}/retention-policy/purge` | Enqueue Retention Purge | [Retention](api/retention.md) |
 | GET | `/api/v1/projects/{project_id}/reviews` | List Reviews | [Reviews](api/reviews.md) |
+| GET | `/api/v1/projects/{project_id}/run-cadences` | List Run Cadences | [Expected runs](api/expected-runs.md) |
+| POST | `/api/v1/projects/{project_id}/run-cadences` | Create Run Cadence | [Expected runs](api/expected-runs.md) |
+| GET | `/api/v1/projects/{project_id}/run-cadences/status` | Run Cadence Status | [Expected runs](api/expected-runs.md) |
+| DELETE | `/api/v1/projects/{project_id}/run-cadences/{cadence_id}` | Delete Run Cadence | [Expected runs](api/expected-runs.md) |
+| PATCH | `/api/v1/projects/{project_id}/run-cadences/{cadence_id}` | Update Run Cadence | [Expected runs](api/expected-runs.md) |
+| POST | `/api/v1/projects/{project_id}/run-cadences/{cadence_id}/pause` | Pause Run Cadence | [Expected runs](api/expected-runs.md) |
+| POST | `/api/v1/projects/{project_id}/run-cadences/{cadence_id}/resume` | Resume Run Cadence | [Expected runs](api/expected-runs.md) |
 | GET | `/api/v1/projects/{project_id}/storage` | Get Project Storage | [Retention](api/retention.md) |
 | GET | `/api/v1/projects/{project_id}/timeline-notes` | List Timeline Notes | [Timeline notes](api/timeline-notes.md) |
 | POST | `/api/v1/projects/{project_id}/timeline-notes` | Create Timeline Note | [Timeline notes](api/timeline-notes.md) |
@@ -700,4 +709,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **691 HTTP operations**, **584 paths**, **88 domain pages**.
+Total: **700 HTTP operations**, **591 paths**, **90 domain pages**.

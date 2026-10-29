@@ -32,6 +32,15 @@ vi.mock('@/services/savedViewsService', () => ({
   updateSavedView: vi.fn(),
   deleteSavedView: vi.fn(),
 }))
+// W23a: Trends' expected-run status (no cadence) and Overview's insights card read hooks of their own.
+vi.mock('@/hooks/useRunCadences', async () => {
+  const { cadenceStatus } = await import('@/test/insightCadenceMocks')
+  return { useRunCadenceStatus: () => ({ data: cadenceStatus('none'), error: undefined, isLoading: false, mutate: async () => undefined }) }
+})
+vi.mock('@/hooks/useInsights', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useInsights')>()),
+  useInsights: () => ({ data: null, error: undefined, isLoading: false, mutate: async () => undefined }),
+}))
 vi.mock('@/hooks/useMetrics', () => {
   const d = () => ({ data: undefined, isLoading: false })
   return {
