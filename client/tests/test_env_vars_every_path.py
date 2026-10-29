@@ -98,6 +98,26 @@ def _trusts_only(bundle: str) -> Callable[[Any], bool]:
     return check
 
 
+#: A digest is hex by definition (``sha256:<64 hex>``); not a secret sentinel.
+_IMAGE_DIGEST = "sha256:" + "0f1e2d3c4b5a6978" * 4
+_LOCKFILE_BYTES = b"[[package]]\nname = \"rootsentinel\"\n"
+
+
+def _lockfile_root(tmp_path: Path) -> str:
+    """A directory OTHER than the working one, holding a poetry.lock."""
+    root = tmp_path / "lockfile-root"
+    root.mkdir()
+    (root / "poetry.lock").write_bytes(_LOCKFILE_BYTES)
+    return str(root)
+
+
+def _hashes_the_root_lockfile(ctx: Any) -> bool:
+    import hashlib
+
+    fingerprints = (ctx or {}).get("dependency_fingerprints") or {}
+    return fingerprints == {"poetry.lock": hashlib.sha256(_LOCKFILE_BYTES).hexdigest()}
+
+
 #: env var → (what it changes in ``Wire.told()``, value to set, expected).
 #: ``expected`` may be a predicate. ``None`` as the value means "computed".
 ENV_EFFECTS: dict[str, tuple[str, Any, Any]] = {
@@ -123,6 +143,14 @@ ENV_EFFECTS: dict[str, tuple[str, Any, Any]] = {
     "TESTLOOKUP_CI_RUN_URL":   ("ci_run_url", "https://ci.test/run/1", "https://ci.test/run/1"),
     "TESTLOOKUP_COMMIT_RANGE": ("commit_range_enabled", "0", False),
     "TESTLOOKUP_COMMIT_RANGE_BASE": ("commit_range_base", "origin/release", "origin/release"),
+    # Run context (W23b FAIL-13): the typed ``run_context`` field each path sends.
+    "TESTLOOKUP_RUN_CONTEXT":  ("run_context", "0", None),
+    "TESTLOOKUP_RUN_CONTEXT_ROOT": ("run_context", None, None),
+    "TESTLOOKUP_RUNTIME":      ("run_context", "java=21.0.2", lambda ctx: (ctx or {}).get("runtime", {}).get("java") == "21.0.2"),
+    "TESTLOOKUP_IMAGE_DIGESTS": (
+        "run_context", "app=" + _IMAGE_DIGEST,
+        lambda ctx: (ctx or {}).get("image_digests") == {"app": _IMAGE_DIGEST},
+    ),
 }
 
 
@@ -144,6 +172,9 @@ def test_env_var_reaches_the_server_on_every_path(wire, monkeypatch, tmp_path, p
     if env_var == "TESTLOOKUP_CA_CERT":
         value = _ca_bundle(tmp_path)
         expected = _trusts_only(value)
+    if env_var == "TESTLOOKUP_RUN_CONTEXT_ROOT":
+        value = _lockfile_root(tmp_path)
+        expected = _hashes_the_root_lockfile
     monkeypatch.setenv(env_var, value)
 
     run()

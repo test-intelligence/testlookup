@@ -330,6 +330,10 @@ async def ingest_file(
     # list of ``{sha, author, message, files}`` the CLI can supply so suspect
     # ranking needs no outbound VCS call. Parsed + bounded below.
     commit_range: str = Form(None),
+    # Run context (FAIL-13): the CLI's runtime / lockfile / image / allowlisted-env
+    # context as JSON text. Validated and redacted by ``schemas.RunContext`` below,
+    # BEFORE any storage write or Celery kwarg; a malformed one is a 422.
+    run_context: str = Form(None, max_length=16384),
     db: AsyncSession = Depends(get_db),
     auth: tuple[User, None] = Depends(get_api_key_context),
 ):
@@ -349,12 +353,12 @@ async def ingest_file(
     # (``_NulFreeInput``); multipart fields arrive here as plain strings.
     (
         build_number, branch, commit_hash, release_name, ci_provider, ci_repo,
-        ci_actor, ci_run_url, jenkins_job, environment, commit_range,
+        ci_actor, ci_run_url, jenkins_job, environment, commit_range, run_context,
     ) = (
         v.replace("\x00", "") if isinstance(v, str) else v
         for v in (
             build_number, branch, commit_hash, release_name, ci_provider, ci_repo,
-            ci_actor, ci_run_url, jenkins_job, environment, commit_range,
+            ci_actor, ci_run_url, jenkins_job, environment, commit_range, run_context,
         )
     )
     if not build_number:
@@ -370,6 +374,17 @@ async def ingest_file(
                 + ", ".join(sorted(_SUPPORTED_FORMATS))
             ),
         )
+    # FAIL-13: parse, validate and redact the run context before anything is
+    # stored or queued, so neither object storage nor the broker sees a raw value.
+    from app.services.run_context_service import RunContextRefused, parse_form_run_context
+
+    try:
+        run_context_arg = parse_form_run_context(run_context)
+    except RunContextRefused as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.detail(),
+        ) from None
 
     current_user, bound_project_id = auth
     ensure_ingest_role(current_user)
@@ -532,6 +547,11 @@ async def ingest_file(
         executed_at=executed_at.isoformat() if executed_at else None,
         commit_range=commit_range_arg,
     )
+    if run_context_arg is not None:
+        # Already validated and redacted (``parse_form_run_context``): the broker
+        # carries the redacted form only. Absent when none was sent, so a task
+        # this router queues still binds a worker that predates the field.
+        task_kwargs["run_context"] = run_context_arg
     try:
         ingest_uploaded_file.apply_async(kwargs=task_kwargs, task_id=task_id)
     except Exception as exc:  # noqa: BLE001 — normalize broker errors for clients

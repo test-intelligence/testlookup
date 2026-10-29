@@ -21,6 +21,7 @@ from app.models.postgres import IngestionSource, LaunchStatus, Project, TestCase
 from app.models.schemas import BUILD_NUMBER_MAX_LENGTH
 from app.services.execution_time import resolve_execution_time
 from app.services.report_timings import ReportTimings
+from app.services.run_context_service import stamp_run_context, validated_or_none
 from app.services.run_environment import normalize_environment
 from app.services.run_tombstone_service import run_is_tombstoned
 from app.services.ingestion import (
@@ -162,6 +163,10 @@ async def create_run_from_payload(
     # Either supplied wire shape: a bare commit list, or the boundary-carrying
     # ``{base, head, commits}`` object (``SuppliedCommitRangeInput``).
     commit_range: Optional[Any] = None,
+    # FAIL-13: the run's runtime / dependency context as sent (the router's
+    # schema already validated + redacted it). Re-validated here once; stored
+    # fill-if-null on create, reuse and resume -- never overwriting a stored one.
+    run_context: Optional[dict] = None,
 ) -> TestRun:
     """
     Create a TestRun record for API-ingested data.
@@ -177,6 +182,7 @@ async def create_run_from_payload(
     authoritative for the caller's 202 response and ``View run`` navigation.
     """
     pid = uuid.UUID(project_id)
+    ctx = validated_or_none(run_context, run_id=run_id)
     ingestion_identity = (
         build_ingestion_identity(
             project_id=pid,
@@ -232,6 +238,7 @@ async def create_run_from_payload(
                 project=project_id,
             )
             await _store_supplied_commit_range(db, prior, commit_range)
+            stamp_run_context(prior, ctx)
             return prior
 
     effective_build = build_number
@@ -274,6 +281,8 @@ async def create_run_from_payload(
                     setattr(existing, field, value)
             if getattr(existing, "ingestion_identity", None) is None:
                 existing.ingestion_identity = ingestion_identity
+            # FAIL-13: the same fill-if-null rule for the run context.
+            stamp_run_context(existing, ctx)
             # US-8.1 — persist a caller-supplied commit range (air-gapped
             # attribution path). Staged under this session; caller commits.
             await _store_supplied_commit_range(db, existing, commit_range)
@@ -324,6 +333,8 @@ async def create_run_from_payload(
         broken_tests=0,
         start_time=resolve_execution_time(executed_at, context="upload"),
     )
+    # FAIL-13: ``test_runs.run_context`` (NULL = "not recorded by this reporter").
+    stamp_run_context(run, ctx)
     db.add(run)
     try:
         await db.flush()
@@ -342,6 +353,7 @@ async def create_run_from_payload(
                 )
             ).scalar_one_or_none()
             if winner is not None:
+                stamp_run_context(winner, ctx)
                 return winner
         raise
     # US-8.1 — persist a caller-supplied commit range (air-gapped attribution

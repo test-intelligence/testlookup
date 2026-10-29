@@ -59,6 +59,8 @@ _SDK_CONFIGS: dict[str, dict] = {
             "testlookup_reporter.py",
             "ci_context.py",
             "commit_range.py",
+            # W23b FAIL-13: the run-context collector the reporter imports.
+            "run_context.py",
             # W18 DEV-03: the Robot Framework live listener (Listener API v3).
             "testlookup_robot_listener.py",
             "pyproject.toml",
