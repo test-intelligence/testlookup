@@ -61,7 +61,8 @@ export interface RegressionDiff {
   pass_rate?: number
   baseline_pass_rate?: number
   pass_rate_delta?: number
-  new_failing_tests?: Array<{ test_name: string; suite_name: string | null }>
+  /** W23b: `test_fingerprint` (optional; an older server sends none) opens the test's narrowed range. */
+  new_failing_tests?: Array<{ test_name: string; suite_name: string | null; test_fingerprint?: string | null }>
   new_failing_count?: number
   resolved_count?: number
   commit_range?: RegressionDiffCommit[]
@@ -76,6 +77,12 @@ export interface RegressionDiff {
    * carry it; absent on an older server, `null` when nothing was purged.
    */
   baseline_purged?: RegressionDiffBaselinePurged | null
+  /**
+   * W23b FAIL-13: the configuration drift against this answer's baseline (baseline-found answers only).
+   * `unknown` on purpose: read it through `parseConfigDrift` (`types/configDrift.ts`) at the use site, so a
+   * malformed or older server value cannot type-lie; absent → the Changes tab renders exactly as before.
+   */
+  config_drift?: unknown
 }
 
 /** `baseline_purged`: the purged baseline's build (may be null) and when the purge removed it. */

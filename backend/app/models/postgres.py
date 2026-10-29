@@ -379,6 +379,9 @@ class TestRun(Base):
             "ix_test_runs_project_recommendation_created",
             "project_id", "ai_recommendation", "created_at",
         ),
+        # Migration 0245 (W23b FAIL-12): one series of a project's runs (a branch, or the runs with
+        # no branch), newest first -- the bisect narrowing's walk. Built CONCURRENTLY.
+        Index("ix_test_runs_project_branch_created", "project_id", text("coalesce(lower(branch), '')"), "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -522,6 +525,14 @@ class TestRun(Base):
     # release gate's opt-in ``perf_regression`` rule and the nightly baseline
     # sweep (``baseline_fed_through``: rows it must not feed twice).
     duration_findings: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
+    # Runtime / dependency / image / allowlisted-env context of this run (FAIL-13, migration 0245):
+    # ``{v, runtime{}, dependency_fingerprints{}, image_digests{}, env{}}`` as accepted by
+    # ``schemas.RunContext`` (validated, env values redacted BEFORE it is stored). NULL means
+    # "not recorded by this reporter", never "no drift". Written once (fill-if-null) by
+    # ``run_context_service.stamp_run_context`` on every ingest path; read by ``run_diff_service.config_drift``.
+    # Never a prompt input (the analysis prompt's ``{run_context}`` variable is a different thing).
+    run_context: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

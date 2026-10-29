@@ -2284,7 +2284,53 @@ export const FAILURES: ApiHandlers = [
       suspects: [],
     }),
   ],
+  // W23b FAIL-12: opening a row's Suspects also reads that test's narrowed range (one more read).
+  [/^\/api\/v1\/runs\/[^/]+\/bisect$/, offlineNarrowing],
 ]
+
+/**
+ * W23b FAIL-12: the default `GET /api/v1/runs/{run_id}/bisect?fingerprint=` answer -- the homelab's, in the REAL
+ * `BisectResponse` shape: narrowed on the run's branch (`main`), last passed in build 238 (`runs()[2]`), first
+ * failed in build 240 (`runs()[0]`), build 239 in between did not run the test, and no commit list (offline
+ * mode). `run_id` / `fingerprint` echo the request; the test's name is the top-failing row's with that
+ * fingerprint. No existing region opens Suspects, so this moves no PNG; `fixtures-bisect-drift.ts` scripts
+ * every other answer.
+ */
+export function offlineNarrowing({ url, path }: ApiRequest) {
+  const fingerprint = url.searchParams.get('fingerprint') ?? ''
+  const [bad, between, good] = runs()
+  const ref = (run: FixtureRun, outcome: string, commit: string | null) => ({
+    run_id: run.id,
+    build_number: String(run.build_number),
+    commit_hash: commit,
+    branch: run.branch,
+    created_at: run.created_at,
+    ci_run_url: null,
+    outcome,
+  })
+  return {
+    run_id: path.split('/')[4],
+    fingerprint,
+    test_name: TOP_FAILING.items.find((row) => row.test_fingerprint === fingerprint)?.test_name ?? fingerprint,
+    state: 'narrowed',
+    series_branch: bad.branch,
+    anchor: 'same_branch',
+    fallback_branch: null,
+    good: ref(good, 'pass', 'goodsentinel01'),
+    bad: ref(bad, 'fail', 'badsentinel002'),
+    streak_length: 1,
+    untested_runs: [ref(between, 'untested', null)],
+    untested_count: 1,
+    runs_read: runs().length,
+    bounded: false,
+    narrowed_from: 'green_baseline',
+    compare: {
+      state: 'unavailable', reason: 'offline_mode', host: null, cached: false, commit_count: 0, truncated: false,
+      commits: [], has_location_signal: false, caveat: null, run_level_commit_count: null,
+    },
+    generated_at: NOW.toISOString(),
+  }
+}
 
 // ── Wave 2.6: the catalogue with its flags ON ──────────────────────────────
 //

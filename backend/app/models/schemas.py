@@ -1,4 +1,5 @@
 """Pydantic v2 request/response schemas for all API endpoints."""
+import json
 import re
 import uuid
 from datetime import date, datetime
@@ -92,6 +93,22 @@ from app.services.retention_vocab import (
     FLOOR_NOTE_EXPLICIT,
     KEEP_LAST_RUNS_DEFAULT,
     PURGE_WINDOW_DEFAULT_HOUR,
+)
+# W23b FAIL-13: constants only (no app.* import inside), so a module-level import is safe.
+from app.services.run_context_vocab import (
+    CONTEXT_MAX_BYTES,
+    CONTEXT_VERSION,
+    DIGEST_RE,
+    ENV_ALLOWLIST,
+    ENV_VALUE_MAX,
+    IMAGE_NAME_RE,
+    IMAGES_MAX,
+    LOCKFILE_NAMES,
+    RUN_CONTEXT_ERRORS,
+    RUNTIME_KEY_RE,
+    RUNTIME_MAX,
+    SHA256_RE,
+    VERSION_RE,
 )
 
 
@@ -4781,6 +4798,127 @@ class SuppliedCommitRange(BaseModel):
 SuppliedCommitRangeInput = Union[List[SuppliedCommit], SuppliedCommitRange]
 
 
+# ── Run context (W23b FAIL-13) ────────────────────────────────────────────────
+# The runtime / dependency / image / allowlisted-env context a reporter sends
+# beside its results. Attacker-controlled input from an API key: every key is
+# allowlisted or pattern-checked, every section and the whole object are capped,
+# env VALUES are redacted here (before the object reaches object storage, a
+# Celery kwarg, ``extra_metadata`` or ``test_runs.run_context``). Versions,
+# hashes, image names and digests are never "cleaned": a value that does not
+# match its pattern is refused (422). The vocabulary is
+# ``services/run_context_vocab.py``; ``sdk-vectors/run_context.json`` holds the
+# cases every SDK and this model agree on.
+
+_RUNTIME_KEY_PATTERN = re.compile(RUNTIME_KEY_RE)
+_VERSION_PATTERN = re.compile(VERSION_RE)
+_SHA256_PATTERN = re.compile(SHA256_RE)
+_IMAGE_NAME_PATTERN = re.compile(IMAGE_NAME_RE)
+_DIGEST_PATTERN = re.compile(DIGEST_RE)
+_ENV_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+_LOCKFILE_NAME_SET = frozenset(LOCKFILE_NAMES)
+_ENV_ALLOWLIST_SET = frozenset(ENV_ALLOWLIST)
+
+
+def _run_context_error(code: str, **fill: Any) -> ValueError:
+    """A ``ValueError`` carrying one ``RUN_CONTEXT_ERRORS`` sentence (FastAPI renders a 422)."""
+    sentence = RUN_CONTEXT_ERRORS[code]
+    return ValueError(sentence.format(**fill) if fill else sentence)
+
+
+def _check_section_size(section: str, value: dict, cap: int) -> None:
+    if len(value) > cap:
+        raise _run_context_error("too_many", section=section, max=cap)
+
+
+class RunContext(BaseModel):
+    """``run_context`` on ``IngestPayload`` / ``LiveSessionCreate`` / ``LiveStreamMeta`` and the
+    ``/ingest/file`` form (W23b FAIL-13). An unknown future SECTION is dropped, never stored;
+    inside a section the rules are strict. Keys are compared EXACTLY (``ENV_ALLOWLIST`` is
+    case-sensitive, as environments are on Linux). ``model_dump(exclude_none=True)`` is the
+    stored form (env values already redacted)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    v: int = CONTEXT_VERSION
+    runtime: Optional[dict[str, str]] = None                  # RUNTIME_KEY_RE -> VERSION_RE, <= RUNTIME_MAX
+    dependency_fingerprints: Optional[dict[str, str]] = None  # LOCKFILE_NAMES -> SHA256_RE
+    image_digests: Optional[dict[str, str]] = None            # IMAGE_NAME_RE -> DIGEST_RE, <= IMAGES_MAX
+    env: Optional[dict[str, str]] = None                      # ENV_ALLOWLIST -> str <= ENV_VALUE_MAX, no control chars
+
+    @field_validator("v")
+    @classmethod
+    def _version(cls, value: int) -> int:
+        if value != CONTEXT_VERSION:
+            raise _run_context_error("bad_version")
+        return value
+
+    @field_validator("runtime")
+    @classmethod
+    def _runtime(cls, value: Optional[dict[str, str]]) -> Optional[dict[str, str]]:
+        if value is None:
+            return None
+        _check_section_size("runtime", value, RUNTIME_MAX)
+        for key, version in value.items():
+            if not _RUNTIME_KEY_PATTERN.match(key) or not _VERSION_PATTERN.match(version):
+                raise _run_context_error("bad_runtime")
+        return value
+
+    @field_validator("dependency_fingerprints")
+    @classmethod
+    def _dependency_fingerprints(cls, value: Optional[dict[str, str]]) -> Optional[dict[str, str]]:
+        if value is None:
+            return None
+        _check_section_size("dependency_fingerprints", value, len(LOCKFILE_NAMES))
+        for name, digest in value.items():
+            if name not in _LOCKFILE_NAME_SET:
+                raise _run_context_error("lockfile_name")
+            if not _SHA256_PATTERN.match(digest):
+                raise _run_context_error("bad_hash")
+        return value
+
+    @field_validator("image_digests")
+    @classmethod
+    def _image_digests(cls, value: Optional[dict[str, str]]) -> Optional[dict[str, str]]:
+        if value is None:
+            return None
+        _check_section_size("image_digests", value, IMAGES_MAX)
+        for name, digest in value.items():
+            if not _IMAGE_NAME_PATTERN.match(name) or not _DIGEST_PATTERN.match(digest):
+                raise _run_context_error("bad_image")
+        return value
+
+    @field_validator("env")
+    @classmethod
+    def _env(cls, value: Optional[dict[str, str]]) -> Optional[dict[str, str]]:
+        if value is None:
+            return None
+        _check_section_size("env", value, len(ENV_ALLOWLIST))
+        for key, text in value.items():
+            if key not in _ENV_ALLOWLIST_SET:
+                raise _run_context_error("env_key", keys=", ".join(ENV_ALLOWLIST))
+            if len(text) > ENV_VALUE_MAX or _ENV_CONTROL_CHARS.search(text):
+                raise _run_context_error("env_value")
+        return value
+
+    @model_validator(mode="after")
+    def _redact_and_cap(self) -> "RunContext":
+        if self.env:
+            # Lazy import: the redaction helper lives in a service module (the
+            # ingestion_sanitization precedent of ``_NulFreeInput``). A redacted value
+            # is re-capped so a stored copy re-validates (``[REDACTED_EMAIL]`` is longer
+            # than the address it replaced).
+            from app.services.run_context_service import redact_env_value  # noqa: PLC0415
+
+            self.env = {key: redact_env_value(text)[:ENV_VALUE_MAX] for key, text in self.env.items()}
+        for section in ("runtime", "dependency_fingerprints", "image_digests", "env"):
+            if not getattr(self, section):
+                setattr(self, section, None)
+        size = len(json.dumps(self.model_dump(exclude_none=True), separators=(",", ":")).encode())
+        if size > CONTEXT_MAX_BYTES:
+            raise _run_context_error("too_large")
+        return self
+
+
 # ── Live Stream Schemas ───────────────────────────────────────────────────────
 
 class _NulFreeInput(BaseModel):
@@ -4853,6 +4991,9 @@ class LiveSessionCreate(_NulFreeInput):
     # either the legacy bare list or the boundary-carrying
     # ``{base, head, commits}`` object (see ``SuppliedCommitRange``).
     commit_range: Optional[SuppliedCommitRangeInput] = None
+    # W23b FAIL-13: the run context -> LiveSession.extra_metadata["run_context"] -> the run
+    # (validated and env-redacted by ``RunContext``).
+    run_context: Optional[RunContext] = None
 
 
 class LiveSessionResponse(BaseModel):
@@ -4980,6 +5121,9 @@ class LiveStreamMeta(BaseModel):
     release_name: Optional[str] = Field(None, max_length=255)
     launch_name: Optional[str] = Field(None, max_length=255)
     metadata: Optional[dict] = None
+    # W23b FAIL-13: the run context, typed (NOT inside ``metadata``): the auto-created
+    # session's extra_metadata["run_context"] -> the run.
+    run_context: Optional[RunContext] = None
 
 
 class LiveStreamIngestRequest(_NulFreeInput):
@@ -5069,6 +5213,9 @@ class IngestPayload(_NulFreeInput):
     # ``{base, head, commits}`` object (see ``SuppliedCommitRange``) — only
     # the latter lets the backend persist the range's base ref.
     commit_range: Optional[SuppliedCommitRangeInput] = None
+    # W23b FAIL-13: the runtime / dependency / image / allowlisted-env context (validated and
+    # env-redacted by ``RunContext``, so ``model_dump()`` puts the REDACTED form in object storage).
+    run_context: Optional[RunContext] = None
 
 
 class IngestResponse(BaseModel):
@@ -5453,6 +5600,85 @@ class RegressionDiffCommit(BaseModel):              # one item of the dict's exi
     timestamp: Optional[str] = None                 # the commit's committed_at
     full_sha: Optional[str] = None
     commit_url: Optional[str] = None                # https link built server-side (_commit_html_url), else None
+
+
+# ── History bisect narrowing (W23b FAIL-12) ──────────────────
+# GET /api/v1/runs/{run_id}/bisect?fingerprint= (routers/commit_attribution.py).
+# Enum-like fields are plain str; their values live in services/bisect_vocab.py.
+
+
+class BisectRunRef(BaseModel):
+    run_id: uuid.UUID
+    build_number: str
+    commit_hash: Optional[str] = None               # the stored value, full length; the SPA shows the first 7
+    branch: Optional[str] = None
+    created_at: datetime
+    ci_run_url: Optional[str] = None                # only when it matches ^https?:// (else None)
+    outcome: str                                    # TEST_OUTCOMES: this test in that run
+
+
+class BisectCommit(BaseModel):                      # == score_commits' item + its link
+    sha: Optional[str]
+    author: Optional[str] = None
+    message: str = ""
+    committed_at: Optional[str] = None
+    score: float
+    rationale: dict[str, Any]
+    commit_url: Optional[str] = None
+
+
+class BisectCompare(BaseModel):
+    state: str                                      # COMPARE_STATES
+    reason: Optional[str] = None                    # COMPARE_REASONS; None when fetched
+    host: Optional[str] = None                      # "github" | "gitlab" (which connector answered)
+    cached: bool = False
+    commit_count: int = 0                           # commits the compare returned (<= _MAX_COMMITS = 100)
+    truncated: bool = False                         # commit_count == 100: the host's list was capped
+    commits: list[BisectCommit] = Field(default_factory=list)   # ranked, <= LISTED_COMMITS_MAX
+    has_location_signal: bool = False
+    caveat: Optional[str] = None                    # MONOREPO_CAVEAT when fetched
+    run_level_commit_count: Optional[int] = None    # len(run_commit_ranges.commits) of the run; None = no stored range
+
+
+class BisectResponse(BaseModel):
+    run_id: uuid.UUID
+    fingerprint: str
+    test_name: str
+    state: str                                      # BISECT_STATES
+    series_branch: Optional[str] = None             # the run's branch as stored; None = "runs without a branch"
+    anchor: Optional[str] = None                    # ANCHOR_CLASSES
+    fallback_branch: Optional[str] = None           # "main" / "master"
+    good: Optional[BisectRunRef] = None
+    bad: Optional[BisectRunRef] = None
+    streak_length: int = 0                          # failing runs from bad to this run, inclusive (untested not counted)
+    untested_runs: list[BisectRunRef] = Field(default_factory=list)   # strictly between good and bad, newest first, <= UNTESTED_LIST_MAX
+    untested_count: int = 0                         # all of them
+    runs_read: int = 0
+    bounded: bool = False                           # runs_read == BISECT_MAX_RUNS
+    narrowed_from: str = "unavailable"              # the run's run_commit_ranges.base_source (BASE_SOURCES), else "unavailable"
+    compare: BisectCompare
+    generated_at: datetime
+
+
+# ── Configuration drift (W23b FAIL-13) ───────────────────────
+# Returned as "config_drift" inside the regression-diff answer (run_diff_service.config_drift).
+# Enum-like fields are plain str; their values live in services/run_context_vocab.py.
+
+
+class DriftEntry(BaseModel):
+    section: str                                    # DRIFT_SECTIONS
+    key: str                                        # "branch", "ocp_namespace", "environment", "python", "poetry.lock", an image name, an env key
+    change: str                                     # DRIFT_CHANGES
+    old: Optional[str] = None                       # dependencies: the first 12 hex of each hash
+    new: Optional[str] = None
+
+
+class ConfigDrift(BaseModel):
+    baseline_run_id: uuid.UUID
+    baseline_build_number: Optional[str] = None
+    context_state: str                              # CONTEXT_STATES
+    entries: list[DriftEntry] = Field(default_factory=list)   # DRIFT_SECTIONS order, keys ascending inside a section, <= DRIFT_ENTRIES_MAX
+    entries_total: int = 0
 
 
 # ── Data & Storage Schemas ───────────────────────────────────
