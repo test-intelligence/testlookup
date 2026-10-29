@@ -52,6 +52,41 @@ locally by default.
 
 ### Added
 
+- **Cross-run insights and expected run cadences** (wave W23a, FAIL-11 +
+  TRND-03; branch `feat/df-insights-cadence-20261028`). An hourly check
+  (`detect_cross_run_insights`, minute 40) looks across each project's runs
+  with four rules, no AI: **perf drift** (suites, and tests when
+  `perf_regression_detection` is on, that the stored duration findings
+  already flag), **flake rising** (a suite's flaky tests in the last week
+  against the week before), **coverage drop** (exercised tests against the
+  snapshot a week earlier) and **AI budget** (the month's LLM budget at its
+  soft warning or cap). Findings show in an **Insights** card on Overview,
+  below the home sections, and in a fourth **Inbox › Insights** tab; a
+  detector that cannot measure says why instead of reading as "all clear",
+  and a QA engineer can **dismiss** an insight for the whole project (who
+  dismissed it is kept). Insights notify no one. Flag `cross_run_insights`,
+  on for every install. **Expected runs** (Settings › Project › Expected
+  runs, QA leads): "a run of <suite | any run> arrives by <time> on <days>
+  in <time zone>, with <grace> minutes" (or a minute/hour/weekday cron).
+  A check every 15 minutes (minutes 7/22/37/52) records each window as met,
+  missed or paused (daylight-saving days never produce a false miss), and a
+  miss sends the new **opt-in** notification "An expected run was missed"
+  (off by default, so nobody gets new mail on upgrade). **Pause** with a
+  reason and an end date stops the expectation and its alerts — it never
+  touches CI. **Behaviour change:** Trends' run-gap callout no longer
+  assumes a nightly schedule — without a configured cadence it says "No
+  expected cadence configured", with one it shows the exact misses and any
+  pause; Coverage's run dimension is "Run cadence" (met / expected) with a
+  cadence and "Days with runs" without, and the Coverage verdict no longer
+  calls a dimension that is below target "above target". Migrations `0243`
+  (insights, detector states, the flag) and `0244` (cadences, decided
+  windows). Tests: `test_insights_engine.py`, `test_insight_routes.py`,
+  `test_w23a_beats.py`, `test_run_cadence_schedule.py` (the DST instants),
+  `test_run_cadence_service.py`, `test_run_cadence_routes.py`,
+  `test_run_missed_event_parity.py`, three `*_postgres.py` modules, the
+  vitests beside each component and the specs `overview-insights`,
+  `inbox-insights`, `trends-expected-runs`, `coverage-expected-runs` and
+  `expected-runs`.
 - **Export before delete, a purge window and pause, and instance-wide
   retention defaults** (wave W22b, ACT-03 + ACT-06; branch
   `feat/df-retention-b-20261028`). A **criteria deletion** can first build an

@@ -93,8 +93,10 @@ const ROUTES: FoldRoute[] = [
       await expectDrawn(sectionFrame(p, 'overview-trend', 'Pass rate trend'), 'trend')
       await expectDrawn(sectionFrame(p, 'overview-donut', 'Status breakdown'), 'donut')
     },
-    // 1,204 / 1,241.
-    budget: 1_250,
+    // 1,204 / 1,241; W23a: 1,343 / ≈1,380 — the Insights card below the home
+    // sections (FAIL-11; its quiet default: the header, the empty sentence and
+    // the detectors' line), still inside the plan's 1,400.
+    budget: 1_400,
     target: 1_400,
     table: false,
   },
@@ -286,7 +288,8 @@ const ROUTES: FoldRoute[] = [
     // the list-page target: the index is seven groups of one-line links and
     // nothing else, in ONE column since the P5 baselines (two columns beside
     // the sub-nav cut every description to ten characters; they measured 1,288).
-    budget: 1_650,
+    // W23a: 1,651 — Settings › Project gained "Expected runs" (TRND-03).
+    budget: 1_700,
     target: 1_100,
     table: false,
   },

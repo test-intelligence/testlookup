@@ -22,6 +22,9 @@ export type NotificationEventType =
   // Duration regressions (EXEC-05): a test or suite BECAME slower than its baseline
   | 'test.newly_slow'
   | 'suite.newly_slow'
+  // Expected run cadence (TRND-03): an expected run did not arrive. Opt-in: no
+  // default preference subscribes to it.
+  | 'run.missed'
 
 export interface NotificationPreference {
   id: string

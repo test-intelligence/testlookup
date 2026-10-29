@@ -24,6 +24,8 @@ _EVENT_COLOUR = {
     # Duration regressions (EXEC-05)
     "test.newly_slow": "warning",
     "suite.newly_slow": "warning",
+    # Expected run cadence (TRND-03; opt-in, no default preference subscribes)
+    "run.missed": "warning",
 }
 
 _EVENT_EMOJI = {
@@ -45,6 +47,8 @@ _EVENT_EMOJI = {
     # Duration regressions (EXEC-05)
     "test.newly_slow": "🐢",
     "suite.newly_slow": "🐢",
+    # Expected run cadence (TRND-03)
+    "run.missed": "⏳",
 }
 
 

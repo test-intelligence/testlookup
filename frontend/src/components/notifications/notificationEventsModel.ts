@@ -8,8 +8,8 @@
  *     high_failure_rate (notification/manager.py);
  *   - `transitions_enabled` and `enabled_events` gate the seven test.*
  *     state-change events (notification_transitions.py);
- *   - ai_analysis_complete, quality_gate_failed and the two "became slower"
- *     events are governed by neither.
+ *   - ai_analysis_complete, quality_gate_failed, the two "became slower"
+ *     events and run.missed (TRND-03) are governed by neither.
  * Pure: no React, no request.
  */
 import type { NotificationEventType, TransitionPolicy } from '@/types/notifications'
@@ -47,6 +47,8 @@ export const EVENT_LABELS: Record<NotificationEventType, string> = {
   // Duration regressions (EXEC-05): one toggle stands for both.
   'test.newly_slow': 'A test or suite became slower',
   'suite.newly_slow': 'A test or suite became slower',
+  // Expected run cadence (TRND-03): opt-in, governed by no project policy switch.
+  'run.missed': 'An expected run was missed',
 }
 
 /**

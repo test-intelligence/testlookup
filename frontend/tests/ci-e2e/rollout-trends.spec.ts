@@ -78,7 +78,7 @@ const PROBE = `GET /api/v1/runs?project_id=${P}&page=1&size=1`
  * release list (`useReleases(..., { cached: true })`), so it is asked once.
  * No catalogue read: Volume shows no catalogue section (P3).
  */
-const LOAD = [
+const LOAD_ANY_TAB = [
   ...SHELL_BASE,
   `GET /api/v1/saved-views?project_id=${P}&page=trends`,
   `GET /api/v1/metrics/trends?project_id=${P}&days=14`,
@@ -93,6 +93,11 @@ const LOAD = [
   // W08 TRND-04: the window's notes (its first and last UTC day at the fixture clock; no suite selected).
   `GET /api/v1/projects/${P}/timeline-notes?from=2026-09-05&to=2026-09-18`,
 ]
+/**
+ * W23a TRND-03: the Volume tab's run-gap callout reads the expected-run status for the page's 14 days — the
+ * Volume tab's own read (a load on another tab does not ask it).
+ */
+const LOAD = [...LOAD_ANY_TAB, `GET /api/v1/projects/${P}/run-cadences/status?days=14`]
 
 /** What each catalogue tab adds to a load, every section of the tab near. */
 const TAB_READS = {
@@ -214,7 +219,7 @@ test.describe('Trends, everything on screen (1280 x 4000)', () => {
       }
       await expectNoErrorFrame(page)
       await expectNoTextEscapes(page, `Trends ${tab} at 1280`)
-      expectInventory(api, errors, [...LOAD, ...TAB_READS[tab]], `Trends ${tab}`)
+      expectInventory(api, errors, [...LOAD_ANY_TAB, ...TAB_READS[tab]], `Trends ${tab}`)
     })
   }
 

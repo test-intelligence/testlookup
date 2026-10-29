@@ -6,7 +6,8 @@
  *   the seven test.* state changes            → not sent when transitions_enabled is false,
  *                                                or when on and the event is not in enabled_events
  *   ai_analysis_complete, quality_gate_failed,
- *   test.newly_slow / suite.newly_slow         → never governed by the policy
+ *   test.newly_slow / suite.newly_slow,
+ *   run.missed (TRND-03)                       → never governed by the policy
  */
 import { describe, expect, it } from 'vitest'
 import type { NotificationEventType, TransitionPolicy } from '@/types/notifications'
@@ -36,7 +37,13 @@ function policy(over: Partial<TransitionPolicy> = {}): TransitionPolicy {
   }
 }
 
-const UNGATED: NotificationEventType[] = ['ai_analysis_complete', 'quality_gate_failed', 'test.newly_slow', 'suite.newly_slow']
+const UNGATED: NotificationEventType[] = [
+  'ai_analysis_complete',
+  'quality_gate_failed',
+  'test.newly_slow',
+  'suite.newly_slow',
+  'run.missed',
+]
 
 describe('the vocabulary', () => {
   it('TRANSITION_EVENTS is the backend order (schemas.TRANSITION_EVENT_VALUES), literally', () => {
@@ -70,6 +77,21 @@ describe('the vocabulary', () => {
     expect(slower).toHaveLength(1)
     expect(slower[0].events).toEqual(['test.newly_slow', 'suite.newly_slow'])
     expect(EVENT_OPTIONS[EVENT_OPTIONS.length - 1]).toBe(slower[0])
+  })
+
+  // W23a TRND-03 (DELIBERATE): "An expected run was missed" is offered as ONE
+  // option of its own and is governed by no project policy switch. It is
+  // opt-in on the server (not in the preference default list).
+  it('"An expected run was missed" is one option for run.missed, ungoverned', () => {
+    expect(EVENT_LABELS['run.missed']).toBe('An expected run was missed')
+    const missed = EVENT_OPTIONS.filter(o => o.events.includes('run.missed'))
+    expect(missed).toHaveLength(1)
+    expect(missed[0]).toEqual({ key: 'run.missed', label: 'An expected run was missed', events: ['run.missed'] })
+    expect(PER_RUN_EVENTS).not.toContain('run.missed')
+    expect(TRANSITION_EVENTS).not.toContain('run.missed')
+    expect(HIDDEN_EVENTS).not.toContain('run.missed')
+    expect(suppressionFor('run.missed', policy({ per_run_events_enabled: false, transitions_enabled: false, enabled_events: [] }))).toBeNull()
+    expect(optionSuppression(['run.missed'], policy({ transitions_enabled: false }))).toBeNull()
   })
 })
 

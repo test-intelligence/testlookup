@@ -97,6 +97,8 @@ from app.routers import (
     test_health,
     test_management,
     timeline_notes,
+    insights,
+    run_cadences,
     users,
     value_metric_assumptions,
     value_metrics,
@@ -273,6 +275,13 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     # collection routes are GET/POST on the literal, the item routes PATCH/DELETE
     # on /{note_id}: nothing to shadow.
     timeline_notes.router,
+    # W23a FAIL-11: /projects/{project_id}/insights (GET) and
+    # /insights/{insight_id}/dismiss (POST): nothing to shadow.
+    insights.router,
+    # W23a TRND-03: /projects/{project_id}/run-cadences[/status|/{cadence_id}[/pause|/resume]].
+    # GET /status is the only GET below the collection (no GET /{cadence_id}),
+    # declared first in its module: nothing to shadow.
+    run_cadences.router,
 )
 
 

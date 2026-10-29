@@ -93,6 +93,7 @@ const OutboundWebhooksPage = lazy(() => import('@/pages/settings/OutboundWebhook
 const ApiKeysPage = lazy(() => import('@/pages/settings/ApiKeysPage'))
 const ProjectDataPage = lazy(() => import('@/pages/settings/ProjectDataPage'))
 const RetentionPage = lazy(() => import('@/pages/settings/RetentionPage'))
+const ExpectedRunsPage = lazy(() => import('@/pages/settings/ExpectedRunsPage'))
 const MfaPolicyPage = lazy(() => import('@/pages/settings/MfaPolicyPage'))
 const AIAgentsPage = lazy(() => import('@/pages/settings/AIAgentsPage'))
 const AgentActivityPage = lazy(() => import('@/pages/settings/AgentActivityPage'))
@@ -190,6 +191,9 @@ const appRoutes: AppRoute[] = [
   // P5: a person's own API keys, for every role that may own one (QA engineer+;
   // the page tells a lower role it cannot). It was a tab of /users (QA lead+).
   { path: 'settings/my-api-keys', component: PersonalKeysPage },
+  // W23a TRND-03: a project's expected runs. Every role READS them (the API's reads are any member's) and a
+  // QA lead edits, so the route is here (the REL-09 precedent); the settings item is QA lead+ (settingsNav).
+  { path: 'settings/expected-runs', component: ExpectedRunsPage },
 ]
 
 /** Routes restricted to QA_LEAD and ADMIN roles. */

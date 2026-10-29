@@ -3416,7 +3416,49 @@ The older per-domain sections omitted these tables. Their full field definitions
 | `suite_executions` | `SuiteExecution` | [Fields and constraints](../docs/reference/data-dictionary.md#suite_executions) |
 | `ai_analysis_versions` | `AIAnalysisVersion` | [Fields and constraints](../docs/reference/data-dictionary.md#ai_analysis_versions) |
 | `timeline_notes` | `TimelineNote` | [Fields and constraints](../docs/reference/data-dictionary.md#timeline_notes) |
+| `project_insights` | `ProjectInsight` | [Fields and constraints](../docs/reference/data-dictionary.md#project_insights) |
+| `insight_detector_states` | `InsightDetectorState` | [Fields and constraints](../docs/reference/data-dictionary.md#insight_detector_states) |
+| `run_cadences` | `RunCadence` | [Fields and constraints](../docs/reference/data-dictionary.md#run_cadences) |
+| `run_cadence_windows` | `RunCadenceWindow` | [Fields and constraints](../docs/reference/data-dictionary.md#run_cadence_windows) |
 | `classification_hints` | `ClassificationHint` | [Fields and constraints](../docs/reference/data-dictionary.md#classification_hints) |
+
+## Cross-run insights and expected run cadences (migrations 0243 / 0244, W23a)
+
+**`project_insights`** (0243, FAIL-11): one EPISODE of one insight check firing on one subject.
+
+- **Identity.** `kind` is one of `perf_drift`, `flake_rising`, `coverage_drop`, `cost_budget`. `subject_key` is `suite:<key>`, `test:<fingerprint>`, `project` or `budget`. `window_key` is `7d`, or `month:YYYY-MM` for the budget.
+- **One open row per identity.** The partial unique index `uq_project_insights_open (project_id, kind, subject_key, window_key) WHERE resolved_at IS NULL` allows one OPEN row per identity. The hourly beat upserts on it: `detection_count` + 1, and `last_seen_at`, `severity`, `evidence` and `subject_label` refreshed. The upsert never touches the `dismissed_*` columns.
+- **Resolution.** A row resolves once, `resolved_reason` `cleared` (a measured check found the subject quiet) or `stale` (not confirmed for 72 h). A resolved row is never reopened; the next firing is a new row.
+- **Dismissal.** `dismissed_at`, `dismissed_by_id` (`ON DELETE SET NULL`) and `dismissed_by_name` record who dismissed the row. The name outlives the user.
+- **Evidence.** `evidence` (JSONB) holds numbers, ids and names only. It carries run ids as VALUES, so no foreign key targets `test_runs` and the retention purge's reference lists are unchanged.
+- **Index.** `ix_project_insights_project_last_seen (project_id, last_seen_at)` serves the list's range filter.
+
+**`insight_detector_states`** (0243): the last evaluation of each check per project, primary key `(project_id, kind)`.
+
+- `measured`, `reason_code` (a fixed "not measured" key, e.g. `coverage_no_snapshot`, `detector_failed`), `subjects_measured`, `firing` and `evaluated_at`.
+- It is the honest "no insights": a check that could not measure writes only this row, and it closes nothing.
+
+**`run_cadences`** (0244, TRND-03): one expectation, "a run of `suite_name` (or any run when NULL) arrives by …", owned by TestLookup. Nothing reads or writes CI.
+
+- **Mode.** `mode` `weekly` uses `weekdays`, a bitmask with Mon = bit 0, 1..127, plus `expected_by`, a local wall time. `mode` `cron` uses `cron`, normalised `m h * * dow`. CHECKs keep the two shapes exclusive.
+- **Time zone and grace.** `timezone` is IANA. `grace_minutes` is 0..720.
+- **Cursor.** `effective_from` and `checked_through` are both reset on create and on any definition change, so a new definition never judges the past.
+- **Pause.** The fields `paused_at`, `paused_until`, `paused_reason` and `paused_by_id` are all set or all NULL.
+- **Uniqueness.** Two partial unique indexes allow one "any run" cadence and one per `suite_key` (lower + trim) in a project.
+
+**`run_cadence_windows`** (0244): every expected window the quarter-hourly beat decided.
+
+- **Window.** `window_start` is exclusive, `window_end` = deadline + grace is inclusive, and `deadline` is in UTC.
+- **Outcome.** `outcome` is `met`, `missed` or `paused`. "Pending" is never stored. `run_count` and `first_run_at` record the matching runs.
+- **Unique.** The constraint `uq_run_cadence_windows_cadence_start (cadence_id, window_start)` is unique: the insert is `ON CONFLICT DO NOTHING … RETURNING`, so a redelivered tick decides nothing twice and alerts once.
+- **History.** A later resume or edit never rewrites a row.
+- **Index.** `ix_run_cadence_windows_project_deadline` serves the status read.
+
+**All four tables:**
+
+- Deleting a project cascades every row.
+- Every index is a plain build on a table its migration creates.
+- `downgrade()` drops exactly what the upgrade built. 0243 also removes the `cross_run_insights` flag row while it still equals its seed.
 
 ## Systemic cluster membership key (migration 0193, VIZ-207)
 

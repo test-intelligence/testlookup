@@ -64,6 +64,9 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
       { id: 'team-channels', label: 'Team channels', description: "Each team's alerts sent to the team's own channel", to: '/settings/team-channels', requires: 'management' },
       { id: 'api-keys', label: 'Streaming API keys', description: "The project's keys for CI result streaming", to: '/settings/api-keys', requires: 'management' },
       { id: 'retention', label: 'Retention & purge', description: 'How long runs and artifacts are kept', to: '/settings/retention', requires: 'management' },
+      // W23a TRND-03: a QA lead's tool, so the item is QA lead+; its route is open to every role (anyone who
+      // has the URL reads the table, without actions) — the one item stricter than its route, on purpose.
+      { id: 'expected-runs', label: 'Expected runs', description: 'When a run is expected, so a missing one is noticed', to: '/settings/expected-runs', requires: 'management' },
       { id: 'project-data', label: 'Project data', description: 'Export, import and reset a project\'s data', to: '/settings/project-data', requires: 'management' },
     ],
   },

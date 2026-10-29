@@ -95,6 +95,12 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     # W22a ACT-05: a retention hold, nested under project_id; loaded WHERE id
     # AND project_id (another project's hold is the unknown-id 404).
     "hold_id",
+    # W23a FAIL-11: a cross-run insight, nested under project_id; loaded WHERE
+    # id AND project_id (another project's insight is the unknown-id 404).
+    "insight_id",
+    # W23a TRND-03: an expected run cadence, nested under project_id; loaded
+    # WHERE id AND project_id (another project's cadence is the unknown-id 404).
+    "cadence_id",
 })
 
 # ── Known backlog of unprotected scoped routes ──────────────────────────────

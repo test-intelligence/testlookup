@@ -212,6 +212,13 @@ test('/settings/my-notifications holds the personal preferences, two columns, an
   ).toHaveCount(0)
   expect(requestsTo(api, '/api/v1/settings/smtp')).toEqual([])
   expect(requestsTo(api, '/api/v1/settings/integrations')).toEqual([])
+  // W23a TRND-03 (DELIBERATE): the e-mail card offers the opt-in "An expected run was missed", unchecked by
+  // default (no default preference subscribes to run.missed; the homelab's SMTP is live).
+  const email = page.locator('[data-channel-card="email"]')
+  await email.locator('button').first().click()
+  const missed = email.getByRole('checkbox', { name: 'An expected run was missed', exact: true })
+  await expect(missed).toBeVisible()
+  await expect(missed).not.toBeChecked()
   // The history: the top bar's bell reads it, and so does the page's (closed)
   // history panel under the same SWR key, so the page's read goes out only
   // when it mounts more than SWR's 2 s dedupe after the bell's: a matter of

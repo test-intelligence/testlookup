@@ -70,6 +70,8 @@ const INVENTORY_ON = [
   `GET /api/v1/analytics/failure-categories?project_id=${P}&days=30`,
   `GET /api/v1/analytics/top-failing?project_id=${P}&days=30`,
   `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,
+  // W23a FAIL-11: the Insights card below the home sections (one project; no window: insights have their own range).
+  `GET /api/v1/projects/${P}/insights?range=7d&include_dismissed=false`,
 ]
 
 /** The activity feed's one read, asked when the Activity tab is opened. */

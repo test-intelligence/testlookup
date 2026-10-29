@@ -30,13 +30,39 @@ const ALL_ROLES = new Set(routeList('appRoutes'))
 const MANAGEMENT = new Set(routeList('managementRoutes'))
 const ITEMS = SETTINGS_GROUPS.flatMap((g) => g.items)
 
+/**
+ * Items stricter than their route, on purpose (reviewed one by one): a QA lead's tool whose page READS for
+ * anyone who opens its URL (the API's reads are any member's) and offers its actions to a QA lead only.
+ * W23a TRND-03: Expected runs (a QA engineer opening the URL sees the table without actions).
+ */
+const LEAD_ITEMS_ON_OPEN_ROUTES = new Set(['expected-runs'])
+
 describe('settings sub-nav: the routes it links to', () => {
   it('every item opens a routed page, behind the role its route asks for', () => {
     for (const item of ITEMS) {
+      if (LEAD_ITEMS_ON_OPEN_ROUTES.has(item.id)) {
+        expect(item.requires, item.id).toBe('management')
+        expect(ALL_ROLES.has(item.to), `${item.id}: ${item.to} is a route every role can open`).toBe(true)
+        continue
+      }
       // `engineer` items are on a route every role opens (the page itself tells a lower role why it cannot).
       if (item.requires !== 'management' && item.requires !== 'admin') expect(ALL_ROLES.has(item.to), `${item.id}: ${item.to} is a route every role can open`).toBe(true)
       else expect(MANAGEMENT.has(item.to), `${item.id}: ${item.to} is a management route`).toBe(true)
     }
+  })
+
+  it('Expected runs is the Project group\'s item after Retention, for a QA lead (W23a TRND-03)', () => {
+    const project = SETTINGS_GROUPS.find((g) => g.id === 'project')
+    const ids = project?.items.map((i) => i.id) ?? []
+    expect(ids.indexOf('expected-runs')).toBe(ids.indexOf('retention') + 1)
+    expect(ITEMS.find((i) => i.id === 'expected-runs')).toMatchObject({
+      label: 'Expected runs', to: '/settings/expected-runs', requires: 'management',
+    })
+    const lead = settingsGroupsFor({ canAccessManagement: true, isAdmin: false, canOwnApiKeys: true, isDev: false })
+    const engineer = settingsGroupsFor({ canAccessManagement: false, isAdmin: false, canOwnApiKeys: true, isDev: false })
+    expect(lead.flatMap((g) => g.items.map((i) => i.id))).toContain('expected-runs')
+    expect(engineer.flatMap((g) => g.items.map((i) => i.id))).not.toContain('expected-runs')
+    expect(activeSettingsItem('/settings/expected-runs', '')?.id).toBe('expected-runs')
   })
 
   it('lists every routed settings and admin page (a new one is added here, or it fails)', () => {

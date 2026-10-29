@@ -43,6 +43,11 @@ vi.mock('@/components/reports/catalogue/TrendsCatalogue', () => ({
   default: () => <div data-testid="trends-catalogue" />,
 }))
 vi.mock('@/hooks/useMetrics', () => ({ useTrendData: vi.fn(), useDashboardSummary: vi.fn(), useCoverage: vi.fn() }))
+// W23a TRND-03: the Volume callout's expected-run status: no cadence configured.
+vi.mock('@/hooks/useRunCadences', async () => {
+  const { cadenceStatus } = await import('@/test/insightCadenceMocks')
+  return { useRunCadenceStatus: () => ({ data: cadenceStatus('none'), error: undefined, isLoading: false, mutate: async () => undefined }) }
+})
 vi.mock('@/hooks/useRuns', () => ({ useRuns: vi.fn() }))
 vi.mock('@/hooks/useSuiteOptions', () => ({ useSuiteOptions: vi.fn(() => ({ options: [], isLoading: false })) }))
 vi.mock('@/hooks/useAnalyticsView', () => ({ useAnalyticsView: () => ({ widgetIds: [], setWidgets: vi.fn(), save: vi.fn() }) }))

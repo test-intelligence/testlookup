@@ -8579,6 +8579,63 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## CadenceWindowStatus
+
+```json
+{
+  "properties": {
+    "deadline": {
+      "format": "date-time",
+      "title": "Deadline",
+      "type": "string"
+    },
+    "local_label": {
+      "default": "",
+      "title": "Local Label",
+      "type": "string"
+    },
+    "outcome": {
+      "title": "Outcome",
+      "type": "string"
+    },
+    "recorded": {
+      "default": false,
+      "title": "Recorded",
+      "type": "boolean"
+    },
+    "run_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Run Count"
+    },
+    "window_end": {
+      "format": "date-time",
+      "title": "Window End",
+      "type": "string"
+    },
+    "window_start": {
+      "format": "date-time",
+      "title": "Window Start",
+      "type": "string"
+    }
+  },
+  "required": [
+    "deadline",
+    "window_start",
+    "window_end",
+    "outcome"
+  ],
+  "title": "CadenceWindowStatus",
+  "type": "object"
+}
+```
+
 ## CandidateEvaluationAccepted
 
 ```json
@@ -20552,6 +20609,267 @@ These are the full generated JSON Schema definitions, including required fields,
     "status"
   ],
   "title": "IngestTestResult",
+  "type": "object"
+}
+```
+
+## InsightDetectorStatus
+
+```json
+{
+  "properties": {
+    "evaluated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Evaluated At"
+    },
+    "firing": {
+      "default": 0,
+      "title": "Firing",
+      "type": "integer"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "subjects_measured": {
+      "default": 0,
+      "title": "Subjects Measured",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "kind"
+  ],
+  "title": "InsightDetectorStatus",
+  "type": "object"
+}
+```
+
+## InsightItem
+
+```json
+{
+  "properties": {
+    "detection_count": {
+      "default": 1,
+      "title": "Detection Count",
+      "type": "integer"
+    },
+    "dismissed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Dismissed At"
+    },
+    "dismissed_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Dismissed By Name"
+    },
+    "evidence": {
+      "additionalProperties": true,
+      "title": "Evidence",
+      "type": "object"
+    },
+    "first_seen_at": {
+      "format": "date-time",
+      "title": "First Seen At",
+      "type": "string"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "last_seen_at": {
+      "format": "date-time",
+      "title": "Last Seen At",
+      "type": "string"
+    },
+    "link": {
+      "$ref": "#/components/schemas/InsightLink"
+    },
+    "resolved_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Resolved At"
+    },
+    "resolved_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Resolved Reason"
+    },
+    "run_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Run Path"
+    },
+    "severity": {
+      "title": "Severity",
+      "type": "string"
+    },
+    "status": {
+      "default": "open",
+      "title": "Status",
+      "type": "string"
+    },
+    "subject_label": {
+      "default": "",
+      "title": "Subject Label",
+      "type": "string"
+    },
+    "title": {
+      "default": "",
+      "title": "Title",
+      "type": "string"
+    },
+    "window_key": {
+      "default": "",
+      "title": "Window Key",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "severity",
+    "first_seen_at",
+    "last_seen_at"
+  ],
+  "title": "InsightItem",
+  "type": "object"
+}
+```
+
+## InsightLink
+
+```json
+{
+  "properties": {
+    "label": {
+      "default": "",
+      "title": "Label",
+      "type": "string"
+    },
+    "path": {
+      "default": "",
+      "title": "Path",
+      "type": "string"
+    }
+  },
+  "title": "InsightLink",
+  "type": "object"
+}
+```
+
+## InsightListResponse
+
+```json
+{
+  "properties": {
+    "detectors": {
+      "items": {
+        "$ref": "#/components/schemas/InsightDetectorStatus"
+      },
+      "title": "Detectors",
+      "type": "array"
+    },
+    "dismissed_total": {
+      "default": 0,
+      "title": "Dismissed Total",
+      "type": "integer"
+    },
+    "enabled": {
+      "default": false,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/InsightItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "range": {
+      "default": "7d",
+      "title": "Range",
+      "type": "string"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "generated_at"
+  ],
+  "title": "InsightListResponse",
   "type": "object"
 }
 ```
@@ -36667,6 +36985,573 @@ These are the full generated JSON Schema definitions, including required fields,
     "run_id"
   ],
   "title": "RunBrief",
+  "type": "object"
+}
+```
+
+## RunCadenceCreate
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "cron": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cron"
+    },
+    "expected_by": {
+      "anyOf": [
+        {
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expected By"
+    },
+    "grace_minutes": {
+      "default": 60,
+      "maximum": 720.0,
+      "minimum": 0.0,
+      "title": "Grace Minutes",
+      "type": "integer"
+    },
+    "mode": {
+      "default": "weekly",
+      "title": "Mode",
+      "type": "string"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "timezone": {
+      "maxLength": 64,
+      "minLength": 1,
+      "title": "Timezone",
+      "type": "string"
+    },
+    "weekdays": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 7,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Weekdays"
+    }
+  },
+  "required": [
+    "timezone"
+  ],
+  "title": "RunCadenceCreate",
+  "type": "object"
+}
+```
+
+## RunCadenceList
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/RunCadenceRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "title": "RunCadenceList",
+  "type": "object"
+}
+```
+
+## RunCadencePatch
+
+```json
+{
+  "additionalProperties": false,
+  "description": "Every field optional; an empty PATCH changes nothing.",
+  "properties": {
+    "clear_suite": {
+      "default": false,
+      "title": "Clear Suite",
+      "type": "boolean"
+    },
+    "cron": {
+      "anyOf": [
+        {
+          "maxLength": 100,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cron"
+    },
+    "expected_by": {
+      "anyOf": [
+        {
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expected By"
+    },
+    "grace_minutes": {
+      "anyOf": [
+        {
+          "maximum": 720.0,
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Grace Minutes"
+    },
+    "mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Mode"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "timezone": {
+      "anyOf": [
+        {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Timezone"
+    },
+    "weekdays": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 7,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Weekdays"
+    }
+  },
+  "title": "RunCadencePatch",
+  "type": "object"
+}
+```
+
+## RunCadencePauseRequest
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "maxLength": 200,
+      "title": "Reason",
+      "type": "string"
+    },
+    "until": {
+      "format": "date-time",
+      "title": "Until",
+      "type": "string"
+    }
+  },
+  "required": [
+    "until",
+    "reason"
+  ],
+  "title": "RunCadencePauseRequest",
+  "type": "object"
+}
+```
+
+## RunCadenceRead
+
+```json
+{
+  "properties": {
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "created_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created By Name"
+    },
+    "cron": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cron"
+    },
+    "effective_from": {
+      "format": "date-time",
+      "title": "Effective From",
+      "type": "string"
+    },
+    "expected_by": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expected By"
+    },
+    "grace_minutes": {
+      "default": 60,
+      "title": "Grace Minutes",
+      "type": "integer"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "mode": {
+      "default": "weekly",
+      "title": "Mode",
+      "type": "string"
+    },
+    "next_deadline": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Next Deadline"
+    },
+    "paused": {
+      "default": false,
+      "title": "Paused",
+      "type": "boolean"
+    },
+    "paused_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Paused At"
+    },
+    "paused_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Paused By Name"
+    },
+    "paused_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Paused Reason"
+    },
+    "paused_until": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Paused Until"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "suite_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Suite Name"
+    },
+    "summary": {
+      "default": "",
+      "title": "Summary",
+      "type": "string"
+    },
+    "timezone": {
+      "default": "UTC",
+      "title": "Timezone",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "weekdays": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Weekdays"
+    }
+  },
+  "required": [
+    "id",
+    "project_id",
+    "effective_from",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "RunCadenceRead",
+  "type": "object"
+}
+```
+
+## RunCadenceStatusItem
+
+```json
+{
+  "properties": {
+    "cadence": {
+      "$ref": "#/components/schemas/RunCadenceRead"
+    },
+    "expected": {
+      "default": 0,
+      "title": "Expected",
+      "type": "integer"
+    },
+    "last_run_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Last Run At"
+    },
+    "measured": {
+      "default": false,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "met": {
+      "default": 0,
+      "title": "Met",
+      "type": "integer"
+    },
+    "missed": {
+      "default": 0,
+      "title": "Missed",
+      "type": "integer"
+    },
+    "missed_windows": {
+      "items": {
+        "$ref": "#/components/schemas/CadenceWindowStatus"
+      },
+      "title": "Missed Windows",
+      "type": "array"
+    },
+    "paused": {
+      "default": 0,
+      "title": "Paused",
+      "type": "integer"
+    },
+    "pending": {
+      "default": 0,
+      "title": "Pending",
+      "type": "integer"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    }
+  },
+  "required": [
+    "cadence"
+  ],
+  "title": "RunCadenceStatusItem",
+  "type": "object"
+}
+```
+
+## RunCadenceStatusResponse
+
+```json
+{
+  "properties": {
+    "configured": {
+      "default": false,
+      "title": "Configured",
+      "type": "boolean"
+    },
+    "days": {
+      "default": 14,
+      "title": "Days",
+      "type": "integer"
+    },
+    "expected": {
+      "default": 0,
+      "title": "Expected",
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/RunCadenceStatusItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "met": {
+      "default": 0,
+      "title": "Met",
+      "type": "integer"
+    },
+    "missed": {
+      "default": 0,
+      "title": "Missed",
+      "type": "integer"
+    },
+    "paused": {
+      "default": 0,
+      "title": "Paused",
+      "type": "integer"
+    },
+    "total": {
+      "default": 0,
+      "title": "Total",
+      "type": "integer"
+    },
+    "window_end": {
+      "format": "date-time",
+      "title": "Window End",
+      "type": "string"
+    },
+    "window_start": {
+      "format": "date-time",
+      "title": "Window Start",
+      "type": "string"
+    }
+  },
+  "required": [
+    "window_start",
+    "window_end"
+  ],
+  "title": "RunCadenceStatusResponse",
   "type": "object"
 }
 ```

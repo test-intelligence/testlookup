@@ -32,7 +32,11 @@
  *             (red→amber→green), the 2×2 weighted dimension grid (Pass Rate
  *             35 % / Tag Quality 25 % / Run Cadence 25 % / Suite Breadth 15 %)
  *             and the coverage gaps that move it. Its header states the
- *             verdict and the score.
+ *             verdict and the score. W23a TRND-03: the run dimension is
+ *             "Run cadence" (met / expected) only with a CONFIGURED expected
+ *             cadence (`/run-cadences/status`, read on load); otherwise it is
+ *             the measured "Days with runs", and the gaps say "No expected
+ *             cadence configured — Configure" instead of inferring a schedule.
  *   Tabs    → `?tab=`: Coverage map (the treemap, default) · Env × release
  *             heatmap — the Wave 3 sections, each in its own tab — · History
  *             (W08 TRND-07, `?tab=history`): the daily coverage snapshots
@@ -108,6 +112,19 @@ import FixTaggingPanel from '@/components/coverage/FixTaggingPanel'
 import { lastRunChip, typicalRunGapDays } from '@/components/coverage/coverageLastRun'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useNow } from '@/hooks/useNow'
+import { useRunCadenceStatus } from '@/hooks/useRunCadences'
+import ScopedLink from '@/components/ui/ScopedLink'
+import { dimensionsBelowTarget, healthyAction, healthyLede } from '@/components/coverage/coverageVerdict'
+import {
+  DAYS_WITH_RUNS_LABEL,
+  RUN_CADENCE_LABEL,
+  cadenceDetail,
+  cadenceDimension,
+  coverageCadenceRows,
+  daysWithRunsDetail,
+  type CadenceGapRow,
+  type CadenceLine,
+} from '@/components/runCadence/cadenceStatusModel'
 
 // ── Window picker ──────────────────────────────────────────────────────────
 // 1 = last 24 hours (rendered as "24h"); the rest are day counts.
@@ -210,6 +227,8 @@ interface DimensionScore {
   score: number
   weight: number
   tone: 'good' | 'warn' | 'bad'
+  /** W23a TRND-03: what the score counts (`4 of 5 expected runs`, `7 of 14 days`); the run dimension only. */
+  detail?: string
 }
 
 function isUntaggedRow(s: CoverageSuite): boolean {
@@ -372,6 +391,13 @@ function computeHealthModel(
   days: number,
   /** Days with runs among the window's UTC calendar days, the cadence strip's count. */
   calendarDaysWithRuns?: number,
+  /**
+   * W23a TRND-03: a CONFIGURED expected cadence over the page window (`cadenceDimension`). With one that
+   * expected a run, the run dimension is `met / expected` ("Run cadence"); without, it stays the measured
+   * active-day share, relabelled "Days with runs". Same weight either way, so a project without a cadence
+   * keeps its composite; optional, so every existing call keeps its numbers.
+   */
+  cadence?: { expected: number; met: number } | null,
 ) {
   const totalRuns      = summary.total_executions ?? 0
   const passRate       = Number(summary.avg_pass_rate ?? 0)
@@ -389,17 +415,23 @@ function computeHealthModel(
   // input doesn't dominate the composite.
   //   - pass_rate     : already 0-100
   //   - tag_quality   : tagged / total, * 100
-  //   - run_cadence   : days_with_runs / days, * 100 (capped at 100)
+  //   - run_cadence   : met / expected of a configured cadence, else days_with_runs / days, * 100 (capped at 100)
   //   - suite_breadth : min(suite_count, 5) / 5 * 100  (5+ suites = full)
   const passRateScore     = clamp(passRate, 0, 100)
   const tagQualityScore   = totalRuns > 0 ? clamp(taggedShare * 100, 0, 100) : 0
-  const runCadenceScore   = days > 0 ? clamp((daysWithRuns / days) * 100, 0, 100) : 0
+  const expectedCadence   = cadence && cadence.expected > 0 ? cadence : null
+  const runCadenceScore   = expectedCadence
+    ? clamp((expectedCadence.met / expectedCadence.expected) * 100, 0, 100)
+    : days > 0 ? clamp((daysWithRuns / days) * 100, 0, 100) : 0
   const suiteBreadthScore = clamp((Math.min(suiteCount, 5) / 5) * 100, 0, 100)
+  const runDimension = expectedCadence
+    ? { label: RUN_CADENCE_LABEL, detail: cadenceDetail(expectedCadence) }
+    : { label: DAYS_WITH_RUNS_LABEL, detail: daysWithRunsDetail(daysWithRuns, days) }
 
   const dimensions: DimensionScore[] = [
     { id: 'pass_rate',     label: 'Pass rate',     score: passRateScore,     weight: DIMENSION_WEIGHTS.pass_rate,     tone: toneFor(passRateScore) },
     { id: 'tag_quality',   label: 'Tag quality',   score: tagQualityScore,   weight: DIMENSION_WEIGHTS.tag_quality,   tone: toneFor(tagQualityScore) },
-    { id: 'run_cadence',   label: 'Run cadence',   score: runCadenceScore,   weight: DIMENSION_WEIGHTS.run_cadence,   tone: toneFor(runCadenceScore) },
+    { id: 'run_cadence',   ...runDimension,        score: runCadenceScore,   weight: DIMENSION_WEIGHTS.run_cadence,   tone: toneFor(runCadenceScore) },
     { id: 'suite_breadth', label: 'Suite breadth', score: suiteBreadthScore, weight: DIMENSION_WEIGHTS.suite_breadth, tone: toneFor(suiteBreadthScore) },
   ]
 
@@ -472,7 +504,8 @@ function ScoreDetails({
 }
 
 function verdictAction(v: Verdict, model: ReturnType<typeof computeHealthModel>): string {
-  if (v === 'HEALTHY') return 'all signals nominal'
+  // W23a: a Healthy composite names the dimensions it still has below target (coverageVerdict.ts).
+  if (v === 'HEALTHY') return healthyAction(dimensionsBelowTarget(model.dimensions))
   if (v === 'PENDING') return 'awaiting executions'
   const failing = model.dimensions.filter(d => d.tone === 'bad').length
   if (v === 'BLOCKED') return failing > 0 ? `${failing} dimension${failing === 1 ? '' : 's'} below threshold` : 'critical issues blocking'
@@ -647,6 +680,7 @@ function DimensionTile({ dim }: { dim: DimensionScore }) {
       metric={{ value: Math.round(dim.score) }}
       tone={dim.tone}
       bar={dim.score}
+      caption={dim.detail}
     />
   )
 }
@@ -1106,12 +1140,25 @@ function UntaggedCallout({
 
 // ── Coverage gaps ──────────────────────────────────────────────────────────
 interface GapRow {
-  tone: 'bad' | 'warn'
+  tone: 'bad' | 'warn' | 'info'
   body: React.ReactNode
   ago: string
 }
 
-function buildGaps(model: ReturnType<typeof computeHealthModel>, suites: CoverageSuite[], days: number): GapRow[] {
+/** A cadence line as a gap row's body: the Configure line links to Settings › Expected runs. */
+function cadenceLineBody(line: CadenceLine): React.ReactNode {
+  if (line.kind === 'text') return line.text
+  // Settings › Expected runs is single-project (config/routeScope.ts): the scoped link.
+  return <>{line.text}<ScopedLink to={line.to} className="text-[var(--color-accent)] hover:underline" hintInTitleOnly>{line.linkLabel}</ScopedLink></>
+}
+
+function buildGaps(
+  model: ReturnType<typeof computeHealthModel>,
+  suites: CoverageSuite[],
+  days: number,
+  /** W23a TRND-03: `coverageCadenceRows` — the measured no-runs row, then the expected-cadence rows. */
+  cadenceRows: CadenceGapRow[] = [],
+): GapRow[] {
   const gaps: GapRow[] = []
   const failingSuites = suites.filter(s => !isUntaggedRow(s) && s.failed > 0 && s.passed === 0)
   for (const s of failingSuites.slice(0, 2)) {
@@ -1126,19 +1173,10 @@ function buildGaps(model: ReturnType<typeof computeHealthModel>, suites: Coverag
       ago: `${days}d+`,
     })
   }
-  if (model.daysWithRuns === 0) {
-    gaps.push({
-      tone: 'warn',
-      body: <>No nightly schedule firing <span className="dim">— last scheduled run unknown</span></>,
-      ago: '—',
-    })
-  } else if (model.daysWithRuns < Math.ceil(days * 0.5)) {
-    gaps.push({
-      tone: 'warn',
-      body: <>Run cadence below 50% <span className="dim">— scheduled runs may be paused</span></>,
-      ago: `${days - model.daysWithRuns}d`,
-    })
-  }
+  // W23a TRND-03: no inferred schedule. "No nightly schedule firing" is now the measured "No runs in the
+  // last N days"; "Run cadence below 50% — scheduled runs may be paused" is gone; a configured expected
+  // cadence adds its misses and pauses, and without one the Configure line says so.
+  for (const row of cadenceRows) gaps.push({ tone: row.tone, body: cadenceLineBody(row.line), ago: '—' })
   if (model.untaggedRuns > 0) {
     gaps.push({
       tone: 'warn',
@@ -1178,7 +1216,7 @@ function CoverageGaps({ gaps }: { gaps: GapRow[] }) {
               className="flex items-center gap-2 rounded-sm border"
               style={{ padding: '8px 10px', background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
             >
-              <span aria-hidden className="inline-block w-2 h-2 rounded-sm flex-none" style={{ background: g.tone === 'bad' ? 'var(--status-failed)' : 'var(--status-broken)' }} />
+              <span aria-hidden className="inline-block w-2 h-2 rounded-sm flex-none" style={{ background: g.tone === 'bad' ? 'var(--status-failed)' : g.tone === 'warn' ? 'var(--status-broken)' : 'var(--ui-info)' }} />
               <div className="flex-1 text-sm text-[var(--color-text)] leading-[1.35] gap-body">{g.body}</div>
               <span className="text-2xs tabular-nums text-[var(--color-text-faint)]">{g.ago}</span>
             </div>
@@ -1289,8 +1327,13 @@ export default function CoveragePage() {
   // The page's own tabs (`?tab=`): the coverage map by default.
   const [tab, setTab] = useTabParam<CoverageTab>(COVERAGE_TAB_IDS, 'map')
   // W08 TRND-07: Fix tagging (QA engineer and above); its panel asks nothing until opened.
-  const { isQaEngineer } = usePermissions()
+  const { isQaEngineer, canAccessManagement } = usePermissions()
   const [fixTaggingOpen, setFixTaggingOpen] = useState(false)
+  // W23a TRND-03: the expected-run status over the page window (one project only; All Projects asks nothing).
+  const cadenceProjectId = !isAllProjects && activeProjectId ? activeProjectId : null
+  // The hook's `error` covers a failed read AND a malformed answer.
+  const { data: cadenceStatus, error: cadenceStatusError } = useRunCadenceStatus(cadenceProjectId, days)
+  const cadenceError = Boolean(cadenceProjectId && cadenceStatusError && !cadenceStatus)
 
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter, suiteNames, suiteLabel } = usePageSuiteFilter()
@@ -1369,12 +1412,18 @@ export default function CoveragePage() {
     // The strip draws at most CADENCE_MAX_CELLS days; past that, the summary's count.
     return days <= CADENCE_MAX_CELLS ? countTones(cells).pass : undefined
   }, [trendData, days])
+  const cadence = useMemo(() => cadenceDimension(cadenceStatus), [cadenceStatus])
   const model = useMemo(
-    () => computeHealthModel(summary, suites, days, calendarDaysWithRuns),
-    [summary, suites, days, calendarDaysWithRuns],
+    () => computeHealthModel(summary, suites, days, calendarDaysWithRuns, cadence),
+    [summary, suites, days, calendarDaysWithRuns, cadence],
   )
   const verdict: Verdict = verdictForScore(model.composite)
-  const gaps = useMemo(() => buildGaps(model, suites, days), [model, suites, days])
+  const gaps = useMemo(
+    () => buildGaps(model, suites, days, coverageCadenceRows(
+      cadenceProjectId ? cadenceStatus : null, days, model.daysWithRuns, canAccessManagement, cadenceError,
+    )),
+    [model, suites, days, cadenceProjectId, cadenceStatus, canAccessManagement, cadenceError],
+  )
 
   // Surface the most-recent run's suite in the header so a user landing here
   // can see which suite the coverage snapshot represents at a glance. Must
@@ -1411,7 +1460,7 @@ export default function CoveragePage() {
 
   const lede = (() => {
     if (verdict === 'PENDING') return <>No executions in the last {days} days. Run a workflow to populate the coverage signal.</>
-    if (verdict === 'HEALTHY') return <>Coverage signal is solid across {model.suiteCount} suite{model.suiteCount === 1 ? '' : 's'}. Pass rate, tagging, cadence, and breadth are all above target.</>
+    if (verdict === 'HEALTHY') return <>{healthyLede(model.suiteCount, dimensionsBelowTarget(model.dimensions))}</>
     const failingNames = suites.filter(s => !isUntaggedRow(s) && s.failed > 0).slice(0, 1).map(s => s.suite_name)
     const failingCount = suites.filter(s => !isUntaggedRow(s) && s.failed > 0).length
     return (

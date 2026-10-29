@@ -8837,3 +8837,229 @@ def run_agent_invocation(self, invocation_id: str):
         if scheduled is not None:
             return {"invocation_id": invocation_id, "retry_scheduled": True, **scheduled}
         raise RuntimeError(safe_error) from None
+
+
+# ── W23a FAIL-11 / TRND-03: the cross-run insights sweep and the cadence check ──
+
+
+async def _claim_sweep_lock(key: str, *, ttl: int, owner: str) -> str:
+    """A deployment-wide beat lock (W23a): ``"acquired"`` | ``"held"`` | ``"unavailable"``.
+
+    The ``_claim_retention_purge_lock`` shape for one global key: the dedup
+    lock (Redis ``SET NX`` with an OWNER, so the same task id may re-take it)
+    RAISES when Redis is unreachable, and that is ``"unavailable"`` here --
+    the caller skips the whole sweep, fail CLOSED: two concurrent sweeps
+    could double-confirm an insight or race a clear, and two cadence checks
+    could race the window ledger. Nothing is lost: the next tick re-evaluates
+    (insights) or catches up from the unmoved cursor (cadences).
+    """
+    try:
+        held = await _is_duplicate(key, ttl=ttl, owner=owner)
+    except Exception as exc:  # noqa: BLE001 - fail closed, never a sweep without the lock
+        _slog.warning("sweep_lock_unavailable", lock=key, error_type=type(exc).__name__)
+        return "unavailable"
+    return "held" if held else "acquired"
+
+
+async def _release_sweep_lock(key: str, owner: str) -> None:
+    """Release the sweep lock if this run still owns it; a failure is left to
+    the TTL (never raised over the sweep's own outcome)."""
+    try:
+        await _release_duplicate_lock(key, owner)
+    except Exception as exc:  # noqa: BLE001
+        _slog.warning("sweep_lock_release_failed", lock=key, error_type=type(exc).__name__)
+
+
+async def _sweep_project_insights(project_id: Any, *, now: datetime, summary: dict[str, int]) -> None:
+    """One project of the insights sweep: the per-project flag, then each
+    detector on ITS OWN short session and commit (a failing detector rolls
+    back nothing of the others, and records ``detector_failed`` on a new
+    session opened only after its own closed), then the stale rule. Strictly
+    sequential: never two sessions open at once."""
+    from app.db.postgres import AsyncSessionLocal
+    from app.services import feature_flags, insight_detectors, insights_service
+    from app.services.insight_vocab import INSIGHT_FLAG
+
+    async with AsyncSessionLocal() as db:
+        enabled = await feature_flags.is_enabled(INSIGHT_FLAG, db=db, project_id=project_id)
+    if not enabled:
+        summary["skipped_projects"] += 1
+        return
+    for kind, detector in insight_detectors.DETECTORS:
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await detector(db, project_id, now=now)
+                counts = await insights_service.apply_result(db, project_id, result, now=now)
+                await db.commit()
+        except Exception as exc:  # noqa: BLE001 - one detector must not stop the others
+            summary["failed"] += 1
+            _slog.warning("insight_detector_failed", project_id=str(project_id), kind=kind,
+                          error_type=type(exc).__name__)
+            try:
+                async with AsyncSessionLocal() as db:
+                    await insights_service.record_detector_failure(db, project_id, kind, now=now)
+                    await db.commit()
+            except Exception as state_exc:  # noqa: BLE001
+                _slog.warning("insight_detector_state_failed", project_id=str(project_id), kind=kind,
+                              error_type=type(state_exc).__name__)
+            continue
+        summary["evaluated"] += 1
+        for key in ("inserted", "confirmed", "cleared"):
+            summary[key] += int(counts.get(key, 0))
+    async with AsyncSessionLocal() as db:
+        summary["stale"] += await insights_service.resolve_stale(db, project_id, now=now)
+        await db.commit()
+
+
+async def _cross_run_insights_sweep(*, owner: str, now: datetime | None = None) -> dict[str, Any]:
+    """The hourly insights sweep (FAIL-11 B-1), module-level so its glue is
+    unit-testable without Celery: the global lock (fail closed), the
+    any-scope flag, the active project ids in one closed session, then each
+    project in turn (a failing project is logged, counted and skipped)."""
+    from sqlalchemy import select
+
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import Project
+    from app.services import feature_flags
+    from app.services.insight_vocab import INSIGHT_FLAG, INSIGHT_SWEEP_LOCK_KEY, INSIGHT_SWEEP_LOCK_TTL_SECONDS
+
+    started = time.monotonic()
+    now = now or datetime.now(timezone.utc)
+    lock = await _claim_sweep_lock(INSIGHT_SWEEP_LOCK_KEY, ttl=INSIGHT_SWEEP_LOCK_TTL_SECONDS, owner=owner)
+    if lock != "acquired":
+        return {"skipped": "already_running" if lock == "held" else "lock_unavailable"}
+    try:
+        if not await feature_flags.is_enabled(INSIGHT_FLAG, any_scope=True):
+            return {"skipped": "flag_off"}
+        async with AsyncSessionLocal() as db:
+            project_ids = list(
+                (await db.execute(select(Project.id).where(Project.is_active.is_(True)).order_by(Project.id)))
+                .scalars().all()
+            )
+        summary = dict.fromkeys(
+            ("evaluated", "inserted", "confirmed", "cleared", "stale", "failed", "skipped_projects"), 0,
+        )
+        summary["projects"] = len(project_ids)
+        for project_id in project_ids:
+            try:
+                await _sweep_project_insights(project_id, now=now, summary=summary)
+            except Exception as exc:  # noqa: BLE001 - one project must not stop the sweep
+                summary["failed"] += 1
+                _slog.warning("insights_project_failed", project_id=str(project_id),
+                              error_type=type(exc).__name__)
+        summary["duration_ms"] = int((time.monotonic() - started) * 1000)
+        _slog.info("insights_sweep_done", **summary)
+        return summary
+    finally:
+        await _release_sweep_lock(INSIGHT_SWEEP_LOCK_KEY, owner)
+
+
+async def _run_cadence_check_sweep(*, owner: str, now: datetime | None = None) -> dict[str, Any]:
+    """The quarter-hourly cadence check (TRND-03 B-2), module-level for the
+    same reason: the global lock (fail closed: nothing is decided and no
+    cursor moves, so the next tick catches up -- a miss is late, never lost
+    and never doubled), the active projects that HAVE a cadence in one closed
+    session, then ``run_cadence_service.check_project_cadences`` per project
+    on its own session and commit. No flag: a project without a cadence is
+    never visited."""
+    from sqlalchemy import select
+
+    from app.db.postgres import AsyncSessionLocal
+    from app.models.postgres import Project, RunCadence
+    from app.services import run_cadence_service
+    from app.services.run_cadence_vocab import CADENCE_CHECK_LOCK_KEY, CADENCE_CHECK_LOCK_TTL_SECONDS
+
+    started = time.monotonic()
+    now = now or datetime.now(timezone.utc)
+    lock = await _claim_sweep_lock(CADENCE_CHECK_LOCK_KEY, ttl=CADENCE_CHECK_LOCK_TTL_SECONDS, owner=owner)
+    if lock != "acquired":
+        return {"skipped": "already_running" if lock == "held" else "lock_unavailable"}
+    try:
+        async with AsyncSessionLocal() as db:
+            project_ids = list(
+                (await db.execute(
+                    select(RunCadence.project_id)
+                    .join(Project, Project.id == RunCadence.project_id)
+                    .where(Project.is_active.is_(True))
+                    .distinct()
+                    .order_by(RunCadence.project_id)
+                )).scalars().all()
+            )
+        summary = dict.fromkeys(("cadences", "decided", "missed", "alerts", "skipped_locked", "failed"), 0)
+        summary["projects"] = len(project_ids)
+        for project_id in project_ids:
+            try:
+                async with AsyncSessionLocal() as db:
+                    out = await run_cadence_service.check_project_cadences(db, project_id, now=now)
+                    await db.commit()
+            except Exception as exc:  # noqa: BLE001 - its cursor did not move; the next project runs
+                summary["failed"] += 1
+                _slog.warning("run_cadence_check_failed", project_id=str(project_id),
+                              error_type=type(exc).__name__)
+                continue
+            for key in ("cadences", "decided", "missed", "alerts", "skipped_locked"):
+                summary[key] += int((out or {}).get(key, 0) or 0)
+        summary["duration_ms"] = int((time.monotonic() - started) * 1000)
+        _slog.info("run_cadence_check_done", **summary)
+        return summary
+    finally:
+        await _release_sweep_lock(CADENCE_CHECK_LOCK_KEY, owner)
+
+
+@celery_app.task(
+    name="app.worker.tasks.detect_cross_run_insights",
+    bind=True,
+    queue="default",
+    soft_time_limit=1500,
+    time_limit=1800,
+)
+def detect_cross_run_insights(self) -> dict:
+    """Scheduled task (beat, hourly at :40): the cross-run insights (W23a FAIL-11).
+
+    Four read-only detectors per active project whose ``cross_run_insights``
+    is on (perf drift over EXEC-05's stored findings, flake rising, coverage
+    drop over two TRND-07 snapshots, the AI budget state), each on its own
+    session and commit, then the 72-hour stale rule. Rules only; nobody is
+    notified. See :func:`_cross_run_insights_sweep`.
+    """
+    owner = str(self.request.id or uuid.uuid4())
+
+    async def _run() -> dict:
+        with _beat_span("detect_cross_run_insights") as span:
+            out = await _cross_run_insights_sweep(owner=owner)
+            span.set_attribute("result.projects", int(out.get("projects", 0)))
+            span.set_attribute("result.failed", int(out.get("failed", 0)))
+            return out
+
+    outcome: dict = _run_async(_run())
+    return outcome
+
+
+@celery_app.task(
+    name="app.worker.tasks.check_run_cadences",
+    bind=True,
+    queue="default",
+    soft_time_limit=600,
+    time_limit=780,
+)
+def check_run_cadences(self) -> dict:
+    """Scheduled task (beat, every 15 min at :07 / :22 / :37 / :52): the
+    expected run cadences (W23a TRND-03).
+
+    Decides every expected window that ended since each cadence's cursor
+    (met / missed / paused) and stages ONE ``run.missed`` alert per cadence
+    for the windows newly missed (opt-in: only preferences that list the
+    event receive it). Observe only: nothing here touches CI. See
+    :func:`_run_cadence_check_sweep`.
+    """
+    owner = str(self.request.id or uuid.uuid4())
+
+    async def _run() -> dict:
+        with _beat_span("check_run_cadences") as span:
+            out = await _run_cadence_check_sweep(owner=owner)
+            span.set_attribute("result.projects", int(out.get("projects", 0)))
+            span.set_attribute("result.missed", int(out.get("missed", 0)))
+            return out
+
+    outcome: dict = _run_async(_run())
+    return outcome

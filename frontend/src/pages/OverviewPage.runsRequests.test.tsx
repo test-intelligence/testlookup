@@ -81,6 +81,11 @@ import OverviewPage from './OverviewPage'
 
 // W17 DEV-02: the first-run guide asks for the deployment's CLI wheel; none here.
 vi.mock('@/hooks/useCliWheel', () => ({ useCliWheel: () => ({ data: undefined }) }))
+// W23a FAIL-11: the Insights card's read is not a /runs read (and unit tests reach no network).
+vi.mock('@/hooks/useInsights', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useInsights')>()),
+  useInsights: () => ({ data: null, error: undefined, isLoading: false, mutate: async () => undefined }),
+}))
 
 const summaryTotal = vi.hoisted(() => ({ value: 0 }))
 const list = vi.mocked(runsService.list)

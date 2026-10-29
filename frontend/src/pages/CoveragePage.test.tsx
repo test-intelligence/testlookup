@@ -87,6 +87,26 @@ vi.mock('@/store/projectStore', () => ({
     selector({ activeProjectId: 'proj-1', activeProject: { name: 'Project One' } })),
 }))
 
+// W23a TRND-03: the expected-run status the score reads on load ("no cadence" unless a test says
+// otherwise; `calls` records every (projectId, days) the page asked with).
+const cadences = vi.hoisted(() => ({ status: undefined as unknown, error: null as unknown, calls: [] as unknown[][] }))
+vi.mock('@/hooks/useRunCadences', async () => {
+  const { cadenceStatus } = await import('@/test/insightCadenceMocks')
+  return {
+    useRunCadenceStatus: (projectId: string | null, days: number) => {
+      cadences.calls.push([projectId, days])
+      if (!projectId) return { data: null, error: undefined, isLoading: false, mutate: async () => undefined }
+      const data = cadences.error ? null : (cadences.status ?? cadenceStatus('none'))
+      return { data, error: cadences.error ?? undefined, isLoading: false, mutate: async () => undefined }
+    },
+  }
+})
+afterEach(() => {
+  cadences.status = undefined
+  cadences.error = null
+  cadences.calls = []
+})
+
 // Lazy chunks (the coverage sections) can take longer than waitFor's 1 s default under the full
 // suite's load, and more than 5 s with coverage on (seen twice), so 10 s here.
 const LAZY_TIMEOUT = 10_000
@@ -1250,9 +1270,84 @@ describe('CoveragePage P3: the page template', () => {
     openScore()
     const verdict = screen.getByRole('region', { name: 'Coverage verdict' })
     expect(within(verdict).getByRole('meter', { name: 'Coverage health score' })).toBeInTheDocument()
-    for (const dim of ['Pass rate', 'Tag quality', 'Run cadence', 'Suite breadth']) expect(within(verdict).getByText(dim)).toBeInTheDocument()
+    // W23a TRND-03: with no expected cadence configured the run dimension is the measured "Days with runs".
+    for (const dim of ['Pass rate', 'Tag quality', 'Days with runs', 'Suite breadth']) expect(within(verdict).getByText(dim)).toBeInTheDocument()
     expect(within(verdict).getByRole('region', { name: 'Coverage gaps' })).toBeInTheDocument()
     expect(verdict).toHaveClass('grid-cols-1', 'lg:grid-cols-[1.45fr_1fr]')
+  })
+
+  // W23a TRND-03 (contract §0.11 / §4.1): the score infers no schedule.
+  describe('TRND-03 the run dimension and the gap rows', () => {
+    const dimensionTile = (name: string) =>
+      within(screen.getByRole('region', { name: 'Coverage verdict' })).getByText(name).closest('[data-metric-card]') as HTMLElement
+
+    it('no cadence: "Days with runs" with its days, the measured no-runs row and the Configure line; nothing inferred', async () => {
+      await renderAt('/coverage')
+      expect(cadences.calls[cadences.calls.length - 1]).toEqual(['proj-1', 30])
+      openScore()
+      expect(dimensionTile('Days with runs')).toHaveTextContent('0 of 30 days')
+      const gaps = screen.getByRole('region', { name: 'Coverage gaps' })
+      expect(gaps).toHaveTextContent('No runs in the last 30 days')
+      expect(gaps).toHaveTextContent('No expected cadence configured — a QA lead can set one in Settings')
+      expect(document.body).not.toHaveTextContent('No nightly schedule firing')
+      expect(document.body).not.toHaveTextContent('scheduled runs may be paused')
+    })
+
+    it('a QA lead gets the Configure link to Settings › Expected runs', async () => {
+      const { useAuthStore } = await import('@/store/authStore')
+      useAuthStore.setState({ user: { id: 'u-1', role: 'QA_LEAD' } as never })
+      onTestFinished(() => {
+        useAuthStore.setState({ user: null })
+      })
+      await renderAt('/coverage')
+      openScore()
+      const gaps = screen.getByRole('region', { name: 'Coverage gaps' })
+      expect(gaps).toHaveTextContent('No expected cadence configured — Configure')
+      expect(within(gaps).getByRole('link', { name: 'Configure' })).toHaveAttribute('href', '/settings/expected-runs')
+    })
+
+    it('a configured cadence: "Run cadence" met / expected (4 of 5) and the miss row; no Configure line', async () => {
+      const { missedLine } = await import('@/types/runCadence')
+      const mocks = await import('@/test/insightCadenceMocks')
+      const item = mocks.statusItem({ expected: 5, met: 4, missed: 1, missed_windows: [mocks.missedWindow(2)] })
+      cadences.status = mocks.cadenceStatus([item], 30)
+      await renderAt('/coverage')
+      openScore()
+      const tile = dimensionTile('Run cadence')
+      expect(tile).toHaveTextContent('4 of 5 expected runs')
+      expect(tile).toHaveTextContent('80')
+      const gaps = screen.getByRole('region', { name: 'Coverage gaps' })
+      expect(gaps).toHaveTextContent(`nightly-regression: ${missedLine(item)}`)
+      expect(gaps).not.toHaveTextContent('No expected cadence configured')
+      expect(within(screen.getByRole('region', { name: 'Coverage verdict' })).queryByText('Days with runs')).toBeNull()
+    })
+
+    // W23a demo: a Healthy composite (69) said "all signals nominal … cadence … all above target" over a
+    // configured cadence at 0 of 1. The verdict names the dimensions below target instead.
+    it.each([
+      [0, '1 dimension below target', 'Run cadence is below target.'],
+      [1, 'all signals nominal', 'Pass rate, tagging, cadence, and breadth are all above target.'],
+    ])('a Healthy verdict with the cadence %i of 1 reads "%s"', async (met, action, sentence) => {
+      const mocks = await import('@/test/insightCadenceMocks')
+      cadences.status = mocks.cadenceStatus([mocks.statusItem({ expected: 1, met, missed: 1 - met })], 30)
+      // Five tagged suites at 85 %: Healthy whether the cadence scores 0 or 100.
+      const five = ['Payments', 'Auth', 'Search', 'Cart', 'Profile'].map((suite_name) => ({
+        suite_name, unique_tests: 2, passed: 17, failed: 3, skipped: 0, pass_rate: 85,
+      }))
+      await renderAt('/coverage', five)
+      openScore()
+      const verdict = screen.getByRole('region', { name: 'Coverage verdict' })
+      expect(verdict).toHaveTextContent(`Healthy·${action}`)
+      expect(verdict).toHaveTextContent(`Coverage signal is solid across 5 suites. ${sentence}`)
+    })
+
+    it('a failed status read says so in the gaps and keeps the measured dimension', async () => {
+      cadences.error = new Error('503')
+      await renderAt('/coverage')
+      openScore()
+      expect(screen.getByRole('region', { name: 'Coverage gaps' })).toHaveTextContent('Could not load the expected runs.')
+      expect(dimensionTile('Days with runs')).toBeInTheDocument()
+    })
   })
 
   it.each([

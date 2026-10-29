@@ -407,6 +407,9 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
                     <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="retention" href="/settings/retention">
                       "Retention & purge"
                   <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="expected-runs" href="/settings/expected-runs">
+                      "Expected runs"
+                  <li>
                     <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="project-data" href="/settings/project-data">
                       "Project data"
               <div data-settings-group="release-governance">

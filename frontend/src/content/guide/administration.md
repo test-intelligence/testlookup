@@ -134,6 +134,17 @@ Self-registration is off unless the deployment turns it on (`REGISTRATION_ENABLE
 
 Purging is irreversible. The operator guide in the repository (`user-guide/administration.md`) lists exactly what each class covers.
 
+### Expected runs
+
+**Expected runs** (`/settings/expected-runs`, `QA_LEAD` and above edit, one project) says when TestLookup expects a run, so a missing one is noticed. It only observes: nothing here starts, stops or pauses your CI.
+
+- **Add expected cadence**: the scope (**Any run of the project**, or **Runs of suite** and its name — a run counts when it is labelled with the suite or has results in it), the days and an **Expected by** time in a **Time zone**, and a **Grace** (0–720 minutes, default 60). **Cron (advanced)** takes `minute hour * * day-of-week` (0 = Sunday), at most 24 times a day. One cadence for any run, and one per suite.
+- A run that arrives by the time plus the grace counts for that day; a run 20 minutes late inside the grace is still that day's. Any result counts: the expectation is that a run arrives, not that it passes.
+- Daylight-saving changes never cause a false miss: a time that does not exist that day, or occurs twice, counts at its later instant.
+- Every 15 minutes TestLookup decides the windows that ended. A miss is recorded once in the activity feed (`2 expected run(s) of nightly-regression missed (Tue 27 Oct, Wed 28 Oct)`) and sent to whoever ticked **An expected run was missed** under **My notifications** — nobody by default.
+- **Pause** (until a time at most 90 days away, with a reason) stops expecting runs and sending alerts; **Resume** expects the next run again. Days decided while paused stay paused. **Edit** changes the expectation from now on: earlier days keep what was decided. **Delete** removes the cadence and its history.
+- The table shows each cadence's last 14 days (`Last 14 days: 12 met · 2 missed (Tue, Wed)`). **Trends** and **Coverage** use the same cadences; without one they say **No expected cadence configured**. Members below QA lead who open the page read it without actions.
+
 ### Project data
 
 **Project data** (`/settings/project-data`, administrators, one project) resets a project. It does not export or import data.

@@ -65,6 +65,8 @@ const SINGLE_PROJECT_ROUTES: ReadonlySet<string> = new Set([
   '/settings/gitlab',
   '/settings/webhooks',
   '/settings/retention',
+  // W23a TRND-03: a project's expected runs; All Projects shows the picker prompt.
+  '/settings/expected-runs',
 ])
 
 /** The declared routes, for tests and for anyone auditing the list. */

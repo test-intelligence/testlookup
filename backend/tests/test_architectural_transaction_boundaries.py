@@ -128,6 +128,20 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "retention_export_service.py",
     "retention_export_content.py",
     "retention_instance_service.py",
+    # ── W23a FAIL-11 / TRND-03 cross-run insights + expected run cadence: new
+    # modules, commit-free from birth ──
+    # The read-only detectors, the insight store (the dismiss route commits in
+    # routers/insights.py; the hourly beat in worker/tasks.py opens one session
+    # per project per detector and commits it), the pure window math, the
+    # cadence store / check / status (the routes commit in
+    # routers/run_cadences.py; the quarter-hourly beat commits per project) and
+    # the two wire vocabularies (constants only).
+    "insight_detectors.py",
+    "insights_service.py",
+    "run_cadence_schedule.py",
+    "run_cadence_service.py",
+    "insight_vocab.py",
+    "run_cadence_vocab.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

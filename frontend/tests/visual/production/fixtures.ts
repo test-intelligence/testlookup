@@ -398,9 +398,37 @@ export function valueMetrics() {
   }
 }
 
+/**
+ * W23a FAIL-11: the Overview card's on-load read (single project). The default answer is the quiet one — no row
+ * and the four detectors measured, nothing firing — so the card renders its empty state BELOW every existing region
+ * and no baseline moves. `fixtures-insights-cadence.ts` (`insightsCadenceWorld`) answers it with rows.
+ */
+export const INSIGHTS_PATH = /^\/api\/v1\/projects\/[^/]+\/insights$/
+export const INSIGHT_DETECTOR_KINDS = ['perf_drift', 'flake_rising', 'coverage_drop', 'cost_budget'] as const
+
+export function emptyInsights(range = '7d') {
+  return {
+    enabled: true,
+    range,
+    items: [],
+    total: 0,
+    dismissed_total: 0,
+    detectors: INSIGHT_DETECTOR_KINDS.map((kind) => ({
+      kind,
+      measured: true,
+      reason: null,
+      evaluated_at: new Date(NOW.getTime() - 30 * 60_000).toISOString(),
+      subjects_measured: 3,
+      firing: 0,
+    })),
+    generated_at: NOW.toISOString(),
+  }
+}
+
 export const OVERVIEW: ApiHandlers = [
   ...LAYOUT,
   ...RUNS,
+  [INSIGHTS_PATH, () => emptyInsights()],
   ['/api/v1/metrics/summary', summary],
   ['/api/v1/metrics/trends', trends],
   [
@@ -1104,9 +1132,30 @@ export function untaggedTestsBody(request: ApiRequest) {
  * `COVERAGE`, `TRENDS_ON`, `COVERAGE_ON`). W08 adds the two reads `/trends`
  * makes on load (the trend summary; the window's notes, EMPTY by default, so
  * no region moves) and the two Coverage reads that only a tab or a panel asks
- * (the history, the untagged tests).
+ * (the history, the untagged tests). W23a TRND-03 adds the expected-runs status
+ * that Trends (Volume tab) and Coverage read on load: `configured: false` by
+ * default (no cadence), so the Trends callout and the Coverage score keep their
+ * measured, unconfigured wording and no region moves.
  */
+export const RUN_CADENCE_STATUS_PATH = /^\/api\/v1\/projects\/[^/]+\/run-cadences\/status$/
+
+export function noCadenceStatus(days = 14) {
+  return {
+    configured: false,
+    days,
+    window_start: new Date(NOW.getTime() - days * DAY_MS).toISOString(),
+    window_end: NOW.toISOString(),
+    items: [],
+    total: 0,
+    expected: 0,
+    met: 0,
+    missed: 0,
+    paused: 0,
+  }
+}
+
 const ANALYTICS: ApiHandlers = [
+  [RUN_CADENCE_STATUS_PATH, (request) => noCadenceStatus(intParam(request, 'days', 14))],
   ['/api/v1/analytics/coverage', coverage],
   ['/api/v1/analytics/flaky-tests', () => FLAKY_TESTS],
   ['/api/v1/metrics/trends', trends],

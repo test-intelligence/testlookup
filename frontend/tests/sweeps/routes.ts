@@ -21,7 +21,7 @@ export const ROUTE_TEMPLATES: readonly string[] = [
   'settings/performance', 'settings/seed-data', 'settings/feature-flags', 'settings/billing',
   'settings/github', 'settings/gitlab', 'settings/webhooks', 'settings/api-keys', 'settings/project-data',
   'settings/retention', 'settings/mfa-policy', 'settings/ai-agents', 'settings/agent-activity', 'policies',
-  'policies/:policyId', 'ownership',
+  'policies/:policyId', 'ownership', 'settings/expected-runs',
 ]
 
 /** Fixture id key for each route parameter. */
