@@ -29,12 +29,32 @@ vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
 }))
 
+// W24: the page's two reads and the cards' job poll / writes (the unit-test network guard).
+interface ListRead {
+  data?: { items: unknown[]; total: number }
+  error?: unknown
+  mutate: () => void
+}
+const emptyRead = (): ListRead => ({ data: { items: [], total: 0 }, error: undefined, mutate: () => undefined })
+const failedRead = (): ListRead => ({ data: undefined, error: new Error('x'), mutate: () => undefined })
+const mockUseExports = vi.fn((_projectId: string | null): ListRead => emptyRead())
+const mockUseImports = vi.fn((_enabled: boolean): ListRead => emptyRead())
+vi.mock('@/hooks/useProjectDataJobs', () => ({
+  useProjectExports: (projectId: string | null) => mockUseExports(projectId),
+  useMyImports: (enabled: boolean) => mockUseImports(enabled),
+  useProjectDataJob: () => ({ data: undefined, error: undefined, mutate: vi.fn() }),
+}))
+vi.mock('@/services/projectDataService', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/services/projectDataService')>()),
+  projectDataService: { startExport: vi.fn(), downloadExport: vi.fn(), startImport: vi.fn() },
+}))
+
 const mockActiveProject = {
   id: 'proj-uuid-1',
   name: 'GoogleSearch',
 }
 
-const mockPermissions = { isAdmin: true }
+const mockPermissions: { isAdmin: boolean; canAccessManagement?: boolean } = { isAdmin: true }
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => mockPermissions,
 }))
@@ -66,11 +86,15 @@ describe('ProjectDataPage', () => {
     mockProjectStore.activeProjectId = 'proj-uuid-1'
   })
 
-  it('renders an access-denied empty state when the user is not ADMIN', () => {
+  // W24 (deliberate): a QA lead may now export, so the refusal is for roles below QA lead.
+  it('renders an access-denied empty state below QA lead', () => {
     mockPermissions.isAdmin = false
+    mockPermissions.canAccessManagement = false
     renderPage()
-    expect(screen.getByText(/admin access required/i)).toBeInTheDocument()
+    expect(screen.getByText('QA lead access required')).toBeInTheDocument()
+    expect(screen.getByText('Project data is limited to QA leads and administrators.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /delete test runs/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Export' })).toBeNull()
   })
 
   it('disables both danger buttons when in All-Projects mode', () => {
@@ -243,5 +267,63 @@ describe('ProjectDataPage — the settings page template (UX redesign P5)', () =
     expect(Array.from(container.querySelectorAll('.max-w-3xl')).filter((el) => !el.closest('[data-page-header]'))).toEqual([])
     expect(container.querySelector('[data-settings-form-grid]')).toBeNull()
     expect(screen.getByRole('button', { name: /delete test runs/i })).toBeInTheDocument()
+  })
+})
+
+describe('ProjectDataPage — export and import (W24 ADM-05)', () => {
+  beforeEach(() => {
+    mockReset.mockReset()
+    mockUseExports.mockClear().mockImplementation(() => emptyRead())
+    mockUseImports.mockClear().mockImplementation(() => emptyRead())
+    mockPermissions.isAdmin = true
+    mockPermissions.canAccessManagement = true
+    mockProjectStore.activeProject = { ...mockActiveProject }
+    mockProjectStore.activeProjectId = 'proj-uuid-1'
+  })
+
+  const exportCard = () => document.querySelector('[data-project-export]')
+  const importCard = () => document.querySelector('[data-project-import]')
+  const dangerZone = () => screen.queryByRole('region', { name: 'Danger zone' })
+
+  it('ADMIN: Export, then Import, then the Danger zone — the cards above it', () => {
+    renderPage()
+    const order = [exportCard(), importCard(), dangerZone()]
+    expect(order.every(Boolean)).toBe(true)
+    const [exp, imp, danger] = order as Element[]
+    expect(exp.compareDocumentPosition(imp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(imp.compareDocumentPosition(danger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(danger.contains(exp) || danger.contains(imp)).toBe(false)
+    expect(screen.getByText('Export settings and the test catalog, import them as a new project, or reset data.')).toBeInTheDocument()
+    expect(mockUseExports).toHaveBeenCalledWith('proj-uuid-1')
+    expect(mockUseImports).toHaveBeenCalledWith(true)
+  })
+
+  it('QA lead: the Export card only — no Import card, no Danger zone, no imports read', () => {
+    mockPermissions.isAdmin = false
+    renderPage()
+    expect(exportCard()).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Export' })).toBeEnabled()
+    expect(importCard()).toBeNull()
+    expect(dangerZone()).toBeNull()
+    expect(screen.queryByRole('button', { name: /delete test runs/i })).toBeNull()
+    expect(mockUseExports).toHaveBeenCalledWith('proj-uuid-1')
+    expect(mockUseImports.mock.calls.every(([enabled]) => enabled === false)).toBe(true)
+  })
+
+  it('All-Projects mode: no export read and no Export card; an ADMIN still has Import', () => {
+    mockProjectStore.activeProject = null
+    mockProjectStore.activeProjectId = 'all'
+    renderPage()
+    expect(exportCard()).toBeNull()
+    expect(importCard()).not.toBeNull()
+    expect(mockUseExports.mock.calls.every(([id]) => id === null)).toBe(true)
+  })
+
+  it("each card shows its read's error", () => {
+    mockUseExports.mockImplementation(() => failedRead())
+    mockUseImports.mockImplementation(() => failedRead())
+    renderPage()
+    expect(screen.getByText("Could not load this project's exports.")).toBeInTheDocument()
+    expect(screen.getByText('Could not load your imports.')).toBeInTheDocument()
   })
 })

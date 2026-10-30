@@ -67,7 +67,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
       // W23a TRND-03: a QA lead's tool, so the item is QA lead+; its route is open to every role (anyone who
       // has the URL reads the table, without actions) — the one item stricter than its route, on purpose.
       { id: 'expected-runs', label: 'Expected runs', description: 'When a run is expected, so a missing one is noticed', to: '/settings/expected-runs', requires: 'management' },
-      { id: 'project-data', label: 'Project data', description: 'Export, import and reset a project\'s data', to: '/settings/project-data', requires: 'management' },
+      { id: 'project-data', label: 'Project data', description: 'Export settings and catalog, import, reset', to: '/settings/project-data', requires: 'management' },
     ],
   },
   {

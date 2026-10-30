@@ -6,7 +6,7 @@ Every page in the settings index, who can open it, and what it changes. Settings
 
 - **Your own pages** — **Profile** and **My notifications** — are open to every role, from the account menu. **My API keys** is for `QA_ENGINEER` and above.
 - **Admin** in the sidebar, the settings index (`/settings`), and every other settings page need **`QA_LEAD` or `ADMIN`**. Anyone else who opens one is sent to Home.
-- On several of those pages a QA lead can **look** but only an **administrator** can **change** things: AI configuration, Jira and the other integrations, email (SMTP), data and storage, gate policies, LLM cost budgets, and the audit export. A few pages are **administrator only** altogether: **SSO & identity**, **Feature flags**, **MFA & lockout**, **Retention & purge**, **Project data** and creating streaming API keys.
+- On several of those pages a QA lead can **look** but only an **administrator** can **change** things: AI configuration, Jira and the other integrations, email (SMTP), data and storage, gate policies, LLM cost budgets, and the audit export. A few pages are **administrator only** altogether: **SSO & identity**, **Feature flags**, **MFA & lockout**, **Retention & purge**, the import and reset of **Project data** (a QA lead can export) and creating streaming API keys.
 
 The sections below follow the groups of the settings index.
 
@@ -147,7 +147,23 @@ Purging is irreversible. The operator guide in the repository (`user-guide/admin
 
 ### Project data
 
-**Project data** (`/settings/project-data`, administrators, one project) resets a project. It does not export or import data.
+**Project data** (`/settings/project-data`, one project) exports a project's settings and test catalogue, imports an export as a **new** project, and resets a project. QA leads see **Export** only; **Import** and the **Danger zone** are for administrators.
+
+**Export settings and catalog** (QA leads and administrators with the project). **Export** builds a signed ZIP in the background (`Exporting… 12 of 30 tables`), then offers **Download (2.1 MB)** until the date shown (72 hours), with the row and table counts and `Signed by this deployment`. One export of a project runs at a time; pressing **Export** while one runs follows that one. **Export again** starts a fresh one.
+
+- **Included**: the project's settings and catalogue — suites, managed test cases with their versions, requirement links and dismissed duplicate pairs, the canonical test catalogue, test plans and strategies, releases with their phases, gate policies and attribution rules, quality gates, quarantine and notification-transition policies, team channels, outbound webhooks, the GitHub and GitLab settings, ownership rules, the retention policy, workflow defaults and definitions, agent settings, expected-run cadences, value-metric assumptions, classification hints and the LLM quota. People appear only as usernames (who wrote what).
+- **Not included**: run history (runs, results, analyses, logs and attachments), members, roles and API keys, activity and audit logs, AI outputs, knowledge sources, retention holds, digests and personal preferences. **No secret travels**: tokens, passwords and signing secrets are removed, and a Slack or Teams channel's webhook address reads `[REDACTED]`.
+- An export larger than **50 MB** (the import limit) fails with `This project's export is larger than 50 MB, the import limit.`
+
+**Import as a new project** (administrators). Choose an export ZIP (at most **50 MB** — a larger file is refused before anything is sent) and, optionally, a name; **Import** creates a NEW project — nothing is ever merged into an existing one. The default name is `<source name> (imported)`, then `(imported 2)`… Choosing the same file again does not create a second copy. The archive is checked before anything is written (its signature, every file against its manifest, the format version, every row); a refused or failed import leaves no project behind and says why. When it finishes, **Open** (with the new project's name) selects the new project and opens **Test management**, and the card lists what was imported, switched off, skipped and cleared.
+
+- **Nothing in an import can send or call out**: webhooks, team channels, the GitHub and GitLab integrations, notification transitions and quarantine auto-defects arrive **switched off** (a webhook reads *Secret required — add it, then switch this on.*), and expected-run cadences arrive **paused for 90 days** (*Imported — resume when this project receives runs.*). Switch each on after adding its secret.
+- The new project's only members are you (plus the service accounts and its default QA lead, as for any new project). Authorship maps to the user with the same username here, or is cleared; assignments are always cleared. Managed test cases waiting for review arrive as drafts.
+- Imported catalogue tests have no runs, so **Coverage** shows them without history until the project's first runs arrive.
+
+From a terminal (an administrator's personal API key for import): `testlookup projects export <project> -o payment.zip` and `testlookup projects import payment.zip [--name NAME]` (CLI 0.3.0); running the same import again answers `Already imported as <name>`, `--new-copy` makes a deliberate second copy.
+
+**Danger zone** (administrators):
 
 - **Delete test runs** removes every run and what hangs off it, keeping suites, the catalogue, releases, policies, baselines and knowledge sources.
 - **Wipe project data** (**Reset project to fresh state**) also removes the catalogue, releases, policies, baselines, test cases, plans, strategies and knowledge sources. The project, its members, API keys, AI and SSO configuration and flag overrides stay.
