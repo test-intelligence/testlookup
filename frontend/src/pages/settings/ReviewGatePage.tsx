@@ -81,7 +81,7 @@ function ReviewGateForAdmin() {
   const { data, error, isLoading, mutate, save } = useReviewGate()
   if (error && !data) {
     return (
-      <div className="card space-y-2" role="alert" data-review-gate-error="">
+      <div className="card flex flex-col items-start gap-2" role="alert" data-review-gate-error="">
         <p className="m-0 text-sm font-medium text-[var(--color-text)]">{LOAD_ERROR}</p>
         <button type="button" className="btn-secondary btn-sm" onClick={() => void mutate()}>Retry</button>
       </div>
@@ -111,12 +111,14 @@ function StateCard({ gate }: { gate: ReviewGateRead }) {
   return (
     <div data-review-gate-state="">
       <Panel title={STATE_TITLE} actions={<span className={BADGE} data-review-gate-badge="">{badgeLabel(gate)}</span>}>
-        <div className="space-y-3 p-4">
+        {/* Flex gaps, not space-y: Tailwind v4's space-y margin sits in a zero-specificity :where() that the
+            children's own m-0 overrides, so the sentence and the by-channel heading touched (W23c baseline read). */}
+        <div className="flex flex-col gap-3 p-4">
           {stateLines(gate).map((line) => (
             <p key={line} className={SENTENCE}>{line}</p>
           ))}
           {measured && (
-            <div className="space-y-1.5">
+            <div className="flex flex-col gap-1.5">
               <h4 className="m-0 text-xs font-semibold text-[var(--color-text-secondary)]">{BY_CHANNEL_TITLE}</h4>
               {rows.length === 0 ? (
                 <p className={HINT}>{NONE_IN_WINDOW}</p>
@@ -175,7 +177,7 @@ function DateCard({ gate, save }: { gate: ReviewGateRead; save: (enforcedFrom: s
   return (
     <div data-review-gate-date="">
       <Panel title={DATE_TITLE}>
-        <div className="space-y-2 p-4">
+        <div className="flex flex-col gap-2 p-4">
           {gate.env_override && <p className={SENTENCE} data-review-gate-env="">{GATE_SENTENCES.env}</p>}
           <div className="flex flex-wrap items-center gap-3">
             <label htmlFor={inputId} className="text-sm text-[var(--color-text-secondary)]">{ENFORCE_FROM_LABEL}</label>
@@ -225,7 +227,7 @@ function ChannelsCard({ gate }: { gate: ReviewGateRead }) {
   return (
     <div data-review-gate-channels="">
       <Panel title={CHANNELS_TITLE}>
-        <div className="space-y-2 p-4">
+        <div className="flex flex-col gap-2 p-4">
           <ul className="m-0 list-disc space-y-0.5 pl-5 text-sm text-[var(--color-text)]">
             {(gate.channels ?? []).map((c) => (
               <li key={c.channel} data-channel={c.channel} className="[overflow-wrap:anywhere]">{c.label}</li>

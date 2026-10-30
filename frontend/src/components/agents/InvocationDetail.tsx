@@ -44,7 +44,7 @@ export default function InvocationDetail({ invocationId, anchor }: InvocationDet
 
   if (error && !inv) {
     return (
-      <div role="alert" data-invocation-detail="" data-invocation-error="" className="space-y-2 border-t border-[var(--color-border)] pt-3">
+      <div role="alert" data-invocation-detail="" data-invocation-error="" className="flex flex-col items-start gap-2 border-t border-[var(--color-border)] pt-3">
         <p className="m-0 text-sm font-medium text-[var(--color-text)]">{INVOCATION_LOAD_ERROR}</p>
         <button type="button" className="btn-secondary btn-sm" onClick={() => void mutate()}>Retry</button>
       </div>
@@ -65,7 +65,9 @@ export default function InvocationDetail({ invocationId, anchor }: InvocationDet
   const run = (anchor?.runId === inv.test_run_id && anchor.label) || runFallbackLabel(inv.test_run_id)
 
   return (
-    <div data-invocation-detail="" data-invocation-status={inv.status} className="space-y-3 border-t border-[var(--color-border)] pt-3">
+    // Flex gaps, not space-y: Tailwind v4's space-y margin sits in a zero-specificity :where() that the children's
+    // own m-0 overrides, so these blocks touched (W23c baseline read).
+    <div data-invocation-detail="" data-invocation-status={inv.status} className="flex flex-col gap-3 border-t border-[var(--color-border)] pt-3">
       <dl className="m-0 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
         <dt className={TERM}>Agent</dt>
         <dd className="m-0 min-w-0 truncate font-mono text-[var(--color-text)]" title={inv.agent_id}>{inv.agent_id}</dd>
@@ -84,21 +86,25 @@ export default function InvocationDetail({ invocationId, anchor }: InvocationDet
         <dd className="m-0 text-[var(--color-text)]">{inputLine(inv)}</dd>
       </dl>
 
-      {review && (
-        <p className="m-0 text-sm text-[var(--color-text)]" data-invocation-review="">
-          {review}
-          {awaiting && (
-            <>
-              {' '}
-              <Link to={REPORTS_QUEUE_HREF} className="whitespace-nowrap text-[var(--color-accent)] hover:underline">{QUEUE_LINK}</Link>
-            </>
+      {(review || inline || inv.error) && (
+        <div className="flex flex-col gap-1">
+          {review && (
+            <p className="m-0 text-sm text-[var(--color-text)]" data-invocation-review="">
+              {review}
+              {awaiting && (
+                <>
+                  {' '}
+                  <Link to={REPORTS_QUEUE_HREF} className="whitespace-nowrap text-[var(--color-accent)] hover:underline">{QUEUE_LINK}</Link>
+                </>
+              )}
+            </p>
           )}
-        </p>
+          {inline && <p className="m-0 text-xs text-[var(--color-text-muted)]" data-invocation-excluded="">{INLINE_SENTENCES.excluded}</p>}
+          {inv.error && <p className="m-0 text-xs text-[var(--color-text-secondary)] [overflow-wrap:anywhere]" data-invocation-error-text="">{inv.error}</p>}
+        </div>
       )}
-      {inline && <p className="m-0 text-xs text-[var(--color-text-muted)]" data-invocation-excluded="">{INLINE_SENTENCES.excluded}</p>}
-      {inv.error && <p className="m-0 text-xs text-[var(--color-text-secondary)] [overflow-wrap:anywhere]" data-invocation-error-text="">{inv.error}</p>}
 
-      <div className="space-y-1.5">
+      <div className="flex flex-col gap-1.5">
         <h3 className={SUBHEAD}>{OUTPUT_TITLE}</h3>
         {summary && <p className="m-0 text-sm text-[var(--color-text)] [overflow-wrap:anywhere]">{summary}</p>}
         {inv.output ? (
@@ -109,7 +115,7 @@ export default function InvocationDetail({ invocationId, anchor }: InvocationDet
       </div>
 
       {inline && inv.input && (
-        <div className="space-y-1.5">
+        <div className="flex flex-col gap-1.5">
           <h3 className={SUBHEAD}>{INLINE_SENTENCES.stored_input_redacted}</h3>
           <pre className={PRE} data-invocation-stored-input="">{JSON.stringify(inv.input, null, 2)}</pre>
         </div>
