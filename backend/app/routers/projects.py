@@ -19,7 +19,6 @@ from app.services.activity.service import ActorRef, record as record_activity
 from app.models.postgres import (
     InstanceRetentionPolicy,
     Project,
-    ProjectMember,
     ProjectRetentionPolicy,
     User,
     UserRole,
@@ -39,6 +38,7 @@ from app.services.project_reset_service import (
     reset_project,
 )
 from app.services import retention_hold_service
+from app.services.project_provisioning import provision_new_project
 from app.services.retention_service import effective_enabled_expr
 
 router = APIRouter(prefix="/api/v1/projects", tags=["Projects"])
@@ -143,63 +143,13 @@ async def create_project(
     db.add(project)
     await db.flush()
 
-    # Auto-add the creator as a member so they can access the project
-    # without an admin having to add them manually. Creator inherits their
-    # global role (ADMIN stays ADMIN, QA_LEAD stays QA_LEAD, etc.).
-    db.add(ProjectMember(
-        user_id=current_user.id,
-        project_id=project.id,
-        role=current_user.role,
-    ))
-
-    # 0079: validate default_qa_lead_user_id, if provided, is permitted to
-    # own suites. Run AFTER the creator's ProjectMember is staged so the
-    # creator themselves (a QA_LEAD or higher per the dependency above)
-    # can be set as default in a single create-then-default flow.
-    if payload.default_qa_lead_user_id is not None:
-        await db.flush()
-        from app.services.suite_review_service import assert_user_is_qa_lead_on_project
-        await assert_user_is_qa_lead_on_project(
-            db, payload.default_qa_lead_user_id, project.id,
-        )
-    else:
-        # Auto-provision a synthetic QA-lead user so the project has a
-        # deterministic default failure assignee from day one. Without
-        # this, every fresh project's /my-failures inbox would stay
-        # empty until an admin manually configures an owner.
-        from app.services.default_qa_lead_service import ensure_default_qa_lead
-        await db.flush()
-        await ensure_default_qa_lead(db, project)
-
-    # Machine accounts (the MCP server) see projects through the same
-    # membership mechanism as everyone else, so a project created after they
-    # were provisioned would otherwise be invisible to them forever.
-    from app.services.service_account_service import enroll_service_accounts_in_project
-    enrolled_service_accounts = await enroll_service_accounts_in_project(db, project.id)
-
-    # Every project must have exactly one active release at every moment
-    # (migration 0150) — it is where a run with no release from the client
-    # lands. Created in THIS transaction on purpose: doing it lazily at first
-    # ingest would make the invariant true-after-the-first-repair rather than
-    # true from t=0, and the reconciliation sweep could not then distinguish
-    # "never provisioned" from "something broke it".
-    from app.services.release_lifecycle_service import (
-        ensure_active_release_for_new_project,
-    )
-    await ensure_active_release_for_new_project(db, project)
-
-    # Epic ACT — the ledger's own first row for this project. Staged on this
-    # session so it shares the create transaction: if the project does not
-    # exist, neither does the event saying it was created.
-    await record_activity(
-        db,
-        project_id=project.id,
-        event_type="project.created",
-        actor=ActorRef.from_user(current_user),
-        entity_id=project.id,
-        entity_label=project.name,
-        context={"slug": project.slug},
-    )
+    # What every new project needs (W24: the project import builds its copy
+    # through the same helper), staged on this session BEFORE the commit below,
+    # in this order: the creator's ProjectMember, the default QA lead (the
+    # supplied one validated, else the synthetic one provisioned), then
+    # enroll_service_accounts_in_project(db, project.id), the active release
+    # (migration 0150) and the project.created activity event.
+    enrolled_service_accounts = await provision_new_project(db, project=project, creator=current_user)
 
     await db.commit()
     await db.refresh(project)

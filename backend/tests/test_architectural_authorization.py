@@ -75,6 +75,13 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     "note_id",
     # VIZ-607: a background report export, reached by id alone.
     "export_id",
+    # W24 ADM-05: a project export / import job (project_data_jobs), reached by
+    # id alone under /project-data-jobs. A NEW name on purpose: ``job_id`` sits
+    # in UNCLASSIFIED_PATH_PARAMS_BACKLOG. The router-local
+    # require_project_data_job_access() loads the job and checks an export
+    # against ITS project (QA lead + get_accessible_project_ids) and an import
+    # against ITS requester (ADMIN); every refusal is the unknown-id 404.
+    "data_job_id",
     # W03 AIH-02: a stored AI history version. Only ever nested under
     # ``/runs/{run_id}`` (require_run_access), and the read service resolves it
     # with ``test_run_id`` in the same Mongo query, so another run's version id
@@ -217,6 +224,10 @@ def _route_is_protected(route: APIRoute) -> bool:
         return True
     # VIZ-607: report export → project.
     if "{export_id}" in path and any("require_report_export_access" in n for n in dep_names):
+        return True
+    # W24 ADM-05: project export / import job → its project (export) or its
+    # requester (import), router-local guard in routers/project_data.py.
+    if "{data_job_id}" in path and any("require_project_data_job_access" in n for n in dep_names):
         return True
     # Knowledge source → project.
     if "{source_id}" in path and any("require_knowledge_source_access" in n for n in dep_names):
