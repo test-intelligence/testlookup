@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Activity, AlertTriangle, Bot, CheckCircle, ChevronDown, ChevronRight,
-  Clock, FileText, FlaskConical, GitBranch, Layers, RefreshCw, Shield, Stethoscope, XCircle, Zap,
+  Clock, FileCheck, FileText, FlaskConical, GitBranch, Layers, RefreshCw, ScrollText, Shield, Stethoscope, XCircle, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import ScopedLink from '@/components/ui/ScopedLink'
@@ -107,6 +107,18 @@ const STAGE_META: Record<string, { label: string; icon: React.ElementType; descr
     label: 'Release Risk',
     icon: Shield,
     description: 'AI go/no-go release recommendation with risk scoring',
+  },
+  // W23d AGT-14 / AGT-15: the two deep specialists whose rows were missing
+  // (a stage absent from this map renders no card).
+  contract_validation: {
+    label: 'API Contract Validation',
+    icon: FileCheck,
+    description: 'Compare captured REST responses with earlier runs',
+  },
+  log_intelligence: {
+    label: 'Log Intelligence',
+    icon: ScrollText,
+    description: 'Trace, log-rate and application-metric evidence',
   },
 }
 

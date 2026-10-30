@@ -39,7 +39,7 @@ test('a failed result: four tabs, nothing asked on load; opening Similar failure
   const { api, errors } = await open(page, TEST_CASE_PATH, similarWorld())
   await expect(tab(page, 'History')).toHaveAttribute('aria-selected', 'true')
   const names = await tabs(page).getByRole('tab').allTextContents()
-  expect(names.map((n) => n.trim().replace(/\s*\d+$/, ''))).toEqual(['History', 'Steps', 'Details', 'Similar failures'])
+  expect(names.map((n) => n.trim().replace(/\s*\d+$/, ''))).toEqual(['History', 'Steps', 'Details', 'HTTP exchanges', 'Similar failures'])
   await networkQuiet(page, api)
   expect(requestsTo(api, SIMILAR), 'no similar read on load').toEqual([])
 
@@ -117,7 +117,8 @@ for (const status of ['PASSED', 'SKIPPED'] as const) {
     const { api, errors } = await open(page, `${TEST_CASE_PATH}?tab=similar`, similarWorld({ status }))
     await expect(tab(page, 'History')).toHaveAttribute('aria-selected', 'true')
     await expect(tab(page, 'Similar failures')).toHaveCount(0)
-    await expect(tabs(page).getByRole('tab')).toHaveCount(3)
+    // W23d AGT-14: History · Steps · Details · HTTP exchanges (the full page's every result).
+    await expect(tabs(page).getByRole('tab')).toHaveCount(4)
     await expect(panel(page)).toHaveCount(0)
     await networkQuiet(page, api)
     expect(requestsTo(api, SIMILAR)).toEqual([])
@@ -133,7 +134,8 @@ for (const width of [1280, 1440]) {
     const { api, errors } = await open(page, TEST_CASE_PATH, similarWorld())
     await networkQuiet(page, api)
     const boxes = await tabs(page).getByRole('tab').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().toJSON() as DOMRect))
-    expect(boxes).toHaveLength(4)
+    // W23d AGT-14: + HTTP exchanges before Similar failures.
+    expect(boxes).toHaveLength(5)
     const tops = new Set(boxes.map((b) => Math.round(b.top)))
     expect([...tops], 'the tab strip is one line').toHaveLength(1)
     const strip = await tabs(page).boundingBox()

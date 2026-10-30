@@ -317,6 +317,28 @@ describe('IntegrationsPage — W10 INT-02: no Slack Default Channel', () => {
     expect(grid.children).toHaveLength(1)
   })
 
+  // W23d AGT-15: the Prometheus card renders after Teams, full row; an
+  // untouched card adds nothing to a save body (the templates are compared by value).
+  it('renders the Prometheus card after Teams, and an untouched card adds nothing to the save body', async () => {
+    mockGet.mockResolvedValue(baseConfig({
+      prometheus_templates_source: 'default',
+      prometheus_metric_templates: [{ id: 'http_p95_latency', label: 'p95 latency', unit: 'seconds', promql: 'up{service="{service}"}' }],
+    } as Partial<IntegrationsConfigRead>))
+    mockUpdate.mockResolvedValue(baseConfig({ jira_enabled: true }))
+    await renderPage()
+
+    const prom = (await screen.findByRole('heading', { level: 3, name: 'Prometheus' })).closest('.card') as HTMLElement
+    const teams = screen.getByRole('heading', { level: 3, name: 'Microsoft Teams' }).closest('.card') as HTMLElement
+    expect(teams.compareDocumentPosition(prom) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(prom.className).toContain('xl:col-span-2')
+    expect(prom.querySelectorAll('[data-prometheus-template]')).toHaveLength(1)
+
+    fireEvent.click((await screen.findAllByLabelText('Enabled'))[0])
+    fireEvent.click(screen.getByRole('button', { name: /save integrations/i }))
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1))
+    expect(mockUpdate.mock.calls[0][0]).toEqual({ jira_enabled: true })
+  })
+
   it('a save body never carries slack_default_channel', async () => {
     mockGet.mockResolvedValue(baseConfig({ slack_default_channel: '#qa-alerts' }))
     mockUpdate.mockResolvedValue(baseConfig())
