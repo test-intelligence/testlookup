@@ -218,14 +218,21 @@ async def test_no_service_accounts_is_not_an_error():
 
 
 def test_project_creation_wires_enrolment_and_cache_invalidation():
+    # W24 ADM-05: the enrolment moved into services/project_provisioning.py (the project import builds its copy
+    # through the same helper), so the pin follows the call: create_project stages provision_new_project BEFORE its
+    # commit and invalidates every enrolled account AFTER it; the helper enrols the service accounts.
     src = PROJECTS_ROUTER.read_text(encoding="utf-8")
     body = src.split("async def create_project")[1].split("\n@router.")[0]
-    assert "enroll_service_accounts_in_project" in body
+    code = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith("#"))
+    assert "enrolled_service_accounts = await provision_new_project(db," in code
     assert re.search(
         r"for account_id in enrolled_service_accounts:\s*\n\s*await invalidate_membership_cache\(account_id\)",
-        body,
+        code,
     ), "enrolled service accounts never have their membership cache invalidated"
-    assert body.index("enroll_service_accounts_in_project(db") < body.index("await db.commit()")
+    assert code.index("await provision_new_project(db,") < code.index("await db.commit()")
+    helper = (BACKEND / "app" / "services" / "project_provisioning.py").read_text(encoding="utf-8")
+    assert "enrolled_service_accounts = await enroll_service_accounts_in_project(db, project.id)" in helper
+    assert "return enrolled_service_accounts" in helper
 
 
 def test_service_accounts_are_not_given_admin():

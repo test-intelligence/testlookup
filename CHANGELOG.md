@@ -52,6 +52,39 @@ locally by default.
 
 ### Added
 
+- **Project export and import: settings and test catalog** (wave W24, ADM-05
+  phase 1; branch `feat/df-project-export-20261030`; migration 0247
+  `project_data_jobs`; no flag).
+  - **Export (QA lead or ADMIN with project access):** Settings › Project
+    data › Export builds a signed, verified ZIP of the project's settings
+    and catalog (30 tables: suites, managed test cases with their versions,
+    plans, strategies, releases with phases, gate policies, ownership and
+    quarantine / retention / notification policies, webhook definitions,
+    integrations, cadences, workflows). It uses the compliance-pack builder,
+    signer and verifier, and is downloadable for 72 hours. Run history,
+    logs and attachments are not included (phase 2).
+  - **Secrets never travel:** no secret-store, settings or API-key row is
+    read; typed secret columns are stripped, and free-text / JSON columns
+    pass the redaction scrubbers.
+  - **Import (ADMIN):** always creates a NEW project
+    ("<name> (imported)"), never a merge. It refuses before any write:
+    50 MB cap, a safe ZIP scan, the signature chain, the schema version and
+    every row's model. It then inserts in ONE transaction with every id
+    remapped. The same upload twice makes one project.
+  - **An import sends nothing:** webhooks, team channels, Git integrations,
+    transition policies and automatic defects arrive switched off;
+    cadences arrive paused for 90 days; digests, preferences, memberships,
+    roles and keys never travel.
+  - **CLI 0.3.0:** `testlookup projects export` / `projects import`.
+  - **Guard:** `test_project_export_classification.py` classifies every
+    project-scoped table (30 exported / 107 excluded / 23 not
+    project-scoped), so a new table cannot be silently missed.
+  - **Navigation:** the nav reads "Export settings and catalog, import,
+    reset".
+  - **Tests:** `test_project_export_postgres.py`,
+    `test_project_import_postgres.py` (the round trip with equal counts and
+    remapped FKs, the secret scan, refusals that write nothing, the
+    mid-import failure).
 - **REST payload capture for contract checks, and Prometheus metrics in the
   log stage** (wave W23d, AGT-14 + AGT-15; branch
   `feat/df-payload-metrics-20261030`; no migration; no flag).

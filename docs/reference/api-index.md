@@ -260,8 +260,12 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/performance/observed` | Get Observed Performance | [Performance](api/performance.md) |
 | GET | `/api/v1/performance/search-config` | Get Search Config | [Performance](api/performance.md) |
 | GET | `/api/v1/performance/slow-queries` | Get Slow Queries | [Performance](api/performance.md) |
+| GET | `/api/v1/project-data-jobs/{data_job_id}` | Get Project Data Job | [Project data](api/project-data.md) |
+| GET | `/api/v1/project-data-jobs/{data_job_id}/download` | Download Project Export | [Project data](api/project-data.md) |
+| GET | `/api/v1/project-imports` | List My Project Imports | [Project data](api/project-data.md) |
 | GET | `/api/v1/projects` | List Projects | [Projects](api/projects.md) |
 | POST | `/api/v1/projects` | Create Project | [Projects](api/projects.md) |
+| POST | `/api/v1/projects/import` | Start Project Import | [Project data](api/project-data.md) |
 | DELETE | `/api/v1/projects/{project_id}` | Delete Project | [Projects](api/projects.md) |
 | GET | `/api/v1/projects/{project_id}` | Get Project | [Projects](api/projects.md) |
 | PUT | `/api/v1/projects/{project_id}` | Update Project | [Projects](api/projects.md) |
@@ -290,6 +294,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/projects/{project_id}/classification-hints/preview` | Preview Classification Hint | [Classification hints](api/classification-hints.md) |
 | DELETE | `/api/v1/projects/{project_id}/classification-hints/{hint_id}` | Delete Classification Hint | [Classification hints](api/classification-hints.md) |
 | PATCH | `/api/v1/projects/{project_id}/classification-hints/{hint_id}` | Update Classification Hint | [Classification hints](api/classification-hints.md) |
+| GET | `/api/v1/projects/{project_id}/data-jobs` | List Project Exports | [Project data](api/project-data.md) |
 | POST | `/api/v1/projects/{project_id}/default-qa-lead/reset-password` | Reset Default Qa Lead Password Endpoint | [Projects](api/projects.md) |
 | POST | `/api/v1/projects/{project_id}/defects/jira` | Create Jira Defect One Click | [Defects](api/defects.md) |
 | GET | `/api/v1/projects/{project_id}/defects/jira/metadata` | Jira Defect Metadata | [Defects](api/defects.md) |
@@ -305,6 +310,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/projects/{project_id}/duplicate-candidates/detect` | Run Duplicate Detection | [Duplicate Detection](api/duplicate-detection.md) |
 | POST | `/api/v1/projects/{project_id}/duplicate-candidates/{candidate_id}/dismiss` | Dismiss Duplicate Candidate | [Duplicate Detection](api/duplicate-detection.md) |
 | POST | `/api/v1/projects/{project_id}/duplicate-candidates/{candidate_id}/merge` | Merge Duplicate Candidate | [Duplicate Detection](api/duplicate-detection.md) |
+| POST | `/api/v1/projects/{project_id}/export` | Start Project Export | [Project data](api/project-data.md) |
 | POST | `/api/v1/projects/{project_id}/fix-outcomes` | Record Fix Outcome | [Feedback & Training](api/feedback-training.md) |
 | GET | `/api/v1/projects/{project_id}/fixer/attempts` | List Fixer Attempts | [Fixer](api/fixer.md) |
 | GET | `/api/v1/projects/{project_id}/fixer/config` | Get Fixer Config | [Fixer](api/fixer.md) |
@@ -714,4 +720,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **705 HTTP operations**, **595 paths**, **90 domain pages**.
+Total: **711 HTTP operations**, **601 paths**, **91 domain pages**.

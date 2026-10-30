@@ -88,6 +88,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [perf_baselines](#perf_baselines) | PerfBaseline | 14 |
 | [product_usage_events](#product_usage_events) | ProductUsageEvent | 6 |
 | [project_activity_events](#project_activity_events) | ProjectActivityEvent | 24 |
+| [project_data_jobs](#project_data_jobs) | ProjectDataJob | 24 |
 | [project_insights](#project_insights) | ProjectInsight | 16 |
 | [project_llm_quota](#project_llm_quota) | ProjectLlmQuota | 12 |
 | [project_llm_usage](#project_llm_usage) | ProjectLlmUsage | 10 |
@@ -2533,7 +2534,7 @@ Constraints and indexes:
 
 ## instance_retention_policy
 
-[backend/app/models/postgres.py:8126](../../backend/app/models/postgres.py#L8126)
+[backend/app/models/postgres.py:8202](../../backend/app/models/postgres.py#L8202)
 
 The instance-wide retention defaults (W22b ACT-06, migration 0242).
 
@@ -3208,7 +3209,7 @@ Constraints and indexes:
 
 ## project_activity_events
 
-[backend/app/models/postgres.py:8217](../../backend/app/models/postgres.py#L8217)
+[backend/app/models/postgres.py:8293](../../backend/app/models/postgres.py#L8293)
 
 Append-only, project-scoped product feed of everything that happens.
 
@@ -3283,6 +3284,59 @@ Constraints and indexes:
 - Index `ix_pae_project_event_type` (unique=False): `project_activity_events.project_id, project_activity_events.event_type, project_activity_events.occurred_at`; options `{}`
 - Index `ix_pae_project_release` (unique=False): `project_activity_events.project_id, project_activity_events.release_id, project_activity_events.occurred_at`; options `{"postgresql_where": "release_id IS NOT NULL"}`
 - Index `ix_pae_project_time` (unique=False): `project_activity_events.project_id, project_activity_events.occurred_at, project_activity_events.id`; options `{}`
+
+## project_data_jobs
+
+[backend/app/models/postgres.py:7888](../../backend/app/models/postgres.py#L7888)
+
+One project export or import (W24 ADM-05 phase 1: settings + catalog; migration 0247).
+
+A NEW table rather than a ``deletion_jobs`` kind: an import has no project
+until its transaction commits (``project_id`` NULL until then) and must
+survive the project it created being archived (``SET NULL``, never
+CASCADE). ``kind`` / ``status`` are the ``project_export_vocab``
+vocabularies (CHECKed). ``storage_key`` (the export archive, or the
+import's upload) is NEVER returned and never logged.
+
+| Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
+|---|---|---|---|---|---|
+| `id` | `UUID` | False | True | `application=uuid4` |  |
+| `kind` | `VARCHAR(10)` | False | False | `—` |  |
+| `status` | `VARCHAR(12)` | False | False | `server='queued'; application=queued` |  |
+| `project_id` | `UUID` | True | False | `—` | projects.id / SET NULL |
+| `project_name` | `VARCHAR(255)` | True | False | `—` |  |
+| `requested_by_id` | `UUID` | True | False | `—` | users.id / SET NULL |
+| `client_token` | `UUID` | True | False | `—` |  |
+| `storage_key` | `TEXT` | True | False | `—` |  |
+| `bytes` | `BIGINT` | True | False | `—` |  |
+| `file_count` | `INTEGER` | True | False | `—` |  |
+| `manifest_sha256` | `VARCHAR(64)` | True | False | `—` |  |
+| `archive_sha256` | `VARCHAR(64)` | True | False | `—` |  |
+| `signature` | `VARCHAR(16)` | True | False | `—` |  |
+| `signing_key_id` | `VARCHAR(64)` | True | False | `—` |  |
+| `counts` | `JSONB` | False | False | `server='{}'::jsonb; application=dict` |  |
+| `report` | `JSONB` | True | False | `—` |  |
+| `progress` | `JSONB` | True | False | `—` |  |
+| `error_code` | `VARCHAR(40)` | True | False | `—` |  |
+| `error` | `TEXT` | True | False | `—` |  |
+| `attempts` | `INTEGER` | False | False | `server=0; application=0` |  |
+| `requested_at` | `DATETIME` | False | False | `server=now()` |  |
+| `started_at` | `DATETIME` | True | False | `—` |  |
+| `finished_at` | `DATETIME` | True | False | `—` |  |
+| `expires_at` | `DATETIME` | True | False | `—` |  |
+
+Constraints and indexes:
+
+- `CheckConstraint` `ck_project_data_jobs_kind`: `kind IN ('export', 'import')`
+- `CheckConstraint` `ck_project_data_jobs_status`: `status IN ('queued', 'running', 'succeeded', 'failed', 'expired')`
+- `ForeignKeyConstraint` `unnamed`: `project_id`
+- `ForeignKeyConstraint` `unnamed`: `requested_by_id`
+- `PrimaryKeyConstraint` `unnamed`: `id`
+- Index `ix_pdj_project_requested` (unique=False): `project_data_jobs.project_id, requested_at DESC`; options `{}`
+- Index `ix_pdj_requester_kind` (unique=False): `project_data_jobs.requested_by_id, project_data_jobs.kind, requested_at DESC`; options `{}`
+- Index `ix_pdj_status_requested` (unique=False): `project_data_jobs.status, project_data_jobs.requested_at`; options `{}`
+- Index `uq_pdj_import_token` (unique=True): `project_data_jobs.requested_by_id, project_data_jobs.client_token`; options `{"postgresql_where": "kind = 'import' AND status <> 'failed'"}`
+- Index `uq_pdj_one_live_export` (unique=True): `project_data_jobs.project_id`; options `{"postgresql_where": "kind = 'export' AND status IN ('queued', 'running')"}`
 
 ## project_insights
 
@@ -3366,7 +3420,7 @@ Constraints and indexes:
 
 ## project_llm_usage
 
-[backend/app/models/postgres.py:8177](../../backend/app/models/postgres.py#L8177)
+[backend/app/models/postgres.py:8253](../../backend/app/models/postgres.py#L8253)
 
 Running per-period LLM cost meter for a project.
 
@@ -3419,7 +3473,7 @@ Constraints and indexes:
 
 ## project_retention_policies
 
-[backend/app/models/postgres.py:8025](../../backend/app/models/postgres.py#L8025)
+[backend/app/models/postgres.py:8101](../../backend/app/models/postgres.py#L8101)
 
 Per-project data retention policy (PMF US-11.4, migration 0113).
 
@@ -4005,7 +4059,7 @@ test_run_links: Mapped[list['ReleaseTestRunLink']] = relationship('ReleaseTestRu
 
 ## report_exports
 
-[backend/app/models/postgres.py:7974](../../backend/app/models/postgres.py#L7974)
+[backend/app/models/postgres.py:8050](../../backend/app/models/postgres.py#L8050)
 
 VIZ-607: one background export of a report (migration 0194).
 
@@ -4108,7 +4162,7 @@ Constraints and indexes:
 
 ## retention_holds
 
-[backend/app/models/postgres.py:7888](../../backend/app/models/postgres.py#L7888)
+[backend/app/models/postgres.py:7964](../../backend/app/models/postgres.py#L7964)
 
 A retention hold on a project, a release, a run or a compliance pack (W22a ACT-05, migration 0239).
 

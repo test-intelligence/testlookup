@@ -254,3 +254,4 @@ Alembic revisions extracted without executing migrations. An inventory is not ev
 | [backend/migrations/versions/0244_run_cadences.py](../../backend/migrations/versions/0244_run_cadences.py) | `'0244'` | `'0243'` | Expected run cadences and their decided windows (W23a TRND-03). |
 | [backend/migrations/versions/0245_run_context_and_bisect_index.py](../../backend/migrations/versions/0245_run_context_and_bisect_index.py) | `'0245'` | `'0244'` | The run context column and the branch-series index (W23b FAIL-13 / FAIL-12). |
 | [backend/migrations/versions/0246_agent_invocation_inline_input.py](../../backend/migrations/versions/0246_agent_invocation_inline_input.py) | `'0246'` | `'0245'` | The inline input of an agent invocation (W23c AGT-11). |
+| [backend/migrations/versions/0247_project_data_jobs.py](../../backend/migrations/versions/0247_project_data_jobs.py) | `'0247'` | `'0246'` | Project export / import jobs (W24 ADM-05 phase 1: settings + catalog). |
