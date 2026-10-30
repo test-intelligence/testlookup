@@ -171,9 +171,19 @@ _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"), "[REDACTED_PHONE]"),
     # SSN (xxx-xx-xxxx or xxx xx xxxx)
     (re.compile(r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b"), "[REDACTED_SSN]"),
-    # Credit card numbers (4 groups of 4 digits). Not the head of a UUID: a uuid4 whose first three groups happen
-    # to be all digits ("05982379-5519-4289-a773-…") reads as 16 digits, and masking it broke stored run ids.
-    (re.compile(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b(?!-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b)"), "[REDACTED_CC]"),
+    # Credit card numbers (4 groups of 4 digits). Never any part of a UUID: a uuid4 whose first three groups happen
+    # to be all digits ("05982379-5519-4289-a773-…") reads as 16 digits, and so does one whose last two are
+    # ("…-4ae1-9193-192975115072"); masking either broke stored ids. The lookbehinds refuse a match that starts at a
+    # UUID's fourth or fifth group, the lookahead one that ends where the rest of a UUID follows.
+    (
+        re.compile(
+            r"(?<![0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-)"
+            r"(?<![0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-)"
+            r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b"
+            r"(?!(?:-[0-9a-fA-F]{4}){1,3}-[0-9a-fA-F]{12}\b)"
+        ),
+        "[REDACTED_CC]",
+    ),
     # IPv4 addresses
     (re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b"), "[REDACTED_IP]"),
 ]
