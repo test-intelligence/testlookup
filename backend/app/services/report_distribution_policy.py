@@ -23,6 +23,10 @@ deploy. With the flag off (the default) nothing is refused and no value
 changes; each refusal that WOULD have happened is recorded in
 ``access_audit_logs`` as ``ai_report.distribution_would_refuse``, so the impact
 can be measured before the switch is thrown.
+
+W23c AGT-10: the switch is also an instance enforcement DATE an administrator
+sets on Settings › AI › Review gate (``review_gate_setting``; unset = audit
+only). The env flag stays the hard override.
 """
 from __future__ import annotations
 
@@ -34,6 +38,7 @@ import structlog
 from sqlalchemy import select
 
 from app.models.postgres import Project
+from app.services import review_gate_setting
 from app.services.review_envelope import (
     ReviewEnvelope,
     not_ai_generated,
@@ -98,9 +103,16 @@ class DistributionDecision:
 
 
 def gate_enforced() -> bool:
+    """Synchronous, signature unchanged (nine callers): the env flag (the hard
+    override) or the instance enforcement date at or before now (W23c AGT-10).
+
+    The date comes from this process's snapshot; every async entry point below
+    refreshes it first (``review_gate_setting.refresh_snapshot``), at most every
+    30 s and never on the caller's session.
+    """
     from app.core.config import settings  # noqa: PLC0415
 
-    return bool(settings.REVIEW_GATE_ENFORCED)
+    return bool(settings.REVIEW_GATE_ENFORCED) or review_gate_setting.enforced_now()
 
 
 def _as_uuid(value: Any) -> Optional[uuid.UUID]:
@@ -136,6 +148,7 @@ async def decide_run_distribution(
     ``include_unreviewed`` is honoured only for pending reviews and only when the
     caller has already checked the requester may ask for it (QA lead or above).
     """
+    await review_gate_setting.refresh_snapshot()
     envelope = await review_envelope_for_run(db, run_id, workflow_type=workflow_type)
     return await _decide_envelope_distribution(
         db,
@@ -282,6 +295,7 @@ async def release_review_projection(
     must not leave as-is: an AI decision no human accepted and no human overrode,
     while the gate is enforced.
     """
+    await review_gate_setting.refresh_snapshot()
     if synthesized:
         envelope = not_ai_generated()
     elif pipeline_run_id is None:
@@ -346,6 +360,7 @@ async def gate_release_decided_delivery(
     project_id: Any = None,
 ) -> tuple[dict[str, Any], DistributionDecision]:
     """Gate one webhook attempt and return its auditable decision."""
+    await review_gate_setting.refresh_snapshot()
     envelope, enforced, _withhold = await release_review_projection(
         db,
         run_id=run_id,
@@ -444,6 +459,7 @@ async def gate_investigation_excerpt(
     matching the workflow runner. Withholding the excerpt never drops the
     deterministic cause, confidence, tally, or cockpit link around it.
     """
+    await review_gate_setting.refresh_snapshot()
     if not excerpt:
         return excerpt, None
     try:
@@ -489,6 +505,7 @@ async def gate_ai_summary_text(
       section 8.2 requires of a notification body;
     * reviewed, or not enforced -- unchanged.
     """
+    await review_gate_setting.refresh_snapshot()
     if not ai_generated or not summary_text:
         return summary_text, None
     if pipeline_run_id is not None and evidence_bundle_sha256 is not None:
@@ -529,6 +546,7 @@ async def gate_release_verdict(
     drafts sees the value with ``draft_watermark``. A human override is a
     decision a person already made, and is left alone.
     """
+    await review_gate_setting.refresh_snapshot()
     envelope = await review_envelope_for_run(db, test_run_id, workflow_type="deep")
     projected = dict(decision)
     projected["review_state"] = envelope.state
@@ -583,6 +601,7 @@ async def gate_kind_labels(
     * the gate itself fails -- no labels while enforced (fail closed),
       unchanged otherwise. It never stops the comment from posting.
     """
+    await review_gate_setting.refresh_snapshot()
     if not kind_labels:
         return kind_labels, None, None
     try:

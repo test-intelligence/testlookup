@@ -290,9 +290,15 @@ def _build_comment_body(
     baseline: Optional[Any],
     attribution_summary: Optional[str] = None,
     draft_note: Optional[str] = None,
+    reviewed_line: Optional[str] = None,
 ) -> str:
     """Render the sticky comment markdown. First line is ALWAYS the
-    hidden marker — it is the upsert key."""
+    hidden marker — it is the upsert key.
+
+    ``reviewed_line`` (W23c AGT-10 R-5): the re-post after a person accepted
+    the run's AI report adds ONE line under the counts line ("Reviewed by a
+    person · <UTC time>", never a name). ``None`` keeps every body
+    byte-identical."""
     total = int(run.total_tests or 0)
     passed = int(run.passed_tests or 0)
     failed = int(run.failed_tests or 0)
@@ -318,6 +324,8 @@ def _build_comment_body(
     if deep_link:
         counts_line += f" · [Open run in TestLookup]({deep_link})"
     lines.extend([counts_line, ""])
+    if reviewed_line:
+        lines.extend([reviewed_line, ""])
 
     # E8.4: the kind labels below are AI classifications going out as a draft.
     if draft_note:
@@ -500,25 +508,47 @@ class _PRCommentContext:
     has_fixed: bool
 
 
-async def _gather_context(run_id: uuid.UUID) -> Optional[_PRCommentContext]:
+def _skip(skip_reasons: Optional[list[str]], reason: str) -> Optional[_PRCommentContext]:
+    """Note why no context is built (a ``REPOST_SKIP_REASONS`` code, read by the
+    W23c re-post) and answer None, as every skip always has."""
+    if skip_reasons is not None:
+        skip_reasons.append(reason)
+    return None
+
+
+async def _gather_context_or_skip(
+    run_id: uuid.UUID, *, reviewed_line: Optional[str] = None,
+) -> tuple[Optional[_PRCommentContext], str]:
+    """``_gather_context`` with the reason of a skip (``""`` with a context)."""
+    reasons: list[str] = []
+    ctx = await _gather_context(run_id, reviewed_line=reviewed_line, skip_reasons=reasons)
+    return ctx, (reasons[0] if reasons else "")
+
+
+async def _gather_context(
+    run_id: uuid.UUID,
+    *,
+    reviewed_line: Optional[str] = None,
+    skip_reasons: Optional[list[str]] = None,
+) -> Optional[_PRCommentContext]:
     """Phase 1 — all DB reads. Returns None (with a debug log) for every
     non-participating case; the session closes before any HTTP happens."""
     async with AsyncSessionLocal() as db:
         run = await _load_run(db, run_id)
         if run is None:
             logger.debug("pr_comment skipped: run not found", run_id=str(run_id))
-            return None
+            return _skip(skip_reasons, "run_not_found")
         if not await _post_allowed(db, project_id=run.project_id):
             logger.debug(
                 "pr_comment skipped: github_checks off for the run's project",
                 run_id=str(run_id),
             )
-            return None
+            return _skip(skip_reasons, "github_checks_off")
         if not run.pr_number or not run.ci_repo:
             logger.debug(
                 "pr_comment skipped: no PR context on run", run_id=str(run_id),
             )
-            return None
+            return _skip(skip_reasons, "no_pr_for_run")
 
         integration = await get_integration(db, run.project_id)
         if integration is None or not integration.enabled:
@@ -526,12 +556,12 @@ async def _gather_context(run_id: uuid.UUID) -> Optional[_PRCommentContext]:
                 "pr_comment skipped: integration disabled or missing",
                 run_id=str(run_id),
             )
-            return None
+            return _skip(skip_reasons, "no_integration" if integration is None else "integration_disabled")
 
         mode = (getattr(integration, "pr_comment_mode", None) or "failures_only").lower()
         if mode == "off":
             logger.debug("pr_comment skipped: mode off", run_id=str(run_id))
-            return None
+            return _skip(skip_reasons, "mode_off")
 
         integration_repo = f"{integration.repo_owner}/{integration.repo_name}"
         if run.ci_repo.strip().lower() != integration_repo.lower():
@@ -543,14 +573,14 @@ async def _gather_context(run_id: uuid.UUID) -> Optional[_PRCommentContext]:
                 run_repo=run.ci_repo,
                 integration_repo=integration_repo,
             )
-            return None
+            return _skip(skip_reasons, "repo_mismatch")
 
         from app.services import github_auth
         _cred = await github_auth.get_github_token(db, run.project_id)
         pat = _cred.token if _cred else None
         if not pat:
             logger.debug("pr_comment skipped: no PAT", run_id=str(run_id))
-            return None
+            return _skip(skip_reasons, "no_token")
 
         project_name = await _project_name(db, run.project_id)
         baseline = await _select_baseline(db, run)
@@ -611,6 +641,7 @@ async def _gather_context(run_id: uuid.UUID) -> Optional[_PRCommentContext]:
             baseline if has_baseline else None,
             attribution_summary=attribution_summary,
             draft_note=draft_note,
+            reviewed_line=reviewed_line,
         )
 
         has_failures = (int(run.failed_tests or 0) + int(run.broken_tests or 0)) > 0
@@ -803,3 +834,107 @@ async def post_pr_summary_for_run(run_id: uuid.UUID) -> Optional[dict[str, Any]]
             "pr_comment unhandled failure", run_id=str(run_id), error=str(exc),
         )
         return {"error": str(exc)}
+
+
+# ── W23c AGT-10: the re-post after a person accepted the run's AI report ─────
+
+
+def _repost_outcome(
+    outcome: str,
+    reason: Optional[str] = None,
+    *,
+    status_code: Optional[int] = None,
+    error_type: Optional[str] = None,
+) -> dict[str, Any]:
+    """The typed re-post answer: ``REPOST_OUTCOMES`` + a ``REPOST_SKIP_REASONS``
+    reason for ``skipped``; ``status_code`` / ``error_type`` for ``failed``."""
+    return {
+        "outcome": outcome,
+        "reason": reason,
+        "status_code": status_code,
+        "error_type": error_type,
+    }
+
+
+def _status_from_error(exc: BaseException) -> Optional[int]:
+    """The HTTP status a listing helper put in its RuntimeError, if any."""
+    import re  # noqa: PLC0415
+
+    match = re.search(r"HTTP (\d{3})", str(exc))
+    return int(match.group(1)) if match else None
+
+
+async def repost_pr_summary_for_run(
+    run_id: uuid.UUID, *, reviewed_line: str,
+) -> dict[str, Any]:
+    """EDIT the run's existing marker comment with the reviewed body. NEVER POSTs.
+
+    The same ``_gather_context`` (the kind labels now pass the review gate as
+    reviewed), the same SSRF guard, the same marker search; then ONE PATCH of
+    the marker comment with the 10 s timeout and the single retry. No marker
+    comment -> ``skipped`` / ``no_prior_comment``: an accept never adds a
+    comment to a PR. A timeout is ``timed_out`` and is NOT written to
+    ``last_error`` (a timeout is not a failure). Never raises.
+    """
+    try:
+        if settings.AI_OFFLINE_MODE:
+            return _repost_outcome("skipped", "offline_mode")
+        ctx, reason = await _gather_context_or_skip(run_id, reviewed_line=reviewed_line)
+        if ctx is None:
+            return _repost_outcome("skipped", reason or "no_integration")
+
+        comments_url = f"{ctx.api_base}/repos/{ctx.repo}/issues/{ctx.pr_number}/comments"
+        block = await _ssrf_block_reason(comments_url)
+        if block:
+            await _record_outcome(ctx.integration_id, error=f"blocked unsafe target: {block}")
+            logger.warning("pr_comment_repost_blocked", run_id=str(run_id), reason=block)
+            return _repost_outcome("skipped", "blocked_unsafe_target")
+
+        headers = {
+            "Authorization": f"Bearer {ctx.pat}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "TestLookup/1.0",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        try:
+            existing_id = await _find_existing_comment(
+                ctx.api_base, ctx.repo, ctx.pr_number, headers, ctx.marker,
+            )
+            if existing_id is None:
+                return _repost_outcome("skipped", "no_prior_comment")
+            resp = await _request_with_retry(
+                "PATCH",
+                f"{ctx.api_base}/repos/{ctx.repo}/issues/comments/{existing_id}",
+                headers=headers,
+                json_body={"body": ctx.body},
+            )
+        except httpx.TimeoutException:
+            logger.info("pr_comment_repost_timed_out", run_id=str(run_id))
+            return _repost_outcome("timed_out")
+        except Exception as exc:  # noqa: BLE001 — recorded for Integration Health
+            await _record_outcome(
+                ctx.integration_id, error=f"{type(exc).__name__}: {str(exc)[:480]}",
+            )
+            logger.warning(
+                "pr_comment_repost_failed", run_id=str(run_id), error_type=type(exc).__name__,
+            )
+            return _repost_outcome(
+                "failed", status_code=_status_from_error(exc), error_type=type(exc).__name__,
+            )
+
+        if resp.status_code == 200:
+            await _record_outcome(ctx.integration_id, error=None)
+            logger.info("pr_comment_reposted", run_id=str(run_id), comment_id=existing_id)
+            return _repost_outcome("updated", status_code=200)
+        await _record_outcome(
+            ctx.integration_id, error=f"HTTP {resp.status_code}: {resp.text[:480]}",
+        )
+        logger.warning(
+            "pr_comment_repost_rejected", run_id=str(run_id), status_code=resp.status_code,
+        )
+        return _repost_outcome("failed", status_code=resp.status_code)
+    except Exception as exc:  # noqa: BLE001 — never raise into the executor
+        logger.warning(
+            "pr_comment_repost_unhandled", run_id=str(run_id), error_type=type(exc).__name__,
+        )
+        return _repost_outcome("failed", error_type=type(exc).__name__)

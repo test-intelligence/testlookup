@@ -77,6 +77,7 @@ export const HELP_TOPICS: Readonly<Record<string, HelpTopic>> = {
   '/settings/ai-agents': { topic: 'administration', anchor: 'ai-agents-and-agent-activity' },
   '/settings/agent-activity': { topic: 'administration', anchor: 'ai-agents-and-agent-activity' },
   '/settings/ai-eval': { topic: 'administration', anchor: 'ai-evaluation' },
+  '/settings/review-gate': { topic: 'administration', anchor: 'review-gate' },
   '/settings/billing': { topic: 'administration', anchor: 'llm-cost-budget' },
   '/projects': { topic: 'administration', anchor: 'projects' },
   '/users': { topic: 'administration', anchor: 'users-and-roles' },

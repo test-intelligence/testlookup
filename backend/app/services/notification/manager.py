@@ -232,7 +232,9 @@ async def _refresh_review_gated_delivery(
             gate_ai_summary_text,
             gate_enforced,
         )
+        from app.services import review_gate_setting
 
+        await review_gate_setting.refresh_snapshot()  # W23c: the date behind gate_enforced()
         if ai_generated and gate_enforced() and (
             not pipeline_run_id or not evidence_bundle_sha256
         ):

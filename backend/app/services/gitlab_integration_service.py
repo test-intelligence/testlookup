@@ -488,14 +488,18 @@ def _build_mr_note_body(
     part: Any,
     baseline: Optional[Any],
     draft_note: Optional[str] = None,
+    reviewed_line: Optional[str] = None,
 ) -> str:
     """Render the sticky MR note markdown by REUSING the GitHub PR-comment
     renderer, then swapping its first line (the GitHub marker) for the GitLab
     marker so re-runs upsert against the right key. Zero classification /
-    rendering fork — same sections, kind labels, overflow, and footer."""
+    rendering fork — same sections, kind labels, overflow, and footer.
+    ``reviewed_line`` (W23c re-post) is passed through; ``None`` keeps the
+    body byte-identical."""
     from app.services import github_pr_comment_service as gh
     gh_body = gh._build_comment_body(
         run, project_id, project_name, part, baseline, draft_note=draft_note,
+        reviewed_line=reviewed_line,
     )
     newline = gh_body.find("\n")
     tail = gh_body[newline:] if newline != -1 else ""
@@ -516,7 +520,29 @@ class _MRNoteContext:
             setattr(self, k, kw[k])
 
 
-async def _gather_mr_context(run_id: uuid.UUID) -> Optional[_MRNoteContext]:
+def _skip(skip_reasons: Optional[list[str]], reason: str) -> Optional[_MRNoteContext]:
+    """Note why no context is built (a ``REPOST_SKIP_REASONS`` code, read by the
+    W23c re-post) and answer None, as every skip always has."""
+    if skip_reasons is not None:
+        skip_reasons.append(reason)
+    return None
+
+
+async def _gather_mr_context_or_skip(
+    run_id: uuid.UUID, *, reviewed_line: Optional[str] = None,
+) -> tuple[Optional[_MRNoteContext], str]:
+    """``_gather_mr_context`` with the reason of a skip (``""`` with a context)."""
+    reasons: list[str] = []
+    ctx = await _gather_mr_context(run_id, reviewed_line=reviewed_line, skip_reasons=reasons)
+    return ctx, (reasons[0] if reasons else "")
+
+
+async def _gather_mr_context(
+    run_id: uuid.UUID,
+    *,
+    reviewed_line: Optional[str] = None,
+    skip_reasons: Optional[list[str]] = None,
+) -> Optional[_MRNoteContext]:
     """Phase 1 — all DB reads. Returns None (with a debug log) for every
     non-participating case; the session closes before any HTTP happens.
 
@@ -531,16 +557,16 @@ async def _gather_mr_context(run_id: uuid.UUID) -> Optional[_MRNoteContext]:
         run = result.scalar_one_or_none()
         if run is None:
             logger.debug("mr_note skipped: run not found", run_id=str(run_id))
-            return None
+            return _skip(skip_reasons, "run_not_found")
         if not await _post_allowed(db, project_id=run.project_id):
             logger.debug(
                 "mr_note skipped: gitlab flag off for the run's project",
                 run_id=str(run_id),
             )
-            return None
+            return _skip(skip_reasons, "gitlab_off")
         if not run.pr_number or not run.ci_repo:
             logger.debug("mr_note skipped: no MR context on run", run_id=str(run_id))
-            return None
+            return _skip(skip_reasons, "no_pr_for_run")
 
         integration = await get_integration(db, run.project_id)
         if integration is None or not integration.enabled:
@@ -548,12 +574,12 @@ async def _gather_mr_context(run_id: uuid.UUID) -> Optional[_MRNoteContext]:
                 "mr_note skipped: integration disabled or missing",
                 run_id=str(run_id),
             )
-            return None
+            return _skip(skip_reasons, "no_integration" if integration is None else "integration_disabled")
 
         mode = (getattr(integration, "mr_comment_mode", None) or "failures_only").lower()
         if mode == "off":
             logger.debug("mr_note skipped: mode off", run_id=str(run_id))
-            return None
+            return _skip(skip_reasons, "mode_off")
 
         # Repo-match guard: MR IIDs are project-scoped, so the run's CI repo
         # must equal the configured project path (case-insensitive). Posting
@@ -565,7 +591,7 @@ async def _gather_mr_context(run_id: uuid.UUID) -> Optional[_MRNoteContext]:
                 run_repo=run.ci_repo,
                 integration_path=integration.project_path,
             )
-            return None
+            return _skip(skip_reasons, "repo_mismatch")
 
         from app.services import secret_service
         pat = await secret_service.read_secret(
@@ -573,7 +599,7 @@ async def _gather_mr_context(run_id: uuid.UUID) -> Optional[_MRNoteContext]:
         )
         if not pat:
             logger.debug("mr_note skipped: no token", run_id=str(run_id))
-            return None
+            return _skip(skip_reasons, "no_token")
 
         project_name = None
         try:
@@ -616,6 +642,7 @@ async def _gather_mr_context(run_id: uuid.UUID) -> Optional[_MRNoteContext]:
             run, run.project_id, project_name, part,
             baseline if has_baseline else None,
             draft_note=draft_note,
+            reviewed_line=reviewed_line,
         )
         has_failures = (int(run.failed_tests or 0) + int(run.broken_tests or 0)) > 0
 
@@ -803,6 +830,77 @@ async def post_mr_note_for_run(run_id: uuid.UUID) -> Optional[dict[str, Any]]:
             "mr_note unhandled failure", run_id=str(run_id), error=str(exc),
         )
         return {"error": str(exc)}
+
+
+async def repost_mr_note_for_run(
+    run_id: uuid.UUID, *, reviewed_line: str,
+) -> dict[str, Any]:
+    """W23c AGT-10: EDIT the run's existing marker note with the reviewed body.
+
+    The twin of ``github_pr_comment_service.repost_pr_summary_for_run``: the
+    same ``_gather_mr_context``, SSRF guard and note search, then ONE PUT of the
+    marker note. NEVER POSTs (no marker note -> ``skipped`` /
+    ``no_prior_comment``). A timeout is ``timed_out`` and not written to
+    ``last_error``. Never raises.
+    """
+    from app.services.github_pr_comment_service import _repost_outcome, _status_from_error
+
+    try:
+        if settings.AI_OFFLINE_MODE:
+            return _repost_outcome("skipped", "offline_mode")
+        found, reason = await _gather_mr_context_or_skip(run_id, reviewed_line=reviewed_line)
+        if found is None:
+            return _repost_outcome("skipped", reason or "no_integration")
+        ctx: Any = found  # a __slots__ class: its attributes are set dynamically
+
+        notes_url = f"{ctx.api_root}/projects/{ctx.project_ref}/merge_requests/{ctx.mr_iid}/notes"
+        block = await _ssrf_block_reason(notes_url)
+        if block:
+            await _record_outcome(ctx.integration_id, error=f"blocked unsafe target: {block}")
+            logger.warning("mr_note_repost_blocked", run_id=str(run_id), reason=block)
+            return _repost_outcome("skipped", "blocked_unsafe_target")
+
+        headers = _headers(ctx.pat)
+        try:
+            existing_id = await _find_existing_note(
+                ctx.api_root, ctx.project_ref, ctx.mr_iid, headers, ctx.marker,
+            )
+            if existing_id is None:
+                return _repost_outcome("skipped", "no_prior_comment")
+            resp = await _request_with_retry(
+                "PUT", f"{notes_url}/{existing_id}", headers=headers,
+                json_body={"body": ctx.body},
+            )
+        except httpx.TimeoutException:
+            logger.info("mr_note_repost_timed_out", run_id=str(run_id))
+            return _repost_outcome("timed_out")
+        except Exception as exc:  # noqa: BLE001 — recorded for Integration Health
+            await _record_outcome(
+                ctx.integration_id, error=f"{type(exc).__name__}: {str(exc)[:480]}",
+            )
+            logger.warning(
+                "mr_note_repost_failed", run_id=str(run_id), error_type=type(exc).__name__,
+            )
+            return _repost_outcome(
+                "failed", status_code=_status_from_error(exc), error_type=type(exc).__name__,
+            )
+
+        if resp.status_code == 200:
+            await _record_outcome(ctx.integration_id, error=None)
+            logger.info("mr_note_reposted", run_id=str(run_id), note_id=existing_id)
+            return _repost_outcome("updated", status_code=200)
+        await _record_outcome(
+            ctx.integration_id, error=f"HTTP {resp.status_code}: {resp.text[:480]}",
+        )
+        logger.warning(
+            "mr_note_repost_rejected", run_id=str(run_id), status_code=resp.status_code,
+        )
+        return _repost_outcome("failed", status_code=resp.status_code)
+    except Exception as exc:  # noqa: BLE001 — never raise into the executor
+        logger.warning(
+            "mr_note_repost_unhandled", run_id=str(run_id), error_type=type(exc).__name__,
+        )
+        return _repost_outcome("failed", error_type=type(exc).__name__)
 
 
 # ── Commit status ────────────────────────────────────────────────────────────
