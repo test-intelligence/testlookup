@@ -67,7 +67,7 @@ import io
 import json
 import uuid
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import IO, Any, AsyncIterator, Collection, Mapping, Optional, cast
 
@@ -632,6 +632,11 @@ def _build_manifest(
                 ),
             }
         )
+    elif scope.kind == "project":
+        # W24 ADM-05: a project export (settings + catalog). The member
+        # iterator FILLED ``manifest_extra`` before it was exhausted (format,
+        # schema_version, source, project, entities, directory, excluded).
+        manifest.update({"scope": "project", **(scope.manifest_extra or {})})
     else:
         manifest.update(
             {
@@ -902,11 +907,15 @@ class ExportScope:
     verification steps the README tells an auditor to follow.
     """
 
-    kind: str                  # "release" | "runs"
+    kind: str                  # "release" | "runs" | "project" (W24)
     project_id: uuid.UUID
     run_ids: tuple[uuid.UUID, ...]
     tier: str
     release_id: Optional[uuid.UUID] = None
+    #: A project export's manifest keys (W24): a dict the member iterator
+    #: FILLS before it is exhausted -- ``build_archive`` builds the manifest
+    #: after the last member. ``None`` for the release and runs kinds.
+    manifest_extra: Optional[dict[str, Any]] = field(default=None, compare=False, hash=False)
 
     @staticmethod
     def _validate(run_ids, tier: str) -> tuple[uuid.UUID, ...]:
@@ -957,6 +966,21 @@ class ExportScope:
             tier=tier,
         )
 
+    @classmethod
+    def for_project(
+        cls, *, project_id: uuid.UUID, manifest_extra: dict[str, Any]
+    ) -> "ExportScope":
+        """A project export (W24 ADM-05: settings + catalog). It covers no runs
+        (run history is phase 2), so ``_validate`` -- whose refusal of an empty
+        run set protects a deletion -- does not apply; ``tier`` is ``full``."""
+        return cls(
+            kind="project",
+            project_id=project_id,
+            run_ids=(),
+            tier="full",
+            manifest_extra=manifest_extra,
+        )
+
 
 def build_export_key(
     scope: ExportScope, generated_at: datetime, pack_id: uuid.UUID
@@ -967,11 +991,14 @@ def build_export_key(
     Release packs keep their existing ``compliance/`` prefix and shape
     verbatim — every stored pack is addressed by it. Run exports live under
     ``exports/`` so a lifecycle rule written for compliance packs does not
-    silently start expiring retention archives.
+    silently start expiring retention archives. Project exports (W24) live
+    under a THIRD prefix, ``project-exports/``, for the same reason.
     """
     date_prefix = generated_at.strftime("%Y/%m/%d")
     if scope.kind == "release":
         return f"compliance/{date_prefix}/{scope.release_id}/{pack_id}.zip"
+    if scope.kind == "project":
+        return f"project-exports/{date_prefix}/{scope.project_id}/{pack_id}.zip"
     return f"exports/{date_prefix}/{scope.project_id}/{pack_id}.zip"
 
 

@@ -329,6 +329,16 @@ celery_app.conf.update(
             "schedule": crontab(minute="*/15"),
             "options": {"queue": "default"},
         },
+        # W24 ADM-05: the project-data janitor -- the ONLY expiry path of a
+        # project export (72 h), removes uploads no job keeps, fails jobs a dead
+        # worker left running (``interrupted``) and re-sends lost enqueues. A
+        # separate task from sweep-deletion-exports (its query and counters are
+        # untouched). Hourly at :35, clear of the :20 / :50 release sweeps.
+        "sweep-project-data-jobs": {
+            "task": "app.worker.tasks.sweep_project_data_jobs",
+            "schedule": crontab(minute=35),
+            "options": {"queue": "default"},
+        },
         "recover-waiting-run-finalizations": {
             "task": "app.worker.tasks.recover_waiting_run_finalizations",
             "schedule": crontab(minute="*"),

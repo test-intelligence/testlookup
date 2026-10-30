@@ -553,6 +553,14 @@ async def _verify_stored(
             copy.close()
 
 
+#: Public names for the project export (W24 ADM-05) -- the SAME functions, no
+#: behaviour change: the spool, and the write -> RE-READ -> verify loop
+#: (``EXPORT_VERIFY_ATTEMPTS``, ``VERIFY_BACKOFF_SECONDS``). Its
+#: ``ExportFailed("unverified", reason=…)`` is mapped by the caller.
+new_spool = _new_spool
+verify_stored_archive = _verify_stored
+
+
 # ── The export phase (E-5) ─────────────────────────────────────────────────
 
 

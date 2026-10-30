@@ -343,6 +343,10 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("project.archived", "configuration", "project", "Project {entity_label} was archived"),
     _spec("project.restored", "configuration", "project", "Project {entity_label} was restored"),
     _spec("project.reset", "configuration", "project", "Project data reset ({mode}) was issued", "attempt"),
+    # W24 ADM-05: outcome events, recorded by the export runner once the archive
+    # is verified, and by the import IN its transaction (on the NEW project).
+    _spec("project.exported", "configuration", "project", "Settings and catalog of {entity_label} were exported", "outcome"),
+    _spec("project.imported", "configuration", "project", "Project {entity_label} was imported from {source}", "outcome"),
     _spec("policy.created", "configuration", "policy", "Release gate policy {entity_label} was created"),
     _spec("policy.updated", "configuration", "policy", "Release gate policy {entity_label} changed: {changed}"),
     # W21 ACT-01: no ``policy.deleted`` -- gate policies are versioned and
