@@ -1343,6 +1343,13 @@ def ingest_uploaded_results(
             except Exception:
                 await db.rollback()
                 raise
+            # W23d AGT-14: the captured HTTP exchanges go to Mongo AFTER the
+            # commit (they join on the committed case ids). Best effort: the
+            # store never raises and never commits.
+            if any(isinstance(r, dict) and r.get("http_exchanges") for r in payload["results"]):
+                from app.services.ingestion_pipeline import store_batch_http_exchanges
+
+                await store_batch_http_exchanges(db, run, payload["results"])
 
         await finalize_run(
             # Use the canonical row returned after identity conflict handling.
@@ -1350,6 +1357,8 @@ def ingest_uploaded_results(
             project_id=payload["project_id"],
             build_number=payload["build_number"],
             release_name=payload.get("release_name"),
+            # W23d (0.8): ``run_ai: false`` stages no AI pipeline (the upload's rule).
+            run_ai=payload.get("run_ai", True),
         )
         if payload_storage_key:
             try:

@@ -108,3 +108,34 @@ async def test_contract_agent_does_not_publish_partial_success(monkeypatch):
 
     assert result["status"] == "failed"
     assert "incomplete" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_contract_agent_violations_keep_their_own_endpoint(monkeypatch):
+    """W23d P-5: a test that called two endpoints names the one that drifted."""
+    sentence = "field `price` missing from GET /api/products/{id}; drift since build 41"
+    invoke = AsyncMock(return_value=json.dumps({
+        "endpoint": "/api/cart",
+        "endpoints": ["/api/cart", "/api/products/{id}"],
+        "evidence_available": True,
+        "exchanges_checked": 2,
+        "violations": [{
+            "field_path": "price", "violation_type": "schema_drift", "expected": "present",
+            "actual": "absent", "severity": "critical", "method": "GET",
+            "endpoint": "/api/products/{id}", "baseline_build": "41", "sentence": sentence,
+        }],
+    }))
+    monkeypatch.setattr(contract_agent_module, "validate_api_contract", type("FakeTool", (), {"ainvoke": invoke})())
+
+    result = await ContractAgent().validate_cluster(
+        ["tc-1"], project_id="p1", run_id="r1", pipeline_run_id="pl1"
+    )
+
+    (violation,) = result["violations"]
+    assert violation["endpoint"] == "/api/products/{id}"
+    assert (violation["method"], violation["baseline_build"], violation["sentence"]) == ("GET", "41", sentence)
+    assert result["evidence_refs"][0]["endpoint"] == "/api/products/{id}"
+    assert result["endpoints_checked"] == ["/api/cart", "/api/products/{id}"]
+    assert result["status"] == "complete" and result["summary"].startswith("CRITICAL CONTRACT VIOLATIONS")
+    assert result["summary"].endswith(sentence)
+    ContractAgentOutput.model_validate({"contract": {"agent_name": "contract_validation"}, **result})

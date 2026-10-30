@@ -82,8 +82,22 @@ async def ensure_indexes() -> None:
     """
     db = get_mongo_db()
     specs = [
-        # Hot path: tools/fetch_rest_payload.py — lookup by test_case_id.
+        # Legacy lookup by test_case_id (the export's by-case read).
         (Collections.REST_API_PAYLOADS, [("test_case_id", 1)], {}),
+        # W23d AGT-14: the exchanges GET, both tools and the run-keyed
+        # retention purge (services/http_exchange_store.py).
+        (
+            Collections.REST_API_PAYLOADS,
+            [("test_run_id", 1), ("test_case_id", 1), ("seq", 1)],
+            {"name": "rest_payloads_run_case"},
+        ),
+        # W23d AGT-14: the cross-run drift baseline (same project, method and
+        # endpoint template, newest runs first).
+        (
+            Collections.REST_API_PAYLOADS,
+            [("project_id", 1), ("method", 1), ("endpoint", 1), ("run_created_at", -1)],
+            {"name": "rest_payloads_drift"},
+        ),
         # Hot path: tools/fetch_stacktrace.py
         (Collections.RAW_ALLURE_JSON, [("test_case_id", 1)], {}),
         (Collections.RAW_TESTNG_XML, [("test_case_id", 1)], {}),

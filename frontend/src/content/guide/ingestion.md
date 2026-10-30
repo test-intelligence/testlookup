@@ -43,6 +43,24 @@ A key is shown **once**; store it in your CI secret store straight away. It carr
 
 An uploaded report arrives after the suite finishes. A **reporter SDK** instead streams each test result as it completes, so the run appears on [Runs → Live](/docs/live) while it is still executing and its partial results are visible straight away. SDKs exist for Python (pytest), Java (TestNG and JUnit 5), JavaScript/TypeScript (Jest and Mocha) and Go; download them from **Connect a test runner** on the Live page. When the suite finishes, the SDK closes the session and the run is finalised like any other.
 
+## Capturing HTTP exchanges
+
+The Python pytest plugin (reporter 1.3.0 or later) can record the HTTP calls each test makes through `requests` or `httpx`: method, URL, status, duration, headers and bodies. It is **off by default**: turn it on per run with `pytest --testlookup-capture-http`, `TESTLOOKUP_CAPTURE_HTTP=1`, or `testlookup.capture_http=true` in `testlookup.properties`. The reporter's own calls to TestLookup are never recorded.
+
+**Redacted before it is stored.** The reporter redacts first and the server redacts again before anything is written:
+
+- header values such as `Authorization`, `Cookie`, `Set-Cookie`, `X-API-Key` and any header whose name ends in `token`, `secret`, `password`, `api-key`, `signature` or `credential`;
+- query values such as `access_token`, `api_key`, `code`, `sig` and the password of a `user:password@host` URL;
+- in bodies, the value of a JSON key named like a credential (`password`, `client_secret`, `apiKey` …), plus bearer tokens, e-mail addresses, provider tokens (`ghp_…`, `glpat-…`, `AKIA…`) and any run of 40 or more key-like characters.
+
+Each removed value reads `[REDACTED]`. Review one captured run before enabling capture in CI: a secret in a shape these rules do not know would be kept.
+
+**Caps.** 20 exchanges per test, 1,000 per run, bodies stored up to 16 KB after redaction (a cut body ends with a truncation note). Anything over a cap is counted, never an error, and a malformed exchange never costs the run its results.
+
+**Where it shows.** Open a test from its run and pick the **HTTP exchanges** tab. A deep AI investigation with the `contract_validation` stage on compares each JSON response's fields with the project's earlier runs of the same endpoint and reports a missing field or a changed type with the build it drifted from. Exchanges follow the project's raw-events retention and are deleted with their run; a held run keeps them.
+
+Over the API, send `http_exchanges` on each result of `POST /api/v1/ingest` (add `"run_ai": false` to skip the AI analysis), or post a live test's exchanges to `POST /api/v1/stream/http-exchanges`.
+
 ## Attaching a run to a release
 
 A run joins a [release](/docs/releases) when it arrives with a release name: **Release** in the upload form, `release_name` on the API, `--release` on the CLI, or the SDK's release setting. A QA lead can also set or change it afterwards with **Set release** on the run's page.

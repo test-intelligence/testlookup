@@ -8,7 +8,7 @@ Used by:
 """
 import hashlib
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 import structlog
@@ -562,6 +562,87 @@ async def ingest_test_results(
         accepted_status_counts,
     )
     return count
+
+
+async def store_batch_http_exchanges(
+    db: AsyncSession,
+    run: TestRun,
+    results: list[dict],
+) -> Optional[Any]:
+    """W23d AGT-14 P-3: store the JSON batch's captured HTTP exchanges in Mongo.
+
+    Called by the batch task AFTER its commit, only when a result carries
+    ``http_exchanges``. ONE select maps each result's fingerprint (the
+    persistence key, ``make_test_fingerprint``) to its ``TestCase.id``; the
+    exchanges of collapsed duplicates are appended in result order (the store
+    caps each case at 20 and counts the rest dropped). Never raises, never
+    commits, no outbound call (local Mongo only). Returns the store's
+    ``WriteCounts``, or ``None`` when nothing was offered or the lookup failed.
+    """
+    from sqlalchemy import inspect as sa_inspect  # noqa: PLC0415
+
+    from app.services.http_exchange_store import write_exchanges  # noqa: PLC0415
+    from app.services.ingestion import make_test_fingerprint  # noqa: PLC0415
+    from app.services.ingestion_sanitization import strip_nul_bytes  # noqa: PLC0415
+
+    order: list[str] = []
+    offered: dict[str, tuple[list[Any], int]] = {}
+    for case in results or ():
+        if not isinstance(case, dict):
+            continue
+        exchanges = case.get("http_exchanges") or []
+        dropped = case.get("http_exchanges_dropped") or 0
+        if not exchanges and not dropped:
+            continue
+        names = strip_nul_bytes({"test_name": case.get("test_name", ""), "class_name": case.get("class_name")})
+        fingerprint = make_test_fingerprint(names.get("test_name") or "", names.get("class_name"))
+        if fingerprint not in offered:
+            order.append(fingerprint)
+            offered[fingerprint] = ([], 0)
+        kept, prior = offered[fingerprint]
+        offered[fingerprint] = (kept + list(exchanges if isinstance(exchanges, list) else []),
+                                prior + (int(dropped) if isinstance(dropped, int) else 0))
+    if not order:
+        return None
+    try:
+        rows = (await db.execute(
+            select(TestCase.id, TestCase.test_fingerprint).where(
+                TestCase.test_run_id == run.id,
+                TestCase.test_fingerprint.in_(order),
+            )
+        )).all()
+        if "created_at" in sa_inspect(run).unloaded:
+            created_at = await db.scalar(select(TestRun.created_at).where(TestRun.id == run.id))
+        else:
+            created_at = run.created_at
+    except Exception as exc:  # noqa: BLE001 — capture is best effort; the run is committed
+        logger.warning("http_exchanges_case_lookup_failed", run_id=str(run.id), error_type=type(exc).__name__)
+        return None
+    case_ids = {fingerprint: str(case_id) for case_id, fingerprint in rows}
+    items = [
+        (case_ids[fingerprint], offered[fingerprint][0], offered[fingerprint][1])
+        for fingerprint in order
+        if fingerprint in case_ids
+    ]
+    counts = await write_exchanges(
+        project_id=str(run.project_id),
+        test_run_id=str(run.id),
+        build_number=str(run.build_number),
+        run_created_at=created_at or datetime.now(timezone.utc),
+        items=items,
+        source="json_batch",
+    )
+    logger.info(
+        "http_exchanges_stored",
+        run_id=str(run.id),
+        cases=len(items),
+        unmatched_cases=len(order) - len(items),
+        stored=counts.stored,
+        truncated=counts.truncated,
+        dropped=counts.dropped,
+        write_failed=counts.write_failed,
+    )
+    return counts
 
 
 async def _run_isolated_step(step_name: str, coro_factory) -> bool:

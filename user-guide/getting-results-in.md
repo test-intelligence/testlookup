@@ -85,6 +85,8 @@ curl -X POST "http://localhost:8000/api/v1/ingest" \
   }'
 ```
 
+Optional JSON fields include `run_ai` (default `true`): `false` stores the run without staging the AI analysis, the JSON twin of the upload's `run_ai` form field and the CLI's `--no-ai`. Each result may also carry `http_exchanges` (see [Capturing HTTP exchanges](#capturing-http-exchanges)).
+
 Both endpoints answer `202 Accepted` with `run_id`, `task_id` and `total_results`. `GET /api/v1/ingest/uploads/{task_id}` reports how processing of an uploaded file ended (`pending`, `parsing`, `ingesting`, `succeeded` or `failed`). Sending the same `project_id` and `build_number` again updates that run instead of creating a second one.
 
 The full request schema is in the live API reference at `/api-docs` on your instance.
@@ -116,6 +118,28 @@ For test-by-test streaming while the suite is still running, so the run shows up
 Every SDK follows the same lifecycle: it opens a live session, streams each test's result in batches while the tests run, and finalises the run when they finish. The session-based reporters (the pytest plugin, Java, JavaScript, Go) do that by closing the session; Python's `LiveStream`, which has no explicit session, sends a `run_complete` event. Either one finalises the run the same way. Sessions carry a heartbeat, so a run whose runner dies mid-flight is detected and recovered instead of staying "in progress" forever. While a live run is in progress, the Runs and report pages read from the live buffer, so their counts match what **Live** shows.
 
 Installation and configuration for each SDK (URL, API key, project, build, release and suite settings, and the shared configuration file) are in [CLI, SDKs & MCP](cli-sdk-mcp.md).
+
+### Capturing HTTP exchanges
+
+The Python pytest plugin can record the HTTP calls each test makes (method, URL, status, duration, both header sets and both bodies), so a failing API test shows what it sent and what came back, and the deep AI investigation can compare a response with earlier runs.
+
+**Opt-in.** Capture is off by default. Turn it on per run with `pytest --testlookup-capture-http`, the environment variable `TESTLOOKUP_CAPTURE_HTTP=1` (also `true`, `yes`, `on`), or `testlookup.capture_http=true` in `testlookup.properties`. It needs Python reporter 1.3.0 or later and records calls made through `requests` and `httpx` (sync and async) while a test runs. The reporter's own traffic to TestLookup is never recorded, and a streamed response body is not read. The Java, JavaScript and Go SDKs do not capture yet.
+
+**What is redacted, before it is stored.** The reporter applies these rules before anything leaves the CI machine, and the server applies them again before anything is written anywhere (the task queue, object storage, the exchange store):
+
+- **Headers**: the values of `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-API-Key`, `Api-Key`, `X-Auth-Token`, `X-Access-Token`, `X-CSRF-Token`, `X-XSRF-Token`, `X-Amz-Security-Token`, `X-Goog-Api-Key`, `X-Session-Token`, `Private-Token`, `X-GitLab-Token`, `X-Hub-Signature` and `X-Hub-Signature-256`, and of any header whose name ends in `token`, `secret`, `password`, `api-key`, `apikey`, `signature` or `credential`, become `[REDACTED]` (the name is kept).
+- **URLs**: the query values of `token`, `access_token`, `id_token`, `refresh_token`, `api_key`, `apikey`, `key`, `code`, `password`, `secret`, `client_secret`, `sig`, `signature`, `auth` and the `X-Amz-Signature` / `X-Amz-Credential` / `X-Amz-Security-Token` signing parameters, and the password of a `user:password@host` URL.
+- **Bodies**: the value of any JSON key named like a credential (`password`, `client_secret`, `apiKey`, `token` and the like), and anywhere in the text bearer tokens, e-mail addresses, provider tokens (`ghp_…`, `github_pat_…`, `glpat-…`, `xoxb-…`, `sk-…`, `AKIA…`) and any unbroken run of 40 or more key-like characters.
+
+Review one captured run before you turn capture on in CI: a secret in a shape these rules do not know (a custom header name, a short opaque token under an innocent JSON key) would be kept.
+
+**Caps.** At most 20 exchanges per test (the first 20; the rest are counted) and 1,000 per run; 50 headers per side; URLs up to 2,048 characters. A body is read up to 64 KB and stored up to 16 KB after redaction, ending with a `…[truncated: N bytes not stored]` marker when cut. A malformed exchange (no URL, an impossible method) is dropped and counted; it never costs the run its results.
+
+**Where it shows.** The **HTTP exchanges** tab on a test's page (`/runs/<run>/tests/<test>`) lists them, with `[REDACTED]` where a value was removed. `GET /api/v1/runs/{run_id}/tests/{test_id}/http-exchanges` answers the same list to any member of the project. In a deep AI investigation with the `contract_validation` stage on, each JSON response's fields are compared with the project's latest earlier run that captured the same method and endpoint, and a missing field or a changed type is reported with the build it drifted from (for example ``field `price` missing from GET /api/products/{id}; drift since build 41``). Added fields are never reported, and a run with no earlier capture says there is nothing to compare with yet.
+
+**Retention.** Exchanges follow the project's raw-events retention clock and are deleted with their run; a run under a retention hold keeps them. The `full` data export includes them, redacted, under each run.
+
+**Over the API.** `http_exchanges` on each result of `POST /api/v1/ingest`: a list of `{"method", "url", "endpoint", "status", "duration_ms", "started_at", "error", "request": {"headers", "body"}, "response": {"headers", "body"}}` (only `method` and `url` are required). A live session posts one test's exchanges to `POST /api/v1/stream/http-exchanges` with `session_id`, `run_id`, `test_name`, `class_name` and `exchanges`; that is the route the pytest plugin uses. `endpoint` is the path template runs are compared by (`/api/products/{id}`); without it the server derives one from the URL, replacing numeric, UUID and long id-like path segments with `{id}`.
 
 ## Attaching runs to a release
 

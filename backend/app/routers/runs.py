@@ -22,6 +22,8 @@ from app.models.schemas import (
     DeleteRunRequest,
     DurationRegressionsResponse,
     EnrichedTestCaseDetailResponse,
+    HttpExchangeListResponse,
+    HttpExchangeRead,
     ReferenceBrokenRead,
     RunBranchListResponse,
     RunSignatureBatchResponse,
@@ -470,6 +472,47 @@ async def get_test_case_steps(
     if tree is None:
         raise HTTPException(status_code=404, detail="Test case not found")
     return tree
+
+
+@router.get("/{run_id}/tests/{test_id}/http-exchanges", response_model=HttpExchangeListResponse)
+async def get_test_case_http_exchanges(
+    run_id: uuid.UUID,
+    test_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_run_access()),
+):
+    """W23d AGT-14: the captured HTTP exchanges of one test (redacted at ingest).
+
+    ``require_run_access`` verifies the PROVIDED ``run_id``; the test must belong
+    to THAT run (another run's case answers the same 404 as an unknown id). The
+    Mongo read filters on the run's project, the run and the case — all server
+    values. Reads only. A Mongo failure is a 503, never an empty list that would
+    read as "nothing captured".
+    """
+    from app.services import http_exchange_store
+
+    row = (await db.execute(
+        select(TestCase.id, TestRun.project_id)
+        .join(TestRun, TestRun.id == TestCase.test_run_id)
+        .where(TestCase.id == test_id, TestCase.test_run_id == run_id)
+    )).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Test case not found")
+    try:
+        items, total, dropped, cap_reached = await http_exchange_store.list_for_case(
+            project_id=str(row.project_id), test_run_id=str(run_id), test_case_id=str(test_id),
+        )
+    except http_exchange_store.ExchangesUnavailable:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "exchanges_unavailable", "message": "HTTP exchanges could not be read right now."},
+        ) from None
+    return HttpExchangeListResponse(
+        items=[HttpExchangeRead.model_validate(http_exchange_store.to_read(doc)) for doc in items],
+        total=total,
+        dropped=dropped,
+        run_cap_reached=cap_reached,
+    )
 
 
 @router.get(
