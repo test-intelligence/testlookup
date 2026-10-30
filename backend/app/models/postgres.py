@@ -6323,6 +6323,17 @@ class AgentInvocation(Base):
             unique=True,
             postgresql_where=text("idempotency_key IS NOT NULL"),
         ),
+        # W23c AGT-11 (migration 0246): an inline input and its hash come together.
+        CheckConstraint(
+            "(input_payload IS NULL) = (input_sha256 IS NULL)",
+            name="ck_agent_invocations_input_pair",
+        ),
+        # The regex operator is PostgreSQL-only: rendered on PostgreSQL alone so a
+        # SQLite create_all of this table (JSONB compiled as JSON) still builds.
+        CheckConstraint(
+            "input_sha256 IS NULL OR input_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_agent_invocations_input_sha256",
+        ).ddl_if(dialect="postgresql"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -6354,6 +6365,12 @@ class AgentInvocation(Base):
     # copies this into the pipeline run before executing any stage. base_url and
     # API keys are deliberately absent and remain environment-owned.
     resolved_config_snapshot: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # W23c AGT-11 (migration 0246): the inline input of this invocation, REDACTED before it was
+    # stored (untrusted_input.scrub on every string), as canonical JSON; NULL = a stored-subject
+    # invocation (the server assembled the input from the run). Frozen: a retry / resume replays it.
+    input_payload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    # sha256 of the canonical compact JSON of input_payload (the redacted bytes); the review's evidence hash.
+    input_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
 #: Agent configuration modes, loosest last (architecture section 4.1). Migration

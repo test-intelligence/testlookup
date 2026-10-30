@@ -154,6 +154,21 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "run_context_service.py",
     "bisect_vocab.py",
     "run_context_vocab.py",
+    # ── W23c AGT-10 / AGT-11 review-gate re-post + inline agent input: new
+    # modules, commit-free from birth ──
+    # The review-gate setting (the PUT commits in routers/app_settings.py; the
+    # snapshot refresh reads on its own short session and writes nothing), the
+    # re-post staging / executor (staged on the accept route's transaction; the
+    # executor's activity row is an attempt-mode event with db=None and the
+    # Celery tasks own their sessions), the untrusted-input scrubber / wrapper
+    # (pure), the inline-invocation helpers (the invoke route commits) and the
+    # two wire vocabularies (constants only).
+    "review_gate_setting.py",
+    "report_repost_service.py",
+    "review_gate_vocab.py",
+    "inline_input_vocab.py",
+    "untrusted_input.py",
+    "inline_invocation.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

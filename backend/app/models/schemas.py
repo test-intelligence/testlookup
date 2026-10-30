@@ -9654,6 +9654,56 @@ class InstanceEnableRequest(BaseModel):
     preview_hash: str = Field(..., min_length=64, max_length=64)
 
 
+# ── W23c AGT-10: the review gate's enforcement date (GET/PUT /api/v1/settings/review-gate).
+# Vocabulary in services/review_gate_vocab.py; mirrored by frontend/src/types/reviewGate.ts.
+
+
+class WouldRefuseChannel(BaseModel):
+    channel: str  # a GATED_CHANNELS code
+    decisions: int = Field(ge=0)
+
+
+class WouldRefuseSummary(BaseModel):
+    """The ``ai_report.distribution_would_refuse`` audit rows of the last 30 days.
+
+    Absence is not health: ``measured`` is False when the audit read failed or
+    timed out, and then every number below is None (never 0).
+    """
+
+    measured: bool
+    window_days: int = 30
+    # max(now - 30 d, oldest access_audit_logs.created_at): less than 30 days of trail is SAID.
+    since: Optional[datetime] = None
+    decisions: Optional[int] = Field(default=None, ge=0)  # rows with action == WOULD_REFUSE_ACTION in the window
+    runs: Optional[int] = Field(default=None, ge=0)  # COUNT(DISTINCT after_value->>'run_id') of those rows
+    by_channel: Optional[List[WouldRefuseChannel]] = None  # every channel with >= 1 row, decisions desc, then channel
+
+
+class GatedChannel(BaseModel):
+    channel: str
+    label: str
+
+
+class ReviewGateRead(BaseModel):
+    """GET/PUT ``/api/v1/settings/review-gate``. Writes nothing on GET."""
+
+    enforced: bool  # gate_enforced() as it answers NOW on this pod's fresh snapshot
+    source: str  # GATE_SOURCES
+    enforced_from: Optional[datetime] = None  # the stored instant (UTC), or None
+    env_override: bool  # settings.REVIEW_GATE_ENFORCED
+    updated_at: Optional[datetime] = None  # the app_settings row's updated_at (no actor: the audit dashboard names who)
+    would_refuse: WouldRefuseSummary
+    channels: List[GatedChannel]  # GATED_CHANNELS, in order
+
+
+class ReviewGateWrite(BaseModel):
+    """PUT body. ``None`` clears (back to audit only); a naive datetime is the route's 422 ``naive_datetime``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enforced_from: Optional[datetime] = None
+
+
 class RetentionPreviewCandidates(BaseModel):
     """Per-class candidate counts a purge WOULD delete right now.
 
