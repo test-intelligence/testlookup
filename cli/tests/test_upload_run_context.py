@@ -85,7 +85,7 @@ def test_the_vocabulary_matches_the_vector_file():
 
 def test_the_cli_records_no_interpreter_only_its_own_version(clean_env):
     runtime = rc.collect_run_context(env={})["runtime"]
-    assert runtime == {"testlookup-cli": __version__} == {"testlookup-cli": "0.2.0"}
+    assert runtime == {"testlookup-cli": __version__} == {"testlookup-cli": "0.3.0"}
 
 
 def test_runtime_flags_beat_the_variable_and_bad_entries_are_dropped(clean_env):

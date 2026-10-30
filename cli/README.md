@@ -90,7 +90,7 @@ Every group has `--help`, for example `testlookup upload file --help`.
 | `auth` | `login`, `logout`, `whoami` | Log in with username and password (saves a JWT profile), clear stored tokens, show the active profile |
 | `doctor` | (none; run `testlookup doctor`) | One-shot setup check: profile, server reachability and build, credentials |
 | `health` | (none; run `testlookup health`) | Server readiness from `GET /health/ready`, with per-dependency detail |
-| `projects` | `list`, `get <project-id>` | List accessible projects, show one project |
+| `projects` | `list`, `get <project-id>`, `export <project>`, `import <zip>` | List accessible projects, show one project; export a project's settings and test catalog as a signed ZIP (QA lead), import one as a NEW project (admin) (see [Exporting and importing a project](#exporting-and-importing-a-project)) |
 | `runs` | `list`, `get <run-id>`, `timing <run-id>` | List runs (`--project`, `--status`, `--page`, `--size`), show one run; how long a run took and where the time went (see [Execution time](#execution-time)) |
 | `tests` | `list <run-id>`, `get <run-id> <test-id>` | List a run's test cases (`--status`, `--suite`, `--page`, `--size`); show one test case, with `--show-steps` to summarise its step tree |
 | `search` | (none; run `testlookup search "<query>"`) | Global search across tests, runs, suites, defects and more (`--types`, `--project`) |
@@ -333,6 +333,39 @@ it defends against storage-only tampering, not against an actor holding both
 the database and `APP_SECRET_KEY`; keep the public key and the recorded digests
 off-host for that. The command needs the `cryptography` package (a dependency
 of the CLI since W11).
+
+## Exporting and importing a project
+
+`testlookup projects export <project> [-o FILE] [--force] [--no-wait] [--timeout 600]` exports a project's
+**settings and test catalog** (suites, managed test cases and their versions, plans, strategies, releases,
+gates, policies, integration settings, cadences, workflow definitions and agent configs) as one signed ZIP —
+the same file the Project data page downloads. `<project>` is the project's id, name or slug. The command starts
+the export (QA lead or admin; a running export of the same project is followed, not restarted), polls it every
+2 seconds, then streams the archive to `FILE` (default `./<slug>-settings-catalog-<YYYYMMDD-HHMM>.zip`); an
+existing file is never overwritten without `--force`. `--no-wait` prints the job id instead.
+
+Run history, logs, attachments, members, API keys and secrets are never in the archive: integration secrets
+stay on the server and typed secrets are redacted.
+
+`testlookup projects import FILE [--name NAME] [--new-copy] [--no-wait]` creates a **new** project from an export
+(admin; nothing is ever merged into an existing project). The file is checked locally first — a missing file, an
+empty file, a file over 50 MB or one that is not a ZIP is refused without a request. The default name is
+`<source> (imported)`, then `(imported 2)` …; `--name` picks one (refused when an active project already has it).
+Re-running the same command with the same file and name creates **one** project — the second run prints
+`Already imported as <name>` — because the request carries a deterministic `client_token` (a UUID derived from
+the file's SHA-256 and the name); `--new-copy` makes a deliberate second copy. When the import finishes the CLI
+prints the new project's name and id, the rows inserted per table, and every skipped / cleared / switched-off
+line. An imported project sends nothing: webhooks, team channels, code-host integrations and notification rules
+arrive switched off, run cadences arrive paused for 90 days, and authorship maps to people with the same username
+here (otherwise it is cleared). A refusal (a tampered or newer archive, an invalid row) prints the server's
+sentence and exits `1`.
+
+```bash
+testlookup projects export "Payment Service" -o payment-service.zip
+testlookup projects import payment-service.zip                # -> Payment Service (imported)
+testlookup projects import payment-service.zip                # -> Already imported as Payment Service (imported)
+testlookup projects import payment-service.zip --new-copy     # -> Payment Service (imported 2)
+```
 
 ## Release names
 

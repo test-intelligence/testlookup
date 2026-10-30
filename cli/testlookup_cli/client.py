@@ -1,4 +1,7 @@
 """Shared HTTP client — handles auth injection, retries, and error mapping."""
+import os
+from pathlib import Path
+
 import httpx
 from typing import Any, Optional
 
@@ -52,15 +55,38 @@ def _raise_for_status(resp: httpx.Response) -> None:
     if resp.status_code < 400:
         return
     detail = ""
+    raw_detail: Any = None
+    sentence = ""
     try:
         payload = resp.json()
         if isinstance(payload, dict):
-            detail = str(payload.get("detail", "") or "")
+            raw_detail = payload.get("detail")
+            # A structured refusal ``{"code", "message"}`` (W22 retention, W24
+            # project export / import) is a complete sentence written for the
+            # person: it is printed as it is (no "Server error (409)." prefix,
+            # never a dict repr); the exit code is still the status's.
+            if isinstance(raw_detail, dict) and isinstance(raw_detail.get("message"), str):
+                sentence = raw_detail["message"]
+            detail = sentence or str(raw_detail or "")
     except Exception:
         pass
     if not detail:
         detail = _error_body_snippet(resp)
-    raise map_http_error(resp.status_code, str(detail))
+    mapped = map_http_error(resp.status_code, str(detail))
+    raise APIError(sentence or str(mapped), mapped.exit_code, resp.status_code, detail=raw_detail)
+
+
+class APIError(CLIError):
+    """A ``CLIError`` from an HTTP answer that keeps the server's raw ``detail``.
+
+    Same message and exit code as ``map_http_error``; ``detail`` lets a command
+    act on a structured refusal (``projects export`` follows the running job a
+    409 ``export_running`` names) without parsing the message.
+    """
+
+    def __init__(self, message: str, exit_code: int, status_code: int, *, detail: Any = None):
+        super().__init__(message, exit_code, status_code)
+        self.detail = detail
 
 
 def _build_headers(profile: dict) -> dict[str, str]:
@@ -151,6 +177,88 @@ async def download(
             resp = await client.get(url, headers=headers, params=params)
             _raise_for_status(resp)
             return resp.content
+    except httpx.RequestError as exc:
+        raise map_connection_error(exc, base_url) from exc
+
+
+_STREAM_CHUNK = 1024 * 1024
+
+
+async def download_to_file(
+    path: str,
+    dest: Path,
+    *,
+    profile_name: Optional[str] = None,
+    timeout: float = 300.0,
+) -> int:
+    """Stream a binary answer to ``dest`` in chunks; returns the bytes written.
+
+    ``download`` returns the whole body (fine for a PDF); a 50 MB project
+    export is streamed instead (W24). The bytes go to ``<dest>.part`` and are
+    renamed onto ``dest`` only once complete, so a failed or interrupted
+    download never leaves a truncated ZIP behind under the real name. A >= 400
+    answer is read whole (it is a small JSON refusal) and mapped like every
+    other call.
+    """
+    profile = get_profile(profile_name)
+    base_url = profile.get("url", "http://localhost:8000").rstrip("/")
+    url = f"{base_url}{path}"
+    headers = _build_headers(profile)
+    partial = dest.with_name(dest.name + ".part")
+    written = 0
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as http:
+            async with http.stream("GET", url, headers=headers) as resp:
+                if resp.status_code >= 400:
+                    await resp.aread()
+                    _raise_for_status(resp)
+                with open(partial, "wb") as fh:
+                    async for chunk in resp.aiter_bytes(_STREAM_CHUNK):
+                        fh.write(chunk)
+                        written += len(chunk)
+        os.replace(partial, dest)
+    except httpx.RequestError as exc:
+        raise map_connection_error(exc, base_url) from exc
+    finally:
+        if partial.exists():
+            partial.unlink()
+    return written
+
+
+async def upload_file(
+    path: str,
+    file: Path,
+    fields: dict[str, str],
+    *,
+    profile_name: Optional[str] = None,
+    timeout: float = 300.0,
+) -> Any:
+    """``multipart/form-data`` POST of one file plus text ``fields``; returns the JSON body.
+
+    The file is re-opened for the one retry an expired JWT earns (a retry must
+    send the whole file again), like ``upload``'s ingest path.
+    """
+    profile = get_profile(profile_name)
+    base_url = profile.get("url", "http://localhost:8000").rstrip("/")
+    url = f"{base_url}{path}"
+    headers = _build_headers(profile)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as http:
+            for attempt in (1, 2):
+                with open(file, "rb") as fh:
+                    resp = await http.post(
+                        url, headers=headers, data=fields,
+                        files={"file": (file.name, fh, "application/zip")},
+                    )
+                if (
+                    attempt == 1 and resp.status_code == 401 and profile.get("auth_type") == "jwt"
+                    and profile.get("refresh_token") and await _try_refresh(http, base_url, profile, profile_name)
+                ):
+                    headers = _build_headers(profile)
+                    continue
+                break
+            _raise_for_status(resp)
+            return resp.json()
     except httpx.RequestError as exc:
         raise map_connection_error(exc, base_url) from exc
 
