@@ -76,6 +76,9 @@ locally by default.
   - **JSON ingest:** it takes `run_ai: false`.
   - **Fixed:** a JSON batch whose results carried `started_at` was refused
     with a 503 (the stored batch is now written in JSON mode).
+  - **Fixed:** the contract summary counts in the singular ("1 required
+    field missing across 1 endpoint", not "1 required fields … 1
+    endpoints"); `test_contract_agent.py` pins both forms.
   **Prometheus (AGT-15):**
   - **Settings › Integrations › Prometheus:** the URL, a bearer token kept
     in the secret store, and metric templates with `{service}`. A probe
