@@ -80,7 +80,10 @@ async def test_review_summary_query_only_selects_live_pipeline_report_subjects()
     statement = db.execute.await_args.args[0]
     params = list(statement.compile().params.values())
     assert "report" in params
-    assert "pipeline_run" in params
+    # W23c AGT-11: an inline-input invocation's pipeline is reviewed as the invocation, so the
+    # two live pipeline subjects are read — and no other subject type.
+    subjects = next(p for p in params if isinstance(p, list) and "pipeline_run" in p)
+    assert sorted(subjects) == ["invocation", "pipeline_run"]
     assert "superseded" in params
 
 
