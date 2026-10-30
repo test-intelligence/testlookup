@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Activity, AlertTriangle, Bot, CheckCircle, ChevronDown, ChevronRight,
-  Clock, FileText, GitBranch, Layers, RefreshCw, Shield, Stethoscope, XCircle, Zap,
+  Clock, FileText, FlaskConical, GitBranch, Layers, RefreshCw, Shield, Stethoscope, XCircle, Zap,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import ScopedLink from '@/components/ui/ScopedLink'
@@ -44,6 +44,8 @@ import GenericComputeCanvas from '@/components/agents/computeGraph/GenericComput
 import PipelineAuditView from '@/components/agents/PipelineAuditView'
 import PipelineCompareView from '@/components/agents/PipelineCompareView'
 import WorkflowPicker from '@/components/agents/WorkflowPicker'
+import TryAgentPanel from '@/components/agents/TryAgentPanel'
+import { OPEN_LABEL as TRY_AGENT_LABEL } from '@/components/agents/tryAgentModel'
 import {
   auditBadge,
   CHOOSE_WORKFLOW_TITLE,
@@ -1261,6 +1263,9 @@ export default function AgentStatusPage() {
   // W14 AGT-08: the in-page workflow picker, opened by the chevron beside
   // Trigger pipeline (which stays ONE click: the project default).
   const [pickerOpen, setPickerOpen] = useState(false)
+  // W23c AGT-11: the in-page Try-an-agent section, toggled by its header button (D-14: nothing is rendered or
+  // read while it is closed, so the page's default load and height are unchanged); `?invocation=` opens it.
+  const [tryOpen, setTryOpen] = useState(() => Boolean(searchParams.get('invocation')))
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
   // The picked run's own project (the workflows and defaults are that
   // project's); the active project when the run is not among the recent ones.
@@ -1316,6 +1321,8 @@ export default function AgentStatusPage() {
     const run = p.run_seq != null ? `Run #${p.run_seq}` : p.build_number ? `#${p.build_number}` : `Run ${runId.slice(0, 8)}`
     return `${p.suite_name || 'Unknown suite'} · ${run}`
   })()
+  const pickedRun = recentRuns.find((r) => r.id === runId)
+  const anchorLabel = runId ? (pickedRun ? runOptionLabel(pickedRun) : pickedRunLabel) : null
 
   return (
     <div className="space-y-4">
@@ -1325,14 +1332,31 @@ export default function AgentStatusPage() {
         subtitle="Each AI pipeline run, with its report and agent stages"
         helpTopic={helpTopicParam('/agents')}
         actions={
-          <ScopedLink
-            to="/agents/workflows"
-            className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
-          >
-            <GitBranch className="h-3.5 w-3.5" /> Workflow editor
-          </ScopedLink>
+          <>
+            {isQaEngineer && (
+              <button
+                type="button"
+                aria-expanded={tryOpen}
+                aria-controls="try-agent"
+                onClick={() => setTryOpen((open) => !open)}
+                className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+              >
+                <FlaskConical className="h-3.5 w-3.5" /> {TRY_AGENT_LABEL}
+              </button>
+            )}
+            <ScopedLink
+              to="/agents/workflows"
+              className="inline-flex items-center gap-1.5 rounded border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+            >
+              <GitBranch className="h-3.5 w-3.5" /> Workflow editor
+            </ScopedLink>
+          </>
         }
       />
+
+      {isQaEngineer && tryOpen && (
+        <TryAgentPanel runId={runId} runLabel={anchorLabel} projectId={pickerProjectId} onClose={() => setTryOpen(false)} />
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <label htmlFor="agent-run-picker" className="text-xs text-[var(--color-text-muted)]">Test suite &amp; build</label>

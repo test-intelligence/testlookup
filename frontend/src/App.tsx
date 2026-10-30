@@ -58,6 +58,7 @@ const MyNotificationsPage = lazy(() => import('@/pages/settings/MyNotificationsP
 const TeamChannelsPage = lazy(() => import('@/pages/settings/TeamChannelsPage'))
 const PersonalKeysPage = lazy(() => import('@/pages/settings/PersonalKeysPage'))
 const AIConfigPage = lazy(() => import('@/pages/settings/AIConfigPage'))
+const ReviewGatePage = lazy(() => import('@/pages/settings/ReviewGatePage'))
 const IntegrationsSettingsPage = lazy(() => import('@/pages/settings/IntegrationsPage'))
 const StoragePage = lazy(() => import('@/pages/settings/StoragePage'))
 const DigestsPage = lazy(() => import('@/pages/settings/DigestsPage'))
@@ -208,6 +209,9 @@ const managementRoutes: AppRoute[] = [
   // UX redesign P5: a team's notification channel, out of Ownership.
   { path: 'settings/team-channels', component: TeamChannelsPage },
   { path: 'settings/ai', component: AIConfigPage },
+  // W23c AGT-10: the instance review-gate date. Admin-only content (the API answers anyone else 403); a QA lead
+  // who opens the URL is told who can change it, and the page reads nothing for them.
+  { path: 'settings/review-gate', component: ReviewGatePage },
   { path: 'settings/integrations', component: IntegrationsSettingsPage },
   { path: 'settings/storage', component: StoragePage },
   { path: 'settings/sso', component: SSOSettingsPage },

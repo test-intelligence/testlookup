@@ -96,6 +96,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     items: [
       { id: 'ai-config', label: 'AI configuration', description: 'Analysis mode, models and providers', to: '/settings/ai', requires: 'management' },
       { id: 'ai-agents', label: 'AI agents', description: 'Which agents run, and how', to: '/settings/ai-agents', requires: 'management' },
+      { id: 'review-gate', label: 'Review gate', description: 'When unreviewed AI reports stop leaving TestLookup', to: '/settings/review-gate', requires: 'admin' },
       { id: 'workflows', label: 'Workflow editor', description: 'The stages an AI pipeline runs', to: '/agents/workflows', requires: 'all' },
       { id: 'pipeline-runs', label: 'Pipeline runs', description: 'Each AI pipeline run, its report and its stages', to: '/agents', requires: 'all' },
       { id: 'agent-activity', label: 'Agent activity', description: 'What the agents did, and when', to: '/settings/agent-activity', requires: 'management' },

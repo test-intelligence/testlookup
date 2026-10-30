@@ -29,10 +29,16 @@ export interface ShareLink {
 
 // ── PDF Export ──────────────────────────────────────────────────────────────
 
+/**
+ * W23c: `suppressToast` — the caller (`pages/run/runActions.downloadRunPdf`) toasts the refusal itself, in the
+ * server's words (a 409 `report_pending_review` once the review gate is enforced), read from the Blob body the
+ * shared interceptor cannot parse.
+ */
 export async function downloadPdf(runId: string, layout: 'executive' | 'engineering'): Promise<void> {
   const response = await api.get(`/api/v1/reports/runs/${runId}/pdf`, {
     params: { layout },
     responseType: 'blob',
+    suppressToast: true,
   });
   const url = URL.createObjectURL(response.data as Blob);
   const a = document.createElement('a');

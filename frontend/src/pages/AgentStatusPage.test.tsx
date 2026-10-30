@@ -778,6 +778,39 @@ describe('AgentStatusPage', () => {
 
     expect(screen.getByText(/Select a pipeline run to see agent stages/i)).toBeInTheDocument()
   })
+
+  // W23c AGT-11 (deliberate): the header button toggles an in-page section that is NOT rendered — and so reads
+  // nothing — until it is pressed, and a VIEWER (who cannot invoke) has no button at all.
+  it('offers Try an agent to a QA engineer, not to a viewer, with the section closed', async () => {
+    const { useActiveLiveRuns, usePipelineStages, usePipelineTimeline, usePipelines, useRunSummary } = await import('@/hooks/useAgentRuns')
+    const { usePermissions } = await import('@/hooks/usePermissions')
+    ;(useActiveLiveRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: [] })
+    ;(usePipelines as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isLoading: false })
+    ;(usePipelineStages as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isLoading: false })
+    ;(usePipelineTimeline as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false })
+    ;(useRunSummary as ReturnType<typeof vi.fn>).mockReturnValue({ data: undefined, isLoading: false, error: undefined })
+    const page = (
+      <MemoryRouter initialEntries={['/agents?run=run-1']}>
+        <Routes>
+          <Route path="/agents" element={<AgentStatusPage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    ;(usePermissions as ReturnType<typeof vi.fn>).mockReturnValue({ isQaEngineer: true })
+    const { unmount } = render(page)
+    const button = screen.getByRole('button', { name: 'Try an agent' })
+    expect(button).toHaveAttribute('aria-expanded', 'false')
+    expect(button).toHaveAttribute('aria-controls', 'try-agent')
+    expect(document.getElementById('try-agent')).toBeNull()
+    unmount()
+
+    ;(usePermissions as ReturnType<typeof vi.fn>).mockReturnValue({ isQaEngineer: false })
+    render(page)
+    expect(screen.getByRole('link', { name: /Workflow editor/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Try an agent' })).toBeNull()
+    expect(document.getElementById('try-agent')).toBeNull()
+  })
 })
 
 // ── The canvas must not draw a pipeline that never ran ─────────────────────
