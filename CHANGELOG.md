@@ -52,6 +52,41 @@ locally by default.
 
 ### Added
 
+- **REST payload capture for contract checks, and Prometheus metrics in the
+  log stage** (wave W23d, AGT-14 + AGT-15; branch
+  `feat/df-payload-metrics-20261030`; no migration; no flag).
+  **Capture (AGT-14):**
+  - **What is sent:** each test result may carry up to 20
+    `http_exchanges` (method, endpoint template, status, headers, bodies;
+    body and per-run caps), on `POST /api/v1/ingest` and on live sessions
+    through `POST /api/v1/stream/http-exchanges`.
+  - **Redaction:** secrets in headers, query strings and bodies are
+    redacted in the ingest model, again by the store, and first by the SDK.
+    The Bearer / API-key / cookie / token shapes are pinned by
+    `sdk-vectors/http_exchange.json`.
+  - **Storage:** redacted copies are kept in Mongo `rest_api_payloads`, run
+    scoped, under raw-events retention and holds.
+  - **The UI:** a new `HTTP exchanges` tab on the test page shows them with
+    `[REDACTED]` markers.
+  - **The contract stage:** it now reads that evidence for the run and
+    reports drift against the project's previous runs, e.g. "field `price`
+    missing from GET /api/products/{id}; drift since build 41".
+  - **Python SDK 1.3.0:** `--testlookup-capture-http` captures `requests` /
+    `httpx` calls (opt-in, off by default).
+  - **JSON ingest:** it takes `run_ai: false`.
+  - **Fixed:** a JSON batch whose results carried `started_at` was refused
+    with a 503 (the stored batch is now written in JSON mode).
+  **Prometheus (AGT-15):**
+  - **Settings › Integrations › Prometheus:** the URL, a bearer token kept
+    in the secret store, and metric templates with `{service}`. A probe
+    feeds Integration Health.
+  - **The log stage:** the deep investigation's log stage queries those
+    templates (never raw PromQL from a model; refused in offline mode) for
+    the failing service in the failure window, and records evidence such as
+    "p95 latency for checkout rose 3.1× in the failure window".
+  - **The UI:** findings show in the run's `Specialist evidence` row with a
+    sparkline.
+  - **Ingest:** test results take `service_name`.
 - **The review gate's enforcement date, the PR / MR comment re-post, and
   inline agent input** (wave W23c, AGT-10 + AGT-11; branch
   `feat/df-review-gate-inline-20261029`; migration 0246; no flag).

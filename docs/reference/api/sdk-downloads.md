@@ -10,7 +10,7 @@ List available client SDKs
 
 Return metadata for all available SDK downloads.
 
-Source: [backend/app/routers/sdk.py:135](../../../backend/app/routers/sdk.py#L135).
+Source: [backend/app/routers/sdk.py:137](../../../backend/app/routers/sdk.py#L137).
 
 Dependency chain: .
 
@@ -56,7 +56,7 @@ W17 DEV-02: the newest staged CLI wheel (name, version, download path), or
 ``available: false`` when this deployment was built without one (the guide
 then shows the from-a-clone install).
 
-Source: [backend/app/routers/sdk.py:178](../../../backend/app/routers/sdk.py#L178).
+Source: [backend/app/routers/sdk.py:180](../../../backend/app/routers/sdk.py#L180).
 
 Dependency chain: .
 
@@ -104,7 +104,7 @@ W17 DEV-02: one staged CLI wheel, by its exact file name (pip needs it).
 Only a name from the staged list is served: anything else -- another
 package, a path, ``..`` -- is a 404, never a file read.
 
-Source: [backend/app/routers/sdk.py:192](../../../backend/app/routers/sdk.py#L192).
+Source: [backend/app/routers/sdk.py:194](../../../backend/app/routers/sdk.py#L194).
 
 Dependency chain: .
 
@@ -180,7 +180,7 @@ Download the SDK for the specified language.
   otherwise falls back to a ZIP archive of the source directory
 - **go / js** — returns a ZIP archive of the SDK directory
 
-Source: [backend/app/routers/sdk.py:206](../../../backend/app/routers/sdk.py#L206).
+Source: [backend/app/routers/sdk.py:208](../../../backend/app/routers/sdk.py#L208).
 
 Dependency chain: .
 

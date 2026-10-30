@@ -488,6 +488,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}` | Get Test Case | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}/ai-history` | Get Test Ai History | [AI History](api/ai-history.md) |
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}/history` | Get Test Case History Endpoint | [Test Runs](api/test-runs.md) |
+| GET | `/api/v1/runs/{run_id}/tests/{test_id}/http-exchanges` | Get Test Case Http Exchanges | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}/rich-detail` | Get Enriched Test Case Detail Endpoint | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}/step-flips` | Get Test Case Step Flips | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/tests/{test_id}/steps` | Get Test Case Steps | [Test Runs](api/test-runs.md) |
@@ -586,6 +587,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/sso/status` | Get Sso Status | [SSO / SAML](api/sso-saml.md) |
 | GET | `/api/v1/stream/active` | List Active Sessions | [Live Stream](api/live-stream.md) |
 | POST | `/api/v1/stream/events/batch` | Ingest Event Batch | [Live Stream](api/live-stream.md) |
+| POST | `/api/v1/stream/http-exchanges` | Ingest Http Exchanges | [Live Stream](api/live-stream.md) |
 | POST | `/api/v1/stream/ingest` | Ingest Via Api Key | [Live Stream](api/live-stream.md) |
 | POST | `/api/v1/stream/sessions` | Create Session | [Live Stream](api/live-stream.md) |
 | DELETE | `/api/v1/stream/sessions/{session_id}` | Close Session | [Live Stream](api/live-stream.md) |
@@ -712,4 +714,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **703 HTTP operations**, **593 paths**, **90 domain pages**.
+Total: **705 HTTP operations**, **595 paths**, **90 domain pages**.

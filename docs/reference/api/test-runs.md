@@ -10,7 +10,7 @@ List Runs
 
 
 
-Source: [backend/app/routers/runs.py:82](../../../backend/app/routers/runs.py#L82).
+Source: [backend/app/routers/runs.py:84](../../../backend/app/routers/runs.py#L84).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -269,7 +269,7 @@ Reads stored state only: a run without a servable snapshot is answered
 Every id is resolved against the caller's projects; an unknown and a
 foreign id are both listed in ``unavailable``, the same way.
 
-Source: [backend/app/routers/runs.py:307](../../../backend/app/routers/runs.py#L307).
+Source: [backend/app/routers/runs.py:309](../../../backend/app/routers/runs.py#L309).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -355,7 +355,7 @@ List Run Branches
 
 The project's branches in the window, newest last run first, for the Runs toolbar (W07 FAIL-05).
 
-Source: [backend/app/routers/runs.py:341](../../../backend/app/routers/runs.py#L341).
+Source: [backend/app/routers/runs.py:343](../../../backend/app/routers/runs.py#L343).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -467,7 +467,7 @@ in 'running' status, or any pipeline created in the last 2h, are
 excluded — matching the Celery task's dedup window so the user doesn't
 waste a click re-firing what's already in flight.
 
-Source: [backend/app/routers/runs.py:181](../../../backend/app/routers/runs.py#L181).
+Source: [backend/app/routers/runs.py:183](../../../backend/app/routers/runs.py#L183).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -630,7 +630,7 @@ The top failure signatures of each failed build, for grouping them by error (W07
 Same validation and authorization shape as ``/ai-verdicts``; at most
 ``SIGNATURE_ROWS_PER_RUN`` failing rows are read per run (``capped`` says so).
 
-Source: [backend/app/routers/runs.py:325](../../../backend/app/routers/runs.py#L325).
+Source: [backend/app/routers/runs.py:327](../../../backend/app/routers/runs.py#L327).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -744,7 +744,7 @@ with ``Held: <reason>`` FIRST in ``blockers`` (the hold read lives in
 202 also lists the links the delete breaks (``references_broken``, a
 warning) and says the keep-last floor does not apply to explicit deletes.
 
-Source: [backend/app/routers/runs.py:922](../../../backend/app/routers/runs.py#L922).
+Source: [backend/app/routers/runs.py:965](../../../backend/app/routers/runs.py#L965).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -844,7 +844,7 @@ Get Run
 
 
 
-Source: [backend/app/routers/runs.py:353](../../../backend/app/routers/runs.py#L353).
+Source: [backend/app/routers/runs.py:355](../../../backend/app/routers/runs.py#L355).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -955,7 +955,7 @@ disagree or are too thin — not a failure to decide.
 a newly-flaky test reflects a real bug often enough that suppression is the
 one irreversible mistake available.
 
-Source: [backend/app/routers/runs.py:391](../../../backend/app/routers/runs.py#L391).
+Source: [backend/app/routers/runs.py:393](../../../backend/app/routers/runs.py#L393).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1042,7 +1042,7 @@ Get Run Downstream Status
 
 Expose durable publication state for required post-ingestion work.
 
-Source: [backend/app/routers/runs.py:365](../../../backend/app/routers/runs.py#L365).
+Source: [backend/app/routers/runs.py:367](../../../backend/app/routers/runs.py#L367).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1138,7 +1138,7 @@ check could be made -- an empty list never stands in for "no
 regressions". A live run still streaming answers the same way instead of
 404, as ``/regression-diff`` does.
 
-Source: [backend/app/routers/runs.py:627](../../../backend/app/routers/runs.py#L627).
+Source: [backend/app/routers/runs.py:670](../../../backend/app/routers/runs.py#L670).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1234,7 +1234,7 @@ re-checks whether work is already done before inserting.
 Returns 422 when the run isn't recoverable (already populated / not a
 live run / no buffer left in Redis).
 
-Source: [backend/app/routers/runs.py:744](../../../backend/app/routers/runs.py#L744).
+Source: [backend/app/routers/runs.py:787](../../../backend/app/routers/runs.py#L787).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1338,7 +1338,7 @@ broken error toast. (Bug 2026-05-19 — Run Detail page hit 404s for
 sessions clicked during the first ~30s before the drainer
 materialised the TestRun row.)
 
-Source: [backend/app/routers/runs.py:574](../../../backend/app/routers/runs.py#L574).
+Source: [backend/app/routers/runs.py:617](../../../backend/app/routers/runs.py#L617).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1432,7 +1432,7 @@ Set Run Release
 
 
 
-Source: [backend/app/routers/runs.py:665](../../../backend/app/routers/runs.py#L665).
+Source: [backend/app/routers/runs.py:708](../../../backend/app/routers/runs.py#L708).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -1546,7 +1546,7 @@ ratchet); the underlying read is project-scoped. No DB writes. Returns 404
 when ``run_id`` has no run; otherwise a roll-up listing only the tests with at
 least one step flip (``truncated`` flags a run larger than the analysis cap).
 
-Source: [backend/app/routers/runs.py:550](../../../backend/app/routers/runs.py#L550).
+Source: [backend/app/routers/runs.py:593](../../../backend/app/routers/runs.py#L593).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1639,7 +1639,7 @@ List Test Cases
 
 
 
-Source: [backend/app/routers/runs.py:377](../../../backend/app/routers/runs.py#L377).
+Source: [backend/app/routers/runs.py:379](../../../backend/app/routers/runs.py#L379).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1775,7 +1775,7 @@ Get Test Case
 
 
 
-Source: [backend/app/routers/runs.py:434](../../../backend/app/routers/runs.py#L434).
+Source: [backend/app/routers/runs.py:436](../../../backend/app/routers/runs.py#L436).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1886,7 +1886,7 @@ leakage), the computed flakiness value (reusing
 ``analytics_service``/``test_health_coach`` thresholds), and identity
 metadata (owner / first-last seen / suite / timestamps). No DB writes.
 
-Source: [backend/app/routers/runs.py:499](../../../backend/app/routers/runs.py#L499).
+Source: [backend/app/routers/runs.py:542](../../../backend/app/routers/runs.py#L542).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1977,6 +1977,110 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/runs/{run_id}/tests/{test_id}/http-exchanges`
+
+Get Test Case Http Exchanges
+
+W23d AGT-14: the captured HTTP exchanges of one test (redacted at ingest).
+
+``require_run_access`` verifies the PROVIDED ``run_id``; the test must belong
+to THAT run (another run's case answers the same 404 as an unknown id). The
+Mongo read filters on the run's project, the run and the case — all server
+values. Reads only. A Mongo failure is a 503, never an empty list that would
+read as "nothing captured".
+
+Source: [backend/app/routers/runs.py:477](../../../backend/app/routers/runs.py#L477).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+run_id: uuid.UUID, test_id: uuid.UUID, db: AsyncSession=Depends(get_db), _: User=Depends(require_run_access())
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=404, detail='Test case not found')
+HTTPException(status_code=503, detail={'code': 'exchanges_unavailable', 'message': 'HTTP exchanges could not be read right now.'})
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_test_case_http_exchanges_api_v1_runs__run_id__tests__test_id__http_exchanges_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Run Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "path",
+      "name": "test_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Test Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HttpExchangeListResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/runs/{run_id}/tests/{test_id}/rich-detail`
 
 Get Enriched Test Case Detail Endpoint
@@ -1987,7 +2091,7 @@ Access is checked against the supplied run before the service query. The
 endpoint is separate from the legacy flat detail route so existing clients
 retain their response shape during gradual rollout.
 
-Source: [backend/app/routers/runs.py:475](../../../backend/app/routers/runs.py#L475).
+Source: [backend/app/routers/runs.py:518](../../../backend/app/routers/runs.py#L518).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -2093,7 +2197,7 @@ verdict. Resolves the test's ``test_fingerprint`` + project via the PROVIDED
 read is project-scoped. No DB writes. Returns 404 when ``test_id`` doesn't
 belong to ``run_id``; an empty-window "insufficient history" report otherwise.
 
-Source: [backend/app/routers/runs.py:524](../../../backend/app/routers/runs.py#L524).
+Source: [backend/app/routers/runs.py:567](../../../backend/app/routers/runs.py#L567).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -2201,7 +2305,7 @@ stays unchanged and clients fetch steps on demand. Guarded by
 ``require_run_access`` which verifies the PROVIDED ``run_id`` (IDOR ratchet).
 Returns the ordered, nested step tree with per-step + test-level attachments.
 
-Source: [backend/app/routers/runs.py:453](../../../backend/app/routers/runs.py#L453).
+Source: [backend/app/routers/runs.py:455](../../../backend/app/routers/runs.py#L455).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

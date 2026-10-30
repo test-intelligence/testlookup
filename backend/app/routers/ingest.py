@@ -150,7 +150,9 @@ async def ingest_batch(
     try:
         await get_storage_provider().put_object(
             batch_storage_key,
-            json.dumps(payload.model_dump(), separators=(",", ":")).encode("utf-8"),
+            # JSON mode: a result's started_at / finished_at is a datetime, which plain json.dumps refuses (every
+            # such batch answered 503). The worker reads the ISO text back through report_timings.to_utc.
+            json.dumps(payload.model_dump(mode="json"), separators=(",", ":")).encode("utf-8"),
             content_type="application/json",
         )
     except Exception as exc:  # noqa: BLE001

@@ -18849,6 +18849,336 @@
         "title": "HoldRefRead",
         "type": "object"
       },
+      "HttpExchangeIn": {
+        "description": "One HTTP request/response a test made (AGT-14). Lenient on purpose: a bad exchange is DROPPED by the\nlist pre-filter (IngestTestResult / LiveHttpExchangesIn), never a 422 that costs the batch its results.",
+        "properties": {
+          "duration_ms": {
+            "anyOf": [
+              {
+                "maximum": 86400000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "redaction_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Redaction Counts",
+            "type": "object"
+          },
+          "request": {
+            "$ref": "#/components/schemas/HttpMessageIn"
+          },
+          "response": {
+            "$ref": "#/components/schemas/HttpMessageIn"
+          },
+          "response_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Schema"
+          },
+          "response_schema_state": {
+            "default": "empty",
+            "title": "Response Schema State",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "maximum": 599.0,
+                "minimum": 100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "url": {
+            "minLength": 1,
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "url"
+        ],
+        "title": "HttpExchangeIn",
+        "type": "object"
+      },
+      "HttpExchangeListResponse": {
+        "description": "GET /api/v1/runs/{run_id}/tests/{test_id}/http-exchanges.",
+        "properties": {
+          "dropped": {
+            "title": "Dropped",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HttpExchangeRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "run_cap_reached": {
+            "title": "Run Cap Reached",
+            "type": "boolean"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "dropped",
+          "run_cap_reached"
+        ],
+        "title": "HttpExchangeListResponse",
+        "type": "object"
+      },
+      "HttpExchangeRead": {
+        "properties": {
+          "captured_at": {
+            "format": "date-time",
+            "title": "Captured At",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "endpoint": {
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host"
+          },
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "redacted": {
+            "title": "Redacted",
+            "type": "boolean"
+          },
+          "request": {
+            "$ref": "#/components/schemas/HttpMessageRead"
+          },
+          "response": {
+            "$ref": "#/components/schemas/HttpMessageRead"
+          },
+          "response_schema_state": {
+            "title": "Response Schema State",
+            "type": "string"
+          },
+          "seq": {
+            "title": "Seq",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "seq",
+          "method",
+          "endpoint",
+          "url",
+          "request",
+          "response",
+          "response_schema_state",
+          "source",
+          "captured_at",
+          "redacted"
+        ],
+        "title": "HttpExchangeRead",
+        "type": "object"
+      },
+      "HttpMessageIn": {
+        "description": "One side of an exchange, as the SDK sends it (cut + redacted by ``HttpExchangeIn``).",
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "body_bytes": {
+            "default": 0,
+            "title": "Body Bytes",
+            "type": "integer"
+          },
+          "body_truncated": {
+            "default": false,
+            "title": "Body Truncated",
+            "type": "boolean"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
+          }
+        },
+        "title": "HttpMessageIn",
+        "type": "object"
+      },
+      "HttpMessageRead": {
+        "properties": {
+          "body": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Body"
+          },
+          "body_bytes": {
+            "default": 0,
+            "title": "Body Bytes",
+            "type": "integer"
+          },
+          "body_truncated": {
+            "default": false,
+            "title": "Body Truncated",
+            "type": "boolean"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Headers",
+            "type": "object"
+          }
+        },
+        "required": [
+          "headers"
+        ],
+        "title": "HttpMessageRead",
+        "type": "object"
+      },
       "IdentityEventListResponse": {
         "properties": {
           "items": {
@@ -19429,6 +19759,12 @@
             "title": "Results",
             "type": "array"
           },
+          "run_ai": {
+            "default": true,
+            "description": "False skips the AI analysis and the suite comparison for this run.",
+            "title": "Run Ai",
+            "type": "boolean"
+          },
           "run_context": {
             "anyOf": [
               {
@@ -19551,6 +19887,32 @@
             ],
             "title": "Finished At"
           },
+          "http_exchanges": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/HttpExchangeIn"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Exchanges"
+          },
+          "http_exchanges_dropped": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Exchanges Dropped"
+          },
           "metadata": {
             "anyOf": [
               {
@@ -19562,6 +19924,18 @@
               }
             ],
             "title": "Metadata"
+          },
+          "service_name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Name"
           },
           "setup_ms": {
             "anyOf": [
@@ -20495,6 +20869,39 @@
             "title": "Ocp Token Set",
             "type": "boolean"
           },
+          "prometheus_base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prometheus Base Url"
+          },
+          "prometheus_enabled": {
+            "default": false,
+            "title": "Prometheus Enabled",
+            "type": "boolean"
+          },
+          "prometheus_metric_templates": {
+            "items": {
+              "$ref": "#/components/schemas/PrometheusMetricTemplate"
+            },
+            "title": "Prometheus Metric Templates",
+            "type": "array"
+          },
+          "prometheus_templates_source": {
+            "default": "default",
+            "title": "Prometheus Templates Source",
+            "type": "string"
+          },
+          "prometheus_token_set": {
+            "default": false,
+            "title": "Prometheus Token Set",
+            "type": "boolean"
+          },
           "slack_default_channel": {
             "deprecated": true,
             "title": "Slack Default Channel",
@@ -20721,6 +21128,56 @@
               }
             ],
             "title": "Ocp Sa Token"
+          },
+          "prometheus_base_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prometheus Base Url"
+          },
+          "prometheus_bearer_token": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prometheus Bearer Token"
+          },
+          "prometheus_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prometheus Enabled"
+          },
+          "prometheus_metric_templates": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/PrometheusMetricTemplateIn"
+                },
+                "maxItems": 12,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prometheus Metric Templates"
           },
           "slack_default_channel": {
             "anyOf": [
@@ -22922,6 +23379,91 @@
           "session_id"
         ],
         "title": "LiveEventBatchResponse",
+        "type": "object"
+      },
+      "LiveHttpExchangesIn": {
+        "description": "Body of POST /api/v1/stream/http-exchanges (§3.1 — no path id, on purpose): one test's exchanges\nof a live session, posted once by the reporter after the test's result.",
+        "properties": {
+          "class_name": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class Name"
+          },
+          "exchanges": {
+            "items": {
+              "$ref": "#/components/schemas/HttpExchangeIn"
+            },
+            "maxItems": 20,
+            "title": "Exchanges",
+            "type": "array"
+          },
+          "exchanges_dropped": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Exchanges Dropped",
+            "type": "integer"
+          },
+          "run_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Run Id",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          },
+          "test_name": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Test Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "run_id",
+          "test_name",
+          "exchanges"
+        ],
+        "title": "LiveHttpExchangesIn",
+        "type": "object"
+      },
+      "LiveHttpExchangesResponse": {
+        "properties": {
+          "dropped": {
+            "title": "Dropped",
+            "type": "integer"
+          },
+          "stored": {
+            "title": "Stored",
+            "type": "integer"
+          },
+          "test_case_id": {
+            "title": "Test Case Id",
+            "type": "string"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stored",
+          "truncated",
+          "dropped",
+          "test_case_id"
+        ],
+        "title": "LiveHttpExchangesResponse",
         "type": "object"
       },
       "LiveSessionCreate": {
@@ -29966,6 +30508,76 @@
           }
         },
         "title": "ProjectUpdate",
+        "type": "object"
+      },
+      "PrometheusMetricTemplate": {
+        "additionalProperties": false,
+        "description": "One admin-defined metric template; the server substitutes ``{service}`` (escaped) — never model PromQL.",
+        "properties": {
+          "id": {
+            "pattern": "^[a-z][a-z0-9_]{1,39}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "promql": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Promql",
+            "type": "string"
+          },
+          "unit": {
+            "default": "count",
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "promql"
+        ],
+        "title": "PrometheusMetricTemplate",
+        "type": "object"
+      },
+      "PrometheusMetricTemplateIn": {
+        "additionalProperties": false,
+        "description": "A template as an ADMIN saves it (IntegrationsConfigUpdate): the placeholder, control characters and\nthe unit are checked per item, so a 422's loc is ``prometheus_metric_templates.N.<field>``.",
+        "properties": {
+          "id": {
+            "pattern": "^[a-z][a-z0-9_]{1,39}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "promql": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Promql",
+            "type": "string"
+          },
+          "unit": {
+            "default": "count",
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "promql"
+        ],
+        "title": "PrometheusMetricTemplateIn",
         "type": "object"
       },
       "PromoteModelRequest": {
@@ -87141,6 +87753,81 @@
         ]
       }
     },
+    "/api/v1/runs/{run_id}/tests/{test_id}/http-exchanges": {
+      "get": {
+        "description": "W23d AGT-14: the captured HTTP exchanges of one test (redacted at ingest).\n\n``require_run_access`` verifies the PROVIDED ``run_id``; the test must belong\nto THAT run (another run's case answers the same 404 as an unknown id). The\nMongo read filters on the run's project, the run and the case — all server\nvalues. Reads only. A Mongo failure is a 503, never an empty list that would\nread as \"nothing captured\".",
+        "operationId": "get_test_case_http_exchanges_api_v1_runs__run_id__tests__test_id__http_exchanges_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "test_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Test Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpExchangeListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Test Case Http Exchanges",
+        "tags": [
+          "Test Runs"
+        ]
+      }
+    },
     "/api/v1/runs/{run_id}/tests/{test_id}/rich-detail": {
       "get": {
         "description": "Versioned additive detail contract with optional recursive steps.\n\nAccess is checked against the supplied run before the service query. The\nendpoint is separate from the legacy flat detail route so existing clients\nretain their response shape during gradual rollout.",
@@ -93131,6 +93818,71 @@
           }
         },
         "summary": "Ingest Event Batch",
+        "tags": [
+          "Live Stream"
+        ]
+      }
+    },
+    "/api/v1/stream/http-exchanges": {
+      "post": {
+        "description": "W23d AGT-14: the captured HTTP exchanges of ONE live test (opt-in capture).\n\nAuthenticated like ``POST /ingest`` (JWT or API key, the ingest role). The\nBODY ``session_id`` names the live session; the project, the run and the\ntest case id are DERIVED from that session, never read from the body. A key\nbound to another project is refused, the caller must be a member of the\nsession's project, and the body ``run_id`` must be the session's own. The\nexchanges were already cut and redacted by the model; the store redacts\nthem again (idempotent) and never fails the request on a Mongo error.",
+        "operationId": "ingest_http_exchanges_api_v1_stream_http_exchanges_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LiveHttpExchangesIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveHttpExchangesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Ingest Http Exchanges",
         "tags": [
           "Live Stream"
         ]
