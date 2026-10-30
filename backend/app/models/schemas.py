@@ -110,6 +110,21 @@ from app.services.run_context_vocab import (
     SHA256_RE,
     VERSION_RE,
 )
+# W23d AGT-14 / AGT-15: constants only (no app.* import inside), so a module-level import is safe.
+from app.services.http_exchange_vocab import (
+    EXCHANGES_PER_RUN_MAX,
+    EXCHANGES_PER_TEST_MAX,
+    SCHEMA_STATES,
+)
+from app.services.prometheus_vocab import (
+    SERVICE_PLACEHOLDER,
+    TEMPLATE_ERRORS,
+    TEMPLATE_ID_RE,
+    TEMPLATE_LABEL_MAX,
+    TEMPLATE_PROMQL_MAX,
+    TEMPLATE_UNITS,
+    TEMPLATES_MAX,
+)
 
 
 # Generous upper bound for long-form free-text fields backed by a Postgres
@@ -5161,6 +5176,226 @@ class LiveStreamIngestResponse(BaseModel):
 
 BUILD_NUMBER_MAX_LENGTH = 100
 
+
+# ── W23d AGT-14: captured HTTP exchanges (contract §1.2) ──────────────────────
+# Opt-in per SDK run; attacker-controlled input from an API key. Every exchange is
+# cut and redacted INSIDE the model (``http_exchange_redaction.redact_exchange``), so
+# ``IngestPayload.model_dump()`` — the object-storage copy — only holds the redacted form.
+
+class HttpMessageIn(BaseModel):
+    """One side of an exchange, as the SDK sends it (cut + redacted by ``HttpExchangeIn``)."""
+    model_config = ConfigDict(extra="ignore")
+    headers: dict[str, str] = Field(default_factory=dict)   # cut to HEADERS_MAX / HEADER_*_MAX, then DENYLIST-redacted
+    body: Optional[str] = None      # text; JSON bodies as JSON text; bytes are the SDK's job (base64 is NOT accepted)
+    body_truncated: bool = False    # the body is incomplete (the SDK's own cut, the wire cap or the store cap)
+    body_bytes: int = 0             # UTF-8 size before the store cut (recomputed; a stored copy carries it)
+
+    @field_validator("headers", mode="before")
+    @classmethod
+    def _usable_headers(cls, value: Any) -> dict[str, str]:
+        """Lenient: a non-object → {}; a non-string name or a value that is not text / a number is skipped."""
+        if not isinstance(value, dict):
+            return {}
+        out: dict[str, str] = {}
+        for name, item in value.items():
+            if not isinstance(name, str):
+                continue
+            if isinstance(item, str):
+                out[name] = item
+            elif isinstance(item, (int, float)) and not isinstance(item, bool):
+                out[name] = str(item)
+        return out
+
+    @field_validator("body", mode="before")
+    @classmethod
+    def _text_body_or_none(cls, value: Any) -> Optional[str]:
+        return value if isinstance(value, str) else None
+
+    @field_validator("body_truncated", mode="before")
+    @classmethod
+    def _truncated_flag(cls, value: Any) -> bool:
+        return value is True
+
+    @field_validator("body_bytes", mode="before")
+    @classmethod
+    def _usable_size(cls, value: Any) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return 0
+        return value
+
+
+class HttpExchangeIn(BaseModel):
+    """One HTTP request/response a test made (AGT-14). Lenient on purpose: a bad exchange is DROPPED by the
+    list pre-filter (IngestTestResult / LiveHttpExchangesIn), never a 422 that costs the batch its results."""
+    model_config = ConfigDict(extra="ignore")
+    method: str                                  # upper-cased; METHOD_RE
+    url: str = Field(..., min_length=1)          # the concrete URL as sent; cut to URL_MAX; query values redacted
+    endpoint: Optional[str] = None               # the TEMPLATE (drift key), e.g. "/api/products/{id}"; derived when absent
+    status: Optional[int] = Field(None, ge=100, le=599)   # None = no response (transport error)
+    duration_ms: Optional[int] = Field(None, ge=0, le=86_400_000)
+    started_at: Optional[datetime] = None
+    error: Optional[str] = Field(None, max_length=200)    # the client's transport error class name, e.g. "ConnectTimeout"
+    request: HttpMessageIn = Field(default_factory=HttpMessageIn)
+    response: HttpMessageIn = Field(default_factory=HttpMessageIn)
+    # ALWAYS recomputed by the after-validator — a client-sent value is overwritten, never trusted
+    # (a stored copy whose body was cut keeps its schema's safe names only):
+    response_schema: Optional[dict[str, str]] = None   # top-level key -> JSON type, from the FULL redacted body
+    response_schema_state: str = "empty"         # SCHEMA_STATES
+    redaction_counts: dict[str, int] = Field(default_factory=dict)   # {"headers": n, "query": n, "body": n}
+
+    @field_validator("method", mode="before")
+    @classmethod
+    def _method_upper(cls, value: Any) -> str:
+        from app.services.http_exchange_redaction import normalise_method  # noqa: PLC0415
+
+        method = normalise_method(value)
+        if method is None:
+            raise PydanticCustomError("http_method", "method must be an HTTP method name (A-Z, at most 16).")
+        return method
+
+    @field_validator("response_schema", mode="before")
+    @classmethod
+    def _schema_mapping_or_none(cls, value: Any) -> Optional[dict[str, str]]:
+        if not isinstance(value, dict):
+            return None
+        return {key: item for key, item in value.items() if isinstance(key, str) and isinstance(item, str)}
+
+    @field_validator("response_schema_state", mode="before")
+    @classmethod
+    def _known_state(cls, value: Any) -> str:
+        return value if value in SCHEMA_STATES else "empty"
+
+    @field_validator("redaction_counts", mode="before")
+    @classmethod
+    def _counts_ignored(cls, value: Any) -> dict[str, int]:
+        return {}  # recomputed by the after-validator
+
+    @model_validator(mode="after")
+    def _cut_and_redact(self) -> "HttpExchangeIn":
+        from app.services.http_exchange_redaction import redact_exchange  # noqa: PLC0415
+
+        redact_exchange(self)
+        return self
+
+
+def _prefiltered(data: Any, field: str, dropped_field: str) -> Any:
+    """The before-validator body of IngestTestResult / LiveHttpExchangesIn: the exchange list → at most
+    EXCHANGES_PER_TEST_MAX validated exchanges; every unusable or surplus one is counted in ``dropped_field``
+    (a client-sent count is overwritten, never trusted)."""
+    if not isinstance(data, dict):
+        return data
+    if data.get(field) is None:
+        if dropped_field in data:
+            data = {key: value for key, value in data.items() if key != dropped_field}
+        return data
+    from app.services.http_exchange_redaction import prefilter_exchanges  # noqa: PLC0415
+
+    kept, dropped = prefilter_exchanges(data[field], validate=HttpExchangeIn.model_validate)
+    return {**data, field: kept, dropped_field: dropped}
+
+
+class LiveHttpExchangesIn(_NulFreeInput):
+    """Body of POST /api/v1/stream/http-exchanges (§3.1 — no path id, on purpose): one test's exchanges
+    of a live session, posted once by the reporter after the test's result."""
+    _NUL_KEPT_FIELDS: ClassVar[frozenset[str]] = frozenset({"session_id", "run_id"})
+    session_id: str = Field(..., min_length=1, max_length=255)   # the live session (loaded, never trusted for scope)
+    run_id: str = Field(..., min_length=1, max_length=100)       # the session's client run id (== LiveSession.run_id)
+    test_name: str = Field(..., min_length=1, max_length=1000)   # EXACTLY what the test_result event sends
+    class_name: Optional[str] = Field(None, max_length=500)
+    exchanges: List[HttpExchangeIn] = Field(..., max_length=EXCHANGES_PER_TEST_MAX)   # same lenient pre-filter
+    exchanges_dropped: int = Field(0, ge=0)                      # server-set by the pre-filter
+
+    @model_validator(mode="before")
+    @classmethod
+    def _prefilter_exchanges(cls, data: Any) -> Any:
+        return _prefiltered(data, "exchanges", "exchanges_dropped")
+
+
+class LiveHttpExchangesResponse(BaseModel):
+    stored: int
+    truncated: int                 # bodies cut at BODY_STORED_MAX_BYTES
+    dropped: int
+    test_case_id: str              # the id the drainer gives this test's row (§2.1 P-6)
+
+
+class HttpMessageRead(BaseModel):
+    headers: dict[str, str]
+    body: Optional[str] = None
+    body_truncated: bool = False
+    body_bytes: int = 0            # the size before the store cut
+
+
+class HttpExchangeRead(BaseModel):
+    seq: int
+    method: str
+    endpoint: str
+    url: str
+    host: Optional[str] = None
+    status: Optional[int] = None
+    duration_ms: Optional[int] = None
+    started_at: Optional[datetime] = None
+    error: Optional[str] = None
+    request: HttpMessageRead
+    response: HttpMessageRead
+    response_schema_state: str     # SCHEMA_STATES
+    source: str                    # CAPTURE_SOURCES
+    captured_at: datetime
+    redacted: bool                 # any redaction_counts value > 0 (the panel's "[REDACTED] markers" line)
+
+
+class HttpExchangeListResponse(BaseModel):
+    """GET /api/v1/runs/{run_id}/tests/{test_id}/http-exchanges."""
+    items: List[HttpExchangeRead]  # seq order, ≤ LIST_PAGE_MAX
+    total: int                     # docs stored for this test (a count, never len(items))
+    dropped: int                   # exchanges of this test the server did not store
+    run_cap_reached: bool          # the run holds EXCHANGES_PER_RUN_MAX docs (so "none" may mean "not stored")
+
+
+# ── W23d AGT-15: the Prometheus metric templates (Settings › Integrations) ─────
+
+class PrometheusMetricTemplate(BaseModel):
+    """One admin-defined metric template; the server substitutes ``{service}`` (escaped) — never model PromQL."""
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(..., pattern=TEMPLATE_ID_RE)
+    label: str = Field(..., min_length=1, max_length=TEMPLATE_LABEL_MAX)
+    promql: str = Field(..., min_length=1, max_length=TEMPLATE_PROMQL_MAX)   # contains SERVICE_PLACEHOLDER
+    unit: str = "count"            # TEMPLATE_UNITS
+
+
+_C0_CONTROLS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+class PrometheusMetricTemplateIn(PrometheusMetricTemplate):
+    """A template as an ADMIN saves it (IntegrationsConfigUpdate): the placeholder, control characters and
+    the unit are checked per item, so a 422's loc is ``prometheus_metric_templates.N.<field>``."""
+
+    @field_validator("label", mode="after")
+    @classmethod
+    def _label_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value or _C0_CONTROLS.search(value):
+            raise PydanticCustomError("template_label", "A template label must be plain text of 1 to 80 characters.")
+        return value
+
+    @field_validator("promql", mode="after")
+    @classmethod
+    def _promql_has_the_placeholder(cls, value: str) -> str:
+        value = value.strip()
+        if SERVICE_PLACEHOLDER not in value:
+            raise PydanticCustomError("template_placeholder", TEMPLATE_ERRORS["placeholder"])
+        if _C0_CONTROLS.search(value):
+            raise PydanticCustomError("template_promql", "A template's PromQL must be one line of text.")
+        return value
+
+    @field_validator("unit", mode="after")
+    @classmethod
+    def _known_unit(cls, value: str) -> str:
+        if value not in TEMPLATE_UNITS:
+            raise PydanticCustomError("template_unit", "A template unit must be one of: {units}.",
+                                      {"units": ", ".join(TEMPLATE_UNITS)})
+        return value
+
+
 class IngestTestResult(BaseModel):
     """A single test result in a JSON batch ingest."""
     test_name: str = Field(..., min_length=1, max_length=1000)
@@ -5180,6 +5415,19 @@ class IngestTestResult(BaseModel):
     call_ms: Optional[int] = Field(None, ge=0)
     teardown_ms: Optional[int] = Field(None, ge=0)
     worker_id: Optional[str] = Field(None, max_length=64)
+    # W23d AGT-14: the test's captured HTTP exchanges (opt-in in the SDK), cut and redacted by
+    # HttpExchangeIn; a malformed one is dropped, never a 422. Unset, all three are left out of
+    # model_dump(), so a batch without exchanges dumps exactly as before (the EXEC-01 rule).
+    http_exchanges: Optional[List[HttpExchangeIn]] = Field(None, exclude_if=lambda value: value is None)
+    # Server-set only (the pre-filter and IngestPayload's per-run cap): exchanges of this test not kept.
+    http_exchanges_dropped: Optional[int] = Field(None, ge=0, exclude_if=lambda value: value is None)
+    # W23d AGT-15 (M-4a): the service under test -> TestCase.service_name (the log stage's metrics context).
+    service_name: Optional[str] = Field(None, max_length=255, exclude_if=lambda value: value is None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _prefilter_http_exchanges(cls, data: Any) -> Any:
+        return _prefiltered(data, "http_exchanges", "http_exchanges_dropped")
 
 
 class IngestPayload(_NulFreeInput):
@@ -5216,6 +5464,29 @@ class IngestPayload(_NulFreeInput):
     # W23b FAIL-13: the runtime / dependency / image / allowlisted-env context (validated and
     # env-redacted by ``RunContext``, so ``model_dump()`` puts the REDACTED form in object storage).
     run_context: Optional[RunContext] = None
+    # W23d (contract §0.8): False -> finalize_run(run_ai=False): no suite comparison and no AI
+    # pipeline (the /ingest/file form's rule). Left out of model_dump() while True, so a batch
+    # that does not send it dumps exactly as before; the worker reads payload.get("run_ai", True).
+    run_ai: bool = Field(
+        True,
+        description="False skips the AI analysis and the suite comparison for this run.",
+        exclude_if=lambda value: value is True,
+    )
+
+    @model_validator(mode="after")
+    def _cap_http_exchanges_per_run(self) -> "IngestPayload":
+        """W23d AGT-14: at most EXCHANGES_PER_RUN_MAX exchanges per batch, kept in result order; the
+        surplus of each later result is added to its http_exchanges_dropped."""
+        budget = EXCHANGES_PER_RUN_MAX
+        for result in self.results:
+            exchanges = result.http_exchanges
+            if not exchanges:
+                continue
+            if len(exchanges) > budget:
+                result.http_exchanges = exchanges[:budget]
+                result.http_exchanges_dropped = (result.http_exchanges_dropped or 0) + len(exchanges) - budget
+            budget -= len(result.http_exchanges or [])
+        return self
 
 
 class IngestResponse(BaseModel):
@@ -5494,6 +5765,13 @@ class IntegrationsConfigRead(BaseModel):
     environment_fields: List[str] = Field(default_factory=list)
     # W20 ADM-10: secret fields stored as Vault references (``vault:<path>#<key>``).
     vault_fields: List[str] = Field(default_factory=list)
+    # W23d AGT-15: the system-under-test's Prometheus (SAVED-ONLY: no environment fallback — the env
+    # PROMETHEUS_URL is TestLookup's own self-monitoring). Defaults keep old clients / fixtures valid.
+    prometheus_enabled: bool = False
+    prometheus_base_url: Optional[str] = None
+    prometheus_token_set: bool = False
+    prometheus_metric_templates: List[PrometheusMetricTemplate] = Field(default_factory=list)   # saved, else the defaults
+    prometheus_templates_source: str = "default"   # "saved" | "default"
 
 
 def _stripped(value: Optional[str]) -> Optional[str]:
@@ -5524,11 +5802,33 @@ class IntegrationsConfigUpdate(BaseModel):
     teams_webhook_url: Optional[str] = Field(None, max_length=1000)
     github_repo: Optional[str] = Field(None, max_length=500)
     github_token: Optional[str] = Field(None, max_length=500)
+    # W23d AGT-15: the Prometheus block. The token goes to secret_refs only ("" expires it; a
+    # ``vault:<path>#<key>`` value is stored as a reference); templates: [] = back to the defaults.
+    prometheus_enabled: Optional[bool] = None
+    prometheus_base_url: Optional[str] = Field(None, max_length=500)
+    prometheus_bearer_token: Optional[str] = Field(None, max_length=4_000)
+    prometheus_metric_templates: Optional[List[PrometheusMetricTemplateIn]] = Field(None, max_length=TEMPLATES_MAX)
+
+    @field_validator("prometheus_metric_templates", mode="before")
+    @classmethod
+    def _at_most_twelve_templates(cls, value: Any) -> Any:
+        if isinstance(value, list) and len(value) > TEMPLATES_MAX:
+            raise PydanticCustomError("templates_too_many", TEMPLATE_ERRORS["too_many"])
+        return value
+
+    @field_validator("prometheus_metric_templates", mode="after")
+    @classmethod
+    def _template_ids_unique(
+        cls, value: Optional[List[PrometheusMetricTemplateIn]],
+    ) -> Optional[List[PrometheusMetricTemplateIn]]:
+        if value and len({template.id for template in value}) != len(value):
+            raise PydanticCustomError("templates_duplicate_id", TEMPLATE_ERRORS["duplicate_id"])
+        return value
 
     # W10 INT-01: shapes checked at save. The host check of the two URLs (and
     # of https://{jira_domain}) is async DNS and lives in the PUT handler (422
-    # "Target host is not allowed").
-    @field_validator("splunk_base_url", "ocp_api_url", mode="after")
+    # "Target host is not allowed"). W23d: the Prometheus URL joins them.
+    @field_validator("splunk_base_url", "ocp_api_url", "prometheus_base_url", mode="after")
     @classmethod
     def _integration_url_shape(cls, value: Optional[str]) -> Optional[str]:
         value = _stripped(value)

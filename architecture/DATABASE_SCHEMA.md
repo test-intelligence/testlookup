@@ -936,7 +936,7 @@ verify against `backend/app/db/mongo.py`, `redis_client.py`, `storage.py`,
 |------------|----------|-------|
 | `raw_allure_json` | `test_case_id` | Raw Allure result JSON per test |
 | `raw_testng_xml` | `test_case_id` | Raw TestNG XML fragment per test |
-| `rest_api_payloads` | `test_case_id` | Captured REST request/response bodies (for contract validation) |
+| `rest_api_payloads` | `test_run_id`, `test_case_id`, `seq` | Captured HTTP exchanges, redacted before storage (W23d AGT-14; see below) |
 | `ai_analysis_payloads` | `test_case_id` | Full LLM chain-of-thought + token counts per classification |
 | `ocp_pod_events` | `test_run_id`, `timestamp` | OpenShift pod events correlated to a run |
 | `execution_logs` | `test_run_id`, `timestamp` | Splunk/OCP logs correlated to a run |
@@ -3502,6 +3502,36 @@ The older per-domain sections omitted these tables. Their full field definitions
 - **No row = unset = audit only** (D17). No migration writes the key, so an upgrade changes nothing.
 - Written only by `PUT /api/v1/settings/review-gate` (an interactive ADMIN), audited in `settings_audit_log`. Read by `services/review_gate_setting.py` into a 30-second process snapshot behind the synchronous `report_distribution_policy.gate_enforced()`. The Redis mirror `config:review_gate:v1` (60 s) is deleted on every PUT.
 - `REVIEW_GATE_ENFORCED=true` still enforces the gate whatever the date.
+
+## Captured HTTP exchanges and the Prometheus block (no migration, W23d)
+
+W23d adds no Postgres column, table or index (head stays `0246`): one Mongo collection gains a writer and two indexes, and one `app_settings` row gains keys.
+
+**Mongo `rest_api_payloads`** (AGT-14): one document per captured exchange, written ONLY by `services/http_exchange_store.write_exchanges` (the JSON ingest's worker after its commit, source `json_batch`; `POST /api/v1/stream/http-exchanges`, source `live`). No writer existed before W23d, so there is no legacy shape.
+
+```text
+v: 1
+project_id, test_run_id, test_case_id: str      # server-written, never taken from the client
+build_number: str, run_created_at: datetime     # the run's created_at orders "previous runs" for drift
+seq: int                                        # 0..19, the order within the test
+source: "json_batch" | "live"
+method, endpoint: str; host: str | None; url: str   # url already redacted (query values, userinfo)
+status, status_class (status // 100): int | None
+duration_ms: int | None; started_at: datetime | None; error: str | None
+request / response: {headers: {...}, body: str | None, body_truncated: bool, body_bytes: int}
+response_schema: {top-level key: string|number|boolean|object|array|null} | None
+response_schema_state: parsed | not_json | empty | too_large
+redaction_counts: {headers: int, query: int, body: int}
+dropped_for_test: int                           # seq 0 only: exchanges of this test the server did not store
+captured_at: datetime                           # server time of the write
+```
+
+- **Redacted before it is stored.** `schemas.HttpExchangeIn` cuts and redacts every exchange inside the model (`services/http_exchange_redaction.py`: the header denylist + secret-suffix rule, query-string values, userinfo, JSON keys named like secrets, `redact_text` and the `TOKEN_SHAPES` on every string), so the queued object-storage copy of a JSON batch is already redacted; the store re-validates (idempotent). The same rules are the cross-language specification `sdk-vectors/http_exchange.json`, which the Python SDK applies first.
+- **Bounded.** ≤ 20 exchanges per test, ≤ 1 000 per run, bodies parsed up to 64 KiB and stored up to 16 KiB (`…[truncated: N bytes not stored]`), ≤ 50 headers per side (`services/http_exchange_vocab.py`).
+- **Indexes** (built by the idempotent background `ensure_indexes` at API start): the existing `(test_case_id)`; `rest_payloads_run_case` `(test_run_id, test_case_id, seq)` — the GET, both tools, the retention purge; `rest_payloads_drift` `(project_id, method, endpoint, run_created_at desc)` — the cross-run drift baseline.
+- **Retention.** Purged by `test_run_id` on the raw-events clock (`retention_service._MONGO_PLANS`); a held run's documents are never purged; deleting one run removes them; the `full` export tier archives them as `raw/<run>/rest_api_payloads.jsonl`; the storage page counts the collection.
+
+**`app_settings` key `integrations_config`** (AGT-15) gains `prometheus_enabled` (bool), `prometheus_base_url` (text) and `prometheus_metric_templates` (a JSON list of `{id, label, promql, unit}`, ≤ 12; absent = the four defaults). **`secret_refs`** scope `integrations_config` gains `prometheus_bearer_token` (a Vault reference allowed). The block is SAVED-ONLY: no environment fallback (the `PROMETHEUS_URL` setting is TestLookup's own self-monitoring Prometheus), and no migration writes any of these keys, so an upgrade changes nothing.
 
 ## Systemic cluster membership key (migration 0193, VIZ-207)
 
