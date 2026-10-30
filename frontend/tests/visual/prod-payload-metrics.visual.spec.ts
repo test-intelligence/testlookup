@@ -8,8 +8,8 @@
  *  - `test-case-http-exchanges-empty`: the same tab with nothing captured — the "none" and "how" sentences;
  *  - `run-specialist-evidence`: the decision report's Specialist evidence row — the API contract card (the drift
  *    violation) and the Log intelligence card (a 40-point spark and its sentence) (AGT-14 / AGT-15);
- *  - `integrations-prometheus-card`: Settings › Integrations › Prometheus with the default templates and a probe
- *    answer (`Test connection: healthy (42 ms)`) (AGT-15).
+ *  - `integrations-prometheus-card`: Settings › Integrations › Prometheus, not configured, with the default templates
+ *    and the probe answer an unconfigured block gets (`Test connection: skipped — …`) (AGT-15).
  *
  * Hermetic fixtures: `production/fixtures-payload-metrics.ts` (G-A). PNGs are rendered by CI only
  * (`visual-baselines.yml`, Linux); nobody regenerates them locally.
@@ -69,15 +69,15 @@ for (const theme of THEMES_WITH_PAPER) {
     assertHermetic(api, errors)
   })
 
-  test(`the Prometheus card with the defaults and a probe answer — ${theme}`, async ({ page }) => {
-    const world = integrationsPrometheusWorld({ role: ADMIN, probeAnswer: 'healthy' })
+  test(`the Prometheus card, not configured, with the defaults and the skipped probe — ${theme}`, async ({ page }) => {
+    const world = integrationsPrometheusWorld({ role: ADMIN, probeAnswer: 'skipped' })
     const { api, errors } = await openRollout(page, '/settings/integrations', {
       theme, handlers: world.handlers, ready: (p) => p.getByRole('heading', { level: 1, name: 'Integrations', exact: true }), user: ADMIN,
     })
     const card = page.locator('[data-prometheus-card]')
     await expect(card.getByText('Defaults in use', { exact: true })).toBeVisible()
     await card.getByRole('button', { name: 'Test connection' }).click()
-    await expect(card.getByText('Test connection: healthy (42 ms)', { exact: true })).toBeVisible()
+    await expect(card.getByText('Test connection: skipped — Prometheus is switched off or has no URL', { exact: true })).toBeVisible()
     await blur(page)
     await networkQuiet(page, api)
     await visualRegion(page, 'integrations-prometheus-card', theme, card)

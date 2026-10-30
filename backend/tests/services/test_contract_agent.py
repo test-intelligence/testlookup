@@ -136,6 +136,26 @@ async def test_contract_agent_violations_keep_their_own_endpoint(monkeypatch):
     assert (violation["method"], violation["baseline_build"], violation["sentence"]) == ("GET", "41", sentence)
     assert result["evidence_refs"][0]["endpoint"] == "/api/products/{id}"
     assert result["endpoints_checked"] == ["/api/cart", "/api/products/{id}"]
-    assert result["status"] == "complete" and result["summary"].startswith("CRITICAL CONTRACT VIOLATIONS")
-    assert result["summary"].endswith(sentence)
+    assert result["status"] == "complete"
+    # W23d: one field on one endpoint reads in the singular (the Specialist evidence row shows the summary as written).
+    assert result["summary"] == f"CRITICAL CONTRACT VIOLATIONS: 1 required field missing across 1 endpoint. {sentence}"
     ContractAgentOutput.model_validate({"contract": {"agent_name": "contract_validation"}, **result})
+
+
+@pytest.mark.asyncio
+async def test_contract_agent_counts_several_findings_in_the_plural(monkeypatch):
+    def drift(field: str) -> dict:
+        return {"field_path": field, "violation_type": "type_drift", "expected": "number", "actual": "string",
+                "severity": "warning", "method": "GET", "endpoint": "/api/products/{id}"}
+
+    invoke = AsyncMock(return_value=json.dumps({
+        "endpoint": "/api/products/{id}", "evidence_available": True, "exchanges_checked": 1,
+        "violations": [drift("price"), drift("stock")],
+    }))
+    monkeypatch.setattr(contract_agent_module, "validate_api_contract", type("FakeTool", (), {"ainvoke": invoke})())
+
+    result = await ContractAgent().validate_cluster(
+        ["tc-1"], project_id="p1", run_id="r1", pipeline_run_id="pl1"
+    )
+
+    assert result["summary"] == "SCHEMA DRIFT DETECTED: 2 fields changed from historical responses."

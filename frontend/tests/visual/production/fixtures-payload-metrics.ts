@@ -170,7 +170,7 @@ export function testCaseHttpWorld(options: TestCaseHttpOptions = {}) {
 /** `CONTRACT_SENTENCES.missing_field` as the contract stage fills it in. */
 export const DRIFT_SENTENCE = 'field `price` missing from GET /api/products/{id}; drift since build 41'
 /** `contract_agent`'s summary for one critical violation, then the first violation sentence. */
-export const CONTRACT_SUMMARY = `CRITICAL CONTRACT VIOLATIONS: 1 required fields missing across 1 endpoints. ${DRIFT_SENTENCE}`
+export const CONTRACT_SUMMARY = `CRITICAL CONTRACT VIOLATIONS: 1 required field missing across 1 endpoint. ${DRIFT_SENTENCE}`
 export const ROSE_SENTENCE = FINDING_SENTENCES.rose.replace('{label}', 'p95 latency').replace('{service}', 'checkout').replace('{ratio}', '3.1')
 export const OFFLINE_SENTENCE = OUTCOME_SENTENCES.offline_mode
 export const LOG_SUMMARY = 'checkout: 3 error spans in the failure window; log rate 4.2× its baseline.'

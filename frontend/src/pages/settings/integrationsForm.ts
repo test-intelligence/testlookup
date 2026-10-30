@@ -198,6 +198,10 @@ export const DEFAULTS_AFTER_SAVE = 'The default templates are used after Save.'
 export const ADD_TEMPLATE = 'Add template'
 export const USE_DEFAULTS = 'Use the defaults'
 export const REMOVE_TEMPLATE = 'Remove'
+/** The unit select's words; the option VALUES stay the server's `TEMPLATE_UNITS` (`per_second`). */
+export const TEMPLATE_UNIT_LABELS: Record<string, string> = {
+  seconds: 'seconds', bytes: 'bytes', ratio: 'ratio', per_second: 'per second', count: 'count',
+}
 /** prometheus_vocab.TEMPLATES_MAX (mirrored in types/prometheus). */
 export { TEMPLATES_MAX }
 export const TEST_CONNECTION = 'Test connection'

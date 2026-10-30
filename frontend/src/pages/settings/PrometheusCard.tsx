@@ -28,6 +28,7 @@ import {
   TEMPLATES_HEADING,
   TEMPLATES_HELP,
   TEMPLATES_MAX,
+  TEMPLATE_UNIT_LABELS,
   TESTING,
   TEST_CONNECTION,
   TEST_FAILED,
@@ -142,15 +143,16 @@ function TemplateRow({ index, template, disabled, onChange, onRemove }: {
   const n = index + 1
   return (
     <div className="flex flex-col gap-1.5 rounded-md border border-[var(--color-border)] p-2" data-prometheus-template={index}>
-      {/* 12rem of 12 px mono holds a default id (`memory_working_set`) whole on CI's DejaVu Sans Mono. */}
-      <div className="grid grid-cols-[12rem_minmax(0,1fr)_7rem_auto] items-center gap-2">
+      {/* 12rem of 12 px mono holds a default id (`memory_working_set`) whole on CI's DejaVu Sans Mono; 9rem holds
+          "per second" and the select's chevron (7rem cut `per_second` to "per_secon"). */}
+      <div className="grid grid-cols-[12rem_minmax(0,1fr)_9rem_auto] items-center gap-2">
         <input aria-label={`Template ${n} id`} value={template.id} disabled={disabled} placeholder="http_p95_latency"
           onChange={e => onChange({ id: e.target.value })} className={`${CELL} font-mono text-xs`} />
         <input aria-label={`Template ${n} label`} value={template.label} disabled={disabled} placeholder="p95 latency"
           onChange={e => onChange({ label: e.target.value })} className={CELL} />
         <select aria-label={`Template ${n} unit`} value={template.unit ?? 'count'} disabled={disabled}
           onChange={e => onChange({ unit: e.target.value })} className={CELL}>
-          {TEMPLATE_UNITS.map(unit => <option key={unit} value={unit}>{unit}</option>)}
+          {TEMPLATE_UNITS.map(unit => <option key={unit} value={unit}>{TEMPLATE_UNIT_LABELS[unit] ?? unit}</option>)}
         </select>
         <button type="button" className="btn-secondary btn-sm" disabled={disabled} aria-label={`Remove template ${n}`} onClick={onRemove}>
           {REMOVE_TEMPLATE}

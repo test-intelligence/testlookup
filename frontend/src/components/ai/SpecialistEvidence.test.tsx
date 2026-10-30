@@ -81,7 +81,7 @@ describe('SpecialistEvidence', () => {
   })
 
   it('the summary drops the violation sentences the stage appended to it (each is said once, in the list)', () => {
-    const lead = 'CRITICAL CONTRACT VIOLATIONS: 1 required fields missing across 1 endpoints.'
+    const lead = 'CRITICAL CONTRACT VIOLATIONS: 1 required field missing across 1 endpoint.'
     render(<SpecialistEvidence contractFindings={contract({ summary: `${lead} ${DRIFT}` })} />)
     expect(document.querySelector('[data-contract-summary]')?.textContent).toBe(lead)
     expect(screen.getAllByText('price')).toHaveLength(1)

@@ -32,6 +32,11 @@ def _checksum(value: Any) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _counted(count: int, noun: str) -> str:
+    """'1 endpoint' / '2 endpoints': the summary is shown as written in the run's Specialist evidence row."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
 class ContractAgent(BaseAgent):
     """Validate REST response contracts using server-scoped evidence only.
 
@@ -169,13 +174,13 @@ class ContractAgent(BaseAgent):
             status = "complete"
             if critical:
                 summary = (
-                    f"CRITICAL CONTRACT VIOLATIONS: {len(critical)} required fields missing across "
-                    f"{len({v.get('endpoint') for v in critical})} endpoints."
+                    f"CRITICAL CONTRACT VIOLATIONS: {_counted(len(critical), 'required field')} missing across "
+                    f"{_counted(len({v.get('endpoint') for v in critical}), 'endpoint')}."
                 )
             elif drift:
-                summary = f"SCHEMA DRIFT DETECTED: {len(drift)} fields changed from historical responses."
+                summary = f"SCHEMA DRIFT DETECTED: {_counted(len(drift), 'field')} changed from historical responses."
             elif all_violations:
-                summary = f"{len(all_violations)} contract warnings found."
+                summary = f"{_counted(len(all_violations), 'contract warning')} found."
             elif not checked_total and first_note:
                 # Nothing was compared (no earlier run, or no JSON body): say so,
                 # never "match" — absence is not health.

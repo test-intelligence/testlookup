@@ -96,6 +96,15 @@ describe('PrometheusCard', () => {
     expect(within(card).getByText('Tests the saved settings — save first.')).toBeInTheDocument()
   })
 
+  it('the unit select names "per second" in words; the value stays the server\'s per_second', async () => {
+    mockGet.mockResolvedValue(config())
+    const card = await renderPage()
+    const unit = within(card).getByLabelText('Template 2 unit') as HTMLSelectElement
+    expect(unit).toHaveValue('per_second')
+    expect(unit.selectedOptions[0].textContent).toBe('per second')
+    expect(Array.from(unit.options, o => o.textContent)).toEqual(['seconds', 'bytes', 'ratio', 'per second', 'count'])
+  })
+
   it('an admin edits the URL, the token and a label: Save sends ONLY those prometheus_* keys', async () => {
     mockGet.mockResolvedValue(config())
     mockUpdate.mockResolvedValue(config({ prometheus_base_url: 'http://10.0.4.7:9090', prometheus_token_set: true }))
