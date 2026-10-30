@@ -19,7 +19,14 @@ to a pipeline. The status is read from that run and never stored twice. That
 holds for ``mode=sync`` too: the worker still runs it, and the request only
 waits for it.
 
-Not yet: payloads other than a stored subject.
+W23c AGT-11: ``agent.summary.v1`` also accepts ``inline_input`` (a pasted
+``InlineSummaryInputV1``), anchored by the same stored subject: the run names
+the tenancy, the review and the retention. The input is size-capped (413),
+validated (422), redacted before it is stored or hashed
+(``services/inline_invocation``), reaches the model only as data blocks
+(``services/untrusted_input``), and its output is a draft kept out of the run's
+report, gates, decisions, notifications and digests. Every wrong anchor answers
+one 404 (no existence oracle). Other catalog payloads are not accepted yet.
 """
 from __future__ import annotations
 
@@ -33,7 +40,7 @@ from typing import Annotated, Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_serializer
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,7 +64,13 @@ from app.models.postgres import (
     UserRole,
 )
 from app.models.schemas import ReviewBlock
-from app.services import agent_catalog, agent_planner, invocation_idempotency, invocation_stream
+from app.services import (
+    agent_catalog,
+    agent_planner,
+    inline_invocation,
+    invocation_idempotency,
+    invocation_stream,
+)
 from app.services.activity.service import ActorRef, record as record_activity
 from app.services.agent_capability_registry import is_report_producing, is_sync_eligible
 from app.services.agent_config_resolver import (
@@ -68,6 +81,7 @@ from app.services.agent_config_resolver import (
     resolve_frozen_for_project,
 )
 from app.services.agent_config_service import AgentConfigPatch, OverrideRejected, get_config_row
+from app.services.inline_input_vocab import INLINE_ERRORS, INLINE_INPUT_MAX_BYTES
 from app.services.pipeline_cancellation import request_cancel
 from app.services.pipeline_retry_config import decide_retry_mode
 from app.services.review_envelope import ReviewEnvelope, envelope_from_review
@@ -121,6 +135,23 @@ class AgentInvokeRequest(BaseModel):
         ),
     )
     correlation_id: Optional[str] = Field(default=None, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")
+    inline_input: Optional[dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "Inline input for an agent that accepts it (catalog: inline_input_supported). input.payload must then "
+            "name a stored test run of project_id, which anchors tenancy, review and retention. "
+            "≤ 262144 bytes; redacted before storage."
+        ),
+    )
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_inline_input(self, handler: Any) -> Any:
+        # A stored-subject request dumps exactly as before W23c, so its Idempotency-Key
+        # fingerprint (the whole dumped body) is byte-identical across the upgrade.
+        data = handler(self)
+        if isinstance(data, dict) and data.get("inline_input") is None:
+            data.pop("inline_input", None)
+        return data
 
 
 class AgentInvocationResponse(BaseModel):
@@ -147,6 +178,15 @@ class AgentInvocationResponse(BaseModel):
     review: ReviewBlock
     created_at: Optional[datetime] = None
     links: dict[str, str]
+    # W23c AGT-11: additive, optional for old clients.
+    input_kind: Literal["stored_run", "inline"] = "stored_run"
+    input_sha256: Optional[str] = Field(
+        default=None, description="sha256 of the redacted stored inline input; None for a stored-run invocation.",
+    )
+    input: Optional[dict[str, Any]] = Field(
+        default=None,
+        description="The inline input as stored: secrets and personal data redacted before storage. None for stored_run.",
+    )
 
 
 class StreamTicketResponse(BaseModel):
@@ -337,6 +377,20 @@ def project_invocation(
         "review": envelope.block(),
         "created_at": invocation.created_at,
         "links": links,
+        **_input_view(invocation),
+    }
+
+
+def _input_view(invocation: Any) -> dict[str, Any]:
+    """``input_kind`` / ``input_sha256`` / ``input``: the REDACTED stored inline input, or the stored-run defaults."""
+    input_sha256 = getattr(invocation, "input_sha256", None)
+    if not isinstance(input_sha256, str) or not input_sha256:
+        return {"input_kind": "stored_run", "input_sha256": None, "input": None}
+    stored = getattr(invocation, "input_payload", None)
+    return {
+        "input_kind": "inline",
+        "input_sha256": input_sha256,
+        "input": stored if isinstance(stored, dict) else None,
     }
 
 
@@ -462,8 +516,8 @@ async def _wait_for_terminal(
         await sleep(min(poll_interval, max(0.0, deadline - now)))
 
 
-def _validate_invocation(agent_id: str, body: AgentInvokeRequest) -> tuple[str, str, uuid.UUID]:
-    """(stage_name, workflow_type, test_run_id), or the 4xx that refuses the call."""
+def _validate_agent(agent_id: str) -> tuple[Any, str]:
+    """(capability spec, workflow_type), or the 4xx that refuses the agent itself."""
     if not agent_catalog.AGENT_ID_PATTERN.match(agent_id):
         raise HTTPException(
             status_code=422,
@@ -481,6 +535,12 @@ def _validate_invocation(agent_id: str, body: AgentInvokeRequest) -> tuple[str, 
                 "(a cluster child, runtime or investigation stage)"
             ),
         )
+    return spec, workflow_type
+
+
+def _validate_invocation(agent_id: str, body: AgentInvokeRequest) -> tuple[str, str, uuid.UUID]:
+    """(stage_name, workflow_type, test_run_id), or the 4xx that refuses the call."""
+    spec, workflow_type = _validate_agent(agent_id)
     try:
         parsed = agent_catalog.input_wrapper(agent_id).model_validate(body.input)
     except ValidationError as exc:
@@ -497,18 +557,95 @@ def _validate_invocation(agent_id: str, body: AgentInvokeRequest) -> tuple[str, 
     return spec.stage_name, workflow_type, payload.test_run_id
 
 
+def _inline_refusal(status_code: int, code: str, **fields: str) -> HTTPException:
+    # Only a message with a placeholder is formatted: inline_input_needs_anchor carries a literal JSON object.
+    message = INLINE_ERRORS[code].format(**fields) if fields else INLINE_ERRORS[code]
+    return HTTPException(status_code=status_code, detail={"code": code, "message": message})
+
+
+async def _validate_inline_invocation(
+    db: AsyncSession, current_user: Any, agent_id: str, body: AgentInvokeRequest,
+) -> tuple[str, str, uuid.UUID, dict[str, Any], str]:
+    """(stage_name, workflow_type, anchor test_run_id, redacted payload, input_sha256) — W23c I-2.
+
+    Cheapest refusal first; nothing is written or locked before every check passes.
+    """
+    from app.models.inline_agent_input import InlineSummaryInputV1  # noqa: PLC0415
+
+    spec, workflow_type = _validate_agent(agent_id)                                          # (1)
+    if not agent_catalog.inline_input_supported(agent_id) or (
+        agent_catalog.resolve_schema_model(spec.input_schema) is None                        # (2)
+    ):
+        raise _inline_refusal(422, "inline_input_unsupported", agent_id=agent_id)
+    try:
+        parsed = agent_catalog.input_wrapper(agent_id).model_validate(body.input)
+    except ValidationError:
+        parsed = None
+    anchor = getattr(parsed, "payload", None)
+    if not isinstance(anchor, agent_catalog.SubjectRef):                                     # (3)
+        raise _inline_refusal(422, "inline_input_needs_anchor")
+    raw = body.inline_input or {}
+    if len(inline_invocation.canonical_bytes(raw)) > INLINE_INPUT_MAX_BYTES:                  # (4)
+        raise _inline_refusal(413, "inline_input_too_large")
+    try:
+        InlineSummaryInputV1.model_validate(raw)                                             # (5)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "inline_input_invalid",
+                "message": INLINE_ERRORS["inline_input_invalid"],
+                # Never Pydantic's "input": a pasted secret is not reflected back.
+                "errors": [{"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in exc.errors()],
+            },
+        ) from None
+    # (6) the anchor, no oracle: missing, another project's, a mismatching project_id assertion,
+    # a non-member, an API key bound elsewhere -- one 404, decided before the run row is locked.
+    anchor_project = (
+        await db.execute(select(TestRun.project_id).where(TestRun.id == anchor.test_run_id))
+    ).scalar_one_or_none()
+    if anchor_project is None or anchor_project != body.project_id:
+        raise _inline_refusal(404, "anchor_run_not_found")
+    try:
+        _enforce_api_key_project_binding(current_user, anchor_project)
+        await resolve_project_scope(db, current_user, str(anchor_project))
+    except HTTPException:
+        raise _inline_refusal(404, "anchor_run_not_found") from None
+    try:
+        redacted, input_sha256 = inline_invocation.prepare(raw)                            # (7)
+    except ValidationError:
+        # The scrubbed object no longer validates (it cannot: every placeholder is clipped to
+        # its cap) -- refused as invalid rather than stored half-redacted.
+        raise _inline_refusal(422, "inline_input_invalid") from None
+    return spec.stage_name, workflow_type, anchor.test_run_id, redacted, input_sha256
+
+
 async def _in_progress_invocation(
     db: AsyncSession,
     test_run_id: uuid.UUID,
     agent_id: str,
     *,
     expected_config_snapshot: Optional[dict[str, Any]] = None,
+    input_sha256: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
-    """The newest invocation of this agent on this run, if it is still in progress."""
+    """The newest invocation of this agent on this run, if it is still in progress.
+
+    W23c I-3: a stored-subject call matches only a stored-subject invocation; an inline call
+    only one with the SAME ``input_sha256`` -- a different pasted input is never swallowed.
+    """
+    same_input = (
+        AgentInvocation.input_sha256.is_(None)
+        if input_sha256 is None
+        else AgentInvocation.input_sha256 == input_sha256
+    )
     latest = (
         await db.execute(
             select(AgentInvocation)
-            .where(AgentInvocation.test_run_id == test_run_id, AgentInvocation.agent_id == agent_id)
+            .where(
+                AgentInvocation.test_run_id == test_run_id,
+                AgentInvocation.agent_id == agent_id,
+                same_input,
+            )
             .order_by(AgentInvocation.created_at.desc())
             .limit(1)
         )
@@ -913,7 +1050,9 @@ _KEY_REUSED = "Idempotency-Key was already used for a different request; send a 
     status_code=202,
     responses={
         200: {"model": AgentInvocationResponse, "description": "Completed sync result or idempotent replay"},
+        404: {"description": "Unknown agent or test run; for inline_input, anchor_run_not_found for every wrong anchor"},
         409: {"description": "Invocation conflict or request still in flight"},
+        413: {"description": "inline_input is larger than 262144 bytes (inline_input_too_large)"},
         422: {"description": "Invalid input or Idempotency-Key reuse"},
         503: {
             "description": "Synchronous invocation capacity is full; Retry-After is returned",
@@ -960,8 +1099,21 @@ async def invoke_agent(
     run that is still in progress is returned as-is with 200. With an
     ``Idempotency-Key``, a repeated request returns the invocation it created
     (E1.3).
+
+    ``inline_input`` (agents with ``inline_input_supported`` in the catalog):
+    the stored run in ``input.payload`` anchors it and must belong to
+    ``project_id`` (else one 404 ``anchor_run_not_found``); larger than 262144
+    bytes is 413; secrets are redacted before it is stored; the output is a
+    draft kept out of the run's report, gates, notifications and digests.
     """
-    stage_name, workflow_type, test_run_id = _validate_invocation(agent_id, body)
+    inline_payload: Optional[dict[str, Any]] = None
+    input_sha256: Optional[str] = None
+    if body.inline_input is not None:
+        stage_name, workflow_type, test_run_id, inline_payload, input_sha256 = (
+            await _validate_inline_invocation(db, current_user, agent_id, body)
+        )
+    else:
+        stage_name, workflow_type, test_run_id = _validate_invocation(agent_id, body)
     sync = body.mode == "sync" and is_sync_eligible(stage_name)
     # Serialize the active-invocation lookup and insert for one stored subject.
     # The lock is released by the commit before any synchronous wait begins.
@@ -1053,6 +1205,7 @@ async def invoke_agent(
             expected_config_snapshot=(
                 config_snapshot if body.config_overrides is not None else None
             ),
+            input_sha256=input_sha256,
         )
         if existing is not None:
             if idempotency_key is not None:
@@ -1082,6 +1235,11 @@ async def invoke_agent(
             holds_slot = True
 
         now = datetime.now(timezone.utc)
+        # W23c I-4: the REDACTED inline input and its hash, frozen on the row (a retry / resume
+        # replays it). A stored-subject invocation passes neither column.
+        inline_columns: dict[str, Any] = (
+            {"input_payload": inline_payload, "input_sha256": input_sha256} if input_sha256 else {}
+        )
         invocation = AgentInvocation(
             id=uuid.uuid4(),
             project_id=project_id,
@@ -1098,8 +1256,13 @@ async def invoke_agent(
             idempotency_key=idempotency_key,
             request_sha256=fingerprint,
             resolved_config_snapshot=config_snapshot,
+            **inline_columns,
         )
         db.add(invocation)
+        activity_context: dict[str, Any] = {"agent_id": agent_id, "invocation_id": str(invocation.id)}
+        if input_sha256:
+            # Ids and a hash prefix only -- never the input.
+            activity_context.update(input_kind="inline", input_sha256_prefix=input_sha256[:12])
         await record_activity(
             db,
             project_id=project_id,
@@ -1107,7 +1270,7 @@ async def invoke_agent(
             actor=ActorRef.from_user(current_user),
             entity_id=run.id,
             entity_label=f"Build {run.build_number}",
-            context={"agent_id": agent_id, "invocation_id": str(invocation.id)},
+            context=activity_context,
         )
         # Commit BEFORE dispatch: the worker loads the row by id.
         try:

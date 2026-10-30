@@ -762,8 +762,12 @@ def build_workflow_plan(
     defect_commander_enabled: bool = False,
     gap_refinement_enabled: bool = False,
     invocation_stage: str | None = None,
+    invocation_input_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Build the minimal useful agent path for the currently known state.
+
+    ``invocation_input_sha256`` (W23c AGT-11, an inline-input invocation only) enters the plan
+    and its hash, and unplans ``ingestion``: the frozen inline input supplies the run facts.
 
     ``threshold`` defaults to the configured env default
     (``confidence_gate.env_default_threshold()``); a pipeline passes the
@@ -982,6 +986,11 @@ def build_workflow_plan(
             if item["stage"] not in keep and item["planned"]:
                 item["planned"] = False
                 item["rationale"] = f"not needed for the invoked agent {invoked_id}"
+        if invocation_input_sha256 is not None:
+            for item in stages:
+                if item["stage"] == "ingestion" and item["planned"]:
+                    item["planned"] = False
+                    item["rationale"] = "inline input supplied the run facts"
 
     specialist_flags: dict[str, bool] = {
         "contract_validation": contract_validation_enabled,
@@ -1014,6 +1023,10 @@ def build_workflow_plan(
     if invocation_stage is not None:
         # Only on invocation plans, so every other plan's hash is unchanged.
         plan["invocation_stage"] = invocation_stage
+        if invocation_input_sha256 is not None:
+            # Only on inline-input invocation plans (W23c): a stored-subject invocation's
+            # plan, and its hash, are byte-identical to before.
+            plan["invocation_input_sha256"] = invocation_input_sha256
     digest = compute_workflow_plan_hash(plan)
     plan["plan_id"] = f"plan:{digest[:20]}"
     plan["plan_sha256"] = digest
@@ -1139,6 +1152,7 @@ def attach_workflow_plan_and_verification(
         defect_commander_enabled=bool(specialist_flags.get("defect_commander")),
         gap_refinement_enabled=bool(specialist_flags.get("gap_refinement")),
         invocation_stage=plan_inputs.get("invocation_stage"),
+        invocation_input_sha256=plan_inputs.get("invocation_input_sha256"),
     )
     state["initial_workflow_plan"] = initial_plan
     state["workflow_plan"] = explained_plan

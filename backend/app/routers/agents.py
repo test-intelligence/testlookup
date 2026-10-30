@@ -73,6 +73,7 @@ from app.core.agent_ops_vocab import (
 from app.services import (
     agent_catalog,
     bulk_pipeline_job_service,
+    inline_invocation,
     pipeline_admission,
     pipeline_compare_service,
     runs_service,
@@ -155,7 +156,8 @@ async def _attach_review_summaries(
             .where(
                 ReviewRequest.pipeline_run_id.in_(pipeline_ids),
                 ReviewRequest.kind == "report",
-                ReviewRequest.subject_type == "pipeline_run",
+                # W23c: an inline-input invocation's pipeline is reviewed as the invocation.
+                ReviewRequest.subject_type.in_(("pipeline_run", "invocation")),
                 ReviewRequest.state != "superseded",
             )
             .order_by(ReviewRequest.created_at.desc())
@@ -1484,6 +1486,8 @@ async def get_pipeline_status(
         .where(
             AgentPipelineRun.test_run_id == run_uuid,
             AgentPipelineRun.workflow_type == workflow_type,
+            # W23c I-8: an inline-input invocation is not the run's analysis status.
+            inline_invocation.not_inline_pipeline(),
         )
         .order_by(AgentPipelineRun.created_at.desc())
         .limit(1)

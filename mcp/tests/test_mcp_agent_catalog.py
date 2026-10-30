@@ -209,6 +209,108 @@ def test_the_invocation_view_shows_the_sanitized_frozen_config():
     assert json.dumps(snapshot, indent=2) in text
 
 
+# -- W23c AGT-11: inline input (payload) -----------------------------------------------------
+
+INLINE = {
+    "schema_version": 1,
+    "failures": [{
+        "test_name": "checkout pays with a saved card", "suite_name": "payments",
+        "failure_category": "PRODUCT_BUG", "confidence_score": 70,
+        "root_cause": "NullPointerException in CardVault.lookup", "log_excerpt": "at CardVault.lookup(CardVault.java:42)",
+    }],
+}
+
+
+def test_invoke_body_with_a_payload_is_the_rest_shape():
+    assert agents.invoke_body("agent.summary.v1", PROJECT, RUN, payload=INLINE) == {
+        "project_id": PROJECT,
+        "input": {"agent_id": "agent.summary.v1", "payload": {"test_run_id": RUN}},
+        "mode": "async",
+        "inline_input": INLINE,
+    }
+    # Without a payload the stored-subject body is unchanged (no inline_input key at all).
+    assert "inline_input" not in agents.invoke_body("agent.summary.v1", PROJECT, RUN)
+
+
+@pytest.mark.parametrize("bad", [["not", "an", "object"], "text", 7])
+def test_invoke_body_refuses_a_payload_that_is_not_an_object(bad):
+    with pytest.raises(ValueError, match="JSON object"):
+        agents.invoke_body("agent.summary.v1", PROJECT, RUN, payload=bad)
+
+
+def test_an_oversize_payload_is_refused_without_calling_the_api(monkeypatch):
+    tools, calls = _tools(monkeypatch, post={"id": "inv-1"})
+    filler = "x" * (agents.INLINE_INPUT_MAX_BYTES + 1)
+    out = asyncio.run(tools["invoke_agent"]("agent.summary.v1", PROJECT, RUN, payload={"filler": filler}))
+    assert out["ok"] is False and "262144" in out["error"]
+    assert calls == []
+    # Exactly at the cap is sent (the backend decides the schema).
+    at_cap = {"f": ""}
+    at_cap["f"] = "x" * (agents.INLINE_INPUT_MAX_BYTES - len('{"f":""}'))
+    assert agents.invoke_body("agent.summary.v1", PROJECT, RUN, payload=at_cap)["inline_input"] is at_cap
+
+
+def test_invoke_sends_the_payload_verbatim_with_the_same_idempotency_key(monkeypatch):
+    tools, calls = _tools(monkeypatch, post={"id": "inv-1", "status": "in_progress"})
+    out = asyncio.run(
+        tools["invoke_agent"]("agent.summary.v1", PROJECT, RUN, payload=INLINE, idempotency_key="key-inline01")
+    )
+    method, path, sent = calls[0]
+    assert (method, path) == ("POST", "/api/v1/agents/agent.summary.v1/invoke")
+    assert sent["json"]["inline_input"] == INLINE
+    assert sent["json"]["input"]["payload"] == {"test_run_id": RUN}
+    assert sent["headers"] == {"Idempotency-Key": "key-inline01"} and out["idempotency_key"] == "key-inline01"
+
+
+def test_the_invocation_view_renders_the_redacted_stored_input():
+    stored = {"schema_version": 1, "failures": [{"test_name": "checkout", "root_cause": "token [REDACTED]"}]}
+    text = agents.render_invocation({
+        "id": "inv-1", "agent_id": "agent.summary.v1", "status": "completed", "attempt": 1, "max_attempts": 5,
+        "input_kind": "inline", "input_sha256": "1a2b3c4d5e6f" + "a" * 52, "input": stored,
+        "review": {"state": "pending_review"},
+    })
+    assert "**Input:** inline (sha256 1a2b3c4d5e6f)" in text
+    assert "### Stored input (redacted)" in text and json.dumps(stored, indent=2) in text
+    stored_run = agents.render_invocation({"id": "inv-2", "input_kind": "stored_run", "review": {}})
+    assert "Stored input" not in stored_run and "**Input:**" not in stored_run
+
+
+def test_get_agent_says_when_an_agent_accepts_inline_input():
+    detail = {"agent_id": "agent.summary.v1", "input_schema_resolved": True, "inline_input_supported": True}
+    assert "Accepts inline input" in agents.render_agent(detail)
+    assert "Accepts inline input" not in agents.render_agent({**detail, "inline_input_supported": False})
+
+
+def _rest_request_fields() -> list[str]:
+    """``AgentInvokeRequest``'s field names, read from the backend source (the MCP suite has no backend imports)."""
+    import ast
+
+    source = (MCP_DIR.parent / "backend" / "app" / "routers" / "agent_invoke.py").read_text(encoding="utf-8")
+    for node in ast.parse(source).body:
+        if isinstance(node, ast.ClassDef) and node.name == "AgentInvokeRequest":
+            return [
+                item.target.id for item in node.body
+                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)
+                and item.target.id != "model_config"
+            ]
+    raise AssertionError("AgentInvokeRequest not found in backend/app/routers/agent_invoke.py")
+
+
+def test_every_rest_request_field_has_an_mcp_parameter(monkeypatch):
+    import inspect
+
+    tools, _ = _tools(monkeypatch)
+    params = list(inspect.signature(tools["invoke_agent"]).parameters)
+    # Path / header / anchor parameters, and REST fields that are body plumbing or carried differently.
+    mcp_only = {"agent_id", "project_id", "test_run_id", "idempotency_key"}
+    renamed = {"payload": "inline_input"}
+    mapped = {renamed.get(name, name) for name in params if name not in mcp_only}
+    rest = set(_rest_request_fields())
+    # project_id and input are built from the anchor parameters; correlation_id is a REST-only trace id.
+    rest_built_by_mcp = {"project_id", "input", "correlation_id"}
+    assert mapped == rest - rest_built_by_mcp, (sorted(mapped), sorted(rest))
+
+
 def test_the_agents_module_is_registered_in_the_server():
     import ast
 

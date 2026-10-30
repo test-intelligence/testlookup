@@ -52,6 +52,9 @@ INVOKABLE_AGENT_IDS: frozenset[str] = frozenset({
 AGENT_ID_PATTERN = re.compile(r"^agent\.[a-z_]+\.v\d+$")
 _MODES = ("async", "sync")
 _MAX_OUTPUT_CHARS = 1500
+#: W23c AGT-11: mirrors backend ``inline_input_vocab.INLINE_INPUT_MAX_BYTES`` (the REST 413 cap,
+#: measured on the compact, key-sorted UTF-8 JSON); an oversize payload is refused here, before any call.
+INLINE_INPUT_MAX_BYTES = 262_144
 
 
 def _yes(value: Any) -> str:
@@ -100,6 +103,11 @@ def render_agent(detail: Any) -> str:
     ]
     if agent_id in INVOKABLE_AGENT_IDS:
         lines.append(f'\nInvoke with `invoke_agent(agent_id="{agent_id}", project_id=..., test_run_id=...)`.')
+        if detail.get("inline_input_supported"):
+            lines.append(
+                "Accepts inline input: add `payload=` (a JSON object matching inline_input_json_schema); "
+                "the test run anchors it, and its output is a draft kept out of the run's report and gates."
+            )
     else:
         lines.append("\nThis agent runs only inside a workflow; it cannot be invoked on its own.")
     if detail.get("produces_report"):
@@ -120,8 +128,12 @@ def invoke_body(
     test_run_id: str,
     mode: str = "async",
     config_overrides: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The invoke request body, or ValueError naming what is wrong."""
+    """The invoke request body, or ValueError naming what is wrong.
+
+    ``payload`` (W23c) becomes the REST body's ``inline_input``; ``test_run_id`` stays the anchor.
+    """
     if not AGENT_ID_PATTERN.match(agent_id or ""):
         raise ValueError("agent_id must look like agent.<name>.v<version>, for example agent.summary.v1")
     if agent_id not in INVOKABLE_AGENT_IDS:
@@ -135,6 +147,13 @@ def invoke_body(
     }
     if config_overrides is not None:
         body["config_overrides"] = config_overrides
+    if payload is not None:
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be a JSON object (the agent's inline input)")
+        size = len(json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"))
+        if size > INLINE_INPUT_MAX_BYTES:
+            raise ValueError(f"payload is larger than {INLINE_INPUT_MAX_BYTES} bytes")
+        body["inline_input"] = payload
     return body
 
 
@@ -151,6 +170,15 @@ def render_invocation(data: Any) -> str:
         lines.append(f"**Next retry:** {data['next_retry_at']}")
     if data.get("error"):
         lines.append(f"**Error:** {str(data['error'])[:300]}")
+    if data.get("input_kind") == "inline":
+        # W23c: the stored inline input, as the server redacted it before storage.
+        lines.append(f"**Input:** inline (sha256 {str(data.get('input_sha256') or '?')[:12]})")
+        stored = data.get("input")
+        if isinstance(stored, dict):
+            rendered_input = json.dumps(stored, indent=2, default=str)
+            if len(rendered_input) > _MAX_OUTPUT_CHARS:
+                rendered_input = rendered_input[: _MAX_OUTPUT_CHARS - 1] + "…"
+            lines += ["", "### Stored input (redacted)", "```json", rendered_input, "```"]
     snapshot = data.get("config_snapshot")
     if isinstance(snapshot, dict):
         rendered_snapshot = json.dumps(snapshot, indent=2, default=str)
@@ -200,6 +228,7 @@ def register(mcp) -> None:  # noqa: ANN001
         test_run_id: str,
         mode: str = "async",
         config_overrides: dict[str, Any] | None = None,
+        payload: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> dict:
         """
@@ -216,22 +245,32 @@ def register(mcp) -> None:  # noqa: ANN001
         `idempotency_key` when retrying the SAME invocation, and the backend
         returns the original instead of running the agent twice.
 
+        Inline input (agents whose get_agent says "Accepts inline input", today
+        agent.summary.v1): pass `payload` (a JSON object, at most 262144 bytes)
+        and the run in `test_run_id` ANCHORS it -- tenancy, review and retention
+        come from that stored run of the project. Secrets and personal data are
+        redacted before the input is stored. The output is a DRAFT reviewed as
+        the invocation and kept out of the run's report, release gates,
+        notifications and digests; say so when you pass it on.
+
         Returns {ok, invocation_id, status, review_state, idempotency_key}. Poll
         get_agent_invocation until status is no longer in_progress. Failures
-        come back as {ok: false, status_code, detail}: 403 (no access), 409
-        (a request with this key is still being handled), 422 (invalid input,
-        or the key was used for a different request).
+        come back as {ok: false, status_code, detail}: 403 (no access), 404
+        (with payload: no such test run in this project), 409 (a request with
+        this key is still being handled), 413 (payload too large), 422 (invalid
+        input, or the key was used for a different request).
 
         Args:
             agent_id: An invocable catalog id, e.g. agent.summary.v1.
             project_id: Project UUID; must be the test run's project.
-            test_run_id: The stored test run to analyse.
+            test_run_id: The stored test run to analyse (with payload: the anchor run).
             mode: "async" (default) or "sync" (waits briefly, only for sync-eligible agents).
             config_overrides: Optional backend-validated tighten-only override document.
+            payload: Optional inline input (InlineSummaryInputV1 for agent.summary.v1; see get_agent).
             idempotency_key: Pass the key from an earlier call to retry it safely.
         """
         try:
-            body = invoke_body(agent_id, project_id, test_run_id, mode, config_overrides)
+            body = invoke_body(agent_id, project_id, test_run_id, mode, config_overrides, payload)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         key = idempotency_key or str(uuid.uuid4())

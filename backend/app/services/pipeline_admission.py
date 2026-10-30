@@ -19,7 +19,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import AgentPipelineRun
+from app.services.inline_invocation import not_inline_pipeline
 from app.services.workflow_run_state import IN_PROGRESS_STATUSES, PUBLIC_STATUS
+
+# W23c AGT-11 (I-8): an inline-input invocation in flight neither blocks nor satisfies the
+# run's own analysis admission -- both reads below exclude it.
 
 
 async def latest_in_progress_pipeline(
@@ -33,6 +37,7 @@ async def latest_in_progress_pipeline(
             AgentPipelineRun.test_run_id == test_run_id,
             AgentPipelineRun.workflow_type == workflow_type,
             AgentPipelineRun.status.in_(in_progress),
+            not_inline_pipeline(),
         )
         .order_by(AgentPipelineRun.created_at.desc())
         .limit(1)
@@ -59,6 +64,7 @@ async def runs_with_in_progress_pipeline(
             AgentPipelineRun.test_run_id.in_(ids),
             AgentPipelineRun.workflow_type == workflow_type,
             AgentPipelineRun.status.in_(IN_PROGRESS_STATUSES),
+            not_inline_pipeline(),
         )
     )
     return {run_id for run_id in result.scalars().all() if run_id is not None}

@@ -1286,6 +1286,7 @@ class BackfillChunk:
 async def _backfill_pipeline_for(db: Any, mongo: Any, run_id: uuid.UUID) -> Optional[uuid.UUID]:
     """Newest published decision report's pipeline, else the newest completed pipeline."""
     from app.models.postgres import AgentPipelineRun
+    from app.services.inline_invocation import not_inline_pipeline
 
     try:
         report = await load_latest_decision_report(mongo, str(run_id))
@@ -1299,7 +1300,12 @@ async def _backfill_pipeline_for(db: Any, mongo: Any, run_id: uuid.UUID) -> Opti
     row = (
         await db.execute(
             select(AgentPipelineRun.id)
-            .where(AgentPipelineRun.test_run_id == run_id, AgentPipelineRun.status == "completed")
+            .where(
+                AgentPipelineRun.test_run_id == run_id,
+                AgentPipelineRun.status == "completed",
+                # W23c I-8: an inline-input invocation never backfills the run's AI history.
+                not_inline_pipeline(),
+            )
             .order_by(AgentPipelineRun.completed_at.desc().nulls_last(), AgentPipelineRun.created_at.desc())
             .limit(1)
         )
