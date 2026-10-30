@@ -81,7 +81,7 @@ def test_the_detected_runtime_names_this_interpreter():
 
     assert runtime["python"] == platform.python_version()
     assert runtime["implementation"] == platform.python_implementation().lower()
-    assert runtime["testlookup-reporter"] == tr.__version__ == "1.2.0"
+    assert runtime["testlookup-reporter"] == tr.__version__ == "1.3.0"  # W23d AGT-14: reporter 1.3.0
     assert runtime["pytest"] == pytest.__version__
     assert all(rc.VERSION_RE.match(v) for v in runtime.values())
 

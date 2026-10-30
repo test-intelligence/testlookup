@@ -61,6 +61,8 @@ _SDK_CONFIGS: dict[str, dict] = {
             "commit_range.py",
             # W23b FAIL-13: the run-context collector the reporter imports.
             "run_context.py",
+            # W23d AGT-14: the opt-in HTTP exchange capture the reporter imports.
+            "http_capture.py",
             # W18 DEV-03: the Robot Framework live listener (Listener API v3).
             "testlookup_robot_listener.py",
             "pyproject.toml",

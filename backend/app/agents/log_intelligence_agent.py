@@ -4,6 +4,8 @@ Runs distributed trace reconstruction and log rate anomaly detection for a failu
 Operates as a specialist sub-agent called by DeepRootCauseAgent.
 """
 import json
+import uuid
+from typing import Any, Literal
 
 import structlog
 
@@ -14,7 +16,9 @@ from app.models.agent_contracts import (
     degraded_contract,
     validate_agent_contract,
 )
+from app.services import prometheus_vocab as pv
 from app.tools.detect_log_anomaly import detect_log_rate_anomaly
+from app.tools.fetch_app_metrics import fetch_app_metrics
 from app.tools.reconstruct_trace import reconstruct_distributed_trace
 from app.services.evidence_sanitizer import (
     sanitize_persistence_payload,
@@ -23,6 +27,83 @@ from app.services.evidence_sanitizer import (
 from app.services.workflow_step_context import tool_allowed
 
 logger = structlog.get_logger("agents.log_intelligence")
+
+#: W23d AGT-15: the failure window the stage asks the metrics tool for (the window before it is the baseline).
+METRICS_WINDOW_MINUTES = 15
+#: The tool answered something the stage cannot read (a bug, never a Prometheus answer).
+METRICS_LOOKUP_FAILED = "metrics unavailable: the metrics lookup failed"
+
+
+def _metrics_block(outcome: str, sentence: str, service: str = "", series: list | None = None) -> dict:
+    """One cluster's ``app_metrics``: numbers, template ids / labels, the regex-checked service and code-built
+    sentences only (no Prometheus string survives -- contract §2.2 M-5)."""
+    return {"outcome": outcome, "sentence": sentence[:500], "service": service[:128], "series": series or []}
+
+
+def _number(value: Any) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _metrics_block_from_answer(answer: Any) -> dict:
+    """The tool's JSON answer → the stored block (≤ 4 series × ≤ 120 points; typed, bounded)."""
+    if not isinstance(answer, dict) or "error" in answer:
+        # The tool refused the input -- here only an unusable failure time (the stage never sends templates).
+        return _metrics_block("no_context", pv.OUTCOME_SENTENCES["no_context"])
+    outcome = str(answer.get("outcome") or "")
+    if outcome not in pv.OUTCOMES:
+        return _metrics_block("http_error", METRICS_LOOKUP_FAILED)
+    series: list[dict] = []
+    for item in (answer.get("series") or [])[: pv.TEMPLATES_PER_CALL_MAX]:
+        if not isinstance(item, dict):
+            continue
+        points = []
+        for pair in (item.get("points") or [])[: pv.POINTS_MAX]:
+            if isinstance(pair, (list, tuple)) and len(pair) == 2 and _number(pair[0]) is not None:
+                points.append([_number(pair[0]), _number(pair[1])])
+        series.append({
+            "template_id": str(item.get("template_id") or "")[:40],
+            "label": str(item.get("label") or "")[: pv.TEMPLATE_LABEL_MAX],
+            "unit": str(item.get("unit") or "count")[:20],
+            "points": points,
+            "baseline_mean": _number(item.get("baseline_mean")),
+            "window_mean": _number(item.get("window_mean")),
+            "window_max": _number(item.get("window_max")),
+            "ratio": _number(item.get("ratio")),
+            "rose": item.get("rose") is True,
+            "sentence": str(item.get("sentence") or "")[:300],
+        })
+    return _metrics_block(outcome, str(answer.get("sentence") or ""), str(answer.get("service") or ""), series)
+
+
+def _metric_evidence(block: dict) -> list[dict]:
+    """``EvidenceRef(source="prometheus")`` per ``ok`` series that compared with a baseline: ratio ≥ 3 strong/70,
+    a rise (≥ RATIO_ROSE, or from 0) medium/50, a steady metric weak/15 (it weakly rules a cause out)."""
+    if block.get("outcome") != "ok":
+        return []
+    refs: list[dict] = []
+    for item in block.get("series") or []:
+        ratio = item.get("ratio")
+        if ratio is None and not item.get("rose"):
+            continue  # no baseline: nothing compared, nothing claimed
+        strength: Literal["weak", "medium", "strong"]
+        if ratio is not None and ratio >= 3.0:
+            strength, contribution = "strong", 70
+        elif item.get("rose"):
+            strength, contribution = "medium", 50
+        else:
+            strength, contribution = "weak", 15
+        refs.append(EvidenceRef(
+            source="prometheus",
+            ref_id=f"{block.get('service')}:{item.get('template_id')}",
+            excerpt=str(item.get("sentence") or ""),
+            strength=strength,
+            contribution=contribution,
+        ).as_legacy_dict())
+    return refs
+
+
+def _metrics_summary(blocks: list[dict]) -> str:
+    return "; ".join(dict.fromkeys(b["sentence"] for b in blocks if b.get("sentence")))[:500]
 
 
 def _grade_anomaly_evidence(anomaly_data: dict) -> tuple[str, int]:
@@ -249,6 +330,106 @@ class LogIntelligenceAgent(BaseAgent):
                 contexts.append(("run", context))
         return contexts
 
+    # ── W23d AGT-15: application metrics (deterministic -- no model decides; no prompt) ──
+
+    @staticmethod
+    async def _metrics_for(service: str, timestamp: str, runtime_cfg: Any) -> dict:
+        """One cluster's ``app_metrics``: the tool when the frozen config allows it, else ``tool_not_allowed``
+        with no call; an unreadable integration config is ``config_unavailable`` (the tool is not asked to
+        resolve it again). The outcome never changes the cluster's status."""
+        if not tool_allowed("fetch_app_metrics"):
+            return _metrics_block("tool_not_allowed", pv.OUTCOME_SENTENCES["tool_not_allowed"])
+        if runtime_cfg is None:
+            return _metrics_block("config_unavailable", pv.OUTCOME_SENTENCES["config_unavailable"])
+        try:
+            raw = await fetch_app_metrics.ainvoke({"params_json": json.dumps({
+                "service_name": service, "timestamp_utc": timestamp, "window_minutes": METRICS_WINDOW_MINUTES,
+            })})
+            return _metrics_block_from_answer(json.loads(raw))
+        except Exception as exc:  # noqa: BLE001 - a metrics lookup never fails the stage
+            logger.debug("app_metrics_lookup_failed", error_type=type(exc).__name__)
+            return _metrics_block("http_error", METRICS_LOOKUP_FAILED)
+
+    @staticmethod
+    async def _metric_targets_from_cases(state: dict) -> list[tuple[str, str, str]]:
+        """M-4a: (cluster id, service, timestamp) from the failures' stored ``TestCase.service_name`` when no
+        analysis named a service. ONE bounded select on a short session, closed before any HTTP; at most
+        ``CLUSTERS_QUERIED_MAX`` targets (one per cluster representative, else one for the run)."""
+        failed = [str(item) for item in (state.get("failed_test_ids") or [])][:200]
+        ids: list[uuid.UUID] = []
+        for item in failed:
+            try:
+                ids.append(uuid.UUID(item))
+            except ValueError:
+                continue
+        try:
+            run_uuid = uuid.UUID(str(state.get("test_run_id") or ""))
+        except ValueError:
+            return []
+        if not ids:
+            return []
+        from sqlalchemy import select
+
+        from app.db.postgres import AsyncSessionLocal
+        from app.models.postgres import TestCase
+
+        try:
+            async with AsyncSessionLocal() as db:
+                rows = (await db.execute(
+                    select(TestCase.id, TestCase.service_name, TestCase.finished_at).where(
+                        TestCase.test_run_id == run_uuid, TestCase.id.in_(ids), TestCase.service_name.is_not(None),
+                    )
+                )).all()
+        except Exception as exc:  # noqa: BLE001 - no target is "no_context", never a failed stage
+            logger.debug("app_metrics_targets_failed", error_type=type(exc).__name__)
+            return []
+        completed_at = (state.get("test_run_data") or {}).get("completed_at")
+        by_id: dict[str, tuple[str, str]] = {}
+        for case_id, service, finished_at in rows:
+            stamp = finished_at.isoformat() if finished_at is not None else completed_at
+            if service and stamp:
+                by_id[str(case_id)] = (str(service), str(stamp))
+
+        targets: list[tuple[str, str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        clusters = state.get("failure_clusters") or []
+        candidates = sorted((c for c in clusters if isinstance(c, dict)),
+                            key=lambda c: str(c.get("cluster_id") or "")) if isinstance(clusters, list) else []
+        for index, cluster in enumerate(candidates[:5]):
+            members = cluster.get("member_test_ids") or cluster.get("test_ids") or []
+            members = sorted({str(m) for m in members}) if isinstance(members, list) else []
+            found = next((by_id[m] for m in members if m in by_id), None)
+            if found is None or found in seen:
+                continue
+            seen.add(found)
+            targets.append((str(cluster.get("cluster_id") or f"cluster_{index + 1}"), *found))
+        if not targets:
+            first = next((by_id[m] for m in failed if m in by_id), None)
+            if first is not None:
+                targets.append(("run", *first))
+        return targets[: pv.CLUSTERS_QUERIED_MAX]
+
+    async def _metrics_without_context(self, state: dict) -> tuple[dict, str, list[dict]]:
+        """The no-context branch: (first block, summary, evidence refs). No failure names a service → the
+        ``no_context`` sentence with no session and no call."""
+        targets = await self._metric_targets_from_cases(state)
+        if not targets:
+            block = _metrics_block("no_context", pv.OUTCOME_SENTENCES["no_context"])
+            return block, block["sentence"], []
+        from app.services.integration_config_service import runtime_integrations_for
+        from app.tools.investigation_context import bind_runtime_integrations, reset_runtime_integrations
+
+        runtime_cfg = await runtime_integrations_for(state.get("project_id"))
+        token = bind_runtime_integrations(runtime_cfg)
+        blocks: list[dict] = []
+        try:
+            for _cluster_id, service, timestamp in targets:
+                blocks.append(await self._metrics_for(service, timestamp, runtime_cfg))
+        finally:
+            reset_runtime_integrations(token)
+        refs = [ref for block in blocks for ref in _metric_evidence(block)][:20]
+        return blocks[0], _metrics_summary(blocks), refs
+
     async def run(self, state: dict) -> dict:
         """Stage entry point: lifecycle around per-cluster log investigation.
 
@@ -266,13 +447,20 @@ class LogIntelligenceAgent(BaseAgent):
             # Ran, looked, found nothing to look at. That is a result, and it
             # has to be stated -- an absent contract reads as a lost record and
             # fails the decision critic closed (#842).
-            findings = {
+            findings: dict[str, Any] = {
                 "status": "not_enough_evidence",
                 "distributed_trace": {},
                 "log_anomaly": {},
                 "cluster_findings": [],
                 "log_summary": "Log evidence requires a scoped service and failure timestamp.",
             }
+            # W23d AGT-15 (M-4a): the metrics context is separate -- a failure's stored service name still
+            # scopes a Prometheus lookup; the stage's status stays the trace / anomaly verdict.
+            app_metrics, metrics_summary, metric_refs = await self._metrics_without_context(state)
+            findings["app_metrics"] = app_metrics
+            findings["metrics_summary"] = metrics_summary
+            if metric_refs:
+                findings["evidence_refs"] = metric_refs
             await self.log_decision(
                 pipeline_run_id,
                 decision_point="log_evidence_scope",
@@ -336,6 +524,16 @@ class LogIntelligenceAgent(BaseAgent):
                     "log_summary": str(safe_result.get("log_summary") or "")[:500],
                     "evidence_refs": list(safe_result.get("evidence_refs") or [])[:20],
                 })
+            # W23d AGT-15 (M-4): application metrics for the first CLUSTERS_QUERIED_MAX contexts, called by code
+            # (small models skip tools), with the same (service, timestamp) and the same bound config.
+            for index, (_cluster_id, (service, timestamp, _corr, _rel)) in enumerate(
+                contexts[: pv.CLUSTERS_QUERIED_MAX]
+            ):
+                block = await self._metrics_for(service, timestamp, runtime_cfg)
+                cluster_results[index]["app_metrics"] = block
+                cluster_results[index]["evidence_refs"] = (
+                    cluster_results[index]["evidence_refs"] + _metric_evidence(block)
+                )[:20]
         finally:
             reset_runtime_integrations(integrations_token)
 
@@ -357,6 +555,11 @@ class LogIntelligenceAgent(BaseAgent):
         result["log_summary"] = " | ".join(
             item["log_summary"] for item in cluster_results if item["log_summary"]
         )[:1000]
+        # W23d AGT-15: ``app_metrics`` (copied above from the first cluster -- always queried) and the distinct
+        # metric sentences. They never change ``status``.
+        result["metrics_summary"] = _metrics_summary(
+            [item["app_metrics"] for item in cluster_results if "app_metrics" in item]
+        )
 
         complete = result.get("status") == "complete"
         evidence_refs = list(result.get("evidence_refs") or [])[:20]
