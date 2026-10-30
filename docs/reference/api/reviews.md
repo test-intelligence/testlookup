@@ -10,7 +10,7 @@ List Reviews
 
 The project's review queue, newest first. ``?state=pending_review`` for the open queue.
 
-Source: [backend/app/routers/reviews.py:242](../../../backend/app/routers/reviews.py#L242).
+Source: [backend/app/routers/reviews.py:255](../../../backend/app/routers/reviews.py#L255).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -129,7 +129,7 @@ Get Review
 
 
 
-Source: [backend/app/routers/reviews.py:267](../../../backend/app/routers/reviews.py#L267).
+Source: [backend/app/routers/reviews.py:280](../../../backend/app/routers/reviews.py#L280).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_review_access.<locals>._check`.
 
@@ -216,7 +216,7 @@ Accept Review
 
 Accept an AI report. Its run becomes ``passed``.
 
-Source: [backend/app/routers/reviews.py:281](../../../backend/app/routers/reviews.py#L281).
+Source: [backend/app/routers/reviews.py:294](../../../backend/app/routers/reviews.py#L294).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_review_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -314,7 +314,7 @@ Reject Review
 
 Reject an AI report with a reason code. Its run becomes ``failed``.
 
-Source: [backend/app/routers/reviews.py:307](../../../backend/app/routers/reviews.py#L307).
+Source: [backend/app/routers/reviews.py:321](../../../backend/app/routers/reviews.py#L321).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_review_access.<locals>._check`, `require_role.<locals>._check`.
 

@@ -4085,6 +4085,24 @@
             "title": "Fallback",
             "type": "string"
           },
+          "inline_input_json_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inline Input Json Schema"
+          },
+          "inline_input_supported": {
+            "default": false,
+            "description": "Accepts inline_input on POST /api/v1/agents/{agent_id}/invoke (a pasted input anchored to a stored test run of the project); the detail publishes its schema as inline_input_json_schema.",
+            "title": "Inline Input Supported",
+            "type": "boolean"
+          },
           "input_json_schema": {
             "additionalProperties": true,
             "title": "Input Json Schema",
@@ -4250,6 +4268,12 @@
           "fallback": {
             "title": "Fallback",
             "type": "string"
+          },
+          "inline_input_supported": {
+            "default": false,
+            "description": "Accepts inline_input on POST /api/v1/agents/{agent_id}/invoke (a pasted input anchored to a stored test run of the project); the detail publishes its schema as inline_input_json_schema.",
+            "title": "Inline Input Supported",
+            "type": "boolean"
           },
           "input_schema": {
             "title": "Input Schema",
@@ -4704,6 +4728,40 @@
             "title": "Id",
             "type": "string"
           },
+          "input": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The inline input as stored: secrets and personal data redacted before storage. None for stored_run.",
+            "title": "Input"
+          },
+          "input_kind": {
+            "default": "stored_run",
+            "enum": [
+              "stored_run",
+              "inline"
+            ],
+            "title": "Input Kind",
+            "type": "string"
+          },
+          "input_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "sha256 of the redacted stored inline input; None for a stored-run invocation.",
+            "title": "Input Sha256"
+          },
           "links": {
             "additionalProperties": {
               "type": "string"
@@ -4824,6 +4882,19 @@
               }
             ],
             "title": "Correlation Id"
+          },
+          "inline_input": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Inline input for an agent that accepts it (catalog: inline_input_supported). input.payload must then name a stored test run of project_id, which anchors tenancy, review and retention. ≤ 262144 bytes; redacted before storage.",
+            "title": "Inline Input"
           },
           "input": {
             "additionalProperties": true,
@@ -18021,6 +18092,24 @@
           }
         },
         "title": "FrontendTelemetryBatch",
+        "type": "object"
+      },
+      "GatedChannel": {
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel",
+          "label"
+        ],
+        "title": "GatedChannel",
         "type": "object"
       },
       "GenerationBatchResponse": {
@@ -34064,6 +34153,86 @@
         "title": "ReviewConfig",
         "type": "object"
       },
+      "ReviewGateRead": {
+        "description": "GET/PUT ``/api/v1/settings/review-gate``. Writes nothing on GET.",
+        "properties": {
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/GatedChannel"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "enforced": {
+            "title": "Enforced",
+            "type": "boolean"
+          },
+          "enforced_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enforced From"
+          },
+          "env_override": {
+            "title": "Env Override",
+            "type": "boolean"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "would_refuse": {
+            "$ref": "#/components/schemas/WouldRefuseSummary"
+          }
+        },
+        "required": [
+          "enforced",
+          "source",
+          "env_override",
+          "would_refuse",
+          "channels"
+        ],
+        "title": "ReviewGateRead",
+        "type": "object"
+      },
+      "ReviewGateWrite": {
+        "additionalProperties": false,
+        "description": "PUT body. ``None`` clears (back to audit only); a naive datetime is the route's 422 ``naive_datetime``.",
+        "properties": {
+          "enforced_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enforced From"
+          }
+        },
+        "title": "ReviewGateWrite",
+        "type": "object"
+      },
       "ReviewQueueSummary": {
         "properties": {
           "items": {
@@ -48733,6 +48902,94 @@
         "title": "WorkflowStepV1",
         "type": "object"
       },
+      "WouldRefuseChannel": {
+        "properties": {
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "decisions": {
+            "minimum": 0.0,
+            "title": "Decisions",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "channel",
+          "decisions"
+        ],
+        "title": "WouldRefuseChannel",
+        "type": "object"
+      },
+      "WouldRefuseSummary": {
+        "description": "The ``ai_report.distribution_would_refuse`` audit rows of the last 30 days.\n\nAbsence is not health: ``measured`` is False when the audit read failed or\ntimed out, and then every number below is None (never 0).",
+        "properties": {
+          "by_channel": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/WouldRefuseChannel"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By Channel"
+          },
+          "decisions": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decisions"
+          },
+          "measured": {
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "runs": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs"
+          },
+          "since": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since"
+          },
+          "window_days": {
+            "default": 30,
+            "title": "Window Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "measured"
+        ],
+        "title": "WouldRefuseSummary",
+        "type": "object"
+      },
       "_BudgetPatch": {
         "additionalProperties": false,
         "properties": {
@@ -51634,7 +51891,7 @@
     },
     "/api/v1/agents/{agent_id}/invoke": {
       "post": {
-        "description": "Invoke one agent on a stored test run.\n\n``mode=async`` (the default) answers 202 with a poll link. ``mode=sync`` on a\nsync-eligible agent waits up to ``AGENT_INVOKE_SYNC_WAIT_SECONDS`` for the run\nto finish: 200 with the result if it did, 202 if it is still going. A full\npool of sync slots is 503 with ``Retry-After``. ``mode=sync`` on any other\nagent runs async.\n\nThe project is derived from the test run; ``project_id`` in the body is an\nassertion that must match it. An invocation of the same agent on the same\nrun that is still in progress is returned as-is with 200. With an\n``Idempotency-Key``, a repeated request returns the invocation it created\n(E1.3).",
+        "description": "Invoke one agent on a stored test run.\n\n``mode=async`` (the default) answers 202 with a poll link. ``mode=sync`` on a\nsync-eligible agent waits up to ``AGENT_INVOKE_SYNC_WAIT_SECONDS`` for the run\nto finish: 200 with the result if it did, 202 if it is still going. A full\npool of sync slots is 503 with ``Retry-After``. ``mode=sync`` on any other\nagent runs async.\n\nThe project is derived from the test run; ``project_id`` in the body is an\nassertion that must match it. An invocation of the same agent on the same\nrun that is still in progress is returned as-is with 200. With an\n``Idempotency-Key``, a repeated request returns the invocation it created\n(E1.3).\n\n``inline_input`` (agents with ``inline_input_supported`` in the catalog):\nthe stored run in ``input.payload`` anchors it and must belong to\n``project_id`` (else one 404 ``anchor_run_not_found``); larger than 262144\nbytes is 413; secrets are redacted before it is stored; the output is a\ndraft kept out of the run's report, gates, notifications and digests.",
         "operationId": "invoke_agent_api_v1_agents__agent_id__invoke_post",
         "parameters": [
           {
@@ -51715,8 +51972,14 @@
             },
             "description": "Successful Response"
           },
+          "404": {
+            "description": "Unknown agent or test run; for inline_input, anchor_run_not_found for every wrong anchor"
+          },
           "409": {
             "description": "Invocation conflict or request still in flight"
+          },
+          "413": {
+            "description": "inline_input is larger than 262144 bytes (inline_input_too_large)"
           },
           "422": {
             "description": "Invalid input or Idempotency-Key reuse"
@@ -91251,6 +91514,124 @@
         ]
       }
     },
+    "/api/v1/settings/review-gate": {
+      "get": {
+        "description": "When unreviewed AI reports stop leaving TestLookup: the stored date (or\nnone = audit only), whether the gate is enforced right now and why, and the\ndistribution attempts that would have been withheld in the last 30 days.\nReads only.",
+        "operationId": "get_review_gate_api_v1_settings_review_gate_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewGateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Review Gate",
+        "tags": [
+          "Settings"
+        ]
+      },
+      "put": {
+        "description": "Set the enforcement date (an ISO-8601 instant with an offset; past or\nfuture) or clear it with ``null`` (back to audit only). A past instant\nenforces at once. Interactive login only; audited once per actual change.",
+        "operationId": "update_review_gate_api_v1_settings_review_gate_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewGateWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReviewGateRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Update Review Gate",
+        "tags": [
+          "Settings"
+        ]
+      }
+    },
     "/api/v1/settings/secret-providers": {
       "get": {
         "operationId": "get_secret_providers_api_v1_settings_secret_providers_get",
@@ -91598,7 +91979,7 @@
     },
     "/api/v1/shared/reports/{token}": {
       "get": {
-        "description": "Render the shared HTML report view (no auth required — token-based).",
+        "description": "Render the shared HTML report view (no auth required — token-based).\n\nA refused (unreviewed, enforced) report answers 409: an HTML page for a\nbrowser, the JSON ``refusal_detail`` for every other caller.",
         "operationId": "view_shared_report_api_v1_shared_reports__token__get",
         "parameters": [
           {

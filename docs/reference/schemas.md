@@ -4333,6 +4333,24 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Fallback",
       "type": "string"
     },
+    "inline_input_json_schema": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Inline Input Json Schema"
+    },
+    "inline_input_supported": {
+      "default": false,
+      "description": "Accepts inline_input on POST /api/v1/agents/{agent_id}/invoke (a pasted input anchored to a stored test run of the project); the detail publishes its schema as inline_input_json_schema.",
+      "title": "Inline Input Supported",
+      "type": "boolean"
+    },
     "input_json_schema": {
       "additionalProperties": true,
       "title": "Input Json Schema",
@@ -4503,6 +4521,12 @@ These are the full generated JSON Schema definitions, including required fields,
     "fallback": {
       "title": "Fallback",
       "type": "string"
+    },
+    "inline_input_supported": {
+      "default": false,
+      "description": "Accepts inline_input on POST /api/v1/agents/{agent_id}/invoke (a pasted input anchored to a stored test run of the project); the detail publishes its schema as inline_input_json_schema.",
+      "title": "Inline Input Supported",
+      "type": "boolean"
     },
     "input_schema": {
       "title": "Input Schema",
@@ -4987,6 +5011,40 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Id",
       "type": "string"
     },
+    "input": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The inline input as stored: secrets and personal data redacted before storage. None for stored_run.",
+      "title": "Input"
+    },
+    "input_kind": {
+      "default": "stored_run",
+      "enum": [
+        "stored_run",
+        "inline"
+      ],
+      "title": "Input Kind",
+      "type": "string"
+    },
+    "input_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "sha256 of the redacted stored inline input; None for a stored-run invocation.",
+      "title": "Input Sha256"
+    },
     "links": {
       "additionalProperties": {
         "type": "string"
@@ -5112,6 +5170,19 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Correlation Id"
+    },
+    "inline_input": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Inline input for an agent that accepts it (catalog: inline_input_supported). input.payload must then name a stored test run of project_id, which anchors tenancy, review and retention. ≤ 262144 bytes; redacted before storage.",
+      "title": "Inline Input"
     },
     "input": {
       "additionalProperties": true,
@@ -19294,6 +19365,29 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "FrontendTelemetryBatch",
+  "type": "object"
+}
+```
+
+## GatedChannel
+
+```json
+{
+  "properties": {
+    "channel": {
+      "title": "Channel",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    }
+  },
+  "required": [
+    "channel",
+    "label"
+  ],
+  "title": "GatedChannel",
   "type": "object"
 }
 ```
@@ -36534,6 +36628,96 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ReviewGateRead
+
+```json
+{
+  "description": "GET/PUT ``/api/v1/settings/review-gate``. Writes nothing on GET.",
+  "properties": {
+    "channels": {
+      "items": {
+        "$ref": "#/components/schemas/GatedChannel"
+      },
+      "title": "Channels",
+      "type": "array"
+    },
+    "enforced": {
+      "title": "Enforced",
+      "type": "boolean"
+    },
+    "enforced_from": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Enforced From"
+    },
+    "env_override": {
+      "title": "Env Override",
+      "type": "boolean"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "updated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Updated At"
+    },
+    "would_refuse": {
+      "$ref": "#/components/schemas/WouldRefuseSummary"
+    }
+  },
+  "required": [
+    "enforced",
+    "source",
+    "env_override",
+    "would_refuse",
+    "channels"
+  ],
+  "title": "ReviewGateRead",
+  "type": "object"
+}
+```
+
+## ReviewGateWrite
+
+```json
+{
+  "additionalProperties": false,
+  "description": "PUT body. ``None`` clears (back to audit only); a naive datetime is the route's 422 ``naive_datetime``.",
+  "properties": {
+    "enforced_from": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Enforced From"
+    }
+  },
+  "title": "ReviewGateWrite",
+  "type": "object"
+}
+```
+
 ## ReviewQueueSummary
 
 ```json
@@ -52299,6 +52483,104 @@ These are the full generated JSON Schema definitions, including required fields,
     "agent_id"
   ],
   "title": "WorkflowStepV1",
+  "type": "object"
+}
+```
+
+## WouldRefuseChannel
+
+```json
+{
+  "properties": {
+    "channel": {
+      "title": "Channel",
+      "type": "string"
+    },
+    "decisions": {
+      "minimum": 0.0,
+      "title": "Decisions",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "channel",
+    "decisions"
+  ],
+  "title": "WouldRefuseChannel",
+  "type": "object"
+}
+```
+
+## WouldRefuseSummary
+
+```json
+{
+  "description": "The ``ai_report.distribution_would_refuse`` audit rows of the last 30 days.\n\nAbsence is not health: ``measured`` is False when the audit read failed or\ntimed out, and then every number below is None (never 0).",
+  "properties": {
+    "by_channel": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/components/schemas/WouldRefuseChannel"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "By Channel"
+    },
+    "decisions": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decisions"
+    },
+    "measured": {
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "runs": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Runs"
+    },
+    "since": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Since"
+    },
+    "window_days": {
+      "default": 30,
+      "title": "Window Days",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "measured"
+  ],
+  "title": "WouldRefuseSummary",
   "type": "object"
 }
 ```

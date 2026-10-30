@@ -28,6 +28,7 @@ from app.models.postgres import (
     WorkflowReplayCorpus,
 )
 from app.services.eval_verdict import EvalVerdict
+from app.services.inline_invocation import not_inline_pipeline
 
 MIN_REPLAY_RUNS = 20
 PUBLISH_REPLAY_RUNS = 100
@@ -513,6 +514,9 @@ async def _load_replay_cases(
             TestRun.project_id == project_id,
             AgentPipelineRun.workflow_type == base,
             AgentPipelineRun.status.in_(("completed", "passed", "failed")),
+            # W23c AGT-11 (D18): an inline invocation's pipeline ran on caller-supplied input,
+            # not the run's evidence, so it is never replay evidence for a workflow.
+            not_inline_pipeline(),
         )
         .order_by(AgentPipelineRun.created_at.desc(), AgentPipelineRun.id.desc())
         .limit(sample_limit)

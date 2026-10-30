@@ -440,3 +440,30 @@ def test_publish_allows_non_regressing_or_unmeasured_definitions(verdict: str | 
         reason=None,
         accepted_by=uuid.uuid4(),
     )
+
+
+class _CapturingSession:
+    """Records the statements ``_load_replay_cases`` executes; answers every one with no rows."""
+
+    def __init__(self) -> None:
+        self.statements: list[Any] = []
+
+    async def execute(self, statement: Any) -> Any:
+        self.statements.append(statement)
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+
+
+@pytest.mark.asyncio
+async def test_inline_invocation_pipelines_are_never_replay_evidence() -> None:
+    # W23c AGT-11 (D18): an inline invocation's pipeline ran on caller-supplied input, so the
+    # replay sampler excludes it with inline_invocation.not_inline_pipeline().
+    from sqlalchemy.dialects import postgresql
+
+    session = _CapturingSession()
+    cases = await svc._load_replay_cases(session, project_id=PROJECT_ID, base="offline", sample_limit=20)
+
+    assert cases == []
+    sql = str(session.statements[0].compile(dialect=postgresql.dialect()))
+    assert "NOT (EXISTS (SELECT 1" in sql
+    assert "agent_invocations.pipeline_run_id = agent_pipeline_runs.id" in sql
+    assert "agent_invocations.input_sha256 IS NOT NULL" in sql
