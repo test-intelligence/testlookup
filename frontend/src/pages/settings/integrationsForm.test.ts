@@ -141,4 +141,48 @@ describe('the copy', () => {
     expect(INTEGRATION_FORM_FIELDS).toContain('ocp_default_namespace')
     expect(INTEGRATION_FORM_FIELDS as readonly string[]).not.toContain('slack_default_channel')
   })
+
+  it('W23d: a field-level 422 may name the four Prometheus write fields', () => {
+    for (const name of ['prometheus_enabled', 'prometheus_base_url', 'prometheus_bearer_token', 'prometheus_metric_templates']) {
+      expect(INTEGRATION_FORM_FIELDS as readonly string[], name).toContain(name)
+    }
+  })
+})
+
+describe('W23d: the Prometheus fields', () => {
+  const template = { id: 'http_p95_latency', label: 'p95 latency', unit: 'seconds', promql: 'up{service="{service}"}' }
+  const config = cfg({ prometheus_metric_templates: [template], prometheus_templates_source: 'default' } as Partial<IntegrationsConfigRead>)
+  const initial = initialIntegrationForm(config)
+
+  it('loads the switch, the URL (null → "") and a COPY of the templates; no token', () => {
+    expect(initial.prometheus_enabled).toBe(false)
+    expect(initial.prometheus_base_url).toBe('')
+    expect(initial.prometheus_metric_templates).toEqual([template])
+    expect(initial.prometheus_metric_templates?.[0]).not.toBe(config.prometheus_metric_templates?.[0])
+    expect(initial).not.toHaveProperty('prometheus_bearer_token')
+  })
+
+  it('an older server without the Prometheus fields loads an empty, unchanged form', () => {
+    const old = initialIntegrationForm(cfg())
+    expect(old.prometheus_metric_templates).toEqual([])
+    expect(changedIntegrationFields(old, old)).toEqual({})
+  })
+
+  it.each([
+    ['untouched templates', { prometheus_metric_templates: [{ ...template }] }, {}],
+    ['an edited label (the whole list is sent)', { prometheus_metric_templates: [{ ...template, label: 'p95' }] }, { prometheus_metric_templates: [{ ...template, label: 'p95' }] }],
+    ['"Use the defaults"', { prometheus_metric_templates: [] }, { prometheus_metric_templates: [] }],
+    ['a URL', { prometheus_base_url: 'http://10.0.4.7:9090' }, { prometheus_base_url: 'http://10.0.4.7:9090' }],
+    ['a typed token', { prometheus_bearer_token: 'prom-local-test-value' }, { prometheus_bearer_token: 'prom-local-test-value' }],
+    ['the switch', { prometheus_enabled: true }, { prometheus_enabled: true }],
+  ] as const)('%s', (_name, edit, expected) => {
+    expect(changedIntegrationFields(initial, { ...initial, ...edit } as typeof initial)).toEqual(expected)
+  })
+
+  it('the token state reads prometheus_token_set; a Vault reference reads "(set — Vault)"', () => {
+    const env = environmentFields(config)
+    expect(secretStateLabel('prometheus_bearer_token', config, env)).toBeNull()
+    expect(secretStateLabel('prometheus_bearer_token', cfg({ prometheus_token_set: true } as Partial<IntegrationsConfigRead>), env)).toBe(SECRET_SET)
+    expect(secretStateLabel('prometheus_bearer_token', cfg({ vault_fields: ['prometheus_bearer_token'] }), env)).toBe(SECRET_SET_VAULT)
+  })
 })

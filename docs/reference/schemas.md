@@ -20209,6 +20209,361 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## HttpExchangeIn
+
+```json
+{
+  "description": "One HTTP request/response a test made (AGT-14). Lenient on purpose: a bad exchange is DROPPED by the\nlist pre-filter (IngestTestResult / LiveHttpExchangesIn), never a 422 that costs the batch its results.",
+  "properties": {
+    "duration_ms": {
+      "anyOf": [
+        {
+          "maximum": 86400000.0,
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Duration Ms"
+    },
+    "endpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Endpoint"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "maxLength": 200,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Error"
+    },
+    "method": {
+      "title": "Method",
+      "type": "string"
+    },
+    "redaction_counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Redaction Counts",
+      "type": "object"
+    },
+    "request": {
+      "$ref": "#/components/schemas/HttpMessageIn"
+    },
+    "response": {
+      "$ref": "#/components/schemas/HttpMessageIn"
+    },
+    "response_schema": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Response Schema"
+    },
+    "response_schema_state": {
+      "default": "empty",
+      "title": "Response Schema State",
+      "type": "string"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "maximum": 599.0,
+          "minimum": 100.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Status"
+    },
+    "url": {
+      "minLength": 1,
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "method",
+    "url"
+  ],
+  "title": "HttpExchangeIn",
+  "type": "object"
+}
+```
+
+## HttpExchangeListResponse
+
+```json
+{
+  "description": "GET /api/v1/runs/{run_id}/tests/{test_id}/http-exchanges.",
+  "properties": {
+    "dropped": {
+      "title": "Dropped",
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/HttpExchangeRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "run_cap_reached": {
+      "title": "Run Cap Reached",
+      "type": "boolean"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total",
+    "dropped",
+    "run_cap_reached"
+  ],
+  "title": "HttpExchangeListResponse",
+  "type": "object"
+}
+```
+
+## HttpExchangeRead
+
+```json
+{
+  "properties": {
+    "captured_at": {
+      "format": "date-time",
+      "title": "Captured At",
+      "type": "string"
+    },
+    "duration_ms": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Duration Ms"
+    },
+    "endpoint": {
+      "title": "Endpoint",
+      "type": "string"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Error"
+    },
+    "host": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Host"
+    },
+    "method": {
+      "title": "Method",
+      "type": "string"
+    },
+    "redacted": {
+      "title": "Redacted",
+      "type": "boolean"
+    },
+    "request": {
+      "$ref": "#/components/schemas/HttpMessageRead"
+    },
+    "response": {
+      "$ref": "#/components/schemas/HttpMessageRead"
+    },
+    "response_schema_state": {
+      "title": "Response Schema State",
+      "type": "string"
+    },
+    "seq": {
+      "title": "Seq",
+      "type": "integer"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "status": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Status"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "seq",
+    "method",
+    "endpoint",
+    "url",
+    "request",
+    "response",
+    "response_schema_state",
+    "source",
+    "captured_at",
+    "redacted"
+  ],
+  "title": "HttpExchangeRead",
+  "type": "object"
+}
+```
+
+## HttpMessageIn
+
+```json
+{
+  "description": "One side of an exchange, as the SDK sends it (cut + redacted by ``HttpExchangeIn``).",
+  "properties": {
+    "body": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Body"
+    },
+    "body_bytes": {
+      "default": 0,
+      "title": "Body Bytes",
+      "type": "integer"
+    },
+    "body_truncated": {
+      "default": false,
+      "title": "Body Truncated",
+      "type": "boolean"
+    },
+    "headers": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Headers",
+      "type": "object"
+    }
+  },
+  "title": "HttpMessageIn",
+  "type": "object"
+}
+```
+
+## HttpMessageRead
+
+```json
+{
+  "properties": {
+    "body": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Body"
+    },
+    "body_bytes": {
+      "default": 0,
+      "title": "Body Bytes",
+      "type": "integer"
+    },
+    "body_truncated": {
+      "default": false,
+      "title": "Body Truncated",
+      "type": "boolean"
+    },
+    "headers": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Headers",
+      "type": "object"
+    }
+  },
+  "required": [
+    "headers"
+  ],
+  "title": "HttpMessageRead",
+  "type": "object"
+}
+```
+
 ## IdentityEventListResponse
 
 ```json
@@ -20832,6 +21187,12 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Results",
       "type": "array"
     },
+    "run_ai": {
+      "default": true,
+      "description": "False skips the AI analysis and the suite comparison for this run.",
+      "title": "Run Ai",
+      "type": "boolean"
+    },
     "run_context": {
       "anyOf": [
         {
@@ -20964,6 +21325,32 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Finished At"
     },
+    "http_exchanges": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/components/schemas/HttpExchangeIn"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Http Exchanges"
+    },
+    "http_exchanges_dropped": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Http Exchanges Dropped"
+    },
     "metadata": {
       "anyOf": [
         {
@@ -20975,6 +21362,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Metadata"
+    },
+    "service_name": {
+      "anyOf": [
+        {
+          "maxLength": 255,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Service Name"
     },
     "setup_ms": {
       "anyOf": [
@@ -21963,6 +22362,39 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Ocp Token Set",
       "type": "boolean"
     },
+    "prometheus_base_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Prometheus Base Url"
+    },
+    "prometheus_enabled": {
+      "default": false,
+      "title": "Prometheus Enabled",
+      "type": "boolean"
+    },
+    "prometheus_metric_templates": {
+      "items": {
+        "$ref": "#/components/schemas/PrometheusMetricTemplate"
+      },
+      "title": "Prometheus Metric Templates",
+      "type": "array"
+    },
+    "prometheus_templates_source": {
+      "default": "default",
+      "title": "Prometheus Templates Source",
+      "type": "string"
+    },
+    "prometheus_token_set": {
+      "default": false,
+      "title": "Prometheus Token Set",
+      "type": "boolean"
+    },
     "slack_default_channel": {
       "deprecated": true,
       "title": "Slack Default Channel",
@@ -22194,6 +22626,56 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Ocp Sa Token"
+    },
+    "prometheus_base_url": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Prometheus Base Url"
+    },
+    "prometheus_bearer_token": {
+      "anyOf": [
+        {
+          "maxLength": 4000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Prometheus Bearer Token"
+    },
+    "prometheus_enabled": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Prometheus Enabled"
+    },
+    "prometheus_metric_templates": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/components/schemas/PrometheusMetricTemplateIn"
+          },
+          "maxItems": 12,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Prometheus Metric Templates"
     },
     "slack_default_channel": {
       "anyOf": [
@@ -24575,6 +25057,101 @@ These are the full generated JSON Schema definitions, including required fields,
     "session_id"
   ],
   "title": "LiveEventBatchResponse",
+  "type": "object"
+}
+```
+
+## LiveHttpExchangesIn
+
+```json
+{
+  "description": "Body of POST /api/v1/stream/http-exchanges (§3.1 — no path id, on purpose): one test's exchanges\nof a live session, posted once by the reporter after the test's result.",
+  "properties": {
+    "class_name": {
+      "anyOf": [
+        {
+          "maxLength": 500,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Class Name"
+    },
+    "exchanges": {
+      "items": {
+        "$ref": "#/components/schemas/HttpExchangeIn"
+      },
+      "maxItems": 20,
+      "title": "Exchanges",
+      "type": "array"
+    },
+    "exchanges_dropped": {
+      "default": 0,
+      "minimum": 0.0,
+      "title": "Exchanges Dropped",
+      "type": "integer"
+    },
+    "run_id": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Run Id",
+      "type": "string"
+    },
+    "session_id": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Session Id",
+      "type": "string"
+    },
+    "test_name": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Test Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "session_id",
+    "run_id",
+    "test_name",
+    "exchanges"
+  ],
+  "title": "LiveHttpExchangesIn",
+  "type": "object"
+}
+```
+
+## LiveHttpExchangesResponse
+
+```json
+{
+  "properties": {
+    "dropped": {
+      "title": "Dropped",
+      "type": "integer"
+    },
+    "stored": {
+      "title": "Stored",
+      "type": "integer"
+    },
+    "test_case_id": {
+      "title": "Test Case Id",
+      "type": "string"
+    },
+    "truncated": {
+      "title": "Truncated",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "stored",
+    "truncated",
+    "dropped",
+    "test_case_id"
+  ],
+  "title": "LiveHttpExchangesResponse",
   "type": "object"
 }
 ```
@@ -32099,6 +32676,86 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "ProjectUpdate",
+  "type": "object"
+}
+```
+
+## PrometheusMetricTemplate
+
+```json
+{
+  "additionalProperties": false,
+  "description": "One admin-defined metric template; the server substitutes ``{service}`` (escaped) — never model PromQL.",
+  "properties": {
+    "id": {
+      "pattern": "^[a-z][a-z0-9_]{1,39}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "label": {
+      "maxLength": 80,
+      "minLength": 1,
+      "title": "Label",
+      "type": "string"
+    },
+    "promql": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Promql",
+      "type": "string"
+    },
+    "unit": {
+      "default": "count",
+      "title": "Unit",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "label",
+    "promql"
+  ],
+  "title": "PrometheusMetricTemplate",
+  "type": "object"
+}
+```
+
+## PrometheusMetricTemplateIn
+
+```json
+{
+  "additionalProperties": false,
+  "description": "A template as an ADMIN saves it (IntegrationsConfigUpdate): the placeholder, control characters and\nthe unit are checked per item, so a 422's loc is ``prometheus_metric_templates.N.<field>``.",
+  "properties": {
+    "id": {
+      "pattern": "^[a-z][a-z0-9_]{1,39}$",
+      "title": "Id",
+      "type": "string"
+    },
+    "label": {
+      "maxLength": 80,
+      "minLength": 1,
+      "title": "Label",
+      "type": "string"
+    },
+    "promql": {
+      "maxLength": 1000,
+      "minLength": 1,
+      "title": "Promql",
+      "type": "string"
+    },
+    "unit": {
+      "default": "count",
+      "title": "Unit",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "label",
+    "promql"
+  ],
+  "title": "PrometheusMetricTemplateIn",
   "type": "object"
 }
 ```

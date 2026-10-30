@@ -365,7 +365,7 @@ def test_wrap_limits_equal_the_downstream_literals_read_from_source() -> None:
 _INPUT_PAYLOAD_READERS = {"models/postgres.py", "routers/agent_invoke.py", "services/inline_invocation.py"}
 # Who may call the wrapping helpers (besides their own module): the seed only.
 _WRAPPERS = {"wrap_untrusted", "excerpt_slices"}
-_WRAPPER_CALLERS = {"services/inline_invocation.py", "services/untrusted_input.py"}
+_WRAPPER_CALLERS = {"services/inline_invocation.py", "services/untrusted_input.py", "tools/fetch_rest_payload.py"}  # W23d P-4: captured REST bodies reach the ReAct prompt only wrapped
 # Who may build or load the seed: the module itself and the workflow's run / resume seam.
 _SEED_FUNCTIONS = {"seed_state", "frozen_inline_seed", "frozen_inline_payload"}
 _SEED_CALLERS = {"services/inline_invocation.py", "agents/workflow.py"}

@@ -11,11 +11,14 @@
  *             viewport at 1440 x 900 (`fold-test-case.spec.ts`).
  *   Tabs    → History (the cross-run timeline, flakiness, and the step-flip
  *             report) · Steps (this run's step tree) · Details (the ids, the
- *             fingerprint, the parser, this result's own fields) · Similar
- *             failures (W12 SRCH-01: a FAILED / BROKEN result on the full page
- *             only — its nearest failed neighbours in the project's semantic
- *             index). Only the open tab is mounted, so Steps asks for the step
- *             tree, and Similar failures for its neighbours, when opened.
+ *             fingerprint, the parser, this result's own fields) · HTTP
+ *             exchanges (W23d AGT-14: the full page only — the requests the
+ *             test made, as its reporter captured and the server redacted
+ *             them) · Similar failures (W12 SRCH-01: a FAILED / BROKEN result
+ *             on the full page only — its nearest failed neighbours in the
+ *             project's semantic index). Only the open tab is mounted, so
+ *             Steps asks for the step tree, HTTP exchanges for its exchanges,
+ *             and Similar failures for its neighbours, when opened.
  *
  * `compact` (a narrow container, e.g. the Run page's side panel): one column,
  * the full name above the chips (the panel's title carries only the short
@@ -36,6 +39,7 @@ import TestStepsPanel from '@/components/runs/TestStepsPanel'
 import TestHistoryPanel from '@/components/runs/TestHistoryPanel'
 import StepFlipPanel from '@/components/runs/StepFlipPanel'
 import TestCaseDetailSummary from '@/components/runs/TestCaseDetailSummary'
+import HttpExchangesPanel from '@/components/runs/HttpExchangesPanel'
 import SimilarFailuresPanel from '@/components/search/SimilarFailuresPanel'
 import { hasSimilarFailures } from '@/components/search/similarFailuresModel'
 import { useTestCase } from '@/hooks/useRuns'
@@ -44,10 +48,12 @@ import type { TestCaseDetailResponse } from '@/types/test-case-detail'
 import { formatDateTime, formatDuration } from '@/utils/formatters'
 import { normalizeTestCaseDetail } from '@/utils/testCaseDetail'
 
-type TabId = 'history' | 'steps' | 'details' | 'similar'
+type TabId = 'history' | 'steps' | 'details' | 'http' | 'similar'
 const TAB_IDS: readonly TabId[] = ['history', 'steps', 'details']
+/** The full page also has the HTTP exchanges its reporter captured (W23d AGT-14, `?tab=http`). */
+const PAGE_TAB_IDS: readonly TabId[] = [...TAB_IDS, 'http']
 /** A failed or broken result on the full page also has Similar failures (`?tab=similar`). */
-const FAILED_TAB_IDS: readonly TabId[] = [...TAB_IDS, 'similar']
+const FAILED_TAB_IDS: readonly TabId[] = [...PAGE_TAB_IDS, 'similar']
 
 export interface TestCaseBodyProps {
   runId: string
@@ -62,9 +68,15 @@ export default function TestCaseBody({ runId, testId, compact = false }: TestCas
   // Similar failures: the full page's FAILED / BROKEN results only; a
   // `?tab=similar` anywhere else reads as History (the allow-list).
   const withSimilar = !compact && hasSimilarFailures(tc?.status)
+  // HTTP exchanges: the full page only (the side panel `run-test-pane` keeps
+  // its tab strip); its one read is asked only while the tab is open.
+  const withHttp = !compact
   // Both are always called (hooks); `compact` picks one. On the full page the
   // tab is `?tab=`; in a side panel the host page's `?tab=` is not ours.
-  const [urlTab, setUrlTab] = useTabParam<TabId>(withSimilar ? FAILED_TAB_IDS : TAB_IDS, 'history')
+  const [urlTab, setUrlTab] = useTabParam<TabId>(
+    withSimilar ? FAILED_TAB_IDS : withHttp ? PAGE_TAB_IDS : TAB_IDS,
+    'history',
+  )
   const [localTab, setLocalTab] = useState<TabId>('history')
   const tab = compact ? localTab : urlTab
   const setTab = compact ? setLocalTab : setUrlTab
@@ -87,6 +99,7 @@ export default function TestCaseBody({ runId, testId, compact = false }: TestCas
     // The reporter's own step count, when it sent one; no count is not 0.
     { id: 'steps', label: 'Steps', count: execution?.step_count ?? undefined },
     { id: 'details', label: 'Details' },
+    ...(withHttp ? [{ id: 'http' as const, label: 'HTTP exchanges' }] : []),
     ...(withSimilar ? [{ id: 'similar' as const, label: 'Similar failures' }] : []),
   ]
 
@@ -188,6 +201,7 @@ export default function TestCaseBody({ runId, testId, compact = false }: TestCas
             <TestCaseDetailSummary detail={detail} />
           </>
         )}
+        {tab === 'http' && withHttp && <HttpExchangesPanel runId={runId} testId={testId} />}
         {tab === 'similar' && withSimilar && <SimilarFailuresPanel testId={testId} />}
       </div>
     </div>

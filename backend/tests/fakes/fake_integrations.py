@@ -66,6 +66,14 @@ refuses.
 * Receiver: ``POST /hooks/ok`` (200), ``/hooks/fail`` (500), ``/hooks/reject``
   (400); every call is logged with its event, delivery id and whether it was
   signed.
+* Prometheus (W23d AGT-15; ``Authorization: Bearer <prometheus_token>`` when
+  a token is set, a 401 otherwise): ``GET /api/v1/status/buildinfo`` and
+  ``GET /api/v1/query_range`` answering a matrix for a query whose
+  ``service="…"`` / ``container="…"`` matcher names a seeded service
+  (``checkout``: p95 latency ~0.20 s, then ~0.62 s inside the last 15 minutes
+  before ``end - 2 min`` -- ratio 3.1; other metrics steady); an unknown
+  service answers an empty ``result``; a query containing ``__timeout__``
+  sleeps past the client's 10 s timeout. Every query is recorded.
 
 Self-contained (Starlette only), because a deployment mounts this one file.
 
@@ -97,6 +105,9 @@ Inspect and steer it under ``/_fake/``:
 * ``POST /_fake/github/revoke`` -- ``{"token"}``: that PAT now answers 401
 * ``GET /_fake/hooks`` -- the receiver's log ``{path, status, event,
   delivery_id, signed}``
+* ``GET /_fake/prometheus/queries`` -- every Prometheus request ``{endpoint,
+  query, service, start, end, step, auth}``; ``POST /_fake/prometheus/series``
+  -- ``{"service", "rises", "baseline", "window", "steady", "window_minutes"}``
 * OIDC identity provider (W20 ADM-08b) under ``/oidc``: discovery
   (``/oidc/.well-known/openid-configuration``), ``/oidc/jwks`` (one RS256 key
   generated at start), ``/oidc/authorize`` (authorization code; PKCE S256
@@ -114,7 +125,7 @@ Inspect and steer it under ``/_fake/``:
 
 Environment (``_state_from_env``): ``FAKE_JIRA_EMAIL``, ``FAKE_JIRA_TOKEN``,
 ``FAKE_BASE_URL``, ``FAKE_SPLUNK_TOKEN``, ``FAKE_OCP_TOKEN``,
-``FAKE_GITHUB_PAT`` (the PAT that sees ``acme/payments``), ``FAKE_GITLAB_PAT``,
+``FAKE_GITHUB_PAT`` (the PAT that sees ``acme/payments``), ``FAKE_GITLAB_PAT``, ``FAKE_PROMETHEUS_TOKEN``,
 ``FAKE_OIDC_ISSUER`` (default: this server's own ``<scheme>://<host>/oidc``),
 ``FAKE_OIDC_CLIENT_SECRET``.
 """
@@ -340,6 +351,20 @@ class FakeState:
     # ── W10: outbound webhook receiver ──
     #: {path, status, event, delivery_id, signed}
     hooks: list[dict[str, Any]] = field(default_factory=list)
+    # ── W23d AGT-15: Prometheus (the system under test's metrics) ──
+    #: None = no auth; else ``Authorization: Bearer <token>`` is required (401 otherwise)
+    prometheus_token: Optional[str] = None
+    #: service -> {"rises": <a metric name>, "baseline", "window", "steady"}: a query naming the service (in a
+    #: ``service=`` / ``container=`` matcher) and the ``rises`` metric answers ``baseline`` then ``window`` inside the
+    #: last ``window_minutes`` before ``end - 2 min`` (ratio 0.62 / 0.20 = 3.1); any other metric answers ``steady``
+    prometheus_series: dict[str, dict[str, Any]] = field(default_factory=lambda: {
+        "checkout": {"rises": "http_server_requests_seconds_bucket", "baseline": 0.20, "window": 0.62,
+                     "steady": 0.35, "window_minutes": 15},
+    })
+    #: every Prometheus request: {endpoint, query, service, start, end, step, auth}
+    prometheus_queries: list[dict[str, Any]] = field(default_factory=list)
+    #: a query containing ``__timeout__`` sleeps this long (past the 10 s client timeout)
+    prometheus_timeout_s: float = 12.0
     _next_id: int = 10000
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -379,6 +404,7 @@ class FakeState:
             self.requests.clear()
             self.faults.clear()
             self.splunk_searches.clear()
+            self.prometheus_queries.clear()
             self.hooks.clear()
             self.revoked_github_tokens.clear()
             self.github_issue_comments.clear()
@@ -784,11 +810,14 @@ async def _slack_webhook(request: Request, state: FakeState) -> Response:
 # credential itself is never recorded.
 
 _SPLUNK_PATHS = {"/services/server/info", "/services/search/jobs", "/services/search/jobs/export"}
+_PROMETHEUS_PATHS = {"/api/v1/query_range", "/api/v1/status/buildinfo"}
 
 
 def _service_of(path: str) -> Optional[str]:
     if path in _SPLUNK_PATHS:
         return "splunk"
+    if path in _PROMETHEUS_PATHS:
+        return "prometheus"
     if path.startswith("/services/"):
         return "slack"
     if path.startswith("/rest/api/"):
@@ -850,6 +879,11 @@ def _auth_status(request: Request, state: FakeState, service: Optional[str], pat
         if not token:
             return "none"
         return "ok" if token == state.gitlab_token else "bad"
+    if service == "prometheus":
+        token = _bearer(request, "Bearer")
+        if token is None:
+            return "none"
+        return "ok" if token == state.prometheus_token else "bad"
     return "none"
 
 
@@ -941,6 +975,60 @@ async def _splunk(request: Request, state: FakeState, path: str, method: str,
 
 
 # ── OpenShift / Kubernetes handlers ─────────────────────────────────────────
+
+
+_PROM_SERVICE_RE = re.compile(r'(?:service|container)="((?:[^"\\]|\\.)*)"')
+
+
+def _prometheus_error(status: int, error_type: str, error: str) -> JSONResponse:
+    return JSONResponse({"status": "error", "errorType": error_type, "error": error}, status_code=status)
+
+
+async def _prometheus(request: Request, state: FakeState, path: str, method: str, auth: str) -> Response:
+    """W23d AGT-15: ``GET /api/v1/query_range`` (a matrix) and ``GET /api/v1/status/buildinfo``."""
+    params = request.query_params
+    query = params.get("query", "")
+    match = _PROM_SERVICE_RE.search(query)
+    service = match.group(1) if match else None
+    with state._lock:
+        state.prometheus_queries.append({
+            "endpoint": "buildinfo" if path.endswith("/buildinfo") else "query_range",
+            "query": query, "service": service, "start": params.get("start"), "end": params.get("end"),
+            "step": params.get("step"), "auth": auth,
+        })
+    if method != "GET":
+        return _prometheus_error(405, "bad_data", "method not allowed")
+    if state.prometheus_token is not None and auth != "ok":
+        return PlainTextResponse("Unauthorized", status_code=401)
+    if path.endswith("/buildinfo"):
+        return JSONResponse({"status": "success", "data": {"version": "2.53.0-fake", "branch": "fake"}})
+    if not query:
+        return _prometheus_error(400, "bad_data", 'invalid parameter "query": no query given')
+    if "__timeout__" in query:
+        await asyncio.sleep(state.prometheus_timeout_s)
+    try:
+        start, end = float(params.get("start", "")), float(params.get("end", ""))
+        step = float(str(params.get("step", "15s")).rstrip("s"))
+    except ValueError:
+        return _prometheus_error(400, "bad_data", "invalid parameter: start / end / step")
+    if step <= 0 or end < start or (end - start) / step > 11_000:
+        return _prometheus_error(400, "bad_data", "exceeded maximum resolution of 11,000 points per timeseries")
+    seeded = state.prometheus_series.get(service or "")
+    if seeded is None:
+        return JSONResponse({"status": "success", "data": {"resultType": "matrix", "result": []}})
+    window_start = end - 120 - 60 * float(seeded.get("window_minutes", 15))
+    rises = str(seeded.get("rises") or "") in query
+    values = []
+    for k in range(int((end - start) // step) + 1):
+        t = start + k * step
+        if rises:
+            value = seeded["window"] if t >= window_start else seeded["baseline"]
+        else:
+            value = seeded["steady"]
+        values.append([round(t, 3), str(value)])
+    return JSONResponse({"status": "success", "data": {"resultType": "matrix", "result": [
+        {"metric": {"service": service, "instance": "fake-prometheus:9090"}, "values": values},
+    ]}})
 
 
 def _k8s_status(code: int, reason: str, message: str) -> JSONResponse:
@@ -1364,6 +1452,14 @@ async def _control(request: Request, state: FakeState) -> Response:
         return JSONResponse({"revoked": len(state.revoked_github_tokens)})
     if path == "/_fake/hooks":
         return JSONResponse(state.hooks)
+    # ── W23d AGT-15 ──
+    if path == "/_fake/prometheus/queries":
+        return JSONResponse(state.prometheus_queries)
+    if path == "/_fake/prometheus/series":
+        body = dict(await request.json())
+        with state._lock:
+            state.prometheus_series[str(body.pop("service"))] = body
+        return JSONResponse({"services": sorted(state.prometheus_series)})
     if path == "/_fake/oidc/users":
         for username, user in dict(await request.json()).items():
             state.oidc_users[str(username)] = dict(user)
@@ -1646,6 +1742,8 @@ def create_app(state: Optional[FakeState] = None) -> Starlette:
         # GHE under /api/v3), the webhook receiver, else 404.
         if service == "splunk":
             response = await _splunk(request, state, path, method, form, auth)
+        elif service == "prometheus":
+            response = await _prometheus(request, state, path, method, auth)
         elif service == "slack":
             response = await _slack_webhook(request, state)
         elif service == "ocp":
@@ -1693,6 +1791,7 @@ def _state_from_env() -> FakeState:
         ocp_token=os.environ.get("FAKE_OCP_TOKEN", "fake-ocp-token"),
         gitlab_token=os.environ.get("FAKE_GITLAB_PAT", "fake-gitlab-pat"),
         oidc_issuer=os.environ.get("FAKE_OIDC_ISSUER") or None,
+        prometheus_token=os.environ.get("FAKE_PROMETHEUS_TOKEN") or None,
     )
     if os.environ.get("FAKE_OIDC_CLIENT_SECRET"):
         state.oidc_clients["testlookup"]["secret"] = os.environ["FAKE_OIDC_CLIENT_SECRET"]

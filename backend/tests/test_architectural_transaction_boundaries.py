@@ -169,6 +169,18 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "inline_input_vocab.py",
     "untrusted_input.py",
     "inline_invocation.py",
+    # ── W23d AGT-14 / AGT-15 REST payload capture + Prometheus metrics
+    # correlation: new modules, commit-free from birth ──
+    # The pure exchange redaction (called from the Pydantic model), the Mongo
+    # exchange store (no SQL at all; the JSON-ingest worker's commit precedes
+    # its write and the live route writes Mongo only), the application-metrics
+    # client (a read-only outbound query; the log stage persists through the
+    # workflow) and the two wire vocabularies (constants only).
+    "http_exchange_vocab.py",
+    "http_exchange_redaction.py",
+    "http_exchange_store.py",
+    "prometheus_vocab.py",
+    "app_metrics_service.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

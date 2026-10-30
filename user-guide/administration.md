@@ -163,6 +163,7 @@ One card per integration; QA leads can read, administrators save. Tokens and web
 | **OpenShift / Kubernetes** | API URL, Default Namespace, Service Account Token | Pod and event evidence for the AI analysis, and a sentinel run's pod metadata |
 | **Slack** | Webhook URL | The shared notification channel and digests |
 | **Microsoft Teams** | Webhook URL | The shared notification channel and digests |
+| **Prometheus** | Base URL, Bearer token, Metric templates | Application metrics for the deep investigation's log stage (see [Prometheus](#prometheus-application-metrics) below; saved here only, no environment fallback) |
 
 **Which value applies** (the same rule for every runtime path, the health probes included; first match wins):
 
@@ -183,7 +184,19 @@ A text field saved empty counts as never saved, so the environment applies again
 
 **Slack's channel** is the one the incoming webhook was created for: the former **Default Channel** field changed nothing and is gone. The API still accepts `slack_default_channel` and ignores it (it is never stored); the read still returns it, marked deprecated. Route a team's alerts to another channel in **Team channels** (below).
 
-There is no test button on this page; **Integration health** probes each connection.
+There is no test button on this page except the Prometheus card's **Test connection**; **Integration health** probes each connection.
+
+### Prometheus (application metrics)
+
+The **Prometheus** card on `/settings/integrations` (administrators save; QA leads read and test) points the deep investigation's **Log intelligence** stage at the **system under test's** Prometheus. It is not TestLookup's own: the `PROMETHEUS_URL` environment variable stays the Performance page's self-monitoring server and is never used here, and this block has **no environment fallback** (nothing is queried until an administrator saves it).
+
+- **Enabled**, **Base URL** (for example `http://prometheus.monitoring:9090`; checked like the hosts above: a loopback, link-local or unspecified address is refused at save and again before every call, before the token is sent; RFC 1918 is allowed) and **Bearer token** (optional; stored encrypted in `secret_refs`, never in the settings row, shown as **(set)**; a `vault:<path>#<key>` value is stored as a Vault reference and shown **(set — Vault)**; saving it empty clears it).
+- **Metric templates**: up to 12, each an id (`a-z`, digits and `_`, 2-40 characters, starting with a letter), a label, a unit (`seconds`, `bytes`, `ratio`, `per_second` or `count`) and a PromQL expression containing `{service}` exactly where the service name goes. Until you save your own, four defaults are used (**Defaults in use**): p95 latency, 5xx error rate (label `service`), memory working set and CPU usage (label `container`). **Use the defaults** clears your list. Only these templates are ever queried: the stage passes template ids, never PromQL; the service name must be a plain label value (letters, digits, `_`, `.`, `:`, `-`, at most 128 characters) and is escaped before it is substituted.
+- **Offline mode refuses every query** (`AI_OFFLINE_MODE=true`, read live): there is no exception for an in-cluster Prometheus. The stage records "Prometheus lookup disabled: offline mode" and the probe reads **skipped**.
+- **What the stage records.** For each of the first 3 failure clusters that name a service (the analysis's, else the failing result's `service_name`, which JSON ingest results may carry) and a failure time, it asks up to 4 templates for the 15 minutes before the failure plus 2 minutes after, against the 15 minutes before that as the baseline (at most 120 points per series), and writes one sentence per series: "p95 latency for checkout rose 3.1× in the failure window" (1.5× or more counts as a rise), "… stayed within 1.1× of its baseline in the failure window" or "…: no data before the failure window to compare with", with an evidence reference (source `prometheus`). The run's **Evidence** tab shows them under **Specialist evidence → Log intelligence** with a sparkline. Nothing else Prometheus returns is kept (label values are dropped). When it cannot ask, it says why: "metrics unavailable: Prometheus is not configured", "… the Prometheus integration is switched off", "… Prometheus timed out" (the 10-second timeout is never "no data"), "… Prometheus refused the token (HTTP 401)", "… the failures name no service and failure time". The metrics never change the stage's own status.
+- **Test connection** (on the card) and **Integration health** probe the **saved** settings with `GET {base}/api/v1/status/buildinfo`: **healthy** "Prometheus API reachable", **auth error**, **timeout**, **down** "Target host is not allowed (…)", or **skipped** "Prometheus is switched off or has no URL" — not configured is never shown as healthy.
+
+API: `GET` / `PUT /api/v1/settings/integrations` carry `prometheus_enabled`, `prometheus_base_url`, `prometheus_token_set` (read only; the token is never returned), `prometheus_bearer_token` (write only), `prometheus_metric_templates` (`[]` restores the defaults) and `prometheus_templates_source` (`saved` or `default`). A template without `{service}`, a duplicate id or a 13th template is refused with `422` under the field. `POST /api/v1/integration-health/probe?provider=prometheus` probes it.
 
 ### Email (SMTP) & channels (`/settings/notifications`)
 
@@ -238,7 +251,7 @@ Each edition composes the week's **top 5 failures** (ranked by count × severity
 
 ### Integration health (`/settings/integration-health`)
 
-The status board for everything above: Jira, Splunk, GitHub, OpenShift, Slack, Teams, SMTP, the local model server and the vector store, probed every 15 minutes (**Probe All Now** to probe at once). Check here first when "the webhook didn't fire", then the audit dashboard.
+The status board for everything above: Jira, Splunk, GitHub, OpenShift, Slack, Teams, Prometheus, SMTP, the local model server and the vector store, probed every 15 minutes (**Probe All Now** to probe at once). Check here first when "the webhook didn't fire", then the audit dashboard.
 
 - **Per-project rows.** Every enabled per-project GitHub / GitHub Enterprise and GitLab integration is probed with that project's own API base and token (`GET {api_base}/repos/{owner}/{name}`, `GET {base}/api/v4/projects/{path}`; at most 5 at a time; the target is checked as above before the token is sent). A row is keyed `(provider, scope_key)`, the scope being the project id, so two projects on different GitHub Enterprise hosts get two rows. A row never probed reads **Not probed yet** (`probed: false`, status `unknown`), never healthy. A project without a stored token reads `auth_error` "No token is stored for this project's GitHub integration." without a request. The 15-minute beat probes them all and prunes the rows of integrations removed or turned off.
 - **Paused webhooks** lists the subscriptions the circuit breaker paused (above), with their streak, threshold and last error.

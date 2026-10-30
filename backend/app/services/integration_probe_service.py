@@ -1,7 +1,8 @@
 """
 Integration Probe Service — active health probes for external systems (OPS-01).
 
-Probes: Jira, Splunk, GitHub, OCP/K8s, Slack, Teams, SMTP, Ollama, ChromaDB.
+Probes: Jira, Splunk, GitHub, OCP/K8s, Slack, Teams, SMTP, Ollama, ChromaDB, and (W23d, saved-only
+``SAVED_CONFIG_PROBES``) the system-under-test's Prometheus.
 Records auth validity, latency, payload correctness.
 Alerts on sustained failures (consecutive_failures >= threshold).
 
@@ -411,6 +412,48 @@ async def probe_chromadb() -> ProbeResult:
         return ProbeResult("chromadb", "down", 0, str(exc)[:300])
 
 
+async def probe_prometheus(config: dict | None = None) -> ProbeResult:
+    """W23d AGT-15: the system-under-test's Prometheus, from the SAVED block only.
+
+    ``config`` is ``resolve_prometheus_settings`` (merged into the global
+    config). Offline mode refuses it first (D19: no offline exception), then
+    a switched-off block or a missing URL is ``skipped`` -- absence is not
+    health -- then the egress guard refuses a loopback / link-local host
+    before the token is sent. ``GET {base}/api/v1/status/buildinfo``.
+    """
+    from app.services.prometheus_vocab import PROBE_SENTENCES
+
+    refused = _offline_hard_gate("prometheus")
+    if refused:
+        return refused
+    config = config or {}
+    base_url = (config.get("prometheus_base_url") or "").strip().rstrip("/")
+    token = config.get("prometheus_bearer_token")
+    if config.get("prometheus_enabled") is not True or not base_url:
+        return ProbeResult("prometheus", "skipped", message=PROBE_SENTENCES["skipped_off"])
+    block = await egress_block_reason(base_url)
+    if block:
+        return ProbeResult("prometheus", "down", 0, f"Target host is not allowed ({block})")
+
+    import httpx
+
+    start = time.monotonic()
+    try:
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        client = get_http_client()
+        resp = await client.get(f"{base_url}/api/v1/status/buildinfo", headers=headers, timeout=_PROBE_TIMEOUT)
+        ms = int((time.monotonic() - start) * 1000)
+        if resp.status_code == 200:
+            return ProbeResult("prometheus", "healthy", ms, PROBE_SENTENCES["healthy"], True, True)
+        if resp.status_code in (401, 403):
+            return ProbeResult("prometheus", "auth_error", ms, f"HTTP {resp.status_code}", False)
+        return ProbeResult("prometheus", "degraded", ms, f"HTTP {resp.status_code}")
+    except httpx.TimeoutException:
+        return ProbeResult("prometheus", "timeout", int((time.monotonic() - start) * 1000), "Timed out")
+    except Exception as exc:  # noqa: BLE001 - a probe answers, it never raises
+        return ProbeResult("prometheus", "down", 0, f"{type(exc).__name__}"[:300])
+
+
 # ── All-provider probe orchestrator ──────────────────────────────────────────
 
 ALL_PROBES = {
@@ -425,6 +468,14 @@ ALL_PROBES = {
     "chromadb": probe_chromadb,
 }
 
+#: W23d AGT-15: probes whose configuration is SAVED-ONLY (no environment fallback), resolved by
+#: ``resolve_prometheus_settings`` and merged into the global config. Kept beside ``ALL_PROBES`` (whose provider
+#: set is pinned by the OPS-01 registry tests) and run, on the same resolver session, whenever the configurable
+#: probes are; ``POST /integration-health/probe?provider=prometheus`` accepts them.
+SAVED_CONFIG_PROBES = {
+    "prometheus": probe_prometheus,
+}
+
 
 async def run_all_probes() -> list[ProbeResult]:
     """Run all integration probes concurrently."""
@@ -433,13 +484,22 @@ async def run_all_probes() -> list[ProbeResult]:
     integration_cfg = None
     integration_cfg_error: Exception | None = None
     configurable = {"jira", "splunk", "github", "ocp", "slack", "teams"}
+    probes = dict(ALL_PROBES)
     if configurable.intersection(ALL_PROBES):
         from app.db.postgres import AsyncSessionLocal
-        from app.services.integration_config_service import resolve_global_integrations
+        from app.services.integration_config_service import (
+            resolve_global_integrations,
+            resolve_prometheus_settings,
+        )
 
+        probes.update(SAVED_CONFIG_PROBES)
+        configurable = configurable | set(SAVED_CONFIG_PROBES)
         try:
             async with AsyncSessionLocal() as db:
-                integration_cfg = await resolve_global_integrations(db)
+                integration_cfg = {
+                    **await resolve_global_integrations(db),
+                    **await resolve_prometheus_settings(db),
+                }
         except Exception as exc:  # noqa: BLE001 — isolate config from other probes
             integration_cfg_error = exc
             logger.warning(
@@ -464,11 +524,11 @@ async def run_all_probes() -> list[ProbeResult]:
         return await fn()
 
     results = await asyncio.gather(
-        *[_run_probe(provider, fn) for provider, fn in ALL_PROBES.items()],
+        *[_run_probe(provider, fn) for provider, fn in probes.items()],
         return_exceptions=True,
     )
     out: list[ProbeResult] = []
-    for provider, result in zip(ALL_PROBES.keys(), results):
+    for provider, result in zip(probes.keys(), results):
         if isinstance(result, BaseException):
             out.append(ProbeResult(provider, "down", 0, str(result)[:300]))
         else:

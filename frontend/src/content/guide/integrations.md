@@ -83,6 +83,16 @@ Where configured, TestLookup can notify external systems and file issues. All of
 
 > **Note.** Jira ticket creation requires Jira to be explicitly enabled. It is off by default, and a defect can exist in TestLookup without any external ticket.
 
+## Prometheus
+
+The **Prometheus** card under **Admin → Integrations** points the deep investigation's **Log intelligence** stage at the application metrics of the system you test (not TestLookup's own monitoring). An administrator saves **Enabled**, a **Base URL** and, optionally, a **Bearer token** (stored encrypted and shown only as **(set)**, or **(set — Vault)** for a Vault reference); QA leads can read the card and press **Test connection**, which probes the **saved** settings.
+
+- **Metric templates.** Up to 12 PromQL templates, each with an id, a label and a unit, and `{service}` where the service name goes. Four defaults (p95 latency, 5xx error rate, memory working set, CPU usage) apply until you save your own; **Use the defaults** returns to them. The stage only ever asks for these templates by id, never with PromQL of its own, and a service name is checked and escaped before it is substituted.
+- **What you see.** For the first few failure clusters that name a service and a failure time, the run's **Evidence** tab shows, under **Specialist evidence → Log intelligence**, a sparkline per metric and a sentence such as "p95 latency for checkout rose 3.1× in the failure window". A JSON ingest result may carry `service_name` so the stage knows which service failed.
+- **When it cannot ask, it says so.** "Prometheus lookup disabled: offline mode" (offline mode refuses every query), "metrics unavailable: Prometheus is not configured", "… Prometheus timed out", "… Prometheus refused the token (HTTP 401)". Not configured never reads as healthy, and a timeout never reads as "no data".
+
+The connection also has its own row on [Settings and administration](/docs/administration#integration-health) › Integration health. `GET` / `PUT /api/v1/settings/integrations` carry the `prometheus_*` fields (the token is never returned: `prometheus_token_set`), and `POST /api/v1/integration-health/probe?provider=prometheus` probes it.
+
 ## Errors
 
 | Status | Means | Do |

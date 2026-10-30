@@ -1,4 +1,5 @@
 import type { ReviewEnvelopeFields } from '@/types/review'
+import type { ContractFindings, LogFindings } from '@/types/specialistEvidence'
 import { api } from './api'
 
 export interface RunSummary {
@@ -230,6 +231,13 @@ export interface DecisionIntelligence {
   }
   claims?: DecisionClaim[]
   proposed_actions?: ProposedAction[]
+  /**
+   * W23d AGT-14 / AGT-15: the API contract stage's and the log stage's findings, copied by the decision report
+   * (free-form dicts; read them through `parseContractFindings` / `parseLogFindings`). Absent on reports
+   * written without those stages — the `Specialist evidence` row then renders nothing.
+   */
+  contract_findings?: ContractFindings | null
+  log_findings?: LogFindings | null
   source_stages: string[]
   evidence_bundle_sha256: string
   verification: DecisionReportVerification

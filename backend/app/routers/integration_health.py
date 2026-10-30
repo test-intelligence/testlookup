@@ -251,6 +251,7 @@ async def trigger_probe(
     from app.services.integration_probe_service import (
         ALL_PROBES,
         PROJECT_PROBE_PROVIDERS,
+        SAVED_CONFIG_PROBES,
         persist_probe_results,
         run_project_probes,
     )
@@ -271,18 +272,30 @@ async def trigger_probe(
         await persist_probe_results(results)
         return _probe_answer(results)
 
-    if provider and provider not in ALL_PROBES and provider not in PROJECT_PROBE_PROVIDERS:
+    supported = set(ALL_PROBES) | set(SAVED_CONFIG_PROBES) | set(PROJECT_PROBE_PROVIDERS)
+    if provider and provider not in supported:
         raise HTTPException(
             status_code=422,
             detail=(
                 f"Unknown integration provider: {provider}. "
-                f"Supported: {', '.join(sorted(set(ALL_PROBES) | set(PROJECT_PROBE_PROVIDERS)))}"
+                f"Supported: {', '.join(sorted(supported))}"
             ),
         )
     if provider == "gitlab":
         raise HTTPException(status_code=422, detail="GitLab is probed per project: pass project_id.")
 
-    if provider and provider in ALL_PROBES:
+    if provider and provider in SAVED_CONFIG_PROBES:
+        # W23d AGT-15: the saved-only Prometheus block, merged over the global config, on the request session;
+        # the connection is handed back before the probe's HTTP call.
+        from app.services.integration_config_service import (
+            resolve_global_integrations,
+            resolve_prometheus_settings,
+        )
+
+        merged_cfg = {**await resolve_global_integrations(db), **await resolve_prometheus_settings(db)}
+        await _hand_back(db)
+        results = [await SAVED_CONFIG_PROBES[provider](merged_cfg)]
+    elif provider and provider in ALL_PROBES:
         if provider in {"jira", "splunk", "github", "ocp", "slack", "teams"}:
             from app.services.integration_config_service import (
                 resolve_global_integrations,

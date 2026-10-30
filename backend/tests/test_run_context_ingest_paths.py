@@ -223,6 +223,22 @@ async def test_json_ingest_stores_only_the_redacted_context_in_object_storage(ha
     _no_secret(harness["batch_kwargs"])
 
 
+async def test_json_ingest_stores_a_result_timestamp_instead_of_a_storage_503(harness):
+    # W23d (found by G-B): the router stored the batch with json.dumps(payload.model_dump()), which raises
+    # TypeError on a datetime, so any result carrying started_at answered 503 "Upload storage is temporarily
+    # unavailable". The batch is dumped in JSON mode now; the worker's to_utc reads the ISO text back.
+    from app.services.report_timings import to_utc
+
+    batch = _batch(harness["project_id"], None)
+    batch["results"][0]["started_at"] = "2026-10-30T08:15:00+00:00"
+    resp = await _post("/api/v1/ingest", json=batch)
+    assert resp.status_code == 202, resp.text
+    (stored,) = harness["storage"].objects.values()
+    result = json.loads(stored)["results"][0]
+    assert result["started_at"].startswith("2026-10-30T08:15:00")
+    assert to_utc(result["started_at"]).isoformat() == "2026-10-30T08:15:00+00:00"
+
+
 @pytest.mark.parametrize("case", _refusals(), ids=lambda c: c[0])
 async def test_json_ingest_refuses_a_malformed_context_with_its_sentence(harness, case):
     _name, ctx, sentence = case

@@ -12,7 +12,7 @@ Probe history for a provider: the deployment-wide history, or -- with
 ``project_id`` (checked by ``resolve_project_scope`` first) -- that
 project's integration.
 
-Source: [backend/app/routers/integration_health.py:310](../../../backend/app/routers/integration_health.py#L310).
+Source: [backend/app/routers/integration_health.py:323](../../../backend/app/routers/integration_health.py#L323).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -149,7 +149,7 @@ Direct handler error branches (dependency/service errors can add others):
 HTTPException(status_code=404, detail=f'This project has no enabled {label} integration.')
 HTTPException(status_code=422, detail='A per-project probe needs provider=github or provider=gitlab.')
 HTTPException(status_code=422, detail='GitLab is probed per project: pass project_id.')
-HTTPException(status_code=422, detail=f"Unknown integration provider: {provider}. Supported: {', '.join(sorted(set(ALL_PROBES) | set(PROJECT_PROBE_PROVIDERS)))}")
+HTTPException(status_code=422, detail=f"Unknown integration provider: {provider}. Supported: {', '.join(sorted(supported))}")
 ```
 
 ### Declared wire contract
@@ -361,7 +361,7 @@ credentials are wrong".
 The trend is deployment-wide (W10 INT-04): per-project probes
 (``scope_key <> ''``) stay out of both statements.
 
-Source: [backend/app/routers/integration_health.py:350](../../../backend/app/routers/integration_health.py#L350).
+Source: [backend/app/routers/integration_health.py:363](../../../backend/app/routers/integration_health.py#L363).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

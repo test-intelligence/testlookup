@@ -57,6 +57,8 @@ _RUN_SCOPED_COLLECTIONS = (
     # AIH-06: the versioned run summaries and analysis digests (runs clock).
     Collections.AI_RUN_VERSIONS,
     Collections.DECISION_EVIDENCE_SNAPSHOTS,
+    # W23d AGT-14: captured HTTP exchanges (keyed by test_run_id).
+    Collections.REST_API_PAYLOADS,
 )
 
 #: Reports are measured SEPARATELY from the run-scoped collections, not

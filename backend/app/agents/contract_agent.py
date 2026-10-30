@@ -14,6 +14,7 @@ from app.models.agent_contracts import (
     validate_agent_contract,
 )
 from app.services.evidence_sanitizer import sanitize_reference_text
+from app.services.http_exchange_vocab import CONTRACT_SENTENCES
 from app.services.workflow_step_context import tool_allowed
 from app.tools.validate_api_contract import validate_api_contract
 
@@ -22,11 +23,18 @@ logger = structlog.get_logger("agents.contract")
 _MAX_TEST_CASES = 200
 _MAX_VIOLATIONS = 200
 _MAX_ENDPOINTS = 200
+# W23d: a missing stable key (schema_drift) and a changed JSON type (type_drift) are both drift.
+_DRIFT_TYPES = frozenset({"schema_drift", "type_drift"})
 
 
 def _checksum(value: Any) -> str:
     canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _counted(count: int, noun: str) -> str:
+    """'1 endpoint' / '2 endpoints': the summary is shown as written in the run's Specialist evidence row."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
 class ContractAgent(BaseAgent):
@@ -63,6 +71,8 @@ class ContractAgent(BaseAgent):
         evidence_refs: list[dict[str, Any]] = []
         evidence_available = False
         failures = 0
+        checked_total = 0
+        first_note = ""
 
         if ids and not (project_id and run_id and pipeline_run_id):
             return {
@@ -104,30 +114,41 @@ class ContractAgent(BaseAgent):
                 result = json.loads(result_json)
                 if result.get("evidence_available"):
                     evidence_available = True
+                    checked_total += int(result.get("exchanges_checked") or 0)
+                    if not result.get("violations") and not first_note and result.get("drift_summary"):
+                        first_note = sanitize_reference_text(str(result["drift_summary"]), limit=2000)[0]
                 endpoint = str(result.get("endpoint") or "unknown")[:500]
-                if endpoint != "unknown" and endpoint not in endpoints_checked:
-                    endpoints_checked.append(endpoint)
+                listed = result.get("endpoints") if isinstance(result.get("endpoints"), list) else []
+                for name in [endpoint, *(str(item)[:500] for item in listed)]:
+                    if name != "unknown" and name not in endpoints_checked:
+                        endpoints_checked.append(name)
                 raw_violations = result.get("violations") or []
                 if not isinstance(raw_violations, list):
                     raw_violations = []
                 for raw in raw_violations:
                     if not isinstance(raw, dict) or len(all_violations) >= _MAX_VIOLATIONS:
                         break
+                    # W23d P-5: a violation names ITS OWN exchange's endpoint (a test may
+                    # call several), the baseline build and the sentence the tool built.
+                    own_endpoint = sanitize_reference_text(str(raw.get("endpoint") or endpoint), limit=500)[0]
                     violation = {
                         "test_case_id": tc_id,
-                        "endpoint": endpoint,
+                        "endpoint": own_endpoint,
                         "field_path": sanitize_reference_text(str(raw.get("field_path") or ""), limit=240)[0],
                         "violation_type": sanitize_reference_text(str(raw.get("violation_type") or "unknown"), limit=80)[0],
                         "expected": sanitize_reference_text(str(raw.get("expected") or ""), limit=160)[0],
                         "actual": sanitize_reference_text(str(raw.get("actual") or ""), limit=160)[0],
                         "severity": str(raw.get("severity") or "warning")[:20],
                     }
+                    for key, limit in (("method", 16), ("baseline_build", 100), ("sentence", 400)):
+                        if raw.get(key):
+                            violation[key] = sanitize_reference_text(str(raw[key]), limit=limit)[0]
                     all_violations.append(violation)
                     evidence_refs.append({
                         "source": "validate_api_contract",
                         "kind": "contract_violation",
                         "test_case_id": tc_id,
-                        "endpoint": endpoint,
+                        "endpoint": own_endpoint,
                         "checksum_sha256": _checksum(violation),
                     })
             except Exception as exc:  # fail closed per test, preserve other members
@@ -139,7 +160,7 @@ class ContractAgent(BaseAgent):
                 )
 
         critical = [v for v in all_violations if v.get("severity") == "critical"]
-        drift = [v for v in all_violations if v.get("violation_type") == "schema_drift"]
+        drift = [v for v in all_violations if v.get("violation_type") in _DRIFT_TYPES]
         if failures:
             status = "failed"
             summary = (
@@ -148,20 +169,27 @@ class ContractAgent(BaseAgent):
             )
         elif not evidence_available:
             status = "not_enough_evidence"
-            summary = "No tenant/run-scoped REST contract evidence was available for these failures."
+            summary = CONTRACT_SENTENCES["no_capture"]
         else:
             status = "complete"
             if critical:
                 summary = (
-                    f"CRITICAL CONTRACT VIOLATIONS: {len(critical)} required fields missing across "
-                    f"{len({v.get('endpoint') for v in critical})} endpoints."
+                    f"CRITICAL CONTRACT VIOLATIONS: {_counted(len(critical), 'required field')} missing across "
+                    f"{_counted(len({v.get('endpoint') for v in critical}), 'endpoint')}."
                 )
             elif drift:
-                summary = f"SCHEMA DRIFT DETECTED: {len(drift)} fields changed from historical responses."
+                summary = f"SCHEMA DRIFT DETECTED: {_counted(len(drift), 'field')} changed from historical responses."
             elif all_violations:
-                summary = f"{len(all_violations)} contract warnings found."
+                summary = f"{_counted(len(all_violations), 'contract warning')} found."
+            elif not checked_total and first_note:
+                # Nothing was compared (no earlier run, or no JSON body): say so,
+                # never "match" — absence is not health.
+                summary = first_note
             else:
                 summary = "No API contract violations detected. Responses match the scoped historical schema."
+            sentences = [str(v["sentence"]) for v in all_violations if v.get("sentence")][:2]
+            if sentences:
+                summary = " ".join([summary, *sentences])
 
         return {
             "status": status,

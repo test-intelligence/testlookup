@@ -53,24 +53,34 @@ def test_denied_or_unavailable_tool_results_are_evidence_gaps_not_citations():
 
 @pytest.mark.asyncio
 async def test_rest_payload_removes_credential_headers_and_redacts_bodies(monkeypatch):
+    # W23d (deliberate): the tool has ONE rendering — the store's v1 doc, every body inside W23c's
+    # <<data>> block. The pre-W23d unwrapped branch (and its case-id-only fallback) is gone.
+    doc = {
+        "v": 1, "project_id": "project-a", "test_run_id": "run-a", "test_case_id": "test-a", "seq": 0,
+        "method": "POST", "endpoint": "/pay", "status": 500,
+        "request": {
+            "headers": {
+                "Cookie": "sessionid=super-secret-session-value",
+                "Authorization": "Bearer abcdefghijklmnopqrstuvwxyz",
+                "Content-Type": "application/json",
+            },
+            "body": "token=short-secret",
+        },
+        "response": {"body": "Set-Cookie: sid=another-secret-value"},
+    }
+
+    class _Cursor:
+        def sort(self, *_a): return self
+        def limit(self, *_a): return self
+        async def to_list(self, *_a): return [doc]
+
     class _Collection:
-        async def find_one(self, _query):
-            return {
-                "request": {
-                    "method": "POST",
-                    "url": "https://service.invalid/pay",
-                    "headers": {
-                        "Cookie": "sessionid=super-secret-session-value",
-                        "Authorization": "Bearer abcdefghijklmnopqrstuvwxyz",
-                        "Content-Type": "application/json",
-                    },
-                    "body": "token=short-secret",
-                },
-                "response": {
-                    "status_code": 500,
-                    "body": "Set-Cookie: sid=another-secret-value",
-                },
-            }
+        async def find_one(self, query):
+            return doc if query.get("test_run_id") == "run-a" else None
+
+        def find(self, *_a): return _Cursor()
+
+        async def count_documents(self, _query): return 1
 
     class _Mongo:
         def __getitem__(self, _name): return _Collection()
@@ -92,5 +102,5 @@ async def test_rest_payload_removes_credential_headers_and_redacts_bodies(monkey
     assert "short-secret" not in result
     assert "Authorization" not in result
     assert "Cookie: sessionid=" not in result
-    assert "Set-Cookie: [REDACTED]" in result
+    assert "<<data>>" in result and "[REDACTED]" in result
     assert "Content-Type: application/json" in result

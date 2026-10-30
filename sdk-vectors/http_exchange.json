@@ -1,0 +1,1537 @@
+{
+  "version": 1,
+  "spec": "W23d AGT-14 captured HTTP exchanges: the cross-language test vectors. The server (schemas.HttpExchangeIn + services/http_exchange_redaction.py) and the Python SDK (client/http_capture.py) both run every case; the Java / JS / Go capture filters adopt this file when they capture. The vocabulary block is pinned equal to backend/app/services/http_exchange_vocab.py (and the redaction module's own constants) by backend/tests/test_payload_metrics_vocab_parity.py. Secret samples are real-looking and non-hex; none is a live credential. Grow it (new cases, new keys); never rewrite a case.",
+  "conventions": [
+    "Expand every generator spec (see generators) in input and expect before use.",
+    "cases[].input is ONE exchange exactly as an SDK puts it on the wire (POST /api/v1/ingest results[].http_exchanges[] or POST /api/v1/stream/http-exchanges exchanges[]).",
+    "cases[].expect is the exchange the server stores: every key present (method, url, endpoint, status, duration_ms, started_at, error, request, response, response_schema, response_schema_state, redaction_counts; each side {headers, body, body_truncated, body_bytes}); objects compare without regard to key order. null = the exchange is DROPPED (counted, never a 422 on the batch).",
+    "Idempotence: redacting expect again yields expect, so the server's re-validation and an SDK's own first pass never change an already-redacted exchange.",
+    "An SDK applies the same rules BEFORE it buffers anything; it may skip the BODY_STORED_MAX_BYTES cut (the server makes it) but no other rule. started_at is sent as ISO-8601 UTC with a Z suffix and stored as sent.",
+    "The text pass (header values, query values, JSON string leaves and keys, non-JSON bodies, error): secret-named pairs (JSON_PAIR_RE / FORM_PAIR_RE whose key is secret-named), then TOKEN_SHAPES whole-token, then the server's redact_text patterns (credentials, JWTs, e-mail / phone / card / IPv4 shapes), then TOKEN_SHAPES again.",
+    "Headers: at most HEADERS_MAX per side, sorted by name; a name in HEADER_DENYLIST or ending in a HEADER_SECRET_SUFFIXES entry (lower-cased, _ read as -) keeps its name and its value becomes [REDACTED]; a numeric value becomes its text; any other non-text value is skipped.",
+    "The url: the userinfo password (or a bare userinfo) becomes [REDACTED]; a QUERY_DENYLIST name's value becomes [REDACTED], every other query value gets the text pass; the fragment is dropped; URL_MAX characters. The url is split by RFC 3986 appendix B (URL_PARTS_RE), never by a parser that refuses a bracket in the userinfo.",
+    "The endpoint: an SDK-sent template keeps its segments (scheme, host, query stripped); otherwise the url's path with every segment matching ENDPOINT_ID_SEGMENT_RES replaced by {id}; ENDPOINT_MAX characters.",
+    "Bodies: cut to BODY_WIRE_MAX_BYTES UTF-8 bytes first (state too_large, not parsed); JSON (no NaN / Infinity) is walked: a secret-named key's non-null, non-boolean value becomes [REDACTED], every list item is walked (no 100-item cut), a container deeper than JSON_DEPTH_MAX becomes [REDACTED], then re-serialised compact (the $json rule); other text gets the text pass; then cut to BODY_STORED_MAX_BYTES with TRUNCATION_MARKER ({omitted} = the bytes not stored). body_bytes = the size before the store cut.",
+    "response_schema: top-level key -> JSON type of the redacted response body (state parsed only); a key outside FIELD_NAME_RE or beyond SCHEMA_KEYS_MAX is counted under UNNAMED_KEYS. A client-sent schema, state or redaction_counts is recomputed. redaction_counts counts the [REDACTED markers per part."
+  ],
+  "generators": [
+    "{\"$repeat\": \"<text>\", \"times\": N} -> the text repeated N times.",
+    "{\"$join\": [part, ...]} -> the parts (each expanded to a string) concatenated.",
+    "{\"$list\": <value>, \"count\": N} -> a list of N copies of the expanded value.",
+    "{\"$json\": <value>} -> the compact JSON text of the expanded value: \",\" and \":\" with no spaces, non-ASCII kept as is, keys in the order given.",
+    "An object is a generator only when its keys are exactly those of one form above; every other object or array is walked and its members expanded."
+  ],
+  "vocabulary": {
+    "EXCHANGES_PER_TEST_MAX": 20,
+    "EXCHANGES_PER_RUN_MAX": 1000,
+    "BODY_WIRE_MAX_BYTES": 65536,
+    "BODY_STORED_MAX_BYTES": 16384,
+    "TRUNCATION_MARKER": "…[truncated: {omitted} bytes not stored]",
+    "HEADERS_MAX": 50,
+    "HEADER_NAME_MAX": 128,
+    "HEADER_VALUE_MAX": 2048,
+    "URL_MAX": 2048,
+    "ENDPOINT_MAX": 300,
+    "METHOD_RE": "^[A-Z]{1,16}$",
+    "SCHEMA_KEYS_MAX": 200,
+    "FIELD_NAME_RE": "^[A-Za-z_$@][A-Za-z0-9_.$@:-]{0,119}$",
+    "SCHEMA_STATES": [
+      "parsed",
+      "not_json",
+      "empty",
+      "too_large"
+    ],
+    "HEADER_DENYLIST": [
+      "authorization",
+      "proxy-authorization",
+      "cookie",
+      "set-cookie",
+      "x-api-key",
+      "api-key",
+      "x-auth-token",
+      "x-access-token",
+      "x-csrf-token",
+      "x-xsrf-token",
+      "x-amz-security-token",
+      "x-goog-api-key",
+      "x-session-token",
+      "private-token",
+      "x-gitlab-token",
+      "x-hub-signature",
+      "x-hub-signature-256"
+    ],
+    "HEADER_SECRET_SUFFIXES": [
+      "token",
+      "secret",
+      "password",
+      "api-key",
+      "apikey",
+      "signature",
+      "credential"
+    ],
+    "QUERY_DENYLIST": [
+      "token",
+      "access_token",
+      "id_token",
+      "refresh_token",
+      "api_key",
+      "apikey",
+      "key",
+      "code",
+      "password",
+      "secret",
+      "client_secret",
+      "sig",
+      "signature",
+      "x-amz-signature",
+      "x-amz-credential",
+      "x-amz-security-token",
+      "auth"
+    ],
+    "ENDPOINT_ID_SEGMENT_RES": [
+      "^\\d+$",
+      "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "^[0-9a-fA-F]{24}$",
+      "^[A-Za-z0-9_-]{16,}$"
+    ],
+    "REDACTED": "[REDACTED]",
+    "TOKEN_SHAPES": [
+      "gh[pousr]_[A-Za-z0-9]{20,}",
+      "github_pat_[A-Za-z0-9_]{20,}",
+      "glpat-[A-Za-z0-9_-]{16,}",
+      "xox[abprs]-[A-Za-z0-9-]{10,}",
+      "sk-[A-Za-z0-9_-]{20,}",
+      "AKIA[A-Z0-9]{16}",
+      "[A-Za-z0-9+/=_-]{40,}"
+    ],
+    "JSON_DEPTH_MAX": 10,
+    "UNNAMED_KEYS": "_unnamed_keys",
+    "ERROR_MAX": 200,
+    "JSON_PAIR_RE": "\"((?:[^\"\\\\\\r\\n]|\\\\.){1,128})\"(\\s*:\\s*)(?:\"(?:[^\"\\\\]|\\\\.)*(?:\"|$(?![\\s\\S]))|-?[0-9][0-9.eE+-]*)",
+    "FORM_PAIR_RE": "(?<![A-Za-z0-9_.-])([A-Za-z][A-Za-z0-9_.-]{0,127})=([^&\\s\\\"',;]+)",
+    "URL_PARTS_RE": "\\A(?:([A-Za-z][A-Za-z0-9+.-]*):)?(?://([^/?#]*))?([^?#]*)(?:\\?([^#]*))?(?:#[\\s\\S]*)?\\Z"
+  },
+  "cases": [
+    {
+      "name": "bearer_jwt_authorization_header",
+      "note": "Authorization keeps its name and loses its value; a non-secret header survives; the template is derived.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "request": {
+          "headers": {
+            "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3MjNkLXNhbXBsZSJ9.c2lnbmF0dXJlLXNhbXBsZS12YWx1ZS0x",
+            "Accept": "application/json",
+            "X-Request-Id": "req-w23d-1"
+          }
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"id\": 7, \"name\": \"lamp\", \"price\": 12.5}"
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {
+            "Accept": "application/json",
+            "Authorization": "[REDACTED]",
+            "X-Request-Id": "req-w23d-1"
+          },
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"id\":7,\"name\":\"lamp\",\"price\":12.5}",
+          "body_truncated": false,
+          "body_bytes": 40
+        },
+        "response_schema": {
+          "id": "number",
+          "name": "string",
+          "price": "number"
+        },
+        "response_schema_state": "parsed",
+        "redaction_counts": {
+          "headers": 1,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "basic_authorization_header",
+      "note": "Basic credentials are a denylisted header value too.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "request": {
+          "headers": {
+            "authorization": "Basic dzIzZDpzYW1wbGUtcGFzcw=="
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {
+            "authorization": "[REDACTED]"
+          },
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 1,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "cookie_and_set_cookie",
+      "note": "Cookie and Set-Cookie: redact_dict misses set_cookie; the denylist does not.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "request": {
+          "headers": {
+            "Cookie": "session=s%3Aw23dSampleSessionValue.abc; csrftoken=w23dcsrf"
+          }
+        },
+        "response": {
+          "headers": {
+            "Set-Cookie": "sid=w23dsid; HttpOnly",
+            "Cache-Control": "no-store"
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {
+            "Cookie": "[REDACTED]"
+          },
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Cache-Control": "no-store",
+            "Set-Cookie": "[REDACTED]"
+          },
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 2,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "api_key_header",
+      "note": "X-API-Key (missed by redact_dict) is denylisted.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "request": {
+          "headers": {
+            "X-API-Key": "tlk_w23d_sample_key_0123456789abcdef",
+            "User-Agent": "w23d-sdk/1.3.0"
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {
+            "User-Agent": "w23d-sdk/1.3.0",
+            "X-API-Key": "[REDACTED]"
+          },
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 1,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "proxy_amz_and_secret_suffix_headers",
+      "note": "Proxy-Authorization and X-Amz-Security-Token are denylisted; X-GitHub-Token, X-Custom-Secret and X_Service_Password end in a secret suffix (_ reads as -); X-Token-Count does not.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "request": {
+          "headers": {
+            "Proxy-Authorization": "Basic cHJveHk6dzIzZFByb3h5UGFzcw==",
+            "X-Amz-Security-Token": "FwoGZXIvYXdzEw23dSampleSessionToken",
+            "X-GitHub-Token": "ghp_w23dSamplePatValueQxZkLmNoPqRsTuVwXy",
+            "X-Custom-Secret": "w23dCustomSecretValue",
+            "X_Service_Password": "w23dServicePass",
+            "X-Token-Count": "3"
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {
+            "Proxy-Authorization": "[REDACTED]",
+            "X-Amz-Security-Token": "[REDACTED]",
+            "X-Custom-Secret": "[REDACTED]",
+            "X-GitHub-Token": "[REDACTED]",
+            "X-Token-Count": "3",
+            "X_Service_Password": "[REDACTED]"
+          },
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 5,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "provider_tokens_in_innocent_header_values",
+      "note": "A bare provider token under an innocent header name is caught by the token shapes.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "request": {
+          "headers": {
+            "X-Debug": "key AKIAW23DSAMPLEKEYQZX",
+            "X-Trace": "pat ghp_w23dSamplePatValueQxZkLmNoPqRsTuVwXy"
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {
+            "X-Debug": "key [REDACTED]",
+            "X-Trace": "pat [REDACTED]"
+          },
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 2,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "email_in_body_string",
+      "note": "An e-mail address in a body string goes through redact_text.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"owner\": \"w23d.sample@example.test\", \"count\": 2}"
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"owner\":\"[REDACTED_EMAIL]\",\"count\":2}",
+          "body_truncated": false,
+          "body_bytes": 49
+        },
+        "response_schema": {
+          "owner": "string",
+          "count": "number"
+        },
+        "response_schema_state": "parsed",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 1
+        }
+      }
+    },
+    {
+      "name": "shape_in_body_under_innocent_key",
+      "note": "A provider-token shape inside a JSON string under a NON-sensitive key is replaced whole.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/notes",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"note\": \"sample ghp_w23dSamplePatValueQxZkLmNoPqRsTuVwXy\", \"id\": 11}"
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/notes",
+        "endpoint": "/api/notes",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"note\":\"sample [REDACTED]\",\"id\":11}",
+          "body_truncated": false,
+          "body_bytes": 69
+        },
+        "response_schema": {
+          "note": "string",
+          "id": "number"
+        },
+        "response_schema_state": "parsed",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 1
+        }
+      }
+    },
+    {
+      "name": "secret_named_body_keys",
+      "note": "JSON keys named like secrets lose their values (password, client_secret, camelCase apiKey, a _token suffix); booleans and nulls under them are kept; the response schema keeps the names.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/clients/w23d",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"client_id\": \"w23d-client\", \"password\": \"w23dSamplePass\", \"client_secret\": \"w23dClientSecretValue\", \"apiKey\": \"w23dApiKeyValue\", \"github_token\": \"w23dGithubValue\", \"remember\": true, \"previous_password\": null}"
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/clients/w23d",
+        "endpoint": "/api/clients/w23d",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"client_id\":\"w23d-client\",\"password\":\"[REDACTED]\",\"client_secret\":\"[REDACTED]\",\"apiKey\":\"[REDACTED]\",\"github_token\":\"[REDACTED]\",\"remember\":true,\"previous_password\":null}",
+          "body_truncated": false,
+          "body_bytes": 209
+        },
+        "response_schema": {
+          "client_id": "string",
+          "password": "string",
+          "client_secret": "string",
+          "apiKey": "string",
+          "github_token": "string",
+          "remember": "boolean",
+          "previous_password": "null"
+        },
+        "response_schema_state": "parsed",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 4
+        }
+      }
+    },
+    {
+      "name": "denylisted_query_values",
+      "note": "QUERY_DENYLIST values become [REDACTED]; page survives; the fragment is dropped.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products?access_token=w23dSampleAccessToken123&page=2&sig=w23dsig#top",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z"
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products?access_token=[REDACTED]&page=2&sig=[REDACTED]",
+        "endpoint": "/api/products",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 2,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "shape_in_innocent_query_value",
+      "note": "A provider-token shape under an innocent query name is caught too.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/search?q=ghp_w23dSamplePatValueQxZkLmNoPqRsTuVwXy&limit=5",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z"
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/search?q=[REDACTED]&limit=5",
+        "endpoint": "/api/search",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 1,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "userinfo_in_url",
+      "note": "The userinfo password of a url becomes [REDACTED]; the user name stays.",
+      "input": {
+        "method": "GET",
+        "url": "https://w23d:samplepass@api.example.test/x",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z"
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://w23d:[REDACTED]@api.example.test/x",
+        "endpoint": "/x",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 1,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "bare_userinfo_in_url",
+      "note": "A userinfo without a password (a token's usual place) is replaced whole.",
+      "input": {
+        "method": "GET",
+        "url": "https://w23dBareUserinfo@api.example.test/x",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z"
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://[REDACTED]@api.example.test/x",
+        "endpoint": "/x",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 1,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "big_text_body_cut_at_the_wire_cap",
+      "note": "A 70 000-byte body: cut to 65 536 bytes first (too_large), stored to 16 384 bytes with the marker; body_bytes is the size received.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/big",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "text/plain"
+          },
+          "body": {
+            "$repeat": "w23d body ",
+            "times": 7000
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/big",
+        "endpoint": "/big",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "text/plain"
+          },
+          "body": {
+            "$join": [
+              {
+                "$repeat": "w23d body ",
+                "times": 1638
+              },
+              "w23d…[truncated: 53616 bytes not stored]"
+            ]
+          },
+          "body_truncated": true,
+          "body_bytes": 70000
+        },
+        "response_schema": null,
+        "response_schema_state": "too_large",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "json_list_of_150_walked_in_full",
+      "note": "Every one of 150 list items is walked (redact_dict stops at 100): the last item's secret is redacted.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/items",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "$json": {
+              "items": {
+                "$list": {
+                  "sku": "w23d-item",
+                  "password": "w23dListPass"
+                },
+                "count": 150
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/items",
+        "endpoint": "/api/items",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "$json": {
+              "items": {
+                "$list": {
+                  "sku": "w23d-item",
+                  "password": "[REDACTED]"
+                },
+                "count": 150
+              }
+            }
+          },
+          "body_truncated": false,
+          "body_bytes": 6911
+        },
+        "response_schema": {
+          "items": "array"
+        },
+        "response_schema_state": "parsed",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 150
+        }
+      }
+    },
+    {
+      "name": "big_json_body_parsed_then_store_cut",
+      "note": "A 20 000-byte JSON body is parsed (state parsed, schema from the full body), then stored cut with the marker.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/blob",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "$json": {
+              "blob": {
+                "$repeat": "w23d blob ",
+                "times": 2000
+              },
+              "password": "w23dBlobPass",
+              "size": 20000
+            }
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/blob",
+        "endpoint": "/api/blob",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "$join": [
+              "{\"blob\":\"",
+              {
+                "$repeat": "w23d blob ",
+                "times": 1637
+              },
+              "w23d …[truncated: 3666 bytes not stored]"
+            ]
+          },
+          "body_truncated": true,
+          "body_bytes": 20050
+        },
+        "response_schema": {
+          "blob": "string",
+          "password": "string",
+          "size": "number"
+        },
+        "response_schema_state": "parsed",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "script_body_kept_as_text",
+      "note": "A <script> body is stored as text, unchanged but for redaction.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/page",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "text/html"
+          },
+          "body": "<script>alert(1)</script>"
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/page",
+        "endpoint": "/page",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "text/html"
+          },
+          "body": "<script>alert(1)</script>",
+          "body_truncated": false,
+          "body_bytes": 25
+        },
+        "response_schema": null,
+        "response_schema_state": "not_json",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "jwt_in_body_string",
+      "note": "A JWT inside a body string is replaced by redact_text.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"session\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3MjNkLXNhbXBsZSJ9.c2lnbmF0dXJlLXNhbXBsZS12YWx1ZS0x\"}"
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"session\":\"[REDACTED_JWT]\"}",
+          "body_truncated": false,
+          "body_bytes": 113
+        },
+        "response_schema": {
+          "session": "string"
+        },
+        "response_schema_state": "parsed",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 1
+        }
+      }
+    },
+    {
+      "name": "text_plain_body_with_token",
+      "note": "A non-JSON body goes through redact_text (token=…).",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/status",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "text/plain"
+          },
+          "body": "user=w23d token=w23dtoken"
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/status",
+        "endpoint": "/status",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "text/plain"
+          },
+          "body": "user=w23d token=[REDACTED]",
+          "body_truncated": false,
+          "body_bytes": 26
+        },
+        "response_schema": null,
+        "response_schema_state": "not_json",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 1
+        }
+      }
+    },
+    {
+      "name": "form_body_with_secret_pair",
+      "note": "A form body: a secret-named key=value pair is redacted, the rest kept.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/echo",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          "body": "grant_type=client_credentials&client_secret=w23dFormValue&scope=read"
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/echo",
+        "endpoint": "/echo",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          "body": "grant_type=client_credentials&client_secret=[REDACTED]&scope=read",
+          "body_truncated": false,
+          "body_bytes": 68
+        },
+        "response_schema": null,
+        "response_schema_state": "not_json",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 1
+        }
+      }
+    },
+    {
+      "name": "endpoint_ids_derived",
+      "note": "Without a template: numeric, uuid, 24-hex and 16+ character segments become {id}; the query is not part of it.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/123/reviews/5f0c6d2e8b1a4c3d2e1f0a9b/u/0b7e8f3a-1c2d-4e5f-8a9b-0c1d2e3f4a5b/s/w23dSlugSegment01?page=2",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z"
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/123/reviews/5f0c6d2e8b1a4c3d2e1f0a9b/u/0b7e8f3a-1c2d-4e5f-8a9b-0c1d2e3f4a5b/s/w23dSlugSegment01?page=2",
+        "endpoint": "/api/products/{id}/reviews/{id}/u/{id}/s/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "long_plain_path_survives",
+      "note": "Token shapes apply per path SEGMENT: an ordinary 60-character path is kept whole in the url and the endpoint.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/catalogue/categories/electronics/featured-items/summary",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z"
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/catalogue/categories/electronics/featured-items/summary",
+        "endpoint": "/api/catalogue/categories/electronics/featured-items/summary",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "shape_in_path_segment",
+      "note": "A provider-token shape as a path segment becomes [REDACTED] (url) / {id} (endpoint).",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/hooks/ghp_w23dSamplePatValueQxZkLmNoPqRsTuVwXy/deliveries",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z"
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/hooks/[REDACTED]/deliveries",
+        "endpoint": "/api/hooks/{id}/deliveries",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 1,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "endpoint_template_normalised",
+      "note": "An SDK-sent template keeps its segments; scheme, host and query are stripped.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7?expand=1",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "endpoint": "https://api.example.test/api/products/{id}?expand=1"
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7?expand=1",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "lowercase_method_and_transport_error",
+      "note": "The method is upper-cased; no response (status null) with the transport error's class name.",
+      "input": {
+        "method": "post",
+        "url": "https://api.example.test/api/orders",
+        "status": null,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "request": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"sku\": \"w23d-item\", \"qty\": 1}"
+        },
+        "error": "ConnectTimeout"
+      },
+      "expect": {
+        "method": "POST",
+        "url": "https://api.example.test/api/orders",
+        "endpoint": "/api/orders",
+        "status": null,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": "ConnectTimeout",
+        "request": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"sku\":\"w23d-item\",\"qty\":1}",
+          "body_truncated": false,
+          "body_bytes": 30
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "client_sent_schema_and_counts_ignored",
+      "note": "A client-sent response_schema / state / redaction_counts is recomputed, never trusted.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"id\": 7}"
+        },
+        "response_schema": {
+          "price": "number"
+        },
+        "response_schema_state": "parsed",
+        "redaction_counts": {
+          "headers": 9
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"id\":7}",
+          "body_truncated": false,
+          "body_bytes": 9
+        },
+        "response_schema": {
+          "id": "number"
+        },
+        "response_schema_state": "parsed",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "deep_json_nesting_fails_closed",
+      "note": "A container nested deeper than 10 levels becomes [REDACTED].",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "$json": {
+              "a": {
+                "b": {
+                  "c": {
+                    "d": {
+                      "e": {
+                        "f": {
+                          "g": {
+                            "h": {
+                              "i": {
+                                "j": {
+                                  "k": {
+                                    "l": "w23d deep"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": "{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":{\"f\":{\"g\":{\"h\":{\"i\":{\"j\":\"[REDACTED]\"}}}}}}}}}}",
+          "body_truncated": false,
+          "body_bytes": 83
+        },
+        "response_schema": {
+          "a": "object"
+        },
+        "response_schema_state": "parsed",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 1
+        }
+      }
+    },
+    {
+      "name": "unusable_body_and_header_values",
+      "note": "A non-string body becomes null; a numeric header value becomes its text; a non-text header value is skipped.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "response": {
+          "headers": {
+            "Content-Length": 12,
+            "X-Flags": [
+              "a"
+            ]
+          },
+          "body": {
+            "id": 7
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {
+            "Content-Length": "12"
+          },
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "method_not_a_word_is_dropped",
+      "note": "A method failing METHOD_RE after upper-casing drops the exchange.",
+      "input": {
+        "method": "get me",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-10-30T09:15:00Z"
+      },
+      "expect": null
+    },
+    {
+      "name": "missing_url_is_dropped",
+      "note": "An exchange without a url is dropped.",
+      "input": {
+        "method": "GET",
+        "status": 200
+      },
+      "expect": null
+    }
+  ]
+}

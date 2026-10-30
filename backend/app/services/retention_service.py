@@ -8,8 +8,9 @@ class                   what it covers
 ``raw_events_days``     ``TestRun.event_archive`` JSONB strip; Mongo
                         ``live_execution_events`` (keyed by run_id — TestRun
                         UUID string or LiveSession slug), ``raw_allure_json``
-                        (keyed by test_run_id), ``raw_testng_xml`` +
-                        ``rest_api_payloads`` (keyed by test_case_id).
+                        (keyed by test_run_id), ``raw_testng_xml`` (keyed by
+                        test_case_id), ``rest_api_payloads`` (W23d: keyed by
+                        test_run_id — every captured-exchange doc carries it).
 ``runs_days``           ``test_runs`` rows — a plain DELETE; every child is
                         ``ondelete="CASCADE"`` (22 direct children plus the
                         second hop via test_cases; zero RESTRICT). Run-scoped
@@ -1238,12 +1239,15 @@ async def _collect_candidates(
 
 # (collection, key field, candidate attribute) — raw-events + runs classes.
 # raw_allure_json docs carry test_run_id (the ingestion writer always sets
-# it); raw_testng_xml / rest_api_payloads / ai_analysis_payloads are keyed
-# only by test_case_id.
+# it); raw_testng_xml / ai_analysis_payloads are keyed only by test_case_id.
+# W23d: rest_api_payloads moved to test_run_id — its only writer
+# (http_exchange_store) always sets it, and a live exchange whose result never
+# projected has no test_cases row, so a case-keyed purge could never reach it.
+# Held runs stay out of raw_run_strs (the hold anti-join), so their docs stay.
 _MONGO_PLANS: tuple[tuple[str, str, str], ...] = (
     (Collections.RAW_ALLURE_JSON, "test_run_id", "raw_run_strs"),
     (Collections.RAW_TESTNG_XML, "test_case_id", "raw_tc_strs"),
-    (Collections.REST_API_PAYLOADS, "test_case_id", "raw_tc_strs"),
+    (Collections.REST_API_PAYLOADS, "test_run_id", "raw_run_strs"),
     (Collections.LIVE_EXECUTION_EVENTS, "run_id", "raw_live_run_keys"),
     (Collections.EXECUTION_LOGS, "test_run_id", "purge_run_strs"),
     (Collections.OCP_POD_EVENTS, "test_run_id", "purge_run_strs"),

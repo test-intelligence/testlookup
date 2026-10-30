@@ -840,6 +840,7 @@ jobs:
           tests/integration/test_migration_0246_postgres.py
           tests/integration/test_review_gate_postgres.py
           tests/integration/test_agent_invoke_inline_postgres.py
+          tests/integration/test_prometheus_integration_postgres.py
           tests/integration/test_defects_list_fields_postgres.py
           tests/integration/test_analytics_scope_postgres.py
           tests/integration/test_analytics_epoch_redis_postgres.py
@@ -960,6 +961,7 @@ jobs:
           tests/integration/test_db_connection_budget_postgres.py
           tests/integration/test_engine_hides_parameters_postgres.py
           tests/integration/test_decision_report_supersession_postgres_mongo.py
+          tests/integration/test_http_exchanges_postgres_mongo.py
           tests/integration/test_protected_artifact_cascade_postgres.py
           tests/integration/test_purge_executor_against_real_postgres.py
           tests/integration/test_run_deletion_postgres_mongo.py

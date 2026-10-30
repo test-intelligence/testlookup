@@ -1,9 +1,66 @@
-"""LangChain tool: fetch captured REST API request/response payloads."""
+"""LangChain tool: fetch captured REST API request/response payloads.
+
+W23d AGT-14 P-4: the docs ``services/http_exchange_store.py`` writes (``v`` = 1) are
+rendered as up to two exchanges — ``METHOD endpoint → status``, the allowlisted request
+headers, and each BODY only inside W23c's data block (``untrusted_input.wrap_untrusted``),
+so the ReAct triage prompt never sees a captured, attacker-controlled body raw. The
+rendered text is bounded to ``_TOTAL_LIMIT`` by construction (no final cut can land on a
+marker). There is ONE rendering: a doc of any shape goes through the data-block path (no
+unwrapped branch for the pre-W23d shape — nothing in TestLookup ever wrote it), and only a
+doc carrying the investigation's own owner fields is read.
+"""
+from typing import Any, Mapping
+
 from langchain_core.tools import tool
 
 from app.db.mongo import Collections, get_mongo_db
 from app.services.evidence_sanitizer import sanitize_reference_text
+from app.services.untrusted_input import wrap_untrusted
 from app.tools.investigation_context import get_investigation_context
+
+_ALLOWED_HEADERS = {"accept", "content-type", "user-agent", "x-request-id"}
+_EXCHANGES_RENDERED = 2
+_REQUEST_BODY_LIMIT = 600
+_RESPONSE_BODY_LIMIT = 900
+_ENDPOINT_LIMIT = 100
+_HEADER_VALUE_LIMIT = 40
+_TOTAL_LIMIT = 4000
+
+
+def _side(doc: Mapping[str, Any], name: str) -> Mapping[str, Any]:
+    value = doc.get(name)
+    return value if isinstance(value, Mapping) else {}
+
+
+def _render_exchange(index: int, doc: Mapping[str, Any]) -> list[str]:
+    request = _side(doc, "request")
+    response = _side(doc, "response")
+    method = str(doc.get("method") or "?")[:16]
+    endpoint, _, _ = sanitize_reference_text(str(doc.get("endpoint") or "?"), limit=_ENDPOINT_LIMIT)
+    status = doc.get("status")
+    outcome = f"HTTP {int(status)}" if isinstance(status, int) else "no response"
+    lines = [f"{index}. {method} {endpoint} → {outcome}"]
+    headers = _side(request, "headers")
+    allowed =[(str(k), v) for k, v in list(headers.items())[:50] if str(k).lower() in _ALLOWED_HEADERS]
+    if allowed:
+        lines.append("Request Headers:")
+        for name, value in allowed[: len(_ALLOWED_HEADERS)]:
+            safe, _, _ = sanitize_reference_text(str(value), limit=_HEADER_VALUE_LIMIT)
+            lines.append(f"  {name[:16]}: {safe}")
+    for label, side, limit in (("Request Body:", request, _REQUEST_BODY_LIMIT),
+                               ("Response Body:", response, _RESPONSE_BODY_LIMIT)):
+        body = side.get("body")
+        if isinstance(body, str) and body:
+            lines.append(label)
+            lines.append(wrap_untrusted(body, limit=limit))
+    return lines
+
+
+async def _store_docs(db: Any, owner: dict[str, str]) -> tuple[list[dict], int]:
+    coll = db[Collections.REST_API_PAYLOADS]
+    docs = await coll.find(owner, {"_id": 0}).sort("seq", 1).limit(_EXCHANGES_RENDERED).to_list(_EXCHANGES_RENDERED)
+    total = await coll.count_documents(owner)
+    return list(docs), int(total)
 
 
 @tool
@@ -25,48 +82,26 @@ async def fetch_rest_api_payload(test_case_id: str) -> str:
     if str(test_case_id) != context.test_case_id:
         return "REST payload lookup denied: requested test is outside the investigation scope."
     db = get_mongo_db()
-    doc = await db[Collections.REST_API_PAYLOADS].find_one({
+    owner = {
         "test_case_id": context.test_case_id,
         "test_run_id": context.run_id,
         "project_id": context.project_id,
-    })
-    if not doc:
-        # Compatibility for legacy payloads written before owner fields were
-        # added. The globally unique test ID is server-bound by the authorized
-        # PostgreSQL context; model input cannot select this fallback key.
-        doc = await db[Collections.REST_API_PAYLOADS].find_one({
-            "test_case_id": context.test_case_id,
-        })
-
+    }
+    # Owner-scoped only: the store always writes the owner fields, so a doc found by the case id
+    # alone would belong to another project / run (the pre-W23d case-id fallback is gone).
+    doc = await db[Collections.REST_API_PAYLOADS].find_one(owner)
     if not doc:
         return f"No REST API payload captured for test_case_id: {test_case_id}. The test may not use HTTP request capture."
 
-    req = doc.get("request", {})
-    resp = doc.get("response", {})
-
+    docs, total = await _store_docs(db, owner)
+    if not docs:
+        docs, total = [doc], 1
     lines = ["=== REST API Payload ==="]
-    lines.append(f"REQUEST: {req.get('method', '?')} {req.get('url', '?')}")
-
-    req_headers = req.get("headers", {})
-    if req_headers:
-        lines.append("Request Headers:")
-        allowed = {"accept", "content-type", "user-agent", "x-request-id"}
-        for k, v in list(req_headers.items())[:20]:
-            if str(k).lower() in allowed:
-                safe, _, _ = sanitize_reference_text(str(v), limit=300)
-                lines.append(f"  {k}: {safe}")
-
-    req_body = req.get("body")
-    if req_body:
-        body_str, _, _ = sanitize_reference_text(str(req_body), limit=500)
-        lines.append(f"Request Body:\n{body_str}")
-
-    lines.append(f"\nRESPONSE: HTTP {resp.get('status_code', '?')}")
-
-    resp_body = resp.get("body")
-    if resp_body:
-        body_str, _, _ = sanitize_reference_text(str(resp_body), limit=1000)
-        lines.append(f"Response Body:\n{body_str}")
-
-    rendered, _, _ = sanitize_reference_text("\n".join(lines), limit=4000)
+    for index, exchange in enumerate(docs[:_EXCHANGES_RENDERED], start=1):
+        lines.extend(_render_exchange(index, exchange))
+    more = total - min(len(docs), _EXCHANGES_RENDERED)
+    if more > 0:
+        lines.append(f"… and {more} more")
+    # Bounded by construction (≤ _TOTAL_LIMIT): this final pass redacts and never cuts a block.
+    rendered, _, _ = sanitize_reference_text("\n".join(lines), limit=_TOTAL_LIMIT)
     return rendered

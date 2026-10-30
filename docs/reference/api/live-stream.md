@@ -10,7 +10,7 @@ List Active Sessions
 
 
 
-Source: [backend/app/routers/stream.py:204](../../../backend/app/routers/stream.py#L204).
+Source: [backend/app/routers/stream.py:264](../../../backend/app/routers/stream.py#L264).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -139,7 +139,7 @@ Ingest Event Batch
 
 
 
-Source: [backend/app/routers/stream.py:140](../../../backend/app/routers/stream.py#L140).
+Source: [backend/app/routers/stream.py:143](../../../backend/app/routers/stream.py#L143).
 
 Dependency chain: .
 
@@ -202,6 +202,102 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## POST `/api/v1/stream/http-exchanges`
+
+Ingest Http Exchanges
+
+W23d AGT-14: the captured HTTP exchanges of ONE live test (opt-in capture).
+
+Authenticated like ``POST /ingest`` (JWT or API key, the ingest role). The
+BODY ``session_id`` names the live session; the project, the run and the
+test case id are DERIVED from that session, never read from the body. A key
+bound to another project is refused, the caller must be a member of the
+session's project, and the body ``run_id`` must be the session's own. The
+exchanges were already cut and redacted by the model; the store redacts
+them again (idempotent) and never fails the request on a Mongo error.
+
+Source: [backend/app/routers/stream.py:207](../../../backend/app/routers/stream.py#L207).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+payload: LiveHttpExchangesIn, db: AsyncSession=Depends(get_db), auth: tuple[User, uuid.UUID | None]=Depends(get_api_key_context)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=404, detail='Session not found')
+HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='This API key is restricted to a different project')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "ingest_http_exchanges_api_v1_stream_http_exchanges_post",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/LiveHttpExchangesIn"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "202": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/LiveHttpExchangesResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## POST `/api/v1/stream/ingest`
 
 Ingest Via Api Key
@@ -213,7 +309,7 @@ can derive ``project_id`` itself) and carry the ``stream:write`` scope.
 The first call for a given ``run_id`` auto-creates a live session;
 subsequent calls reuse it.
 
-Source: [backend/app/routers/stream.py:163](../../../backend/app/routers/stream.py#L163).
+Source: [backend/app/routers/stream.py:166](../../../backend/app/routers/stream.py#L166).
 
 Dependency chain: `get_db`, `get_streaming_api_key_context`.
 
@@ -289,7 +385,7 @@ Create Session
 
 
 
-Source: [backend/app/routers/stream.py:51](../../../backend/app/routers/stream.py#L51).
+Source: [backend/app/routers/stream.py:54](../../../backend/app/routers/stream.py#L54).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -376,7 +472,7 @@ Close Session
 
 
 
-Source: [backend/app/routers/stream.py:105](../../../backend/app/routers/stream.py#L105).
+Source: [backend/app/routers/stream.py:108](../../../backend/app/routers/stream.py#L108).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -449,7 +545,7 @@ Get Session
 
 
 
-Source: [backend/app/routers/stream.py:89](../../../backend/app/routers/stream.py#L89).
+Source: [backend/app/routers/stream.py:92](../../../backend/app/routers/stream.py#L92).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -535,7 +631,7 @@ Sse Stream
 
 
 
-Source: [backend/app/routers/stream.py:279](../../../backend/app/routers/stream.py#L279).
+Source: [backend/app/routers/stream.py:339](../../../backend/app/routers/stream.py#L339).
 
 Dependency chain: .
 

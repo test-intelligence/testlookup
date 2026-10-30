@@ -147,6 +147,19 @@ def _fingerprint(event: dict) -> str:
     return hashlib.md5(value.encode()).hexdigest()
 
 
+def live_test_case_id(run_uuid: _uuid_mod.UUID, test_name: str, class_name: Optional[str]) -> _uuid_mod.UUID:
+    """The ``test_cases.id`` the drainer gives a live ``test_result`` event.
+
+    W23d AGT-14: the live HTTP-exchanges route stores its docs under this id
+    before the drain projects the row, so it must be the SAME expression as
+    ``_event_to_row``'s ``id``: the event's identity fields through the same
+    sanitizer, the same ``_fingerprint``, the same ``uuid5`` namespace (the
+    equality is pinned by ``tests/test_http_exchanges_routes.py``).
+    """
+    safe = sanitize_test_result_payload({"test_name": test_name, "class_name": class_name})
+    return _uuid_mod.uuid5(run_uuid, _fingerprint(safe))
+
+
 #: A live clock this far BEFORE the session started (server time) is a client clock that is off, not history.
 LIVE_CLOCK_EARLY_TOLERANCE = timedelta(hours=1)
 

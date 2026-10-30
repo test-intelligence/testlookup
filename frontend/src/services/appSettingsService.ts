@@ -1,4 +1,5 @@
 import type { AxiosResponse } from 'axios'
+import type { PrometheusMetricTemplate } from '@/types/prometheus'
 import { api } from './api'
 import { getData, postData } from './http'
 
@@ -346,6 +347,17 @@ export interface IntegrationsConfigRead {
   environment_fields?: string[]
   /** W20 ADM-10: secret fields stored as Vault references (`vault:<path>#<key>`). */
   vault_fields?: string[]
+  /**
+   * W23d AGT-15: the Prometheus block (SAVED-ONLY — never an environment value). Optional: an older server
+   * sends none (read: off, no URL, no token, the defaults).
+   */
+  prometheus_enabled?: boolean
+  prometheus_base_url?: string | null
+  /** A bearer token is stored (never the value). */
+  prometheus_token_set?: boolean
+  /** The saved templates, else the server's defaults (`prometheus_templates_source: 'default'`). */
+  prometheus_metric_templates?: PrometheusMetricTemplate[]
+  prometheus_templates_source?: 'saved' | 'default' | string
 }
 
 export interface IntegrationsConfigUpdate {
@@ -367,6 +379,12 @@ export interface IntegrationsConfigUpdate {
   teams_webhook_url?: string
   github_repo?: string
   github_token?: string
+  /** W23d AGT-15 (ADMIN only). `prometheus_bearer_token: ''` expires the stored token. */
+  prometheus_enabled?: boolean
+  prometheus_base_url?: string
+  prometheus_bearer_token?: string
+  /** ≤ TEMPLATES_MAX; `[]` = back to the defaults. */
+  prometheus_metric_templates?: PrometheusMetricTemplate[]
 }
 
 // ── Data & Storage Configuration ────────────────────────────

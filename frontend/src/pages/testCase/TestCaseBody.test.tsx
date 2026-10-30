@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import TestCaseBody from './TestCaseBody'
 import { useTestCase, useTestCaseHistory, useTestStepFlips, useTestSteps } from '@/hooks/useRuns'
 import { useSimilarFailures } from '@/hooks/useSimilarFailures'
+import { useHttpExchanges } from '@/hooks/useHttpExchanges'
 
 vi.mock('@/hooks/useRuns', () => ({
   useTestCase: vi.fn(),
@@ -43,8 +44,17 @@ vi.mock('@/hooks/useSimilarFailures', () => ({
     isLoading: false,
   })),
 }))
+// W23d AGT-14: the HTTP exchanges tab's read (asked only while the tab is open).
+vi.mock('@/hooks/useHttpExchanges', () => ({
+  useHttpExchanges: vi.fn(() => ({
+    data: { items: [], total: 0, dropped: 0, run_cap_reached: false },
+    error: undefined,
+    isLoading: false,
+    mutate: vi.fn(),
+  })),
+}))
 
-const ERROR = 'AssertionError: expected total 108.00 but was 100.00'
+const ERROR ='AssertionError: expected total 108.00 but was 100.00'
 const TRACE = `${ERROR}\n    at com.example.checkout.TotalSpec.checkoutTotalIncludesTax(TotalSpec.java:42)`
 
 function failedCase(over: Record<string, unknown> = {}) {
@@ -102,6 +112,7 @@ beforeEach(() => {
   vi.mocked(useTestCaseHistory).mockClear()
   vi.mocked(useTestStepFlips).mockClear()
   vi.mocked(useSimilarFailures).mockClear()
+  vi.mocked(useHttpExchanges).mockClear()
 })
 
 describe('TestCaseBody — the answer first (P4)', () => {
@@ -261,7 +272,7 @@ describe('TestCaseBody — Similar failures (W12)', () => {
   it.each(['FAILED', 'BROKEN'])('a %s result on the full page has the tab, and asks nothing until it opens', (status) => {
     setCase(failedCase({ status, execution: { status, error_message: ERROR, stack_trace: TRACE, step_count: 3 } }))
     renderBody()
-    expect(tabNames()).toEqual(['History', 'Steps3', 'Details', 'Similar failures'])
+    expect(tabNames()).toEqual(['History', 'Steps3', 'Details', 'HTTP exchanges', 'Similar failures'])
     expect(useSimilarFailures).not.toHaveBeenCalled()
 
     fireEvent.click(within(tablist()).getByRole('tab', { name: 'Similar failures' }))
@@ -282,7 +293,7 @@ describe('TestCaseBody — Similar failures (W12)', () => {
   it('a passed result has no such tab, and ?tab=similar reads as History', () => {
     setCase(failedCase({ status: 'PASSED', error_message: null, execution: { status: 'PASSED', step_count: 3 } }))
     renderBody('/runs/run-1/tests/test-1?tab=similar')
-    expect(tabNames()).toEqual(['History', 'Steps3', 'Details'])
+    expect(tabNames()).toEqual(['History', 'Steps3', 'Details', 'HTTP exchanges'])
     expect(within(tablist()).getByRole('tab', { name: /History/ })).toHaveAttribute('aria-selected', 'true')
     expect(useSimilarFailures).not.toHaveBeenCalled()
   })
@@ -291,5 +302,39 @@ describe('TestCaseBody — Similar failures (W12)', () => {
     renderBody('/runs/run-1/tests/test-1?tab=similar', true)
     expect(tabNames()).toEqual(['History', 'Steps3', 'Details'])
     expect(useSimilarFailures).not.toHaveBeenCalled()
+  })
+})
+
+// W23d AGT-14: HTTP exchanges is a tab on the FULL page of every result
+// (`?tab=http`), after Details and before Similar failures, mounted only while
+// open — the page's load asks nothing new, and the compact pane
+// (`run-test-pane`) keeps its tab strip.
+describe('TestCaseBody — HTTP exchanges (W23d)', () => {
+  const tabNames = () => within(tablist()).getAllByRole('tab').map((tab) => tab.textContent)
+
+  it('the full page has the tab and asks nothing until it opens; a click opens it and asks with enabled = true', () => {
+    renderBody()
+    expect(within(tablist()).getByRole('tab', { name: 'HTTP exchanges' })).toBeInTheDocument()
+    expect(useHttpExchanges).not.toHaveBeenCalled()
+
+    fireEvent.click(within(tablist()).getByRole('tab', { name: 'HTTP exchanges' }))
+    expect(screen.getByTestId('search')).toHaveTextContent('?tab=http')
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('data-test-case-tab', 'http')
+    expect(useHttpExchanges).toHaveBeenCalledWith('run-1', 'test-1', true)
+    expect(screen.getByText('No HTTP exchanges were captured for this test.')).toBeInTheDocument()
+  })
+
+  it('?tab=http opens it directly, on a passed result too', () => {
+    setCase(failedCase({ status: 'PASSED', error_message: null, execution: { status: 'PASSED', step_count: 3 } }))
+    renderBody('/runs/run-1/tests/test-1?tab=http')
+    expect(within(tablist()).getByRole('tab', { name: 'HTTP exchanges' })).toHaveAttribute('aria-selected', 'true')
+    expect(useHttpExchanges).toHaveBeenCalledWith('run-1', 'test-1', true)
+  })
+
+  it('the compact pane has no HTTP exchanges tab, and ?tab=http asks nothing there', () => {
+    renderBody('/runs/run-1/tests/test-1?tab=http', true)
+    expect(tabNames()).toEqual(['History', 'Steps3', 'Details'])
+    expect(within(tablist()).getByRole('tab', { name: /History/ })).toHaveAttribute('aria-selected', 'true')
+    expect(useHttpExchanges).not.toHaveBeenCalled()
   })
 })

@@ -786,6 +786,17 @@ activity_live_published_total = Counter(
     ["result"],
 )
 
+# W23d AGT-14: captured HTTP exchanges offered to the Mongo store. The store is
+# best-effort (a write failure never fails an ingest), so this counter is the
+# only way an operator tells "no run opted in" from "every write is dropped".
+# Incremented in services/http_exchange_store.py.
+http_exchanges_ingested_total = Counter(
+    "testlookup_http_exchanges_ingested_total",
+    "Captured HTTP exchanges offered to the store, by source and outcome",
+    # source: json_batch | live; outcome: stored | truncated | dropped | write_failed
+    ["source", "outcome"],
+)
+
 # E9.5: fraction of candidate workflow steps backed by an exact replay-cache
 # key during the latest dry-run. Project/workflow labels are bounded by stored
 # definitions and let operators distinguish a safe regression result from an

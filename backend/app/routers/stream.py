@@ -26,12 +26,15 @@ from app.core.deps import (
     get_api_key_context,
     get_current_active_user,
     get_streaming_api_key_context,
+    resolve_project_scope,
 )
 from app.db.postgres import get_db
-from app.models.postgres import TestRun, User
+from app.models.postgres import LiveSession, TestRun, User
 from app.models.schemas import (
     ActiveSessionsResponse,
     LiveEventBatch,
+    LiveHttpExchangesIn,
+    LiveHttpExchangesResponse,
     LiveSessionCreate,
     LiveStreamIngestRequest,
 )
@@ -199,6 +202,63 @@ async def ingest_via_api_key(
         await bump_analytics_epoch(auth.project_id)
         await stream_service.finalize_closed_session_redis(response.session_id)
     return response
+
+
+@router.post("/http-exchanges", response_model=LiveHttpExchangesResponse, status_code=202)
+async def ingest_http_exchanges(
+    payload: LiveHttpExchangesIn,
+    db: AsyncSession = Depends(get_db),
+    auth: tuple[User, uuid.UUID | None] = Depends(get_api_key_context),
+):
+    """W23d AGT-14: the captured HTTP exchanges of ONE live test (opt-in capture).
+
+    Authenticated like ``POST /ingest`` (JWT or API key, the ingest role). The
+    BODY ``session_id`` names the live session; the project, the run and the
+    test case id are DERIVED from that session, never read from the body. A key
+    bound to another project is refused, the caller must be a member of the
+    session's project, and the body ``run_id`` must be the session's own. The
+    exchanges were already cut and redacted by the model; the store redacts
+    them again (idempotent) and never fails the request on a Mongo error.
+    """
+    from app.services import http_exchange_store
+    from app.services.live_session_drainer import live_test_case_id
+
+    current_user, bound_project_id = auth
+    ensure_ingest_role(current_user)
+    try:
+        session_uuid = uuid.UUID(payload.session_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Session not found") from None
+    session = await db.get(LiveSession, session_uuid)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if bound_project_id is not None and bound_project_id != session.project_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API key is restricted to a different project",
+        )
+    await resolve_project_scope(db, current_user, str(session.project_id))
+    if session.run_id != payload.run_id:
+        raise stream_service.LiveBatchConflictError("run_id does not belong to this live session")
+    # Admission gates after authorisation (the /ingest order): backpressure first.
+    await enforce_redis_memory_backpressure()
+    await enforce_ingest_rate_limit(str(session.project_id))
+
+    # A live run's TestRun.id IS its session id (the stub row is written with it).
+    run_uuid = stream_service.canonical_test_run_uuid(str(session.id))
+    test_case_id = live_test_case_id(run_uuid, payload.test_name, payload.class_name)
+    counts = await http_exchange_store.write_exchanges(
+        project_id=str(session.project_id),
+        test_run_id=str(run_uuid),
+        build_number=session.build_number or str(run_uuid)[:8],
+        run_created_at=session.started_at,
+        items=[(str(test_case_id), payload.exchanges, payload.exchanges_dropped)],
+        source="live",
+    )
+    return LiveHttpExchangesResponse(
+        stored=counts.stored, truncated=counts.truncated, dropped=counts.dropped,
+        test_case_id=str(test_case_id),
+    )
 
 
 @router.get("/active", response_model=ActiveSessionsResponse)

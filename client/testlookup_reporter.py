@@ -71,9 +71,13 @@ from commit_range import resolve_commit_range
 # field is simply omitted. Aliased: the constructors' ``collect_run_context=``
 # flag would shadow the function's own name.
 from run_context import collect_run_context as _collect_run_context, locates_run_context
+# Opt-in capture of the HTTP exchanges each test makes (W23d AGT-14): OFF unless
+# --testlookup-capture-http / TESTLOOKUP_CAPTURE_HTTP / testlookup.capture_http
+# asks; redacted here, before anything is buffered; see http_capture.py.
+from http_capture import HttpCapture, capture_enabled
 
 # Keep in step with ``version`` in pyproject.toml (pinned by a test).
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __all__ = ["TestLookupReporter", "LiveSession", "LiveStream"]
 
 logger = logging.getLogger("testlookup_reporter")
@@ -251,6 +255,10 @@ class ConfigLoader:
         # Run context (W23b FAIL-13) — runtime / lockfile hashes; see run_context.py.
         "testlookup.run_context":       ("ci", "collect_run_context"),
         "testlookup.run_context_root":  ("ci", "run_context_root"),
+        # HTTP exchange capture (W23d AGT-14) — opt-in, pytest plugin only; see http_capture.py.
+        # TESTLOOKUP_CAPTURE_HTTP is read by http_capture.capture_enabled, NOT ENV_MAP: every ENV_MAP
+        # variable must act on all three paths, and only the pytest plugin captures.
+        "testlookup.capture_http":      ("reporting", "capture_http"),
         # TLS — homelab / dev convenience. Either point at a custom CA bundle
         # (preferred — preserves verification) or disable verification entirely.
         "testlookup.ca_cert_path": ("auth", "ca_cert_path"),
@@ -861,6 +869,9 @@ class LiveSession:
         self._queue: asyncio.Queue[dict] = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
         self._flusher_task: Optional[asyncio.Task] = None
         self._stats = {"sent": 0, "failed": 0}
+        # W23d AGT-14: the opt-in exchange posts, counted apart from the event stats.
+        self._http_stats = {"http_exchanges_sent": 0, "http_exchanges_failed": 0}
+        self._http_warned = False
 
         # Start the background flusher
         self._flusher_task = asyncio.create_task(
@@ -955,6 +966,47 @@ class LiveSession:
     @property
     def stats(self) -> dict:
         return dict(self._stats)
+
+    @property
+    def http_exchange_stats(self) -> dict:
+        return dict(self._http_stats)
+
+    async def record_http_exchanges(
+        self, test_name: str, class_name: Optional[str], exchanges: list[dict],
+    ) -> bool:
+        """POST one test's captured (already redacted) exchanges to ``/api/v1/stream/http-exchanges``.
+
+        ``test_name`` / ``class_name`` must be EXACTLY what the test's ``record()`` sent: the server
+        derives the test case id from them. Best-effort: a non-2xx answer or a transport error is
+        counted in ``http_exchange_stats`` and warned about once per session -- never raised, never a
+        test failure. Returns whether the server accepted them."""
+        if not exchanges:
+            return False
+        body: dict[str, Any] = {
+            "session_id": self.session_id,
+            "run_id": self.run_id,
+            "test_name": test_name,
+            "exchanges": exchanges[:20],
+        }
+        if class_name:
+            body["class_name"] = class_name
+        try:
+            resp = await self._http.post("/api/v1/stream/http-exchanges", json=body)
+            ok = 200 <= resp.status_code < 300
+            reason = f"HTTP {resp.status_code}"
+        except Exception as exc:  # noqa: BLE001 - capture never fails a run
+            ok, reason = False, type(exc).__name__
+        if ok:
+            self._http_stats["http_exchanges_sent"] += len(body["exchanges"])
+            return True
+        self._http_stats["http_exchanges_failed"] += 1
+        if not self._http_warned:
+            self._http_warned = True
+            logger.warning(
+                "TestLookup did not store the captured HTTP exchanges (%s); results are unaffected. "
+                "Further failures this session are counted, not logged.", reason,
+            )
+        return False
 
     # ── Internal ──────────────────────────────────────────────────────────
 
@@ -1627,6 +1679,11 @@ def pytest_addoption(parser):  # noqa: D401
     group.addoption("--testlookup-build",   default="", help="Build number (TESTLOOKUP_BUILD)")
     group.addoption("--testlookup-branch",  default="", help="Git branch (TESTLOOKUP_BRANCH)")
     group.addoption("--testlookup-launch",  default="", help="Launch label (TESTLOOKUP_LAUNCH)")
+    group.addoption(
+        "--testlookup-capture-http", action="store_true", default=False,
+        help="Capture each test's requests / httpx exchanges, redacted, beside its result "
+             "(opt-in; TESTLOOKUP_CAPTURE_HTTP=1 / testlookup.capture_http=true)",
+    )
 
 
 def pytest_configure(config):  # noqa: D401
@@ -1654,6 +1711,11 @@ def pytest_configure(config):  # noqa: D401
             branch=config.getoption("--testlookup-branch", default=""),
             launch_name=config.getoption("--testlookup-launch", default=""),
             api_key=api_key or None,
+            capture_http=capture_enabled(
+                config.getoption("--testlookup-capture-http", default=False),
+                env=os.environ,
+                config_value=ConfigLoader.get(cfg, "reporting.capture_http"),
+            ),
         )
         config.pluginmanager.register(plugin, "testlookup_live")
 
@@ -1679,6 +1741,7 @@ class _TestLookupPytestPlugin:
         launch_name: str = "",
         *,
         api_key: Optional[str] = None,
+        capture_http: bool = False,
     ) -> None:
         self._reporter = TestLookupReporter(
             base_url=base_url,
@@ -1706,8 +1769,30 @@ class _TestLookupPytestPlugin:
         #: nodeid -> (setup_ms, started_at_ms) from its setup report, so the
         #: call report can send the phase split and when the test began.
         self._setup: dict = {}
+        # W23d AGT-14: None unless the run opted in -- then nothing is wrapped
+        # either. The reporter's own client is excluded by identity.
+        self._capture: Optional[HttpCapture] = (
+            HttpCapture(exclude=[self._reporter._http]) if capture_http else None
+        )
 
     # ── pytest hooks ──────────────────────────────────────────────────────
+
+    def pytest_runtest_setup(self, item):
+        """Start capturing this test's HTTP exchanges (opt-in runs only)."""
+        if self._capture is not None:
+            self._capture.start(item.nodeid)
+
+    def _post_captured(self, test_name: str) -> None:
+        """Send what the capture recorded for the test just decided -- once, best-effort."""
+        if self._capture is None or self._live is None or self._loop is None:
+            return
+        exchanges = self._capture.stop()
+        if not exchanges:
+            return
+        try:
+            self._loop.run_until_complete(self._live.record_http_exchanges(test_name, None, exchanges))
+        except Exception as exc:  # noqa: BLE001 - capture never fails a test
+            logger.warning("Could not send the captured HTTP exchanges (%s)", type(exc).__name__)
 
     def pytest_sessionstart(self, session):
         self._loop = asyncio.new_event_loop()
@@ -1719,6 +1804,8 @@ class _TestLookupPytestPlugin:
             )
         )
         logger.info("TestLookup live session started: %s", self._live.session_id)
+        if self._capture is not None:
+            self._capture.install()
 
     def pytest_runtest_logreport(self, report):
         """Stream a result for every test, whichever phase decided its fate.
@@ -1825,8 +1912,14 @@ class _TestLookupPytestPlugin:
                 **{name: value for name, value in timing.items() if value is not None},
             )
         )
+        if not suffix:
+            # The report that decided the test's outcome: send its captured exchanges with the SAME
+            # test_name (and no class_name) the record above sent -- the server's test case id.
+            self._post_captured(test_name)
 
     def pytest_sessionfinish(self, session, exitstatus):
+        if self._capture is not None:
+            self._capture.uninstall()
         if self._live is None or self._loop is None:
             return
         self._loop.run_until_complete(self._live._shutdown())

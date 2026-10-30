@@ -14,6 +14,7 @@ import type {
 import { deriveDecisionTrustState } from './decisionTrustState'
 import { readAnalysisCoverage, describeAnalysisCoverage } from './analysisCoverage'
 import DecisionReportFeedbackControls from './DecisionReportFeedbackControls'
+import SpecialistEvidence from './SpecialistEvidence'
 import { formatCompactDateTime, formatNumber } from '@/utils/formatters'
 import { ACTIONS_QUEUE_HREF, CHIP_TONE_CLASS, chipFor, type AgentActionLike } from '@/pages/inbox/agentActionModel'
 
@@ -397,6 +398,8 @@ export default function DecisionIntelligencePanel({
 
           <div className="mt-3">
             <EvidenceList report={displayReport} />
+            {/* W23d: the contract / log stages' findings, only when the report carries them. */}
+            <SpecialistEvidence contractFindings={displayReport.contract_findings} logFindings={displayReport.log_findings} />
       <ClaimsSection claims={displayReport.claims ?? []} actions={displayReport.proposed_actions ?? []} actionStatuses={actionStatuses} onInspect={setSelectedClaim} />
             <DecisionReportFeedbackControls runId={runId} reportVersion={verified ? reportVersion : null} claims={displayReport.claims ?? []} />
             {/* Keyed: inspecting another claim opens its own section (focus and scroll move to it). */}

@@ -1,14 +1,35 @@
-"""Tool: validate tenant-scoped REST response contracts."""
+"""Tool: validate captured REST responses against the project's previous runs (W23d AGT-14 P-4).
+
+Scope is ``project_id`` + ``test_run_id`` + ``test_case_id`` — all server-bound by the
+contract stage; a missing one is refused BEFORE any Mongo call. ``pipeline_run_id`` is
+still accepted (the stage sends it) and ignored: an ingest-time writer cannot know the
+pipeline. The docs are the ones ``services/http_exchange_store.py`` wrote (redacted).
+
+Drift is cross-run: for each parsed response, the newest of the project's ≤ 5 earlier
+runs that captured the same (method, endpoint template, status class) gives the STABLE
+keys (present in every doc of that run). A stable key absent now is ``schema_drift``
+(critical), a stable key whose JSON type changed is ``type_drift`` (warning); added keys
+are counted, never violations. A key outside ``FIELD_NAME_RE`` is never named. No LLM.
+"""
 from __future__ import annotations
 
 import json
-import logging
+import re
+from typing import Any, Mapping, Optional
 
 from langchain_core.tools import tool
 
-from app.db.mongo import get_mongo_db
+# Kept on purpose: tests/services/test_contract_agent.py patches this name to prove the
+# scope refusal happens before any Mongo access (the reads go through the store).
+from app.db.mongo import get_mongo_db  # noqa: F401
+from app.services import http_exchange_store
+from app.services.http_exchange_vocab import CONTRACT_SENTENCES, FIELD_NAME_RE
 
-logger = logging.getLogger("tools.validate_api_contract")
+_FIELD_NAME = re.compile(FIELD_NAME_RE)
+_UNNAMED_KEYS = "_unnamed_keys"
+_MAX_VIOLATIONS = 200
+_MAX_ENDPOINTS = 20
+_MAX_SUMMARY = 1_000
 
 
 def _check_schema(response_body: dict, expected_fields: dict) -> list[dict]:
@@ -34,20 +55,89 @@ def _check_schema(response_body: dict, expected_fields: dict) -> list[dict]:
     return violations
 
 
-def _extract_schema_fingerprint(body: dict) -> dict:
-    return {str(k)[:240]: type(v).__name__ for k, v in body.items()} if isinstance(body, dict) else {}
+def _named_schema(schema: Any) -> dict[str, str]:
+    """A stored ``response_schema`` with only nameable keys (never ``_unnamed_keys``)."""
+    if not isinstance(schema, Mapping):
+        return {}
+    return {
+        str(key): str(kind)
+        for key, kind in schema.items()
+        if key != _UNNAMED_KEYS and isinstance(key, str) and _FIELD_NAME.match(key)
+    }
+
+
+def _stable_keys(baseline_docs: list[dict]) -> tuple[dict[str, Optional[str]], set[str]]:
+    """(stable key -> its type when every doc agrees, else None; every key seen)."""
+    schemas = [_named_schema(doc.get("response_schema")) for doc in baseline_docs]
+    if not schemas:
+        return {}, set()
+    seen: set[str] = set().union(*schemas)
+    stable = set(schemas[0]).intersection(*schemas[1:])
+    types: dict[str, Optional[str]] = {}
+    for key in sorted(stable):
+        kinds = {schema[key] for schema in schemas}
+        types[key] = kinds.pop() if len(kinds) == 1 else None
+    return types, seen
+
+
+def _parsed_body(doc: Mapping[str, Any]) -> dict:
+    response = doc.get("response") if isinstance(doc.get("response"), Mapping) else {}
+    body = response.get("body") if isinstance(response, Mapping) else None
+    try:
+        parsed = json.loads(body) if isinstance(body, str) else None
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _missing_scope() -> str:
-    return json.dumps({"error": "project_id, test_run_id, and pipeline_run_id are required", "evidence_available": False})
+    return json.dumps({"error": "project_id, test_run_id and test_case_id are required", "evidence_available": False})
+
+
+async def _drift_for(doc: Mapping[str, Any], *, project_id: str, test_run_id: str) -> tuple[list[dict], Optional[str], Optional[str], int]:
+    """(violations, baseline build or None, a note sentence or None, added-key count) for ONE doc."""
+    method = str(doc.get("method") or "")
+    endpoint = str(doc.get("endpoint") or "")
+    before = doc.get("run_created_at")
+    if before is None:
+        return [], None, CONTRACT_SENTENCES["no_baseline"].format(endpoint=endpoint), 0
+    baseline = await http_exchange_store.drift_baseline(
+        project_id=project_id, method=method, endpoint=endpoint,
+        status_class=doc.get("status_class"), before=before, exclude_run_id=test_run_id,
+    )
+    if not baseline:
+        return [], None, CONTRACT_SENTENCES["no_baseline"].format(endpoint=endpoint), 0
+    newest = baseline[0].get("test_run_id")
+    build = str(baseline[0].get("build_number") or "")
+    stable, seen = _stable_keys([d for d in baseline if d.get("test_run_id") == newest])
+    current = _named_schema(doc.get("response_schema"))
+    violations: list[dict] = []
+    for key, was in stable.items():
+        if key not in current:
+            violations.append({
+                "violation_type": "schema_drift", "severity": "critical", "field_path": key,
+                "expected": "present", "actual": "absent", "method": method, "endpoint": endpoint,
+                "baseline_build": build,
+                "sentence": CONTRACT_SENTENCES["missing_field"].format(field=key, method=method, endpoint=endpoint, build=build),
+            })
+        elif was is not None and current[key] != was:
+            violations.append({
+                "violation_type": "type_drift", "severity": "warning", "field_path": key,
+                "expected": was, "actual": current[key], "method": method, "endpoint": endpoint,
+                "baseline_build": build,
+                "sentence": CONTRACT_SENTENCES["type_changed"].format(
+                    field=key, method=method, endpoint=endpoint, was=was, now=current[key], build=build,
+                ),
+            })
+    return violations, build, None, len(set(current) - seen)
 
 
 @tool
 async def validate_api_contract(params_json: str) -> str:
-    """Validate a REST response against an owned historical contract.
+    """Validate a test's captured REST responses against the project's previous runs.
 
-    The caller must supply server-bound project, test-run, pipeline, and test
-    identifiers. Global test-case lookups are intentionally unsupported.
+    The caller must supply the server-bound project, test-run and test-case ids.
+    ``pipeline_run_id`` is accepted and ignored. Global lookups are unsupported.
     """
     try:
         params = json.loads(params_json)
@@ -59,82 +149,74 @@ async def validate_api_contract(params_json: str) -> str:
     test_case_id = str(params.get("test_case_id") or "")
     project_id = str(params.get("project_id") or "")
     test_run_id = str(params.get("test_run_id") or "")
-    pipeline_run_id = str(params.get("pipeline_run_id") or "")
     expected_fields = params.get("expected_fields") or {}
     check_drift = bool(params.get("check_drift", True))
-    if not test_case_id:
-        return json.dumps({"error": "test_case_id_required", "evidence_available": False})
-    if not (project_id and test_run_id and pipeline_run_id):
+    if not (test_case_id and project_id and test_run_id):
         return _missing_scope()
 
-    db = get_mongo_db()
-    scope_filter = {
-        "test_case_id": test_case_id,
-        "project_id": project_id,
-        "test_run_id": test_run_id,
-        "pipeline_run_id": pipeline_run_id,
-    }
-    payload_doc = await db["rest_api_payloads"].find_one(scope_filter)
-    if not payload_doc:
+    # ExchangesUnavailable propagates: a store outage is a failed check, never "no capture".
+    docs = await http_exchange_store.docs_for_case(
+        project_id=project_id, test_run_id=test_run_id, test_case_id=test_case_id,
+    )
+    if not docs:
         return json.dumps({
-            "violations": [],
-            "drift_summary": "No tenant/run-scoped REST payload found for this test case.",
-            "has_violations": False,
-            "evidence_available": False,
+            "endpoint": "unknown", "endpoints": [], "violations": [], "has_violations": False,
+            "drift_summary": CONTRACT_SENTENCES["no_capture"], "exchanges_checked": 0,
+            "baseline_builds": [], "schema_fingerprint": {}, "evidence_available": False,
         })
 
-    try:
-        resp_body_raw = payload_doc.get("response_body", {})
-        resp_body = json.loads(resp_body_raw) if isinstance(resp_body_raw, str) else resp_body_raw
-        if not isinstance(resp_body, dict):
-            resp_body = {}
-    except (json.JSONDecodeError, TypeError):
-        resp_body = {}
+    endpoints: list[str] = []
+    violations: list[dict] = []
+    keys_seen: set[tuple[str, str, str, str]] = set()
+    notes: list[str] = []
+    builds: list[str] = []
+    checked = added = 0
+    fingerprint: dict[str, str] = {}
+    for doc in docs:
+        method, endpoint = str(doc.get("method") or ""), str(doc.get("endpoint") or "")
+        if endpoint and endpoint not in endpoints and len(endpoints) < _MAX_ENDPOINTS:
+            endpoints.append(endpoint)
+        if doc.get("response_schema_state") != "parsed":
+            note = CONTRACT_SENTENCES["body_not_checked"].format(method=method, endpoint=endpoint)
+            if note not in notes:
+                notes.append(note)
+            continue
+        if not fingerprint:
+            fingerprint = _named_schema(doc.get("response_schema"))
+        found: list[dict] = []
+        if expected_fields and isinstance(expected_fields, dict):
+            body = _parsed_body(doc)
+            if body:
+                found += [{**v, "method": method, "endpoint": endpoint} for v in _check_schema(body, expected_fields)]
+        if check_drift:
+            drift, build, drift_note, extra = await _drift_for(doc, project_id=project_id, test_run_id=test_run_id)
+            found += drift
+            added += extra
+            if drift_note and drift_note not in notes:
+                notes.append(drift_note)
+            if build is not None:
+                checked += 1
+                if build not in builds:
+                    builds.append(build)
+        for violation in found:
+            key = (method, endpoint, str(violation.get("field_path")), str(violation.get("violation_type")))
+            if key not in keys_seen and len(violations) < _MAX_VIOLATIONS:
+                keys_seen.add(key)
+                violations.append(violation)
 
-    endpoint = str(payload_doc.get("endpoint") or "unknown")[:500]
-    status_code = payload_doc.get("response_status", 0)
-    violations = _check_schema(resp_body, expected_fields) if expected_fields and resp_body else []
-    drift_summary = "Schema drift check skipped."
-    if check_drift and resp_body:
-        current_fingerprint = _extract_schema_fingerprint(resp_body)
-        historical_docs = await db["rest_api_payloads"].find(
-            {
-                "endpoint": endpoint,
-                "project_id": project_id,
-                "test_run_id": test_run_id,
-                "pipeline_run_id": pipeline_run_id,
-                "test_case_id": {"$ne": test_case_id},
-            },
-            {"response_body": 1},
-        ).sort("_id", -1).limit(20).to_list(20)
-        if historical_docs:
-            historical_fields: set[str] = set()
-            for doc in historical_docs:
-                try:
-                    body = doc.get("response_body", {})
-                    body = json.loads(body) if isinstance(body, str) else body
-                    if isinstance(body, dict):
-                        historical_fields.update(str(key)[:240] for key in body)
-                except (json.JSONDecodeError, AttributeError, TypeError):
-                    continue
-            missing = historical_fields - set(current_fingerprint)
-            added = set(current_fingerprint) - historical_fields
-            for field in sorted(missing)[:200]:
-                violations.append({"field_path": field, "violation_type": "schema_drift", "expected": "present in historical response", "actual": "absent", "severity": "warning"})
-            drift_summary = (
-                f"Schema drift detected on endpoint {endpoint}: {len(missing)} fields disappeared, {len(added)} new fields appeared."
-                if missing or added else
-                f"No schema drift detected. Response structure matches {len(historical_docs)} historical responses."
-            )
-        else:
-            drift_summary = "No historical payloads found for baseline comparison."
-
+    sentences = [str(v["sentence"]) for v in violations if v.get("sentence")]
+    if not sentences and checked:
+        sentences = [CONTRACT_SENTENCES["no_drift"].format(checked=checked)]
+    summary = " ".join(sentences + notes) or "Schema drift check skipped."
     return json.dumps({
-        "endpoint": endpoint,
-        "response_status": status_code,
-        "violations": violations[:200],
+        "endpoint": endpoints[0] if endpoints else "unknown",
+        "endpoints": endpoints,
+        "violations": violations,
         "has_violations": bool(violations),
-        "drift_summary": drift_summary[:1000],
-        "schema_fingerprint": _extract_schema_fingerprint(resp_body),
+        "drift_summary": summary[:_MAX_SUMMARY],
+        "exchanges_checked": checked,
+        "added_fields": added,
+        "baseline_builds": builds[:_MAX_ENDPOINTS],
+        "schema_fingerprint": fingerprint,
         "evidence_available": True,
-    })
+    }, default=str)

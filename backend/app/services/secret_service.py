@@ -143,6 +143,7 @@ SECRET_FIELDS: dict[str, set[str]] = {
         "jira_api_token", "splunk_api_token", "ocp_sa_token",
         "slack_bot_token", "slack_webhook_url", "teams_webhook_url",
         "github_token",
+        "prometheus_bearer_token",  # W23d AGT-15: secret_refs only, never app_settings.value
     },
 }
 

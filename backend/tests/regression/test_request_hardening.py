@@ -223,6 +223,7 @@ async def test_range_is_ignored_so_the_sdk_download_is_always_whole(tmp_path, mo
             "python/commit_range.py",
             "python/testlookup_robot_listener.py",  # W18 DEV-03
             "python/run_context.py",  # W23b FAIL-13
+            "python/http_capture.py",  # W23d AGT-14
             "python/pyproject.toml",
             "python/README.md",
             "python/testlookup.yaml.example",
@@ -253,6 +254,7 @@ async def test_the_real_python_sdk_archive_imports_in_an_isolated_directory(
         "commit_range",
         "testlookup_robot_listener",  # W18 DEV-03
         "run_context",  # W23b FAIL-13
+        "http_capture",  # W23d AGT-14
     ]
 
     site_packages = next(

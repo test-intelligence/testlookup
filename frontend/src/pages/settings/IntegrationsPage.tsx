@@ -12,6 +12,9 @@ import {
   ENV_HINT,
   INTEGRATION_FORM_FIELDS,
   NO_CHANGES,
+  PROMETHEUS_TOKEN_LABEL,
+  PROMETHEUS_URL_LABEL,
+  PROMETHEUS_URL_PLACEHOLDER,
   SAVED,
   SAVE_FAILED,
   SECRET_SET,
@@ -25,6 +28,7 @@ import {
   secretStateLabel,
   showsEnvHint,
 } from './integrationsForm'
+import PrometheusCard from './PrometheusCard'
 
 const HELP_TOPIC = helpTopicParam('/settings/integrations')
 
@@ -188,7 +192,7 @@ export default function IntegrationsPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader compact helpTopic={HELP_TOPIC} title="Integrations" subtitle="Jira, Splunk, OpenShift, Slack and Teams" />
+      <PageHeader compact helpTopic={HELP_TOPIC} title="Integrations" subtitle="Jira, Splunk, OpenShift, Slack, Teams and Prometheus" />
 
       {/* Two columns of cards at ≥ 1280 px (P5 item 4) instead of one
           `max-w-2xl` column. */}
@@ -282,6 +286,17 @@ export default function IntegrationsPage() {
             placeholder={config.teams_webhook_set ? '••••••••' : 'https://outlook.office.com/webhook/...'}
             error={fieldErrors.teams_webhook_url} />
         </div>
+
+        {/* Prometheus (W23d AGT-15): a full-row card, so the cards above keep their size. */}
+        <PrometheusCard config={config} form={form} upd={upd} fieldErrors={fieldErrors} isAdmin={isAdmin}
+          toggle={<Toggle label="Enabled" checked={form.prometheus_enabled ?? false} onChange={v => upd('prometheus_enabled', v)} disabled={!isAdmin} />}
+          fields={<>
+            <Field name="prometheus_base_url" label={PROMETHEUS_URL_LABEL} value={form.prometheus_base_url ?? ''} onChange={v => upd('prometheus_base_url', v)} disabled={!isAdmin}
+              placeholder={PROMETHEUS_URL_PLACEHOLDER} error={fieldErrors.prometheus_base_url} />
+            <SecretField id="integration-secret-prometheus" name="prometheus_bearer_token" label={PROMETHEUS_TOKEN_LABEL} state={secretStateLabel('prometheus_bearer_token', config, envFields)}
+              value={form.prometheus_bearer_token ?? ''} onChange={v => upd('prometheus_bearer_token', v)} disabled={!isAdmin}
+              placeholder="Enter token" error={fieldErrors.prometheus_bearer_token} />
+          </>} />
 
         {/* GitHub is configured in ONE place, per project (P5 item 3): the
             card that sat here wrote a global repo + token that only the

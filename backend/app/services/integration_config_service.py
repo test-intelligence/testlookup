@@ -26,6 +26,7 @@ response, workflow state or a checkpoint.
 """
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -165,15 +166,92 @@ async def resolve_global_integrations(
     }
 
 
+async def _saved_integrations_row(db: AsyncSession) -> dict[str, Any]:
+    """The saved ``integrations_config`` value (``{}`` when never saved): ONE select."""
+    result = await db.execute(select(AppSetting).where(AppSetting.key == _SCOPE))
+    row = result.scalar_one_or_none()
+    return dict(row.value) if row is not None and row.value else {}
+
+
+def _saved_metric_templates(raw: Any) -> list[dict[str, str]]:
+    """The saved Prometheus metric templates that are still well formed (the PUT validated them; a hand-edited row
+    is re-checked so a bad entry is skipped, never sent). ``[]`` when none are saved or none survive."""
+    from app.services import prometheus_vocab as pv
+
+    if not isinstance(raw, list):
+        return []
+    id_re = re.compile(pv.TEMPLATE_ID_RE)
+    kept: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw[: pv.TEMPLATES_MAX]:
+        if not isinstance(item, Mapping):
+            continue
+        tid, label, promql = item.get("id"), item.get("label"), item.get("promql")
+        unit = item.get("unit") if item.get("unit") in pv.TEMPLATE_UNITS else "count"
+        if not (isinstance(tid, str) and id_re.fullmatch(tid) and tid not in seen):
+            continue
+        if not (isinstance(label, str) and 0 < len(label) <= pv.TEMPLATE_LABEL_MAX):
+            continue
+        if not (isinstance(promql, str) and 0 < len(promql) <= pv.TEMPLATE_PROMQL_MAX
+                and pv.SERVICE_PLACEHOLDER in promql):
+            continue
+        if any((ord(ch) < 32 and ch not in "\t\n\r") or ord(ch) == 127 for ch in label + promql):
+            continue  # other C0 controls: never sent in a query, never shown
+        seen.add(tid)
+        kept.append({"id": tid, "label": label, "unit": str(unit), "promql": promql})
+    return kept
+
+
+async def resolve_prometheus_settings(
+    db: AsyncSession,
+    *,
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """W23d AGT-15: the Prometheus block, from the SAME ``integrations_config`` row plus its ``secret_refs`` row.
+
+    SAVED-ONLY (contract 0.24 / D-9): there is no environment fallback -- the
+    process ``PROMETHEUS_URL`` is TestLookup's OWN self-monitoring server (the
+    Performance page), never the system under test's. A separate function on
+    purpose: ``resolve_global_integrations``' key set is pinned exactly.
+
+    Keys: ``prometheus_enabled``, ``prometheus_base_url``,
+    ``prometheus_bearer_token`` (the ``secret_refs`` value, Vault references
+    resolved by ``read_secret``; never an inline value), ``prometheus_metric_templates``
+    (the saved list, else ``DEFAULT_METRIC_TEMPLATES``) and
+    ``prometheus_templates_source`` (``saved`` | ``default``). Statements: the
+    row (only when ``overrides`` is None) and the secret read.
+    """
+    from app.services import prometheus_vocab as pv
+
+    saved = await _saved_integrations_row(db) if overrides is None else overrides
+    templates = _saved_metric_templates(saved.get("prometheus_metric_templates"))
+    source = "saved" if templates else "default"
+    if not templates:
+        templates = [dict(item) for item in pv.DEFAULT_METRIC_TEMPLATES]
+    try:
+        token = await read_secret(db, _SCOPE, pv.SECRET_KEY)
+    except Exception as exc:  # noqa: BLE001 - an absent / unreadable token is "no bearer", never a crashed read
+        logger.warning("integrations: the Prometheus token could not be read", error_type=type(exc).__name__)
+        token = None
+    return {
+        "prometheus_enabled": saved.get("prometheus_enabled") is True,
+        "prometheus_base_url": _text(saved.get("prometheus_base_url")),
+        "prometheus_bearer_token": _text(token),
+        "prometheus_metric_templates": templates,
+        "prometheus_templates_source": source,
+    }
+
+
 async def list_vault_reference_fields(db: AsyncSession) -> list[str]:
     """W20 ADM-10: the integration secret fields stored as Vault references (shown "(set — Vault)" even while Vault
-    is down). Only the settings page asks; the runtime resolver above stays one read."""
+    is down). Only the settings page asks; the runtime resolver above stays one read. W23d: the saved-only
+    ``prometheus_bearer_token`` is one of them."""
     from app.models.postgres import SecretRef
 
     try:
         rows = await db.execute(select(SecretRef.key_name).where(
             SecretRef.scope == _SCOPE, SecretRef.provider == "vault", SecretRef.rotation_status != "expired"))
-        return sorted(set(rows.scalars().all()) & set(_SECRET_ENV_SETTING))
+        return sorted(set(rows.scalars().all()) & (set(_SECRET_ENV_SETTING) | {"prometheus_bearer_token"}))
     except Exception:  # noqa: BLE001 - a display label; never fail the settings read over it
         logger.warning("integrations: could not list Vault reference fields", exc_info=True)
         return []
@@ -231,6 +309,23 @@ class IntegrationRuntimeConfig:
     ocp_namespace_source: str             # VALUE_SOURCES
     splunk_api_token: Optional[str] = field(default=None, repr=False)
     ocp_sa_token: Optional[str] = field(default=None, repr=False)
+    # W23d AGT-15: the saved-only Prometheus block (``resolve_prometheus_settings``; no environment fallback).
+    prometheus_enabled: bool = False
+    prometheus_base_url: Optional[str] = None
+    prometheus_templates: tuple[Mapping[str, str], ...] = ()
+    prometheus_bearer_token: Optional[str] = field(default=None, repr=False)
+
+    def prometheus_unavailable_reason(self) -> Optional[str]:
+        """offline_mode | disabled | not_configured | None (offline read LIVE, D19: no offline exception).
+
+        The egress host check is separate (``url_safety.egress_block_reason``, async)."""
+        if settings.AI_OFFLINE_MODE:
+            return "offline_mode"
+        if not self.prometheus_enabled:
+            return "disabled"
+        if not _text(self.prometheus_base_url):
+            return "not_configured"
+        return None
 
     def splunk_unavailable_reason(self) -> Optional[str]:
         """offline_mode | disabled | not_configured | invalid_index | None.
@@ -301,11 +396,14 @@ async def resolve_runtime_integrations(
 ) -> IntegrationRuntimeConfig:
     """The runtime config for ``project_id`` (None = deployment-wide only).
 
-    Statements: ``resolve_global_integrations(db)`` (its own), then -- only
-    when a project id is given -- ONE
+    Statements: the saved ``integrations_config`` row (read ONCE and handed to
+    ``resolve_global_integrations`` and, W23d, ``resolve_prometheus_settings``),
+    then -- only when a project id is given -- ONE
     ``select(Project.splunk_index, Project.ocp_namespace)``. No HTTP, no cache.
     """
-    cfg = await resolve_global_integrations(db)
+    saved = await _saved_integrations_row(db)
+    cfg = await resolve_global_integrations(db, overrides=saved)
+    prometheus = await resolve_prometheus_settings(db, overrides=saved)
     environment_fields = set(cfg.get("_environment_fields") or ())
 
     project_index: Optional[str] = None
@@ -344,6 +442,10 @@ async def resolve_runtime_integrations(
         ocp_namespace_source=namespace_source,
         splunk_api_token=_text(cfg.get("splunk_api_token")),
         ocp_sa_token=_text(cfg.get("ocp_sa_token")),
+        prometheus_enabled=bool(prometheus["prometheus_enabled"]),
+        prometheus_base_url=prometheus["prometheus_base_url"],
+        prometheus_templates=tuple(prometheus["prometheus_metric_templates"]),
+        prometheus_bearer_token=prometheus["prometheus_bearer_token"],
     )
 
 

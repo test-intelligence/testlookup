@@ -1061,10 +1061,16 @@ async def _load_integrations_config(db: AsyncSession) -> dict:
     result = await db.execute(select(AppSetting).where(AppSetting.key == _INTEGRATIONS_KEY))
     row = result.scalar_one_or_none()
     overrides = dict(row.value) if row and row.value else {}
-    from app.services.integration_config_service import list_vault_reference_fields, resolve_global_integrations
+    from app.services.integration_config_service import (
+        list_vault_reference_fields,
+        resolve_global_integrations,
+        resolve_prometheus_settings,
+    )
 
     cfg = await resolve_global_integrations(db, overrides=overrides)
-    return {**cfg, "_vault_fields": await list_vault_reference_fields(db)}
+    # W23d AGT-15: the saved-only Prometheus block, from the same row (+ its secret_refs row).
+    prometheus = await resolve_prometheus_settings(db, overrides=overrides)
+    return {**cfg, **prometheus, "_vault_fields": await list_vault_reference_fields(db)}
 
 
 def _integrations_read(cfg: dict) -> IntegrationsConfigRead:
@@ -1098,6 +1104,12 @@ def _integrations_read(cfg: dict) -> IntegrationsConfigRead:
         github_token_set=bool(cfg.get("github_token")),
         environment_fields=list(cfg.get("_environment_fields") or []),
         vault_fields=list(cfg.get("_vault_fields") or []),
+        # W23d AGT-15: never the token -- only whether one is stored.
+        prometheus_enabled=bool(cfg.get("prometheus_enabled")),
+        prometheus_base_url=cfg.get("prometheus_base_url"),
+        prometheus_token_set=bool(cfg.get("prometheus_bearer_token")),
+        prometheus_metric_templates=list(cfg.get("prometheus_metric_templates") or []),
+        prometheus_templates_source=str(cfg.get("prometheus_templates_source") or "default"),
     )
 
 
@@ -1107,6 +1119,7 @@ _INTEGRATION_HOST_FIELDS = {
     "splunk_base_url": lambda value: value,
     "ocp_api_url": lambda value: value,
     "jira_domain": lambda value: f"https://{value}",
+    "prometheus_base_url": lambda value: value,   # W23d AGT-15
 }
 
 
@@ -1170,6 +1183,7 @@ async def update_integrations_config(
         "slack_webhook_url",
         "teams_webhook_url",
         "github_token",
+        "prometheus_bearer_token",  # W23d AGT-15: secret_refs only ("" expires it; a vault: value is a reference)
     }
     for key_name in secret_fields.intersection(updates):
         raw_value = updates[key_name]
@@ -1199,6 +1213,9 @@ async def update_integrations_config(
     row = result.scalar_one_or_none()
     saved = dict(row.value) if row and row.value else {}
     store_value = strip_secrets_from_config(_INTEGRATIONS_KEY, {**saved, **updates})
+    if updates.get("prometheus_metric_templates") == []:
+        # W23d AGT-15: an empty list hands the templates back to the defaults (the key is removed, not stored).
+        store_value.pop("prometheus_metric_templates", None)
     if row:
         row.value = store_value
         row.updated_by = current_user.id
