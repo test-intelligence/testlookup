@@ -268,6 +268,16 @@ Two switches are worth understanding:
 
 Saving a policy needs `QA_LEAD`. **Agent activity** (`/settings/agent-activity`) lists every agent run: agent, mode, trigger, status, tokens, cost and duration, with the **Actions proposed** and **Actions taken** for each, and the Fixer's attempts. In shadow mode, actions taken is always zero; the gap is the evidence for promoting an agent.
 
+### Review gate
+
+**Review gate** (`/settings/review-gate`, administrators only) decides when AI reports nobody has accepted stop leaving TestLookup: PDF exports, shared links, AI summary e-mails and digests, webhooks, and the AI labels in PR / MR comments.
+
+- **Current state** says **Audit only** or **Enforced**, and why. Until a date is set nothing is withheld; the page counts what *would* have been withheld in the last 30 days: how many runs' AI reports, and how many distribution attempts, by channel. If the audit log cannot be read it says **Not measured** instead of a number.
+- **Enforcement date**: **Enforce from** takes a date and time in your time zone (stored as UTC). A future date schedules enforcement; a date in the past enforces at once, so the page asks you to confirm first (**Enforce now**). **Clear date** goes back to audit only. A change takes effect on every server within 30 seconds and is recorded on **Settings › Audit**.
+- **Gated channels** lists every place the gate applies. Enforcement also turns the release value CI reads into `PENDING_REVIEW` for an unreviewed AI decision.
+
+The server setting `REVIEW_GATE_ENFORCED=true` enforces the gate whatever the date; the page says so while it is on. When a QA lead accepts a run's AI report, TestLookup also updates the run's existing comment on its pull or merge request with the reviewed labels and a *Reviewed by a person* line (never the reviewer's name); the run's activity records each update or the reason it was skipped. More in the administrator guide's AI configuration page.
+
 ### Workflow editor and pipeline runs
 
 **Workflow editor** and **Pipeline runs** are listed here too; see [AI agents and the pipeline](/docs/ai-agents#pipeline-runs).

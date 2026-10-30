@@ -47,6 +47,10 @@ _OPERATIONS = frozenset(
         "ai_summary_notifications",
         "suite_comparison",
         "run_completed_webhook",
+        # W23c AGT-10: re-post the run's PR / MR comment after a person accepts
+        # its AI report (staged by routers/reviews.py, report_repost_service).
+        "pr_comment_repost",
+        "mr_note_repost",
     }
 )
 
@@ -959,6 +963,8 @@ def downstream_tasks() -> dict[str, Any]:
         "ai_summary_notifications": tasks.dispatch_ai_summary_email,
         "suite_comparison": tasks.precompute_suite_comparisons_for_run,
         "run_completed_webhook": tasks.dispatch_run_completed_webhook,
+        "pr_comment_repost": tasks.repost_pr_comment,
+        "mr_note_repost": tasks.repost_mr_note,
     }
 
 

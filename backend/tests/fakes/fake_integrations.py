@@ -42,7 +42,9 @@ refuses.
 * GitHub (``Authorization: token <pat>`` or ``Bearer <pat>``), at the root
   (``base: "dotcom"``) and under ``/api/v3`` (GitHub Enterprise, ``base:
   "ghe"``): ``/rate_limit``, ``/repos/{o}/{r}``, ``.../compare/{base}...{head}``,
-  ``.../commits/{sha}``, ``.../commits?since=&until=&per_page=``. An unknown or
+  ``.../commits/{sha}``, ``.../commits?since=&until=&per_page=``, and the PR
+  (issue) comments the sticky summary uses (W23c): ``GET`` / ``POST
+  .../issues/{n}/comments``, ``PATCH .../issues/comments/{id}``. An unknown or
   revoked PAT is 401 ``Bad credentials``; a repo the PAT cannot see, or an
   unknown sha, is 404 ``Not Found``.
 * GitHub App (W19 INT-06): ``POST /app/installations/{id}/access_tokens`` (root
@@ -276,6 +278,9 @@ class FakeState:
     #: repo -> commits oldest -> newest {sha (40 hex), author, date, message, files}
     github_commits: dict[str, list[dict[str, Any]]] = field(default_factory=_demo_github_commits)
     revoked_github_tokens: set[str] = field(default_factory=set)
+    # ── W23c AGT-10: PR (issue) comments — the sticky summary and its re-post ──
+    #: repo -> comments {id, issue (the PR number), body, user}
+    github_issue_comments: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     # ── W19 INT-06: GitHub Apps ──
     #: app id -> public key PEM
     github_app_keys: dict[str, str] = field(default_factory=dict)
@@ -376,6 +381,7 @@ class FakeState:
             self.splunk_searches.clear()
             self.hooks.clear()
             self.revoked_github_tokens.clear()
+            self.github_issue_comments.clear()
             self.oidc_codes.clear()
             self.oidc_next_token.clear()
             for project in self.projects.values():
@@ -1074,7 +1080,10 @@ async def _github(request: Request, state: FakeState, path: str, method: str) ->
     am = re.fullmatch(r"/app/installations/([0-9]+)/access_tokens", path)
     if am and method == "POST":
         return await _github_app_token(request, state, am.group(1))
-    if method != "GET":
+    if method != "GET" and not (
+        (method == "POST" and _GH_ISSUE_COMMENTS.fullmatch(path))
+        or (method == "PATCH" and _GH_ISSUE_COMMENT.fullmatch(path))
+    ):
         return _gh_not_found()
     pat = _github_pat(request)
     if not _github_pat_valid(state, pat):
@@ -1092,6 +1101,8 @@ async def _github(request: Request, state: FakeState, path: str, method: str) ->
     if repo not in visible:
         return _gh_not_found()
     commits = state.github_commits.get(repo, [])
+    if _GH_ISSUE_COMMENTS.fullmatch(path) or _GH_ISSUE_COMMENT.fullmatch(path):
+        return await _github_issue_comments(request, state, repo, rest, method)
     if rest == "":
         return JSONResponse({
             "full_name": repo, "name": m.group(2), "owner": {"login": m.group(1)},
@@ -1135,6 +1146,50 @@ async def _github(request: Request, state: FakeState, path: str, method: str) ->
                 continue
             window.append(_gh_commit(repo, commit))
         return JSONResponse(window[:per_page])
+    return _gh_not_found()
+
+
+_GH_ISSUE_COMMENTS = re.compile(r"/repos/[^/]+/[^/]+/issues/([0-9]+)/comments")
+_GH_ISSUE_COMMENT = re.compile(r"/repos/[^/]+/[^/]+/issues/comments/([0-9]+)")
+
+
+async def _github_issue_comments(request: Request, state: FakeState, repo: str, rest: str, method: str) -> Response:
+    """The PR-comment endpoints TestLookup's sticky summary uses (W23c AGT-10's re-post edits it):
+    list ``GET .../issues/{n}/comments?per_page=&page=``, create ``POST`` there, edit ``PATCH
+    .../issues/comments/{id}``. Every call is already in ``/_fake/requests``."""
+    try:
+        payload = await request.json() if method != "GET" else {}
+    except ValueError:
+        payload = {}
+    body = str((payload or {}).get("body") or "")
+    with state._lock:
+        comments = state.github_issue_comments.setdefault(repo, [])
+        lm = re.fullmatch(r"/issues/([0-9]+)/comments", rest)
+        if lm and method == "GET":
+            issue = int(lm.group(1))
+            try:
+                per_page = max(1, min(100, int(request.query_params.get("per_page", 30))))
+                page = max(1, int(request.query_params.get("page", 1)))
+            except ValueError:
+                per_page, page = 30, 1
+            mine = [c for c in comments if c["issue"] == issue]
+            return JSONResponse(mine[(page - 1) * per_page: page * per_page])
+        if lm and method == "POST":
+            if not body:
+                return JSONResponse({"message": "Validation Failed"}, status_code=422)
+            comment = {"id": 4100 + sum(len(v) for v in state.github_issue_comments.values()),
+                       "issue": int(lm.group(1)), "body": body, "user": {"login": "testlookup-bot"}}
+            comments.append(comment)
+            return JSONResponse(comment, status_code=201)
+        em = re.fullmatch(r"/issues/comments/([0-9]+)", rest)
+        if em and method == "PATCH":
+            for comment in comments:
+                if comment["id"] == int(em.group(1)):
+                    if not body:
+                        return JSONResponse({"message": "Validation Failed"}, status_code=422)
+                    comment["body"] = body
+                    return JSONResponse(comment)
+            return _gh_not_found()
     return _gh_not_found()
 
 
@@ -1624,7 +1679,7 @@ def create_app(state: Optional[FakeState] = None) -> Starlette:
         log_hook(response.status_code)
         return response
 
-    app = Starlette(routes=[Route("/{path:path}", dispatch, methods=["GET", "POST", "PUT", "DELETE"])])
+    app = Starlette(routes=[Route("/{path:path}", dispatch, methods=["GET", "POST", "PUT", "PATCH", "DELETE"])])
     app.state.fake = state
     return app
 

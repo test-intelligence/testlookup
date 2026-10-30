@@ -619,6 +619,61 @@ def dispatch_run_completed_webhook(
         raise self.retry(exc=exc)
 
 
+# ── W23c AGT-10: re-post the PR / MR comment after a person accepts the run's AI report ──
+
+
+def _run_report_repost(task, kind: str, test_run_id: str, review_id: str) -> Any:
+    """A thin shell over ``report_repost_service.execute_repost``.
+
+    No dedup lock: the outbox fence (``begin_downstream_execution``) already
+    makes a duplicate delivery a no-op, and a lock would silence the retry. A
+    timeout with attempts left raises ``RepostTimedOut`` and goes back to the
+    outbox through ``self.retry`` (its back-off); the last attempt records
+    ``timed_out`` and completes -- a timeout is never ``failed``.
+    """
+    from app.services import report_repost_service
+
+    _bind_task_context(task, run_id=test_run_id, review_id=review_id, repost_kind=kind)
+    headers = getattr(task.request, "headers", None) or {}
+    try:
+        return _run_async(
+            report_repost_service.execute_repost(
+                kind,
+                test_run_id=test_run_id,
+                review_id=review_id,
+                outbox_id=headers.get("downstream_outbox_id"),
+            )
+        )
+    except report_repost_service.RepostTimedOut as exc:
+        raise task.retry(exc=exc)
+
+
+@celery_app.task(
+    name="app.worker.tasks.repost_pr_comment",
+    base=DownstreamTrackedTask,
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    queue="default",
+)
+def repost_pr_comment(self, test_run_id: str, review_id: str):
+    """Edit the run's GitHub PR marker comment with the reviewed AI labels."""
+    return _run_report_repost(self, "pr_comment_repost", test_run_id, review_id)
+
+
+@celery_app.task(
+    name="app.worker.tasks.repost_mr_note",
+    base=DownstreamTrackedTask,
+    bind=True,
+    max_retries=2,
+    default_retry_delay=30,
+    queue="default",
+)
+def repost_mr_note(self, test_run_id: str, review_id: str):
+    """Edit the run's GitLab MR marker note with the reviewed AI labels."""
+    return _run_report_repost(self, "mr_note_repost", test_run_id, review_id)
+
+
 @celery_app.task(
     name="app.worker.tasks.persist_live_session",
     base=DownstreamTrackedTask,
@@ -2655,12 +2710,17 @@ async def _schedule_pipeline_retry(
                 AgentPipelineRun.id == uuid.UUID(str(pipeline_run_id))
             )
         else:
+            # W23c AGT-11: an inline invocation's pipeline is never "the run's
+            # latest failed pipeline" -- it retries through its own invocation.
+            from app.services.inline_invocation import not_inline_pipeline
+
             stmt = (
                 select(AgentPipelineRun)
                 .where(
                     AgentPipelineRun.test_run_id == uuid.UUID(str(test_run_id)),
                     AgentPipelineRun.workflow_type == workflow_type,
                     AgentPipelineRun.status == PipelineRunStatus.FAILED.value,
+                    not_inline_pipeline(),
                 )
                 .order_by(AgentPipelineRun.created_at.desc())
                 .limit(1)
@@ -3650,6 +3710,9 @@ def dispatch_ai_summary_email(
 
         summary_withheld = False
         try:
+            from app.services import review_gate_setting
+
+            await review_gate_setting.refresh_snapshot()  # W23c: the date behind gate_enforced()
             async with AsyncSessionLocal() as db:
                 if summary_is_ai and gate_enforced() and (
                     not pipeline_run_id

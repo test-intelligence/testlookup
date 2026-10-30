@@ -582,6 +582,8 @@ def test_the_migration_and_model_agree():
         MIGRATION.with_name("0178_agent_invocation_idempotency.py"),
         MIGRATION.with_name("0181_agent_invocation_config_snapshot.py"),
         MIGRATION.with_name("0191_agent_invocation_cancel_intent.py"),
+        # W23c AGT-11: input_payload + input_sha256 (deliberate edit, G-C).
+        MIGRATION.with_name("0246_agent_invocation_inline_input.py"),
     ):
         migrated |= {
             call.args[0].value

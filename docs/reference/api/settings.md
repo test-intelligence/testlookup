@@ -10,7 +10,7 @@ Get Ai Config
 
 
 
-Source: [backend/app/routers/app_settings.py:548](../../../backend/app/routers/app_settings.py#L548).
+Source: [backend/app/routers/app_settings.py:553](../../../backend/app/routers/app_settings.py#L553).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -81,7 +81,7 @@ Update Ai Config
 
 
 
-Source: [backend/app/routers/app_settings.py:725](../../../backend/app/routers/app_settings.py#L725).
+Source: [backend/app/routers/app_settings.py:730](../../../backend/app/routers/app_settings.py#L730).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -173,7 +173,7 @@ Deployment-wide. The settings page polls this only while a build runs
 (``GET /settings/ai`` carries the same body on load). 503 when the state
 cannot be read: an unreadable state is never reported as in sync.
 
-Source: [backend/app/routers/app_settings.py:960](../../../backend/app/routers/app_settings.py#L960).
+Source: [backend/app/routers/app_settings.py:965](../../../backend/app/routers/app_settings.py#L965).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -257,7 +257,7 @@ while a build toward it runs (a failed one may be retried, and so may a
 STALLED one -- ``build_is_stalled``: its worker died), 422 with the
 embedder's sentence when this deployment refuses it.
 
-Source: [backend/app/routers/app_settings.py:983](../../../backend/app/routers/app_settings.py#L983).
+Source: [backend/app/routers/app_settings.py:988](../../../backend/app/routers/app_settings.py#L988).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -344,7 +344,7 @@ tester or viewer got "Requires at least QA_LEAD role" toasts on every
 page and never saw Ask AI (the UX redesign's browser E2E pass). Nothing
 else of the config — providers, models, which keys are set — is here.
 
-Source: [backend/app/routers/app_settings.py:667](../../../backend/app/routers/app_settings.py#L667).
+Source: [backend/app/routers/app_settings.py:672](../../../backend/app/routers/app_settings.py#L672).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -420,7 +420,7 @@ settings row, or a broken ML model directory all degrade into honest
 fields rather than a 500 — an operator debugging an air-gapped install
 needs this page to render precisely when things are broken.
 
-Source: [backend/app/routers/app_settings.py:689](../../../backend/app/routers/app_settings.py#L689).
+Source: [backend/app/routers/app_settings.py:694](../../../backend/app/routers/app_settings.py#L694).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -491,7 +491,7 @@ Get Audit Log
 
 Return recent settings change audit entries.
 
-Source: [backend/app/routers/app_settings.py:1371](../../../backend/app/routers/app_settings.py#L1371).
+Source: [backend/app/routers/app_settings.py:1376](../../../backend/app/routers/app_settings.py#L1376).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -596,7 +596,7 @@ List Feature Flags
 
 List all feature flags.
 
-Source: [backend/app/routers/app_settings.py:1393](../../../backend/app/routers/app_settings.py#L1393).
+Source: [backend/app/routers/app_settings.py:1398](../../../backend/app/routers/app_settings.py#L1398).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -673,7 +673,7 @@ Remove Feature Flag
 
 Delete a feature flag. Requires ADMIN.
 
-Source: [backend/app/routers/app_settings.py:1428](../../../backend/app/routers/app_settings.py#L1428).
+Source: [backend/app/routers/app_settings.py:1433](../../../backend/app/routers/app_settings.py#L1433).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -746,7 +746,7 @@ Update Feature Flag
 
 Create or update a feature flag. Requires ADMIN.
 
-Source: [backend/app/routers/app_settings.py:1403](../../../backend/app/routers/app_settings.py#L1403).
+Source: [backend/app/routers/app_settings.py:1408](../../../backend/app/routers/app_settings.py#L1408).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -842,7 +842,7 @@ Get Integrations Config
 
 
 
-Source: [backend/app/routers/app_settings.py:1130](../../../backend/app/routers/app_settings.py#L1130).
+Source: [backend/app/routers/app_settings.py:1135](../../../backend/app/routers/app_settings.py#L1135).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -913,7 +913,7 @@ Update Integrations Config
 
 
 
-Source: [backend/app/routers/app_settings.py:1139](../../../backend/app/routers/app_settings.py#L1139).
+Source: [backend/app/routers/app_settings.py:1144](../../../backend/app/routers/app_settings.py#L1144).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1003,7 +1003,7 @@ Return health status for all tracked integration providers.
 The deployment-wide view only (``scope_key = ''``): per-project GitHub /
 GitLab rows (W10 INT-04) are Integration Health's ``?scope=all`` read.
 
-Source: [backend/app/routers/app_settings.py:1528](../../../backend/app/routers/app_settings.py#L1528).
+Source: [backend/app/routers/app_settings.py:1533](../../../backend/app/routers/app_settings.py#L1533).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1080,7 +1080,7 @@ Get Mfa Policy
 
 Read the workspace MFA + lockout policy. QA_LEAD or higher.
 
-Source: [backend/app/routers/app_settings.py:1458](../../../backend/app/routers/app_settings.py#L1458).
+Source: [backend/app/routers/app_settings.py:1463](../../../backend/app/routers/app_settings.py#L1463).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1151,7 +1151,7 @@ Update Mfa Policy
 
 Update the workspace MFA + lockout policy. ADMIN only, audit-logged.
 
-Source: [backend/app/routers/app_settings.py:1470](../../../backend/app/routers/app_settings.py#L1470).
+Source: [backend/app/routers/app_settings.py:1475](../../../backend/app/routers/app_settings.py#L1475).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1234,7 +1234,7 @@ The instance retention defaults: the stored values (NULL = the code
 default), the code defaults, the effective values, how many projects
 inherit each field, and who switched the default on. Reads only.
 
-Source: [backend/app/routers/app_settings.py:1578](../../../backend/app/routers/app_settings.py#L1578).
+Source: [backend/app/routers/app_settings.py:1583](../../../backend/app/routers/app_settings.py#L1583).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1307,7 +1307,7 @@ Save the instance defaults (``clear`` resets a field to the code
 default). ``enabled: true`` is refused (422 ``enable_via_flow``);
 ``enabled: false`` switches the default off at once. Interactive login only.
 
-Source: [backend/app/routers/app_settings.py:1604](../../../backend/app/routers/app_settings.py#L1604).
+Source: [backend/app/routers/app_settings.py:1609](../../../backend/app/routers/app_settings.py#L1609).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1397,7 +1397,7 @@ Switch the instance default ON for every project without its own
 ``preview_stale``) and the confirmation must be the exact phrase (422
 ``confirmation_mismatch``). Interactive login only.
 
-Source: [backend/app/routers/app_settings.py:1632](../../../backend/app/routers/app_settings.py#L1632).
+Source: [backend/app/routers/app_settings.py:1637](../../../backend/app/routers/app_settings.py#L1637).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1481,7 +1481,7 @@ no explicit ``enabled``), the hash ``POST …/enable`` must echo and the phrase
 it must type. An instance administrator's deployment-wide view. Writes
 NOTHING.
 
-Source: [backend/app/routers/app_settings.py:1591](../../../backend/app/routers/app_settings.py#L1591).
+Source: [backend/app/routers/app_settings.py:1596](../../../backend/app/routers/app_settings.py#L1596).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1546,13 +1546,176 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/settings/review-gate`
+
+Get Review Gate
+
+When unreviewed AI reports stop leaving TestLookup: the stored date (or
+none = audit only), whether the gate is enforced right now and why, and the
+distribution attempts that would have been withheld in the last 30 days.
+Reads only.
+
+Source: [backend/app/routers/app_settings.py:1710](../../../backend/app/routers/app_settings.py#L1710).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+current_user: User=Depends(require_role(UserRole.ADMIN)), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_review_gate_api_v1_settings_review_gate_get",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/ReviewGateRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## PUT `/api/v1/settings/review-gate`
+
+Update Review Gate
+
+Set the enforcement date (an ISO-8601 instant with an offset; past or
+future) or clear it with ``null`` (back to audit only). A past instant
+enforces at once. Interactive login only; audited once per actual change.
+
+Source: [backend/app/routers/app_settings.py:1722](../../../backend/app/routers/app_settings.py#L1722).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+payload: ReviewGateWrite, current_user: User=Depends(require_role(UserRole.ADMIN)), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='enforced_from is out of range.')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "update_review_gate_api_v1_settings_review_gate_put",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "$ref": "#/components/schemas/ReviewGateWrite"
+        }
+      }
+    },
+    "required": true
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/ReviewGateRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/settings/smtp`
 
 Get Smtp Config
 
 Return current SMTP configuration (password is never returned — only a boolean flag).
 
-Source: [backend/app/routers/app_settings.py:105](../../../backend/app/routers/app_settings.py#L105).
+Source: [backend/app/routers/app_settings.py:110](../../../backend/app/routers/app_settings.py#L110).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1623,7 +1786,7 @@ Update Smtp Config
 
 Persist SMTP configuration to the database. Password is stored in secret_refs, not in app_settings.
 
-Source: [backend/app/routers/app_settings.py:127](../../../backend/app/routers/app_settings.py#L127).
+Source: [backend/app/routers/app_settings.py:132](../../../backend/app/routers/app_settings.py#L132).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1704,7 +1867,7 @@ Test Smtp Config
 
 Send a test email to the current user's address using the stored SMTP config.
 
-Source: [backend/app/routers/app_settings.py:188](../../../backend/app/routers/app_settings.py#L188).
+Source: [backend/app/routers/app_settings.py:193](../../../backend/app/routers/app_settings.py#L193).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1775,7 +1938,7 @@ Get Storage Config
 
 
 
-Source: [backend/app/routers/app_settings.py:1293](../../../backend/app/routers/app_settings.py#L1293).
+Source: [backend/app/routers/app_settings.py:1298](../../../backend/app/routers/app_settings.py#L1298).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1846,7 +2009,7 @@ Update Storage Config
 
 
 
-Source: [backend/app/routers/app_settings.py:1307](../../../backend/app/routers/app_settings.py#L1307).
+Source: [backend/app/routers/app_settings.py:1312](../../../backend/app/routers/app_settings.py#L1312).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

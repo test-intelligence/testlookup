@@ -76,6 +76,7 @@ from app.services.agent_planner import (
     compute_workflow_plan_hash,
 )
 from app.services.agent_capability_registry import get_capability
+from app.services import inline_invocation
 from app.services.agent_step_tracing import trace_agent_step
 from app.services.pipeline_event_log import emit_event
 from app.services.evidence_sanitizer import (
@@ -1697,6 +1698,9 @@ async def _load_checkpoint(
                         AgentPipelineRun.status.in_(
                             [PipelineRunStatus.FAILED.value, PipelineRunStatus.COMPLETED.value]
                         ),
+                        # W23c AGT-11: never adopt an inline-input invocation's checkpoint
+                        # (its plan hash differs too -- belt and braces).
+                        inline_invocation.not_inline_pipeline(),
                     )
                     .order_by(AgentPipelineRun.started_at.desc())
                     .limit(1)
@@ -2829,6 +2833,15 @@ async def run_offline_pipeline(
                 pipeline_run_id=pipeline_run_id,
                 checkpoint_stages=checkpoint_stages,
             )
+        # W23c AGT-11: an inline-input invocation runs on its FROZEN, redacted input, re-read by
+        # pipeline id on every attempt (a resume replays it, never the request), seeded AFTER any
+        # checkpoint so the input always wins. Every string arrives wrapped as a data block.
+        if inline_invocation.is_inline_plan(pipeline_setup.get("initial_workflow_plan")):
+            async with AsyncSessionLocal() as seed_db:
+                inline_seed = await inline_invocation.frozen_inline_seed(seed_db, pipeline_run_id)
+            if inline_seed is None:
+                raise ValueError("inline_input_missing: the invocation's frozen input could not be read")
+            initial_state.update(cast(Any, inline_seed[0]))
         _apply_pipeline_cost_budget(cast(dict[str, Any], initial_state), cost_budget_snapshot)
 
         blocked_state = await _complete_cost_budget_block(
@@ -3518,6 +3531,11 @@ async def _create_pipeline_run(
             ).scalar_one_or_none()
         if invocation is not None and bool(invocation.cancel_requested):
             raise PipelineCancelled(str(pipeline_run_id))
+        inline_input_sha256 = (
+            str(invocation.input_sha256)
+            if invocation is not None and isinstance(getattr(invocation, "input_sha256", None), str)
+            else None
+        )
 
         authority_project_id = uuid.UUID(str(project_id))
         from app.services.agent_authority_lock import (  # noqa: PLC0415
@@ -3769,6 +3787,9 @@ async def _create_pipeline_run(
             change_ownership_enabled=change_ownership_enabled,
             defect_commander_enabled=defect_commander_enabled,
             invocation_stage=invocation_stage,
+            # W23c AGT-11: an inline-input invocation's input hash enters the plan (and the
+            # hash below), so a resume can never replay another input. None for every other run.
+            invocation_input_sha256=inline_input_sha256,
         )
         by_capability = {
             str(item.get("stage")): dict(item)
@@ -3922,6 +3943,12 @@ async def _create_pipeline_run(
                     if run_overrides
                     else {}
                 ),
+                # W23c AGT-11: present only on an inline-input invocation's pipeline.
+                **(
+                    {inline_invocation.PLAN_INPUT_KEY: inline_input_sha256}
+                    if inline_input_sha256
+                    else {}
+                ),
                 "budget_spend": {
                     "llm_calls": 0,
                     "tokens": 0,
@@ -4050,6 +4077,14 @@ async def _mark_pipeline_done(
             raise LeaseLost(pipeline_run_id, fencing_token)
         if run:
             summary_completed = False
+            # W23c AGT-11 (contract §2.2 I-7 / I-8): an inline-input invocation's output is a
+            # draft reviewed as the INVOCATION and kept out of every run rollup -- no action
+            # proposals, no AI-summary notification / digest staging.
+            inline_plan = inline_invocation.is_inline_plan(
+                (run.execution_metadata or {}).get("initial_workflow_plan")
+                if isinstance(run.execution_metadata, dict)
+                else None
+            ) or inline_invocation.is_inline_plan((final_state or {}).get("initial_workflow_plan"))
             if success:
                 # WF-3: Check for partial completion — some stages may have failed
                 # while the pipeline overall didn't raise an exception
@@ -4120,17 +4155,42 @@ async def _mark_pipeline_done(
                                 sa_select(TestRun.project_id).where(TestRun.id == run.test_run_id)
                             )
                         ).scalar_one_or_none()
-                        await review_request_service.stage_run_review_request(
-                            db,
-                            run=run,
-                            project_id=review_project_id,
-                            report_stage_names=produced,
-                            evidence_bundle_sha256=(
-                                review_request_service.evidence_hash_from(final_state)
-                                or review_request_service.reviewer_evidence_hash_from(final_state)
-                            ),
-                            requested_by=run.requested_by,
+                        inline_subject = (
+                            await inline_invocation.inline_review_subject(db, pipeline_run_id)
+                            if inline_plan
+                            else None
                         )
+                        if inline_plan and inline_subject is None:
+                            # Never fall back to a run report review: that would supersede
+                            # the anchor run's own pending review.
+                            logger.warning(
+                                "inline_review_subject_missing", pipeline_run_id=pipeline_run_id,
+                            )
+                        elif inline_subject is not None:
+                            # The invocation is the subject; its evidence hash is the
+                            # redacted input's. It supersedes no run report review.
+                            await review_request_service.stage_run_review_request(
+                                db,
+                                run=run,
+                                project_id=review_project_id,
+                                report_stage_names=produced,
+                                evidence_bundle_sha256=inline_subject[1],
+                                requested_by=run.requested_by,
+                                subject_type="invocation",
+                                subject_id=inline_subject[0],
+                            )
+                        else:
+                            await review_request_service.stage_run_review_request(
+                                db,
+                                run=run,
+                                project_id=review_project_id,
+                                report_stage_names=produced,
+                                evidence_bundle_sha256=(
+                                    review_request_service.evidence_hash_from(final_state)
+                                    or review_request_service.reviewer_evidence_hash_from(final_state)
+                                ),
+                                requested_by=run.requested_by,
+                            )
                     except Exception as review_exc:  # noqa: BLE001
                         logger.warning(
                             "review_request_stage_failed",
@@ -4148,6 +4208,7 @@ async def _mark_pipeline_done(
                 # proposals in the same transaction as pipeline completion.
                 # This is intentionally best-effort for legacy/failed reports;
                 # a malformed proposal must not hide the terminal pipeline.
+                # W23c I-8: an inline-input invocation proposes nothing.
                 try:
                     from app.services.agent_action_ledger_service import (
                         persist_report_action_proposals,
@@ -4156,7 +4217,7 @@ async def _mark_pipeline_done(
                     decision = final_state.get("decision_intelligence") or {}
                     proposed_actions = (
                         decision.get("proposed_actions")
-                        if isinstance(decision, dict)
+                        if isinstance(decision, dict) and not inline_plan
                         else []
                     )
                     # W15 §0.5: the decision report's FROZEN mode, hashed into
@@ -4317,6 +4378,8 @@ async def _mark_pipeline_done(
                             "run_overrides",
                             "run_overrides_status",
                             "run_overrides_reasons",
+                            # W23c AGT-11: an inline-input invocation's input hash.
+                            inline_invocation.PLAN_INPUT_KEY,
                         )
                         if key in prior_metadata
                     },
@@ -4328,7 +4391,9 @@ async def _mark_pipeline_done(
                     reason="pipeline_failed" if not success else "pipeline_terminalized",
                 )
                 run.execution_metadata = prior_metadata
-            if success and summary_completed and final_state:
+            # W23c I-8: an inline-input invocation sends nothing -- no AI-summary e-mail, no
+            # PER_RUN / PER_SUITE / PER_RELEASE / ALL-PROJECTS digest (all dispatched from this row).
+            if success and summary_completed and final_state and not inline_plan:
                 from app.services.run_downstream_outbox import (
                     stage_ai_summary_notification_operation,
                 )

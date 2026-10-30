@@ -47,6 +47,7 @@ from app.services.criticality_service import score_cluster
 from app.services.run_diff_service import get_baseline_diff
 from app.services.decision_report_service import load_decision_report
 from app.services.cluster_snapshot import is_current_snapshot
+from app.services.inline_invocation import not_inline_pipeline
 
 logger = logging.getLogger("services.run_intelligence")
 
@@ -254,7 +255,8 @@ async def get_run_intelligence(
     async def _fetch_pipeline_run():
         r = await db.execute(
             select(AgentPipelineRun)
-            .where(AgentPipelineRun.test_run_id == run_id)
+            # W23c I-8: an inline-input invocation is never "the run's pipeline".
+            .where(AgentPipelineRun.test_run_id == run_id, not_inline_pipeline())
             .order_by(AgentPipelineRun.created_at.desc())
             .limit(1)
         )
@@ -267,6 +269,7 @@ async def get_run_intelligence(
             .where(
                 AgentPipelineRun.test_run_id == run_id,
                 AgentPipelineRun.workflow_type == "deep",
+                not_inline_pipeline(),
             )
             .order_by(AgentPipelineRun.created_at.desc())
             .limit(1)

@@ -556,6 +556,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | PUT | `/api/v1/settings/retention-defaults` | Update Retention Defaults | [Settings](api/settings.md) |
 | POST | `/api/v1/settings/retention-defaults/enable` | Enable Retention Defaults | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/retention-defaults/enable-preview` | Preview Retention Defaults Enable | [Settings](api/settings.md) |
+| GET | `/api/v1/settings/review-gate` | Get Review Gate | [Settings](api/settings.md) |
+| PUT | `/api/v1/settings/review-gate` | Update Review Gate | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/secret-providers` | Get Secret Providers | [Secret providers](api/secret-providers.md) |
 | GET | `/api/v1/settings/smtp` | Get Smtp Config | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/smtp` | Update Smtp Config | [Settings](api/settings.md) |
@@ -710,4 +712,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **701 HTTP operations**, **592 paths**, **90 domain pages**.
+Total: **703 HTTP operations**, **593 paths**, **90 domain pages**.

@@ -37,7 +37,7 @@ from app.core.deps import (
 )
 from app.db.postgres import get_db
 from app.models.postgres import AgentPipelineRun, ProjectMember, ReviewRequest, User, UserRole
-from app.services import review_request_service
+from app.services import report_repost_service, review_request_service
 from app.services.access_audit_service import log_access_change
 from app.services.activity.service import ActorRef, record as record_activity
 
@@ -223,6 +223,19 @@ def _entity(review: ReviewRequest) -> tuple[Any, str]:
     return entity_id, f"run {str(entity_id)[:8]}"
 
 
+async def _stage_reposts(db: AsyncSession, review: ReviewRequest) -> None:
+    """W23c AGT-10: stage the PR / MR comment re-post in the accept's own
+    transaction, inside a savepoint. A staging failure is logged and never
+    fails the human's review decision."""
+    try:
+        async with db.begin_nested():
+            await report_repost_service.stage_report_reposts(db, review=review)
+    except Exception as exc:  # noqa: BLE001 -- the accept must commit regardless
+        logger.warning(
+            "report_repost_not_staged review_id=%s error_type=%s", review.id, type(exc).__name__
+        )
+
+
 async def _emit_review_event(review: ReviewRequest, decision: str) -> None:
     """Best-effort pipeline event after the commit (section 8.3)."""
     if review.pipeline_run_id is None:
@@ -299,6 +312,7 @@ async def accept_review(
         entity_label=entity_label,
         context={"review_id": str(review.id), "pipeline_run_id": str(review.pipeline_run_id or "")},
     )
+    await _stage_reposts(db, review)
     await db.commit()
     await _emit_review_event(review, "accepted")
     return _to_response(review)

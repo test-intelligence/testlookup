@@ -15,6 +15,7 @@ import { reviewService } from '@/services/reviewService'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { formatCompactDateTime } from '@/utils/formatters'
 import ChipFilter from './inbox/ChipFilter'
+import { INVOCATION_ROW_LABEL, invocationHref } from '@/components/agents/tryAgentModel'
 import {
   REVIEW_REASON_CODES,
   REVIEW_REASON_LABEL,
@@ -170,6 +171,7 @@ function ReviewRow({
   const [reason, setReason] = useState<ReviewReasonCode | ''>('')
   const [busy, setBusy] = useState(false)
   const pending = review.state === 'pending_review'
+  const invocation = review.subject_type === 'invocation'
 
   function close() {
     setMode(null)
@@ -202,11 +204,19 @@ function ReviewRow({
     <>
       <tr className="border-t border-[var(--color-border)]" data-testid="review-row" data-review-id={review.id}>
         <td className="px-3 py-2">
-          <div className="text-[var(--color-text)] capitalize">{review.workflow_type ?? review.kind} report</div>
+          {/* W23c AGT-11: an inline-input invocation's draft is reviewed on its own (its output is not the run's report). */}
+          {invocation
+            ? <div className="text-[var(--color-text)]">{INVOCATION_ROW_LABEL}</div>
+            : <div className="text-[var(--color-text)] capitalize">{review.workflow_type ?? review.kind} report</div>}
           <div className="text-[10px] font-mono text-[var(--color-text-muted)]">{review.subject_type.replace(/_/g, ' ')}</div>
         </td>
         <td className="px-3 py-2 text-xs">
-          {review.test_run_id ? (
+          {invocation && review.test_run_id ? (
+            // The run's Analysis tab does not show an inline invocation's output: the invocation itself does.
+            <Link to={invocationHref(review.test_run_id, review.subject_id)} className="text-[var(--color-accent)] hover:underline">
+              Open invocation
+            </Link>
+          ) : review.test_run_id ? (
             <Link
               // P4: the run's Analysis tab (the old `/runs/:id/intelligence` redirects there).
               to={`/runs/${encodeURIComponent(review.test_run_id)}?tab=analysis`}

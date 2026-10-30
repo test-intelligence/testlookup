@@ -10,14 +10,17 @@ View Shared Report
 
 Render the shared HTML report view (no auth required — token-based).
 
-Source: [backend/app/routers/shared_reports.py:18](../../../backend/app/routers/shared_reports.py#L18).
+A refused (unreviewed, enforced) report answers 409: an HTML page for a
+browser, the JSON ``refusal_detail`` for every other caller.
+
+Source: [backend/app/routers/shared_reports.py:43](../../../backend/app/routers/shared_reports.py#L43).
 
 Dependency chain: `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-token: str, db: AsyncSession=Depends(get_db)
+token: str, db: AsyncSession=Depends(get_db), request: Request=None
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -25,7 +28,7 @@ Direct handler error branches (dependency/service errors can add others):
 ```python
 HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc))
 HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
-HTTPException(status_code=status.HTTP_409_CONFLICT, detail=refusal_detail(decision))
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 ```
 
 ### Declared wire contract
@@ -77,7 +80,7 @@ Download Shared Report Pdf
 
 Download the shared PDF report (no auth required — token-based).
 
-Source: [backend/app/routers/shared_reports.py:77](../../../backend/app/routers/shared_reports.py#L77).
+Source: [backend/app/routers/shared_reports.py:112](../../../backend/app/routers/shared_reports.py#L112).
 
 Dependency chain: `get_db`.
 

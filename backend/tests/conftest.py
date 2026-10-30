@@ -242,6 +242,29 @@ def _activity_live_publish_off():
     live.PUBLISH_ENABLED = previous
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _review_gate_date_unset():
+    """The review-gate enforcement date is UNSET (loaded, never expiring) for the session.
+
+    ``report_distribution_policy.gate_enforced()`` reads the env flag OR a
+    process snapshot of the instance date (W23c AGT-10), refreshed from Redis /
+    Postgres at the top of every policy entry point. Pinned here, no refresh
+    runs: the gate modules that flip ``REVIEW_GATE_ENFORCED`` see exactly the
+    env flag, and no test gains a Redis call or a second session. SESSION scope
+    for the reason ``_activity_live_publish_off`` gives. The review-gate tests
+    call ``reset_snapshot_for_tests()`` / ``pin_snapshot_for_tests(<instant>)``
+    themselves and pin ``None`` again in their teardown.
+    """
+    try:
+        from app.services import review_gate_setting
+    except Exception:  # pragma: no cover - an import-broken tree fails elsewhere
+        yield
+        return
+    review_gate_setting.pin_snapshot_for_tests(None)
+    yield
+    review_gate_setting.reset_snapshot_for_tests()
+
+
 @pytest.fixture(autouse=True)
 def _close_the_worker_loop_after_each_test():
     """Close the Celery worker loop, and drain what it holds, after each test.

@@ -37,6 +37,7 @@ from app.models.postgres import (
     TestCase,
     TestRun,
 )
+from app.services.inline_invocation import not_inline_pipeline
 
 logger = structlog.get_logger("services.decision_trail")
 
@@ -63,7 +64,8 @@ def _duration_seconds(start: Any, end: Any) -> Optional[float]:
 async def _load_pipeline_run(db: AsyncSession, run_id: uuid.UUID) -> Optional[AgentPipelineRun]:
     result = await db.execute(
         select(AgentPipelineRun)
-        .where(AgentPipelineRun.test_run_id == run_id)
+        # W23c I-8: an inline-input invocation's pipeline is not the run's decision trail.
+        .where(AgentPipelineRun.test_run_id == run_id, not_inline_pipeline())
         .order_by(AgentPipelineRun.started_at.desc())
         .limit(1)
     )

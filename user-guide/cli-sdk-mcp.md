@@ -123,6 +123,39 @@ Beyond reads, the server ships **write-path tools** so an agent can close the tr
 
 Typical assistant workflows: "why did last night's run fail?" (runs and analysis tools), "is this build safe to ship?" (release tools), "which tests should we quarantine?" (quarantine and flakiness tools). The full tool, resource and prompt reference and the environment variables are in [mcp/README.md](../mcp/README.md); client setup (Claude Code, Claude Desktop, Cursor, SSE) and worked end-to-end recipes are in the **[Agent cookbook](agent-cookbook.md)**.
 
+## Invoke an agent with inline input
+
+Normally an agent invocation (`POST /api/v1/agents/{agent_id}/invoke`, or MCP `invoke_agent`) runs on what TestLookup already stored for a test run. The summary agent, `agent.summary.v1`, can also run on failures you paste in: the catalog marks it with `inline_input_supported: true`, and `GET /api/v1/agents/catalog/agent.summary.v1` publishes the accepted shape as `inline_input_json_schema`.
+
+```json
+{
+  "project_id": "<project uuid>",
+  "input": {"agent_id": "agent.summary.v1", "payload": {"test_run_id": "<uuid of a stored run of that project>"}},
+  "inline_input": {
+    "schema_version": 1,
+    "failures": [{
+      "test_name": "checkout pays with a saved card",
+      "suite_name": "payments",
+      "failure_category": "PRODUCT_BUG",
+      "confidence_score": 70,
+      "root_cause": "NullPointerException in CardVault.lookup",
+      "log_excerpt": "at CardVault.lookup(CardVault.java:42)"
+    }]
+  },
+  "mode": "async"
+}
+```
+
+From MCP, pass the same object as `payload`: `invoke_agent(agent_id="agent.summary.v1", project_id=..., test_run_id=..., payload={...})`. The Idempotency-Key works as for any invocation (the same key with a different `inline_input` is refused with 422), and `get_agent_invocation` prints `Input: inline (sha256 …)` with the stored input.
+
+The rules:
+
+- **A stored run anchors it.** `input.payload.test_run_id` must name a test run of `project_id` that you can see; it decides the project, the review and the retention (the invocation is deleted with that run). Any wrong anchor (an unknown run, another project's run, a run you cannot see, a mismatching `project_id`, an API key bound to another project) answers the same `404 {"code": "anchor_run_not_found"}`.
+- **Caps.** The whole `inline_input` is at most 262 144 bytes as compact JSON (larger is `413 inline_input_too_large`); 1 to 10 failures; a test or suite name at most 300 characters, a root cause 4 000, a log excerpt 8 000; `failure_category` is one of `PRODUCT_BUG`, `INFRASTRUCTURE`, `TEST_DATA`, `AUTOMATION_DEFECT`, `FLAKY`, `UNKNOWN`; `confidence_score` 0 to 100 (your own claim; the summary leaves out failures below 50 as it does for any analysis). A field TestLookup does not know, or a control character, is `422 inline_input_invalid` with an `errors` list (the offending value is never echoed back). Only `agent.summary.v1` accepts inline input in this release; any other agent answers `422 inline_input_unsupported`.
+- **What is redacted.** Before the input is stored or hashed, every text field goes through the same redaction as AI prompts: provider tokens (`ghp_…`, `github_pat_…`, `glpat-…`, `xox?-…`, `sk-…`, `AKIA…`, and any unbroken run of 40 or more key-like characters), `Authorization` / `Bearer` / `Cookie` values, `token=` / `password=` / `api_key=` values, passwords in connection strings, e-mail addresses, phone numbers and IP addresses all become `[REDACTED…]`. The invocation detail shows only the redacted copy, and `input_sha256` is the hash of that copy.
+- **It reaches the model as data.** Each pasted value is put between `<<data>>` and `<</data>>` markers and cannot open or close a marker itself; the prompts are not changed.
+- **The output is a draft that counts nowhere.** It is reviewed as the invocation (Inbox › Approvals lists it as an agent invocation), never as the run's report review, and accepting it changes only the invocation. It is kept out of the run's report, PDF and share links, release gates and decisions, run intelligence and AI history, notifications and digests, and it sends nothing: no e-mail, no digest, no PR comment, no action proposal.
+
 ## Choosing a surface
 
 - **CI pipeline step** → CLI (or plain `curl` against the REST API).

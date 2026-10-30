@@ -196,6 +196,11 @@ def run_report_review_filters(*, workflow_type: Optional[str] = None) -> list:
     filters: list = [
         ReviewRequest.kind == "report",
         ReviewRequest.state != "superseded",
+        # W23c AGT-11 (I-8): an inline-input invocation's review is NEVER the run's review.
+        # It names the invocation, not the run's report, so it can neither release the
+        # run's report (PDF / share / exports / gates / notifications) nor read as the
+        # Runs list's verdict.
+        ReviewRequest.subject_type != "invocation",
     ]
     if workflow_type:
         filters.append(ReviewRequest.workflow_type == workflow_type)

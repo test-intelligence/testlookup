@@ -95,11 +95,29 @@ describe('settings sub-nav: who sees what', () => {
   it('SSO and Feature flags are admin-only: their API answers a QA lead 403 (browser E2E pass)', () => {
     const ids = (isAdmin: boolean) =>
       settingsGroupsFor({ canAccessManagement: true, isAdmin, canOwnApiKeys: true, isDev: false }).flatMap((g) => g.items.map((i) => i.id))
-    expect(ITEMS.filter((i) => i.requires === 'admin').map((i) => i.id)).toEqual(['sso', 'feature-flags'])
+    // W23c AGT-10: Review gate too (its GET / PUT answer a QA lead 403) — see the case below.
+    expect(ITEMS.filter((i) => i.requires === 'admin').map((i) => i.id)).toEqual(['review-gate', 'sso', 'feature-flags'])
     expect(ids(false)).not.toContain('sso')
     expect(ids(false)).not.toContain('feature-flags')
     expect(ids(false)).toContain('mfa-policy')
     expect(ids(true)).toEqual(expect.arrayContaining(['sso', 'feature-flags', 'mfa-policy']))
+  })
+
+  it('Review gate is the AI group\'s admin-only item after AI agents (W23c AGT-10)', () => {
+    const ai = SETTINGS_GROUPS.find((g) => g.id === 'ai')
+    const ids = ai?.items.map((i) => i.id) ?? []
+    expect(ids.indexOf('review-gate')).toBe(ids.indexOf('ai-agents') + 1)
+    expect(ITEMS.find((i) => i.id === 'review-gate')).toMatchObject({
+      label: 'Review gate',
+      description: 'When unreviewed AI reports stop leaving TestLookup',
+      to: '/settings/review-gate',
+      requires: 'admin',
+    })
+    const lead = settingsGroupsFor({ canAccessManagement: true, isAdmin: false, canOwnApiKeys: true, isDev: false })
+    const admin = settingsGroupsFor({ canAccessManagement: true, isAdmin: true, canOwnApiKeys: true, isDev: false })
+    expect(lead.flatMap((g) => g.items.map((i) => i.id))).not.toContain('review-gate')
+    expect(admin.flatMap((g) => g.items.map((i) => i.id))).toContain('review-gate')
+    expect(activeSettingsItem('/settings/review-gate', '')?.id).toBe('review-gate')
   })
 
   it('a viewer sees their own pages and the AI pipeline pages anyone can open, nothing that would redirect them', () => {

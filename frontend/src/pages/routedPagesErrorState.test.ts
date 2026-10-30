@@ -85,6 +85,8 @@ const REVIEWED: Record<string, ErrorState> = {
   WorkflowEditorPage: 'data-unavailable',
   MyFailuresPage: 'own-error-ui',
   'settings/AIConfigPage': 'own-error-ui',
+  // W23c AGT-10: "Could not load the review gate." + Retry.
+  'settings/ReviewGatePage': 'own-error-ui',
   'settings/DigestsPage': 'own-error-ui',
   'settings/SSOSettingsPage': 'own-error-ui',
   'settings/SeedDataPage': 'own-error-ui',

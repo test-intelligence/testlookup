@@ -141,15 +141,29 @@ Every AI report the pipeline produces is a **review request**: `pending_review`,
 
 Settling a review needs the `QA_LEAD` role and membership of the project (or `ADMIN`), signed in interactively: API keys and synthetic accounts are refused. When the run proposes actions for an agent to take, the person who requested the run cannot settle its review (separation of duties). The report then carries a banner: **Draft: awaiting human review**, **Reviewed and accepted**, **Rejected by a reviewer** or **Superseded by a newer report**.
 
-Whether an unreviewed report may leave the app is the server setting **`REVIEW_GATE_ENFORCED`** (default `false`):
+### The review gate date
 
-| | `false` (default) | `true` |
+Whether an unreviewed report may leave the app is decided by an **enforcement date** an administrator sets on **Settings › AI › Review gate** (`/settings/review-gate`, `ADMIN` only). No date is set after an upgrade, which means **audit only**: nothing is withheld. A date in the future schedules enforcement; once it has passed (or when you set a past date, which the page asks you to confirm) the gate is enforced for every project. **Clear date** goes back to audit only.
+
+| | Audit only (no date, or a date still in the future) | Enforced (the date has passed) |
 |---|---|---|
-| Exports, shared links, notifications, webhooks, PR/MR comments carrying an unreviewed report | Allowed. Each would-be refusal is logged to the access audit log as `ai_report.distribution_would_refuse`, so you can see what enforcement would block before turning it on | Refused (`409`). Notifications say an AI summary is ready and awaiting human review instead of including it. A QA lead can still export one deliberately (`include_unreviewed=true` on the run PDF export); it goes out watermarked "DRAFT - AI-generated, not human-reviewed" and audited. Rejected and superseded reports are never distributed |
+| Exports, shared links, notifications, webhooks, PR/MR comments carrying an unreviewed report | Allowed. Each would-be refusal is logged to the access audit log as `ai_report.distribution_would_refuse`, so you can see what enforcement would block before turning it on | Refused (`409`; a shared link opened in a browser shows a "Report awaiting review" page). Notifications say an AI summary is ready and awaiting human review instead of including it. A QA lead can still export one deliberately (`include_unreviewed=true` on the run PDF export); it goes out watermarked "DRAFT - AI-generated, not human-reviewed" and audited. Rejected and superseded reports are never distributed |
 | Release verdict on an unreviewed report | The computed verdict | `PENDING_REVIEW` until a reviewer settles it |
 | AI kind labels on PR/MR comments | Shown | Stripped until reviewed |
 
-Run with it `false` for a while, read the would-refuse audit rows, make sure reviewers are keeping up with the Approvals queue, then turn it on.
+- **What would have been withheld.** The page counts the `ai_report.distribution_would_refuse` audit rows of the last 30 days: the number of **runs** whose AI report would have been withheld and the number of **distribution attempts** (one per channel per attempt, so attempts outnumber runs), broken down by channel. When the audit log has less than 30 days of rows, the page says since when it counts. When the audit log cannot be read it says **Not measured**, never 0. Pick the date from these numbers, once reviewers are keeping up with the Approvals queue.
+- **The server override.** The environment variable **`REVIEW_GATE_ENFORCED=true`** enforces the gate whatever the date (the page says so and the date does not apply while it is on). `false`, the default, lets the date decide.
+- **When a change takes effect.** The server you saved on applies it at once; every other server and worker picks it up **within 30 seconds**.
+- **Who changed it.** Each change of the date is recorded on **Settings › Audit** (setting `review_gate`). API keys of an administrator can read the page's data (`GET /api/v1/settings/review-gate`) but only an administrator signed in interactively can change it (`PUT`).
+
+### The PR / MR comment after a review is accepted
+
+When a QA lead accepts a run's AI report, TestLookup updates the run's existing TestLookup comment on its GitHub pull request or GitLab merge request: the AI kind labels now show as reviewed (whether or not the gate is enforced), the draft note goes, and one line is added under the counts: *Reviewed by a person · 2026-11-02 09:14 UTC* (the time of the review, never who reviewed). Nothing else changes, and no AI summary is added.
+
+- It **edits** the comment TestLookup posted when the run was ingested; it never adds a new comment to the request. A run of the same request that is newer than the accepted one owns the comment, so accepting an older run's report leaves it alone.
+- It goes through the same switches as every GitHub / GitLab post: offline mode, the `github_checks` / `gitlab` flags, the integration's comment mode, the address safety check.
+- Each attempt leaves one row on **Activity** (category Integrations, and on the run's own activity), for example "PR comment updated with the reviewed AI labels. — Build 1042", "PR comment re-post skipped: offline mode (AI_OFFLINE_MODE=true). — Build 1042" or "PR comment re-post skipped: no GitHub integration for this project. — Build 7". A git host that does not answer in time is retried up to three times and then recorded as timed out (not as a failure); a refusal by the host is recorded with its status and also shows on Integration Health.
+- A run with no PR / MR context in a project with no GitHub or GitLab integration has nothing to update and records nothing.
 
 ## AI history: every analysis is kept
 

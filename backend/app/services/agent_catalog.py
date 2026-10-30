@@ -100,12 +100,38 @@ class AgentCatalogEntry(BaseModel):
     max_retries: int
     fallback: str
     concurrency_class: str
+    # W23c AGT-11: additive. True for the agents in inline_input_vocab.INLINE_INPUT_AGENTS.
+    inline_input_supported: bool = Field(
+        default=False,
+        description=(
+            "Accepts inline_input on POST /api/v1/agents/{agent_id}/invoke (a pasted input anchored to a "
+            "stored test run of the project); the detail publishes its schema as inline_input_json_schema."
+        ),
+    )
 
 
 class AgentCatalogDetail(AgentCatalogEntry):
     input_wrapper: str
     input_json_schema: dict[str, Any]
     output_json_schema: Optional[dict[str, Any]] = None
+    # W23c AGT-11: InlineSummaryInputV1's JSON Schema for an inline-supported agent, else None.
+    inline_input_json_schema: Optional[dict[str, Any]] = None
+
+
+def inline_input_supported(agent_id: str) -> bool:
+    """Whether ``agent_id`` accepts ``inline_input`` (W23c: ``agent.summary.v1`` only)."""
+    from app.services.inline_input_vocab import INLINE_INPUT_AGENTS  # noqa: PLC0415
+
+    return agent_id in INLINE_INPUT_AGENTS
+
+
+def _inline_input_json_schema(agent_id: str) -> Optional[dict[str, Any]]:
+    if not inline_input_supported(agent_id):
+        return None
+    # Not a registry contract: deliberately outside CATALOG_SCHEMA_MODULES (contract §0.12).
+    from app.models.inline_agent_input import InlineSummaryInputV1  # noqa: PLC0415
+
+    return InlineSummaryInputV1.model_json_schema()
 
 
 def _model_name(schema: str) -> tuple[str, bool]:
@@ -195,6 +221,7 @@ def _entry_fields(spec: CapabilitySpecV1) -> dict[str, Any]:
         "max_retries": spec.max_retries,
         "fallback": spec.fallback,
         "concurrency_class": spec.concurrency_class,
+        "inline_input_supported": inline_input_supported(spec.capability_id),
     }
 
 
@@ -215,4 +242,5 @@ def get_catalog_detail(agent_id: str) -> Optional[AgentCatalogDetail]:
         input_wrapper=wrapper.__name__,
         input_json_schema=wrapper.model_json_schema(),
         output_json_schema=_output_json_schema(spec.output_schema),
+        inline_input_json_schema=_inline_input_json_schema(agent_id),
     )

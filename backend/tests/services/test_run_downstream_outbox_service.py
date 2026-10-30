@@ -2212,6 +2212,26 @@ async def test_every_staged_payload_binds_to_its_task(monkeypatch):
     await service.stage_live_persist_operation(
         MagicMock(), canonical_run_id=run.id, session=session, final_state={"passed": 1}
     )
+    # W23c AGT-10: the accept handler stages the PR / MR comment re-post.
+    from app.services import (
+        github_checks_service,
+        gitlab_integration_service,
+        report_repost_service,
+    )
+
+    monkeypatch.setattr(github_checks_service, "get_integration", AsyncMock(return_value=object()))
+    monkeypatch.setattr(gitlab_integration_service, "get_integration", AsyncMock(return_value=object()))
+    repost_db = MagicMock()
+    repost_db.execute = AsyncMock(return_value=SimpleNamespace(
+        first=lambda: (run.id, run.project_id, 7, "acme/payments", "github_actions"),
+    ))
+    review = SimpleNamespace(
+        id=uuid.uuid4(), kind="report", subject_type="pipeline_run", test_run_id=run.id,
+        project_id=run.project_id, workflow_type="offline",
+    )
+    assert await report_repost_service.stage_report_reposts(repost_db, review=review) == [
+        "pr_comment_repost", "mr_note_repost",
+    ]
 
     payloads = {call.kwargs["operation"]: call.kwargs["payload"] for call in staged.await_args_list}
     assert payloads["ai_summary_notifications"]["pipeline_run_id"] == (

@@ -479,6 +479,11 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("integration.connected", "integration", "integration", "{provider} was connected"),
     _spec("integration.disconnected", "integration", "integration", "{provider} was disconnected"),
     _spec("integration.tested", "integration", "integration", "{provider} connection was tested"),
+    # W23c AGT-10: ONE row per terminal outcome of a PR / MR comment re-post after a run's AI
+    # report was accepted (services/report_repost_service.py, system actor, db=None so attempt
+    # mode commits on its own session). ``context`` holds the REPOST_SENTENCES sentence, host,
+    # outcome, reason, review_id, status_code — never a URL, a token, a PR body or a reviewer.
+    _spec("integration.comment_reposted", "integration", "run", "{sentence} — {entity_label}", "attempt", frozenset({"system"})),
     _spec("notification_pref.updated", "integration", "integration", "Notification preferences changed: {changed}"),
     _spec("knowledge_source.added", "integration", "knowledge_source", "Knowledge source {entity_label} was added"),
     _spec("knowledge_source.synced", "integration", "knowledge_source", "Knowledge source {entity_label} was synced"),

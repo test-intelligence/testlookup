@@ -3477,6 +3477,32 @@ The older per-domain sections omitted these tables. Their full field definitions
 - Built `CONCURRENTLY` inside `autocommit_block` on the existing table; an INVALID leftover of a failed build is dropped first (the 0214 pattern). The ORM `Index` carries the same expression (valid in SQLite too).
 - `downgrade()` drops the index (`CONCURRENTLY`) and the column.
 
+## Inline agent input and the review-gate date (migration 0246, W23c)
+
+**`agent_invocations.input_payload`** (0246, AGT-11): `JSONB NULL`, no default (a catalogue change, no rewrite).
+
+- **What it holds.** The inline input of an invocation of `agent.summary.v1` (`models/inline_agent_input.InlineSummaryInputV1`: 1–10 failures with name, suite, category, confidence, root cause and a log excerpt), as canonical JSON.
+- **Never a secret.** Every string is scrubbed (`untrusted_input.scrub`: `sanitize_for_llm` → `redact_text` → the `TOKEN_SHAPES` whole-token rule) BEFORE the object is stored or hashed. The raw request body is never stored, logged or put on the Celery broker.
+- **NULL means a stored-subject invocation** (the server assembled the input from the run). No backfill: every invocation before W23c is one.
+- **Frozen.** A retry or resume re-seeds the graph from this column, read by `pipeline_run_id` through the existing unique `ux_agent_invocations_pipeline_run`. It is read only by `services/inline_invocation.py` and the invocation detail.
+- **The anchor stays.** `test_run_id` stays `NOT NULL` (D18): an inline invocation names a stored run of the project, which anchors tenancy, review and retention (`ON DELETE CASCADE` with the run).
+
+**`agent_invocations.input_sha256`** (0246): `VARCHAR(64) NULL`, no default. The sha256 of the canonical compact JSON of `input_payload` (the redacted bytes). It is the inline review's `evidence_bundle_sha256` and enters the invocation's workflow plan hash.
+
+**CHECKs** (0246), the ORM `CheckConstraint` twins:
+
+- `ck_agent_invocations_input_pair`: `(input_payload IS NULL) = (input_sha256 IS NULL)`.
+- `ck_agent_invocations_input_sha256`: `input_sha256 IS NULL OR input_sha256 ~ '^[0-9a-f]{64}$'`. The regex operator is PostgreSQL-only, so the ORM renders it on PostgreSQL alone (`ddl_if(dialect="postgresql")`); a SQLite test table keeps the pair CHECK.
+- Both are added `NOT VALID` and then `VALIDATE`d (the 0146 pattern), so the scan takes `SHARE UPDATE EXCLUSIVE`. Every existing row is NULL in both columns, so they hold trivially.
+- No index: nothing filters by the new columns.
+- `downgrade()` drops the two CHECKs and the two columns, in reverse order.
+
+**`app_settings` key `review_gate`** (AGT-10, no migration): `value = {"enforced_from": "<ISO-8601 UTC>" | null}`.
+
+- **No row = unset = audit only** (D17). No migration writes the key, so an upgrade changes nothing.
+- Written only by `PUT /api/v1/settings/review-gate` (an interactive ADMIN), audited in `settings_audit_log`. Read by `services/review_gate_setting.py` into a 30-second process snapshot behind the synchronous `report_distribution_policy.gate_enforced()`. The Redis mirror `config:review_gate:v1` (60 s) is deleted on every PUT.
+- `REVIEW_GATE_ENFORCED=true` still enforces the gate whatever the date.
+
 ## Systemic cluster membership key (migration 0193, VIZ-207)
 
 `systemic_flake_cluster` gains `membership_key VARCHAR(32) NULL` and the non-unique index

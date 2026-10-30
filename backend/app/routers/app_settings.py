@@ -20,8 +20,9 @@ from app.core.config import settings
 from app.core.deps import CREDENTIAL_KIND_JWT, credential_kind, get_current_active_user, require_role
 from app.db.postgres import get_db
 from app.models.postgres import AppSetting, User, UserRole
-from app.services import retention_instance_service
+from app.services import retention_instance_service, review_gate_setting
 from app.services.retention_instance_service import InstancePolicyError
+from app.services.review_gate_vocab import GATED_CHANNELS, REVIEW_GATE_ERRORS
 from app.services.retention_service import RetentionValidationError
 from app.services.secret_service import extract_secrets_from_config, store_secret, strip_secrets_from_config
 from app.services.settings_audit_service import get_settings_audit_log, log_settings_change
@@ -29,6 +30,7 @@ from app.models.schemas import (
     AIConfigRead,
     AIConfigUpdate,
     EmbeddingIndexRead,
+    GatedChannel,
     InstanceEnablePreviewResponse,
     InstanceEnableRequest,
     InstanceRetentionPolicyRead,
@@ -37,11 +39,14 @@ from app.models.schemas import (
     IntegrationsConfigUpdate,
     MfaPolicyRead,
     MfaPolicyUpdate,
+    ReviewGateRead,
+    ReviewGateWrite,
     SmtpConfigRead,
     SmtpConfigUpdate,
     SmtpTestResult,
     StorageConfigRead,
     StorageConfigUpdate,
+    WouldRefuseSummary,
 )
 
 logger = logging.getLogger(__name__)
@@ -1654,3 +1659,91 @@ async def enable_retention_defaults(
     return InstanceRetentionPolicyRead.model_validate(
         await retention_instance_service.instance_policy_read(db)
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Review gate — the instance enforcement date of the AI-report review gate (W23c AGT-10)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# ONE ``app_settings`` row (``review_gate``); no row = unset = audit only (D17).
+# ADMIN only. The GET answers any ADMIN credential (an admin API key included)
+# and writes nothing; the PUT needs an interactive (JWT) login. The PUT is
+# audited in ``settings_audit_log`` (instance settings have no ledger row; this
+# router is unscoped). ``gate_enforced()`` reads a 30 s process snapshot: the
+# PUT sets this pod's at once and deletes the Redis mirror, so every other pod
+# follows within 30 seconds (``review_gate_setting``).
+
+
+def _review_gate_error(code: str, status_code: int) -> HTTPException:
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": code, "message": REVIEW_GATE_ERRORS[code]},
+    )
+
+
+async def _review_gate_read(db: AsyncSession) -> ReviewGateRead:
+    """The answer of both routes: read on the request session, never a write.
+
+    The row is read on the request session (its connection is already held by
+    the auth dependency's user lookup) and seeds this pod's snapshot, so
+    ``enforced`` / ``source`` are this pod's fresh answer without a second
+    session. The would-refuse summary is measured from the audit rows, never
+    cached; an unreadable audit log reads ``measured: false``.
+    """
+    now = datetime.now(timezone.utc)
+    enforced_from, updated_at = await review_gate_setting.load_setting_record(db)
+    review_gate_setting.seed_snapshot(enforced_from)
+    env = bool(settings.REVIEW_GATE_ENFORCED)
+    enforced, source = review_gate_setting.gate_state(enforced_from, env=env, now=now)
+    would_refuse = await review_gate_setting.would_refuse_summary(db, now=now)
+    return ReviewGateRead(
+        enforced=enforced,
+        source=source,
+        enforced_from=enforced_from,
+        env_override=env,
+        updated_at=updated_at,
+        would_refuse=WouldRefuseSummary.model_validate(would_refuse),
+        channels=[GatedChannel(channel=code, label=label) for code, label in GATED_CHANNELS],
+    )
+
+
+@router.get("/review-gate", response_model=ReviewGateRead)
+async def get_review_gate(
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> ReviewGateRead:
+    """When unreviewed AI reports stop leaving TestLookup: the stored date (or
+    none = audit only), whether the gate is enforced right now and why, and the
+    distribution attempts that would have been withheld in the last 30 days.
+    Reads only."""
+    return await _review_gate_read(db)
+
+
+@router.put("/review-gate", response_model=ReviewGateRead)
+async def update_review_gate(
+    payload: ReviewGateWrite,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> ReviewGateRead:
+    """Set the enforcement date (an ISO-8601 instant with an offset; past or
+    future) or clear it with ``null`` (back to audit only). A past instant
+    enforces at once. Interactive login only; audited once per actual change."""
+    if credential_kind(current_user) != CREDENTIAL_KIND_JWT:
+        raise _review_gate_error("interactive_only", status.HTTP_403_FORBIDDEN)
+    enforced_from = payload.enforced_from
+    if enforced_from is not None:
+        if enforced_from.tzinfo is None or enforced_from.utcoffset() is None:
+            raise _review_gate_error("naive_datetime", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        try:
+            enforced_from = enforced_from.astimezone(timezone.utc)
+        except (OverflowError, ValueError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="enforced_from is out of range.",
+            ) from exc
+    _before, after = await review_gate_setting.stage_setting(
+        db, enforced_from=enforced_from, actor=current_user
+    )
+    await db.commit()
+    await review_gate_setting.after_commit(after)
+    return await _review_gate_read(db)

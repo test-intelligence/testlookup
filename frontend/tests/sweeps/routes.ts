@@ -16,7 +16,7 @@ export const ROUTE_TEMPLATES: readonly string[] = [
   'flaky', 'flaky-coach', 'quarantine', 'reviews', 'test-management', 'live', 'my-failures',
   'reports/summary', 'settings/profile', 'settings/my-notifications', 'settings/my-api-keys', 'projects',
   'releases', 'releases/:releaseId', 'activity', 'users', 'settings', 'settings/notifications',
-  'settings/team-channels', 'settings/ai', 'settings/integrations', 'settings/storage', 'settings/sso',
+  'settings/team-channels', 'settings/ai', 'settings/review-gate', 'settings/integrations', 'settings/storage', 'settings/sso',
   'settings/digests', 'settings/integration-health', 'settings/audit', 'settings/ai-eval',
   'settings/performance', 'settings/seed-data', 'settings/feature-flags', 'settings/billing',
   'settings/github', 'settings/gitlab', 'settings/webhooks', 'settings/api-keys', 'settings/project-data',

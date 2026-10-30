@@ -10,7 +10,7 @@ Get Invocation
 
 Poll one invocation: status, attempts, output and review state, read from its run.
 
-Source: [backend/app/routers/agent_invoke.py:590](../../../backend/app/routers/agent_invoke.py#L590).
+Source: [backend/app/routers/agent_invoke.py:727](../../../backend/app/routers/agent_invoke.py#L727).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_invocation_access.<locals>._check`.
 
@@ -96,7 +96,7 @@ terminalises at its next stage boundary. Cancellation is sticky: an
 automatic retry never brings it back. Cancellation before the worker
 creates a run is stored on the invocation and rechecked under a row lock.
 
-Source: [backend/app/routers/agent_invoke.py:811](../../../backend/app/routers/agent_invoke.py#L811).
+Source: [backend/app/routers/agent_invoke.py:948](../../../backend/app/routers/agent_invoke.py#L948).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_invocation_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -184,7 +184,7 @@ Stream Invocation Events
 
 Progress of one invocation as server-sent events, until its run finishes.
 
-Source: [backend/app/routers/agent_invoke.py:621](../../../backend/app/routers/agent_invoke.py#L621).
+Source: [backend/app/routers/agent_invoke.py:758](../../../backend/app/routers/agent_invoke.py#L758).
 
 Dependency chain: `require_invocation_stream_ticket.<locals>._check`.
 
@@ -261,7 +261,7 @@ Issue Invocation Stream Ticket
 
 A single-use ticket for ``GET .../events`` (EventSource cannot send Authorization).
 
-Source: [backend/app/routers/agent_invoke.py:602](../../../backend/app/routers/agent_invoke.py#L602).
+Source: [backend/app/routers/agent_invoke.py:739](../../../backend/app/routers/agent_invoke.py#L739).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_invocation_access.<locals>._check`.
 
@@ -360,7 +360,7 @@ configuration, and a rerun needs a new run -- which is a new invocation --
 so that is 409 with ``links.rerun`` too. An invocation whose run never
 started is dispatched again.
 
-Source: [backend/app/routers/agent_invoke.py:635](../../../backend/app/routers/agent_invoke.py#L635).
+Source: [backend/app/routers/agent_invoke.py:772](../../../backend/app/routers/agent_invoke.py#L772).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_invocation_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -467,7 +467,13 @@ run that is still in progress is returned as-is with 200. With an
 ``Idempotency-Key``, a repeated request returns the invocation it created
 (E1.3).
 
-Source: [backend/app/routers/agent_invoke.py:910](../../../backend/app/routers/agent_invoke.py#L910).
+``inline_input`` (agents with ``inline_input_supported`` in the catalog):
+the stored run in ``input.payload`` anchors it and must belong to
+``project_id`` (else one 404 ``anchor_run_not_found``); larger than 262144
+bytes is 413; secrets are redacted before it is stored; the output is a
+draft kept out of the run's report, gates, notifications and digests.
+
+Source: [backend/app/routers/agent_invoke.py:1047](../../../backend/app/routers/agent_invoke.py#L1047).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -577,8 +583,14 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       },
       "description": "Successful Response"
     },
+    "404": {
+      "description": "Unknown agent or test run; for inline_input, anchor_run_not_found for every wrong anchor"
+    },
     "409": {
       "description": "Invocation conflict or request still in flight"
+    },
+    "413": {
+      "description": "inline_input is larger than 262144 bytes (inline_input_too_large)"
     },
     "422": {
       "description": "Invalid input or Idempotency-Key reuse"

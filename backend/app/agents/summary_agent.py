@@ -43,6 +43,7 @@ from app.services.evidence_catalogue import (
     ground_layer,
     render_catalogue,
 )
+from app.services.inline_invocation import is_inline_state
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
 from app.services.model_router import choose_model, decide_escalation, provenance
@@ -1380,6 +1381,9 @@ class SummaryAgent(BaseAgent):
         similar_timeout: int | None = None,
     ) -> list[dict]:
         """Retrieve similar historical failures via semantic search (blocks before LLM)."""
+        # W23c AGT-11: no project-history search keyed on a pasted inline input.
+        if is_inline_state(state):
+            return []
         if similar_timeout is None:
             similar_timeout = summary_timeouts(state)[1]
         top_error = ""
@@ -1674,6 +1678,11 @@ class SummaryAgent(BaseAgent):
         structured: dict,
         state: dict,
     ) -> None:
+        # W23c AGT-11: an inline-input invocation's summary is a draft of the INVOCATION: no
+        # run_summaries write (the run's latest summary) and no AI-history version. Its output
+        # lives only in its agent_stage_results row.
+        if is_inline_state(state):
+            return
         db = get_mongo_db()
         now = datetime.now(timezone.utc)
 

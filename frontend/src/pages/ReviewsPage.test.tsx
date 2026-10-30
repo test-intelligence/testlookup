@@ -5,7 +5,7 @@
  * everyone else sees the queue read-only; All Projects mode shows the project
  * picker instead of fetching a queue that does not exist.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Review } from '@/types/review'
@@ -113,6 +113,23 @@ describe('ReviewsPage', () => {
     // UX redesign P4: the run's Analysis tab, not the old /runs/:id/intelligence (which redirects there).
     expect(screen.getByRole('link', { name: 'Open report' })).toHaveAttribute('href', '/runs/run-1?tab=analysis')
     expect(screen.getByText('AI-generated content. Verify before acting.')).toBeInTheDocument()
+  })
+
+  it('an inline-input invocation row reads as one and links to the invocation, not to the run report (W23c)', () => {
+    hookState.reviews = [
+      review(1),
+      review(2, { subject_type: 'invocation', subject_id: 'inv-2', test_run_id: 'run 2', workflow_type: 'offline' }),
+    ]
+    renderPage()
+    const [reportRow, invocationRow] = screen.getAllByTestId('review-row')
+    expect(invocationRow).toHaveTextContent('Agent invocation (inline input)')
+    expect(invocationRow).not.toHaveTextContent('offline report')
+    expect(within(invocationRow).getByRole('link', { name: 'Open invocation' }))
+      .toHaveAttribute('href', '/agents?run=run%202&invocation=inv-2')
+    expect(within(invocationRow).queryByRole('link', { name: 'Open report' })).toBeNull()
+    // Every other row is unchanged.
+    expect(reportRow).toHaveTextContent('deep report')
+    expect(within(reportRow).getByRole('link', { name: 'Open report' })).toHaveAttribute('href', '/runs/run-1?tab=analysis')
   })
 
   it('switches the state filter from its chips', () => {

@@ -52,6 +52,47 @@ locally by default.
 
 ### Added
 
+- **The review gate's enforcement date, the PR / MR comment re-post, and
+  inline agent input** (wave W23c, AGT-10 + AGT-11; branch
+  `feat/df-review-gate-inline-20261029`; migration 0246; no flag).
+  **Review gate (AGT-10):** a new admin page, Settings › AI › Review
+  gate, sets the date from which unreviewed AI reports stop leaving
+  TestLookup. It is unset on upgrade, so behaviour stays audit-only.
+  The page shows how many runs' reports would have been withheld in the
+  last 30 days, by channel ("Not measured" when the audit log cannot be
+  read, never 0). A past date asks first ("Enforce now"). The setting is
+  audited and reaches every server within 30 seconds; the
+  `REVIEW_GATE_ENFORCED` environment flag still forces it on.
+  - **While enforced:** the run page's PDF action shows the server's own
+    sentence in one toast, and an anonymous share-link view gets a
+    "Report awaiting review" page instead of raw JSON.
+  - **Re-post:** accepting a run's AI report now edits that run's
+    existing TestLookup PR comment (GitHub) or MR note (GitLab) to add
+    "Reviewed by a person · <time>". It never names the reviewer and
+    never posts a new comment.
+  - **Skips:** a newer run on the same request, a run with no PR / MR,
+    no integration and offline mode each skip, and every outcome is one
+    `integration.comment_reposted` activity row. A timeout is recorded
+    once as `timed_out`, never `failed`.
+  **Inline agent input (AGT-11):** `POST /api/v1/agents/agent.summary.v1/invoke`
+  accepts `inline_input` (`InlineSummaryInputV1`: up to 10 failures with
+  root cause and log excerpt), anchored to a stored run of the project
+  (one 404 for every wrong anchor; 413 over 256 KB; 422 with field
+  errors).
+  - **Storage:** the input is redacted before it is stored, with its
+    sha256 on `agent_invocations` (`input_payload`, `input_sha256`). It is
+    frozen into the plan, so a resume replays it.
+  - **Prompts:** every pasted value reaches the model only inside a
+    `<<data>>…<</data>>` block, through one value-level boundary
+    (`services/untrusted_input.py`). No prompt text changed.
+  - **Exclusions:** the output is reviewed as its own invocation and
+    stays out of the run's report, release gates, decisions,
+    notifications, digests and workflow evaluation.
+  - **UI:** a "Try an agent" section on Pipeline runs (QA engineer and
+    above) shows the catalog, a JSON editor pre-filled from the schema,
+    and the invocation with its redacted stored input. Inbox › Approvals
+    lists "Agent invocation (inline input)".
+  - **MCP:** `invoke_agent` gains `payload`.
 - **Narrowing a failure to its last pass, and configuration drift** (wave
   W23b, FAIL-12 + FAIL-13; branch `feat/df-history-drift-20261029`).
   **Narrowing (observe-only):** a failing test's **Suspects** section on

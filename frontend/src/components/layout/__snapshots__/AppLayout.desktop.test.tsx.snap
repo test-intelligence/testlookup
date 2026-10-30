@@ -455,6 +455,9 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
                     <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="ai-agents" href="/settings/ai-agents">
                       "AI agents"
                   <li>
+                    <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="review-gate" href="/settings/review-gate">
+                      "Review gate"
+                  <li>
                     <a class="block truncate rounded-md px-2 py-1 text-sm transition-colors text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)]" data-discover="true" data-settings-item="workflows" href="/agents/workflows">
                       "Workflow editor"
                   <li>

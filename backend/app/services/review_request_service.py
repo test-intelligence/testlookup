@@ -140,13 +140,15 @@ def _new_request(
     run: Any,
     evidence_bundle_sha256: Optional[str],
     requested_by: Optional[uuid.UUID],
+    subject_type: str = "pipeline_run",
+    subject_id: Optional[str] = None,
 ) -> ReviewRequest:
     return ReviewRequest(
         id=uuid.uuid4(),
         project_id=project_id,
         kind="report",
-        subject_type="pipeline_run",
-        subject_id=str(run.id),
+        subject_type=subject_type,
+        subject_id=subject_id if subject_id is not None else str(run.id),
         pipeline_run_id=_as_uuid(run.id),
         test_run_id=_as_uuid(getattr(run, "test_run_id", None)),
         workflow_type=getattr(run, "workflow_type", None),
@@ -169,9 +171,16 @@ async def create_run_review_request(
     report_stage_names: Iterable[str],
     evidence_bundle_sha256: Optional[str] = None,
     requested_by: Any = None,
+    subject_type: str = "pipeline_run",
+    subject_id: Optional[str] = None,
 ) -> Optional[ReviewRequest]:
     """Stage the live review request for ``run``. Returns it, or ``None`` when the
-    run produced no report or its project is unknown. The caller commits."""
+    run produced no report or its project is unknown. The caller commits.
+
+    W23c AGT-11: an inline-input invocation's review names the INVOCATION
+    (``subject_type="invocation"``, ``subject_id`` its id). It is looked up live by
+    that subject, supersedes no other review of the test run, and is superseded
+    by nothing but its own re-finalize."""
     stages = [s for s in report_stage_names if s]
     if not stages:
         return None
@@ -180,7 +189,7 @@ async def create_run_review_request(
         logger.warning("review_request_skipped_no_project", pipeline_run_id=str(run.id))
         return None
     requester = _as_uuid(requested_by)
-    subject_id = str(run.id)
+    subject_id = subject_id if subject_id is not None else str(run.id)
     test_run_id = _as_uuid(getattr(run, "test_run_id", None))
     workflow_type = getattr(run, "workflow_type", None)
     manifest_checksum = checksum_from_execution_metadata(
@@ -203,7 +212,7 @@ async def create_run_review_request(
             select(ReviewRequest)
             .where(
                 ReviewRequest.kind == "report",
-                ReviewRequest.subject_type == "pipeline_run",
+                ReviewRequest.subject_type == subject_type,
                 ReviewRequest.subject_id == subject_id,
                 ReviewRequest.state != "superseded",
             )
@@ -233,6 +242,8 @@ async def create_run_review_request(
         run=run,
         evidence_bundle_sha256=evidence_bundle_sha256,
         requested_by=requester,
+        subject_type=subject_type,
+        subject_id=subject_id,
     )
     db.add(request)
     await db.flush()
@@ -241,8 +252,14 @@ async def create_run_review_request(
         live.superseded_by = request.id
 
     # A newer run over the same test run and workflow replaces older pending reviews.
+    # Not an invocation review (W23c): a pasted input never replaces the run's report review.
     older: list[ReviewRequest] = []
-    if test_run_id is not None and workflow_type and workflow_type != "investigation":
+    if (
+        subject_type == "pipeline_run"
+        and test_run_id is not None
+        and workflow_type
+        and workflow_type != "investigation"
+    ):
         older = (
             await db.execute(
                 select(ReviewRequest)
@@ -252,6 +269,9 @@ async def create_run_review_request(
                     ReviewRequest.workflow_type == workflow_type,
                     ReviewRequest.state == "pending_review",
                     ReviewRequest.subject_id != subject_id,
+                    # W23c: an inline-input invocation's review is superseded by nothing
+                    # but its own re-finalize.
+                    ReviewRequest.subject_type != "invocation",
                 )
                 .with_for_update()
             )
@@ -296,6 +316,11 @@ async def stage_run_review_request(db: Any, **kwargs: Any) -> Optional[ReviewReq
 # ── Settling a review (architecture E8.2, section 8.3) ───────────────────────
 
 
+#: Review subjects that ARE a pipeline run: settling one moves that run, and a
+#: nulled ``pipeline_run_id`` (the run was deleted) makes it an orphan.
+_PIPELINE_BACKED_SUBJECTS = ("pipeline_run", "invocation")
+
+
 def subject_still_exists():
     """SQL predicate: the review's subject has not been deleted.
 
@@ -309,9 +334,12 @@ def subject_still_exists():
     row from the one surface an operator could see it on while it still drove
     the export gate and the release narrative, which is the same
     two-readers-one-fact shape this branch exists to fix.
+
+    W23c AGT-11: an ``invocation`` review (an inline-input invocation) runs as a
+    pipeline too and is orphaned the same way when that pipeline is deleted.
     """
     return ~(
-        (ReviewRequest.subject_type == "pipeline_run")
+        (ReviewRequest.subject_type.in_(_PIPELINE_BACKED_SUBJECTS))
         & (ReviewRequest.pipeline_run_id.is_(None))
     )
 
@@ -430,7 +458,7 @@ async def settle_review(
     # no run left to mark. Measured on the homelab deployment: 12 of 118
     # pipeline-run reviews were in this state, and the one review a human had
     # accepted was one of them (BUG-012).
-    if review.subject_type == "pipeline_run" and review.pipeline_run_id is None:
+    if review.subject_type in _PIPELINE_BACKED_SUBJECTS and review.pipeline_run_id is None:
         raise ReviewDecisionRefused(
             409, "subject_run_deleted",
             "The pipeline run this review describes no longer exists, so "
