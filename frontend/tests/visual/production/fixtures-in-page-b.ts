@@ -900,7 +900,10 @@ export function projectDataJob(kind: 'export' | 'import', status: ProjectDataJob
   if (done && !isExport) {
     const report: ProjectDataImportReport = {
       project_id: IMPORTED_PROJECT_ID, project_name: IMPORTED_PROJECT_NAME, project_slug: 'checkout-imported',
-      inserted: { test_suites: 3, managed_test_cases: 42, releases: 2 },
+      // Every switched-off row is an INSERTED row too (the product never reports one without the other), and the
+      // project row itself always travels: the W24 baseline reading caught "3 webhooks switched off" beside an
+      // inserted list without them.
+      inserted: { projects: 1, test_suites: 3, managed_test_cases: 42, releases: 2, webhook_subscriptions: 3 },
       skipped: [{ entity: 'test_plan_items', column: 'test_case_id', reason: 'row_unresolved', count: 1 }],
       cleared: [], switched_off: { webhook_subscriptions: 3 }, signature: 'valid',
       source_project_name: 'Payment Service', source_app_version: '2.4.0', exported_at: isoAgo(0, 2),

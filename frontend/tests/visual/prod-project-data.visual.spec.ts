@@ -7,8 +7,8 @@
  *  - `project-data-export-running` — the Export card while the export runs: the spinner, "Exporting… 12 of 30
  *    tables" and Export disabled (the job keeps answering running);
  *  - `project-data-import-report` — the Import card after an import finished in this visit: the chosen file, "Created
- *    Payment Service (imported)." + Open Payment Service (imported), the signature, three inserted rows, one
- *    switched-off line and one skipped line in the singular.
+ *    Payment Service (imported)." + Open Payment Service (imported), the signature, five inserted rows (the project, its
+ *    catalog and the switched-off webhooks), one switched-off line and one skipped line in the singular.
  *
  * Each region is the card itself (`[data-project-export]` / `[data-project-import]`) in the 732 px settings column.
  * World: `projectDataWorld({...})` in `production/fixtures-in-page-b.ts`. PNGs are rendered by CI only
@@ -59,7 +59,7 @@ for (const theme of THEMES_WITH_PAPER) {
     await page.getByLabel('Export file (.zip)').setInputFiles({ name: 'payment-service.zip', mimeType: 'application/zip', buffer: Buffer.alloc(3 * 1024) })
     await importCard(page).getByRole('button', { name: 'Import', exact: true }).click()
     await expect(importCard(page).getByText(`Created ${IMPORTED_PROJECT_NAME}.`, { exact: true })).toBeVisible({ timeout: 15_000 })
-    await expect(importCard(page).locator('[data-report-list="inserted"] li')).toHaveCount(3)
+    await expect(importCard(page).locator('[data-report-list="inserted"] li')).toHaveCount(5)
     await expect(importCard(page).locator('[data-report-list="switched-off"] li')).toHaveCount(1)
     await expect(importCard(page).getByText('1 row was skipped: it pointed at a row that is not in the export', { exact: true })).toBeVisible()
     await blur(page)

@@ -129,7 +129,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 900
       await expect(open).toBeVisible()
       await expect(importCard(page).getByText('1 row was skipped: it pointed at a row that is not in the export', { exact: true })).toBeVisible()
       await expect(importCard(page).getByText('3 rows switched off — secret required', { exact: true })).toBeVisible()
-      await expect(importCard(page).locator('[data-report-list="inserted"] li')).toHaveCount(3)
+      await expect(importCard(page).locator('[data-report-list="inserted"] li')).toHaveCount(5)
       await networkQuiet(page, api)
       expect(world.writes).toHaveLength(1)
       const first = world.writes[0] as { line: string; body: Record<string, unknown> }
