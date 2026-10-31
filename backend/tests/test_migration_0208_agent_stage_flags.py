@@ -87,7 +87,7 @@ def test_the_six_rows_their_descriptions_and_defaults():
         assert description.isascii()
 
 
-def test_the_legacy_variables_are_the_feature_flag_services_map():
+def test_the_legacy_variables_are_the_feature_flags_map():
     """A seeded OFF row must not switch off a stage enabled through its env fallback."""
     from app.services.feature_flags import LEGACY_ENV_VAR_MAP
 

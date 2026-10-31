@@ -13,7 +13,6 @@ import pytest
 
 
 from app.services import feature_flags as ff
-from app.services import feature_flag_service as legacy_ff
 
 
 def _make_user(role: str = "QA_ENGINEER", user_id: str | None = None) -> SimpleNamespace:
@@ -455,39 +454,4 @@ async def test_feature_flag_writers_share_the_global_authority_lock(monkeypatch)
     await ff.delete_flag(db, key=flag.key, actor=actor)
 
     assert lock.await_count == 3
-    assert all(call.args == (db,) for call in lock.await_args_list)
-
-
-@pytest.mark.asyncio
-async def test_legacy_feature_flag_writers_share_the_global_authority_lock(monkeypatch):
-    lock = AsyncMock()
-    monkeypatch.setattr(legacy_ff, "lock_global_agent_authority", lock)
-    existing = SimpleNamespace(enabled_global=True, description=None)
-
-    class _Result:
-        def __init__(self, value):
-            self.value = value
-
-        def scalar_one_or_none(self):
-            return self.value
-
-    class _DB:
-        def __init__(self):
-            self.value = None
-
-        async def execute(self, _statement):
-            return _Result(self.value)
-
-        def add(self, _row):
-            return None
-
-        async def delete(self, _row):
-            return None
-
-    db = _DB()
-    await legacy_ff.set_flag(db, "contract_validation", True)
-    db.value = existing
-    assert await legacy_ff.delete_flag(db, "contract_validation") is True
-
-    assert lock.await_count == 2
     assert all(call.args == (db,) for call in lock.await_args_list)

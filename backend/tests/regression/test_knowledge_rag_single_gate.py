@@ -113,10 +113,11 @@ async def test_the_gate_and_the_status_reader_cannot_disagree():
 
 
 def test_the_toggle_writes_through_the_cache_invalidating_path():
-    """Two flag services exist. ``feature_flag_service.set_flag`` does not clear
-    the in-process/Redis caches ``is_enabled`` reads, so a write through it
-    leaves the switch looking broken for up to the 30s TTL. The AI page must
-    use ``feature_flags.update_flag``/``create_flag``, which invalidate.
+    """Two flag services existed until W25b. The legacy facade's ``set_flag``
+    did not clear the in-process/Redis caches ``is_enabled`` reads, so a write
+    through it left the switch looking broken for up to the 30s TTL. The AI
+    page must use ``feature_flags.update_flag``/``create_flag``, which
+    invalidate; the assertions now guard against the facade's reintroduction.
     """
     import inspect
     src = inspect.getsource(settings_router.update_ai_config)

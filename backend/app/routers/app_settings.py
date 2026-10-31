@@ -9,10 +9,10 @@ Security model:
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Annotated, Any, Optional
 
 import aiosmtplib
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -805,10 +805,10 @@ async def update_ai_config(
     # Two stores is exactly what let this page report "Active" while
     # /knowledge-sources answered 503 and told the operator to come here.
     #
-    # Routed through feature_flags.update_flag rather than
-    # feature_flag_service.set_flag because only the former invalidates the
-    # in-process and Redis caches that is_enabled() reads; without that, the
-    # switch appears not to work for up to 30 seconds after it is flipped.
+    # Routed through feature_flags.update_flag because it invalidates the
+    # in-process and Redis caches that is_enabled() reads; the legacy facade,
+    # removed in W25b, did not invalidate them, so a write through it left the
+    # switch looking broken for up to 30 seconds after it was flipped.
     rag_requested = updates.pop("knowledge_rag_enabled", None)
     merged.pop("knowledge_rag_enabled", None)
     if rag_requested is not None:
@@ -1402,8 +1402,39 @@ async def get_audit_log(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Feature Flags
+# Feature Flags — legacy, DEPRECATED aliases (W25b HYG-03)
 # ═══════════════════════════════════════════════════════════════════════════════
+#
+# The three routes below keep their paths, roles, request bodies and response
+# shapes; since W25b they run over the canonical service behind
+# /api/v1/feature-flags (services/feature_flags) and announce their successor
+# with two headers. They read and write enabled_global only.
+
+LEGACY_FLAGS_SUCCESSOR = "/api/v1/feature-flags"
+#: RFC 9745 Structured Field Date: the moment the legacy routes became deprecated (2026-11-01T00:00:00Z,
+#: the W25b release). D-W25b-1 — the outline's pre-RFC value was "true".
+LEGACY_FLAGS_DEPRECATED_AT = "@1793491200"
+LEGACY_FLAGS_DEPRECATION_HEADERS = {
+    "Deprecation": LEGACY_FLAGS_DEPRECATED_AT,
+    "Link": f'<{LEGACY_FLAGS_SUCCESSOR}>; rel="successor-version"',
+}
+#: What the facade wrote for a key it did not know (feature_flag_service.py:102-107): global toggle,
+#: no project / role allow-list, everyone who passes the gates.
+LEGACY_FLAG_CREATE_DEFAULTS: dict[str, Any] = {"enabled_projects": None, "enabled_roles": None, "rollout_percent": 100}
+LEGACY_FLAG_KEY_MAX = 80        # FeatureFlag.key String(80), postgres.py:6698
+
+
+def _legacy_flag_deprecation(response: Response) -> None:
+    """Route dependency: both headers on every 2xx answer of the three legacy routes (204 included)."""
+    response.headers.update(LEGACY_FLAGS_DEPRECATION_HEADERS)
+
+
+def _legacy_flag_row(flag) -> dict:
+    """The facade's row shape, byte for byte (feature_flag_service.py:69-79)."""
+    return {"flag_key": flag.key, "scope": "global", "enabled": flag.enabled_global, "config": None,
+            "description": flag.description,
+            "updated_at": flag.updated_at.isoformat() if flag.updated_at else None}
+
 
 class FeatureFlagUpdate(BaseModel):
     enabled: bool
@@ -1412,26 +1443,48 @@ class FeatureFlagUpdate(BaseModel):
     description: Optional[str] = None
 
 
-@router.get("/flags")
+@router.get("/flags", deprecated=True, dependencies=[Depends(_legacy_flag_deprecation)])
 async def list_feature_flags(
     _: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all feature flags."""
-    from app.services.feature_flag_service import get_all_flags
-    return await get_all_flags(db)
+    """List all feature flags (legacy shape). Deprecated: use GET /api/v1/feature-flags.
+
+    A database failure propagates to the error boundary: an empty list is a
+    valid authority answer and must never stand in for an outage.
+    """
+    from app.services.feature_flags import list_flags
+    return [_legacy_flag_row(f) for f in await list_flags(db)]
 
 
-@router.put("/flags/{flag_key}")
+@router.put("/flags/{flag_key}", deprecated=True, dependencies=[Depends(_legacy_flag_deprecation)])
 async def update_feature_flag(
-    flag_key: str,
+    flag_key: Annotated[str, Path(max_length=LEGACY_FLAG_KEY_MAX)],
     body: FeatureFlagUpdate,
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create or update a feature flag. Requires ADMIN."""
-    from app.services.feature_flag_service import set_flag
-    result = await set_flag(db, flag_key, body.enabled, body.scope, body.config, body.description)
+    """Create or update a flag's global toggle. Requires ADMIN. Deprecated: use /api/v1/feature-flags.
+
+    ``scope`` and ``config`` are accepted and ignored, as they always were.
+    """
+    from app.services import feature_flags as ff
+    from app.services.agent_authority_lock import lock_global_agent_authority
+
+    # Lock first, then decide create-or-update: the same atomic decision the
+    # facade made, so two concurrent legacy PUTs of a new key never race into
+    # create_flag's 409.
+    await lock_global_agent_authority(db)
+    if await ff.get_flag(db, flag_key) is None:
+        await ff.create_flag(
+            db, key=flag_key, description=body.description, enabled_global=body.enabled,
+            actor=current_user, **LEGACY_FLAG_CREATE_DEFAULTS,
+        )
+    else:
+        updates: dict = {"enabled_global": body.enabled}
+        if body.description is not None:
+            updates["description"] = body.description
+        await ff.update_flag(db, key=flag_key, updates=updates, actor=current_user)
     changed_fields = ["enabled_global"]
     if body.description is not None:
         changed_fields.append("description")
@@ -1439,30 +1492,35 @@ async def update_feature_flag(
         db, f"feature_flag:{flag_key}", "updated", current_user, changed_fields,
     )
     await db.commit()
-    # This compatibility route writes the same authority rows as the canonical
-    # feature-flag API. Invalidate only after commit so all replicas observe the
-    # new row and no concurrent reader can repopulate Redis from old data.
-    from app.services.feature_flags import invalidate_flag_cache
-    await invalidate_flag_cache(flag_key)
-    return result
+    # Invalidate only after commit so all replicas observe the new row and no
+    # concurrent reader can repopulate Redis from old data.
+    await ff.invalidate_flag_cache(flag_key)
+    return {"flag_key": flag_key, "enabled": body.enabled, "scope": "global"}
 
 
-@router.delete("/flags/{flag_key}", status_code=204)
+@router.delete(
+    "/flags/{flag_key}", status_code=204, deprecated=True, dependencies=[Depends(_legacy_flag_deprecation)],
+)
 async def remove_feature_flag(
     flag_key: str,
     current_user: User = Depends(require_role(UserRole.ADMIN)),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a feature flag. Requires ADMIN."""
-    from app.services.feature_flag_service import delete_flag
-    deleted = await delete_flag(db, flag_key)
-    if deleted:
+    """Delete a feature flag. Requires ADMIN. Deprecated: use /api/v1/feature-flags.
+
+    A missing key is still a 204: no service call, no audit row.
+    """
+    from app.services import feature_flags as ff
+    from app.services.agent_authority_lock import lock_global_agent_authority
+
+    await lock_global_agent_authority(db)
+    if await ff.get_flag(db, flag_key) is not None:
+        await ff.delete_flag(db, key=flag_key, actor=current_user)
         await log_settings_change(
             db, f"feature_flag:{flag_key}", "deleted", current_user, ["enabled_global"],
         )
     await db.commit()
-    from app.services.feature_flags import invalidate_flag_cache
-    await invalidate_flag_cache(flag_key)
+    await ff.invalidate_flag_cache(flag_key)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

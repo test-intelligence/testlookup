@@ -161,25 +161,6 @@ class TestFeatureFlagModel:
         assert "description" in columns
 
 
-class TestFeatureFlagService:
-    def test_well_known_flags(self):
-        from app.services.feature_flag_service import (
-            SECURE_SETTINGS, ONBOARDING_WIZARD, DEMO_MODE,
-            EVIDENCE_PROVENANCE, SNAPSHOT_CACHING, CLUSTER_RANKING, ACCESS_AUDIT,
-        )
-        flags = [SECURE_SETTINGS, ONBOARDING_WIZARD, DEMO_MODE,
-                 EVIDENCE_PROVENANCE, SNAPSHOT_CACHING, CLUSTER_RANKING, ACCESS_AUDIT]
-        assert all(isinstance(f, str) for f in flags)
-        assert len(set(flags)) == len(flags)  # All unique
-
-    def test_service_importable(self):
-        from app.services.feature_flag_service import is_enabled, get_all_flags, set_flag, delete_flag
-        assert callable(is_enabled)
-        assert callable(get_all_flags)
-        assert callable(set_flag)
-        assert callable(delete_flag)
-
-
 class TestIntegrationHealthModel:
     def test_table_exists(self):
         from app.models.postgres import IntegrationHealthCheck
