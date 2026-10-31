@@ -6,6 +6,14 @@ import { projectsService } from '@/services/projectsService'
 /** Special sentinel value for "view all projects aggregated" mode */
 export const ALL_PROJECTS_ID = 'all' as const
 
+/**
+ * W25a HYG-07: concurrent `refreshProjects()` callers share ONE
+ * `GET /api/v1/projects` (the shell and a page mounting together, or the dev
+ * server's StrictMode double effect). Cleared when the read settles, so a call
+ * after it (a create, an import) reads again.
+ */
+let projectsInFlight: Promise<Project[]> | null = null
+
 interface ProjectStore {
   activeProjectId: string | null
   activeProject: Project | null
@@ -41,37 +49,42 @@ export const useProjectStore = create<ProjectStore>()(
       setAllProjects: () =>
         set({ activeProject: null, activeProjectId: ALL_PROJECTS_ID }),
       refreshProjects: async () => {
-        const list = await projectsService.list()
-        set((state) => {
-          const next: Partial<ProjectStore> = { projects: list }
-          // Validate the persisted active selection against the fresh list.
-          // Stale localStorage (e.g. project_id from a different deployment's
-          // database) would otherwise cause every mutation to fail with a
-          // foreign-key violation on the backend. When stale, fall back to
-          // ALL_PROJECTS_ID (NOT null) — null leaves the project-gated pages
-          // showing "No project selected" with no way for the user to
-          // self-recover beyond manually picking from the TopBar dropdown.
-          if (
-            state.activeProjectId &&
-            state.activeProjectId !== ALL_PROJECTS_ID &&
-            !list.find((p) => p.id === state.activeProjectId)
-          ) {
-            next.activeProject = null
-            next.activeProjectId = ALL_PROJECTS_ID
-          } else if (state.activeProjectId && state.activeProjectId !== ALL_PROJECTS_ID) {
-            // Refresh the cached project (name may have changed)
-            const fresh = list.find((p) => p.id === state.activeProjectId)
-            if (fresh) next.activeProject = fresh
-          } else if (state.activeProjectId == null) {
-            // Persisted state from a prior version may carry literal null —
-            // promote it to ALL_PROJECTS_ID on read so the user lands on a
-            // working page instead of the locked empty state.
-            next.activeProjectId = ALL_PROJECTS_ID
-            next.activeProject = null
-          }
-          return next as ProjectStore
-        })
-        return list
+        if (projectsInFlight) return projectsInFlight
+        projectsInFlight = (async () => {
+          const list = await projectsService.list()
+          // Inside the shared read: the selection check below runs once per fetch.
+          set((state) => {
+            const next: Partial<ProjectStore> = { projects: list }
+            // Validate the persisted active selection against the fresh list.
+            // Stale localStorage (e.g. project_id from a different deployment's
+            // database) would otherwise cause every mutation to fail with a
+            // foreign-key violation on the backend. When stale, fall back to
+            // ALL_PROJECTS_ID (NOT null) — null leaves the project-gated pages
+            // showing "No project selected" with no way for the user to
+            // self-recover beyond manually picking from the TopBar dropdown.
+            if (
+              state.activeProjectId &&
+              state.activeProjectId !== ALL_PROJECTS_ID &&
+              !list.find((p) => p.id === state.activeProjectId)
+            ) {
+              next.activeProject = null
+              next.activeProjectId = ALL_PROJECTS_ID
+            } else if (state.activeProjectId && state.activeProjectId !== ALL_PROJECTS_ID) {
+              // Refresh the cached project (name may have changed)
+              const fresh = list.find((p) => p.id === state.activeProjectId)
+              if (fresh) next.activeProject = fresh
+            } else if (state.activeProjectId == null) {
+              // Persisted state from a prior version may carry literal null —
+              // promote it to ALL_PROJECTS_ID on read so the user lands on a
+              // working page instead of the locked empty state.
+              next.activeProjectId = ALL_PROJECTS_ID
+              next.activeProject = null
+            }
+            return next as ProjectStore
+          })
+          return list
+        })()
+        try { return await projectsInFlight } finally { projectsInFlight = null }
       },
     }),
     {

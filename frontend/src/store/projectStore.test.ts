@@ -106,3 +106,83 @@ describe('projectStore — ALL_PROJECTS_ID fallback', () => {
     expect(useProjectStore.getState().activeProjectId).toBe(ALL_PROJECTS_ID)
   })
 })
+
+// W25a HYG-07: concurrent callers (the shell and a page mounting together, or
+// the dev server's StrictMode double effect) share ONE GET /api/v1/projects.
+describe('projectStore — one shared project-list read', () => {
+  beforeEach(() => {
+    mockList.mockReset()
+    localStorage.clear()
+  })
+
+  const LIVE = { id: 'live-uuid-aaaa', name: 'Live Project', slug: 'live', is_active: true, created_at: '' }
+
+  /** A list read that answers only when the test says so. */
+  function deferredList() {
+    let resolve!: (value: unknown) => void
+    mockList.mockReturnValueOnce(new Promise((r) => { resolve = r }))
+    return resolve
+  }
+
+  it('two concurrent refreshProjects() calls make ONE list call and resolve to the same list', async () => {
+    const { useProjectStore } = await loadStore()
+    const answer = deferredList()
+
+    const first = useProjectStore.getState().refreshProjects()
+    const second = useProjectStore.getState().refreshProjects()
+    answer([LIVE])
+    const [a, b] = await Promise.all([first, second])
+
+    expect(mockList).toHaveBeenCalledTimes(1)
+    expect(a).toBe(b)
+    expect(a).toEqual([LIVE])
+    expect(useProjectStore.getState().projects).toEqual([LIVE])
+  })
+
+  it('a call after the first settles reads again (a create or an import still re-reads)', async () => {
+    mockList.mockResolvedValue([LIVE])
+    const { useProjectStore } = await loadStore()
+
+    await useProjectStore.getState().refreshProjects()
+    await useProjectStore.getState().refreshProjects()
+
+    expect(mockList).toHaveBeenCalledTimes(2)
+  })
+
+  it('a failed read is not shared with the next call', async () => {
+    const { useProjectStore } = await loadStore()
+    mockList.mockRejectedValueOnce(new Error('offline'))
+    await expect(useProjectStore.getState().refreshProjects()).rejects.toThrow('offline')
+
+    mockList.mockResolvedValueOnce([LIVE])
+    await expect(useProjectStore.getState().refreshProjects()).resolves.toEqual([LIVE])
+    expect(mockList).toHaveBeenCalledTimes(2)
+  })
+
+  it('the stale-selection fallback runs exactly once for two concurrent callers', async () => {
+    localStorage.setItem(
+      'testlookup-active-project',
+      JSON.stringify({
+        state: {
+          activeProjectId: 'stale-uuid-that-no-longer-exists',
+          activeProject: { id: 'stale-uuid-that-no-longer-exists', name: 'Gone', slug: 'gone' },
+        },
+        version: 0,
+      }),
+    )
+    const { useProjectStore, ALL_PROJECTS_ID } = await loadStore()
+    let writes = 0
+    const unsubscribe = useProjectStore.subscribe(() => { writes += 1 })
+    const answer = deferredList()
+
+    const first = useProjectStore.getState().refreshProjects()
+    const second = useProjectStore.getState().refreshProjects()
+    answer([LIVE])
+    await Promise.all([first, second])
+    unsubscribe()
+
+    expect(writes).toBe(1)
+    expect(useProjectStore.getState().activeProjectId).toBe(ALL_PROJECTS_ID)
+    expect(useProjectStore.getState().activeProject).toBeNull()
+  })
+})

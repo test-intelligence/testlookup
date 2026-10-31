@@ -75,6 +75,34 @@ test.describe('hermetic critical journeys', () => {
     await expect(page.getByRole('navigation', { name: 'Main navigation' })).toBeVisible()
   })
 
+  // W25a HYG-07: the sign-in's own `GET /auth/me` IS the verification (the
+  // protected shell does not ask again within 30 s), and the shell's project
+  // list is one shared read (the dev server's StrictMode double effect shares
+  // the in-flight promise). Counted on the wire, not in the stores.
+  test('a sign-in reads the session once and the project list once before Overview paints', async ({ page }) => {
+    const reads = { me: 0, projects: 0 }
+    page.on('request', (request) => {
+      if (request.method() !== 'GET') return
+      const path = new URL(request.url()).pathname
+      if (path === '/api/v1/auth/me') reads.me += 1
+      if (path === '/api/v1/projects') reads.projects += 1
+    })
+
+    await page.goto('/login')
+    await page.getByLabel('Email or Username').fill('qa_lead')
+    await page.getByLabel('Password').fill('correct horse battery staple')
+    await page.getByRole('button', { name: 'Log In' }).click()
+
+    await expect(page).toHaveURL(/\/overview$/)
+    await expect(page.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible({ timeout: 20_000 })
+    const atPaint = { ...reads }
+    // A late second read would still be a second read: give the shell a moment.
+    await page.waitForTimeout(1_500)
+
+    expect(atPaint, 'the session and the project list, read by the time Overview paints').toEqual({ me: 1, projects: 1 })
+    expect(reads, 'no second read after the paint').toEqual({ me: 1, projects: 1 })
+  })
+
   test('an explicitly rejected persisted token cannot expose a protected route', async ({ page }) => {
     await page.addInitScript((seedUser) => {
       localStorage.setItem('auth-storage', JSON.stringify({

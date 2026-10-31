@@ -8,6 +8,7 @@ type AuthState = {
   isAuthenticated: boolean
   token: string | null
   fetchUser: () => Promise<void>
+  lastVerifiedAt?: number | null
 }
 
 const mocked = vi.hoisted(() => {
@@ -45,6 +46,7 @@ describe('ProtectedRoute', () => {
     mocked.state.isAuthenticated = false
     mocked.state.token = null
     mocked.state.fetchUser = vi.fn(async () => {})
+    delete mocked.state.lastVerifiedAt
     mocked.useAuthStore.mockClear()
   })
 
@@ -82,5 +84,37 @@ describe('ProtectedRoute', () => {
     await waitFor(() => {
       expect(fetchUser).toHaveBeenCalledTimes(1)
     })
+  })
+
+  // W25a HYG-07: the sign-in's own `/auth/me` (stamped by `setAuth`) IS the
+  // verification — the protected shell does not ask again within 30 s.
+  it('does not re-verify a session the server confirmed under 30 s ago', async () => {
+    mocked.state.token = 'token'
+    mocked.state.isAuthenticated = true
+    mocked.state.lastVerifiedAt = Date.now() - 1_000
+    const fetchUser = vi.fn(async () => {})
+    mocked.state.fetchUser = fetchUser
+
+    renderWithRoutes('/overview')
+
+    await waitFor(() => {
+      expect(screen.getByText('Overview Page')).toBeInTheDocument()
+    })
+    expect(fetchUser).not.toHaveBeenCalled()
+  })
+
+  it('re-verifies once the confirmation is older than 30 s', async () => {
+    mocked.state.token = 'token'
+    mocked.state.isAuthenticated = true
+    mocked.state.lastVerifiedAt = Date.now() - 31_000
+    const fetchUser = vi.fn(async () => {})
+    mocked.state.fetchUser = fetchUser
+
+    renderWithRoutes('/overview')
+
+    await waitFor(() => {
+      expect(fetchUser).toHaveBeenCalledTimes(1)
+    })
+    expect(screen.getByText('Overview Page')).toBeInTheDocument()
   })
 })

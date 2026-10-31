@@ -185,15 +185,19 @@ function timeOf(iso: string | null | undefined): number | null {
 }
 
 /**
- * "4,210 rows in 30 tables" — the first line of a finished export; the signature and the expiry are the second and
+ * "4,210 rows in 5 tables" — the first line of a finished export; the signature and the expiry are the second and
  * third. Measured under DejaVu at 1280: "4,210 rows in 30 tables · Signed by this deployment" on one line beside
  * Export again + Download (2.1 MB) left 41 px of the 698 px row (a 7-digit count would wrap it); three short lines
  * leave ≈ 200 px.
+ *
+ * W25a (W24 F-8): only the tables that hold rows are counted, as the import line does — `job.counts` carries EVERY
+ * exported table (zeros included), and "4,210 rows in 30 tables" read as if all 30 had data. Nothing exported:
+ * "0 rows in 0 tables".
  */
 export function exportSummaryLine(job: JobLike): string {
-  const counts = job.counts && typeof job.counts === 'object' ? Object.values(job.counts) : []
-  const rows = counts.reduce((sum, n) => sum + (Number.isFinite(n) ? n : 0), 0)
-  return `${countNoun(rows, 'row')} in ${countNoun(counts.length, 'table')}`
+  const tables = positiveEntries(job.counts)
+  const rows = tables.reduce((sum, [, n]) => sum + n, 0)
+  return `${countNoun(rows, 'row')} in ${countNoun(tables.length, 'table')}`
 }
 
 /** What the Export card shows for the newest export of the project (`null`: none yet). */
