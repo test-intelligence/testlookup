@@ -715,6 +715,92 @@ async def test_tie_breaks_are_code_point_order_whatever_the_collation(world) -> 
     await engine.dispose()
 
 
+async def test_a_mixed_spelling_suite_labels_by_code_point_whatever_the_collation(world) -> None:
+    """W25b HYG-05: the heatmap's labels come from ``chart_data_service``'s
+    fragments, ``MIN(<label> COLLATE "C")``, and the OUTER ``MIN(y_label)`` /
+    ``MIN(x_label)`` over the ``grouped`` CTE inherit "C" from that column --
+    so a key spelled two ways shows its byte-order-first spelling on every
+    server (``Orders`` before ``orders``, ``Été`` before ``été``).
+
+    The ICU shadow of the test above, where lower case sorts first. Three runs:
+    r1 today (``été`` / ``orders``), r2 yesterday (``Été`` / ``Orders``), r3 today
+    (``été`` / ``zeta``). ``suite_day`` puts ``orders`` and ``Orders`` in two
+    different day groups, so only the OUTER ``MIN(y_label)`` can choose;
+    ``suite_environment`` puts r1 and r2 in ONE group (the inner aggregate
+    chooses ``Orders`` / ``Été``) and ``été`` (r3) in another, so the outer
+    ``MIN(x_label)`` chooses between ``Été`` and ``été``."""
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.pool import NullPool
+
+    from app.services import heatmap_service as hs
+    from app.services.analytics_scope import AnalyticsScope
+
+    today, yesterday = FROZEN - timedelta(hours=1), FROZEN - timedelta(hours=25)
+    # Own connection, no statement cache: see the test above.
+    engine = create_async_engine(
+        world.engine.url.update_query_dict({"prepared_statement_cache_size": "0"}),
+        poolclass=NullPool,
+    )
+    async with engine.connect() as conn:
+        if not await conn.scalar(text(
+                "SELECT count(*) FROM pg_collation WHERE collname = 'und-x-icu'")):
+            pytest.skip("no ICU collation in this PostgreSQL build")
+        try:
+            shadow = {
+                "test_runs": ("primary_suite_name", "environment"),
+                "test_cases": ("suite_name", "test_fingerprint"),
+            }
+            for table, columns in shadow.items():
+                await conn.execute(text(
+                    f"CREATE TEMP TABLE {table} AS SELECT * FROM public.{table} WITH NO DATA"))
+                for column in columns:
+                    await conn.execute(text(
+                        f'ALTER TABLE pg_temp.{table} ALTER COLUMN {column} '
+                        f'TYPE text COLLATE "und-x-icu"'))
+            for env, suite, at, build in (
+                    ("été", "orders", today, "mx-1"),
+                    ("Été", "Orders", yesterday, "mx-2"),
+                    ("été", "zeta", today, "mx-3")):
+                run_id = uuid.uuid4()
+                await conn.execute(text(
+                    "INSERT INTO pg_temp.test_runs "
+                    "(id, project_id, build_number, trigger_source, environment, created_at) "
+                    "VALUES (:id, :p, :b, 'push', :env, :at)"),
+                    {"id": run_id, "p": world.p1, "b": build, "env": env, "at": at})
+                await conn.execute(text(
+                    "INSERT INTO pg_temp.test_cases "
+                    "(id, test_run_id, test_fingerprint, test_name, suite_name, status, "
+                    "created_at) VALUES (:id, :run, :fp, :name, :suite, 'FAILED', :at)"),
+                    {"id": uuid.uuid4(), "run": run_id, "fp": f"mx-{build}",
+                     "name": f"test_{build}", "suite": suite, "at": at})
+            mins = (await conn.execute(text(
+                "SELECT (SELECT MIN(suite_name) FROM pg_temp.test_cases), "
+                "(SELECT MIN(environment) FROM pg_temp.test_runs)"))).one()
+            assert tuple(mins) == ("orders", "été"), "precondition: the shadow must order lower case first"
+
+            scope = AnalyticsScope(project_id=world.p1, allowed_project_ids=None,
+                                   release_ids=(), suite_names=(), days=30)
+            session = AsyncSession(bind=conn)
+            by_day = await hs.build_heatmap(
+                session, scope, hs.parse_heatmap_spec("suite_day", None, None, scope=scope), now=FROZEN)
+            assert dict(zip(by_day["y_keys"], by_day["y_labels"]))["orders"] == "Orders", (
+                "suite_day: two day groups, the outer MIN(y_label) chooses by code point"
+            )
+            by_env = await hs.build_heatmap(
+                session, scope, hs.parse_heatmap_spec("suite_environment", None, None, scope=scope),
+                now=FROZEN)
+            assert dict(zip(by_env["y_keys"], by_env["y_labels"]))["orders"] == "Orders", (
+                "suite_environment: one group, the inner MIN chooses by code point"
+            )
+            assert by_env["x_keys"] == ["été"]
+            assert by_env["x_labels"] == ["Été"], (
+                "suite_environment: the outer MIN(x_label) chooses by code point"
+            )
+        finally:
+            await conn.rollback()  # the temp tables go with the transaction
+    await engine.dispose()
+
+
 # ── 5. the cap ─────────────────────────────────────────────────────────────
 
 

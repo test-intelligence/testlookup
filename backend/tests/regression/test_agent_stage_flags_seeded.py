@@ -75,7 +75,7 @@ def test_every_seeded_key_is_a_flag_the_code_evaluates(key):
     assert _code_reads(key), f"{key} is seeded but nothing calls is_enabled({key!r}): a row that gates nothing"
 
 
-def test_the_legacy_env_columns_match_the_feature_flag_service():
+def test_the_legacy_env_columns_match_the_feature_flags_map():
     from app.services.feature_flags import LEGACY_ENV_VAR_MAP
 
     for key, row in _seeded().items():

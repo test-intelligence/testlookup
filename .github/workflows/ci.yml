@@ -845,6 +845,8 @@ jobs:
           tests/integration/test_project_import_postgres.py
           tests/integration/test_suite_membership_parity_postgres.py
           tests/integration/test_suite_membership_reconcile_postgres.py
+          tests/integration/test_migration_0249_postgres.py
+          tests/integration/test_legacy_settings_flags_alias_postgres.py
           tests/integration/test_defects_list_fields_postgres.py
           tests/integration/test_analytics_scope_postgres.py
           tests/integration/test_analytics_epoch_redis_postgres.py

@@ -70,7 +70,6 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "test_management_ai_service.py",
     "evidence_service.py",
     "stream_service.py",
-    "feature_flag_service.py",
     "share_link_service.py",
     "refresh_token_service.py",
     # ── Tier 0-2 stage-only conversions (Phase E-1, 2026-04-15) ──────

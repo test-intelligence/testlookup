@@ -9,13 +9,18 @@ from the other side (a declared metric nobody increments).
 
 Three ratchets:
 
-1. every ``testlookup_*`` series a panel expression names is one a metric
-   declared in ``app.core.metrics`` actually exports -- with prometheus_client's
-   suffixes: a Counter is declared WITHOUT ``_total`` and exported with it, a
-   Histogram exports ``_bucket``/``_count``/``_sum`` and never its bare name;
+1. every ``testlookup_*`` series a panel expression -- or a dashboard
+   annotation's expression (W25b: the "Deploys" annotation) -- names is one a
+   metric declared in ``app.core.metrics`` actually exports -- with
+   prometheus_client's suffixes: a Counter is declared WITHOUT ``_total`` and
+   exported with it, a Histogram exports ``_bucket``/``_count``/``_sum`` and
+   never its bare name;
 2. panel ids are unique (Grafana links, alerts and provisioning key on them);
 3. no two ``gridPos`` rectangles overlap (Grafana silently re-flows them, so
    the layout in the file is not the layout on screen).
+
+Two rows are pinned panel by panel (row 60, row 80 "Tier 0-2 jobs"): a row
+that silently lost a panel would still pass the declared-series check.
 """
 from __future__ import annotations
 
@@ -71,11 +76,18 @@ def _panels(container: dict) -> Iterator[dict]:
 
 
 def _exprs(dashboard: dict) -> Iterator[tuple[Any, str]]:
+    """``(panel id, expr)`` for every panel target, then
+    ``("annotation:<name>", expr)`` for every annotation query (a string key,
+    so the per-row tests' ``isinstance(pid, int)`` filters leave it out)."""
     for panel in _panels(dashboard):
         for target in panel.get("targets", []):
             expr = target.get("expr")
             if expr:
                 yield panel.get("id"), expr
+    for annotation in (dashboard.get("annotations") or {}).get("list", []):
+        expr = annotation.get("expr")
+        if expr:
+            yield f"annotation:{annotation.get('name')}", expr
 
 
 def exported_series(module: Any = metrics) -> dict[str, str]:
@@ -189,3 +201,108 @@ def test_the_visualization_row_graphs_the_phase_d_metrics():
     ):
         assert name in joined, f"no row-60 panel reads {name}"
     assert 'outcome="miss"' in row[61] and 'outcome="hit"' in row[62]
+
+
+# ── Row 80 "Tier 0-2 jobs" (W25b HYG-09) ────────────────────────────────────
+
+#: Every series the row charts. Each has a production ``.inc()`` cited in the
+#: W25b contract §2.3 table; the label values the row filters on are driven
+#: and read back by test_alerted_metrics_are_emitted.py.
+_TIER_0_2_SERIES = frozenset({
+    "testlookup_quarantine_proposals_total",
+    "testlookup_quarantine_approvals_total",
+    "testlookup_quarantine_expired_total",
+    "testlookup_webhook_delivery_attempts_total",
+    "testlookup_perf_baseline_refresh_runs_total",
+    "testlookup_feature_flag_evaluations_total",
+    "testlookup_retro_digest_dispatch_total",
+    "testlookup_compliance_pack_generated_total",
+    "testlookup_orphan_test_suites_total",
+    "testlookup_celery_tasks_total",
+    "testlookup_suite_parity_runs_total",
+    "testlookup_ws_connections_total",
+})
+
+#: The Celery tasks behind the Tier 0-2 jobs (worker/celery_app.py beat entries
+#: and worker/tasks.py); panel 88 charts their terminal failures.
+_TIER_0_2_TASKS = frozenset({
+    "app.worker.tasks.run_flaky_quarantine_maintenance",
+    "app.worker.tasks.refresh_perf_baselines",
+    "app.worker.tasks.dispatch_scheduled_digests",
+    "app.worker.tasks.deliver_webhook",
+    "app.worker.tasks.flag_orphan_test_suites",
+    "app.worker.tasks.run_suite_membership_parity",
+})
+
+#: A PromQL label matcher: name, operator, quoted value.
+_MATCHER_RE = re.compile(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(=~|!~|!=|=)\s*"((?:[^"\\]|\\.)*)"')
+
+_TIER_ROW_ID = 80
+_TIER_PANEL_IDS = list(range(81, 91))
+
+
+def test_the_tier_0_2_row_graphs_every_tier_0_2_job():
+    """Row 80: expanded, its ten panels below it, the twelve series charted and
+    nothing else, panel 88 filtering on exactly the six task names, no
+    ``noValue`` (absence is "No data", never a zero), and no label filter
+    beyond the two whose values a production line emits."""
+    dashboard = _dashboard()
+    top = {panel.get("id"): panel for panel in dashboard.get("panels", [])}
+
+    row = top.get(_TIER_ROW_ID)
+    assert row is not None, "row 80 is missing (or folded inside a collapsed row)"
+    assert row["type"] == "row" and row["title"] == "Tier 0-2 jobs"
+    assert row.get("collapsed") is False, "row 80 ships expanded (its panels stay top-level)"
+    row_y = row["gridPos"]["y"]
+    next_rows = [p["gridPos"]["y"] for p in top.values() if p.get("type") == "row" and p["gridPos"]["y"] > row_y]
+    for pid in _TIER_PANEL_IDS:
+        assert pid in top, f"panel {pid} is missing from the top level"
+        y = top[pid]["gridPos"]["y"]
+        assert y > row_y and all(y < ny for ny in next_rows), f"panel {pid} is not under row 80"
+    for pid in [_TIER_ROW_ID, *_TIER_PANEL_IDS]:
+        assert '"noValue"' not in json.dumps(top[pid]), f"panel {pid} sets noValue"
+
+    exprs: dict[int, list[str]] = {}
+    for pid, expr in _exprs(dashboard):
+        if isinstance(pid, int) and pid in _TIER_PANEL_IDS:
+            exprs.setdefault(pid, []).append(expr)
+    assert sorted(exprs) == _TIER_PANEL_IDS, "a row-80 panel has no query"
+    every = [expr for panel_exprs in exprs.values() for expr in panel_exprs]
+    charted = {name for expr in every for name in _SERIES_RE.findall(expr)}
+    assert charted == _TIER_0_2_SERIES, (
+        f"missing {sorted(_TIER_0_2_SERIES - charted)}, unexpected {sorted(charted - _TIER_0_2_SERIES)}"
+    )
+
+    matchers = [(pid, m) for pid, panel_exprs in exprs.items() for e in panel_exprs for m in _MATCHER_RE.findall(e)]
+    exact = {(name, op, value) for _, (name, op, value) in matchers if op != "=~"}
+    assert exact == {("status", "=", "failure"), ("flag_key", "=", "perf_regression_detection")}, exact
+    regex = [(pid, name, value) for pid, (name, op, value) in matchers if op == "=~"]
+    assert [(pid, name) for pid, name, _ in regex] == [(88, "task_name")], regex
+    alternatives = re.fullmatch(r"app\.worker\.tasks\.\(([a-z_|]+)\)", regex[0][2])
+    assert alternatives, regex[0][2]
+    named = {f"app.worker.tasks.{task}" for task in alternatives.group(1).split("|")}
+    assert named == _TIER_0_2_TASKS, named
+    assert 'status="failure"' in exprs[88][0]
+    assert 'flag_key="perf_regression_detection"' in " ".join(exprs[84])
+
+
+def test_the_deploys_annotation_reads_app_info():
+    """``testlookup_app_info`` marks each new ``version`` on every panel; it is
+    set by the API only (main.py), hence the backend job filter."""
+    annotations = {a.get("name"): a for a in _dashboard()["annotations"]["list"]}
+    deploys = annotations.get("Deploys")
+    assert deploys is not None and deploys.get("enable") is True
+    assert set(_SERIES_RE.findall(deploys["expr"])) == {"testlookup_app_info"}
+    assert "unless" in deploys["expr"] and "offset" in deploys["expr"]
+    assert ("annotation:Deploys", deploys["expr"]) in list(_exprs(_dashboard()))
+
+
+def test_the_walker_reads_annotation_expressions():
+    """Self-test: an undeclared series in an annotation is caught like a panel's."""
+    fake = {
+        "panels": [{"id": 1, "targets": [{"expr": "testlookup_app_info"}]}],
+        "annotations": {"list": [{"name": "X", "expr": "count(testlookup_no_such_metric_total)"}]},
+    }
+    exprs = list(_exprs(fake))
+    assert exprs == [(1, "testlookup_app_info"), ("annotation:X", "count(testlookup_no_such_metric_total)")]
+    assert undeclared(exprs, exported_series()) == ["panel annotation:X: testlookup_no_such_metric_total"]

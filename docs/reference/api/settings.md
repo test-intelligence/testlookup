@@ -594,11 +594,14 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 List Feature Flags
 
-List all feature flags.
+List all feature flags (legacy shape). Deprecated: use GET /api/v1/feature-flags.
 
-Source: [backend/app/routers/app_settings.py:1415](../../../backend/app/routers/app_settings.py#L1415).
+A database failure propagates to the error boundary: an empty list is a
+valid authority answer and must never stand in for an outage.
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+Source: [backend/app/routers/app_settings.py:1446](../../../backend/app/routers/app_settings.py#L1446).
+
+Dependency chain: `OAuth2PasswordBearer`, `_legacy_flag_deprecation`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
@@ -612,6 +615,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 ```json
 {
+  "deprecated": true,
   "operationId": "list_feature_flags_api_v1_settings_flags_get",
   "parameters": [
     {
@@ -662,7 +666,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-await get_all_flags(db)
+[_legacy_flag_row(f) for f in await list_flags(db)]
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -671,11 +675,13 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 Remove Feature Flag
 
-Delete a feature flag. Requires ADMIN.
+Delete a feature flag. Requires ADMIN. Deprecated: use /api/v1/feature-flags.
 
-Source: [backend/app/routers/app_settings.py:1450](../../../backend/app/routers/app_settings.py#L1450).
+A missing key is still a 204: no service call, no audit row.
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+Source: [backend/app/routers/app_settings.py:1501](../../../backend/app/routers/app_settings.py#L1501).
+
+Dependency chain: `OAuth2PasswordBearer`, `_legacy_flag_deprecation`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
@@ -689,6 +695,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 ```json
 {
+  "deprecated": true,
   "operationId": "remove_feature_flag_api_v1_settings_flags__flag_key__delete",
   "parameters": [
     {
@@ -744,16 +751,18 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 Update Feature Flag
 
-Create or update a feature flag. Requires ADMIN.
+Create or update a flag's global toggle. Requires ADMIN. Deprecated: use /api/v1/feature-flags.
 
-Source: [backend/app/routers/app_settings.py:1425](../../../backend/app/routers/app_settings.py#L1425).
+``scope`` and ``config`` are accepted and ignored, as they always were.
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+Source: [backend/app/routers/app_settings.py:1460](../../../backend/app/routers/app_settings.py#L1460).
+
+Dependency chain: `OAuth2PasswordBearer`, `_legacy_flag_deprecation`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-flag_key: str, body: FeatureFlagUpdate, current_user: User=Depends(require_role(UserRole.ADMIN)), db: AsyncSession=Depends(get_db)
+flag_key: Annotated[str, Path(max_length=LEGACY_FLAG_KEY_MAX)], body: FeatureFlagUpdate, current_user: User=Depends(require_role(UserRole.ADMIN)), db: AsyncSession=Depends(get_db)
 ```
 
 ### Declared wire contract
@@ -762,6 +771,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 ```json
 {
+  "deprecated": true,
   "operationId": "update_feature_flag_api_v1_settings_flags__flag_key__put",
   "parameters": [
     {
@@ -769,6 +779,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       "name": "flag_key",
       "required": true,
       "schema": {
+        "maxLength": 80,
         "title": "Flag Key",
         "type": "string"
       }
@@ -831,7 +842,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-result
+{'flag_key': flag_key, 'enabled': body.enabled, 'scope': 'global'}
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -1003,7 +1014,7 @@ Return health status for all tracked integration providers.
 The deployment-wide view only (``scope_key = ''``): per-project GitHub /
 GitLab rows (W10 INT-04) are Integration Health's ``?scope=all`` read.
 
-Source: [backend/app/routers/app_settings.py:1550](../../../backend/app/routers/app_settings.py#L1550).
+Source: [backend/app/routers/app_settings.py:1608](../../../backend/app/routers/app_settings.py#L1608).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1080,7 +1091,7 @@ Get Mfa Policy
 
 Read the workspace MFA + lockout policy. QA_LEAD or higher.
 
-Source: [backend/app/routers/app_settings.py:1480](../../../backend/app/routers/app_settings.py#L1480).
+Source: [backend/app/routers/app_settings.py:1538](../../../backend/app/routers/app_settings.py#L1538).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1151,7 +1162,7 @@ Update Mfa Policy
 
 Update the workspace MFA + lockout policy. ADMIN only, audit-logged.
 
-Source: [backend/app/routers/app_settings.py:1492](../../../backend/app/routers/app_settings.py#L1492).
+Source: [backend/app/routers/app_settings.py:1550](../../../backend/app/routers/app_settings.py#L1550).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1234,7 +1245,7 @@ The instance retention defaults: the stored values (NULL = the code
 default), the code defaults, the effective values, how many projects
 inherit each field, and who switched the default on. Reads only.
 
-Source: [backend/app/routers/app_settings.py:1600](../../../backend/app/routers/app_settings.py#L1600).
+Source: [backend/app/routers/app_settings.py:1658](../../../backend/app/routers/app_settings.py#L1658).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1307,7 +1318,7 @@ Save the instance defaults (``clear`` resets a field to the code
 default). ``enabled: true`` is refused (422 ``enable_via_flow``);
 ``enabled: false`` switches the default off at once. Interactive login only.
 
-Source: [backend/app/routers/app_settings.py:1626](../../../backend/app/routers/app_settings.py#L1626).
+Source: [backend/app/routers/app_settings.py:1684](../../../backend/app/routers/app_settings.py#L1684).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1397,7 +1408,7 @@ Switch the instance default ON for every project without its own
 ``preview_stale``) and the confirmation must be the exact phrase (422
 ``confirmation_mismatch``). Interactive login only.
 
-Source: [backend/app/routers/app_settings.py:1654](../../../backend/app/routers/app_settings.py#L1654).
+Source: [backend/app/routers/app_settings.py:1712](../../../backend/app/routers/app_settings.py#L1712).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1481,7 +1492,7 @@ no explicit ``enabled``), the hash ``POST …/enable`` must echo and the phrase
 it must type. An instance administrator's deployment-wide view. Writes
 NOTHING.
 
-Source: [backend/app/routers/app_settings.py:1613](../../../backend/app/routers/app_settings.py#L1613).
+Source: [backend/app/routers/app_settings.py:1671](../../../backend/app/routers/app_settings.py#L1671).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1555,7 +1566,7 @@ none = audit only), whether the gate is enforced right now and why, and the
 distribution attempts that would have been withheld in the last 30 days.
 Reads only.
 
-Source: [backend/app/routers/app_settings.py:1727](../../../backend/app/routers/app_settings.py#L1727).
+Source: [backend/app/routers/app_settings.py:1785](../../../backend/app/routers/app_settings.py#L1785).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1628,7 +1639,7 @@ Set the enforcement date (an ISO-8601 instant with an offset; past or
 future) or clear it with ``null`` (back to audit only). A past instant
 enforces at once. Interactive login only; audited once per actual change.
 
-Source: [backend/app/routers/app_settings.py:1739](../../../backend/app/routers/app_settings.py#L1739).
+Source: [backend/app/routers/app_settings.py:1797](../../../backend/app/routers/app_settings.py#L1797).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

@@ -1030,102 +1030,112 @@ async def generate_pack(
             "Enable 'release_compliance_pack' in Settings > Feature Flags."
         )
 
+    # W25b HYG-09 (D-W25b-9): everything after the flag gate runs inside ONE
+    # ``try``, so a failure anywhere -- the payload build, the signing, the
+    # upload, the flush -- is counted ``result="error"`` and still raised.
+    # TestLookupCompliancePackGenerationErrors (prometheus-rules/
+    # testlookup-alerts.yml) fires on that label value, which nothing emitted
+    # before, so the alert could never fire. ``disabled`` stays above (raised
+    # before the try) and ``not_available`` keeps its own branch.
     try:
         zip_bytes, metadata = await _build_pack_payload(db, release)
+
+        pack_id = uuid.uuid4()
+        generated_at = datetime.now(timezone.utc)
+
+        # W11 REL-11: sign the manifest's digest BEFORE the upload, so the stored
+        # ZIP carries signature.json. manifest.json and its digest are untouched
+        # (signature.json sits outside the chain it signs); only the ZIP grows.
+        zip_bytes, signature, signing_key_id, signing = await _sign_pack(
+            db,
+            zip_bytes,
+            pack_id=pack_id,
+            manifest_sha256=metadata["manifest_sha256"],
+            actor=actor,
+            signed_at=generated_at,
+        )
+        metadata["signing"] = signing
+        metadata["bytes"] = len(zip_bytes)
+
+        # One description, one key builder. The release path goes through the same
+        # ExportScope a retention export uses — the epic's warning is that a
+        # half-generalised service with two entry points is worse than either,
+        # because the second copy of the manifest chain drifts from the
+        # verification steps the README tells an auditor to follow.
+        scope = ExportScope.for_release(
+            release_id=release.id,
+            project_id=release.project_id,
+            run_ids=[uuid.UUID(metadata["run_id"])],
+        )
+        minio_key = build_export_key(scope, generated_at, pack_id)
+
+        # Upload to MinIO. A failure here aborts the pack — we don't want a
+        # DB row pointing at nothing.
+        from app.db.storage import get_storage_provider
+        storage = get_storage_provider()
+        await storage.put_object(
+            key=minio_key,
+            content=zip_bytes,
+            content_type="application/zip",
+            bucket=COMPLIANCE_BUCKET,
+        )
+
+        retention = timedelta(days=retention_days or DEFAULT_RETENTION_DAYS)
+        row = CompliancePack(
+            id=pack_id,
+            release_id=release.id,
+            project_id=release.project_id,
+            test_run_id=uuid.UUID(metadata["run_id"]),
+            minio_key=minio_key,
+            manifest_sha256=metadata["manifest_sha256"],
+            signature=signature,
+            signing_key_id=signing_key_id,
+            file_count=int(metadata["file_count"]),
+            bytes=int(metadata["bytes"]),
+            retention_expires_at=generated_at + retention,
+            generated_at=generated_at,
+            generated_by_user_id=actor.id if actor else None,
+            metadata_snapshot=metadata,
+            notes=notes,
+        )
+        db.add(row)
+        await db.flush()
+
+        # Audit trail — use the existing settings_audit_log convention with a
+        # release-scoped key so the unified audit dashboard picks it up.
+        # Stage-only (Phase E-1): router's get_db owns the commit so the pack
+        # row and its audit entry land in the same transaction.
+        try:
+            from app.models.postgres import SettingsAuditLog
+            entry = SettingsAuditLog(
+                setting_key=f"release:{release.id}:compliance_pack:{pack_id}",
+                action="generate",
+                actor_id=actor.id if actor else None,
+                actor_name=(
+                    getattr(actor, "username", None) or getattr(actor, "email", None)
+                ) if actor else None,
+                changed_fields=["compliance_pack"],
+            )
+            db.add(entry)
+        except Exception as exc:
+            logger.warning("compliance pack audit stage failed", error=str(exc))
+
+        logger.info(
+            "compliance_pack_generated",
+            pack_id=str(pack_id),
+            release_id=str(release.id),
+            project_id=str(release.project_id),
+            run_id=metadata["run_id"],
+            bytes=metadata["bytes"],
+            manifest_sha256=metadata["manifest_sha256"],
+            signing_key_id=signing_key_id,
+        )
     except CompliancePackNotAvailableError:
         compliance_pack_generated_total.labels(result="not_available").inc()
         raise
-
-    pack_id = uuid.uuid4()
-    generated_at = datetime.now(timezone.utc)
-
-    # W11 REL-11: sign the manifest's digest BEFORE the upload, so the stored
-    # ZIP carries signature.json. manifest.json and its digest are untouched
-    # (signature.json sits outside the chain it signs); only the ZIP grows.
-    zip_bytes, signature, signing_key_id, signing = await _sign_pack(
-        db,
-        zip_bytes,
-        pack_id=pack_id,
-        manifest_sha256=metadata["manifest_sha256"],
-        actor=actor,
-        signed_at=generated_at,
-    )
-    metadata["signing"] = signing
-    metadata["bytes"] = len(zip_bytes)
-
-    # One description, one key builder. The release path goes through the same
-    # ExportScope a retention export uses — the epic's warning is that a
-    # half-generalised service with two entry points is worse than either,
-    # because the second copy of the manifest chain drifts from the
-    # verification steps the README tells an auditor to follow.
-    scope = ExportScope.for_release(
-        release_id=release.id,
-        project_id=release.project_id,
-        run_ids=[uuid.UUID(metadata["run_id"])],
-    )
-    minio_key = build_export_key(scope, generated_at, pack_id)
-
-    # Upload to MinIO. A failure here aborts the pack — we don't want a
-    # DB row pointing at nothing.
-    from app.db.storage import get_storage_provider
-    storage = get_storage_provider()
-    await storage.put_object(
-        key=minio_key,
-        content=zip_bytes,
-        content_type="application/zip",
-        bucket=COMPLIANCE_BUCKET,
-    )
-
-    retention = timedelta(days=retention_days or DEFAULT_RETENTION_DAYS)
-    row = CompliancePack(
-        id=pack_id,
-        release_id=release.id,
-        project_id=release.project_id,
-        test_run_id=uuid.UUID(metadata["run_id"]),
-        minio_key=minio_key,
-        manifest_sha256=metadata["manifest_sha256"],
-        signature=signature,
-        signing_key_id=signing_key_id,
-        file_count=int(metadata["file_count"]),
-        bytes=int(metadata["bytes"]),
-        retention_expires_at=generated_at + retention,
-        generated_at=generated_at,
-        generated_by_user_id=actor.id if actor else None,
-        metadata_snapshot=metadata,
-        notes=notes,
-    )
-    db.add(row)
-    await db.flush()
-
-    # Audit trail — use the existing settings_audit_log convention with a
-    # release-scoped key so the unified audit dashboard picks it up.
-    # Stage-only (Phase E-1): router's get_db owns the commit so the pack
-    # row and its audit entry land in the same transaction.
-    try:
-        from app.models.postgres import SettingsAuditLog
-        entry = SettingsAuditLog(
-            setting_key=f"release:{release.id}:compliance_pack:{pack_id}",
-            action="generate",
-            actor_id=actor.id if actor else None,
-            actor_name=(
-                getattr(actor, "username", None) or getattr(actor, "email", None)
-            ) if actor else None,
-            changed_fields=["compliance_pack"],
-        )
-        db.add(entry)
-    except Exception as exc:
-        logger.warning("compliance pack audit stage failed", error=str(exc))
-
-    logger.info(
-        "compliance_pack_generated",
-        pack_id=str(pack_id),
-        release_id=str(release.id),
-        project_id=str(release.project_id),
-        run_id=metadata["run_id"],
-        bytes=metadata["bytes"],
-        manifest_sha256=metadata["manifest_sha256"],
-        signing_key_id=signing_key_id,
-    )
+    except Exception:
+        compliance_pack_generated_total.labels(result="error").inc()
+        raise
     compliance_pack_generated_total.labels(result="success").inc()
     return row
 

@@ -11,10 +11,21 @@ The alerts that were structurally unable to fire until this landed:
 * ``TestLookupLLMCircuitBreakerOpen``         -> testlookup_llm_circuit_breaker_trips_total
 * ``TestLookupFlakyQuarantineMaintenanceFailing`` -> testlookup_celery_tasks_total
 * ``TestLookupPerfBaselineRefreshFailing``    -> testlookup_celery_tasks_total
+* ``TestLookupCompliancePackGenerationErrors`` -> testlookup_compliance_pack_generated_total{result="error"}
+  (W25b HYG-09: the service counted disabled / not_available / success and
+  nothing else, so the alert's label value was never written)
+
+W25b also drives the two label values the Grafana "Tier 0-2 jobs" row filters
+on -- ``celery_tasks_total{status="failure"}`` under the six Tier 0-2 task names
+and ``feature_flag_evaluations_total{flag_key="perf_regression_detection"}`` --
+so no panel of that row charts a series nothing emits.
 """
 from __future__ import annotations
 
 import asyncio
+import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -200,3 +211,134 @@ class TestPipelineOutcome:
         assert source.index('if not final_state.get("duplicate"):') < source.index(
             '_count_pipeline(workflow_type, "success")'
         )
+
+
+# ── Compliance pack generation errors (W25b HYG-09, D-W25b-9) ────────────────
+
+class TestCompliancePackErrors:
+    """``TestLookupCompliancePackGenerationErrors`` fires on
+    ``compliance_pack_generated_total{result="error"}``. ``generate_pack``
+    counted ``disabled``, ``not_available`` and ``success`` only, so the alert
+    could never fire however often packs failed. The error branch now counts,
+    and the exception still reaches the caller."""
+
+    def _arm(self, monkeypatch):
+        from app.services import compliance_pack_service as svc
+
+        monkeypatch.setattr(svc, "_feature_enabled", AsyncMock(return_value=True))
+        release = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+        return svc, release
+
+    def _counts(self) -> tuple[float, float]:
+        return (
+            _counter(metrics.compliance_pack_generated_total, result="error"),
+            _counter(metrics.compliance_pack_generated_total, result="not_available"),
+        )
+
+    def test_a_payload_failure_is_counted_as_error_and_raised(self, monkeypatch):
+        svc, release = self._arm(monkeypatch)
+        monkeypatch.setattr(
+            svc, "_build_pack_payload", AsyncMock(side_effect=RuntimeError("collector broke")),
+        )
+        error_before, not_available_before = self._counts()
+
+        with pytest.raises(RuntimeError, match="collector broke"):
+            asyncio.run(svc.generate_pack(MagicMock(), release, actor=None))
+
+        assert self._counts() == (error_before + 1, not_available_before)
+
+    def test_a_failure_after_the_payload_is_counted_too(self, monkeypatch):
+        """The alert's own description names a MinIO write failure: the try
+        covers the whole body after the flag gate, not only the payload build."""
+        svc, release = self._arm(monkeypatch)
+        payload = (b"zip", {"manifest_sha256": "0" * 64, "run_id": str(uuid.uuid4())})
+        monkeypatch.setattr(svc, "_build_pack_payload", AsyncMock(return_value=payload))
+        monkeypatch.setattr(svc, "_sign_pack", AsyncMock(side_effect=OSError("store unreachable")))
+        error_before, not_available_before = self._counts()
+
+        with pytest.raises(OSError, match="store unreachable"):
+            asyncio.run(svc.generate_pack(MagicMock(), release, actor=None))
+
+        assert self._counts() == (error_before + 1, not_available_before)
+
+    def test_no_linked_run_stays_not_available_and_is_not_an_error(self, monkeypatch):
+        """``not_available`` is the expected "release has no linked run yet"
+        answer; counting it as ``error`` too would page on a normal state."""
+        svc, release = self._arm(monkeypatch)
+        monkeypatch.setattr(
+            svc,
+            "_build_pack_payload",
+            AsyncMock(side_effect=svc.CompliancePackNotAvailableError("no linked run")),
+        )
+        error_before, not_available_before = self._counts()
+
+        with pytest.raises(svc.CompliancePackNotAvailableError):
+            asyncio.run(svc.generate_pack(MagicMock(), release, actor=None))
+
+        assert self._counts() == (error_before, not_available_before + 1)
+
+
+# ── The Tier 0-2 row's filtered series (W25b HYG-09) ─────────────────────────
+
+#: Panel 88 of infra/monitoring/grafana/dashboards/testlookup-overview.json
+#: charts ``celery_tasks_total{status="failure"}`` for exactly these names
+#: (pinned there by test_grafana_dashboard_metrics_are_declared.py).
+TIER_0_2_TASKS = (
+    "app.worker.tasks.run_flaky_quarantine_maintenance",
+    "app.worker.tasks.refresh_perf_baselines",
+    "app.worker.tasks.dispatch_scheduled_digests",
+    "app.worker.tasks.deliver_webhook",
+    "app.worker.tasks.flag_orphan_test_suites",
+    "app.worker.tasks.run_suite_membership_parity",
+)
+
+
+class TestTierJobFailuresAreCounted:
+    """A renamed task would leave panel 88's regex matching nothing -- and an
+    empty failure panel reads as "no failures"."""
+
+    @pytest.mark.parametrize("name", TIER_0_2_TASKS)
+    def test_the_task_exists_and_its_failure_is_counted_under_its_name(self, name):
+        from celery.signals import task_postrun
+
+        import app.worker.tasks  # noqa: F401  (registers the tasks)
+        from app.worker.celery_app import celery_app
+
+        assert name in celery_app.tasks, f"{name} is not a registered Celery task"
+        before = _counter(metrics.celery_tasks_total, task_name=name, status="failure")
+        task_postrun.send(
+            sender=None, task_id="t-w25b", task=celery_app.tasks[name], state="FAILURE",
+        )
+        after = _counter(metrics.celery_tasks_total, task_name=name, status="failure")
+
+        assert after == before + 1
+
+
+class TestPerfFlagEvaluationsAreCounted:
+    """Panel 84's target B charts the ``perf_regression_detection`` flag's
+    evaluations by result: the nightly refresh's own gate must be one of them."""
+
+    @pytest.mark.parametrize("enabled, result", [(True, "enabled"), (False, "disabled")])
+    def test_the_refresh_gate_counts_the_flag_evaluation(self, monkeypatch, enabled, result):
+        from app.services import feature_flags as ff
+        from app.services import perf_regression_service as perf
+
+        stored = {
+            "key": "perf_regression_detection",
+            "enabled_global": enabled,
+            "enabled_projects": [],
+            "enabled_roles": [],
+            "rollout_percent": 100,
+        }
+        monkeypatch.setattr(ff, "_load_from_redis", AsyncMock(return_value=stored))
+        before = _counter(
+            metrics.feature_flag_evaluations_total,
+            flag_key="perf_regression_detection", result=result,
+        )
+
+        assert asyncio.run(perf._feature_enabled(any_scope=True)) is enabled
+
+        assert _counter(
+            metrics.feature_flag_evaluations_total,
+            flag_key="perf_regression_detection", result=result,
+        ) == before + 1
