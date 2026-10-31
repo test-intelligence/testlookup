@@ -9182,3 +9182,38 @@ def sweep_project_data_jobs() -> dict:
             return await project_data_runner.run_sweep()
 
     return cast(dict, _run_async(_run()))
+
+
+# ── W25a HYG-04: the suite-membership parity harness (the 7-day cutover clock) ─
+
+
+@celery_app.task(
+    bind=True,
+    name="app.worker.tasks.run_suite_membership_parity",
+    queue="default",
+    max_retries=0,
+    soft_time_limit=1500,
+    time_limit=1800,
+)
+def run_suite_membership_parity(self, trigger: str = "beat", requested_by_id: str | None = None) -> dict:
+    """Compare the legacy suite memberships with the canonical model (beat daily at 06:15 UTC, or "Compare now").
+
+    Reads the catalog only; its only writes are its own ``suite_membership_parity_runs``
+    row (the claim, then the outcome), committed by the runner on ONE session at a
+    time. A second run while one is ``running`` is skipped; a failure is recorded on
+    the row (``failed`` + the exception TYPE name) and the task returns its dict —
+    it never raises out and is never retried (tomorrow's beat is the retry). No
+    mail, no integration call, no AI pipeline."""
+    # Its own log context: unbound, the parity log lines carried the previous task's name / ids on a reused worker.
+    _bind_task_context(self, parity_trigger=trigger)
+
+    async def _run() -> dict:
+        from app.worker import suite_parity_runner
+
+        requester = uuid.UUID(requested_by_id) if requested_by_id else None
+        with _beat_span("run_suite_membership_parity") as span:
+            out = await suite_parity_runner.run_parity(trigger, requester)
+            span.set_attribute("result.status", str(out.get("status") or out.get("skipped") or ""))
+            return out
+
+    return cast(dict, _run_async(_run()))

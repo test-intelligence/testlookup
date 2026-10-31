@@ -14,15 +14,28 @@ scoped admins are NOT sufficient — these tasks walk every project.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
+from datetime import time as dt_time
+from typing import Any, Optional
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_instance_admin
 from app.db.postgres import get_db
-from app.models.postgres import User
+from app.models.postgres import Project, SuiteMembershipParityRun, User
+from app.models.schemas import (
+    SuiteParityHistory,
+    SuiteParityProjectLine,
+    SuiteParityRunDetail,
+    SuiteParityRunSummary,
+    SuiteParitySampleRow,
+)
+from app.services import suite_membership_parity as parity_service
+from app.services import suite_parity_vocab as parity_vocab
 
 logger = structlog.get_logger(__name__)
 
@@ -394,3 +407,184 @@ async def requeue_failed_outbox_operations(
         "requeued": 0 if body.dry_run else len(rows),
         "rows": rows,
     }
+
+
+# ── W25a HYG-04: the suite-membership parity harness (the 7-day cutover clock) ─
+#
+# The two GETs read ``suite_membership_parity_runs`` (+ ``users.username`` and
+# ``projects.name`` by id lists) and nothing else: they never claim, enqueue or
+# write. The POST reads whether a fresh comparison is running, then enqueues the
+# worker task (the comparison never runs in the API process). Instance admins
+# only; project names are shown to them alone.
+
+_PARITY_SUMMARY_COLUMNS = (
+    SuiteMembershipParityRun.id, SuiteMembershipParityRun.trigger, SuiteMembershipParityRun.status,
+    SuiteMembershipParityRun.started_at, SuiteMembershipParityRun.finished_at,
+    SuiteMembershipParityRun.requested_by_id, SuiteMembershipParityRun.window_runs,
+    SuiteMembershipParityRun.projects_checked, SuiteMembershipParityRun.keys_compared,
+    SuiteMembershipParityRun.blocking_diffs, SuiteMembershipParityRun.expected_divergences,
+)
+
+
+def _as_uuid(value: object) -> Optional[uuid.UUID]:
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _usernames(db: AsyncSession, ids: set[uuid.UUID]) -> dict[uuid.UUID, str]:
+    if not ids:
+        return {}
+    rows = await db.execute(select(User.id, User.username).where(User.id.in_(ids)))
+    return {row[0]: str(row[1]) for row in rows.all()}
+
+
+async def _project_names(db: AsyncSession, ids: set[uuid.UUID]) -> dict[uuid.UUID, str]:
+    if not ids:
+        return {}
+    rows = await db.execute(select(Project.id, Project.name).where(Project.id.in_(ids)))
+    return {row[0]: str(row[1]) for row in rows.all()}
+
+
+def _summary(row: Any, names: dict[uuid.UUID, str]) -> dict[str, Any]:
+    requester = row.requested_by_id
+    return {
+        "id": row.id,
+        "trigger": row.trigger,
+        "status": row.status,
+        "started_at": row.started_at,
+        "finished_at": row.finished_at,
+        "requested_by_name": names.get(requester) if requester is not None and row.trigger == "admin" else None,
+        "window_runs": row.window_runs,
+        "projects_checked": row.projects_checked,
+        "keys_compared": row.keys_compared,
+        "blocking_diffs": row.blocking_diffs,
+        "expected_divergences": row.expected_divergences,
+    }
+
+
+@router.get(
+    "/suite-membership-parity",
+    response_model=SuiteParityHistory,
+    dependencies=[Depends(require_instance_admin())],
+)
+async def read_suite_membership_parity(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> SuiteParityHistory:
+    """The comparisons started in the last 14 UTC days (newest first) and the clean-day streak.
+
+    ``cutover_ready`` is true on the 7th consecutive UTC day whose LAST finished
+    comparison is clean. A day with no finished comparison breaks the streak
+    (absence is not health); today without one does not, until it is over. An
+    empty ``runs`` list means no comparison has run yet — never "0 differences".
+    """
+    from app.core.config import settings
+
+    today = datetime.now(timezone.utc).date()
+    since = datetime.combine(today - timedelta(days=parity_vocab.HISTORY_DAYS - 1), dt_time.min, tzinfo=timezone.utc)
+    rows = (await db.execute(
+        select(*_PARITY_SUMMARY_COLUMNS)
+        .where(SuiteMembershipParityRun.started_at >= since)
+        .order_by(SuiteMembershipParityRun.started_at.desc(), SuiteMembershipParityRun.id)
+    )).all()
+    names = await _usernames(db, {r.requested_by_id for r in rows if r.requested_by_id is not None})
+    streak = parity_service.streak_days(rows, today)
+    return SuiteParityHistory(
+        runs=[SuiteParityRunSummary(**_summary(r, names)) for r in rows],
+        streak_days=streak,
+        required_days=parity_vocab.REQUIRED_CLEAN_DAYS,
+        cutover_ready=streak >= parity_vocab.REQUIRED_CLEAN_DAYS,
+        window_runs_now=int(settings.CANONICAL_DELETION_WINDOW_RUNS),
+    )
+
+
+@router.get(
+    "/suite-membership-parity/{parity_run_id}",
+    response_model=SuiteParityRunDetail,
+    dependencies=[Depends(require_instance_admin())],
+)
+async def read_suite_membership_parity_run(
+    parity_run_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> SuiteParityRunDetail:
+    """One comparison: its counts per reason, the projects with differences and the sample.
+
+    Project names are resolved at read time (None for a project deleted since).
+    """
+    row = await db.get(SuiteMembershipParityRun, parity_run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=parity_vocab.NOT_FOUND_SENTENCE)
+    per_project = [p for p in (row.per_project or []) if isinstance(p, dict) and _as_uuid(p.get("project_id"))]
+    sample = [s for s in (row.sample or []) if isinstance(s, dict) and _as_uuid(s.get("project_id"))]
+    project_ids = {_as_uuid(p["project_id"]) for p in per_project} | {_as_uuid(s["project_id"]) for s in sample}
+    projects = await _project_names(db, {pid for pid in project_ids if pid is not None})
+    names = await _usernames(db, {row.requested_by_id} if row.requested_by_id is not None else set())
+    blocking = set(parity_vocab.BLOCKING_REASONS)
+    counts = parity_service.zero_counts()
+    counts.update({str(k): int(v) for k, v in (row.counts or {}).items()})
+    return SuiteParityRunDetail(
+        **_summary(row, names),
+        counts=counts,
+        per_project=[
+            SuiteParityProjectLine(
+                project_id=pid, project_name=projects.get(pid),
+                blocking=int(p.get("blocking", 0)), expected=int(p.get("expected", 0)),
+            )
+            for p in per_project if (pid := _as_uuid(p["project_id"])) is not None
+        ],
+        sample=[
+            SuiteParitySampleRow(
+                reason=str(s.get("reason", "")), blocking=s.get("reason") in blocking,
+                project_id=pid, project_name=projects.get(pid),
+                suite=str(s.get("suite", "")), fingerprint=str(s.get("fingerprint", "")),
+                test_name=s.get("test_name"), legacy=str(s.get("legacy", "")), canonical=str(s.get("canonical", "")),
+            )
+            for s in sample if (pid := _as_uuid(s["project_id"])) is not None
+        ],
+        error_code=row.error_code,
+    )
+
+
+@router.post(
+    "/suite-membership-parity",
+    status_code=202,
+    dependencies=[Depends(require_instance_admin())],
+)
+async def trigger_suite_membership_parity(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> dict[str, Any]:
+    """"Compare now": enqueue one read-only comparison on the worker.
+
+    409 while a comparison started less than ``RUN_STALE_MINUTES`` ago is still
+    running (read before enqueueing; the runner's unique claim is the real
+    guard). 503 when the broker refuses the task — its exception TYPE is
+    logged, never echoed.
+    """
+    fresh_since = datetime.now(timezone.utc) - timedelta(minutes=parity_vocab.RUN_STALE_MINUTES)
+    running = (await db.execute(
+        select(SuiteMembershipParityRun.id)
+        .where(SuiteMembershipParityRun.status == "running", SuiteMembershipParityRun.started_at >= fresh_since)
+        .limit(1)
+    )).first()
+    if running is not None:
+        raise HTTPException(status_code=409, detail=parity_vocab.ALREADY_RUNNING_SENTENCE)
+    try:
+        from app.worker.tasks import run_suite_membership_parity
+
+        result = run_suite_membership_parity.apply_async(
+            kwargs={"trigger": "admin", "requested_by_id": str(current_user.id)},
+        )
+    except Exception as exc:  # noqa: BLE001 - only the TYPE name is logged; the sentence is fixed
+        logger.warning(
+            "admin_suite_parity_dispatch_failed",
+            actor_user_id=str(current_user.id),
+            error_type=type(exc).__name__,
+        )
+        raise HTTPException(status_code=503, detail=parity_vocab.DISPATCH_FAILED_SENTENCE) from None
+    logger.info("admin_triggered_suite_parity", actor_user_id=str(current_user.id), task_id=result.id)
+    return {"queued": True, "task_id": str(result.id), "task_name": parity_vocab.TASK_NAME}
+

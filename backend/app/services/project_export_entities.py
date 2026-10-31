@@ -355,6 +355,7 @@ NOT_PROJECT_SCOPED: Mapping[str, str] = {
     "decision_report_eval_cycles": "instance eval cycles",
     "integration_health_checks": "project-KEYED cache (scope_key, no FK), recomputed by the next probe",
     "integration_probe_results": "project-KEYED cache (scope_key, no FK), recomputed by the next probe",
+    "suite_membership_parity_runs": "instance cutover evidence (HYG-04), dropped with the legacy membership tables",
 }
 
 

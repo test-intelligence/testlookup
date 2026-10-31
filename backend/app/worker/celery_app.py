@@ -421,6 +421,18 @@ celery_app.conf.update(
             "task": "app.worker.tasks.reconcile_canonical_deletions",
             "schedule": crontab(hour=5, minute=30),
         },
+        # W25a HYG-04 (D26): compare the legacy suite memberships with the
+        # canonical model once a UTC day — 45 minutes AFTER the 05:30
+        # reconcile, so the night's canonical retirements are applied before
+        # the comparison reads them. Read-only over the catalog; its only write
+        # is its own suite_membership_parity_runs row. Seven consecutive clean
+        # days unlock the W25d cutover; W25d removes this entry at the cutover.
+        "daily-suite-membership-parity": {
+            "task": "app.worker.tasks.run_suite_membership_parity",
+            "schedule": crontab(hour=6, minute=15),
+            "kwargs": {"trigger": "beat"},
+            "options": {"queue": "default", "ignore_result": True},
+        },
         # Roadmap Phase 0: measure per-project flaky-classifier specificity.
         # Retrospective 90-day backtest per project, so it runs off-peak and
         # well after the nightly ingestion tail. Read-only as far as the

@@ -1456,6 +1456,12 @@ GLOBAL_PATH_PARAMS: dict[str, str] = {
     # W20 ADM-09: /scim/v2/Groups/{group_id}. A SCIM group the IdP pushes is instance-wide (scim_groups has no
     # project owner); the routes authenticate with the SCIM bearer token (verify_scim_bearer), not a user session.
     "group_id": "an instance-wide SCIM group (scim_groups), reachable only with the SCIM bearer token",
+    # W25a HYG-04: GET /admin/maintenance/suite-membership-parity/{parity_run_id}. Not ``run_id``: that
+    # name is a test run in SCOPED_IDS.
+    "parity_run_id": (
+        "an instance-wide suite-membership cutover comparison (suite_membership_parity_runs has no "
+        "project owner), guarded by require_instance_admin"
+    ),
 }
 
 #: Path ids in use when this scan was added that neither list classifies. Their

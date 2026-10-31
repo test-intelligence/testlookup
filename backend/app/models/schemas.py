@@ -1004,6 +1004,59 @@ class ProjectDataJobList(BaseModel):
     total: int                                     # all matching rows; items ≤ JOBS_LIST_LIMIT (a top-N length is not a count)
 
 
+# ── W25a HYG-04: the suite-membership parity harness (the 7-day cutover clock) ─
+# Every ``trigger`` / ``status`` / ``reason`` is a plain ``str`` checked against
+# ``services/suite_parity_vocab.py`` (mirrored in frontend/src/types/suiteParity.ts).
+
+class SuiteParityRunSummary(BaseModel):
+    """One comparison of the legacy suite memberships with the canonical model."""
+    id: uuid.UUID
+    trigger: str                                   # suite_parity_vocab.RUN_TRIGGERS
+    status: str                                    # suite_parity_vocab.RUN_STATUSES
+    started_at: datetime
+    finished_at: Optional[datetime] = None
+    requested_by_name: Optional[str] = None        # the admin's username for trigger="admin"; None for the beat or a removed user
+    window_runs: int
+    projects_checked: int
+    keys_compared: int
+    blocking_diffs: int
+    expected_divergences: int
+
+
+class SuiteParityHistory(BaseModel):
+    runs: list[SuiteParityRunSummary]              # started in the last HISTORY_DAYS UTC days, newest first
+    streak_days: int                               # consecutive clean UTC days (a day with no finished run breaks it)
+    required_days: int = 7                         # suite_parity_vocab.REQUIRED_CLEAN_DAYS
+    cutover_ready: bool
+    window_runs_now: int                           # settings.CANONICAL_DELETION_WINDOW_RUNS today (0 = the reconciler is off)
+
+
+class SuiteParityProjectLine(BaseModel):
+    project_id: uuid.UUID
+    project_name: Optional[str] = None             # resolved at read time; None for a project deleted since
+    blocking: int
+    expected: int
+
+
+class SuiteParitySampleRow(BaseModel):
+    reason: str                                    # BLOCKING_REASONS ∪ EXPECTED_REASONS
+    blocking: bool
+    project_id: uuid.UUID
+    project_name: Optional[str] = None
+    suite: str
+    fingerprint: str
+    test_name: Optional[str] = None
+    legacy: str                                    # "active" | "removed" | "absent"
+    canonical: str                                 # "active" | "retired" | "other_suite" | "absent"
+
+
+class SuiteParityRunDetail(SuiteParityRunSummary):
+    counts: dict[str, int]                         # every reason + INFO_COUNTS, zeros included
+    per_project: list[SuiteParityProjectLine]
+    sample: list[SuiteParitySampleRow]
+    error_code: Optional[str] = None               # an exception TYPE name or "interrupted"; never a message
+
+
 class ProjectResetResponse(BaseModel):
     mode: Literal["runs", "full"]
     deleted: dict[str, int]
