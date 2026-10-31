@@ -115,8 +115,14 @@ async def exported(env: Any, tmp_path_factory: pytest.TempPathFactory) -> Any:
     from app.models.postgres import Project, User
     from app.services import project_data_job_service as jobs
     from app.worker import project_data_runner as runner
-    from tests.integration.project_transfer_seed import exported_counts, make_sentinels, seed_transfer_project
+    from tests.integration.project_transfer_seed import (
+        exported_counts,
+        make_sentinels,
+        remove_transfer_data,
+        seed_transfer_project,
+    )
 
+    seed = None
     root = tmp_path_factory.mktemp("objects")
     patch = pytest.MonkeyPatch()
     patch.setattr(storage_module.settings, "LOCAL_STORAGE_PATH", str(root))
@@ -157,11 +163,17 @@ async def exported(env: Any, tmp_path_factory: pytest.TempPathFactory) -> Any:
                               store=store, root=root)
     finally:
         patch.undo()
+        if seed is not None:          # CI shares ONE database across modules: leave nothing behind (#308)
+            await remove_transfer_data(env, seed, user_ids=_CREATED_USERS)
 
 
 def _members(archive: bytes) -> dict[str, bytes]:
     with zipfile.ZipFile(io.BytesIO(archive)) as zf:
         return {name: zf.read(name) for name in zf.namelist()}
+
+
+# Every person a test below creates; the module fixture's teardown removes them with the seed (CI shares ONE database).
+_CREATED_USERS: list[uuid.UUID] = []
 
 
 async def _member(env: Any, project_id: uuid.UUID, role: str, label: str) -> Any:
@@ -170,6 +182,7 @@ async def _member(env: Any, project_id: uuid.UUID, role: str, label: str) -> Any
     username = f"xfer-{label}-{uuid.uuid4().hex[:8]}g"
     user = User(id=uuid.uuid4(), username=username, email=f"{username}@xfer.example.test",
                 full_name=label.title(), hashed_password="!", role=role, is_active=True)
+    _CREATED_USERS.append(user.id)
     async with env() as db:
         db.add(user)
         await db.flush()

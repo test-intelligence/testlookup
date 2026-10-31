@@ -114,11 +114,11 @@ def _rewrap(
 
 
 async def _cleanup(sessions: Any, seeded: Any, people: list[Any]) -> None:
-    """Best effort: the source, every project this module imported, their synthetic QA leads, the people."""
-    from sqlalchemy import delete
-    from sqlalchemy.exc import DBAPIError
-
-    from app.models.postgres import CanonicalTestCase, Project, ProjectDataJob, User
+    """The source, every project this module imported (+ their secrets and synthetic QA leads), the people and the
+    instance secrets the seed overwrote — CI shares ONE database across modules (#308: a leaked GitHub integration
+    failed the integration-health sweep three modules later)."""
+    from app.models.postgres import ProjectDataJob
+    from tests.integration.project_transfer_seed import remove_transfer_data
 
     people_ids = [p.id for p in people]
     async with sessions() as db:
@@ -126,24 +126,7 @@ async def _cleanup(sessions: Any, seeded: Any, people: list[Any]) -> None:
             select(ProjectDataJob.project_id).where(
                 ProjectDataJob.requested_by_id.in_(people_ids), ProjectDataJob.project_id.is_not(None))
         )).scalars().all()
-        project_ids = sorted({seeded.project_id, *imported}, key=str)
-        leads = (await db.execute(
-            select(Project.default_qa_lead_user_id).where(Project.id.in_(project_ids))
-        )).scalars().all()
-    steps = [
-        delete(CanonicalTestCase).where(CanonicalTestCase.project_id.in_(project_ids)),   # RESTRICT on suites
-        delete(Project).where(Project.id.in_(project_ids)),
-        delete(ProjectDataJob).where(ProjectDataJob.requested_by_id.in_(people_ids)),
-        delete(User).where(User.id.in_([*people_ids, *[lead for lead in leads if lead]])),
-        delete(User).where(User.username.in_(list(seeded.usernames.values()))),
-    ]
-    for statement in steps:
-        async with sessions() as db:
-            try:
-                await db.execute(statement)
-                await db.commit()
-            except DBAPIError:
-                await db.rollback()
+    await remove_transfer_data(sessions, seeded, project_ids=imported, user_ids=people_ids)
 
 
 def _user(tag: str, role: str, label: str) -> Any:

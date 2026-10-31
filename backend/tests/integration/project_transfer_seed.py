@@ -110,6 +110,9 @@ class SeededProject:
     placements: dict[str, tuple[str, str]] = field(default_factory=dict)   # sentinel → (table, column) it was typed into
     ids: dict[str, uuid.UUID] = field(default_factory=dict)       # named rows (releases, cases, run, …)
     excluded: dict[str, list[uuid.UUID]] = field(default_factory=dict)     # table → rows that must NOT travel
+    # (scope, key_name) → the instance secret row BEFORE the seed overwrote it (None = there was none), so
+    # remove_transfer_data can put the shared database back.
+    instance_secrets: dict[tuple[str, str], Optional[dict[str, Any]]] = field(default_factory=dict)
 
 
 def _tag() -> str:
@@ -371,10 +374,62 @@ async def _seed_what_must_not_travel(db: AsyncSession, seed: SeededProject, s: S
         db.add(row)
         await db.flush()
         seed.excluded.setdefault(table, []).append(row.id)
+    for scope, key_name in _INSTANCE_SECRETS:
+        before = (await db.execute(select(m.SecretRef).where(
+            m.SecretRef.scope == scope, m.SecretRef.key_name == key_name))).scalar_one_or_none()
+        seed.instance_secrets[(scope, key_name)] = (
+            None if before is None else {column: getattr(before, column) for column in _SECRET_COLUMNS})
     await secret_service.store_secret(db, "smtp_config", "password", s.smtp_password, seed.admin_id)
     await secret_service.store_secret(db, "ai_config", "anthropic_api_key", s.anthropic_key, seed.admin_id)
     await secret_service.store_secret(db, "integrations_config", "jira_api_token", s.vault_ref, seed.admin_id)
     await db.flush()
+
+
+_INSTANCE_SECRETS = (("smtp_config", "password"), ("ai_config", "anthropic_api_key"),
+                     ("integrations_config", "jira_api_token"))
+_SECRET_COLUMNS = ("provider", "encrypted_value", "external_ref", "masked_value", "rotation_status")
+
+
+async def remove_transfer_data(
+    sessions: Any, seed: SeededProject, *, project_ids: Any = (), user_ids: Any = (),
+) -> None:
+    """Remove EVERYTHING the seed (and the imports made from it) left in a SHARED database, and put the instance
+    secrets it overwrote back. CI runs every ``*_postgres.py`` module in ONE database, in order: on PR #308 the
+    seeded project's GitHub integration survived the export module and the W10 integration-health sweep, which
+    probes every project's integration, read it as ``auth_error`` three modules later.
+
+    Order: the per-project secret rows (``secret_refs`` has no FK to a project), the jobs, the canonical cases
+    (RESTRICT on suites), the projects (everything project-scoped cascades), the instance secrets, the people.
+    Raises on a failure — a leak must fail THIS module, not a later one."""
+    from sqlalchemy import delete, or_, update
+
+    from app.services import github_checks_service, gitlab_integration_service, webhook_service
+
+    projects = sorted({seed.project_id, *project_ids}, key=str)
+    async with sessions() as db:
+        leads = [lead for lead in (await db.execute(
+            select(m.Project.default_qa_lead_user_id).where(m.Project.id.in_(projects)))).scalars().all() if lead]
+        hooks = (await db.execute(
+            select(m.WebhookSubscription.id).where(m.WebhookSubscription.project_id.in_(projects)))).scalars().all()
+    secret_keys = [(github_checks_service.SECRET_SCOPE, github_checks_service._secret_key(p)) for p in projects]
+    secret_keys += [(gitlab_integration_service.SECRET_SCOPE, gitlab_integration_service._secret_key(p)) for p in projects]
+    secret_keys += [(webhook_service.SECRET_SCOPE, webhook_service._secret_key(h)) for h in hooks]
+    people = sorted({seed.admin_id, seed.author_id, seed.assignee_id, *user_ids, *leads}, key=str)
+    async with sessions() as db:
+        await db.execute(delete(m.SecretRef).where(or_(*[
+            (m.SecretRef.scope == scope) & (m.SecretRef.key_name == key) for scope, key in secret_keys])))
+        await db.execute(delete(m.ProjectDataJob).where(or_(
+            m.ProjectDataJob.project_id.in_(projects), m.ProjectDataJob.requested_by_id.in_(people))))
+        await db.execute(delete(m.CanonicalTestCase).where(m.CanonicalTestCase.project_id.in_(projects)))
+        await db.execute(delete(m.Project).where(m.Project.id.in_(projects)))
+        for (scope, key_name), before in seed.instance_secrets.items():
+            where = (m.SecretRef.scope == scope) & (m.SecretRef.key_name == key_name)
+            if before is None:
+                await db.execute(delete(m.SecretRef).where(where))
+            else:
+                await db.execute(update(m.SecretRef).where(where).values(**before))
+        await db.execute(delete(m.User).where(m.User.id.in_(people)))
+        await db.commit()
 
 
 async def seed_transfer_project(
