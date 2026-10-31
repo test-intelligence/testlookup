@@ -11,7 +11,10 @@ import re
 import time
 import uuid as _uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional, Set
+
+import structlog
 
 from fastapi import (
     APIRouter,
@@ -34,9 +37,11 @@ from app.core.deps import (
 from app.core.security import JWTError, decode_token
 from app.db.postgres import AsyncSessionLocal, get_db
 from app.models.postgres import User
+from app.services import ws_audit_policy
 from app.services.access_audit_service import log_access_change
 
 logger = logging.getLogger(__name__)
+_slog = structlog.get_logger(__name__)
 
 # WS auth handshake timeout — clients must send {"type": "auth", "token": "..."}
 # within this window of opening the socket, or we close the connection.
@@ -281,30 +286,131 @@ async def _authenticate_ws(
     )
 
 
-async def _audit_ws_event(
-    action: str,
-    user_id: Optional[_uuid.UUID],
-    user_name: Optional[str],
-    project_uuid: Optional[_uuid.UUID],
-    detail: Optional[dict] = None,
-) -> None:
-    """Best-effort audit write — never let an audit failure break the WS."""
+# ── Session audit (HYG-06 a, D27 a): AT MOST ONE ws_session row per live session, append-only ─────
+
+
+def _iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+
+
+def _ws_session_detail(session: dict, started_at: float, ended_at: float, reason: str) -> dict:
+    """The row's ``after_value``, written ONCE at the disconnect that took the session to 5 s.
+
+    It carries that connection's timing (``started_at`` / ``ended_at`` / ``reason``), the session's start and
+    the connected time accumulated so far, and states the reconnect rule as a fixed fact: the row is never
+    updated, so it claims no reconnect count and no total duration it cannot know.
+    """
+    return {
+        "channel": "live",
+        "reason": reason,
+        "started_at": _iso(started_at),
+        "ended_at": _iso(max(ended_at, started_at)),
+        "session_started_at": _iso(session["started_at"]),
+        "connected_s_at_write": round(session["connected_ms"] / 1000),
+        "reconnect_policy": ws_audit_policy.RECONNECT_POLICY,
+    }
+
+
+async def _read_ws_session(key: str) -> Optional[dict]:
+    """The user's open session on this project, or None — a Redis error is "no session", never a raise."""
     try:
-        async with AsyncSessionLocal() as db:
-            entry_actor = None
-            if user_id is not None:
-                # Build a lightweight stand-in so log_access_change can pull id/username
-                entry_actor = await db.get(User, user_id)
-            await log_access_change(
-                db,
-                action=action,
-                actor=entry_actor,
-                project_id=project_uuid,
-                after_value=detail,
-            )
-            await db.commit()
-    except Exception as exc:  # noqa: BLE001 — audit is fire-and-forget
-        logger.debug(f"ws_audit_skipped action={action}: {exc}")
+        from app.db import redis_client
+
+        raw = await redis_client.get_redis().get(key)
+        if not raw:
+            return None
+        stored = json.loads(raw)
+        return stored if isinstance(stored, dict) else None
+    except Exception as exc:  # noqa: BLE001 — no Redis = no collapse for this connection
+        _slog.debug("ws_session_state_unread", error_type=type(exc).__name__)
+        return None
+
+
+async def _keep_ws_session(key: str, session: dict) -> None:
+    """Best effort: without it the next reconnect starts a new session (one more row), nothing worse."""
+    try:
+        from app.db import redis_client
+
+        await redis_client.get_redis().set(
+            key, json.dumps(session), ex=ws_audit_policy.RECONNECT_WINDOW_SECONDS
+        )
+    except Exception as exc:  # noqa: BLE001
+        _slog.debug("ws_session_state_unkept", error_type=type(exc).__name__)
+
+
+async def _insert_ws_session_row(
+    user_id: _uuid.UUID,
+    project_uuid: Optional[_uuid.UUID],
+    detail: dict,
+) -> None:
+    """INSERT the session's one row in a short session of its own, committed here; a DB error raises.
+
+    A WebSocket has no request session, so this opens its own (as the connect / disconnect audit did) and
+    commits it. Append-only: nothing in this module updates or deletes an audit row.
+    """
+    async with AsyncSessionLocal() as db:
+        actor = await db.get(User, user_id)
+        await log_access_change(
+            db,
+            action=ws_audit_policy.WS_AUDIT_ACTION,
+            actor=actor,
+            project_id=project_uuid,
+            after_value=detail,
+        )
+        await db.commit()
+
+
+def _count_ws_connection(outcome: str) -> None:
+    """``testlookup_ws_connections_total{outcome}`` — one literal ``.inc()`` per outcome. Never raises."""
+    try:
+        from app.core.metrics import ws_connections_total
+
+        if outcome == "audited":
+            ws_connections_total.labels(outcome="audited").inc()
+        elif outcome == "merged":
+            ws_connections_total.labels(outcome="merged").inc()
+        elif outcome == "short":
+            ws_connections_total.labels(outcome="short").inc()
+        else:
+            ws_connections_total.labels(outcome="audit_failed").inc()
+    except Exception:  # noqa: BLE001 — telemetry must never break the socket
+        pass
+
+
+async def _record_ws_session(
+    user_id: _uuid.UUID,
+    project_uuid: Optional[_uuid.UUID],
+    started_at: float,
+    ended_at: float,
+    reason: str,
+) -> str:
+    """Record one finished live connection into the user's session on the project; returns the outcome.
+
+    Replaces the old ``ws_connect`` + ``ws_disconnect`` pair (two ``access_audit_logs`` rows per connection).
+    ``ws_audit_policy.decide`` reads the session kept in Redis (``SESSION_KEY``, TTL 60 s) and says: INSERT the
+    session's one row now that its connected time reached 5 s (``audited``), nothing for a continuation of an
+    already-audited session (``merged`` — only the Redis session moves), or nothing for a session still under
+    5 s (``short``, metric only). Audit rows are append-only: no row is ever updated. A DB error is
+    ``audit_failed`` (the session stays un-audited, so the next continuation tries again). Without Redis every
+    connection of 5 s or more is its own session and row. Never raises into the socket; logs carry an
+    exception TYPE — never a user name, a token or a URL.
+    """
+    key = ws_audit_policy.SESSION_KEY.format(user_id=user_id, project_id=project_uuid)
+    prev = await _read_ws_session(key)
+    decision = ws_audit_policy.decide(prev, started_at, ended_at)
+    session = dict(decision.session)
+    outcome = decision.outcome
+    if decision.kind == "insert":
+        try:
+            detail = _ws_session_detail(session, started_at, ended_at, reason)
+            await _insert_ws_session_row(user_id, project_uuid, detail)
+            session["audited"] = True
+        except Exception as exc:  # noqa: BLE001 — audit is best effort; the socket is already closing
+            outcome = "audit_failed"
+            _slog.debug("ws_session_audit_failed", error_type=type(exc).__name__)
+    await _keep_ws_session(key, session)
+    _count_ws_connection(outcome)
+    return outcome
 
 
 # ── WebSocket endpoint ─────────────────────────────────────────────────────
@@ -338,18 +444,12 @@ async def live_updates(websocket: WebSocket, project_id: str):
         # _authenticate_ws already closed the socket. Nothing registered yet.
         return
 
-    # Audit the connect — non-blocking, best-effort
+    # No audit row at connect (HYG-06 a): a session's one ws_session row is written at a disconnect.
     try:
         project_uuid_for_audit = _uuid.UUID(project_id)
     except ValueError:
         project_uuid_for_audit = None
-    await _audit_ws_event(
-        "ws_connect",
-        session.user_id,
-        session.user_name,
-        project_uuid_for_audit,
-        detail={"channel": "live"},
-    )
+    started_at = time.time()
 
     close_reason_for_audit = "client_disconnect"
 
@@ -453,12 +553,12 @@ async def live_updates(websocket: WebSocket, project_id: str):
         logger.warning(f"WS error for project={project_id}: {e}")
     finally:
         manager.disconnect(project_id, websocket)
-        await _audit_ws_event(
-            "ws_disconnect",
+        await _record_ws_session(
             session.user_id,
-            session.user_name,
             project_uuid_for_audit,
-            detail={"channel": "live", "reason": close_reason_for_audit},
+            started_at,
+            time.time(),
+            close_reason_for_audit,
         )
 
 
