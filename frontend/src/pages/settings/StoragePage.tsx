@@ -7,6 +7,7 @@ import { appSettingsService, type StorageConfigRead, type StorageConfigUpdate } 
 import { usePermissions } from '@/hooks/usePermissions'
 import Field from '@/components/ui/Field'
 import SecretProvidersCard from './SecretProvidersCard'
+import SuiteParityCard from './SuiteParityCard'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import {
   COLLECTION_PREFIX_HELP,
@@ -219,6 +220,8 @@ export default function StoragePage() {
       </form>
 
       {isAdmin && <SecretProvidersCard />}
+      {/* W25a HYG-04: the suite-membership cutover comparisons — the LAST block, so nothing above it moves. */}
+      {isAdmin && <SuiteParityCard />}
     </div>
   )
 }

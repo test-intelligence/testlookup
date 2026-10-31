@@ -10,7 +10,8 @@
  *    list / create / rename / share / delete, the list filtered like `routers/saved_views.list_saved_views`);
  *  - `similarWorld(options)`: one test result's page (`TEST_CASE`) with `GET /search/similar/{id}`;
  *  - `embeddingWorld(options)`: Settings › AI and Settings › Data & storage with `embedding_index`, the re-embed
- *    routes and the Collection prefix fields.
+ *    routes and the Collection prefix fields (and, since W25a, the admin's suite-membership cutover history, built
+ *    by `src/test/suiteParityMocks.ts` — test data shared with the vitests, not app copy).
  *
  * W12's answers are listed BEFORE the worlds they compose (first match wins, `production-pages.ts`). Every factory
  * returns fresh state per call and records each write it answered (`writes`: `METHOD path?query` and the parsed
@@ -19,6 +20,8 @@
  * logged here either. Not a spec file.
  */
 import { respond, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
+import { parityHistory } from '../../../src/test/suiteParityMocks'
+import type { SuiteParityHistory } from '../../../src/types/suiteParity'
 import { isoAgo, LAYOUT, NOW, PROJECT_ID, RUN_ID, USER } from './fixtures'
 import { aiConfig, aiConfigHandlers, EMBEDDING_INDEX_IN_SYNC, MODEL_STATUS } from './fixtures-ai-config'
 import { TEST_CASE, TEST_CASE_API, TEST_CASE_ERROR, TEST_CASE_ID } from './fixtures-pages'
@@ -1000,7 +1003,16 @@ export interface EmbeddingWorldOptions {
   storedPrefix?: string
   /** `GET /settings/ai/embedding-index` polls before the build reports done (default 1: the second poll is idle). */
   pollsUntilDone?: number
+  /**
+   * W25a HYG-04: `GET /admin/maintenance/suite-membership-parity` (default `SUITE_PARITY_HISTORY`: a deploy four days
+   * before `NOW` — day −4 found 12 differences, days −3…0 clean, the two dates before never ran: "Day 4 of 7").
+   */
+  parity?: SuiteParityHistory
 }
+
+export const SUITE_PARITY_API = '/api/v1/admin/maintenance/suite-membership-parity'
+/** The cutover card's history after a deploy four days before `NOW` (a state the product produces together). */
+export const SUITE_PARITY_HISTORY: SuiteParityHistory = parityHistory({ streak: 4, now: NOW })
 
 /**
  * Settings › AI + Settings › Data & storage as a W12 server answers them (§2.4, §3): GET `/settings/ai` carries
@@ -1031,6 +1043,7 @@ export function embeddingWorld(options: EmbeddingWorldOptions = {}) {
     state.index = { ...INDEX_BUILDING, active, configured: target, in_sync: false, target, requested_at: NOW.toISOString() }
     state.indexPolls = 0
   }
+  const parity = options.parity ?? SUITE_PARITY_HISTORY
   const config = () => ({ ...aiConfig({ embedding_provider: state.provider, embedding_model: state.model }), embedding_index: state.index })
   const base = aiConfigHandlers({ config: { embedding_provider: state.provider, embedding_model: state.model } })
 
@@ -1081,6 +1094,8 @@ export function embeddingWorld(options: EmbeddingWorldOptions = {}) {
     [STORAGE_API, () => storageRead(state.storedPrefix, state.index ? state.index.active.prefix : null)],
     // W20 ADM-10: the Secrets card on Data & storage (no Vault).
     ['/api/v1/settings/secret-providers', () => ({ providers: [{ name: 'vault', configured: false, address_host: null, auth_method: 'token', healthy: false, message: 'Not configured: set SECRET_PROVIDER_VAULT_ADDR on the deployment.', references: 0 }], reference_syntax: 'vault:<path>#<key>' })],
+    // W25a HYG-04: the admin's cutover card on Data & storage (its one read).
+    [SUITE_PARITY_API, () => parity],
     [
       STORAGE_API,
       (request) => {

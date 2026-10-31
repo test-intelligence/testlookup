@@ -211,6 +211,41 @@ describe('the settings page template (UX redesign P5)', () => {
   })
 })
 
+// W25a HYG-06 (a): a live session writes ONE append-only `ws_session` access row; the page says what it holds.
+describe('a ws_session row reads as one sentence', () => {
+  const accessRow = (action: string, detail: Record<string, unknown> | null) => ({
+    source: 'access', action, actor_name: 'Avery Admin', actor_id: 'u-1', project_id: 'proj-1', detail,
+    created_at: '2026-10-31T09:01:00Z',
+  })
+
+  it('shows only what the append-only row knows, beside the action', () => {
+    // `routers/live.py` `_ws_session_detail`'s keys; the suite runs in America/Chicago (09:00 UTC = 04:00 CDT).
+    const detail = {
+      channel: 'live', reason: 'client_disconnect',
+      started_at: '2026-10-31T09:00:10Z', ended_at: '2026-10-31T09:00:52Z', session_started_at: '2026-10-31T09:00:00Z',
+      connected_s_at_write: 47, reconnect_policy: 'reconnects within 60 s are merged into this session',
+    }
+    mockUseAuditEvents.mockReturnValue({ events: [accessRow('ws_session', detail)], total: 1, isLoading: false, isError: false })
+    renderPage()
+    const note = screen.getByText(
+      'Live session from Oct 31, 04:00; this connection 04:00:10–04:00:52 (client_disconnect); 47 s connected when ' +
+      'recorded; reconnects within 60 s are merged into this session.',
+    )
+    expect(note).toHaveAttribute('data-audit-note')
+    expect(note.parentElement).toContainElement(screen.getByText('ws_session'))
+  })
+
+  it('a legacy ws_connect row shows only its action, as before', () => {
+    const detail = { channel: 'live', started_at: '2026-10-30T09:00:00Z', ended_at: '2026-10-30T09:00:42Z', session_started_at: '2026-10-30T09:00:00Z' }
+    mockUseAuditEvents.mockReturnValue({ events: [accessRow('ws_connect', detail), accessRow('ws_disconnect', null)], total: 2, isLoading: false, isError: false })
+    const { container } = renderPage()
+    expect(screen.getByText('ws_connect')).toBeInTheDocument()
+    expect(screen.getByText('ws_disconnect')).toBeInTheDocument()
+    expect(container.querySelector('[data-audit-note]')).toBeNull()
+    expect(screen.queryByText(/Live session/)).toBeNull()
+  })
+})
+
 describe('Export CSV is ADMIN on the API (GET /audit-dashboard/export)', () => {
   // The page is QA lead; a QA lead's Export answered 403.
   const signInAs = (role: string) => useAuthStore.setState({ user: { id: role, role } as never })
