@@ -514,7 +514,8 @@ const ROUTES: SweepRoute[] = [
     roles: MANAGEMENT,
     handlers: () => projectDataWorld().handlers,
     ready: h1('Project Data'),
-    readyFor: { QA_LEAD: adminNotice },
+    // W24 ADM-05 (deliberate): a QA lead now opens the page (the Export card); the reset stays ADMIN-only.
+    readyFor: { QA_LEAD: h1('Project Data') },
     actions: [only(ADMIN_ONLY, form('Delete test runs', (p) => p.getByRole('button', { name: 'Delete test runs' }), 'Delete test runs'))],
   },
 

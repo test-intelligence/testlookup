@@ -8504,6 +8504,51 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## Body_start_project_import_api_v1_projects_import_post
+
+```json
+{
+  "properties": {
+    "client_token": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Client Token"
+    },
+    "file": {
+      "anyOf": [
+        {
+          "format": "binary",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "File"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Name"
+    }
+  },
+  "title": "Body_start_project_import_api_v1_projects_import_post",
+  "type": "object"
+}
+```
+
 ## Body_trigger_finetune_api_v1_training_finetune_post
 
 ```json
@@ -32016,6 +32061,408 @@ These are the full generated JSON Schema definitions, including required fields,
     "slug"
   ],
   "title": "ProjectCreate",
+  "type": "object"
+}
+```
+
+## ProjectDataError
+
+```json
+{
+  "description": "A W24 refusal: also the 4xx ``detail`` shape ``{code, message}`` (ERROR_SENTENCES).",
+  "properties": {
+    "code": {
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "title": "ProjectDataError",
+  "type": "object"
+}
+```
+
+## ProjectDataImportReport
+
+```json
+{
+  "properties": {
+    "cleared": {
+      "default": [],
+      "items": {
+        "$ref": "#/components/schemas/ProjectDataSkip"
+      },
+      "title": "Cleared",
+      "type": "array"
+    },
+    "exported_at": {
+      "format": "date-time",
+      "title": "Exported At",
+      "type": "string"
+    },
+    "inserted": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Inserted",
+      "type": "object"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "project_name": {
+      "title": "Project Name",
+      "type": "string"
+    },
+    "project_slug": {
+      "title": "Project Slug",
+      "type": "string"
+    },
+    "signature": {
+      "title": "Signature",
+      "type": "string"
+    },
+    "skipped": {
+      "default": [],
+      "items": {
+        "$ref": "#/components/schemas/ProjectDataSkip"
+      },
+      "title": "Skipped",
+      "type": "array"
+    },
+    "source_app_version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source App Version"
+    },
+    "source_project_name": {
+      "title": "Source Project Name",
+      "type": "string"
+    },
+    "switched_off": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "default": {},
+      "title": "Switched Off",
+      "type": "object"
+    }
+  },
+  "required": [
+    "project_id",
+    "project_name",
+    "project_slug",
+    "inserted",
+    "signature",
+    "source_project_name",
+    "exported_at"
+  ],
+  "title": "ProjectDataImportReport",
+  "type": "object"
+}
+```
+
+## ProjectDataJobList
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/ProjectDataJobRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total"
+  ],
+  "title": "ProjectDataJobList",
+  "type": "object"
+}
+```
+
+## ProjectDataJobRead
+
+```json
+{
+  "description": "One export / import job. ``storage_key`` is NEVER part of it.",
+  "properties": {
+    "bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Bytes"
+    },
+    "counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "default": {},
+      "title": "Counts",
+      "type": "object"
+    },
+    "download_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Download Path"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ProjectDataError"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expires At"
+    },
+    "file_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "File Count"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "import_report": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ProjectDataImportReport"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Manifest Sha256"
+    },
+    "progress": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ProjectDataProgress"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Id"
+    },
+    "project_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Name"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "requested_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Requested By Name"
+    },
+    "signature": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Signature"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "status",
+    "requested_at"
+  ],
+  "title": "ProjectDataJobRead",
+  "type": "object"
+}
+```
+
+## ProjectDataProgress
+
+```json
+{
+  "properties": {
+    "done": {
+      "minimum": 0.0,
+      "title": "Done",
+      "type": "integer"
+    },
+    "total": {
+      "minimum": 0.0,
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "done",
+    "total"
+  ],
+  "title": "ProjectDataProgress",
+  "type": "object"
+}
+```
+
+## ProjectDataSkip
+
+```json
+{
+  "properties": {
+    "column": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Column"
+    },
+    "count": {
+      "minimum": 1.0,
+      "title": "Count",
+      "type": "integer"
+    },
+    "entity": {
+      "title": "Entity",
+      "type": "string"
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "entity",
+    "reason",
+    "count"
+  ],
+  "title": "ProjectDataSkip",
   "type": "object"
 }
 ```

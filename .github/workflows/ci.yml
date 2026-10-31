@@ -841,6 +841,8 @@ jobs:
           tests/integration/test_review_gate_postgres.py
           tests/integration/test_agent_invoke_inline_postgres.py
           tests/integration/test_prometheus_integration_postgres.py
+          tests/integration/test_project_export_postgres.py
+          tests/integration/test_project_import_postgres.py
           tests/integration/test_defects_list_fields_postgres.py
           tests/integration/test_analytics_scope_postgres.py
           tests/integration/test_analytics_epoch_redis_postgres.py

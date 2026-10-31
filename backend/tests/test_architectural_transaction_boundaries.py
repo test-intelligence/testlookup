@@ -181,6 +181,21 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "http_exchange_store.py",
     "prometheus_vocab.py",
     "app_metrics_service.py",
+    # ── W24 ADM-05 project export / import (settings + catalog): new modules,
+    # commit-free from birth ──
+    # The wire vocabulary (constants only), the entity classification (a pure
+    # metadata walk), the job rows and the project provisioning shared with
+    # create_project (the routers and worker/project_data_runner.py commit),
+    # the export row streamer and its pure scrubbers, the import (ONE
+    # transaction the runner commits or rolls back) and its pure row models.
+    "project_export_vocab.py",
+    "project_export_entities.py",
+    "project_data_job_service.py",
+    "project_provisioning.py",
+    "project_export_service.py",
+    "project_export_scrub.py",
+    "project_import_service.py",
+    "project_import_rows.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

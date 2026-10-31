@@ -19,6 +19,12 @@
  * W27b PAN-06: the typed confirmation renders IN THE PAGE, inside the Danger
  * zone right under the row whose button opened it (it was a modal dialog),
  * one at a time; it keeps its field, its exact-match rule and `aria-disabled`.
+ *
+ * W24 ADM-05 (phase 1): two cards ABOVE the Danger zone — Export settings and
+ * catalog (QA lead or ADMIN with the project) and Import as a new project
+ * (ADMIN). The page reads the newest export / import and hands each card its
+ * read's error; a QA lead sees the Export card only (no Import card, no
+ * Danger-zone control, no imports read). The reset flow is unchanged.
  */
 import { Fragment, useMemo, useState } from 'react'
 import { AlertTriangle, Loader2, ShieldAlert, Trash2 } from 'lucide-react'
@@ -37,6 +43,10 @@ import {
 } from '@/services/projectsService'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { formatNumber } from '@/utils/formatters'
+import { useMyImports, useProjectExports } from '@/hooks/useProjectDataJobs'
+import ProjectExportCard from './ProjectExportCard'
+import ProjectImportCard from './ProjectImportCard'
+import { newestJob, PAGE_SUBTITLE, UI_SENTENCES } from './projectDataModel'
 
 const HELP_TOPIC = helpTopicParam('/settings/project-data')
 
@@ -210,7 +220,11 @@ export default function ProjectDataPage() {
   const project = useProjectStore((s) => s.activeProject)
   const activeProjectId = useProjectStore((s) => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
-  const { isAdmin } = usePermissions()
+  const { isAdmin, canAccessManagement } = usePermissions()
+  // W24: export = QA lead or ADMIN with a project selected (the route's rule); import = ADMIN.
+  const canSeePage = Boolean(isAdmin || canAccessManagement)
+  const canExport = Boolean(canSeePage && project && !isAllProjects)
+  const canImport = Boolean(isAdmin)
 
   // W27b: one typed confirmation open in the Danger zone, under its row (the key is the mode).
   const slot = useInlineSlot<ProjectResetMode>()
@@ -219,19 +233,17 @@ export default function ProjectDataPage() {
 
   const projectName = project?.name ?? ''
   const projectId = project?.id ?? ''
+  // The newest export of the project and the caller's newest import (no read the role may not make).
+  const exportsRead = useProjectExports(canExport ? projectId : null)
+  const importsRead = useMyImports(canImport)
 
   const canReset = useMemo(
     () => Boolean(isAdmin && project && !isAllProjects),
     [isAdmin, project, isAllProjects],
   )
 
-  if (!isAdmin) {
-    return (
-      <EmptyState
-        title="Admin access required"
-        description="Project data reset is restricted to platform administrators."
-      />
-    )
+  if (!canSeePage) {
+    return <EmptyState title={UI_SENTENCES.below_qa_lead_title} description={UI_SENTENCES.below_qa_lead_body} />
   }
 
   // No form fields here (two actions behind a typed confirmation), so no
@@ -241,7 +253,7 @@ export default function ProjectDataPage() {
       <PageHeader
         compact
         title="Project Data"
-        subtitle="Reset destructive project data when you need a clean slate. ADMIN only."
+        subtitle={PAGE_SUBTITLE}
         helpTopic={HELP_TOPIC}
       />
 
@@ -281,60 +293,84 @@ export default function ProjectDataPage() {
         </section>
       )}
 
-      {/* Danger zone */}
-      <section
-        className="card space-y-4 border-[var(--status-failed-bd)]/40"
-        aria-labelledby="danger-zone-heading"
-      >
-        <header className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--status-failed)]">
-          <AlertTriangle className="h-4 w-4" />
-          <h2 id="danger-zone-heading">Danger zone</h2>
-        </header>
-        <p className="text-xs text-[var(--color-text-muted)]">
-          These actions cannot be undone. A typed-name confirmation guards every reset; the backend
-          re-validates and writes a settings_audit_log entry for every successful run.
-        </p>
-
-        <div className="divide-y divide-[var(--color-border)] rounded border border-[var(--status-failed-bd)]/30">
-          {MODE_SPECS.map((spec) => (
-            <Fragment key={spec.mode}>
-            <div className="flex items-start justify-between gap-4 p-4">
-              <div className="min-w-0">
-                <h3 className="text-sm font-medium text-[var(--color-text)]">{spec.title}</h3>
-                <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">{spec.blurb}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => slot.open(spec.mode)}
-                disabled={!canReset}
-                className="inline-flex flex-shrink-0 items-center gap-1.5 rounded border border-[var(--status-failed-bd)]/60 bg-[var(--status-failed-bg)]/30 px-3 py-1.5 text-xs font-medium text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/60 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <Trash2 className="h-3.5 w-3.5" /> {spec.buttonLabel}
-              </button>
-            </div>
-            {/* W27b: the typed confirmation, right under the row whose button opened it. */}
-            {slot.openKey === spec.mode && project && !isAllProjects && (
-              <div data-in-page-row="" className="p-4">
-                <ResetConfirmModal
-                  spec={spec}
-                  projectId={projectId}
-                  projectName={projectName}
-                  slot={slot}
-                  onClose={() => closeConfirm(spec.mode)}
-                  onSuccess={(resp) => {
-                    setLastResult(resp)
-                    closeConfirm(spec.mode)
-                    toast.success(
-                      `Reset complete: ${Object.values(resp.deleted).reduce((a, b) => a + b, 0)} rows deleted`,
-                    )
-                  }}
-                />
-              </div>
-            )}
-            </Fragment>
-          ))}
+      {/* W24: Export (QA lead / ADMIN with the project) and Import (ADMIN), above the Danger zone. */}
+      {(canExport || canImport) && (
+        <div className="flex flex-col gap-4" data-project-transfer="">
+          {canExport && (
+            <ProjectExportCard
+              key={projectId}
+              loadError={exportsRead.error}
+              projectId={projectId}
+              latest={newestJob(exportsRead.data)}
+              onChanged={exportsRead.mutate}
+            />
+          )}
+          {canImport && (
+            <ProjectImportCard
+              loadError={importsRead.error}
+              latest={newestJob(importsRead.data)}
+              onChanged={importsRead.mutate}
+            />
+          )}
         </div>
-      </section>
+      )}
+
+      {/* Danger zone (ADMIN) */}
+      {isAdmin && (
+        <section
+          className="card space-y-4 border-[var(--status-failed-bd)]/40"
+          aria-labelledby="danger-zone-heading"
+        >
+          <header className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--status-failed)]">
+            <AlertTriangle className="h-4 w-4" />
+            <h2 id="danger-zone-heading">Danger zone</h2>
+          </header>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            These actions cannot be undone. A typed-name confirmation guards every reset; the backend
+            re-validates and writes a settings_audit_log entry for every successful run.
+          </p>
+
+          <div className="divide-y divide-[var(--color-border)] rounded border border-[var(--status-failed-bd)]/30">
+            {MODE_SPECS.map((spec) => (
+              <Fragment key={spec.mode}>
+              <div className="flex items-start justify-between gap-4 p-4">
+                <div className="min-w-0">
+                  <h3 className="text-sm font-medium text-[var(--color-text)]">{spec.title}</h3>
+                  <p className="mt-0.5 text-xs text-[var(--color-text-muted)]">{spec.blurb}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => slot.open(spec.mode)}
+                  disabled={!canReset}
+                  className="inline-flex flex-shrink-0 items-center gap-1.5 rounded border border-[var(--status-failed-bd)]/60 bg-[var(--status-failed-bg)]/30 px-3 py-1.5 text-xs font-medium text-[var(--status-failed)] hover:bg-[var(--status-failed-bg)]/60 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> {spec.buttonLabel}
+                </button>
+              </div>
+              {/* W27b: the typed confirmation, right under the row whose button opened it. */}
+              {slot.openKey === spec.mode && project && !isAllProjects && (
+                <div data-in-page-row="" className="p-4">
+                  <ResetConfirmModal
+                    spec={spec}
+                    projectId={projectId}
+                    projectName={projectName}
+                    slot={slot}
+                    onClose={() => closeConfirm(spec.mode)}
+                    onSuccess={(resp) => {
+                      setLastResult(resp)
+                      closeConfirm(spec.mode)
+                      toast.success(
+                        `Reset complete: ${Object.values(resp.deleted).reduce((a, b) => a + b, 0)} rows deleted`,
+                      )
+                    }}
+                  />
+                </div>
+              )}
+              </Fragment>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   )
 }

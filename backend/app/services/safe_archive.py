@@ -18,11 +18,14 @@ Design (from the MRU-11 spike):
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import posixpath
 import stat
 import zipfile
-from typing import Callable, Optional
+import zlib
+from dataclasses import dataclass
+from typing import IO, Callable, Optional
 
 # Defaults — the caller (worker) may override from settings. Compressed wire
 # size is already capped upstream by _read_upload_bounded (50 MB); these bound
@@ -143,3 +146,108 @@ def safe_extract_zip(
         out[posixpath.normpath(name)] = bytes(buf)
 
     return out
+
+
+# ── W24 ADM-05: a streaming scan that keeps no member bytes ──────────────────
+
+
+@dataclass(frozen=True)
+class ScannedMember:
+    """One regular member of a scanned archive: its RAW entry name (never
+    normalised, never used as a filesystem path), its uncompressed size as
+    actually read, and the SHA-256 of those bytes."""
+
+    name: str
+    size: int
+    sha256: str
+
+
+def scan_zip(
+    fileobj: IO[bytes],
+    *,
+    max_total: int,
+    max_entries: int,
+    max_entry: int,
+    max_ratio: int,
+) -> list[ScannedMember]:
+    """Scan a seekable ZIP file object with ``safe_extract_zip``'s checks.
+
+    The SAME checks in the SAME order with the SAME ``UnsafeZipError`` codes
+    (``bad_zip``, ``too_many_entries``, ``unsafe_path``, ``nested_zip``,
+    ``zip_bomb``, ``zip_too_large``), but each member is streamed ONCE through
+    SHA-256 and its bytes are dropped chunk by chunk — nothing is kept, so a
+    50 MiB upload holding 1 GiB of JSONL costs one read chunk of memory.
+
+    Directory entries are skipped like ``safe_extract_zip`` skips them (they
+    still count toward ``max_entries``). Two additions a caller can only gain
+    from: an encrypted member and a member whose compressed stream is corrupt
+    raise ``bad_zip`` instead of a bare ``RuntimeError`` / ``zlib.error``.
+
+    The messages carry entry POSITIONS, never entry names: an archive is
+    attacker-controlled, and a name may end up in a job's error sentence.
+    """
+    try:
+        zf = zipfile.ZipFile(fileobj)
+    except (zipfile.BadZipFile, OSError, EOFError) as exc:
+        raise UnsafeZipError("bad_zip", "The file is not a valid ZIP archive.") from exc
+
+    with zf:
+        infos = zf.infolist()
+        if len(infos) > max_entries:
+            raise UnsafeZipError(
+                "too_many_entries",
+                f"Archive has {len(infos)} entries; the limit is {max_entries}.",
+            )
+
+        scanned: list[ScannedMember] = []
+        running_total = 0
+        for position, zi in enumerate(infos, start=1):
+            name = zi.filename
+            if zi.is_dir():
+                continue
+            if _is_unsafe_path(name):
+                raise UnsafeZipError("unsafe_path", f"Entry {position} has an unsafe path.")
+            mode = (zi.external_attr >> 16) & 0xFFFF
+            if stat.S_IFMT(mode) and not stat.S_ISREG(mode):
+                raise UnsafeZipError("unsafe_path", f"Entry {position} is not a regular file (symlink?).")
+            if zi.flag_bits & 0x1:
+                raise UnsafeZipError("bad_zip", f"Entry {position} is encrypted.")
+
+            digest = hashlib.sha256()
+            entry_total = 0
+            first = True
+            try:
+                with zf.open(zi) as src:
+                    while True:
+                        chunk = src.read(_READ_CHUNK)
+                        if not chunk:
+                            break
+                        if first:
+                            if name.lower().endswith(".zip") or chunk[:4] == _ZIP_MAGIC:
+                                raise UnsafeZipError(
+                                    "nested_zip", f"Entry {position} is a nested archive; nested archives are not allowed."
+                                )
+                            first = False
+                        entry_total += len(chunk)
+                        running_total += len(chunk)
+                        if entry_total > max_entry:
+                            raise UnsafeZipError(
+                                "zip_bomb", f"Entry {position} exceeds {max_entry} bytes uncompressed."
+                            )
+                        if running_total > max_total:
+                            raise UnsafeZipError("zip_too_large", f"Archive exceeds {max_total} bytes uncompressed.")
+                        digest.update(chunk)
+            except UnsafeZipError:
+                raise
+            except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError) as exc:
+                raise UnsafeZipError("bad_zip", f"Entry {position} could not be read.") from exc
+
+            comp = zi.compress_size or 0
+            if comp > 0 and entry_total / comp > max_ratio:
+                raise UnsafeZipError(
+                    "zip_bomb",
+                    f"Entry {position} has a compression ratio of {entry_total // comp}x; the limit is {max_ratio}x.",
+                )
+            scanned.append(ScannedMember(name=name, size=entry_total, sha256=digest.hexdigest()))
+
+    return scanned

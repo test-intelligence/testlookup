@@ -7885,6 +7885,82 @@ class DeletionJob(Base):
     )
 
 
+class ProjectDataJob(Base):
+    """One project export or import (W24 ADM-05 phase 1: settings + catalog; migration 0247).
+
+    A NEW table rather than a ``deletion_jobs`` kind: an import has no project
+    until its transaction commits (``project_id`` NULL until then) and must
+    survive the project it created being archived (``SET NULL``, never
+    CASCADE). ``kind`` / ``status`` are the ``project_export_vocab``
+    vocabularies (CHECKed). ``storage_key`` (the export archive, or the
+    import's upload) is NEVER returned and never logged.
+    """
+
+    __tablename__ = "project_data_jobs"
+    __table_args__ = (
+        CheckConstraint("kind IN ('export', 'import')", name="ck_project_data_jobs_kind"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'expired')",
+            name="ck_project_data_jobs_status",
+        ),
+        Index("ix_pdj_project_requested", "project_id", text("requested_at DESC")),
+        # one queued / running export per project (409 export_running)
+        Index(
+            "uq_pdj_one_live_export", "project_id", unique=True,
+            postgresql_where=text("kind = 'export' AND status IN ('queued', 'running')"),
+        ),
+        # the import's idempotency key; a failed job's token may be reused
+        Index(
+            "uq_pdj_import_token", "requested_by_id", "client_token", unique=True,
+            postgresql_where=text("kind = 'import' AND status <> 'failed'"),
+        ),
+        Index("ix_pdj_status_requested", "status", "requested_at"),           # the janitor
+        Index("ix_pdj_requester_kind", "requested_by_id", "kind", text("requested_at DESC")),   # "your imports"
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    #: project_export_vocab.JOB_KINDS
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)
+    #: project_export_vocab.JOB_STATUSES
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="queued", server_default=text("'queued'"))
+    #: export: the source; import: the created project (set IN the import transaction)
+    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), nullable=True
+    )
+    #: export: the source's name at request time; import: the manifest's source name
+    project_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    requested_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: import only: the idempotency token (uq_pdj_import_token)
+    client_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    #: export: the archive; import: the upload (NULL once removed). NEVER in a response or a log line.
+    storage_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    file_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    manifest_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    archive_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    signature: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    signing_key_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    #: export: rows written per entity; import: rows inserted per entity
+    counts: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    #: import: ProjectDataImportReport.model_dump(mode="json")
+    report: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    #: {"done": int, "total": int} — tables finished / tables in the plan
+    progress: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    #: project_export_vocab.ERROR_SENTENCES key; ``error`` is its sentence
+    error_code: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: export only: finished_at + EXPORT_TTL_HOURS; the janitor removes the object after it
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class RetentionHold(Base):
     """A retention hold on a project, a release, a run or a compliance pack (W22a ACT-05, migration 0239).
 

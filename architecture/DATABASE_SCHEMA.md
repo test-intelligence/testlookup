@@ -3422,6 +3422,7 @@ The older per-domain sections omitted these tables. Their full field definitions
 | `run_cadences` | `RunCadence` | [Fields and constraints](../docs/reference/data-dictionary.md#run_cadences) |
 | `run_cadence_windows` | `RunCadenceWindow` | [Fields and constraints](../docs/reference/data-dictionary.md#run_cadence_windows) |
 | `classification_hints` | `ClassificationHint` | [Fields and constraints](../docs/reference/data-dictionary.md#classification_hints) |
+| `project_data_jobs` | `ProjectDataJob` | [Fields and constraints](../docs/reference/data-dictionary.md#project_data_jobs) |
 
 ## Cross-run insights and expected run cadences (migrations 0243 / 0244, W23a)
 
@@ -3532,6 +3533,35 @@ captured_at: datetime                           # server time of the write
 - **Retention.** Purged by `test_run_id` on the raw-events clock (`retention_service._MONGO_PLANS`); a held run's documents are never purged; deleting one run removes them; the `full` export tier archives them as `raw/<run>/rest_api_payloads.jsonl`; the storage page counts the collection.
 
 **`app_settings` key `integrations_config`** (AGT-15) gains `prometheus_enabled` (bool), `prometheus_base_url` (text) and `prometheus_metric_templates` (a JSON list of `{id, label, promql, unit}`, ≤ 12; absent = the four defaults). **`secret_refs`** scope `integrations_config` gains `prometheus_bearer_token` (a Vault reference allowed). The block is SAVED-ONLY: no environment fallback (the `PROMETHEUS_URL` setting is TestLookup's own self-monitoring Prometheus), and no migration writes any of these keys, so an upgrade changes nothing.
+
+## Project export / import jobs (migration 0247, W24)
+
+**`project_data_jobs`** (0247, ADM-05 phase 1: settings + catalog): one row per project export or import. A NEW table rather than a `deletion_jobs` kind: an import has no project until its transaction commits, and a job must outlive the project it exported or created.
+
+```text
+id UUID PK
+kind VARCHAR(10) NOT NULL              -- ck_project_data_jobs_kind: export | import
+status VARCHAR(12) NOT NULL 'queued'   -- ck_project_data_jobs_status: queued | running | succeeded | failed | expired
+project_id UUID NULL → projects.id ON DELETE SET NULL      -- export: the source; import: the new project (set IN the import transaction)
+project_name VARCHAR(255) NULL         -- export: the source name at request time; import: the manifest's source name
+requested_by_id UUID NULL → users.id ON DELETE SET NULL
+client_token UUID NULL                 -- import only: the idempotency key
+storage_key TEXT NULL                  -- export: the archive; import: the upload (NULL once removed); never returned, never logged
+bytes BIGINT NULL; file_count INTEGER NULL
+manifest_sha256 VARCHAR(64) NULL; archive_sha256 VARCHAR(64) NULL
+signature VARCHAR(16) NULL; signing_key_id VARCHAR(64) NULL
+counts JSONB NOT NULL '{}'             -- rows per entity (export: written; import: inserted)
+report JSONB NULL                      -- import: ProjectDataImportReport
+progress JSONB NULL                    -- {done, total} tables
+error_code VARCHAR(40) NULL; error TEXT NULL   -- project_export_vocab.ERROR_SENTENCES key + sentence
+attempts INTEGER NOT NULL 0
+requested_at TIMESTAMPTZ NOT NULL now(); started_at / finished_at / expires_at TIMESTAMPTZ NULL
+```
+
+- **Vocabularies.** `kind` / `status` are plain strings CHECKed with the literals of `services/project_export_vocab.py` (`JOB_KINDS` / `JOB_STATUSES`, pinned by `tests/test_migration_0247.py`). `expired` = the janitor removed an export's object (`expires_at = finished_at + 72 h`).
+- **Indexes.** `ix_pdj_project_requested (project_id, requested_at DESC)` — a project's exports; `uq_pdj_one_live_export UNIQUE (project_id) WHERE kind = 'export' AND status IN ('queued', 'running')` — one live export per project (409 `export_running`); `uq_pdj_import_token UNIQUE (requested_by_id, client_token) WHERE kind = 'import' AND status <> 'failed'` — the same upload twice is one job (a failed job's token may be reused); `ix_pdj_status_requested (status, requested_at)` — the janitor; `ix_pdj_requester_kind (requested_by_id, kind, requested_at DESC)` — "your imports". Plain builds: the migration creates the table.
+- **Never exported.** The table is classified `EXCLUDED` (`job_or_outbox`) in `services/project_export_entities.py`, the classification every table of the metadata must appear in (`tests/test_project_export_classification.py`: 30 exported / 107 excluded / 23 not project-scoped).
+- **Rollback.** `downgrade()` drops the five indexes and the table. No change to any existing table, no backfill, no seed.
 
 ## Systemic cluster membership key (migration 0193, VIZ-207)
 

@@ -177,6 +177,18 @@ report_export_jobs_total = Counter(
     ["format", "outcome"],  # format: pdf|xlsx|unknown; outcome: completed|failed|superseded|skipped
 )
 
+# W24 ADM-05: project export / import jobs by their END. The runner catches its
+# own failures and records them on the row, so Celery reports SUCCESS for a job
+# that failed -- this counter is how an operator tells them apart. Incremented
+# by literal calls in worker/project_data_runner.py: ``succeeded`` / ``failed``
+# when a job ends, ``expired`` when the janitor removes an export's archive,
+# ``interrupted`` when it fails a job a dead worker left (not a data failure).
+project_data_jobs_total = Counter(
+    "testlookup_project_data_jobs_total",
+    "Project export / import jobs by kind and final outcome",
+    ["kind", "outcome"],  # kind: export|import; outcome: succeeded|failed|expired|interrupted
+)
+
 # Wall-clock time of ``report_export_service.render_summary_export`` -- the
 # report build plus the ReportLab/openpyxl render -- on both paths: ``sync``
 # is the download-now route (the reader is waiting on it), ``background`` the

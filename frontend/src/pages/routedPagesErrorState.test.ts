@@ -116,7 +116,8 @@ const REVIEWED: Record<string, ErrorState> = {
   ResetPasswordConfirmPage: 'no-fetch',
   DocsPage: 'no-fetch',
   'settings/ProfilePage': 'no-fetch',
-  'settings/ProjectDataPage': 'no-fetch',
+  // W24 ADM-05: the page reads the newest export / import; each card shows "Could not load …" for its read.
+  'settings/ProjectDataPage': 'own-error-ui',
 
   // Backlog. Ranked by impact in docs/reaudit_reviews/b45_m21_enumeration.md.
   FailureAnalysisPage: 'known-silent',

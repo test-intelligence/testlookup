@@ -278,3 +278,79 @@ def test_two_manifests_of_unchanged_data_are_byte_identical():
         "manifest bytes depend on dict insertion order — two exports of "
         "unchanged data would not be diffable"
     )
+
+
+# ── W24 ADM-05: the project scope (settings + catalog) ──────────────────────
+
+
+def _project_extra() -> dict:
+    return {
+        "format": "testlookup.project-export",
+        "schema_version": 1,
+        "source": {"app_version": "9.9.9", "host": None},
+        "project": {"name": "Payment Service", "slug": "payment-service"},
+        "entities": {"test_suites": {"rows": 3, "parts": 1, "columns": ["id", "name"]}},
+        "directory": {"users": 2},
+        "excluded": {"run_history": ["test_runs"]},
+    }
+
+
+def test_a_project_scope_needs_no_runs():
+    """A project export covers settings + catalog only (run history is phase 2);
+    the empty-run-set refusal protects a DELETION and does not apply."""
+    project_id = uuid.uuid4()
+    scope = svc.ExportScope.for_project(project_id=project_id, manifest_extra={})
+    assert scope.kind == "project"
+    assert scope.run_ids == ()
+    assert scope.tier == "full"
+    assert scope.project_id == project_id
+    assert scope.release_id is None
+
+
+def test_a_project_manifest_carries_its_scope_keys():
+    project_id = uuid.uuid4()
+    scope = svc.ExportScope.for_project(project_id=project_id, manifest_extra=_project_extra())
+    manifest = _manifest(scope)
+    assert set(manifest) == {
+        "format_version", "generated_at", "project_id", "files",
+        "scope", "format", "schema_version", "source", "project", "entities", "directory", "excluded",
+    }
+    assert manifest["scope"] == "project"
+    assert manifest["format"] == "testlookup.project-export"
+    assert manifest["schema_version"] == 1
+    assert manifest["project"] == {"name": "Payment Service", "slug": "payment-service"}
+    assert manifest["entities"]["test_suites"]["rows"] == 3
+    assert manifest["project_id"] == str(project_id)
+    # No run or release provenance it does not have.
+    for absent in ("run_ids", "tier", "release_id", "recommendation"):
+        assert absent not in manifest
+
+
+def test_the_project_manifest_reads_the_extra_filled_after_the_scope_was_built():
+    """``build_archive`` builds the manifest AFTER the last member: the member
+    iterator fills the dict the scope holds, so the scope must not copy it."""
+    extra: dict = {}
+    scope = svc.ExportScope.for_project(project_id=uuid.uuid4(), manifest_extra=extra)
+    extra.update(_project_extra())
+    assert _manifest(scope)["entities"] == _project_extra()["entities"]
+
+
+def test_a_project_key_lives_under_its_own_prefix():
+    project_id, pack_id = uuid.uuid4(), uuid.uuid4()
+    at = datetime(2026, 10, 30, 12, 0, tzinfo=timezone.utc)
+    scope = svc.ExportScope.for_project(project_id=project_id, manifest_extra={})
+    key = svc.build_export_key(scope, at, pack_id)
+    assert key == f"project-exports/2026/10/30/{project_id}/{pack_id}.zip"
+    runs = svc.ExportScope.for_runs(project_id=project_id, run_ids=[uuid.uuid4()], tier="summary")
+    assert svc.build_export_key(runs, at, pack_id) == f"exports/2026/10/30/{project_id}/{pack_id}.zip"
+
+
+def test_the_project_kind_shares_no_key_set_with_the_other_two():
+    project = svc.ExportScope.for_project(project_id=uuid.uuid4(), manifest_extra=_project_extra())
+    release = svc.ExportScope.for_release(
+        release_id=uuid.uuid4(), project_id=uuid.uuid4(), run_ids=[uuid.uuid4()]
+    )
+    runs = svc.ExportScope.for_runs(project_id=uuid.uuid4(), run_ids=[uuid.uuid4()], tier="full")
+    assert set(_manifest(project)) != set(_manifest(release))
+    assert set(_manifest(project)) != set(_manifest(runs))
+    assert hash(project) is not None   # a frozen scope stays hashable with its dict

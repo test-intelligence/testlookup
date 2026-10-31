@@ -940,6 +940,70 @@ class ProjectRestoreResponse(BaseModel):
     default_qa_lead_reactivated: bool = False
 
 
+# ── W24 ADM-05: project export / import (settings + catalog) ─────────────────
+# Every ``kind`` / ``status`` / ``reason`` is a plain ``str`` checked against
+# ``services/project_export_vocab.py`` (mirrored in frontend/src/types/projectData.ts).
+
+class ProjectDataError(BaseModel):
+    """A W24 refusal: also the 4xx ``detail`` shape ``{code, message}`` (ERROR_SENTENCES)."""
+    code: str
+    message: str
+
+
+class ProjectDataProgress(BaseModel):
+    done: int = Field(ge=0)        # tables finished
+    total: int = Field(ge=0)       # tables in the plan
+
+
+class ProjectDataSkip(BaseModel):
+    entity: str
+    column: Optional[str] = None
+    reason: str                    # project_export_vocab.SKIP_REASONS key
+    count: int = Field(ge=1)
+
+
+class ProjectDataImportReport(BaseModel):
+    project_id: uuid.UUID
+    project_name: str
+    project_slug: str
+    inserted: dict[str, int]                       # entity → rows inserted (every EXPORTED entity present, 0 allowed)
+    skipped: list[ProjectDataSkip] = []            # rows NOT inserted, by entity + reason
+    cleared: list[ProjectDataSkip] = []            # columns set NULL (assignments / user refs / unresolved optional FKs)
+    switched_off: dict[str, int] = {}              # entity → rows that arrived disabled / paused
+    signature: str                                 # "valid" | "unknown_key" | "unsigned"
+    source_project_name: str
+    source_app_version: Optional[str] = None
+    exported_at: datetime
+
+
+class ProjectDataJobRead(BaseModel):
+    """One export / import job. ``storage_key`` is NEVER part of it."""
+    id: uuid.UUID
+    kind: str                                      # project_export_vocab.JOB_KINDS
+    status: str                                    # project_export_vocab.JOB_STATUSES
+    project_id: Optional[uuid.UUID] = None         # export: the source; import: the created project (None until it commits)
+    project_name: Optional[str] = None             # export: source name at request time; import: the manifest's source name
+    requested_by_name: Optional[str] = None        # full name or username — never an e-mail address
+    requested_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    progress: Optional[ProjectDataProgress] = None
+    bytes: Optional[int] = None
+    file_count: Optional[int] = None
+    manifest_sha256: Optional[str] = None          # export: after verification; import: the uploaded archive's
+    signature: Optional[str] = None                # "signed" | "unsigned" (export) / the report's values (import)
+    expires_at: Optional[datetime] = None          # export only: finished_at + EXPORT_TTL_HOURS
+    counts: dict[str, int] = {}                    # export: rows per entity written
+    import_report: Optional[ProjectDataImportReport] = None
+    error: Optional[ProjectDataError] = None
+    download_path: Optional[str] = None            # only for a succeeded, unexpired export
+
+
+class ProjectDataJobList(BaseModel):
+    items: list[ProjectDataJobRead]
+    total: int                                     # all matching rows; items ≤ JOBS_LIST_LIMIT (a top-N length is not a count)
+
+
 class ProjectResetResponse(BaseModel):
     mode: Literal["runs", "full"]
     deleted: dict[str, int]

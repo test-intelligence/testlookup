@@ -8029,6 +8029,46 @@
         "title": "Body_reassign_assigned_failure_api_v1_me_assigned_failures__test_case_id__reassign_put",
         "type": "object"
       },
+      "Body_start_project_import_api_v1_projects_import_post": {
+        "properties": {
+          "client_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Token"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "format": "binary",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "Body_start_project_import_api_v1_projects_import_post",
+        "type": "object"
+      },
       "Body_trigger_finetune_api_v1_training_finetune_post": {
         "properties": {
           "track": {
@@ -29883,6 +29923,378 @@
           "slug"
         ],
         "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectDataError": {
+        "description": "A W24 refusal: also the 4xx ``detail`` shape ``{code, message}`` (ERROR_SENTENCES).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ProjectDataError",
+        "type": "object"
+      },
+      "ProjectDataImportReport": {
+        "properties": {
+          "cleared": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProjectDataSkip"
+            },
+            "title": "Cleared",
+            "type": "array"
+          },
+          "exported_at": {
+            "format": "date-time",
+            "title": "Exported At",
+            "type": "string"
+          },
+          "inserted": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Inserted",
+            "type": "object"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "title": "Project Name",
+            "type": "string"
+          },
+          "project_slug": {
+            "title": "Project Slug",
+            "type": "string"
+          },
+          "signature": {
+            "title": "Signature",
+            "type": "string"
+          },
+          "skipped": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProjectDataSkip"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "source_app_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source App Version"
+          },
+          "source_project_name": {
+            "title": "Source Project Name",
+            "type": "string"
+          },
+          "switched_off": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": {},
+            "title": "Switched Off",
+            "type": "object"
+          }
+        },
+        "required": [
+          "project_id",
+          "project_name",
+          "project_slug",
+          "inserted",
+          "signature",
+          "source_project_name",
+          "exported_at"
+        ],
+        "title": "ProjectDataImportReport",
+        "type": "object"
+      },
+      "ProjectDataJobList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectDataJobRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "ProjectDataJobList",
+        "type": "object"
+      },
+      "ProjectDataJobRead": {
+        "description": "One export / import job. ``storage_key`` is NEVER part of it.",
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": {},
+            "title": "Counts",
+            "type": "object"
+          },
+          "download_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Path"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectDataError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "file_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Count"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "import_report": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectDataImportReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "manifest_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest Sha256"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectDataProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Name"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "requested_at"
+        ],
+        "title": "ProjectDataJobRead",
+        "type": "object"
+      },
+      "ProjectDataProgress": {
+        "properties": {
+          "done": {
+            "minimum": 0.0,
+            "title": "Done",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "done",
+          "total"
+        ],
+        "title": "ProjectDataProgress",
+        "type": "object"
+      },
+      "ProjectDataSkip": {
+        "properties": {
+          "column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Column"
+          },
+          "count": {
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "entity": {
+            "title": "Entity",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity",
+          "reason",
+          "count"
+        ],
+        "title": "ProjectDataSkip",
         "type": "object"
       },
       "ProjectMemberResponse": {
@@ -69513,6 +69925,201 @@
         ]
       }
     },
+    "/api/v1/project-data-jobs/{data_job_id}": {
+      "get": {
+        "description": "One export or import job (the page and the CLI poll it). Writes nothing.",
+        "operationId": "get_project_data_job_api_v1_project_data_jobs__data_job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "data_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Data Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDataJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Project Data Job",
+        "tags": [
+          "Project data"
+        ]
+      }
+    },
+    "/api/v1/project-data-jobs/{data_job_id}/download": {
+      "get": {
+        "description": "Stream a succeeded, unexpired export (``Content-Length`` = the stored size). 409 not an export / not\nready / failed, 410 expired, 502 when storage cannot give the first byte. Writes NOTHING.",
+        "operationId": "download_project_export_api_v1_project_data_jobs__data_job_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "data_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Data Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Download Project Export",
+        "tags": [
+          "Project data"
+        ]
+      }
+    },
+    "/api/v1/project-imports": {
+      "get": {
+        "description": "The caller's OWN import jobs, newest first. Writes nothing.",
+        "operationId": "list_my_project_imports_api_v1_project_imports_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 10,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDataJobList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List My Project Imports",
+        "tags": [
+          "Project data"
+        ]
+      }
+    },
     "/api/v1/projects": {
       "get": {
         "operationId": "list_projects_api_v1_projects_get",
@@ -69642,6 +70249,70 @@
         "summary": "Create Project",
         "tags": [
           "Projects"
+        ]
+      }
+    },
+    "/api/v1/projects/import": {
+      "post": {
+        "description": "Accept an export ZIP to import as a NEW project. The body is counted into a spool before any job\nrow exists (413 past 50 MB, nothing stored); a repeated ``client_token`` answers 200 with its job and\nreads nothing. Commit, then enqueue; 202.",
+        "operationId": "start_project_import_api_v1_projects_import_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_start_project_import_api_v1_projects_import_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDataJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Start Project Import",
+        "tags": [
+          "Project data"
         ]
       }
     },
@@ -72282,6 +72953,83 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/data-jobs": {
+      "get": {
+        "description": "The project's exports, newest first; ``total`` counts all of them. Writes nothing.",
+        "operationId": "list_project_exports_api_v1_projects__project_id__data_jobs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 10,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDataJobList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Project Exports",
+        "tags": [
+          "Project data"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/default-qa-lead/reset-password": {
       "post": {
         "description": "Reset the project's auto-provisioned QA-lead account password.\n\nA QA lead (or admin) of the project can call this — the account is a\nshared, per-project triage inbox, not a personal user, so rotating\nits password is a routine project-admin task. It is a QA_LEAD login,\nso nobody below that role may obtain it.\n\nIdempotently provisions the QA-lead user first if it doesn't exist\nyet (covers projects created before this feature shipped). Returns\nthe new password so the operator can hand it off; the response is\nnot persisted anywhere else.",
@@ -73490,6 +74238,71 @@
         "summary": "Merge Duplicate Candidate",
         "tags": [
           "Duplicate Detection"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/export": {
+      "post": {
+        "description": "Queue an export of the project's settings + catalog (an archived project too: the access rule is\n``require_project_access``'s, unchanged). 409 ``export_running`` names the live job.",
+        "operationId": "start_project_export_api_v1_projects__project_id__export_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDataJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Start Project Export",
+        "tags": [
+          "Project data"
         ]
       }
     },

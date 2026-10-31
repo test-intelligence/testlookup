@@ -700,11 +700,15 @@ test('D1 Delete test runs: Cancel and the X send nothing; a wrong name keeps the
   assertHermetic(api, errors)
 })
 
-test('role gating: Project data is admin only (a QA lead reads the refusal, no control)', async ({ page }) => {
+// W24 ADM-05 (deliberate): a QA lead may now export, so the page opens for them with the Export card only.
+test('role gating: a QA lead sees Export only (no Import card, no Delete test runs), and nothing is written', async ({ page }) => {
   const world = projectDataWorld()
-  const { api, errors } = await openRollout(page, '/settings/project-data', { handlers: world.handlers, ready: (p) => p.getByText('Admin access required'), user: USER })
+  const { api, errors } = await openRollout(page, '/settings/project-data', { handlers: world.handlers, ready: (p) => p.locator('[data-project-export]'), user: USER })
+  await expect(page.getByRole('button', { name: 'Export', exact: true })).toBeEnabled()
+  await expect(page.locator('[data-project-import]')).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Delete test runs' })).toHaveCount(0)
   await networkQuiet(page, api)
+  expect(requestsTo(api, '/api/v1/project-imports'), 'a QA lead never reads the imports').toEqual([])
   expect(world.writes).toEqual([])
   assertHermetic(api, errors)
 })

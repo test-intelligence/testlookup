@@ -70,6 +70,7 @@ from app.routers import (
     onboarding,
     ownership,
     performance,
+    project_data,
     projects,
     rag_generation,
     release_attribution_rules,
@@ -150,6 +151,9 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     admin_dlq.router,
     admin_maintenance.router,
     admin_storage.router,
+    # W24 ADM-05: project export / import, BEFORE projects.router so the literal
+    # ``POST /projects/import`` is matched before any ``/projects/{project_id}`` route.
+    project_data.router,
     projects.router,
     # run_compare must be registered BEFORE runs.router because both share the
     # ``/api/v1/runs`` prefix and runs.router has ``GET /{run_id}`` which

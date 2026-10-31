@@ -142,7 +142,7 @@ click==8.5.0
 openpyxl==3.1.5           # Excel export (.xlsx)
 python-docx==1.1.2        # Word export (.docx) + document ingestion
 reportlab==5.0.1         # PDF generation
-pypdf==6.21.2              # PDF text extraction (knowledge RAG); CVE-2026-59935/59936, CVE-2026-102993..103000, CVE-2026-115572/115580/115585
+pypdf==6.21.4              # PDF text extraction (knowledge RAG); CVE-2026-59935/59936, CVE-2026-102993..103000, CVE-2026-115572/115580/115585, CVE-2026-119203..119209
 beautifulsoup4==4.15.0    # HTML content extraction (knowledge RAG)
 
 # ── Development & Testing ────────────────────────────────────

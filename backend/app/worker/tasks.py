@@ -9142,3 +9142,43 @@ def check_run_cadences(self) -> dict:
 
     outcome: dict = _run_async(_run())
     return outcome
+
+
+# ── W24 ADM-05: project export / import (settings + catalog) ────────────────
+
+
+@celery_app.task(name="app.worker.tasks.export_project_data", queue="default", max_retries=0)
+def export_project_data(job_id: str) -> str:
+    """Build, sign, store and verify one project export (``project_data_jobs`` row ``job_id``).
+
+    One argument: everything else is read from the row, so a redelivered message
+    carries nothing stale; the runner's claim makes a redelivery a no-op. No Celery
+    retry: a failure is recorded on the row (and counted), and the person starts a
+    new export. The global hard limit applies; a worker killed by it leaves the row
+    ``running`` for the janitor (``interrupted``, never a data failure)."""
+    from app.worker import project_data_runner
+
+    return cast(str, _run_async(project_data_runner.run_export_job(uuid.UUID(job_id))))
+
+
+@celery_app.task(name="app.worker.tasks.import_project_data", queue="default", max_retries=0)
+def import_project_data(job_id: str) -> str:
+    """Import one uploaded export as a NEW project, in ONE transaction (``project_data_jobs`` row ``job_id``).
+    Claim-guarded like the export; a failure rolls the whole project back and is recorded on the row."""
+    from app.worker import project_data_runner
+
+    return cast(str, _run_async(project_data_runner.run_import_job(uuid.UUID(job_id))))
+
+
+@celery_app.task(name="app.worker.tasks.sweep_project_data_jobs", queue="default", max_retries=0)
+def sweep_project_data_jobs() -> dict:
+    """The project-data janitor (hourly at :35): expire exports past 72 hours (the ONLY expiry path),
+    remove uploads and objects no job may keep, fail jobs a dead worker left ``running``, re-send jobs
+    whose enqueue was lost. Never raises out: a fault leaves its rows for the next hour."""
+    async def _run() -> dict:
+        from app.worker import project_data_runner
+
+        with _beat_span("sweep_project_data_jobs"):
+            return await project_data_runner.run_sweep()
+
+    return cast(dict, _run_async(_run()))

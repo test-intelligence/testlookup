@@ -9,7 +9,13 @@
  * the parsed JSON body), so a spec pins the whole body with `toEqual`.
  * Not a spec file.
  */
-import { respond, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
+import { ApiResponse, respond, respondRaw, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
+import {
+  ERROR_SENTENCES,
+  type ProjectDataImportReport,
+  type ProjectDataJob,
+  type ProjectDataJobStatus,
+} from '../../../src/types/projectData'
 import { isoAgo, LAYOUT, PROJECT_ID, SECOND_SUITE_ID, SUITE_DETAIL, SUITE_DETAIL_ON, SUITE_ID, USER } from './fixtures'
 import { flagsHandlers } from './fixtures-agents-billing-flags'
 import { bodyOf, delegate, type RecordedWrite } from './fixtures-in-page'
@@ -857,14 +863,154 @@ export function flagsDeleteWorld() {
 /** What a runs reset deletes (D1). */
 export const RESET_DELETED = { test_runs: 12, test_cases: 340, ai_analysis: 18 }
 
-/** `/settings/project-data`: `POST /api/v1/projects/{id}/reset` answers the deleted counts. */
-export function projectDataWorld() {
+// ── W24 ADM-05: export / import (the REAL §1.2 shapes of src/types/projectData.ts) ──
+
+export const PROJECT_DATA_EXPORT_JOB_ID = 'dada0000-0000-4000-8000-0000000000e1'
+export const PROJECT_DATA_IMPORT_JOB_ID = 'dada0000-0000-4000-8000-0000000000e2'
+export const IMPORTED_PROJECT_ID = 'dada0000-0000-4000-8000-0000000000f1'
+export const IMPORTED_PROJECT_NAME = 'Payment Service (imported)'
+/** 2.1 MB, the size the Export card's Download button reads. */
+export const EXPORT_BYTES = Math.round(2.1 * 1024 * 1024)
+/** The smallest valid ZIP (an empty end-of-central-directory record): every byte is ASCII, so it travels as text. */
+export const EMPTY_ZIP = `PK\u0005\u0006${'\u0000'.repeat(18)}`
+const EXPORT_TABLES = 30
+
+/** One job in the server's shape for `kind` + `status` together (a running export is at 12 of 30 tables). */
+export function projectDataJob(kind: 'export' | 'import', status: ProjectDataJobStatus, overrides: Partial<ProjectDataJob> = {}): ProjectDataJob {
+  const isExport = kind === 'export'
+  const id = overrides.id ?? (isExport ? PROJECT_DATA_EXPORT_JOB_ID : PROJECT_DATA_IMPORT_JOB_ID)
+  const done = status === 'succeeded' || status === 'expired'
+  const job: ProjectDataJob = {
+    id, kind, status,
+    project_id: isExport ? PROJECT_ID : null, project_name: isExport ? 'Checkout' : null,
+    requested_by_name: 'Riley Admin', requested_at: isoAgo(0, 1), started_at: status === 'queued' ? null : isoAgo(0, 1),
+    finished_at: done || status === 'failed' ? isoAgo(0, 0.5) : null,
+    progress: status === 'running' ? { done: isExport ? 12 : 5, total: EXPORT_TABLES } : done ? { done: EXPORT_TABLES, total: EXPORT_TABLES } : null,
+    bytes: null, file_count: null, manifest_sha256: null, signature: null, expires_at: null, counts: {},
+    import_report: null, error: null, download_path: null,
+  }
+  if (done && isExport) {
+    Object.assign(job, {
+      bytes: EXPORT_BYTES, file_count: 33, manifest_sha256: 'f00d'.repeat(16), signature: 'signed',
+      counts: { projects: 1, test_suites: 3, managed_test_cases: 4180, releases: 26 },
+      expires_at: status === 'expired' ? isoAgo(0, 0.25) : isoAgo(0, -71),
+      download_path: status === 'succeeded' ? `/api/v1/project-data-jobs/${id}/download` : null,
+    })
+  }
+  if (done && !isExport) {
+    const report: ProjectDataImportReport = {
+      project_id: IMPORTED_PROJECT_ID, project_name: IMPORTED_PROJECT_NAME, project_slug: 'checkout-imported',
+      // Every switched-off row is an INSERTED row too (the product never reports one without the other), and the
+      // project row itself always travels: the W24 baseline reading caught "3 webhooks switched off" beside an
+      // inserted list without them.
+      inserted: { projects: 1, test_suites: 3, managed_test_cases: 42, releases: 2, webhook_subscriptions: 3 },
+      skipped: [{ entity: 'test_plan_items', column: 'test_case_id', reason: 'row_unresolved', count: 1 }],
+      cleared: [], switched_off: { webhook_subscriptions: 3 }, signature: 'valid',
+      source_project_name: 'Payment Service', source_app_version: '2.4.0', exported_at: isoAgo(0, 2),
+    }
+    Object.assign(job, { project_id: IMPORTED_PROJECT_ID, project_name: 'Payment Service', import_report: report,
+                         counts: report.inserted, signature: 'valid' })
+  }
+  if (status === 'failed') {
+    const code = isExport ? 'export_build' : 'import_failed'
+    job.error = { code, message: ERROR_SENTENCES[code].replace('{error_type}', isExport ? 'OperationalError' : 'IntegrityError') }
+  }
+  return { ...job, ...overrides }
+}
+
+/** queued → running 12 of 30 → succeeded (Download 2.1 MB): the answers of successive job GETs. */
+export const exportProgression = (id = PROJECT_DATA_EXPORT_JOB_ID) =>
+  (['queued', 'running', 'succeeded'] as const).map((status) => projectDataJob('export', status, { id }))
+/** queued → running 5 of 30 → succeeded (Created Payment Service (imported).). */
+export const importProgression = (id = PROJECT_DATA_IMPORT_JOB_ID) =>
+  (['queued', 'running', 'succeeded'] as const).map((status) => projectDataJob('import', status, { id }))
+
+/** A `{detail: {code, message}}` refusal with its §1.1 sentence (placeholders as given). */
+export function projectDataRefusal(status: number, code: keyof typeof ERROR_SENTENCES, extra: Record<string, unknown> = {}) {
+  return respond(status, { detail: { code, message: ERROR_SENTENCES[code], ...extra } })
+}
+
+export interface ProjectDataWorldOptions {
+  /** The project's exports, newest first (default none). */
+  exports?: ProjectDataJob[]
+  /** The caller's imports, newest first (default none). */
+  imports?: ProjectDataJob[]
+  /** job id → the answers of successive `GET /api/v1/project-data-jobs/{id}`; the last one repeats. */
+  jobAnswers?: Record<string, ProjectDataJob[]>
+  /** The answer to `POST …/export`: a job (202) or a scripted refusal (`projectDataRefusal(409, 'export_running', {job_id})`). */
+  exportPost?: ProjectDataJob | ApiResponse
+  /** The answer to `POST /api/v1/projects/import`: a job (202) or a refusal. */
+  importPost?: ProjectDataJob | ApiResponse
+  /** The download: a small ZIP (default) or a scripted JSON refusal. */
+  download?: 'zip' | ApiResponse
+}
+
+/** Parse a multipart body into its field names, the token and the name — the file by name + type, never its bytes. */
+function multipartSummary(request: ApiRequest): Record<string, unknown> {
+  const raw = request.route.request().postDataBuffer()?.toString('latin1') ?? ''
+  const fields: string[] = []
+  const summary: Record<string, unknown> = { fields }
+  const part = /Content-Disposition: form-data; name="([^"]+)"(?:; filename="([^"]*)")?\r\n(?:Content-Type: ([^\r\n]+)\r\n)?\r\n([\s\S]*?)\r\n--/g
+  for (let match = part.exec(raw); match; match = part.exec(raw)) {
+    const [, name, filename, contentType, value] = match
+    fields.push(name)
+    summary[name] = filename !== undefined ? { filename, content_type: contentType ?? null } : value
+  }
+  return summary
+}
+
+/**
+ * `/settings/project-data`: the reset POST answers the deleted counts; the two W24 default reads
+ * (`GET …/data-jobs`, `GET /api/v1/project-imports`) answer `{items, total}` — empty unless `options` says
+ * otherwise — so every existing spec stays hermetic. The options script an export / import: the POST's answer
+ * (recorded in `writes`: the export with no body, the import as its multipart field names + token + file name),
+ * the job's progression on successive GETs, and the download (a small ZIP, or a JSON refusal).
+ */
+export function projectDataWorld(options: ProjectDataWorldOptions = {}) {
   const writes: RecordedWrite[] = []
+  const exports = [...(options.exports ?? [])]
+  const imports = [...(options.imports ?? [])]
+  const answers: Record<string, ProjectDataJob[]> = {
+    [PROJECT_DATA_EXPORT_JOB_ID]: exportProgression(),
+    [PROJECT_DATA_IMPORT_JOB_ID]: importProgression(),
+    ...Object.fromEntries(Object.entries(options.jobAnswers ?? {}).map(([id, list]) => [id, [...list]])),
+  }
+  const current: Record<string, ProjectDataJob> = {}
+  const latest = (job: ProjectDataJob) => current[job.id] ?? job
+  const page = (list: ProjectDataJob[], request: ApiRequest) => {
+    const limit = Number(request.url.searchParams.get('limit') ?? 10)
+    return { items: list.slice(0, limit).map(latest), total: list.length }
+  }
+  const accepted = (answer: ProjectDataJob | ApiResponse, list: ProjectDataJob[]) => {
+    if (answer instanceof ApiResponse) return answer
+    list.unshift(answer)
+    current[answer.id] = answer
+    return respond(202, answer)
+  }
   const handlers: ApiHandlers = [
     [/^\/api\/v1\/projects\/[^/]+\/reset$/, (request) => {
       const body = recordIn(writes, request) as { mode: string }
       return { project_id: request.path.split('/')[4], mode: body.mode, deleted: RESET_DELETED }
     }, 'POST'],
+    [/^\/api\/v1\/projects\/[^/]+\/export$/, (request) => {
+      writes.push({ line: `POST ${request.path}`, body: null })
+      return accepted(options.exportPost ?? projectDataJob('export', 'queued'), exports)
+    }, 'POST'],
+    ['/api/v1/projects/import', (request) => {
+      writes.push({ line: `POST ${request.path}`, body: multipartSummary(request) })
+      return accepted(options.importPost ?? projectDataJob('import', 'queued'), imports)
+    }, 'POST'],
+    [/^\/api\/v1\/projects\/[^/]+\/data-jobs$/, (request) => page(exports, request)],
+    ['/api/v1/project-imports', (request) => page(imports, request)],
+    [/^\/api\/v1\/project-data-jobs\/[^/]+\/download$/, () =>
+      options.download instanceof ApiResponse ? options.download : respondRaw(EMPTY_ZIP, 'application/zip')],
+    [/^\/api\/v1\/project-data-jobs\/[^/]+$/, (request) => {
+      const id = request.path.split('/')[4]
+      const queue = answers[id]
+      if (!queue?.length) return current[id] ?? projectDataRefusal(404, 'job_not_found')
+      current[id] = queue.length > 1 ? (queue.shift() as ProjectDataJob) : queue[0]
+      return current[id]
+    }],
     ...LAYOUT,
   ]
   return { handlers, writes }
