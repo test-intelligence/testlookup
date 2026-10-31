@@ -100,14 +100,20 @@ const P = PROJECT_ID
 
 /**
  * What the app shell asks for on every report route, whatever the flags
- * (session and project list twice, two shell flags, badges, notifications,
- * the release picker, the AI settings), as the former flag-off spec recorded
- * it. Since Phase D no report page asks a viz flag: S6 deleted the chart
- * seam, and M1-M3 the multi-filter gate (which asked `viz_multi_filters` on
- * every page), so every page's inventory starts here.
+ * (the session and the project list once each, a shell flag, badges,
+ * notifications, the release picker, the AI settings), as the former flag-off
+ * spec recorded it. Since Phase D no report page asks a viz flag: S6 deleted
+ * the chart seam, and M1-M3 the multi-filter gate (which asked
+ * `viz_multi_filters` on every page), so every page's inventory starts here.
+ *
+ * W25a HYG-07 (DELIBERATE): the session and the project list were each read
+ * TWICE here — the dev server's React.StrictMode runs every mount effect
+ * twice, and `ProtectedRoute`'s re-verify and `TopBar`'s list read each issued
+ * a request per run. Both now share one in-flight read (`fetchUser`,
+ * `refreshProjects`), so the shell reads each ONCE. A page that reads either
+ * itself lists that line in its own inventory, never here.
  */
 export const SHELL_BASE = [
-  'GET /api/v1/auth/me',
   'GET /api/v1/auth/me',
   `GET /api/v1/feature-flags/ask_ai_chat/status?project_id=${P}`,
   // UX redesign P1: the sidebar's Runs live dot. (Upload left the sidebar,
@@ -116,7 +122,6 @@ export const SHELL_BASE = [
   'GET /api/v1/me/assigned-failures/count',
   'GET /api/v1/notifications/history/unread-count',
   'GET /api/v1/notifications/history?unread_only=false&limit=50',
-  'GET /api/v1/projects',
   'GET /api/v1/projects',
   `GET /api/v1/releases?project_id=${P}`,
   // The sidebar's Ask AI entry: the mode every role may read (it asked

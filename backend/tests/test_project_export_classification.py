@@ -273,7 +273,8 @@ def test_7_projects_row_columns_are_the_settings_plus_the_cleared_assignments():
 
 def test_8_pinned_counts():
     counts = (len(e.EXPORTED), len(e.EXCLUDED), len(e.NOT_PROJECT_SCOPED))
-    assert counts == (30, 107, 23), (
+    # W25a HYG-04 (deliberate): + suite_membership_parity_runs under NOT_PROJECT_SCOPED (23 → 24)
+    assert counts == (30, 107, 24), (
         f"EXPORTED / EXCLUDED / NOT_PROJECT_SCOPED = {counts}: a table was added or moved — "
         "classify it in project_export_entities.py and update this pin deliberately"
     )

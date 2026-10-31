@@ -809,6 +809,30 @@ http_exchanges_ingested_total = Counter(
     ["source", "outcome"],
 )
 
+# W25a HYG-04: one increment per FINISHED suite-membership parity comparison
+# (the daily beat or "Compare now"). The evidence of D26's 7-day clock is the
+# ``suite_membership_parity_runs`` row (the homelab has no Prometheus); this is
+# the secondary signal for deployments that scrape. An already-running skip
+# writes no row and counts nothing. Incremented in worker/suite_parity_runner.py.
+suite_parity_runs_total = Counter(
+    "testlookup_suite_parity_runs_total",
+    "Suite-membership parity comparisons finished, by status",
+    # status: clean | diffs | failed (suite_parity_vocab.RUN_STATUSES minus running)
+    ["status"],
+)
+
+# W25a HYG-06 (D27 a): one increment per live WebSocket connection that ends,
+# by what its audit did: a new ``ws_session`` row, a reconnect folded into the
+# session's row, a connection too short to audit, or an audit write that
+# failed. Without it "no rows" and "every write failed" read the same.
+# Incremented in routers/live.py (_record_ws_session).
+ws_connections_total = Counter(
+    "testlookup_ws_connections_total",
+    "Live WebSocket connections ended, by audit outcome",
+    # outcome: audited | merged | short | audit_failed (ws_audit_policy.WS_OUTCOMES)
+    ["outcome"],
+)
+
 # E9.5: fraction of candidate workflow steps backed by an exact replay-cache
 # key during the latest dry-run. Project/workflow labels are bounded by stored
 # definitions and let operators distinguish a safe regression result from an

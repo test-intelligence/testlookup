@@ -108,6 +108,12 @@ vi.mock('@/services/projectsService', () => ({
   },
 }))
 
+// The release picker reads the list in "All projects" mode (the W25a HYG-07
+// cases below start there); no release is needed by any case.
+vi.mock('@/services/releasesService', () => ({
+  releasesService: { list: vi.fn(async () => []) },
+}))
+
 vi.mock('@/hooks/useNotifications', () => ({
   useUnreadCount: () => ({ data: { unread: 3 } }),
   useNotificationHistory: () => ({
@@ -523,5 +529,54 @@ describe('TopBar', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  // W25a HYG-07: the shell reads the project list once per mount; the
+  // non-admin auto-select is its own effect on the list, not a second read.
+  describe('the project list read (W25a HYG-07)', () => {
+    const original = mocked.projectStoreState.projects
+    const shell = () => (
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>
+    )
+
+    beforeEach(() => {
+      mocked.projectStoreState.refreshProjects.mockClear()
+      mocked.projectStoreState.projects = original
+    })
+
+    it('a non-admin on "All projects" gets the first project selected once the list arrives', () => {
+      mocked.authState.user.role = 'QA_LEAD'
+      mocked.projectStoreState.activeProjectId = 'all'
+      mocked.projectStoreState.projects = []
+      const { rerender } = render(shell())
+      expect(mocked.setActiveProject).not.toHaveBeenCalled()
+
+      mocked.projectStoreState.projects = [{ id: 'p1', name: 'Core UI' }]
+      rerender(shell())
+
+      expect(mocked.setActiveProject).toHaveBeenCalledTimes(1)
+      expect(mocked.setActiveProject).toHaveBeenCalledWith({ id: 'p1', name: 'Core UI' })
+    })
+
+    it('an admin keeps "All projects" (nothing is auto-selected)', () => {
+      mocked.projectStoreState.activeProjectId = 'all'
+      render(shell())
+
+      expect(mocked.setActiveProject).not.toHaveBeenCalled()
+    })
+
+    it('a role change re-renders the shell without reading the list again', () => {
+      const { rerender } = render(shell())
+      expect(mocked.projectStoreState.refreshProjects).toHaveBeenCalledTimes(1)
+
+      mocked.authState.user.role = 'QA_LEAD'
+      rerender(shell())
+      mocked.authState.user.role = 'ADMIN'
+      rerender(shell())
+
+      expect(mocked.projectStoreState.refreshProjects).toHaveBeenCalledTimes(1)
+    })
   })
 })

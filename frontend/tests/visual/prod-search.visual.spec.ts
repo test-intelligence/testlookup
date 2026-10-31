@@ -15,13 +15,17 @@
  *  - `/settings/ai` (an admin, a re-embed in progress): `ai-config-embedding-card`;
  *  - `/settings/storage` (an admin, prefix `demo` in use): `storage-chroma-card`.
  *
+ * W25a HYG-04 (`W25-contract.md` §6.5, NEW): `storage-suite-parity-card` — `/settings/storage` as an admin, at
+ * `PINNED_TALL`'s 1280 × 4000 viewport (the card is the page's last block): "Day 4 of 7 with no differences.", the diffs day (12
+ * differences · 340 expected), four clean days and the two dates that never ran ("Not run", never "No differences").
+ *
  * CHANGED: none (§6.5 proves each candidate). The focus ring is not part of a baseline: the page is blurred before
  * each region, except the typeahead's (a blur closes that list by design; its region is the list, not the input).
  * Hermetic fixtures: `production/fixtures-search.ts`. PNGs are rendered by CI only (`visual-baselines.yml`, Linux);
  * nobody regenerates them locally (a local run passes `--update-snapshots=none` to prove each region is reached).
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { assertHermetic, cardAround, openProductionPage, PINNED, THEMES_WITH_PAPER, visualRegion, type ApiHandlers, type Theme } from '../lib/production-pages'
+import { assertHermetic, cardAround, openProductionPage, PINNED, PINNED_TALL, THEMES_WITH_PAPER, visualRegion, type ApiHandlers, type Theme } from '../lib/production-pages'
 import { networkQuiet } from '../lib/rollout'
 import { NOW, PROJECT_ID } from './production/fixtures'
 import { TEST_CASE_NAME, TEST_CASE_PATH } from './production/fixtures-pages'
@@ -145,5 +149,29 @@ for (const theme of THEMES_WITH_PAPER) {
     await blur(page)
     await visualRegion(page, 'storage-chroma-card', theme, card)
     assertHermetic(api, errors)
+  })
+
+  test.describe(`Settings › Data & storage: the suite membership cutover card — ${theme}`, () => {
+    // W25a HYG-04: the card is the page's LAST block (below the fold at 800 px), so the tall viewport keeps it on
+    // screen with nothing scrolled, as `visualRegion` requires. Only the viewport changes here (the file's PINNED
+    // launch options cannot be re-used in a group).
+    test.use({ viewport: PINNED_TALL.viewport })
+
+    test(`day 4 of 7 after a deploy: a diffs day, four clean days, two dates never run — ${theme}`, async ({ page }) => {
+      const world = embeddingWorld({ index: INDEX_MINILM_IN_SYNC })
+      const { api, errors } = await open(page, '/settings/storage', theme, world.handlers, ADMIN, h1('Data & Storage'))
+      const card = page.locator('[data-suite-parity]')
+      await expect(card.locator('[data-parity-status-line]')).toHaveText('Day 4 of 7 with no differences.')
+      await expect(card.locator('[data-parity-day]')).toHaveCount(7)
+      await expect(card.locator('[data-day-kind="not_run"]')).toHaveText(['Sun 13 SepNot run', 'Sat 12 SepNot run'])
+      await expect(card.locator('[data-day-kind="diffs"]')).toContainText('12 differences · 340 expected')
+      await networkQuiet(page, api)
+      // Nothing in the card is cut at 1280 (every result cell truncates rather than wraps).
+      const cut = await card.locator('.truncate').evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth).map((el) => el.textContent))
+      expect(cut, 'truncated text in the cutover card').toEqual([])
+      await blur(page)
+      await visualRegion(page, 'storage-suite-parity-card', theme, card)
+      assertHermetic(api, errors)
+    })
   })
 }

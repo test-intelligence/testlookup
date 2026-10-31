@@ -3,6 +3,14 @@ import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import LoadingSpinner from '../ui/LoadingSpinner';
 
+/**
+ * W25a HYG-07: a session the server confirmed this recently is not asked
+ * again on mount. Every sign-in tail fetches `/auth/me` and then calls
+ * `setAuth`, which stamps `lastVerifiedAt` — that read IS the verification.
+ * A hard reload has no stamp (it is not persisted) and re-verifies once.
+ */
+const AUTH_REVERIFY_SKIP_MS = 30_000;
+
 export default function ProtectedRoute() {
   const hasHydrated = useAuthStore((s) => s._hasHydrated);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
@@ -24,8 +32,10 @@ export default function ProtectedRoute() {
 
   useEffect(() => {
     if (!hasHydrated || !token) return;
+    const verifiedAt = useAuthStore.getState().lastVerifiedAt;
+    if (typeof verifiedAt === 'number' && Date.now() - verifiedAt < AUTH_REVERIFY_SKIP_MS) return;
 
-    // Always re-verify the token silently on every mount so expired tokens are
+    // Otherwise re-verify the token silently on mount so expired tokens are
     // caught promptly.  If we already have cached auth state (isAuthenticated=true
     // from localStorage) we don't block rendering — the verification runs in the
     // background and only logs out on an explicit 401/403 from the server.

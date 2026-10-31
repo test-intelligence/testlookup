@@ -256,10 +256,14 @@ def export_project(
     if dest is None:
         output.print_success(f"Started the export of {found.get('name')}: job {job.get('id')} ({job.get('status')}).")
         return
-    counts = job.get("counts") or {}
-    rows = sum(int(v) for v in counts.values())
+    # W25a (W24 F-8): ``counts`` carries every exported table, zeros included; only the tables that hold rows are
+    # counted (as the import line does and the Export card says). Singular for 1.
+    filled = [int(v) for v in (job.get("counts") or {}).values() if int(v) > 0]
+    rows, tables = sum(filled), len(filled)
+    rows_text = _plural(rows, "1 row", "{count} rows")
+    tables_text = _plural(tables, "1 table", "{count} tables")
     output.print_success(
-        f"Exported {found.get('name')}: {rows} rows in {len(counts)} tables ({human_size(job.get('bytes') or written)})."
+        f"Exported {found.get('name')}: {rows_text} in {tables_text} ({human_size(job.get('bytes') or written)})."
     )
     output.print_success(f"Saved {dest}.")
 

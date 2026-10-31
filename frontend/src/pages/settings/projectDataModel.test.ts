@@ -12,6 +12,7 @@ import {
   EXPORT_LABEL,
   EXPORT_QUEUED,
   exportCardState,
+  exportSummaryLine,
   formatProgress,
   formatSize,
   IMPORT_FAILED_FALLBACK,
@@ -90,6 +91,27 @@ describe('exportCardState', () => {
     expect(s.signature).toBe(UNSIGNED)
     expect(s.detail).toBeNull()
     expect(s.button.label).toBe(DOWNLOAD_LABEL)
+  })
+
+  // W25a (W24 F-8): `job.counts` carries every exported table, zeros included; the line counts only the tables
+  // that hold rows (as the import line does).
+  it('the summary counts only tables with rows: zeros are left out, singular for 1', () => {
+    expect(exportSummaryLine({ status: 'succeeded', counts: { a: 4200, b: 0, c: 10 } })).toBe('4,210 rows in 2 tables')
+    expect(exportSummaryLine({ status: 'succeeded', counts: { a: 1, b: 0 } })).toBe('1 row in 1 table')
+    expect(exportSummaryLine({ status: 'succeeded', counts: { test_suites: 3, managed_test_cases: 8, releases: 0 } }))
+      .toBe('11 rows in 2 tables')
+  })
+
+  it('nothing exported reads "0 rows in 0 tables" (all zero, empty or missing counts)', () => {
+    expect(exportSummaryLine({ status: 'succeeded', counts: { a: 0, b: 0 } })).toBe('0 rows in 0 tables')
+    expect(exportSummaryLine({ status: 'succeeded', counts: {} })).toBe('0 rows in 0 tables')
+    expect(exportSummaryLine({ status: 'succeeded', counts: null })).toBe('0 rows in 0 tables')
+    expect(exportSummaryLine({ status: 'succeeded' })).toBe('0 rows in 0 tables')
+  })
+
+  it('the ready card line leaves a zero-count table out', () => {
+    const s = exportCardState({ status: 'succeeded', counts: { test_plans: 4000, releases: 210, quality_gates: 0 }, download_path: '/x' })
+    expect(s.line).toBe('4,210 rows in 2 tables')
   })
 
   it('expired: by status, by the viewer clock past expires_at, or without a download path', () => {

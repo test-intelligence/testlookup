@@ -179,20 +179,20 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
   const { data: recentLogs, mutate: refreshLogs } = useNotificationHistory(false)
   const unreadCount = unreadData?.unread ?? 0
 
+  // W25a HYG-07: the list is read once per mount (concurrent callers share the
+  // store's in-flight read) — a role change does not read it again.
   useEffect(() => {
-    refreshProjects().then((list) => {
-      // Non-admin users cannot use "All Projects" — auto-select first project
-      if (!isAdmin) {
-        const currentIsAll = useProjectStore.getState().activeProjectId === ALL_PROJECTS_ID
-        const currentIsNull = useProjectStore.getState().activeProjectId === null
-        if (currentIsAll || currentIsNull) {
-          if (list.length > 0) {
-            setActiveProject(list[0])
-          }
-        }
-      }
-    }).catch(() => {})
-  }, [isAdmin, setActiveProject, refreshProjects])
+    refreshProjects().catch(() => {})
+  }, [refreshProjects])
+
+  // Non-admin users cannot use "All Projects" — select the first project once
+  // the list is there.
+  useEffect(() => {
+    if (isAdmin || projects.length === 0) return
+    if (activeProjectId === ALL_PROJECTS_ID || activeProjectId === null) {
+      setActiveProject(projects[0])
+    }
+  }, [isAdmin, projects, activeProjectId, setActiveProject])
 
   // W12 SRCH-03: the typeahead under the input. Opened by typing; closed by
   // Escape, Enter, a blur (150 ms later) or a navigation, which drops its read.

@@ -3942,6 +3942,55 @@ class SuiteMembershipEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class SuiteMembershipParityRun(Base):
+    """One comparison of the legacy suite memberships with the canonical model (W25a HYG-04; migration 0248).
+
+    An instance-wide run (no ``project_id`` column: project ids live inside the
+    JSON for display only). ``trigger`` / ``status`` are the
+    ``suite_parity_vocab`` vocabularies (CHECKed). Written ONLY by
+    ``worker/suite_parity_runner.py``: the claim (``running``) and the outcome
+    (``clean`` / ``diffs`` / ``failed``). The rows are the evidence of D26's
+    7-day clock; ``uq_smpr_one_running`` keeps one comparison at a time.
+    """
+
+    __tablename__ = "suite_membership_parity_runs"
+    __table_args__ = (
+        CheckConstraint("trigger IN ('beat', 'admin')", name="ck_smpr_trigger"),
+        CheckConstraint("status IN ('running', 'clean', 'diffs', 'failed')", name="ck_smpr_status"),
+        CheckConstraint("(status = 'running') = (finished_at IS NULL)", name="ck_smpr_finished"),
+        Index("ix_smpr_started", text("started_at DESC")),
+        # one comparison at a time (the beat vs "Compare now")
+        Index("uq_smpr_one_running", "status", unique=True, postgresql_where=text("status = 'running'")),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    #: suite_parity_vocab.RUN_TRIGGERS
+    trigger: Mapped[str] = mapped_column(String(10), nullable=False)
+    requested_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: suite_parity_vocab.RUN_STATUSES
+    status: Mapped[str] = mapped_column(String(10), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: settings.CANONICAL_DELETION_WINDOW_RUNS at run time
+    window_runs: Mapped[int] = mapped_column(Integer, nullable=False)
+    projects_checked: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    keys_compared: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    blocking_diffs: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    expected_divergences: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    #: {reason: n} for every reason of both tuples + INFO_COUNTS, zeros included
+    counts: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    #: [{project_id, blocking, expected}] ≤ PER_PROJECT_MAX
+    per_project: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    #: [{reason, project_id, suite, fingerprint, test_name, legacy, canonical}] ≤ SAMPLE_PER_REASON per reason
+    sample: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb"))
+    #: an exception TYPE name or "interrupted"; never a message
+    error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
 # ── Release Management ────────────────────────────────────────────────────────
 
 

@@ -89,8 +89,11 @@ def _form_field(request: httpx.Request, name: str) -> str | None:
 # ── export ───────────────────────────────────────────────────────────────────
 
 
-def _export_handler(archive: bytes, *, post: httpx.Response | None = None) -> Callable[[httpx.Request], httpx.Response]:
+def _export_handler(
+    archive: bytes, *, post: httpx.Response | None = None, counts: dict[str, int] | None = None,
+) -> Callable[[httpx.Request], httpx.Response]:
     polls = {"n": 0}
+    finished_counts = counts if counts is not None else {"test_suites": 3, "managed_test_cases": 8, "releases": 1}
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -106,7 +109,7 @@ def _export_handler(archive: bytes, *, post: httpx.Response | None = None) -> Ca
             if polls["n"] == 1:
                 return httpx.Response(200, json=_job("running", progress={"done": 12, "total": 30}))
             return httpx.Response(200, json=_job(
-                "succeeded", counts={"test_suites": 3, "managed_test_cases": 8, "releases": 1},
+                "succeeded", counts=finished_counts,
                 bytes=len(archive), finished_at="2026-10-30T12:05:00+00:00",
             ))
         if path == f"{JOB_PATH}/download":
@@ -130,6 +133,21 @@ def test_export_polls_to_the_end_and_streams_the_archive_to_the_file(wire, tmp_p
         ("GET", f"{JOB_PATH}/download"),
     ]
     assert all(r.headers["x-api-key"] == "tl_test_key" for r in seen)
+
+
+# W25a (W24 F-8): the job's ``counts`` carries every exported table, zeros included; the line counts only the
+# tables that hold rows (as the import line and the Export card do), in the singular for 1.
+@pytest.mark.parametrize(("counts", "line"), [
+    ({"test_suites": 3, "managed_test_cases": 8, "releases": 0}, "Exported Payment Service: 11 rows in 2 tables ("),
+    ({"test_suites": 0, "releases": 1}, "Exported Payment Service: 1 row in 1 table ("),
+    ({"test_suites": 0, "releases": 0}, "Exported Payment Service: 0 rows in 0 tables ("),
+])
+def test_the_export_line_counts_only_tables_with_rows(wire, tmp_path, counts, line):
+    archive = _zip_bytes()
+    wire(_export_handler(archive, counts=counts))
+    result = _run("projects", "export", "Payment Service", "-o", str(tmp_path / "payments.zip"))
+    assert result.exit_code == 0, result.output
+    assert line in result.output
 
 
 def test_export_default_file_name_is_slug_and_utc_stamp(wire, tmp_path, monkeypatch):
@@ -327,7 +345,7 @@ def test_a_reset_review_and_a_paused_cadence_are_not_called_switched_off():
     ]
 
 
-def test_the_cli_version_is_0_3_0():
+def test_the_cli_version_is_0_3_1():
     import testlookup_cli
 
-    assert testlookup_cli.__version__ == "0.3.0"
+    assert testlookup_cli.__version__ == "0.3.1"

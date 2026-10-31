@@ -16,6 +16,7 @@ import { snapToAllowed, useTimeWindowStore } from '../../store/timeWindowStore';
 import { formatCompactDateTime } from '@/utils/formatters'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { usePermissions } from '@/hooks/usePermissions'
+import { auditRowNote } from './auditDashboardModel'
 
 const HELP_TOPIC = helpTopicParam('/settings/audit')
 
@@ -126,18 +127,23 @@ export default function AuditDashboardPage() {
           {loading ? <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div> : (
             <div className="space-y-1">
               {events.length === 0 && <div className="text-center py-8 text-[var(--color-text-muted)]">No audit events found for this filter.</div>}
-              {events.map((ev, i) => (
-                <div key={i} className="bg-[var(--color-bg-secondary)] rounded px-3 py-2 flex justify-between items-center text-sm">
-                  <div className="flex items-center gap-3">
+              {events.map((ev, i) => {
+                // W25a HYG-06 (a): a live session's one `ws_session` row says what it holds, in words.
+                const note = auditRowNote(ev);
+                return (
+                <div key={i} className="bg-[var(--color-bg-secondary)] rounded px-3 py-2 flex justify-between items-center gap-3 text-sm">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5">
                     <span className={clsx('px-2 py-0.5 rounded text-[10px] font-medium', SOURCE_COLORS[ev.source] || 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]')}>
                       {ev.source}
                     </span>
                     <span className="text-[var(--color-text-secondary)] font-mono text-xs">{ev.action}</span>
                     {ev.actor_name && <span className="text-[var(--color-text-muted)] text-xs">by {ev.actor_name}</span>}
+                    {note && <span data-audit-note="" className="text-[var(--color-text-muted)] text-xs">{note}</span>}
                   </div>
-                  <span className="text-[var(--color-text-muted)] text-xs">{ev.created_at ? formatCompactDateTime(ev.created_at) : '—'}</span>
+                  <span className="shrink-0 text-[var(--color-text-muted)] text-xs">{ev.created_at ? formatCompactDateTime(ev.created_at) : '—'}</span>
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

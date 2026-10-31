@@ -40,8 +40,9 @@ const card = (page: Page, name: string): Locator =>
 const toast = (page: Page, text: string | RegExp) => page.getByRole('status').filter({ hasText: text })
 
 /**
- * The page's requests to `/settings/integrations`: the load's GETs (the dev server's React StrictMode runs the load
- * effect twice, as `SHELL_BASE` lists `auth/me` and `projects` twice; production asks once), then `puts` PUTs.
+ * The page's requests to `/settings/integrations`: the load's GETs (the dev server's React StrictMode runs this page's
+ * load effect twice; production asks once — the shell's own `auth/me` and `projects` reads share one in-flight request
+ * since W25a HYG-07, so `SHELL_BASE` lists each once), then `puts` PUTs.
  */
 function expectSettingsRequests(lines: string[], puts: number) {
   const gets = lines.filter((line) => line === `GET ${READ}`)

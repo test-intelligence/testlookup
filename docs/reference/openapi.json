@@ -42143,6 +42143,335 @@
         "title": "SuiteOwnerUpdate",
         "type": "object"
       },
+      "SuiteParityHistory": {
+        "properties": {
+          "cutover_ready": {
+            "title": "Cutover Ready",
+            "type": "boolean"
+          },
+          "required_days": {
+            "default": 7,
+            "title": "Required Days",
+            "type": "integer"
+          },
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/SuiteParityRunSummary"
+            },
+            "title": "Runs",
+            "type": "array"
+          },
+          "streak_days": {
+            "title": "Streak Days",
+            "type": "integer"
+          },
+          "window_runs_now": {
+            "title": "Window Runs Now",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "runs",
+          "streak_days",
+          "cutover_ready",
+          "window_runs_now"
+        ],
+        "title": "SuiteParityHistory",
+        "type": "object"
+      },
+      "SuiteParityProjectLine": {
+        "properties": {
+          "blocking": {
+            "title": "Blocking",
+            "type": "integer"
+          },
+          "expected": {
+            "title": "Expected",
+            "type": "integer"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          }
+        },
+        "required": [
+          "project_id",
+          "blocking",
+          "expected"
+        ],
+        "title": "SuiteParityProjectLine",
+        "type": "object"
+      },
+      "SuiteParityRunDetail": {
+        "properties": {
+          "blocking_diffs": {
+            "title": "Blocking Diffs",
+            "type": "integer"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "expected_divergences": {
+            "title": "Expected Divergences",
+            "type": "integer"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "keys_compared": {
+            "title": "Keys Compared",
+            "type": "integer"
+          },
+          "per_project": {
+            "items": {
+              "$ref": "#/components/schemas/SuiteParityProjectLine"
+            },
+            "title": "Per Project",
+            "type": "array"
+          },
+          "projects_checked": {
+            "title": "Projects Checked",
+            "type": "integer"
+          },
+          "requested_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Name"
+          },
+          "sample": {
+            "items": {
+              "$ref": "#/components/schemas/SuiteParitySampleRow"
+            },
+            "title": "Sample",
+            "type": "array"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          },
+          "window_runs": {
+            "title": "Window Runs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "trigger",
+          "status",
+          "started_at",
+          "window_runs",
+          "projects_checked",
+          "keys_compared",
+          "blocking_diffs",
+          "expected_divergences",
+          "counts",
+          "per_project",
+          "sample"
+        ],
+        "title": "SuiteParityRunDetail",
+        "type": "object"
+      },
+      "SuiteParityRunSummary": {
+        "description": "One comparison of the legacy suite memberships with the canonical model.",
+        "properties": {
+          "blocking_diffs": {
+            "title": "Blocking Diffs",
+            "type": "integer"
+          },
+          "expected_divergences": {
+            "title": "Expected Divergences",
+            "type": "integer"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "keys_compared": {
+            "title": "Keys Compared",
+            "type": "integer"
+          },
+          "projects_checked": {
+            "title": "Projects Checked",
+            "type": "integer"
+          },
+          "requested_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Name"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "trigger": {
+            "title": "Trigger",
+            "type": "string"
+          },
+          "window_runs": {
+            "title": "Window Runs",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "trigger",
+          "status",
+          "started_at",
+          "window_runs",
+          "projects_checked",
+          "keys_compared",
+          "blocking_diffs",
+          "expected_divergences"
+        ],
+        "title": "SuiteParityRunSummary",
+        "type": "object"
+      },
+      "SuiteParitySampleRow": {
+        "properties": {
+          "blocking": {
+            "title": "Blocking",
+            "type": "boolean"
+          },
+          "canonical": {
+            "title": "Canonical",
+            "type": "string"
+          },
+          "fingerprint": {
+            "title": "Fingerprint",
+            "type": "string"
+          },
+          "legacy": {
+            "title": "Legacy",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "suite": {
+            "title": "Suite",
+            "type": "string"
+          },
+          "test_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Name"
+          }
+        },
+        "required": [
+          "reason",
+          "blocking",
+          "project_id",
+          "suite",
+          "fingerprint",
+          "legacy",
+          "canonical"
+        ],
+        "title": "SuiteParitySampleRow",
+        "type": "object"
+      },
       "SuiteReviewResponse": {
         "properties": {
           "created_at": {
@@ -51017,6 +51346,181 @@
           }
         ],
         "summary": "Requeue Failed Outbox Operations",
+        "tags": [
+          "Admin Maintenance"
+        ]
+      }
+    },
+    "/api/v1/admin/maintenance/suite-membership-parity": {
+      "get": {
+        "description": "The comparisons started in the last 14 UTC days (newest first) and the clean-day streak.\n\n``cutover_ready`` is true on the 7th consecutive UTC day whose LAST finished\ncomparison is clean. A day with no finished comparison breaks the streak\n(absence is not health); today without one does not, until it is over. An\nempty ``runs`` list means no comparison has run yet — never \"0 differences\".",
+        "operationId": "read_suite_membership_parity_api_v1_admin_maintenance_suite_membership_parity_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuiteParityHistory"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Read Suite Membership Parity",
+        "tags": [
+          "Admin Maintenance"
+        ]
+      },
+      "post": {
+        "description": "\"Compare now\": enqueue one read-only comparison on the worker.\n\n409 while a comparison started less than ``RUN_STALE_MINUTES`` ago is still\nrunning (read before enqueueing; the runner's unique claim is the real\nguard). 503 when the broker refuses the task — its exception TYPE is\nlogged, never echoed.",
+        "operationId": "trigger_suite_membership_parity_api_v1_admin_maintenance_suite_membership_parity_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Trigger Suite Membership Parity Api V1 Admin Maintenance Suite Membership Parity Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Trigger Suite Membership Parity",
+        "tags": [
+          "Admin Maintenance"
+        ]
+      }
+    },
+    "/api/v1/admin/maintenance/suite-membership-parity/{parity_run_id}": {
+      "get": {
+        "description": "One comparison: its counts per reason, the projects with differences and the sample.\n\nProject names are resolved at read time (None for a project deleted since).",
+        "operationId": "read_suite_membership_parity_run_api_v1_admin_maintenance_suite_membership_parity__parity_run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "parity_run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Parity Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuiteParityRunDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Read Suite Membership Parity Run",
         "tags": [
           "Admin Maintenance"
         ]

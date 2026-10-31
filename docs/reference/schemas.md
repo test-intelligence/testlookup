@@ -45223,6 +45223,360 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## SuiteParityHistory
+
+```json
+{
+  "properties": {
+    "cutover_ready": {
+      "title": "Cutover Ready",
+      "type": "boolean"
+    },
+    "required_days": {
+      "default": 7,
+      "title": "Required Days",
+      "type": "integer"
+    },
+    "runs": {
+      "items": {
+        "$ref": "#/components/schemas/SuiteParityRunSummary"
+      },
+      "title": "Runs",
+      "type": "array"
+    },
+    "streak_days": {
+      "title": "Streak Days",
+      "type": "integer"
+    },
+    "window_runs_now": {
+      "title": "Window Runs Now",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "runs",
+    "streak_days",
+    "cutover_ready",
+    "window_runs_now"
+  ],
+  "title": "SuiteParityHistory",
+  "type": "object"
+}
+```
+
+## SuiteParityProjectLine
+
+```json
+{
+  "properties": {
+    "blocking": {
+      "title": "Blocking",
+      "type": "integer"
+    },
+    "expected": {
+      "title": "Expected",
+      "type": "integer"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "project_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Name"
+    }
+  },
+  "required": [
+    "project_id",
+    "blocking",
+    "expected"
+  ],
+  "title": "SuiteParityProjectLine",
+  "type": "object"
+}
+```
+
+## SuiteParityRunDetail
+
+```json
+{
+  "properties": {
+    "blocking_diffs": {
+      "title": "Blocking Diffs",
+      "type": "integer"
+    },
+    "counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Counts",
+      "type": "object"
+    },
+    "error_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Error Code"
+    },
+    "expected_divergences": {
+      "title": "Expected Divergences",
+      "type": "integer"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "keys_compared": {
+      "title": "Keys Compared",
+      "type": "integer"
+    },
+    "per_project": {
+      "items": {
+        "$ref": "#/components/schemas/SuiteParityProjectLine"
+      },
+      "title": "Per Project",
+      "type": "array"
+    },
+    "projects_checked": {
+      "title": "Projects Checked",
+      "type": "integer"
+    },
+    "requested_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Requested By Name"
+    },
+    "sample": {
+      "items": {
+        "$ref": "#/components/schemas/SuiteParitySampleRow"
+      },
+      "title": "Sample",
+      "type": "array"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "trigger": {
+      "title": "Trigger",
+      "type": "string"
+    },
+    "window_runs": {
+      "title": "Window Runs",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "trigger",
+    "status",
+    "started_at",
+    "window_runs",
+    "projects_checked",
+    "keys_compared",
+    "blocking_diffs",
+    "expected_divergences",
+    "counts",
+    "per_project",
+    "sample"
+  ],
+  "title": "SuiteParityRunDetail",
+  "type": "object"
+}
+```
+
+## SuiteParityRunSummary
+
+```json
+{
+  "description": "One comparison of the legacy suite memberships with the canonical model.",
+  "properties": {
+    "blocking_diffs": {
+      "title": "Blocking Diffs",
+      "type": "integer"
+    },
+    "expected_divergences": {
+      "title": "Expected Divergences",
+      "type": "integer"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "keys_compared": {
+      "title": "Keys Compared",
+      "type": "integer"
+    },
+    "projects_checked": {
+      "title": "Projects Checked",
+      "type": "integer"
+    },
+    "requested_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Requested By Name"
+    },
+    "started_at": {
+      "format": "date-time",
+      "title": "Started At",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "trigger": {
+      "title": "Trigger",
+      "type": "string"
+    },
+    "window_runs": {
+      "title": "Window Runs",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "trigger",
+    "status",
+    "started_at",
+    "window_runs",
+    "projects_checked",
+    "keys_compared",
+    "blocking_diffs",
+    "expected_divergences"
+  ],
+  "title": "SuiteParityRunSummary",
+  "type": "object"
+}
+```
+
+## SuiteParitySampleRow
+
+```json
+{
+  "properties": {
+    "blocking": {
+      "title": "Blocking",
+      "type": "boolean"
+    },
+    "canonical": {
+      "title": "Canonical",
+      "type": "string"
+    },
+    "fingerprint": {
+      "title": "Fingerprint",
+      "type": "string"
+    },
+    "legacy": {
+      "title": "Legacy",
+      "type": "string"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "project_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Name"
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    },
+    "suite": {
+      "title": "Suite",
+      "type": "string"
+    },
+    "test_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Name"
+    }
+  },
+  "required": [
+    "reason",
+    "blocking",
+    "project_id",
+    "suite",
+    "fingerprint",
+    "legacy",
+    "canonical"
+  ],
+  "title": "SuiteParitySampleRow",
+  "type": "object"
+}
+```
+
 ## SuiteReviewResponse
 
 ```json

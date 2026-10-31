@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import StoragePage from './StoragePage'
 import type { StorageConfigRead } from '@/services/appSettingsService'
 import { expectTemplateHeader } from '@/test/expectTemplateHeader'
+import { parityHistory } from '@/test/suiteParityMocks'
 
 const mockGet = vi.fn<() => Promise<StorageConfigRead>>()
 const mockUpdate = vi.fn()
@@ -46,6 +47,19 @@ vi.mock('@/services/appSettingsService', () => ({
 
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isAdmin }) }))
 
+// W25a HYG-04: the cutover card's history read. Mocked (the network guard), except where a test sets
+// `parity.real` to prove the page never mounts the REAL read for a non-admin (a request would fail the guard).
+const parity = vi.hoisted(() => ({ real: false, history: vi.fn() }))
+vi.mock('@/hooks/useSuiteParity', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/hooks/useSuiteParity')>()
+  return {
+    ...actual,
+    useSuiteParityHistory: (...args: Parameters<typeof actual.useSuiteParityHistory>) =>
+      parity.real ? actual.useSuiteParityHistory(...args) : parity.history(...args),
+    useSuiteParityRun: () => ({ data: undefined, error: undefined }),
+  }
+})
+
 const CONFIG = {
   storage_backend: 'minio',
   chroma_collection: 'test_case_search',
@@ -66,6 +80,35 @@ beforeEach(() => {
   vi.clearAllMocks()
   isAdmin = true
   mockGet.mockResolvedValue(CONFIG)
+  parity.real = false
+  parity.history.mockReturnValue({ data: undefined, error: undefined, mutate: vi.fn() })
+})
+
+describe('the suite membership cutover card (W25a HYG-04)', () => {
+  it('an admin sees it as the LAST block of the page, below the Secrets card', async () => {
+    parity.history.mockReturnValue({ data: parityHistory({ streak: 4 }), error: undefined, mutate: vi.fn() })
+    const { container } = renderPage()
+    await screen.findByDisplayValue('minio:9000')
+
+    expect(screen.getByRole('heading', { name: 'Suite membership cutover' })).toBeInTheDocument()
+    expect(screen.getByText('Day 4 of 7 with no differences.')).toBeInTheDocument()
+    expect(parity.history).toHaveBeenCalled()
+    expect(parity.history.mock.calls.every(([enabled]) => enabled === true)).toBe(true)
+    const blocks = Array.from((container.firstElementChild as HTMLElement).children)
+    expect(blocks[blocks.length - 1]).toHaveAttribute('data-suite-parity')
+    expect(blocks[blocks.length - 2]).toHaveAttribute('data-testid', 'secret-providers')
+  })
+
+  it('a QA lead renders no card and requests nothing on the parity path (the REAL read would trip the network guard)', async () => {
+    isAdmin = false
+    parity.real = true
+    renderPage()
+    await screen.findByDisplayValue('minio:9000')
+
+    expect(screen.queryByRole('heading', { name: 'Suite membership cutover' })).toBeNull()
+    expect(document.querySelector('[data-suite-parity]')).toBeNull()
+    expect(parity.history).not.toHaveBeenCalled()
+  })
 })
 
 describe('a failed save tells the operator why', () => {

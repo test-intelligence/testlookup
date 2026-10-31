@@ -196,6 +196,14 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "project_export_scrub.py",
     "project_import_service.py",
     "project_import_rows.py",
+    # ── W25a HYG-04 / HYG-06: new modules, commit-free from birth ──
+    # The parity vocabulary (constants only) and the comparison (reads only, on
+    # the caller's session; worker/suite_parity_runner.py owns the run row's
+    # two commits); the live WebSocket audit policy (constants + one pure
+    # decision; routers/live.py opens the short session and commits).
+    "suite_parity_vocab.py",
+    "suite_membership_parity.py",
+    "ws_audit_policy.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

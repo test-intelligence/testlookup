@@ -16,6 +16,7 @@
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { assertHermetic, openProductionPage, type ApiHandlers } from '../lib/production-pages'
+import { parityHistory } from '../../src/test/suiteParityMocks'
 import { LAYOUT, NOW, PROJECT_ID, USER } from '../visual/production/fixtures'
 import { EMBEDDING_INDEX_IN_SYNC } from '../visual/production/fixtures-ai-config'
 
@@ -154,6 +155,8 @@ const HANDLERS: ApiHandlers = [
   ['/api/v1/settings/storage', () => STORAGE],
   // W20 ADM-10: the Secrets card on Data & storage (no Vault).
   ['/api/v1/settings/secret-providers', () => ({ providers: [{ name: 'vault', configured: false, address_host: null, auth_method: 'token', healthy: false, message: 'Not configured: set SECRET_PROVIDER_VAULT_ADDR on the deployment.', references: 0 }], reference_syntax: 'vault:<path>#<key>' })],
+  // W25a HYG-04: the admin's suite-membership cutover card on Data & storage (below the form; its one read).
+  ['/api/v1/admin/maintenance/suite-membership-parity', () => parityHistory({ streak: 4, now: NOW })],
   ['/api/v1/settings/mfa-policy', () => MFA_POLICY],
   [`/api/v1/projects/${PROJECT_ID}/retention-policy`, () => RETENTION_POLICY],
   // W22a: the Holds card's one read, in the REAL shape (no hold here).

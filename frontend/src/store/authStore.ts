@@ -25,6 +25,14 @@ interface AuthState {
   refreshRequiresReauth: boolean;
   refreshRetryExhausted: boolean;
   sessionGeneration: number;
+  /**
+   * When the server last confirmed this session (W25a HYG-07): stamped by
+   * `setAuth` (every sign-in tail fetched `/auth/me` just before it) and by a
+   * successful `fetchUser`; cleared by `logout`. NOT persisted, so a hard
+   * reload has no stamp and re-verifies once. `ProtectedRoute` skips its
+   * re-verify while the stamp is fresh.
+   */
+  lastVerifiedAt: number | null;
   retryRefresh: () => Promise<string | null>;
   _hasHydrated: boolean;
   setHasHydrated: (v: boolean) => void;
@@ -49,6 +57,13 @@ function normalizeUser(user: User): User {
 }
 
 let refreshInFlight: Promise<string | null> | null = null;
+/**
+ * One `GET /api/v1/auth/me` per token at a time: a second `fetchUser()` while
+ * the first is pending for the SAME token returns the same promise (the dev
+ * server's StrictMode runs every mount effect twice). A different token never
+ * shares. Cleared when the read settles.
+ */
+let fetchUserInFlight: { token: string; promise: Promise<void> } | null = null;
 
 export const useAuthStore = create<AuthState>()(
   persist(
@@ -63,13 +78,14 @@ export const useAuthStore = create<AuthState>()(
       refreshRequiresReauth: false,
       refreshRetryExhausted: false,
       sessionGeneration: 0,
+      lastVerifiedAt: null,
       retryRefresh: async () => { set({ refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }); return get().refreshAccessToken(); },
       _hasHydrated: false,
 
       setHasHydrated: (v) => set({ _hasHydrated: v }),
 
       setAuth: (token, refreshToken, user) =>
-        set((state) => ({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1 })),
+        set((state) => ({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1, lastVerifiedAt: Date.now() })),
 
       clearMustChangePassword: () =>
         set((state) =>
@@ -77,7 +93,7 @@ export const useAuthStore = create<AuthState>()(
         ),
 
       logout: () => {
-        set((state) => ({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1 }));
+        set((state) => ({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1, lastVerifiedAt: null }));
         // Security M1: the saved release filter (`tl.release-filter`, and a
         // `tl.suite-filter` an older build may have left) belongs to THIS
         // user's session — the next sign-in on this browser must not inherit
@@ -91,25 +107,35 @@ export const useAuthStore = create<AuthState>()(
         finally { get().logout(); }
       },
 
-      fetchUser: async () => {
+      fetchUser: () => {
         const { token, logout, sessionGeneration } = get();
-        if (!token) return;
+        if (!token) return Promise.resolve();
+        if (fetchUserInFlight && fetchUserInFlight.token === token) return fetchUserInFlight.promise;
 
-        try {
-          const res = await api.get<User>('/api/v1/auth/me');
-          if (get().token === token && get().sessionGeneration === sessionGeneration) {
-            set({ user: normalizeUser(res.data), isAuthenticated: true });
+        // Registered BEFORE the read starts, so a read that settles at once
+        // still clears its own entry (and only its own).
+        const entry: { token: string; promise: Promise<void> } = { token, promise: Promise.resolve() };
+        fetchUserInFlight = entry;
+        entry.promise = (async () => {
+          try {
+            const res = await api.get<User>('/api/v1/auth/me');
+            if (get().token === token && get().sessionGeneration === sessionGeneration) {
+              set({ user: normalizeUser(res.data), isAuthenticated: true, lastVerifiedAt: Date.now() });
+            }
+          } catch (err) {
+            // Only clear auth on explicit auth rejections (401/403).
+            // Network errors (status undefined) or server errors (5xx) should not
+            // log the user out — they may be a transient connectivity issue and
+            // the stored token may still be valid once the backend recovers.
+            const status = (err as { response?: { status?: number } })?.response?.status;
+            if ((status === 401 || status === 403) && get().token === token && get().sessionGeneration === sessionGeneration && !get().refreshRequiresReauth && !get().refreshError) {
+              logout();
+            }
+          } finally {
+            if (fetchUserInFlight === entry) fetchUserInFlight = null;
           }
-        } catch (err) {
-          // Only clear auth on explicit auth rejections (401/403).
-          // Network errors (status undefined) or server errors (5xx) should not
-          // log the user out — they may be a transient connectivity issue and
-          // the stored token may still be valid once the backend recovers.
-          const status = (err as { response?: { status?: number } })?.response?.status;
-          if ((status === 401 || status === 403) && get().token === token && get().sessionGeneration === sessionGeneration && !get().refreshRequiresReauth && !get().refreshError) {
-            logout();
-          }
-        }
+        })();
+        return entry.promise;
       },
 
       refreshAccessToken: async (): Promise<string | null> => {
@@ -169,8 +195,10 @@ export const useAuthStore = create<AuthState>()(
       name: 'auth-storage',
       // Persist user + isAuthenticated alongside tokens so that a hard page
       // refresh never clears auth state while valid tokens are still present.
-      // fetchUser() still runs in the background on every mount to silently
-      // re-validate the token; logout only happens on explicit 401/403.
+      // fetchUser() still runs in the background on every protected mount to
+      // silently re-validate the token (skipped within 30 s of a verification,
+      // `lastVerifiedAt`, which is deliberately NOT persisted); logout only
+      // happens on explicit 401/403.
       partialize: (state) => ({
         token: state.token,
         refreshToken: state.refreshToken,
