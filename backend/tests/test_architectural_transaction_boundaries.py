@@ -204,6 +204,9 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "suite_parity_vocab.py",
     "suite_membership_parity.py",
     "ws_audit_policy.py",
+    # W25a Day-0 follow-up: the legacy-membership reconcile stages INSERT / UPDATE statements on the caller's
+    # session (the import's one transaction; the in-pod script commits one project at a time).
+    "suite_membership_reconcile.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

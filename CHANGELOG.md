@@ -1445,6 +1445,26 @@ locally by default.
 
 ### Fixed
 
+- **The suite-membership parity check on real data** (W25a follow-up, branch
+  `fix/df-parity-day0-20261031`). The first comparison on a real deployment
+  reported 269 blocking differences, and none of them meant the two writers
+  disagreed:
+  - seeded run history that the legacy `suite_memberships` table never
+    received, plus one sync miss;
+  - two runs created in the same second, where each table kept a different
+    one as the first sighting;
+  - the W24 project import, which built the catalog but no legacy rows. Every
+    imported project would have blocked the cutover clock.
+
+  Fixes:
+  - `scripts/reconcile_legacy_suite_memberships.py` writes the missing
+    legacy rows exactly as the legacy writer would, a retired test into the
+    `<suite>-deleted` bucket. It moves both sides' first sighting to the
+    earlier run. It is a dry run by default; `--apply` commits one project
+    at a time.
+  - The import now writes the legacy rows for its catalog inside its one
+    transaction.
+  - No parity reason or rule changed.
 - **A project export in a production worker** (W24 follow-up, branch
   `fix/df-project-export-pool-20261031`): the export held its read-only
   snapshot's database connection through the sign / write / verify steps,
