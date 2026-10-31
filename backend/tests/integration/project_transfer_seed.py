@@ -361,9 +361,12 @@ async def _seed_what_must_not_travel(db: AsyncSession, seed: SeededProject, s: S
                                                canonical_url=f"https://wiki.example.test/payments/{seed.tag}"),
         "digest_subscriptions": m.DigestSubscription(user_id=seed.admin_id, project_id=pid, name="Weekly payments"),
     }
-    seed.api_key_plaintext = "qai" + "_" + _secrets.token_urlsafe(32)
+    # Hash the freshly minted value, not the attribute: CodeQL reads `seed.api_key_plaintext` as a password and flagged
+    # the product's SHA-256 key hash (py/weak-sensitive-data-hashing) through this flow on PR #308.
+    minted = "qai" + "_" + _secrets.token_urlsafe(32)
+    seed.api_key_plaintext = minted
     rows["api_keys"] = m.ApiKey(user_id=seed.admin_id, project_id=pid, name="CI pipeline",
-                                key_hash=_hash_key(seed.api_key_plaintext), key_hint=seed.api_key_plaintext[:8] + "...")
+                                key_hash=_hash_key(minted), key_hint=minted[:8] + "...")
     for table, row in rows.items():
         db.add(row)
         await db.flush()

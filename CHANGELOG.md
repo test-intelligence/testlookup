@@ -1662,6 +1662,11 @@ locally by default.
 
 ### Security
 
+- **pypdf 6.21.4 and follow-redirects 1.16.2.** The backend's PDF text
+  extraction (CVE-2026-119203..119209, high: denial of service through
+  crafted PDFs) and the frontend's follow-redirects under axios
+  (CVE-2026-116689, high: information disclosure through cross-origin
+  redirects) move to their fixed releases.
 - **pymongo 4.18.3.** The backend's MongoDB driver moves from 4.18.2
   (CVE-2026-106435, high: a denial of service through an out-of-bounds read);
   still below 5.0 for motor 3.7.1.
