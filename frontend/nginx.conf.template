@@ -1,3 +1,17 @@
+# og:image must be an absolute URL (W25b HYG-09). Only http/https from the proxy is trusted, and the
+# origin is reflected only when it is a plain host name: $host comes from the client's Host header.
+# (This file is included inside nginx's http {} block, where map belongs. envsubst leaves these
+# variables alone: it substitutes only environment variables that are defined.)
+map $http_x_forwarded_proto $og_scheme {
+    default $scheme;
+    https   https;
+    http    http;
+}
+map "$og_scheme://$host" $og_origin {
+    "~^https?://[a-z0-9.-]+$" "$og_scheme://$host";
+    default "";
+}
+
 server {
     listen 80;
     root /usr/share/nginx/html;
@@ -50,6 +64,12 @@ server {
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         add_header Strict-Transport-Security "max-age=31536000" always;
+        # Social card (W25b HYG-09): index.html's og:image carries a placeholder
+        # origin; this fills in $og_origin (the maps at the top), or "" for a
+        # host that is not a plain name, leaving a relative /og-card.png. The
+        # file is served from disk, so sub_filter sees plain text before gzip.
+        sub_filter "__TESTLOOKUP_ORIGIN__" "$og_origin";
+        sub_filter_once off;
     }
 
     # SPA routing - send all requests to index.html

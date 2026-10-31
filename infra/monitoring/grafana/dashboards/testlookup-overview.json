@@ -1,7 +1,20 @@
 {
   "__inputs": [],
   "__requires": [],
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": [
+      {
+        "name": "Deploys",
+        "datasource": "Prometheus",
+        "enable": true,
+        "iconColor": "blue",
+        "expr": "count by (version) (testlookup_app_info{job=\"testlookup-backend\"}) unless count by (version) (testlookup_app_info{job=\"testlookup-backend\"} offset 10m)",
+        "step": "60s",
+        "titleFormat": "Deploy",
+        "textFormat": "version {{version}}"
+      }
+    ]
+  },
   "description": "TestLookup — Application Overview",
   "editable": true,
   "fiscalYearStartMonth": 0,
@@ -758,6 +771,224 @@
         }
       ],
       "title": "Report Export Render p95 (1h)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 94 },
+      "id": 80,
+      "title": "Tier 0-2 jobs",
+      "description": "Background jobs from the Tier 0-2 programme and W25a's two counters. Only label values a production line emits are charted; a job that crashes shows in 'Tier 0-2 task failures', not as a missing bar. Every series is declared in backend/app/core/metrics.py (test_grafana_dashboard_metrics_are_declared.py).",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Flaky-quarantine proposals by source (auto: a detection worker; manual: a QA lead's Propose) and the decisions on them (approved, rejected), per hour. Emitted by backend/app/services/flaky_quarantine_service.py (propose_quarantine, the approve and reject paths).",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 95 },
+      "id": 81,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (source) (increase(testlookup_quarantine_proposals_total[1h]))",
+          "legendFormat": "proposed · {{source}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (outcome) (increase(testlookup_quarantine_approvals_total[1h]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Quarantine proposals & decisions (1h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Quarantined tests leaving quarantine, by terminal state, last 24h: released or re_quarantined by the nightly recheck cycle (run_flaky_quarantine_maintenance, 04:00 UTC), released by auto-promotion after a passing streak (update_quarantine_stability, after each run).",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 95 },
+      "id": 82,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (terminal_state) (increase(testlookup_quarantine_expired_total[24h]))",
+          "legendFormat": "{{terminal_state}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Quarantine expiries by outcome (24h)",
+      "type": "barchart"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Outbound webhook delivery attempts by result (success, retry, failure). A failure is terminal: an unsafe target, a missing signing secret, or the last retry spent. Emitted by backend/app/services/webhook_service.py (the deliver_webhook task).",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 95 },
+      "id": 83,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (result) (increase(testlookup_webhook_delivery_attempts_total[5m]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Webhook delivery attempts by result (5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "The nightly perf-baseline refresh (04:30 UTC) by status: skipped means the perf_regression_detection flag was off for everyone (switch off or a 0% rollout), success means it ran. B: every evaluation of that flag by result (enabled, disabled, default), so a skipped refresh can be read against the flag's state. A crashed refresh shows in 'Tier 0-2 task failures'.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 103 },
+      "id": 84,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (status) (increase(testlookup_perf_baseline_refresh_runs_total[24h]))",
+          "legendFormat": "refresh · {{status}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (result) (increase(testlookup_feature_flag_evaluations_total{flag_key=\"perf_regression_detection\"}[24h]))",
+          "legendFormat": "flag · {{result}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Perf baseline refresh and its flag (24h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Weekly auto-retro digests by status over 7 days, one per weekly-retro subscription the dispatcher reaches: skipped (the weekly_retro_digest flag is off for its project), success (the retro document was built). The pass rides dispatch_scheduled_digests on Mondays 07:05 UTC. Emitted by backend/app/services/retro_digest_service.py (generate_weekly_retro).",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 103 },
+      "id": 85,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (status) (increase(testlookup_retro_digest_dispatch_total[7d]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Weekly retro digest dispatch (7d)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Release compliance packs by result, last 24h: success, disabled (the release_compliance_pack flag is off), not_available (the release has no linked run yet), error (any other failure; TestLookupCompliancePackGenerationErrors fires above 3 an hour). Emitted by compliance_pack_service.generate_pack.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 103 },
+      "id": 86,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (result) (increase(testlookup_compliance_pack_generated_total[24h]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Compliance packs by result (24h)",
+      "type": "barchart"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "TestSuite rows with no run and no test case left, flagged by the nightly reaper (flag_orphan_test_suites, 05:00 UTC), last 24h. Nothing is deleted; each one is a structured WARNING for ops review. Unlabelled, so the worker exports a measured 0 from the start.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 1 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 111 },
+      "id": 87,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area", "textMode": "value" },
+      "targets": [
+        {
+          "expr": "sum(increase(testlookup_orphan_test_suites_total[24h]))",
+          "legendFormat": "orphans flagged",
+          "refId": "A"
+        }
+      ],
+      "title": "Orphan test suites flagged (24h)",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Terminal failures of the six Tier 0-2 Celery tasks, by task name, last 24h (testlookup_celery_tasks_total from the worker's task_postrun signal; a task still retrying is not a failure yet). The job counters beside it only see runs that finished.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 111 },
+      "id": 88,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (task_name) (increase(testlookup_celery_tasks_total{task_name=~\"app.worker.tasks.(run_flaky_quarantine_maintenance|refresh_perf_baselines|dispatch_scheduled_digests|deliver_webhook|flag_orphan_test_suites|run_suite_membership_parity)\", status=\"failure\"}[24h]))",
+          "legendFormat": "{{task_name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Tier 0-2 task failures (24h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Finished suite-membership parity comparisons (the 06:15 UTC beat or 'Compare now'), by status: clean, diffs, failed. D26's seven-day clock reads the suite_membership_parity_runs rows; this is the scraped signal beside them. Emitted by backend/app/worker/suite_parity_runner.py.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 111 },
+      "id": 89,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (status) (increase(testlookup_suite_parity_runs_total[24h]))",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Suite-membership parity runs (24h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Live WebSocket connections that ended, by what their audit did: audited (a new ws_session row), merged (a reconnect folded into its session's row), short (too short to audit), audit_failed (the audit write failed). Emitted by backend/app/routers/live.py.",
+      "fieldConfig": {
+        "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 111 },
+      "id": 90,
+      "options": { "legend": { "calcs": ["sum"], "displayMode": "list" }, "tooltip": { "mode": "single" } },
+      "targets": [
+        {
+          "expr": "sum by (outcome) (increase(testlookup_ws_connections_total[5m]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Live WebSocket sessions by outcome (5m)",
       "type": "timeseries"
     }
   ],

@@ -5,6 +5,20 @@ metadata:
   namespace: testlookup
 data:
   default.conf: |
+    # og:image must be an absolute URL (W25b HYG-09). Only http/https from the proxy is trusted, and the
+    # origin is reflected only when it is a plain host name: $host comes from the client's Host header.
+    # (conf.d/default.conf is included inside nginx's http {} block, where map belongs.) The OpenShift
+    # router terminates TLS and sends X-Forwarded-Proto: https -> https://<route host>/og-card.png.
+    map $http_x_forwarded_proto $og_scheme {
+        default $scheme;
+        https   https;
+        http    http;
+    }
+    map "$og_scheme://$host" $og_origin {
+        "~^https?://[a-z0-9.-]+$" "$og_scheme://$host";
+        default "";
+    }
+
     server {
         listen 80;
         root /usr/share/nginx/html;
@@ -46,6 +60,11 @@ data:
             add_header Cache-Control "no-cache, no-store, must-revalidate" always;
             add_header Pragma "no-cache" always;
             expires -1;
+            # Social card (W25b HYG-09): index.html's og:image carries a placeholder
+            # origin; this fills in $og_origin (the maps at the top), or "" for a
+            # host that is not a plain name, leaving a relative /og-card.png.
+            sub_filter "__TESTLOOKUP_ORIGIN__" "$og_origin";
+            sub_filter_once off;
         }
 
         location / {

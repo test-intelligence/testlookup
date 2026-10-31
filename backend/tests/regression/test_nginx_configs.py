@@ -278,3 +278,94 @@ def test_the_parser_sees_add_header_inheritance() -> None:
     # An envsubst placeholder is a value, not a block.
     templated = _servers(parse("server { location /api/ { proxy_pass http://${UP}; } }"))[0]
     assert _locations(templated)["/api/"] == [("proxy_pass", ["http://envsubst-UP"], None)]
+
+
+# ── og:image origin (W25b HYG-09) ───────────────────────────────────────────
+#
+# index.html's og:image is "__TESTLOOKUP_ORIGIN__/og-card.png"; unfurlers need
+# an absolute URL, so `location = /index.html` replaces the placeholder with
+# $og_origin. $host comes from the client's Host header, so the origin is
+# reflected only when it is a plain host name; anything else becomes "" and
+# the tag degrades to a relative /og-card.png, never to an injected string.
+
+OG_PLACEHOLDER = "__TESTLOOKUP_ORIGIN__"
+OG_HOST_PATTERN = "~^https?://[a-z0-9.-]+$"
+OG_MAPS = {
+    ("$http_x_forwarded_proto", "$og_scheme"): [
+        ("default", ["$scheme"]),
+        ("https", ["https"]),
+        ("http", ["http"]),
+    ],
+    ("$og_scheme://$host", "$og_origin"): [
+        (OG_HOST_PATTERN, ["$og_scheme://$host"]),
+        ("default", [""]),
+    ],
+}
+
+
+def _maps(tree: list) -> dict[tuple[str, ...], list[tuple[str, list[str]]]]:
+    """``{(source, $variable): [(key, [value])]}`` for every ``map`` block at
+    the top level or directly inside ``http {}`` (where nginx allows one)."""
+    maps = {
+        tuple(args): [(key, values) for key, values, _ in children]
+        for name, args, children in tree
+        if name == "map" and children is not None
+    }
+    for name, _, children in tree:
+        if name == "http" and children:
+            maps.update(_maps(children))
+    return maps
+
+
+@pytest.mark.parametrize("name", sorted(CONFIGS))
+def test_index_html_fills_the_og_origin(name: str) -> None:
+    tree = parse(CONFIGS[name])
+    assert _maps(tree) == OG_MAPS, f"{name}: the og maps differ from the pinned two"
+    for server in _servers(tree):
+        assert not [n for n, _, _ in server if n.startswith("sub_filter")], (
+            f"{name}: a server-level sub_filter would rewrite every text/html response"
+        )
+        for location, children in _locations(server).items():
+            subs = [(n, args) for n, args, _ in children if n.startswith("sub_filter")]
+            if location == "= /index.html":
+                assert subs == [
+                    ("sub_filter", [OG_PLACEHOLDER, "$og_origin"]),
+                    ("sub_filter_once", ["off"]),
+                ], (name, subs)
+            else:
+                assert subs == [], f"{name} location {location}: sub_filter outside index.html"
+
+
+@pytest.mark.parametrize(
+    "origin, reflected",
+    [
+        ("http://testlookup.localhost", True),
+        ("https://testlookup.example.com", True),
+        ("http://10.0.0.12", True),
+        ('http://evil.test"><script>alert(1)</script>', False),
+        ("http://a'b", False),
+        ("http://[::1]", False),
+        ("http://under_score.local", False),
+        ("https://", False),
+        ("javascript://x", False),
+    ],
+)
+def test_the_og_origin_map_reflects_only_plain_host_names(origin: str, reflected: bool) -> None:
+    """The pinned regex, run on the strings nginx would build (``$host`` is
+    lower-cased and port-less, so upper case and ports never reach it)."""
+    assert bool(re.search(OG_HOST_PATTERN[1:], origin)) is reflected
+
+
+def test_the_parser_reads_a_map_with_quoted_keys() -> None:
+    """Self-test: a ``map`` with a quoted regex key, an empty-string key and
+    an empty-string value parses (the tokenizer strips the quotes), and a
+    ``map`` is never mistaken for a server."""
+    tree = parse(
+        'map "$a://$b" $c { "~^x$" "$a"; "" none; default ""; }\n'
+        "server { listen 80; location = /index.html { sub_filter \"__P__\" \"$c\"; } }"
+    )
+    assert [name for name, _, _ in tree] == ["map", "server"]
+    assert _maps(tree) == {("$a://$b", "$c"): [("~^x$", ["$a"]), ("", ["none"]), ("default", [""])]}
+    servers = _servers(tree)
+    assert len(servers) == 1
+    assert _locations(servers[0])["= /index.html"] == [("sub_filter", ["__P__", "$c"], None)]
