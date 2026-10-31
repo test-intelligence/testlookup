@@ -348,3 +348,28 @@ async def test_the_janitor_expires_the_export_and_fails_a_stale_job(env: Any, ex
     assert gone.status_code == 410
     assert gone.json()["detail"] == {"code": "export_expired",
                                      "message": "This export was removed after 72 hours; start a new one."}
+
+
+async def test_the_export_runs_inside_a_two_connection_worker_pool(exported: Any) -> None:
+    """The homelab's Celery worker pool is size 1 + overflow 1. Its first live export held the snapshot AND the
+    signing session through the write, needed a third connection to record the storage key, and failed
+    ``export_write`` (TimeoutError) after two 30 s pool timeouts. The same export through a 1 + 1 pool succeeds."""
+    from app.models.postgres import Project, User
+    from app.services import project_data_job_service as jobs
+    from app.worker import project_data_runner as runner
+
+    engine = create_async_engine(_dsn(), pool_size=1, max_overflow=1, pool_timeout=5)
+    small = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with small() as db:
+            project = await db.get(Project, exported.seed.project_id)
+            admin = await db.get(User, exported.seed.admin_id)
+            job = await jobs.create_export_job(db, project=project, actor=admin)
+            await db.commit()
+        status = await runner.run_export_job(job.id, storage=exported.store, session_factory=small)
+        async with small() as db:
+            row = await db.get(jobs.ProjectDataJob, job.id)
+        assert status == "succeeded", (row.error_code, row.error)
+        assert row.status == "succeeded" and row.storage_key and row.archive_sha256
+    finally:
+        await engine.dispose()

@@ -83,6 +83,10 @@ class RecordingSession:
     async def commit(self) -> None:  # pragma: no cover
         raise AssertionError("the source session must not commit")
 
+    async def rollback(self) -> None:
+        """Ending the read-only snapshot (after the build) is the one thing a READ session may do."""
+        self.rollbacks = getattr(self, "rollbacks", 0) + 1
+
 
 class FakeStorage:
     def __init__(self, *, corrupt: bool = False, fail_put: bool = False) -> None:
@@ -279,6 +283,24 @@ def test_the_source_session_executes_only_selects(signing: Any) -> None:
         assert isinstance(stmt, Select), type(stmt).__name__
         assert str(stmt.compile(dialect=postgresql.dialect())).lstrip().upper().startswith("SELECT")
     assert len(db.statements) == len(plan()) + 1     # one streamed SELECT per table + the directory
+
+
+def test_the_snapshot_is_ended_before_the_archive_is_written(signing: Any) -> None:
+    """The worker's pool holds 2 connections: the snapshot must hand its back before the write (on_written and the
+    storage config each need one) — the homelab's first export held it and failed export_write (TimeoutError)."""
+    project, rows, users = _seed()
+    db = RecordingSession(rows, users)
+    storage = FakeStorage()
+    seen: list[int] = []
+    real_put = storage.put_object_stream
+
+    async def put(*args: Any, **kwargs: Any) -> None:
+        seen.append(getattr(db, "rollbacks", 0))
+        await real_put(*args, **kwargs)
+
+    storage.put_object_stream = put  # type: ignore[method-assign]
+    _run(db, project, storage, sign_db=RecordingSession({}))
+    assert seen == [1], "the read-only snapshot was still open when the archive was written"
 
 
 # ── parts ───────────────────────────────────────────────────────────────────

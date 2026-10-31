@@ -1396,6 +1396,16 @@ locally by default.
 
 ### Fixed
 
+- **A project export in a production worker** (W24 follow-up, branch
+  `fix/df-project-export-pool-20261031`): the export held its read-only
+  snapshot's database connection through the sign / write / verify steps,
+  so recording the storage key needed a third connection. A production
+  worker's pool holds two, so the first export on a real deployment failed
+  "The export could not be written to storage (TimeoutError)" after two
+  30-second pool waits. The snapshot now ends as soon as the rows are in
+  the archive. `test_project_export_postgres.py` and
+  `test_project_import_postgres.py` run an export and an import through a
+  1 + 1 pool.
 - The pre-release gate run without a candidate (Settings › AI evaluation ›
   Gate, the agent-stack gate and the nightly gate) no longer compares the
   legacy label-agreement metric with a replay baseline. Once a replay run was
