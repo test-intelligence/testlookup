@@ -40,8 +40,9 @@ SCOPE_PARENT_PREFIX = "parent:"        # "parent:<parent table>.<fk column of th
 # ── scrubber names (G-B's project_export_scrub applies them; contract §2.2) ──
 SCRUB_DEFAULT = "default"              # S-5 / S-6: JSON columns → scrub_json, free text → text_pass
 SCRUB_URLS = "urls"                    # SCRUB_DEFAULT + S-4 strip_url_credentials on the entity's URL column
-SCRUB_TEAM_CHANNEL = "team_channel"    # SCRUB_DEFAULT + S-3: a slack / teams ``target`` → [REDACTED]
-SCRUBBERS = (SCRUB_DEFAULT, SCRUB_URLS, SCRUB_TEAM_CHANNEL)
+# Not a ``*_CHANNEL`` name: test_review_gate_inline_vocab_parity reads those as review-gate distribution channels.
+SCRUB_TEAM_TARGETS = "team_channel"    # SCRUB_DEFAULT + S-3: a slack / teams ``target`` → [REDACTED]
+SCRUBBERS = (SCRUB_DEFAULT, SCRUB_URLS, SCRUB_TEAM_TARGETS)
 
 
 @dataclass(frozen=True)
@@ -162,7 +163,7 @@ _NOTIFICATION_TRANSITION_POLICIES = EntitySpec(
     "notification_transition_policies", inert={"transitions_enabled": False, "per_run_events_enabled": False},
 )
 _TEAM_NOTIFICATION_CHANNELS = EntitySpec(
-    "team_notification_channels", inert={"is_active": False}, scrub=SCRUB_TEAM_CHANNEL, natural_key=("team_name",),
+    "team_notification_channels", inert={"is_active": False}, scrub=SCRUB_TEAM_TARGETS, natural_key=("team_name",),
 )
 _WEBHOOK_SUBSCRIPTIONS = EntitySpec(
     "webhook_subscriptions",
