@@ -52,6 +52,16 @@ locally by default.
 
 ### Added
 
+- **Grafana: the "Tier 0-2 jobs" row, and a link preview card** (wave W25b,
+  HYG-09; branch `feat/df-hygiene-b-20261031`).
+  - The overview dashboard gains a row charting quarantine proposals,
+    approvals and expiries; performance-baseline refreshes; retro digests;
+    webhook deliveries and retries; compliance packs; orphan suites; and the
+    W25a parity and live-session counters. A "Deploys" annotation marks each
+    rollout.
+  - Shared links now unfurl with a 1200×630 card. nginx fills in the card's
+    absolute address for the configured host and falls back to a relative
+    path for any other.
 - **Suite-membership parity check** (wave W25a, HYG-04 phase 1; branch
   `feat/df-hygiene-a-20261031`; migration 0248
   `suite_membership_parity_runs`; no flag).
@@ -1128,6 +1138,23 @@ locally by default.
 
 ### Changed
 
+- **Deleting a run is faster on a large catalog** (wave W25b, HYG-05;
+  migration 0249 `ctc_run_fk_indexes`).
+  - Three partial indexes on the catalog's run pointers are built online,
+    with no row changes.
+  - On 200,000 catalog rows, deleting a run went from 60 ms to 26 ms at the
+    median: the cleanup that clears those pointers no longer scans the
+    whole catalog three times.
+  - Each ingest's catalog refresh costs about 6 % more.
+  - Chart, heatmap and coverage-map labels for a group with several
+    spellings now choose the same spelling on every Postgres collation.
+- **The legacy feature-flag routes are deprecated** (wave W25b, HYG-03).
+  - `GET/PUT/DELETE /api/v1/settings/flags[/{key}]` keep working, now over
+    the feature-flag service behind Settings › Feature flags.
+  - Every successful answer carries `Deprecation: @1793491200` and a
+    `Link` to `/api/v1/feature-flags`.
+  - A flag key over 80 characters now returns 422 instead of a server error.
+  - The old flag service module is removed.
 - **One audit row per live session** (wave W25a, HYG-06 a). A live-stream
   WebSocket connection used to write two access-audit rows (`ws_connect`,
   `ws_disconnect`), so connection churn filled the first page of
@@ -1445,6 +1472,10 @@ locally by default.
 
 ### Fixed
 
+- **The compliance-pack failure alert can fire** (wave W25b, HYG-09).
+  Nothing counted `testlookup_compliance_pack_generated_total{result="error"}`,
+  so the alert on it could never trigger. A pack build that fails is now
+  counted as `error`.
 - **The suite-membership parity check on real data** (W25a follow-up, branch
   `fix/df-parity-day0-20261031`). The first comparison on a real deployment
   reported 269 blocking differences, and none of them meant the two writers

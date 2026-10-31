@@ -92697,7 +92697,8 @@
     },
     "/api/v1/settings/flags": {
       "get": {
-        "description": "List all feature flags.",
+        "deprecated": true,
+        "description": "List all feature flags (legacy shape). Deprecated: use GET /api/v1/feature-flags.\n\nA database failure propagates to the error boundary: an empty list is a\nvalid authority answer and must never stand in for an outage.",
         "operationId": "list_feature_flags_api_v1_settings_flags_get",
         "parameters": [
           {
@@ -92750,7 +92751,8 @@
     },
     "/api/v1/settings/flags/{flag_key}": {
       "delete": {
-        "description": "Delete a feature flag. Requires ADMIN.",
+        "deprecated": true,
+        "description": "Delete a feature flag. Requires ADMIN. Deprecated: use /api/v1/feature-flags.\n\nA missing key is still a 204: no service call, no audit row.",
         "operationId": "remove_feature_flag_api_v1_settings_flags__flag_key__delete",
         "parameters": [
           {
@@ -92805,7 +92807,8 @@
         ]
       },
       "put": {
-        "description": "Create or update a feature flag. Requires ADMIN.",
+        "deprecated": true,
+        "description": "Create or update a flag's global toggle. Requires ADMIN. Deprecated: use /api/v1/feature-flags.\n\n``scope`` and ``config`` are accepted and ignored, as they always were.",
         "operationId": "update_feature_flag_api_v1_settings_flags__flag_key__put",
         "parameters": [
           {
@@ -92813,6 +92816,7 @@
             "name": "flag_key",
             "required": true,
             "schema": {
+              "maxLength": 80,
               "title": "Flag Key",
               "type": "string"
             }
