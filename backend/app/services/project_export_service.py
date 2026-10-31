@@ -365,6 +365,11 @@ async def run_project_export(
                 db, project_id=project_id, project_name=str(project.name), project_slug=str(project.slug),
                 sink=spool, now=now, stats=stats, on_table=on_table,
             )
+            # End the read-only snapshot NOW: every row is in the spool, and holding its connection through the
+            # sign / write / verify steps needed a THIRD one (on_written, the storage config) — the worker's pool
+            # is size 1 + overflow 1, so the homelab's first export waited out two 30 s pool timeouts and failed
+            # export_write (TimeoutError). Nothing below reads `project` (its id was taken above).
+            await db.rollback()
             spool, signature, signing_key_id, _signing = await packs._sign_pack(
                 signer, spool, pack_id=job_id, manifest_sha256=archive.manifest_sha256, actor=None, signed_at=now,
             )

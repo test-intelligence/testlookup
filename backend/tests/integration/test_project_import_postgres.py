@@ -627,3 +627,20 @@ async def test_only_an_admin_imports_and_another_admins_job_is_the_unknown_404(e
     assert theirs.json() == unknown.json()
     own = await env.call("GET", job_path)
     assert own.status_code == 200 and own.json()["kind"] == "import"
+
+
+async def test_the_import_runs_inside_a_two_connection_worker_pool(env):
+    """The homelab's Celery worker pool is size 1 + overflow 1 (the export failed export_write there by holding a
+    third connection): the import's ONE transaction plus its progress / manifest writes must fit in two."""
+    response = await _post(env, env.archive, name=f"W24 pool check {env.tag}")
+    assert response.status_code == 202, response.text
+    job_id = uuid.UUID(response.json()["id"])
+    engine = create_async_engine(_dsn(), pool_size=1, max_overflow=1, pool_timeout=5)
+    small = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        status = await env.runner.run_import_job(job_id, storage=env.storage, session_factory=small)
+    finally:
+        await engine.dispose()
+    job = await _job(env, job_id)
+    assert status == "succeeded", (job.error_code, job.error)
+    assert job.project_id is not None
