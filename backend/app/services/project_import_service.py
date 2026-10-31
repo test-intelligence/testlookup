@@ -19,7 +19,10 @@ Two entry points (contract §1.4, §2.3):
   first INSERT (only SELECTs run until then); I-4 the project row +
   ``provision_new_project``; I-5 the entities in ``plan()`` order with the id
   remap, batched; I-6 the self-reference second pass; I-7 the one-active-
-  release invariant; I-8 the job outcome + the ``project.imported`` activity.
+  release invariant; I-7b the legacy ``suite_memberships`` mirror of the
+  imported catalog (``suite_membership_reconcile``: a derived table, never
+  exported, so the parity harness sees an imported project as clean); I-8 the
+  job outcome + the ``project.imported`` activity.
 
 An archive is attacker-controlled and never grants access: no member name is
 used as a path (members are read with ``zf.open`` only), no archive id
@@ -885,6 +888,7 @@ async def run_import(
     from app.services.compliance_pack_service import COMPLIANCE_BUCKET, sha256_of_file
     from app.services.release_lifecycle_service import ensure_active_release_for_new_project
     from app.services.retention_export_service import new_spool
+    from app.services.suite_membership_reconcile import reconcile_project
 
     requested = clean_name(job.project_name)
     specs = plan()
@@ -927,6 +931,9 @@ async def run_import(
         await _second_pass(db, ctx)                                 # I-6
         if not ctx.active_release_kept:                             # I-7
             await ensure_active_release_for_new_project(db, project)
+        # I-7b: suite_memberships is derived (never exported), so the legacy table mirrors the imported
+        # catalog here, in this transaction — else every import is a parity missing_in_legacy (W25a Day-0).
+        mirrored = await reconcile_project(db, project.id, apply=True)
     finally:
         spool.close()
 
@@ -968,5 +975,6 @@ async def run_import(
     _slog.info(
         "project_import_succeeded", job_id=str(job.id), project_id=str(project.id),
         rows=sum(inserted.values()), tables=total, signature=pre.signature,
+        legacy_memberships=mirrored.legacy_inserted,
     )
     return report
