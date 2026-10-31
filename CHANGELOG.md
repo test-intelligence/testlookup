@@ -52,6 +52,30 @@ locally by default.
 
 ### Added
 
+- **Suite-membership parity check** (wave W25a, HYG-04 phase 1; branch
+  `feat/df-hygiene-a-20261031`; migration 0248
+  `suite_membership_parity_runs`; no flag).
+  - Before the legacy suite-membership tables stop being written, a daily
+    job (06:15 UTC, beat `daily-suite-membership-parity`) compares them with
+    the canonical model in every project, archived ones included.
+  - Each difference gets a reason: 6 reasons block the cutover and 7 are
+    expected divergences (for example a deletion still inside its window).
+  - The clock counts UTC days whose last finished run had no blocking
+    difference. The cutover (W25d) waits for 7 such days.
+  - Settings › Data & storage (instance admins) has a new card. It says
+    where the clock stands ("Day 4 of 7 with no differences.") and lists
+    the last seven days. "Compare now" queues a run. "Show differences"
+    opens the reasons, projects and sample rows inline.
+  - API: `GET /api/v1/admin/maintenance/suite-membership-parity`,
+    `GET …/{parity_run_id}` and `POST …` (409 while a run is in progress).
+  - The job reads one project at a time, holds one database connection,
+    and writes only its own table.
+- **Live stress harness** (wave W25a, HYG-06 b):
+  `backend/scripts/stress_live_ingest.py` runs N concurrent live SDK
+  sessions plus WebSocket watchers against a throwaway local stack. It
+  refuses any non-loopback host and reports finalize lag, frames per second
+  per client, Redis stream depth and database pool waits. It ends with a
+  verdict on whether the ingest coalescers are needed.
 - **Project export and import: settings and test catalog** (wave W24, ADM-05
   phase 1; branch `feat/df-project-export-20261030`; migration 0247
   `project_data_jobs`; no flag).
@@ -1104,6 +1128,31 @@ locally by default.
 
 ### Changed
 
+- **One audit row per live session** (wave W25a, HYG-06 a). A live-stream
+  WebSocket connection used to write two access-audit rows (`ws_connect`,
+  `ws_disconnect`), so connection churn filled the first page of
+  Settings › Audit.
+  - Now a live session writes at most one `ws_session` row: at the first
+    disconnect where the session has been connected for 5 s in total.
+  - Reconnects within 60 s belong to the same session and write nothing.
+    A session that never reaches 5 s writes nothing.
+  - Audit rows stay append-only. The row holds that connection's start,
+    end and close reason, the session's start and the connected seconds
+    at write time. Settings › Audit shows these as one sentence.
+  - The counter `testlookup_ws_connections_total{outcome}` counts the
+    decisions (`audited`, `merged`, `short`, `audit_failed`).
+- **A sign-in reads the session and the project list once** (wave W25a,
+  HYG-07).
+  - After a sign-in, `GET /auth/me` runs once instead of twice: the
+    re-verify is skipped for 30 s after a verified sign-in, and a hard
+    reload still re-verifies.
+  - Concurrent callers share one in-flight `GET /projects`.
+  - Under the dev server's StrictMode, Overview painted after 3 + 2 reads;
+    it now paints after 1 + 1.
+- **The export line counts only tables that hold rows** (W24 F-8). The
+  ready line on Settings › Project data and the output of
+  `testlookup projects export` read "11 rows in 2 tables", not "in 30
+  tables". **CLI 0.3.1.**
 - **A search containing a known `key:value` now filters** (wave W12, SRCH-04).
   `status:failed checkout` used to search for that text; it now returns failed
   results matching "checkout" — on `/search`, on `GET /api/v1/search/global` and

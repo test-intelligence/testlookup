@@ -36,7 +36,7 @@ key server-side and a caller cannot name someone else's. Legacy: the shared
 it could previously inject fabricated results into ANY project. Set
 ``LIVE_EVENTS_REQUIRE_PROJECT_KEY=true`` to refuse it outright.
 
-Source: [backend/app/routers/live.py:509](../../../backend/app/routers/live.py#L509).
+Source: [backend/app/routers/live.py:609](../../../backend/app/routers/live.py#L609).
 
 Dependency chain: `get_db`.
 

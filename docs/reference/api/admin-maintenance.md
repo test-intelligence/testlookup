@@ -17,7 +17,7 @@ the signal to purge that collection could not be seen. Instance admins
 only: the counts span tenants. A cache that cannot be read is a 503, never
 a page of zeros.
 
-Source: [backend/app/routers/admin_maintenance.py:223](../../../backend/app/routers/admin_maintenance.py#L223).
+Source: [backend/app/routers/admin_maintenance.py:236](../../../backend/app/routers/admin_maintenance.py#L236).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -110,7 +110,7 @@ Idempotent — subsequent calls produce zero rows once the first run
 has filled the gaps. Returns the Celery task id so the caller can
 correlate with worker logs.
 
-Source: [backend/app/routers/admin_maintenance.py:35](../../../backend/app/routers/admin_maintenance.py#L35).
+Source: [backend/app/routers/admin_maintenance.py:48](../../../backend/app/routers/admin_maintenance.py#L48).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -213,7 +213,7 @@ next 15-minute beat tick.
 Idempotent — only writes to NULL rows, only provisions missing
 leads, never over-writes a manual reassignment.
 
-Source: [backend/app/routers/admin_maintenance.py:87](../../../backend/app/routers/admin_maintenance.py#L87).
+Source: [backend/app/routers/admin_maintenance.py:100](../../../backend/app/routers/admin_maintenance.py#L100).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -312,7 +312,7 @@ failed, but never what. Instance admins only -- the entries are
 cross-tenant (run and project ids, error text, sanitized event payloads).
 A store that cannot be read is a 503, never an empty list.
 
-Source: [backend/app/routers/admin_maintenance.py:169](../../../backend/app/routers/admin_maintenance.py#L169).
+Source: [backend/app/routers/admin_maintenance.py:182](../../../backend/app/routers/admin_maintenance.py#L182).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -411,7 +411,7 @@ Normally runs every 30s. Useful when an operator wants to confirm
 the drain is functional after a deploy without waiting for the
 next tick.
 
-Source: [backend/app/routers/admin_maintenance.py:133](../../../backend/app/routers/admin_maintenance.py#L133).
+Source: [backend/app/routers/admin_maintenance.py:146](../../../backend/app/routers/admin_maintenance.py#L146).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -507,7 +507,7 @@ Requeue a stranded N27 intent only after its pipeline is marked failed: a
 pipeline left ``running`` refuses the retry until the stale-pipeline reaper
 (every 10 minutes, after 30) has failed it.
 
-Source: [backend/app/routers/admin_maintenance.py:316](../../../backend/app/routers/admin_maintenance.py#L316).
+Source: [backend/app/routers/admin_maintenance.py:329](../../../backend/app/routers/admin_maintenance.py#L329).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -593,3 +593,253 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## GET `/api/v1/admin/maintenance/suite-membership-parity`
+
+Read Suite Membership Parity
+
+The comparisons started in the last 14 UTC days (newest first) and the clean-day streak.
+
+``cutover_ready`` is true on the 7th consecutive UTC day whose LAST finished
+comparison is clean. A day with no finished comparison breaks the streak
+(absence is not health); today without one does not, until it is over. An
+empty ``runs`` list means no comparison has run yet — never "0 differences".
+
+Source: [backend/app/routers/admin_maintenance.py:467](../../../backend/app/routers/admin_maintenance.py#L467).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "read_suite_membership_parity_api_v1_admin_maintenance_suite_membership_parity_get",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/SuiteParityHistory"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/admin/maintenance/suite-membership-parity`
+
+Trigger Suite Membership Parity
+
+"Compare now": enqueue one read-only comparison on the worker.
+
+409 while a comparison started less than ``RUN_STALE_MINUTES`` ago is still
+running (read before enqueueing; the runner's unique claim is the real
+guard). 503 when the broker refuses the task — its exception TYPE is
+logged, never echoed.
+
+Source: [backend/app/routers/admin_maintenance.py:551](../../../backend/app/routers/admin_maintenance.py#L551).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=409, detail=parity_vocab.ALREADY_RUNNING_SENTENCE)
+HTTPException(status_code=503, detail=parity_vocab.DISPATCH_FAILED_SENTENCE)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "trigger_suite_membership_parity_api_v1_admin_maintenance_suite_membership_parity_post",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "202": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "additionalProperties": true,
+            "title": "Response Trigger Suite Membership Parity Api V1 Admin Maintenance Suite Membership Parity Post",
+            "type": "object"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## GET `/api/v1/admin/maintenance/suite-membership-parity/{parity_run_id}`
+
+Read Suite Membership Parity Run
+
+One comparison: its counts per reason, the projects with differences and the sample.
+
+Project names are resolved at read time (None for a project deleted since).
+
+Source: [backend/app/routers/admin_maintenance.py:503](../../../backend/app/routers/admin_maintenance.py#L503).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+parity_run_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=404, detail=parity_vocab.NOT_FOUND_SENTENCE)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "read_suite_membership_parity_run_api_v1_admin_maintenance_suite_membership_parity__parity_run_id__get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "parity_run_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Parity Run Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/SuiteParityRunDetail"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
