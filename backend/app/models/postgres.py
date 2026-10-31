@@ -1237,6 +1237,23 @@ class CanonicalTestCase(Base):
             unique=True,
             postgresql_where=text("managed_test_case_id IS NOT NULL"),
         ),
+        # The three run pointers' ON DELETE SET NULL actions (migration 0249): partial, so the
+        # referential UPDATE's strict ``<col> = $1`` can use them and the deleted_at one stays small.
+        Index(
+            "ix_ctc_first_seen_run",
+            "first_seen_run_id",
+            postgresql_where=text("first_seen_run_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_ctc_last_seen_run",
+            "last_seen_run_id",
+            postgresql_where=text("last_seen_run_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_ctc_deleted_at_run",
+            "deleted_at_run_id",
+            postgresql_where=text("deleted_at_run_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

@@ -820,8 +820,9 @@ async def _icu_shadow(world):
     ``und-x-icu`` ``épée`` sorts before ``fence``; by code point it is after
     ``zebra`` (``é`` is U+00E9). Yields ``(session, add, locale_order)``: ``add``
     writes one run on P1 an hour before the frozen clock with one PASSED case
-    in it, ``locale_order`` lists a run column's distinct keys in the shadow's
-    collation.
+    in it (its own fingerprint and test name unless given), ``locale_order``
+    lists a run column's distinct keys in the shadow's collation. The case's
+    ``test_name`` is shadowed too (W25b: the ``test`` dimension's label).
 
     A connection of its own, outside the shared pool and with no statement
     cache: a pooled connection may hold these very statements prepared against
@@ -845,7 +846,7 @@ async def _icu_shadow(world):
             try:
                 shadow = {
                     "test_runs": ("primary_suite_name", "branch", "environment"),
-                    "test_cases": ("suite_name",),
+                    "test_cases": ("suite_name", "test_name"),
                 }
                 for table, columns in shadow.items():
                     await conn.execute(text(
@@ -855,7 +856,8 @@ async def _icu_shadow(world):
                             f'ALTER TABLE pg_temp.{table} ALTER COLUMN {column} '
                             f'TYPE text COLLATE "und-x-icu"'))
 
-                async def add(*, suite: str, branch: str = "main", environment: str = "ci"):
+                async def add(*, suite: str, branch: str = "main", environment: str = "ci",
+                              fingerprint: str | None = None, name: str | None = None):
                     run_id = uuid.uuid4()
                     await conn.execute(text(
                         "INSERT INTO pg_temp.test_runs "
@@ -868,8 +870,9 @@ async def _icu_shadow(world):
                         "INSERT INTO pg_temp.test_cases "
                         "(id, test_run_id, test_fingerprint, test_name, suite_name, status, "
                         "created_at) VALUES (:id, :run, :fp, :name, :suite, 'PASSED', :at)"),
-                        {"id": uuid.uuid4(), "run": run_id, "fp": f"cp-{run_id.hex[:8]}",
-                         "name": f"test_{run_id.hex[:8]}", "suite": suite, "at": at})
+                        {"id": uuid.uuid4(), "run": run_id,
+                         "fp": fingerprint or f"cp-{run_id.hex[:8]}",
+                         "name": name or f"test_{run_id.hex[:8]}", "suite": suite, "at": at})
 
                 async def locale_order(column: str) -> str:
                     return await conn.scalar(text(
@@ -940,6 +943,53 @@ async def test_the_label_a_key_keeps_does_not_depend_on_the_collation(world) -> 
         labels = {series["key"]: series["label"] for series in got["series"]}
         assert labels["orders"] == "ORDERS", "the series label follows the bucket order"
         assert got["x_labels"]["fence"] == "FENCE", "the bucket label follows the series order"
+
+
+async def test_a_mixed_spelling_group_labels_by_code_point_whatever_the_collation(world) -> None:
+    """W25b HYG-05: when ONE group's rows carry several spellings of its key, the
+    label aggregate itself chooses -- ``MIN(<label> COLLATE "C")`` -- so the
+    byte-order-first spelling wins on every server: ASCII capitals (0x41-0x5A)
+    before lower case, ``É`` (C3 89) before ``é`` (C3 A9).
+
+    Two runs at the same hour: suite ``orders`` / ``Orders``, environment
+    ``été`` / ``Été``, and one fingerprint named ``test_login`` / ``test_Login``.
+    Under the ICU shadow the collation puts lower case first (the precondition),
+    so a ``MIN`` under the column's collation would show ``orders``, ``été`` and
+    ``test_login``. One assertion per fragment: dropping ``COLLATE "C"`` from any
+    ONE of the three fails exactly its own line."""
+    from sqlalchemy import text
+
+    from app.services import chart_data_service as svc
+
+    async with _icu_shadow(world) as (session, add, _locale_order):
+        await add(suite="orders", environment="été", fingerprint="cp-login", name="test_login")
+        await add(suite="Orders", environment="Été", fingerprint="cp-login", name="test_Login")
+        mins = (await session.execute(text(
+            "SELECT (SELECT MIN(suite_name) FROM pg_temp.test_cases), "
+            "(SELECT MIN(environment) FROM pg_temp.test_runs), "
+            "(SELECT MIN(test_name) FROM pg_temp.test_cases)"))).one()
+        assert tuple(mins) == ("orders", "été", "test_login"), (
+            "precondition: the shadow must order lower case first"
+        )
+
+        scope = _scope_for(world)
+        by_suite = await svc.build_chart_data(
+            session, scope, svc.parse_chart_spec("executions", ["day", "suite"], None, scope=scope),
+            now=FROZEN)
+        labels = {series["key"]: series["label"] for series in by_suite["series"]}
+        assert labels == {"orders": "Orders"}, "suite: the byte-order-first spelling"
+
+        by_env = await svc.build_chart_data(
+            session, scope, svc.parse_chart_spec("executions", ["environment"], None, scope=scope),
+            now=FROZEN)
+        # Only a label that differs from its key is sent, so a lower-case winner would drop the map.
+        assert by_env.get("x_labels") == {"été": "Été"}, "environment: the byte-order-first spelling"
+        assert [point["y"] for point in by_env["series"][0]["points"]] == [2], "one group, both rows"
+
+        by_test = await svc.build_chart_data(
+            session, scope, svc.parse_chart_spec("executions", ["test"], 5, scope=scope),
+            now=FROZEN)
+        assert by_test.get("x_labels") == {"cp-login": "test_Login"}, "test: the byte-order-first spelling"
 
 
 async def test_run_count_s_n_is_the_executions_not_the_run_count(world) -> None:

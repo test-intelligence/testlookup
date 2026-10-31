@@ -170,6 +170,38 @@ def test_a_group_by_value_never_reaches_the_sql() -> None:
     assert declared, "the dimension table is empty -- this test checks nothing"
 
 
+def test_every_label_aggregate_compares_by_code_point() -> None:
+    """W25b HYG-05: a group whose rows carry several spellings of one key shows the
+    byte-order-first spelling on EVERY server, so each label aggregate is
+    ``MIN(<expr> COLLATE "C")`` -- the collation INSIDE the aggregate, where it decides
+    the comparison (outside, it would only relabel a result already chosen under the
+    server's collation). The heatmap and the coverage map read the very same
+    fragments, so they cannot drift from the chart. The real proof on an ICU server
+    is ``test_chart_data_postgres.py`` / ``test_heatmap_postgres.py``."""
+    import re
+
+    from app.services import coverage_map_service, heatmap_service
+
+    labelled = {name: d.label_sql for name, d in svc.DIMENSIONS.items() if d.label_sql is not None}
+    assert set(labelled) == {"suite", "environment", "test"}, labelled
+    for name, label in labelled.items():
+        match = re.fullmatch(r'MIN\((?P<inner>.+) COLLATE "C"\)', label)
+        assert match, (name, label)
+        inner = match.group("inner")
+        depth = 0
+        for ch in inner:  # the COLLATE applies to the WHOLE argument, not to a piece of it
+            depth += {"(": 1, ")": -1}.get(ch, 0)
+            assert depth >= 0, (name, label)
+        assert depth == 0, (name, label)
+        assert label.count("MIN(") == 1 and label.count('COLLATE "C"') == 1, (name, label)
+    # Shared objects, not copies.
+    assert coverage_map_service._SUITE_LABEL_SQL is svc.DIMENSIONS["suite"].label_sql
+    assert heatmap_service._SUITE is svc.DIMENSIONS["suite"]
+    assert heatmap_service._GROUPED_X[heatmap_service.KIND_SUITE_ENVIRONMENT][1] is (
+        svc.DIMENSIONS["environment"].label_sql
+    )
+
+
 def test_the_statement_text_does_not_move_with_the_filter_values() -> None:
     """Suites, releases and projects are BINDS: same SQL, different params."""
     spec = _spec("pass_rate", ("day", "suite"))

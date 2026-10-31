@@ -155,6 +155,13 @@ _EFFECTIVE_SUITE = effective_suite_sql()
 #:   here so rows written before that migration bucket with their successors.
 #: * ``commit_hash`` is the commit COLUMN, not a dimension: a chart with one
 #:   point per commit is a run list, which ``/runs`` already is.
+#: * Every ``label_sql`` compares by code point (``COLLATE "C"`` inside the
+#:   ``MIN``, W25b HYG-05): a group whose rows carry several spellings of one
+#:   key (``orders`` / ``Orders``) shows the byte-order-first spelling
+#:   (``Orders``) on every server, not whichever its default collation ranks
+#:   first. The aggregate's result keeps "C", so the outer ``MIN``s over these
+#:   columns -- here, in the heatmap and in the coverage map, which share the
+#:   fragments -- inherit it. Keys, grouping and filters are unchanged.
 DIMENSIONS: dict[str, DimensionDef] = {
     "day": DimensionDef(
         sql="TO_CHAR(DATE_TRUNC('day', tr.created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD')",
@@ -170,7 +177,7 @@ DIMENSIONS: dict[str, DimensionDef] = {
     ),
     "suite": DimensionDef(
         sql=f"LOWER(COALESCE(NULLIF({_EFFECTIVE_SUITE}, ''), '{NO_VALUE}'))",
-        label_sql=f"MIN(COALESCE(NULLIF({_EFFECTIVE_SUITE}, ''), '{NO_VALUE}'))",
+        label_sql=f"MIN(COALESCE(NULLIF({_EFFECTIVE_SUITE}, ''), '{NO_VALUE}') COLLATE \"C\")",
         row_level=True,
         high_cardinality=True,
     ),
@@ -183,14 +190,14 @@ DIMENSIONS: dict[str, DimensionDef] = {
     ),
     "environment": DimensionDef(
         sql=f"LOWER(COALESCE(NULLIF(TRIM(tr.environment), ''), '{NO_VALUE}'))",
-        label_sql=f"MIN(COALESCE(NULLIF(TRIM(tr.environment), ''), '{NO_VALUE}'))",
+        label_sql=f"MIN(COALESCE(NULLIF(TRIM(tr.environment), ''), '{NO_VALUE}') COLLATE \"C\")",
     ),
     "ingestion_source": DimensionDef(
         sql=f"COALESCE(NULLIF(TRIM(tr.ingestion_source), ''), '{NO_VALUE}')"
     ),
     "test": DimensionDef(
         sql="tc.test_fingerprint",
-        label_sql="MIN(tc.test_name)",
+        label_sql='MIN(tc.test_name COLLATE "C")',
         row_level=True,
         high_cardinality=True,
     ),
