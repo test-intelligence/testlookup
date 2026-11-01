@@ -38,6 +38,7 @@ from app.services.analytics_scope import (
     suite_keys,
 )
 from app.services.metrics_service import PASS_RATE_BASIS_UNIQUE_TESTS
+from app.services import suite_membership_cutover as suite_cutover
 
 logger = structlog.get_logger(__name__)
 
@@ -1493,6 +1494,13 @@ async def get_suite_test_cases(
 
 
 # ── Suite Membership Traceability (TS-5) ──────────────────────────────────────
+#
+# W25d HYG-04 (the cutover): each handler resolves scope FIRST (unchanged), then
+# asks ONE question, ``suite_cutover.legacy_model_active(db)`` (the flag
+# ``suite_membership_legacy_writes``, seeded ON). ON → today's legacy query,
+# verbatim and inline below; OFF (after the guarded cutover) → the canonical read
+# from ``services/suite_membership_cutover.py``, which answers the SAME keys in
+# the same order. Paths, parameters, roles and shapes are unchanged.
 
 
 @router.get("/suites/{suite_name}/membership")
@@ -1514,6 +1522,10 @@ async def get_suite_membership(
     )
     if scoped_project_id is None and allowed is not None:
         return []
+    if not await suite_cutover.legacy_model_active(db):
+        return await suite_cutover.canonical_membership(
+            db, suite_name=suite_name, project_id=project_id, status=status,
+        )
     from app.models.postgres import SuiteMembership
 
     stmt = select(SuiteMembership).where(SuiteMembership.suite_name == suite_name)
@@ -1565,6 +1577,10 @@ async def get_suite_changes(
     )
     if scoped_project_id is None and allowed is not None:
         return []
+    if not await suite_cutover.legacy_model_active(db):
+        return await suite_cutover.canonical_changes(
+            db, suite_name=suite_name, project_id=project_id, run_id=run_id, limit=limit,
+        )
     from app.models.postgres import SuiteMembershipEvent
 
     stmt = select(SuiteMembershipEvent).where(SuiteMembershipEvent.suite_name == suite_name)
@@ -1612,6 +1628,8 @@ async def get_suite_deleted(
     )
     if scoped_project_id is None and allowed is not None:
         return []
+    if not await suite_cutover.legacy_model_active(db):
+        return await suite_cutover.canonical_deleted(db, suite_name=suite_name, project_id=project_id)
 
     deleted_bucket = f"{suite_name}-deleted"
     stmt = select(SuiteMembership).where(

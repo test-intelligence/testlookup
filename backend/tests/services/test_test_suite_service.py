@@ -396,6 +396,20 @@ def test_list_test_suites_uses_expanding_bind_for_in_clause():
 # ── reconcile_canonical_deletions ───────────────────────────────────────────
 
 
+@pytest.fixture
+def _legacy_writes_on(monkeypatch):
+    """W25d HYG-04: a retiring reconciler asks the cutover flag (one SELECT) before staging its
+    ``suite.sync_deleted`` line, and these ``AsyncMock`` sessions answer only the reconciler's own
+    reads (a fixed ``side_effect`` list). Legacy writes ON is the seeded state, in which the reconciler
+    stages nothing extra. The OFF path is ``tests/test_suite_membership_cutover.py``'s."""
+    from app.services import suite_membership_cutover
+
+    async def _on(db, *, fresh=False):
+        return True
+
+    monkeypatch.setattr(suite_membership_cutover, "legacy_model_active", _on)
+
+
 def _canonical(*, fingerprint: str, status: str = "active") -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid.uuid4(),
@@ -447,6 +461,7 @@ async def test_reconcile_deletion_noop_when_project_has_no_runs():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_legacy_writes_on")
 async def test_reconcile_deletion_marks_stale_active_canonicals_only():
     """The reconciler's core contract: an active canonical whose
     fingerprint is missing from every run in the window is marked
@@ -490,6 +505,7 @@ async def test_reconcile_deletion_marks_stale_active_canonicals_only():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_legacy_writes_on")
 async def test_reconcile_deletion_idempotent_on_rerun():
     """Running the reconciler twice in a row over the same DB state must
     NOT keep deleting things — the second run should report 0 deleted."""
@@ -554,6 +570,7 @@ async def test_reconcile_deletion_window_size_capped_by_actual_runs():
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_legacy_writes_on")
 async def test_reconcile_deletion_filters_null_fingerprints():
     """Test cases without a fingerprint can't match anything; the
     sweep must not let a NULL fingerprint sneak into the seen set

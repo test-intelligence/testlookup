@@ -331,9 +331,12 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             # positional %s args raise TypeError mid-call, which would
             # escape the except and 500 the ingest. Every log inside an
             # except block on this hot post-ingest path uses kwargs.
+            # W25d HYG-04: only while the legacy model is written (the flag
+            # ``suite_membership_legacy_writes``, seeded ON); a failing flag
+            # read lands in the same except as a failing sync.
             try:
-                from app.services.suite_sync_service import sync_suite_membership
-                await sync_suite_membership(db, run.project_id, run.id)
+                from app.services.suite_membership_cutover import sync_legacy_if_active
+                await sync_legacy_if_active(db, run.project_id, run.id)
             except Exception as sync_err:
                 logger.warning("suite_membership_sync_failed", error=str(sync_err))
 

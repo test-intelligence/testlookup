@@ -1650,6 +1650,7 @@ async def reconcile_canonical_deletions(
     deleted_at_run_id = recent_run_ids[0]
 
     counts = {"deleted": 0, "unchanged": 0, "window_size": len(recent_run_ids)}
+    retired: list[CanonicalTestCase] = []
     for canonical in active_canonicals:
         if canonical.test_fingerprint in seen_fingerprints:
             counts["unchanged"] += 1
@@ -1663,6 +1664,7 @@ async def reconcile_canonical_deletions(
         canonical.retirement_confirmed_by_id = None
         canonical.retirement_reason = None
         counts["deleted"] += 1
+        retired.append(canonical)
 
     if counts["deleted"]:
         logger.info(
@@ -1673,8 +1675,49 @@ async def reconcile_canonical_deletions(
             unchanged=counts["unchanged"],
             deleted_at_run_id=str(deleted_at_run_id),
         )
+        await _record_canonical_retirements(db, project_id, retired, deleted_at_run_id)
 
     return counts
+
+
+async def _record_canonical_retirements(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    retired: list[CanonicalTestCase],
+    deleted_at_run_id: uuid.UUID,
+) -> None:
+    """W25d HYG-04 C-5: ONE ``suite.sync_deleted`` activity row per suite that lost tests, ONLY while cut over.
+
+    While ``suite_membership_legacy_writes`` is ON the legacy writer still records this line
+    (``suite_sync_service._record_sync_deletions``), so nothing is staged here — no double line during the
+    dual-write window. After the cutover this reconciler is the only thing that retires tests, and without
+    it the feed would silently stop saying tests were removed. Suite names come from ONE
+    ``SELECT id, name FROM test_suites WHERE id IN (…)``. Stage-only: the finalize step / the nightly task
+    commit it with the retirements. The per-test ``test_case_audit_logs`` rows are not replaced (D-W25d-8).
+    """
+    from app.services.suite_membership_cutover import legacy_model_active
+
+    if await legacy_model_active(db):
+        return
+    per_suite: dict[uuid.UUID, int] = {}
+    for canonical in retired:
+        per_suite[canonical.test_suite_id] = per_suite.get(canonical.test_suite_id, 0) + 1
+    rows = (await db.execute(
+        select(TestSuite.id, TestSuite.name).where(TestSuite.id.in_(list(per_suite)))
+    )).all()
+    names: dict[uuid.UUID, str] = {row[0]: str(row[1]) for row in rows}
+    from app.services.activity.service import ActorRef, record as record_activity
+
+    for suite_id in sorted(per_suite, key=lambda sid: (names.get(sid, ""), str(sid))):
+        await record_activity(
+            db,
+            project_id=project_id,
+            event_type="suite.sync_deleted",
+            actor=ActorRef.system("canonical_reconcile"),
+            entity_id=suite_id,
+            entity_label=names.get(suite_id) or str(suite_id),
+            context={"count": per_suite[suite_id], "run_id": str(deleted_at_run_id)},
+        )
 
 
 async def list_runs_for_canonical(

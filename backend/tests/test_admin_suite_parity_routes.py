@@ -7,6 +7,15 @@ in SQLite syntax); ``get_db`` and ``get_current_active_user`` are overridden;
 statement, so "a GET writes nothing" is measured, not assumed. The POST's
 dispatch binds the REAL task signature (``run_suite_membership_parity.s(...)``)
 BEFORE ``apply_async`` is replaced, so Celery's argument check is never hidden.
+
+W25d HYG-04 (the cutover, contract §2.1 C-6 / C-7, §3): the database also holds
+``feature_flags`` (the ``suite_membership_legacy_writes`` row, seeded ON like
+migration 0251) and ``settings_audit_log``. The flag is read through the REAL
+``feature_flags.is_enabled``; only its shared Redis cache is faked (a miss on
+every read) and the Postgres-only advisory lock is a recorder. The cutover POST
+runs the REAL ``update_flag`` (its call bound to the real signature first), so
+the flag row, its audit row and the order update → commit → cache drop → epoch
+bump are measured on the database, not assumed.
 """
 from __future__ import annotations
 
@@ -34,12 +43,23 @@ from app.core.deps import (
     get_current_active_user,
 )
 from app.db.postgres import get_db
-from app.models.postgres import Base, Project, SuiteMembershipParityRun, User, UserRole
+from app.models.postgres import (
+    Base,
+    FeatureFlag,
+    Project,
+    SettingsAuditLog,
+    SuiteMembershipParityRun,
+    User,
+    UserRole,
+)
 from app.routers import admin_maintenance as routes
+from app.services import feature_flags as ff
+from app.services import suite_membership_cutover as cutover
 from app.services import suite_parity_vocab as vocab
 from app.worker import tasks
 
 BASE = "/api/v1/admin/maintenance/suite-membership-parity"
+CUTOVER = "/api/v1/admin/maintenance/suite-membership-cutover"
 
 
 @compiles(JSONB, "sqlite")
@@ -77,8 +97,27 @@ async def factory(monkeypatch: pytest.MonkeyPatch) -> Any:
     table = SuiteMembershipParityRun.__table__
     for column in ("counts", "per_project", "sample"):
         monkeypatch.setattr(table.c[column], "server_default", None)
+    # W25d: the flag is read through the REAL is_enabled; only the shared Redis cache is faked (always a miss),
+    # and the Postgres-only advisory lock is a no-op that journals itself.
+    lock_calls: list[str] = []
+
+    async def _miss(key: str) -> None:
+        return None
+
+    async def _no_store(key: str, flag: Any) -> None:
+        return None
+
+    async def _lock(db: Any) -> None:
+        lock_calls.append("lock")
+
+    monkeypatch.setattr(ff, "_load_from_redis", _miss)
+    monkeypatch.setattr(ff, "_store_in_redis", _no_store)
+    monkeypatch.setattr(ff, "lock_global_agent_authority", _lock)
+    monkeypatch.setattr(routes, "lock_global_agent_authority", _lock)
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all, tables=[Project.__table__, User.__table__, table])
+        await conn.run_sync(Base.metadata.create_all, tables=[
+            Project.__table__, User.__table__, table, FeatureFlag.__table__, SettingsAuditLog.__table__,
+        ])
         await conn.execute(text("DROP INDEX IF EXISTS uq_smpr_one_running"))
         await conn.execute(text(
             "CREATE UNIQUE INDEX uq_smpr_one_running ON suite_membership_parity_runs (status) "
@@ -86,6 +125,8 @@ async def factory(monkeypatch: pytest.MonkeyPatch) -> Any:
         ))
     maker = async_sessionmaker(engine, expire_on_commit=False)
     maker.statements = statements  # type: ignore[attr-defined]
+    maker.engine = engine  # type: ignore[attr-defined]
+    maker.lock_calls = lock_calls  # type: ignore[attr-defined]
     yield maker
     await engine.dispose()
 
@@ -99,8 +140,10 @@ def _user(role: UserRole, name: str) -> User:
 async def world(factory: Any) -> SimpleNamespace:
     project = Project(id=uuid.uuid4(), name="Payment Service", slug="payment-service", is_active=True)
     admin, lead = _user(UserRole.ADMIN, "ada"), _user(UserRole.QA_LEAD, "lee")
+    flag = FeatureFlag(id=uuid.uuid4(), key=cutover.FEATURE_FLAG, description="seeded by 0251",
+                       enabled_global=True, rollout_percent=100)      # migration 0251's seed: legacy writes ON
     async with factory() as db:
-        db.add_all([project, admin, lead])
+        db.add_all([project, admin, lead, flag])
         await db.commit()
     bound = SimpleNamespace(id=admin.id, role=UserRole.ADMIN.value, is_active=True, username="ci-key",
                             full_name=None, email="ci@example.test")
@@ -191,6 +234,9 @@ async def test_no_comparison_yet_is_an_empty_history_not_zero_differences(factor
     assert answer.json() == {
         "runs": [], "streak_days": 0, "required_days": vocab.REQUIRED_CLEAN_DAYS, "cutover_ready": False,
         "window_runs_now": settings.CANONICAL_DELETION_WINDOW_RUNS,
+        # W25d: before the cutover, today's answer plus the null-filled cut-over state (legacy writes ON).
+        "cutover": {"legacy_writes": True, "cut_over_at": None, "cut_over_by_name": None,
+                    "streak_days_at_cutover": None},
     }
 
 
@@ -396,3 +442,241 @@ def test_the_task_binds_its_own_log_context(monkeypatch: pytest.MonkeyPatch) -> 
     assert seen["celery_task_name"] == "app.worker.tasks.run_suite_membership_parity"
     assert seen["parity_trigger"] == "admin"
     assert "investigation_id" not in seen
+
+
+# ── W25d HYG-04: the cutover POST, the GET's cut-over state, "Compare now" after it ──────────────
+
+
+async def _set_flag(factory: Any, enabled: bool) -> None:
+    from sqlalchemy import update
+
+    async with factory() as db:
+        await db.execute(update(FeatureFlag).where(FeatureFlag.key == cutover.FEATURE_FLAG)
+                         .values(enabled_global=enabled))
+        await db.commit()
+
+
+async def _flag(factory: Any) -> FeatureFlag:
+    from sqlalchemy import select
+
+    async with factory() as db:
+        return (await db.execute(select(FeatureFlag).where(FeatureFlag.key == cutover.FEATURE_FLAG))).scalar_one()
+
+
+async def _audit(factory: Any) -> list[SettingsAuditLog]:
+    from sqlalchemy import select
+
+    async with factory() as db:
+        return list((await db.execute(select(SettingsAuditLog))).scalars().all())
+
+
+async def _clean_days(factory: Any, offsets: range | tuple[int, ...]) -> None:
+    for offset in offsets:
+        await _run(factory, started_at=_at(offset), projects_checked=2, keys_compared=40)
+
+
+@pytest.fixture
+def journal(factory: Any, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """update_flag (bound to the REAL signature, then run for real) → DBAPI commit → cache drop → epoch bump."""
+    from app.services import cache_service
+
+    entries: list[Any] = []
+    real_update = ff.update_flag
+    signature = inspect.signature(real_update)
+
+    async def _update(*args: Any, **kwargs: Any) -> Any:
+        bound = signature.bind(*args, **kwargs)
+        entries.append(("update_flag", {k: v for k, v in bound.arguments.items() if k != "db"}))
+        return await real_update(*args, **kwargs)
+
+    async def _invalidate(key: str) -> None:
+        entries.append(("invalidate", key))
+
+    async def _bump(project_ids: Any) -> None:
+        entries.append(("bump", sorted(str(p) for p in project_ids)))
+
+    @event.listens_for(factory.engine.sync_engine, "commit")
+    def _commit(conn: Any) -> None:
+        entries.append(("commit", None))
+
+    monkeypatch.setattr(ff, "update_flag", _update)
+    monkeypatch.setattr(ff, "invalidate_flag_cache", _invalidate)
+    monkeypatch.setattr(cache_service, "bump_analytics_epochs", _bump)
+    entries.clear()
+    return entries
+
+
+@pytest.mark.parametrize("who", ["lead", "bound"])
+async def test_the_cutover_refuses_a_qa_lead_and_a_project_bound_admin_key(
+    factory: Any, world: Any, journal: list, who: str,
+) -> None:
+    await _clean_days(factory, range(1, 8))
+    factory.statements.clear()
+    journal.clear()
+    async with _client(factory, getattr(world, who)) as client:
+        answer = await client.post(CUTOVER, json={})
+    assert answer.status_code == 403
+    assert journal == [] and _writes(factory.statements) == []
+    assert (await _flag(factory)).enabled_global is True
+
+
+async def test_the_cutover_is_409_when_already_cut_over(factory: Any, world: Any, journal: list) -> None:
+    await _clean_days(factory, range(1, 8))
+    await _set_flag(factory, False)
+    factory.statements.clear()
+    journal.clear()
+    async with _client(factory, world.admin) as client:
+        answer = await client.post(CUTOVER, json={})
+    assert answer.status_code == 409
+    assert answer.json() == {"detail": "Already cut over: the old suite-membership tables are not written."}
+    assert journal == [] and _writes(factory.statements) == []
+
+
+async def test_the_cutover_is_409_while_a_comparison_is_running(factory: Any, world: Any, journal: list) -> None:
+    await _clean_days(factory, range(1, 8))
+    await _run(factory, started_at=datetime.now(timezone.utc) - timedelta(minutes=5), status="running")
+    journal.clear()
+    async with _client(factory, world.admin) as client:
+        answer = await client.post(CUTOVER, json={})
+    assert answer.status_code == 409
+    assert answer.json() == {"detail": "A comparison is running; cut over when it has finished."}
+    assert journal == [] and (await _flag(factory)).enabled_global is True
+
+
+async def test_the_cutover_is_409_before_seven_clean_days(factory: Any, world: Any, journal: list) -> None:
+    await _clean_days(factory, (1, 2, 3))
+    factory.statements.clear()
+    journal.clear()
+    async with _client(factory, world.admin) as client:
+        answer = await client.post(CUTOVER, json={})
+    assert answer.status_code == 409
+    assert answer.json() == {"detail": "Not ready: day 3 of 7 with no differences."}
+    assert journal == [] and _writes(factory.statements) == []
+    assert (await _flag(factory)).enabled_global is True and await _audit(factory) == []
+
+
+async def test_two_clicks_make_one_change_the_reread_under_the_lock_refuses(
+    factory: Any, world: Any, journal: list, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first read said ON; by the time the lock is held another request has turned it off."""
+    from sqlalchemy import update
+
+    async def _lock_after_the_other_click(db: Any) -> None:
+        await db.execute(update(FeatureFlag).where(FeatureFlag.key == cutover.FEATURE_FLAG)
+                         .values(enabled_global=False))
+
+    monkeypatch.setattr(routes, "lock_global_agent_authority", _lock_after_the_other_click)
+    await _clean_days(factory, range(1, 8))
+    journal.clear()
+    async with _client(factory, world.admin) as client:
+        answer = await client.post(CUTOVER, json={})
+    assert answer.status_code == 409
+    assert answer.json() == {"detail": "Already cut over: the old suite-membership tables are not written."}
+    assert [e for e in journal if e[0] == "update_flag"] == []          # update_flag never ran
+    assert await _audit(factory) == []
+
+
+async def test_the_cutover_turns_the_flag_off_in_order_and_the_card_reads_it(
+    factory: Any, world: Any, journal: list, dispatched: list, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log = _Recorder()
+    monkeypatch.setattr(routes, "logger", log)
+    await _clean_days(factory, range(1, 8))
+    journal.clear()
+    async with _client(factory, world.admin) as client:
+        answer = await client.post(CUTOVER, json={"ignored": True})
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert set(body) == {"cut_over_at", "streak_days"} and body["streak_days"] == 7
+    assert datetime.fromisoformat(body["cut_over_at"]) <= datetime.now(timezone.utc)
+
+    # update_flag (real signature) → the ONE commit → the cache drop → the epoch bump, in that order.
+    assert [e[0] for e in journal][:4] == ["update_flag", "commit", "invalidate", "bump"]
+    update_args = journal[0][1]
+    assert update_args == {
+        "key": "suite_membership_legacy_writes", "updates": {"enabled_global": False},
+        "actor": world.admin, "reason": "HYG-04 cutover after 7 clean UTC days",
+    }
+    assert journal[2] == ("invalidate", "suite_membership_legacy_writes")
+    assert journal[3] == ("bump", [str(world.project.id)])
+    assert factory.lock_calls                                            # the flag service's lock was taken
+    flag = await _flag(factory)
+    assert flag.enabled_global is False and flag.updated_by_user_id == world.admin.id
+    [audit] = await _audit(factory)
+    assert (audit.setting_key, audit.action, audit.actor_name) == (
+        "feature_flag:suite_membership_legacy_writes", "update", "ada")
+    assert audit.changed_fields == ["enabled_global"] and audit.reason == "HYG-04 cutover after 7 clean UTC days"
+    assert log.calls == [("info", "suite_membership_cutover",
+                          {"actor_user_id": str(world.admin.id), "streak_days": 7})]
+
+    async with _client(factory, world.admin) as client:
+        history = (await client.get(BASE)).json()
+        compare = await client.post(BASE, json={})
+        again = await client.post(CUTOVER, json={})
+    state = history["cutover"]
+    assert state["legacy_writes"] is False and state["cut_over_by_name"] == "ada"
+    assert state["streak_days_at_cutover"] == 7 and state["cut_over_at"] is not None
+    assert history["streak_days"] == 7 and history["cutover_ready"] is True and len(history["runs"]) == 7
+    assert compare.status_code == 409 and compare.json() == {
+        "detail": "The comparison is retired: the old suite-membership tables are no longer written."}
+    assert dispatched == []
+    assert again.status_code == 409 and again.json()["detail"].startswith("Already cut over")
+
+
+async def test_a_failing_epoch_bump_still_answers_200_and_logs_the_type(
+    factory: Any, world: Any, journal: list, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import cache_service
+
+    async def _redis_down(project_ids: Any) -> None:
+        raise ConnectionError("redis at cache-Xq refused")
+
+    monkeypatch.setattr(cache_service, "bump_analytics_epochs", _redis_down)
+    log = _Recorder()
+    monkeypatch.setattr(routes, "logger", log)
+    await _clean_days(factory, range(1, 8))
+    journal.clear()
+    async with _client(factory, world.admin) as client:
+        answer = await client.post(CUTOVER, json={})
+    assert answer.status_code == 200, answer.text
+    assert "cache-Xq" not in answer.text and "cache-Xq" not in repr(log.calls)
+    assert ("warning", "suite_membership_cutover_epoch_bump_failed",
+            {"actor_user_id": str(world.admin.id), "error_type": "ConnectionError"}) in log.calls
+    assert (await _flag(factory)).enabled_global is False
+
+
+async def test_after_the_cutover_the_history_window_ends_at_the_cutover(factory: Any, world: Any) -> None:
+    """Cut over at day -3 10:12 after seven clean days (-9 … -3); a run started after the cut is not listed, and
+    the three dates since (no run: the runner skips) never read as missed days."""
+    cut = _at(3, hour=10, minute=12)
+    await _clean_days(factory, range(3, 10))
+    late = await _run(factory, started_at=_at(1), status="diffs", blocking_diffs=2)
+    await _set_flag(factory, False)
+    async with factory() as db:
+        db.add(SettingsAuditLog(setting_key="feature_flag:suite_membership_legacy_writes", action="update",
+                                actor_id=world.admin.id, actor_name="ada", changed_fields=["enabled_global"],
+                                reason="HYG-04 cutover after 7 clean UTC days", created_at=cut))
+        db.add(SettingsAuditLog(setting_key="feature_flag:suite_membership_legacy_writes", action="update",
+                                actor_id=world.admin.id, actor_name="lee", changed_fields=["description"],
+                                created_at=cut + timedelta(days=1)))   # a later description edit is not the cutover
+        await db.commit()
+    factory.statements.clear()
+    async with _client(factory, world.admin) as client:
+        body = (await client.get(BASE)).json()
+    assert _writes(factory.statements) == []
+    assert body["cutover"] == {"legacy_writes": False, "cut_over_at": body["cutover"]["cut_over_at"],
+                               "cut_over_by_name": "ada", "streak_days_at_cutover": 7}
+    assert datetime.fromisoformat(body["cutover"]["cut_over_at"]) == cut
+    assert str(late.id) not in {r["id"] for r in body["runs"]} and len(body["runs"]) == 7
+    assert body["streak_days"] == 7 and body["cutover_ready"] is True
+
+
+async def test_off_without_an_audit_row_shows_no_cutover_date_and_the_live_window(factory: Any, world: Any) -> None:
+    """The row flipped outside the audit trail: "not written", never "cut over after N clean days"."""
+    await _clean_days(factory, (1, 2))
+    await _set_flag(factory, False)
+    async with _client(factory, world.admin) as client:
+        body = (await client.get(BASE)).json()
+    assert body["cutover"] == {"legacy_writes": False, "cut_over_at": None, "cut_over_by_name": None,
+                               "streak_days_at_cutover": None}
+    assert body["streak_days"] == 2 and body["cutover_ready"] is False and len(body["runs"]) == 2

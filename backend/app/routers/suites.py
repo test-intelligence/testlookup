@@ -562,6 +562,12 @@ async def confirm_canonical_retirement(
     )
     await db.commit()
     await emit_staged_test_management_metrics(db)
+    # Once the suite memberships are cut over (W25d), the coverage map's
+    # needs-review count reads retirement_confirmed_at: bump the analytics
+    # epoch after the commit that made the confirmation durable.
+    from app.services.cache_service import bump_analytics_epoch
+
+    await bump_analytics_epoch(canonical.project_id)
     await db.refresh(canonical)
     return _canonical_to_response(canonical)
 
