@@ -12,7 +12,7 @@ import time
 import uuid as _uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional, Set
+from typing import Any, Optional, Set
 
 import structlog
 
@@ -39,6 +39,8 @@ from app.db.postgres import AsyncSessionLocal, get_db
 from app.models.postgres import User
 from app.services import ws_audit_policy
 from app.services.access_audit_service import log_access_change
+from app.streams import live_frames
+from app.streams.live_frames import LIVE_PROTOCOL_BATCH, LIVE_PROTOCOL_LEGACY, LiveFramePacer
 
 logger = logging.getLogger(__name__)
 _slog = structlog.get_logger(__name__)
@@ -59,17 +61,47 @@ class WsSession:
     user_name: Optional[str]
     token_exp: float  # epoch seconds; 0 means "no exp claim"
     last_event_id: Optional[str] = None
+    # W25e: the frame protocol the client asked for in its auth frame (2 = live_batch frames).
+    protocol: int = LIVE_PROTOCOL_LEGACY
 
 router = APIRouter(prefix="/ws", tags=["Live Reporting"])
+
+# The monotonic clock's tick (15.6 ms on Windows, ~1 ns on Linux). A flush timer is
+# scheduled one tick late so the event loop, which runs a timer up to one tick early,
+# never wakes it before the pacer's interval has elapsed.
+_CLOCK_TICK_SECONDS = time.get_clock_info("monotonic").resolution
+
+
+@dataclass
+class _PacedSocket:
+    """One registered socket's pacer and its pending flush (W25e E-2, contract §1.2)."""
+    project_id: str
+    pacer: LiveFramePacer
+    flush_handle: Optional[asyncio.TimerHandle] = None
+    flush_task: Optional[asyncio.Task[None]] = None
+    # True while a data frame is being sent: one send at a time per socket. A send slower
+    # than the interval keeps folding into the pacer instead of stacking concurrent sends.
+    sending: bool = False
 
 # ── Connection manager ─────────────────────────────────────────────────────
 
 class ConnectionManager:
-    """Manages WebSocket connections per project channel with connection limits."""
+    """Manages WebSocket connections per project channel with connection limits.
 
-    def __init__(self):
+    W25e (E-2): every registered socket has a ``LiveFramePacer``; a socket receives at
+    most one data frame per ``live_frames.FRAME_INTERVAL_MS``. The first frame after an
+    idle interval is sent INLINE inside ``broadcast`` (byte-identical to the event, with
+    the synchronous 1013 dead-socket handling); events inside the interval are folded and
+    flushed by a per-socket timer. Control frames (``connected``, ``initial_state``, the
+    bootstrap ``reconcile_required``, ``ping`` / ``pong`` / ``refreshed``) are sent by the
+    endpoint directly and are never paced.
+    """
+
+    def __init__(self) -> None:
         # project_id -> set of WebSocket connections
         self._channels: dict[str, Set[WebSocket]] = {}
+        # socket -> its pacer and pending flush (keyed by the socket object)
+        self._paced: dict[Any, _PacedSocket] = {}
 
     async def accept(self, project_id: str, websocket: WebSocket) -> bool:
         """Accept the WS handshake if limits permit; do NOT yet register in the
@@ -118,11 +150,20 @@ class ConnectionManager:
         except Exception:  # noqa: BLE001 -- telemetry must never break the socket
             pass
 
-    def register(self, project_id: str, websocket: WebSocket) -> None:
-        """Register an already-accepted, authenticated socket in the broadcast channel."""
+    def register(
+        self, project_id: str, websocket: WebSocket, protocol: int = LIVE_PROTOCOL_LEGACY
+    ) -> None:
+        """Register an already-accepted, authenticated socket in the broadcast channel.
+
+        No I/O: creates the socket's pacer (``protocol`` 2 = ``live_batch`` frames).
+        """
         if project_id not in self._channels:
             self._channels[project_id] = set()
         self._channels[project_id].add(websocket)
+        previous = self._paced.pop(websocket, None)
+        if previous is not None:
+            self._cancel_flush(previous)
+        self._paced[websocket] = _PacedSocket(project_id, LiveFramePacer(protocol))
         self._publish_active_total()
         logger.info(f"WS connect: project={project_id} total={len(self._channels[project_id])}")
 
@@ -131,44 +172,174 @@ class ConnectionManager:
         channel.discard(websocket)
         if not channel:
             self._channels.pop(project_id, None)
+        paced = self._paced.pop(websocket, None)
+        if paced is not None:
+            self._cancel_flush(paced)
         self._publish_active_total()
         logger.info(f"WS disconnect: project={project_id}")
 
+    @staticmethod
+    def _cancel_flush(paced: _PacedSocket) -> None:
+        """Cancel the socket's flush timer and flush task (never the task calling this)."""
+        if paced.flush_handle is not None:
+            paced.flush_handle.cancel()
+            paced.flush_handle = None
+        task = paced.flush_task
+        paced.flush_task = None
+        if task is not None and not task.done():
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:  # no running loop (a synchronous caller)
+                current = None
+            if task is not current:
+                task.cancel()
+
+    def _paced_for(self, project_id: str, websocket: Any) -> _PacedSocket:
+        paced = self._paced.get(websocket)
+        if paced is None:  # defensive: a socket that reached a channel without register()
+            paced = _PacedSocket(project_id, LiveFramePacer(LIVE_PROTOCOL_LEGACY))
+            self._paced[websocket] = paced
+        return paced
+
+    async def _send_payload(self, project_id: str, websocket: Any, payload: str) -> bool:
+        """One send with the per-send timeout; False when the socket is dead."""
+        try:
+            await asyncio.wait_for(
+                websocket.send_text(payload), timeout=settings.WS_BROADCAST_TIMEOUT
+            )
+            return True
+        except asyncio.TimeoutError:
+            logger.debug(f"ws_broadcast_timeout project_id={project_id}")
+        except (RuntimeError, ConnectionError):
+            # RuntimeError: WebSocket already in CLOSED state.
+            # ConnectionError: peer vanished mid-send.
+            pass
+        except Exception as exc:  # noqa: BLE001 — defensive: never let one dead socket poison gather
+            logger.warning(
+                f"ws_broadcast_failed project_id={project_id}: {type(exc).__name__}"
+            )
+        return False
+
+    async def _drop_dead(self, project_id: str, websocket: Any) -> None:
+        """Close a socket that failed a send with 1013 (the client reconnects) and forget it."""
+        try:
+            await asyncio.wait_for(
+                websocket.close(code=1013, reason="Live stream delivery timeout"),
+                timeout=settings.WS_BROADCAST_TIMEOUT,
+            )
+        except Exception:
+            pass
+        self.disconnect(project_id, websocket)
+
+    def _schedule_flush(self, websocket: Any, paced: _PacedSocket) -> None:
+        """Arm the socket's flush timer for when its pacer can hand out the next frame."""
+        if paced.sending or paced.flush_handle is not None:
+            return
+        if paced.flush_task is not None and not paced.flush_task.done():
+            return
+        delay = paced.pacer.due_in()
+        if delay is None:
+            return
+        paced.flush_handle = asyncio.get_running_loop().call_later(
+            delay + _CLOCK_TICK_SECONDS, self._start_flush, websocket, paced
+        )
+
+    def _start_flush(self, websocket: Any, paced: _PacedSocket) -> None:
+        paced.flush_handle = None
+        if self._paced.get(websocket) is not paced:
+            return  # disconnected (or re-registered) since the timer was armed
+        paced.flush_task = asyncio.get_running_loop().create_task(self._flush(websocket))
+
+    async def _flush(self, websocket: Any) -> None:
+        """Timer-driven: take the pacer's frame → send (timeout) → 1013 on failure → re-arm."""
+        paced = self._paced.get(websocket)
+        if paced is None:
+            return
+        if paced.sending:  # an inline send is in flight; its completion re-arms the timer
+            paced.flush_task = None
+            return
+        frame = paced.pacer.take_frame()
+        if frame is not None:
+            paced.sending = True
+            try:
+                sent = await self._send_payload(paced.project_id, websocket, json.dumps(frame))
+            finally:
+                paced.sending = False
+            if not sent:
+                await self._drop_dead(paced.project_id, websocket)
+                return
+        if self._paced.get(websocket) is paced:
+            paced.flush_task = None
+            self._schedule_flush(websocket, paced)
+
     async def broadcast(self, project_id: str, message: dict) -> None:
-        """Send a message to all connected clients with per-send timeout to drop dead connections."""
+        """Offer a message to every socket of the channel; send what each pacer allows now.
+
+        A socket whose slot is free and has nothing pending receives the message itself,
+        inline, with the per-send timeout; a dead socket is closed 1013 and dropped here.
+        A socket inside its interval folds the message and a timer flushes it later.
+        """
         channel = self._channels.get(project_id, set())
         if not channel:
             return
-        dead: Set[WebSocket] = set()
-        payload = json.dumps(message)
-        timeout = settings.WS_BROADCAST_TIMEOUT
+        payload = json.dumps(message)  # today's encoding: the inline frame's bytes are unchanged
+        sends: list[tuple[Any, _PacedSocket, str]] = []
+        for ws in list(channel):
+            paced = self._paced_for(project_id, ws)
+            paced.pacer.offer(message)
+            if paced.sending:
+                continue  # the in-flight send re-arms the timer when it completes
+            frame = paced.pacer.take_frame()
+            if frame is None:
+                self._schedule_flush(ws, paced)
+                continue
+            data = payload if frame is message else json.dumps(frame)
+            paced.sending = True  # before any await: a concurrent caller buffers
+            sends.append((ws, paced, data))
+        if not sends:
+            return
+        try:
+            results = await asyncio.gather(
+                *(self._send_payload(project_id, ws, data) for ws, _paced, data in sends),
+                return_exceptions=True,
+            )
+        finally:
+            for _ws, paced, _data in sends:
+                paced.sending = False
+        for (ws, paced, _data), sent in zip(sends, results):
+            if sent is True:
+                if self._paced.get(ws) is paced:
+                    self._schedule_flush(ws, paced)  # anything folded during the send
+            else:
+                await self._drop_dead(project_id, ws)
 
-        async def _send(ws: WebSocket) -> None:
-            try:
-                await asyncio.wait_for(ws.send_text(payload), timeout=timeout)
-            except asyncio.TimeoutError:
-                logger.debug(f"ws_broadcast_timeout project_id={project_id}")
-                dead.add(ws)
-            except (RuntimeError, ConnectionError):
-                # RuntimeError: WebSocket already in CLOSED state.
-                # ConnectionError: peer vanished mid-send.
-                dead.add(ws)
-            except Exception as exc:  # noqa: BLE001 — defensive: never let one dead socket poison gather
-                logger.warning(
-                    f"ws_broadcast_failed project_id={project_id}: {exc}"
-                )
-                dead.add(ws)
+    async def send_replay(self, project_id: str, websocket: WebSocket, events: list[dict]) -> None:
+        """The bootstrap replay, offered to the socket's pacer (register first).
 
-        await asyncio.gather(*[_send(ws) for ws in list(channel)], return_exceptions=True)
-        for ws in dead:
-            try:
-                await asyncio.wait_for(
-                    ws.close(code=1013, reason="Live stream delivery timeout"),
-                    timeout=timeout,
-                )
-            except Exception:
-                pass
-            self.disconnect(project_id, ws)
+        Protocol 2 receives one ``live_batch``; protocol 1 at most ``LEGACY_BACKLOG_MAX``
+        paced legacy frames or ONE ``reconcile_required`` carrying ``dropped``.
+        """
+        if not events:
+            return
+        paced = self._paced_for(project_id, websocket)
+        for event in events:
+            paced.pacer.offer(event)
+        if paced.sending:
+            return
+        frame = paced.pacer.take_frame()
+        if frame is None:
+            self._schedule_flush(websocket, paced)
+            return
+        paced.sending = True
+        try:
+            sent = await self._send_payload(project_id, websocket, json.dumps(frame))
+        finally:
+            paced.sending = False
+        if not sent:
+            await self._drop_dead(project_id, websocket)
+            return
+        if self._paced.get(websocket) is paced:
+            self._schedule_flush(websocket, paced)
 
     async def broadcast_all(self, message: dict) -> None:
         """Broadcast to all connected clients across all projects."""
@@ -278,11 +449,22 @@ async def _authenticate_ws(
         await websocket.close(code=4400, reason="Invalid last_event_id")
         return None
 
+    # W25e: the frame protocol is opt-in and lenient — never a close for it. Only an int
+    # >= 2 selects live_batch frames (a bool, a string or an absent value is legacy; a
+    # future 3 gets this server's best, 2).
+    requested = msg.get("protocol")
+    protocol = (
+        LIVE_PROTOCOL_BATCH
+        if type(requested) is int and requested >= LIVE_PROTOCOL_BATCH
+        else LIVE_PROTOCOL_LEGACY
+    )
+
     return WsSession(
         user_id=user.id,
         user_name=user.username,
         token_exp=exp_epoch,
         last_event_id=last_event_id,
+        protocol=protocol,
     )
 
 
@@ -422,14 +604,26 @@ async def live_updates(websocket: WebSocket, project_id: str):
 
     Auth handshake (required, ~10s timeout):
         client → ``{"type":"auth","token":"<JWT access token>"}``
+        optional ``"last_event_id": "<ms>-<seq>"`` (reconnect replay) and
+        ``"protocol": 2`` (opt in to ``live_batch`` frames; anything else is legacy).
 
-    On success, server sends ``{"type":"connected", ...}``.
+    On success, server sends ``{"type":"connected", ..., "protocol": 1|2,
+    "frame_interval_ms": 200}``.
     On failure, server closes with a ``4xxx`` code and a reason.
+
+    Data frames are paced: at most one per ``frame_interval_ms`` per socket (W25e).
 
     Message types sent to client:
     - connected: Auth successful, subscription active
-    - run_started / run_updated / run_completed: lifecycle of a test run
-    - test_failed / ai_analysis_ready: per-test events
+    - initial_state / reconcile_required: the bootstrap state (control, unpaced)
+    - live_run_started / live_test_result / live_warning / live_run_complete,
+      run_completed, pipeline_progress, …: data events. Protocol 1 receives them
+      as themselves; several ``live_test_result`` / ``live_warning`` events of one
+      run inside one interval arrive as the latest one plus ``"coalesced": n``.
+    - live_batch (protocol 2 only): every data event folded inside one interval,
+      in last-update order (``events``, ``counts``, the max ``sequence_id``); a lone
+      event is sent as itself
+    - reconcile_required with ``dropped``: the backlog overflowed — re-read the state
     - ping: Keep-alive heartbeat every 30s
 
     Message types received from client (post-auth):
@@ -460,6 +654,8 @@ async def live_updates(websocket: WebSocket, project_id: str):
             "project_id": project_id,
             "user_id": str(session.user_id),
             "message": "Subscribed to live test updates",
+            "protocol": session.protocol,
+            "frame_interval_ms": live_frames.FRAME_INTERVAL_MS,
         })
 
         from app.streams.live_fanout import (
@@ -470,33 +666,35 @@ async def live_updates(websocket: WebSocket, project_id: str):
         from app.streams.live_run_state import RedisLiveRunState
 
         # The local relay takes this same lock before broadcasting. Capture a
-        # high-water mark, bootstrap through it, and only then register the
-        # socket; later events wait and are delivered after bootstrap.
+        # high-water mark, bootstrap through it, and register the socket inside
+        # the lock; later events wait and are delivered after bootstrap. The
+        # control frame goes out directly; a replay goes through the socket's
+        # pacer (W25e), so it arrives paced like live frames.
         async with asyncio.timeout(settings.WS_BROADCAST_TIMEOUT):
             async with project_delivery_lock(project_id):
                 high_water = await latest_live_sequence(project_id)
                 active = await RedisLiveRunState.get_all_active()
                 project_sessions = [s for s in active if s.get("project_id") == project_id]
+                replay: list[dict] = []
                 if session.last_event_id:
                     replay, reconcile = await replay_live_notifications(
                         project_id, session.last_event_id, through_id=high_water,
                     )
                     if reconcile:
+                        replay = []
                         await websocket.send_json({
                             "type": "reconcile_required",
                             "sessions": project_sessions,
                             "sequence_id": high_water,
                         })
-                    else:
-                        for event in replay:
-                            await websocket.send_json(event)
                 else:
                     await websocket.send_json({
                         "type": "initial_state",
                         "sessions": project_sessions,
                         "sequence_id": high_water,
                     })
-                manager.register(project_id, websocket)
+                manager.register(project_id, websocket, protocol=session.protocol)
+                await manager.send_replay(project_id, websocket, replay)
 
         # Keep connection alive with ping/pong + periodic token-expiry checks.
         while True:
@@ -849,6 +1047,12 @@ async def ingest_live_event(
 
                 await bump_analytics_epoch(bound_project_id)
             await after_commit(outcome)
+            if outcome.completes:
+                # W25e E-1: publish the close's staged persist now instead of at
+                # the next relay tick (never raises; the relay stays the safety net).
+                from app.worker.downstream_dispatch import publish_staged_now
+
+                await publish_staged_now(db, run_id=outcome.session_id)
         return {
             "accepted": True,
             "run_id": run_id,

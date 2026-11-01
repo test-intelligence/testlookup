@@ -1,4 +1,5 @@
 """Celery background tasks for ingestion and AI analysis."""
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -491,6 +492,27 @@ def _release_dedup_for_retry(dedup_key: str, dedup_owner: str, task_id: str) -> 
 
 # ── Tasks ─────────────────────────────────────────────────────────────────────
 
+#: W25e F-4. Since a closed run's persist is published the moment the close
+#: commits, it can meet the 30 s ``drain-active-live-sessions`` beat mid-chunk
+#: on the same run (its per-run Redis lock). The close-time drain waits up to
+#: this long for that peer, polling every DRAIN_LOCK_POLL_SECONDS, before it
+#: defers the persist back to the outbox without spending an attempt.
+DRAIN_LOCK_WAIT_SECONDS = 15.0
+DRAIN_LOCK_POLL_SECONDS = 0.25
+
+
+class LiveEvidenceDrainBusy(RuntimeError):
+    """The periodic drainer held this run's drain lock past DRAIN_LOCK_WAIT_SECONDS.
+
+    Not a failure: ``persist_live_session``'s ``self.retry(exc=...)`` carries
+    this marker to :class:`DownstreamTrackedTask`, which defers the operation
+    to the relay without spending an execution attempt. A timeout is not a
+    failure.
+    """
+
+    defer_downstream_without_failure = True
+
+
 async def _drain_live_evidence_before_finalize(
     *,
     run_id: str,
@@ -528,6 +550,7 @@ async def _drain_live_evidence_before_finalize(
     stream_key = LIVE_EVIDENCE_STREAM_KEY.format(run_id=run_id)
     list_key = LIVE_TESTCASES_KEY.format(run_id=run_id)
     total_drained = 0
+    lock_wait_deadline: float | None = None
 
     while True:
         outcome = await drain_run_buffer(
@@ -540,6 +563,23 @@ async def _drain_live_evidence_before_finalize(
         total_drained += drained
         if drained:
             continue
+
+        # W25e F-4: ``lock_held`` False = another drainer holds this run's
+        # lock mid-chunk (live_session_drainer.drain_run_buffer). Wait for it
+        # instead of reading its in-flight entries as stranded; no DB
+        # connection is held while waiting. An outcome without the key keeps
+        # the historical behaviour.
+        if outcome.get("lock_held", True) is False:
+            now = time.monotonic()
+            if lock_wait_deadline is None:
+                lock_wait_deadline = now + DRAIN_LOCK_WAIT_SECONDS
+            if now < lock_wait_deadline:
+                await asyncio.sleep(DRAIN_LOCK_POLL_SECONDS)
+                continue
+            if int(await redis.xlen(stream_key) or 0):
+                raise LiveEvidenceDrainBusy(
+                    "live evidence drain lock held by a peer drainer"
+                )
 
         stream_length = int(await redis.xlen(stream_key) or 0)
         legacy_length = int(await redis.llen(list_key) or 0)
@@ -5796,6 +5836,8 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
     from app.streams.live_run_state import RedisLiveRunState
 
     async def _sweep() -> dict:
+        from app.worker.downstream_dispatch import publish_staged_now
+
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=idle_minutes)
         closed = 0
         skipped_recent = 0
@@ -5808,10 +5850,17 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
                     select(LiveSession).where(LiveSession.status == "active")
                 )
             ).scalars().all()
+            # W25e: publish_staged_now (below) can end with a rollback of an
+            # open transaction (nothing pending, a refused mark, a failed
+            # claim), and a rollback expires every LiveSession loaded above.
+            # Read what the loop needs first, so a later iteration never
+            # lazy-loads an expired row outside the session's greenlet
+            # (MissingGreenlet).
+            candidates = [(session.id, session.started_at) for session in active]
 
-            for session in active:
+            for session_id, started_at in candidates:
                 try:
-                    state = await RedisLiveRunState.get(str(session.id))
+                    state = await RedisLiveRunState.get(str(session_id))
                     last_event_iso = (state or {}).get("last_event_at")
                     is_idle = True
                     if last_event_iso:
@@ -5838,7 +5887,6 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
                         # prior reaper treated ``is_idle=True`` then
                         # skipped them via ``not is_idle`` being false.
                         # Result: sessions accumulated indefinitely.
-                        started_at = session.started_at
                         if started_at and started_at.tzinfo is None:
                             started_at = started_at.replace(tzinfo=timezone.utc)
                         is_idle = bool(started_at and started_at < cutoff)
@@ -5847,17 +5895,20 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
                         skipped_recent += 1
                         continue
 
-                    closed_project_id = await close_session(db, str(session.id))
+                    closed_project_id = await close_session(db, str(session_id))
                     await db.commit()
                     if closed_project_id is not None:
                         changed_projects.append(closed_project_id)
-                    await finalize_closed_session_redis(str(session.id))
+                    await finalize_closed_session_redis(str(session_id))
+                    # W25e E-1: publish the close's persist now, not at the next
+                    # relay tick. Never raises; a deferral stays relay-recoverable.
+                    await publish_staged_now(db, run_id=session_id)
                     closed += 1
                 except Exception as exc:
                     errors += 1
                     logger.warning(
                         "close_stale_live_sessions: failed to close %s: %s",
-                        session.id, exc,
+                        session_id, exc,
                     )
                     try:
                         await db.rollback()

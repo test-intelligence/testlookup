@@ -38,6 +38,11 @@ EXECUTION_LEASE_SECONDS = 2100
 # no longer still be executing.
 FINALIZATION_RECOVERY_GRACE_SECONDS = 2100
 FINALIZATION_RECOVERY_LEASE_SECONDS = 2100
+# W25e E-1: the lease an immediate claim (claim_staged_dispatches) holds until
+# its publish is marked. Short on purpose: if the publish or the mark fails,
+# the relay reclaims the row ('sending', lease expired -> same token) at its
+# first tick after 30 s.
+IMMEDIATE_LEASE_SECONDS = 30
 _OPERATIONS = frozenset(
     {
         "persist_live_session",
@@ -649,33 +654,104 @@ async def claim_downstream_dispatches(
         expired = row.lease_expires_at is not None and row.lease_expires_at <= now
         if not ((row.status == "pending" and due) or (row.status in {"sending", "published", "processing"} and expired)):
             continue
-        if (
-            row.status == "pending"
-            and int(row.dispatch_failures or 0) >= MAX_DISPATCH_ATTEMPTS
-        ):
-            row.status = "failed"
-            row.lease_expires_at = None
-            row.next_attempt_at = None
-            row.last_error = row.last_error or "dispatch_attempts_exhausted"
-            continue
-        previous_status = row.status
-        row.status = "sending"
-        row.attempts = int(row.attempts or 0) + 1
-        # A sending/published lease can expire while the accepted Celery
-        # message is merely waiting in its queue. Reuse that publication's
-        # token so either the original or the republished copy can claim the
-        # operation; begin_downstream_execution fences every later copy once
-        # one reaches processing. A dead processing worker gets a fresh token.
-        if previous_status == "processing" or row.dispatch_token is None:
-            row.dispatch_token = uuid.uuid4()
-        row.processing_task_id = None
-        row.lease_expires_at = now + timedelta(
-            seconds=max(10, min(int(lease_seconds), 900))
-        )
-        row.next_attempt_at = row.lease_expires_at
-        row.last_error = None
-        claimed.append(row)
+        if _lease_for_dispatch(row, now=now, lease_seconds=lease_seconds):
+            claimed.append(row)
     return claimed
+
+
+def _lease_for_dispatch(
+    row: RunDownstreamOutbox, *, now: datetime, lease_seconds: int
+) -> bool:
+    """The per-row claim transition shared by the relay and the immediate publish.
+
+    A ``pending`` row whose publish failed MAX_DISPATCH_ATTEMPTS times becomes
+    ``failed`` and is not leased (False). Otherwise the row is leased for
+    publication (True). Stage-only: the caller's transaction makes it durable.
+    """
+    if (
+        row.status == "pending"
+        and int(row.dispatch_failures or 0) >= MAX_DISPATCH_ATTEMPTS
+    ):
+        row.status = "failed"
+        row.lease_expires_at = None
+        row.next_attempt_at = None
+        row.last_error = row.last_error or "dispatch_attempts_exhausted"
+        return False
+    previous_status = row.status
+    row.status = "sending"
+    row.attempts = int(row.attempts or 0) + 1
+    # A sending/published lease can expire while the accepted Celery
+    # message is merely waiting in its queue. Reuse that publication's
+    # token so either the original or the republished copy can claim the
+    # operation; begin_downstream_execution fences every later copy once
+    # one reaches processing. A dead processing worker gets a fresh token.
+    if previous_status == "processing" or row.dispatch_token is None:
+        row.dispatch_token = uuid.uuid4()
+    row.processing_task_id = None
+    row.lease_expires_at = now + timedelta(
+        seconds=max(10, min(int(lease_seconds), 900))
+    )
+    row.next_attempt_at = row.lease_expires_at
+    row.last_error = None
+    return True
+
+
+#: The most intents one immediate claim leases. One close stages one
+#: ``persist_live_session`` row per run; the bound only caps a misuse.
+_STAGED_CLAIM_LIMIT = 10
+
+
+async def claim_staged_dispatches(
+    db: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    operations: tuple[str, ...],
+    lease_seconds: int = IMMEDIATE_LEASE_SECONDS,
+) -> list[RunDownstreamOutbox]:
+    """Lease THIS run's due ``pending`` intents of ``operations`` for an immediate publish.
+
+    Stage-only (worker/downstream_dispatch.py commits). ``SKIP LOCKED``: a row
+    the relay holds is skipped, never waited for, and the status / due
+    re-check after the lock skips a row the relay leased between the SELECT
+    and the lock. Served by ``uq_run_downstream_operation_version``'s leading
+    ``(run_id, operation)`` columns. An unknown operation is a ValueError.
+    """
+    if not operations:
+        raise ValueError("claim_staged_dispatches needs at least one operation")
+    for operation in operations:
+        if operation not in _OPERATIONS:
+            raise ValueError(f"unknown downstream operation: {operation!r}")
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(RunDownstreamOutbox)
+        .where(
+            RunDownstreamOutbox.run_id == run_id,
+            RunDownstreamOutbox.operation.in_(tuple(operations)),
+            RunDownstreamOutbox.status == "pending",
+            or_(
+                RunDownstreamOutbox.next_attempt_at.is_(None),
+                RunDownstreamOutbox.next_attempt_at <= now,
+            ),
+        )
+        .order_by(RunDownstreamOutbox.created_at, RunDownstreamOutbox.id)
+        .limit(_STAGED_CLAIM_LIMIT)
+        .with_for_update(skip_locked=True)
+        # The caller's session may already hold this row (the close staged it;
+        # sessions keep objects across commits, expire_on_commit=False): load
+        # the locked row's CURRENT state, or the re-check below reads a stale one.
+        .execution_options(populate_existing=True)
+    )
+    claimed: list[RunDownstreamOutbox] = []
+    for row in result.scalars().all():
+        if row.status != "pending":
+            continue
+        if not (row.next_attempt_at is None or row.next_attempt_at <= now):
+            continue
+        if _lease_for_dispatch(row, now=now, lease_seconds=lease_seconds):
+            claimed.append(row)
+    return claimed
+
+
 def _fair_candidate_ids(rows: list[Any], *, limit: int) -> list[uuid.UUID]:
     """Round-robin due work so an old high-volume tenant cannot starve peers."""
     by_project: dict[uuid.UUID, deque[uuid.UUID]] = {}
@@ -699,6 +775,13 @@ async def mark_downstream_dispatch_published(
         select(RunDownstreamOutbox)
         .where(RunDownstreamOutbox.id == outbox_id)
         .with_for_update()
+        # W25e: publish_staged_now marks on the session that claimed the row
+        # (expire_on_commit=False keeps that object). Without a refresh a
+        # consumer that already began ('processing') would read as the stale
+        # 'sending' and be overwritten to 'published' — its completion fence
+        # lost and the work re-run by the relay. The relay marks on a fresh
+        # session, where this changes nothing.
+        .execution_options(populate_existing=True)
     )
     row = result.scalar_one_or_none()
     if row is None or row.dispatch_token != dispatch_token:

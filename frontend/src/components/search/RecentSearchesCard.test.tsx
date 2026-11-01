@@ -1,9 +1,19 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RecentSearchesCard, { HighlightedQuery, RECENT_EMPTY, RECENT_LOAD_ERROR } from './RecentSearchesCard'
 import type { RecentSearches } from '@/types/search'
 
 const now = new Date().toISOString()
+
+// The rows read "0s ago" against Date.now(): freeze only the clock at the
+// fixtures' instant, or a slow machine renders "2s ago" (W25e push gate).
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date(now))
+})
+afterEach(() => {
+  vi.useRealTimers()
+})
 const RECENTS: RecentSearches = {
   items: [
     { q: 'checkout timeout', scope: 'tests', mode: 'hybrid', project_id: 'p1', result_count: 12, counts_exact: false, ts: now },

@@ -48,7 +48,9 @@ changes and rollback.
 ## Stop every publisher
 
 1. Enable the maintenance response at the ingress/load-balancer boundary so no
-   API request can create or recover a live run.
+   API request can create or recover a live run. Since W25e the API also
+   publishes a closed live run's `persist_live_session` right after its commit;
+   maintenance mode and scaling the API to zero stop that path too.
 2. Stop Celery beat. Its `relay-run-downstream-outbox` and
    `auto-recover-completed-live-runs` schedules publish ingestion work. Keep the
    default worker running temporarily so it can relay durable intents that were
