@@ -1,47 +1,41 @@
 /**
- * VIZ-104 (K4b) — `PassRateGauge` IS `RingGauge` with its defaults, pixel for
- * pixel.
+ * VIZ-104 (K4b) — `RingGauge`'s own default render, pixel for pixel.
  *
- * The chart gallery screenshots `PassRateGauge` (`pass-rate-gauge`, and the
- * zero item) on Linux in CI. Wave 2.5 generalises it into `RingGauge` for the
- * release-gate risk arc, and the gallery baselines must not move. So the
- * snapshot below was written from the tree BEFORE `RingGauge` existed (main
- * d55c6ce1, `PassRateGauge.tsx` untouched), through REAL Recharts: only the
+ * The chart gallery screenshots the ring (`ring-gauge-*`) and the release gate
+ * draws it (`gate-risk-gauge`) on Linux in CI. The snapshot below pins every
+ * byte `RingGauge` draws with its defaults, through REAL Recharts: only the
  * `ResponsiveContainer` is given a fixed size, because jsdom lays nothing
  * out. A change to it is a change to a visual baseline — do not update it to
  * make this pass unless that is the intent.
  *
- * `PassRateGauge` must keep rendering those bytes exactly (it keeps Recharts'
- * `accessibilityLayer` on: `rechartsA11y.test.tsx` and the gallery's
- * LEGACY_APPLICATION_LAYER ratchet both count it, and neither is this wave's).
- * `RingGauge`'s default differs from it in exactly two NON-visual ways and one
- * deliberate visual one (its track outline, R2 F9), which
- * this file removes before comparing, so every drawn byte is still pinned:
- *   - `accessibilityLayer={false}` (RULES.md): Recharts' unnamed
- *     `role="application"` tab stop, which does nothing on a gauge, is gone.
+ * What the default render carries, and the snapshot therefore pins:
+ *   - `accessibilityLayer={false}` (RULES.md): no unnamed `role="application"`
+ *     tab stop on the surface, which did nothing on a gauge;
  *   - the wrapper is a named `role="meter"` with `aria-value*`, so the value
- *     reaches a screen reader as a value.
+ *     reaches a screen reader as a value;
  *   - the track's background sector carries a 1 px `NON_TEXT_EDGE` stroke
- *     (`TRACK_OUTLINE` below): the only drawn change, asserted to be there once.
+ *     (R2 F9), so the scale's end can be seen on the card.
  * (`RingGauge` also shrinks its number when the MEASURED text overruns the
  * ring — a real browser at a small size only; at the gallery's 320 px nothing
  * overruns, and jsdom measures nothing. The last block below covers it.)
  *
- * ONE deliberate change since (W29b UIX-04b): the caption is `text-2xs` (11 px,
- * the page scale's floor) instead of `text-[10px]`; the snapshot diff is that
- * class and only that, and the `pass-rate-gauge*` / `ring-gauge-*` baselines
- * change with it, on purpose.
- *
- * Before this file was committed, a one-off sweep also compared the
- * refactored `PassRateGauge` against the ORIGINAL file (`git show
+ * History. The ring began as `PassRateGauge` (main d55c6ce1); Wave 2.5
+ * generalised it into `RingGauge` for the release-gate risk arc. Before the
+ * refactor was committed, a one-off sweep compared the refactored
+ * `PassRateGauge` against the ORIGINAL file (`git show
  * d55c6ce1:…/PassRateGauge.tsx`) over 216 renders — sizes 60/120/200/320 x
  * animate undefined/false/true x 18 values including NaN, ±Infinity, both
- * clamps and every band edge: identical bytes in all 216.
+ * clamps and every band edge: identical bytes in all 216. This file then
+ * pinned `PassRateGauge`'s pre-refactor bytes and proved `RingGauge`'s default
+ * drew the same, minus the three differences above; W29b UIX-04b changed the
+ * caption to `text-2xs` (11 px) on purpose. W25c (HYG-01) deleted
+ * `PassRateGauge`: the snapshot below was recorded while that equality proof
+ * still ran, in the same run, so it is exactly the old pins with those three
+ * differences, and it is now the ring's own pin.
  */
 import { render } from '@testing-library/react'
 import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import PassRateGauge from './PassRateGauge'
 import RingGauge from './RingGauge'
 import { bandsTone, ringTextWidth } from './gaugeBar.model'
 
@@ -85,7 +79,11 @@ function normaliseIds(html: string): string {
   return html.replace(/recharts\d+-clip/g, 'recharts#-clip')
 }
 
-/** The gallery's two items, plus both band edges and both clamp ends. */
+/**
+ * The two former `PassRateGauge` gallery items' values (96.4 and 0, at the
+ * canvas's 320 px), plus both band edges and both clamp ends. The names are
+ * the snapshot keys, recorded in W25c: kept as they are.
+ */
 const PINNED_CASES: { name: string; value: number; size?: number; animate?: boolean }[] = [
   { name: 'gallery pass-rate-gauge', value: 96.4, size: 320, animate: false },
   { name: 'gallery zero', value: 0, size: 320, animate: false },
@@ -96,46 +94,12 @@ const PINNED_CASES: { name: string; value: number; size?: number; animate?: bool
   { name: 'negative clamps the arc', value: -3, animate: false },
 ]
 
-describe('PassRateGauge — the pinned pre-RingGauge render', () => {
+describe('RingGauge — the pinned default render', () => {
   for (const c of PINNED_CASES) {
-    it(`renders the same bytes as before RingGauge existed: ${c.name}`, () => {
+    it(`draws the same bytes as its pinned default: ${c.name}`, () => {
       box.size = c.size ?? 120
-      const { container } = render(<PassRateGauge value={c.value} size={c.size} animate={c.animate} />)
+      const { container } = render(<RingGauge value={c.value} size={c.size} animate={c.animate} />)
       expect(normaliseIds(container.innerHTML)).toMatchSnapshot()
-    })
-  }
-})
-
-/** Recharts' accessibility layer: two attributes on the surface, nothing drawn. */
-const APPLICATION_LAYER = ' role="application" tabindex="0"'
-/**
- * The ONE drawn difference, deliberate (Wave 2.5 FX-kit, R2 F9): `RingGauge`
- * outlines its track in `NON_TEXT_EDGE`, because the grid-coloured track alone
- * is 1.1-1.8:1 on the card and the scale's end could not be seen. Two
- * attributes on the background sector; `PassRateGauge` keeps its pinned bytes.
- */
-const TRACK_OUTLINE = ' stroke="color-mix(in srgb, var(--chart-axis) 80%, var(--color-bg-card))" stroke-width="1"'
-/** The meter semantics on the wrapper, nothing drawn. */
-const METER_ATTRS = /^<div role="meter" aria-label="[^"]*" aria-valuenow="[^"]*" aria-valuemin="0" aria-valuemax="100" aria-valuetext="[^"]*" /
-
-describe('RingGauge — its default IS PassRateGauge, minus two non-visual defects', () => {
-  for (const c of PINNED_CASES) {
-    it(`draws the same bytes as PassRateGauge: ${c.name}`, () => {
-      box.size = c.size ?? 120
-      const legacy = normaliseIds(render(<PassRateGauge value={c.value} size={c.size} animate={c.animate} />).container.innerHTML)
-      const ring = render(<RingGauge value={c.value} size={c.size} animate={c.animate} />).container
-      const html = normaliseIds(ring.innerHTML)
-
-      // What differs, exactly: the meter semantics are there and the
-      // application layer is not …
-      expect(html).toMatch(METER_ATTRS)
-      expect(html).not.toContain('role="application"')
-      expect(legacy.split(APPLICATION_LAYER)).toHaveLength(2)
-      // … the track is outlined, once, and the legacy track is not …
-      expect(html.split(TRACK_OUTLINE)).toHaveLength(2)
-      expect(legacy).not.toContain('stroke-width="1" class="recharts-sector recharts-radial-bar-background-sector')
-      // … and with those three removed, every other byte is the same.
-      expect(html.replace(METER_ATTRS, '<div ').replace(TRACK_OUTLINE, '')).toBe(legacy.replace(APPLICATION_LAYER, ''))
     })
   }
 
@@ -212,12 +176,5 @@ describe('RingGauge — text that holds in a wider font', () => {
 
     measured.charPx = 8 // 48 px: fits, so the class's size stands
     expect((render(<RingGauge value={100} />).getByText('100.0%') as HTMLElement).style.fontSize).toBe('')
-  })
-
-  it('PassRateGauge never refits: its bytes are pinned', () => {
-    measured.charPx = 16
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({ width: 50 } as DOMRect)
-    const { getByText } = render(<PassRateGauge value={100} />)
-    expect((getByText('100.0%') as HTMLElement).style.fontSize).toBe('')
   })
 })

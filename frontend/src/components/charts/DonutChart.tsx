@@ -1,6 +1,6 @@
 /**
  * `DonutChart` (VIZ-401) — the status-distribution donut, and the generic
- * donut `DefectDonut` is now built from.
+ * donut the status donut and the breakdown donut are built from.
  *
  *   `DonutPlot`   the renderer: fixed slice order, the total in the centre,
  *                 a count-and-percent label on every slice big enough to hold

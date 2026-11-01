@@ -37,7 +37,6 @@
     "frontend/src/pages/RunDetailPage.tsx": 1,
     "frontend/src/pages/SearchPage.tsx": 1,
     "frontend/src/pages/SuiteCasesPage.tsx": 1,
-    "frontend/src/pages/SuiteDetailPage.tsx": 1,
     "frontend/src/pages/SuitesPage.tsx": 3,
     "frontend/src/pages/SummaryReportPage.tsx": 3,
     "frontend/src/pages/TestManagementPage.tsx": 15,

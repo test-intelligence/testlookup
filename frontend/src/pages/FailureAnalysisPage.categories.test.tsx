@@ -61,9 +61,6 @@ vi.mock('@/hooks/useFeatureFlags', async (importOriginal) => ({
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(() => ({ data: { items: [] }, isLoading: false })),
 }))
-vi.mock('@/hooks/useAnalyticsView', () => ({
-  useAnalyticsView: () => ({ widgetIds: [], setWidgets: vi.fn(), save: vi.fn() }),
-}))
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (state: { activeProjectId: string; activeProject: { id: string; name: string } | null }) => unknown) =>

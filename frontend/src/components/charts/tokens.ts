@@ -313,7 +313,7 @@ export const NON_TEXT_EDGE = 'color-mix(in srgb, var(--chart-axis) 80%, var(--co
  * sits on the baseline, where the largest share is read against zero; the two
  * failure kinds sit together directly on it, where the eye compares them; the
  * statuses that did not run come last. A page passes statuses in any order and
- * the kit applies this one (`buildStackedColumnModel`, `TrendChart`).
+ * the kit applies this one (`buildStackedColumnModel`).
  */
 export const STATUS_STACK_ORDER: readonly VizStatus[] = VIZ_STATUSES
 

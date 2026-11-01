@@ -68,20 +68,6 @@ vi.mock('@/hooks/useRuns', () => ({
   useRuns: vi.fn(),
 }))
 
-// P2: the page no longer reads the saved widget selection. The hook stays
-// mocked so a test can hand it a narrow selection and prove nothing hides.
-const analyticsControls = vi.hoisted(() => ({
-  widgetIds: ['failures_kpis', 'failure_category_pie', 'top_failing_bar', 'flaky_leaderboard_table'],
-}))
-
-vi.mock('@/hooks/useAnalyticsView', () => ({
-  useAnalyticsView: () => ({
-    widgetIds: analyticsControls.widgetIds,
-    setWidgets: vi.fn(),
-    save: vi.fn(),
-  }),
-}))
-
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (state: { activeProjectId: string; activeProject: { id: string; name: string } | null }) => unknown) =>
@@ -193,9 +179,6 @@ async function openDisclosure(title: string) {
 
 describe('FailureAnalysisPage', () => {
   beforeEach(() => {
-    analyticsControls.widgetIds = [
-      'failures_kpis', 'failure_category_pie', 'top_failing_bar', 'flaky_leaderboard_table',
-    ]
     // The page reads its window from the shared ``useTimeWindowStore``
     // (Zustand). Reset to the documented default so each test starts
     // from a known state — picking 30d in one test would otherwise
@@ -302,8 +285,8 @@ describe('FailureAnalysisPage', () => {
     const { useFlakyTests, useFailureCategories, useTopFailing, useTrendData } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
     // A narrow saved selection used to hide every other section forever once
-    // the picker was gone. The page must not read it any more.
-    analyticsControls.widgetIds = ['failures_kpis']
+    // the picker was gone. The page must not read it any more (W25c: the hook
+    // that read it is deleted).
     ;(useFlakyTests as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
     ;(useFailureCategories as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })
     ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [] }, isLoading: false })

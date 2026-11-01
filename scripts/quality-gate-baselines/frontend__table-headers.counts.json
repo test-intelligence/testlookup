@@ -23,7 +23,6 @@
     "frontend/src/pages/ReleasesPage.tsx": 7,
     "frontend/src/pages/ReviewsPage.tsx": 6,
     "frontend/src/pages/RunComparePage.tsx": 7,
-    "frontend/src/pages/SuiteDetailPage.tsx": 10,
     "frontend/src/pages/SuitesPage.tsx": 9,
     "frontend/src/pages/SummaryReportPage.tsx": 13,
     "frontend/src/pages/TestManagementPage.tsx": 12,

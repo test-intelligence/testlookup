@@ -320,21 +320,30 @@ describe('HeatmapSection: row order and fit', () => {
     expect(heatmapCalls()).toHaveLength(1)
   })
 
-  it('fit to data: a pressed toggle that narrows the ramp to the measured range', async () => {
+  it('fit to data is ON at first paint (HYG-08): pressed, the ramp narrowed to the measured range, the footer naming it; the toggle gives 0..100% back', async () => {
+    const rowsNote = () => section()?.querySelector('[data-heatmap-rows]')?.textContent ?? ''
     renderSection({ kinds: ['suite_environment'] })
     let ramp = (await lastOption()).visualMap.find((v) => v.id === 'ramp')
-    expect([ramp?.min, ramp?.max]).toEqual([0, 1])
+    expect(ramp?.min).toBeGreaterThan(0.5)
+    expect(ramp?.max).toBeLessThan(1)
     const toggle = screen.getByRole('button', { name: HEATMAP_FIT_LABEL })
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(rowsNote()).toContain('Colour scale fitted to the data:')
+
+    engine.instance.setOption.mockClear()
+    fireEvent.click(toggle)
     expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    ramp = (await lastOption()).visualMap.find((v) => v.id === 'ramp')
+    expect([ramp?.min, ramp?.max]).toEqual([0, 1])
+    expect(rowsNote()).not.toContain('Colour scale fitted')
+
     engine.instance.setOption.mockClear()
     fireEvent.click(toggle)
     expect(toggle).toHaveAttribute('aria-pressed', 'true')
     ramp = (await lastOption()).visualMap.find((v) => v.id === 'ramp')
     expect(ramp?.min).toBeGreaterThan(0.5)
     expect(ramp?.max).toBeLessThan(1)
-    expect(section()?.querySelector('[data-heatmap-rows]')?.textContent).toContain('Colour scale fitted to the data')
-    fireEvent.click(toggle)
-    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(rowsNote()).toContain('Colour scale fitted to the data:')
   })
 
   it('a status kind has no colour scale to fit: no toggle', async () => {
@@ -342,6 +351,10 @@ describe('HeatmapSection: row order and fit', () => {
     await waitFor(() => expect(frameState()).toBe('ready'))
     expect(screen.queryByRole('button', { name: HEATMAP_FIT_LABEL })).toBeNull()
     expect(screen.getByRole('combobox', { name: HEATMAP_SORT_LABEL })).toBeInTheDocument()
+    // The footer is drawn (the row order note) but names no fitted range: `fittedDomain` is null for a status matrix.
+    const rowsNote = section()?.querySelector('[data-heatmap-rows]')
+    expect(rowsNote?.textContent).toMatch(/^Rows: /)
+    expect(rowsNote?.textContent).not.toContain('Colour scale fitted')
   })
 
   it('hostile names reach the table as text', async () => {

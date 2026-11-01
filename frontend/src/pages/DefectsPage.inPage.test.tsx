@@ -44,13 +44,6 @@ vi.mock('@/hooks/useIntegrationsConfig', async (importOriginal) => ({
   useIntegrationsConfig: () => ({ config: undefined, error: undefined, isLoading: true }),
 }))
 vi.mock('@/hooks/useSuiteOptions', () => ({ useSuiteOptions: () => ({ options: [], isLoading: false }) }))
-vi.mock('@/hooks/useAnalyticsView', () => ({
-  useAnalyticsView: () => ({
-    instances: [], widgetIds: [], addInstance: vi.fn(), removeInstance: vi.fn(), save: vi.fn(), reset: vi.fn(),
-    isDirty: false, savedViews: [], activeViewId: null, setActiveView: vi.fn(), deleteView: vi.fn(),
-    updateInstance: vi.fn(), moveInstance: vi.fn(),
-  }),
-}))
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: (selector: (state: { activeProjectId: string; activeProject: { name: string } }) => unknown) =>

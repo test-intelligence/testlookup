@@ -1,18 +1,9 @@
 import { useMemo, type ReactNode } from 'react'
-import { Link, useSearchParams, useNavigate } from 'react-router-dom'
-import {
-  ArrowLeft, Layers, CheckCircle2, XCircle, SkipForward,
-  Clock, Activity, AlertTriangle, FolderTree,
-} from 'lucide-react'
-import { clsx } from 'clsx'
-import PageHeader from '@/components/ui/PageHeader'
+import { Layers, AlertTriangle } from 'lucide-react'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useSuiteDetail } from '@/hooks/useMetrics'
-import { useSuites } from '@/hooks/useSuites'
 import { useSuiteTrend } from '@/hooks/useSuiteTrend'
-import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
-import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import type { SuiteDetailRun, SuiteDetailSummary, SuiteDetailTestCase } from '@/types/analytics'
 import type { TrendPoint } from '@/types/metrics'
 import type { SuiteTrendPoint } from '@/hooks/useSuiteTrend'
@@ -27,17 +18,6 @@ import {
 } from '@/components/charts/stackedColumnModel'
 import { buildTimeSeriesModel, timeSeriesFromTrends, type TimeSeriesModel } from '@/components/charts/timeSeriesModel'
 import SuiteDetailAdvanced from '@/components/reports/catalogue/SuiteDetailAdvanced'
-import { FlakyPill, LastStatusBadge, PassRateBar, RecentRunsTable } from './suite/SuiteParts'
-import { formatSuiteDate, formatSuiteDuration } from './suite/format'
-
-const PERIODS = [
-  { label: '1d',  days: 1 },
-  { label: '7d',  days: 7 },
-  { label: '14d', days: 14 },
-  { label: '30d', days: 30 },
-  { label: '90d', days: 90 },
-] as const
-const PERIOD_DAYS = PERIODS.map(p => p.days) as readonly number[]
 
 /**
  * The suite's per-day counts as stacked columns. The days are zero-filled by
@@ -93,9 +73,9 @@ export const SUITE_CHART_HEIGHT = 240
 
 /**
  * One suite's reads for a window: the analytics roll-up (summary, per-test
- * rows, recent runs) and the per-day trend. Both the full body and the suite
- * page's Charts tab read through here; SWR shares the requests with any other
- * caller of the same suite and window.
+ * rows, recent runs) and the per-day trend. The suite page's Charts tab reads
+ * through here; SWR shares the requests with any other caller of the same
+ * suite and window.
  */
 function useSuiteBody(suiteName: string, days: number) {
   const { data, isLoading, error } = useSuiteDetail(suiteName || null, days)
@@ -119,9 +99,7 @@ function useSuiteBody(suiteName: string, days: number) {
   // page used to gate the *entire* view on ``testCases.length`` and fall
   // through to "No data for this suite" — hiding the real totals that every
   // other surface (/test-management, /reports/summary) shows. We now bail
-  // only when there is genuinely nothing to summarise, and let the per-test
-  // table render its own inline explanation when only the per-test detail
-  // is missing.
+  // only when there is genuinely nothing to summarise.
   const hasAnyData =
     (summary.unique_tests ?? 0) > 0
     || (summary.total_executions ?? 0) > 0
@@ -161,53 +139,6 @@ function SuiteBodyState({ body, days, children }: { body: SuiteBody; days: numbe
 
 // ── Sections ──────────────────────────────────────────────────────────────────
 
-function SuiteKpiCards({ summary }: { summary: Partial<SuiteDetailSummary> }) {
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-      {[
-        {
-          label: 'Unique Tests', value: summary.unique_tests ?? 0,
-          color: 'text-[var(--color-text)]', icon: <Layers className="h-4 w-4" />,
-        },
-        {
-          label: 'Total Executions', value: summary.total_executions ?? 0,
-          color: 'text-[var(--color-text-secondary)]', icon: <Activity className="h-4 w-4" />,
-        },
-        {
-          label: 'Passed', value: summary.passed ?? 0,
-          color: 'text-[var(--status-passed)]', icon: <CheckCircle2 className="h-4 w-4" />,
-        },
-        {
-          label: 'Failed', value: summary.failed ?? 0,
-          color: 'text-[var(--status-failed)]', icon: <XCircle className="h-4 w-4" />,
-        },
-        {
-          label: 'Pass Rate',
-          value: `${Number(summary.pass_rate ?? 0).toFixed(1)}%`,
-          color: Number(summary.pass_rate ?? 0) >= 90 ? 'text-[var(--status-passed)]'
-               : Number(summary.pass_rate ?? 0) >= 70 ? 'text-[var(--status-broken)]' : 'text-[var(--status-failed)]',
-          icon: <SkipForward className="h-4 w-4" />,
-        },
-        {
-          label: 'Avg Duration', value: formatSuiteDuration(summary.avg_duration_ms),
-          color: 'text-[var(--color-accent)]', icon: <Clock className="h-4 w-4" />,
-        },
-      ].map(({ label, value, color, icon }) => (
-        <div key={label} className="card py-3">
-          <div className="flex items-center gap-1.5 text-[var(--color-text-muted)] mb-1">
-            {icon}
-            <p className="text-xs uppercase tracking-wider">{label}</p>
-          </div>
-          {/* The metric value on the stat token (VIZ-106): 24 px like the
-              `text-2xl` it replaces, with the same 4:3 line height, so no
-              pixel moves — and presentation mode raises it with the rest. */}
-          <p className={clsx('text-[length:var(--text-stat-lg)] leading-[calc(2/1.5)] font-bold tabular-nums', color)}>{value}</p>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 /**
  * The run history and the per-day pass rate. `primary`: the suite page's
  * Charts tab marks the run history as the tab's primary content (the page
@@ -229,7 +160,7 @@ function SuiteTrendCharts({
   // Run history — per-day executions of this suite by status, on the chart
   // kit (VIZ-104). The caller hides it when no day in the window had a run,
   // so an empty suite does not show a row of zero columns. The run-by-run
-  // pass rates stay in the "Recent runs" table.
+  // pass rates stay in the suite page's Runs tab.
   const history = (
     <StackedColumnChartFrame
       title={`Run history — last ${days} days`}
@@ -259,9 +190,11 @@ function SuiteTrendCharts({
           is instead, where a sighted reader sees it.
 
           The catalogue's additions (VIZ-408, plan 2.2): the trend overlays
-          and the local zoom. No "apply as window": this page's window is
-          its own `?days`, not the global one. No `rateTarget` either: the
-          page has no target of its own to draw. */}
+          and the local zoom. No "apply as window": it was left out while
+          the chart's page kept its own `?days` window; the suite page that
+          hosts it now reads the global window, and the chart still offers
+          none. No `rateTarget` either: the page has no target of its own
+          to draw. */}
       <div data-catalogue-section="suite-pass-rate">
         <TimeSeriesChartFrame
           title={`Pass rate trend — last ${days} days`}
@@ -278,116 +211,7 @@ function SuiteTrendCharts({
   )
 }
 
-function SuiteTestCasesTable({
-  testCases,
-  summary,
-}: {
-  testCases: readonly SuiteDetailTestCase[]
-  summary: Partial<SuiteDetailSummary>
-}) {
-  return (
-    <div className="card">
-      <h3 className="text-sm font-semibold text-[var(--color-text)] mb-4">
-        Test Cases ({testCases.length})
-      </h3>
-      {testCases.length === 0 ? (
-        <div className="rounded border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] px-4 py-3 text-sm text-[var(--status-broken)]">
-          <p className="font-medium">
-            {summary.total_executions ?? 0} test{(summary.total_executions ?? 0) === 1 ? '' : 's'} reported by the run, but per-test rows are missing.
-          </p>
-          <p className="mt-1 text-xs text-[var(--status-broken)]/80">
-            This happens when the SDK doesn&apos;t emit <code className="font-mono">test_result</code> events,
-            the upload was a run-level summary (e.g. JUnit XML with no <code className="font-mono">&lt;testcase&gt;</code> elements),
-            or the live buffer evicted before persistence. Re-run the suite to populate detail rows.
-          </p>
-        </div>
-      ) : (
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr>
-              <th className="th text-left">Test Name</th>
-              <th className="th text-left">Class</th>
-              <th className="th text-right">Runs</th>
-              <th className="th text-right text-[var(--status-passed)]">Passed</th>
-              <th className="th text-right text-[var(--status-failed)]">Failed</th>
-              <th className="th text-right text-[var(--status-skipped)]">Skipped</th>
-              <th className="th min-w-[160px]">Pass Rate</th>
-              <th className="th text-right">Avg Duration</th>
-              <th className="th">Last Status</th>
-              <th className="th text-right">Last Run</th>
-            </tr>
-          </thead>
-          <tbody>
-            {testCases.map((tc) => (
-              <tr key={tc.test_fingerprint} className="table-row">
-                <td className="td max-w-[260px]">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-[var(--color-text)] truncate" title={tc.test_name}>
-                      {tc.test_name}
-                    </span>
-                    {tc.is_flaky && <FlakyPill />}
-                  </div>
-                  {tc.last_error && (
-                    <p className="text-xs text-[var(--status-failed)]/70 truncate mt-0.5" title={tc.last_error}>
-                      {tc.last_error}
-                    </p>
-                  )}
-                </td>
-                <td className="td text-[var(--color-text-muted)] text-xs max-w-[180px] truncate" title={tc.class_name ?? ''}>
-                  {tc.class_name ?? '—'}
-                </td>
-                <td className="td text-right tabular-nums text-[var(--color-text-secondary)]">{tc.total_executions}</td>
-                <td className="td text-right tabular-nums text-[var(--status-passed)]">{tc.passed}</td>
-                <td className="td text-right tabular-nums text-[var(--status-failed)]">{tc.failed}</td>
-                <td className="td text-right tabular-nums text-[var(--status-skipped)]">{tc.skipped}</td>
-                <td className="td w-44">
-                  <PassRateBar rate={Number(tc.pass_rate ?? 0)} />
-                </td>
-                <td className="td text-right tabular-nums text-[var(--color-text-muted)] text-xs">
-                  {formatSuiteDuration(tc.avg_duration_ms)}
-                </td>
-                <td className="td">
-                  <LastStatusBadge status={tc.last_status ?? 'UNKNOWN'} />
-                </td>
-                <td className="td text-right text-xs text-[var(--color-text-muted)]">
-                  {formatSuiteDate(tc.last_run_at)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      )}
-    </div>
-  )
-}
-
-// ── Bodies ────────────────────────────────────────────────────────────────────
-
-/**
- * Everything the former `/coverage/suite` page showed under its header, for one
- * suite and window: KPI cards, the run history and per-day pass rate, the
- * Wave 3 sections, the per-test table and the recent runs.
- */
-export function SuiteDetailBody({ suiteName, days }: { suiteName: string; days: number }) {
-  const body = useSuiteBody(suiteName, days)
-  return (
-    <SuiteBodyState body={body} days={days}>
-      <SuiteKpiCards summary={body.summary} />
-
-      {body.trendHasRuns && <SuiteTrendCharts days={days} trendPoints={body.trendPoints} />}
-
-      {/* Wave 3 (VIZ-501 test x run, VIZ-506 scatter): the composite
-          lazy-loads each section when it is near (no flag since Phase D). */}
-      <SuiteDetailAdvanced days={days} suiteName={suiteName} />
-
-      <SuiteTestCasesTable testCases={body.testCases} summary={body.summary} />
-
-      {body.recentRuns.length > 0 && <RecentRunsTable runs={body.recentRuns} />}
-    </SuiteBodyState>
-  )
-}
+// ── The suite page's Charts tab ───────────────────────────────────────────────
 
 /**
  * The suite page's Charts tab (UX redesign P4): the run history, the per-day
@@ -405,131 +229,5 @@ export function SuiteChartsPanel({ suiteName, days, projectId }: { suiteName: st
         <SuiteDetailAdvanced days={days} suiteName={suiteName} projectId={projectId} />
       </div>
     </SuiteBodyState>
-  )
-}
-
-// ── Page ──────────────────────────────────────────────────────────────────────
-
-export default function SuiteDetailPage() {
-  const [searchParams, setSearchParams] = useSearchParams()
-  const navigate = useNavigate()
-  const project       = useProjectStore(s => s.activeProject)
-  const activeProjectId = useProjectStore(s => s.activeProjectId)
-  const isAllProjects = activeProjectId === ALL_PROJECTS_ID
-
-  const suiteName  = searchParams.get('name') ?? ''
-  // Precedence: explicit URL ``?days=`` (deep link) > shared global
-  // preference > snapped default. Picking a period in the UI also
-  // rewrites the URL so the chip *and* the data refresh together —
-  // previously the URL pinned ``days``, so clicking 7d updated the
-  // store but ``days`` (derived) stayed on the URL value and the
-  // chart never refreshed. (Bug reported 2026-05-19 on
-  // /coverage/suite?name=…&days=90.)
-  const storedDays = useTimeWindowStore(s => s.days)
-  const setStoredDays = useTimeWindowStore(s => s.setDays)
-  const urlDays = Number(searchParams.get('days'))
-  const days = PERIOD_DAYS.includes(urlDays)
-    ? urlDays
-    : snapToAllowed(storedDays, PERIOD_DAYS)
-  const setDays = (next: number) => {
-    setStoredDays(next)
-    // Rewrite ?days= in the URL so the derived ``days`` value above
-    // re-reads the new selection on the next render. ``replace`` so
-    // the back button doesn't accumulate one entry per click.
-    const params = new URLSearchParams(searchParams)
-    params.set('days', String(next))
-    setSearchParams(params, { replace: true })
-  }
-
-  // The reverse-direction link to the catalog needs a TestSuite *id*,
-  // but the analytics page only knows the name (from the URL). Use the
-  // already-cached ``useSuites`` SWR entry to resolve it. The lookup is
-  // cheap (O(N) over a few dozen suites at most) and the fetch is
-  // shared with the rest of the app; we don't pay for it again here.
-  const { data: allSuites } = useSuites()
-  const catalogSuite = allSuites?.items.find(
-    (s) =>
-      s.name === suiteName &&
-      (activeProjectId === ALL_PROJECTS_ID || s.project_id === activeProjectId),
-  )
-
-  if (!project && !isAllProjects) {
-    return (
-      <EmptyState
-        icon={<Layers className="h-10 w-10" />}
-        title="No project selected"
-        description="Select a project from the top bar"
-      />
-    )
-  }
-
-  if (!suiteName) {
-    return (
-      <EmptyState
-        icon={<Layers className="h-10 w-10" />}
-        title="No suite specified"
-        description="Navigate here from the Coverage tab"
-      />
-    )
-  }
-
-  const periodSelector = (
-    <div className="flex items-center gap-1 bg-[var(--color-bg-secondary)] rounded-lg p-1">
-      {PERIODS.map(({ label, days: d }) => (
-        <button
-          key={d}
-          onClick={() => setDays(d)}
-          className={clsx(
-            'px-3 py-1 rounded-md text-sm font-medium transition-colors',
-            // A segmented control's chosen segment, not a primary action: the
-            // WindowPicker's selected look (W29a UIX-08, as ActivityPage's window toggle).
-            days === d ? 'bg-[var(--color-accent-muted)] text-[var(--color-accent-ink)]' : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
-          )}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  )
-
-  // Pivot back to the catalog ("what tests live in this suite") from the
-  // analytics view ("how have those tests performed"). Only rendered when
-  // we can resolve the catalog suite id — analytics pages can be reached
-  // for suites that exist as a free-text aggregate on test_runs but
-  // haven't been materialised into a TestSuite row yet (live-stream gap
-  // fallback). For those we hide the link rather than navigating to a
-  // 404'd ``/suites/null`` route.
-  const headerActions = (
-    // `flex-wrap`: below ~480 px the link and five period buttons do not fit
-    // one row (VIZ-106); at desktop widths they do, and nothing moves.
-    <div className="flex flex-wrap items-center gap-2">
-      {catalogSuite && (
-        <Link
-          to={`/suites/${catalogSuite.id}`}
-          className="inline-flex items-center gap-1 rounded px-3 py-1.5 text-sm text-[var(--color-text-muted)] ring-1 ring-[var(--color-border)] hover:bg-[var(--color-bg-secondary)] hover:text-[var(--color-text)]"
-        >
-          <FolderTree className="h-4 w-4" /> Open catalog
-        </Link>
-      )}
-      {periodSelector}
-    </div>
-  )
-
-  return (
-    <div className="space-y-6">
-      <button
-        onClick={() => navigate(`/coverage?days=${days}`)}
-        className="flex items-center gap-1 text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors text-sm"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" />
-        Back to Coverage
-      </button>
-      <PageHeader
-        title={suiteName}
-        actions={headerActions}
-      />
-
-      <SuiteDetailBody suiteName={suiteName} days={days} />
-    </div>
   )
 }

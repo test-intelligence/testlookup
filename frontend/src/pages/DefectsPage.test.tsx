@@ -103,21 +103,6 @@ const suiteOptions = vi.hoisted(() => ({ names: [] as string[] }))
 vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: () => ({ options: suiteOptions.names, isLoading: false }),
 }))
-// UX redesign P2: the page no longer reads a saved widget selection. The mock
-// stays so the test below can hand it an EMPTY selection and prove that a
-// reintroduced gate would be caught (it would hide the KPIs and the panel).
-const analyticsControls = vi.hoisted(() => ({
-  widgetIds: [] as string[],
-}))
-
-vi.mock('@/hooks/useAnalyticsView', () => ({
-  useAnalyticsView: () => ({
-    instances: [], widgetIds: analyticsControls.widgetIds, addInstance: vi.fn(), removeInstance: vi.fn(),
-    save: vi.fn(), reset: vi.fn(), isDirty: false, savedViews: [],
-    activeViewId: null, setActiveView: vi.fn(), deleteView: vi.fn(),
-    updateInstance: vi.fn(), moveInstance: vi.fn(),
-  }),
-}))
 
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
@@ -226,7 +211,6 @@ function cellOf(row: HTMLElement, header: string): HTMLElement {
 }
 
 beforeEach(() => {
-  analyticsControls.widgetIds = []
   suiteOptions.names = []
   insights.trend.mockReset()
   insights.trend.mockReturnValue({ data: undefined, isLoading: false })
@@ -273,7 +257,6 @@ describe('DefectsPage', () => {
   it('shows every section whatever a saved widget selection says (no Customize)', async () => {
     // A saved selection used to gate the KPIs and the category panel, and with
     // the picker gone nothing could ever bring a hidden section back.
-    analyticsControls.widgetIds = []
     await mockRows([{
       id: 'def-1', test_name: 'payment fails', suite_name: 'Payments',
       resolution_status: 'OPEN', ai_confidence_score: 80,

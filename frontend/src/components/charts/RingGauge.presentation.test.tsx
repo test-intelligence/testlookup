@@ -17,7 +17,6 @@ import { render } from '@testing-library/react'
 import { cloneElement, isValidElement, type ReactElement, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { usePresentationStore } from '@/store/presentationStore'
-import PassRateGauge from './PassRateGauge'
 import RingGauge from './RingGauge'
 import { ringTextWidth } from './gaugeBar.model'
 
@@ -98,14 +97,5 @@ describe('RingGauge in presentation mode (R1-5)', () => {
     // Shrunk only as far as it must: still far above the desk size.
     expect(drawn).toBeGreaterThan(30)
     expect(drawn).toBeLessThan(40)
-  })
-
-  it('PassRateGauge (legacy, pinned bytes) does not take part', () => {
-    usePresentationStore.setState({ enabled: true })
-    layOut()
-    measured.em = 0.5
-    const { container, getByText } = render(<PassRateGauge value={96.4} />)
-    expect(box(container).width).toBe('120px')
-    expect(px(getByText('96.4%'))).toBe('')
   })
 })

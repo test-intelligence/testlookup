@@ -166,10 +166,8 @@ describe('ChartGalleryPage', () => {
     expect(empties.map((item) => item.chart).sort()).toEqual([
       // Wave 3: a level with no tests (the frame's empty state, not an empty canvas).
       'coverage-map',
-      'donut',
       // VIZ-406: nothing timed at all — no value can go on a log axis.
       'duration-histogram',
-      'gauge',
       // Wave 2.5 (VIZ-104): an unmeasured bar and ring (an empty track, never
       // 0), and a sparkline with one point, which draws nothing.
       'gauge-bar',
@@ -181,19 +179,14 @@ describe('ChartGalleryPage', () => {
       'status-donut',
       // Wave 3 (R6): no cluster this week is an ANSWER (the server's sentence), drawn without a plot.
       'systemic-clusters',
-      'trend',
     ])
     const { container } = renderAt()
     expect(container.querySelectorAll('[data-gallery-empty="true"]')).toHaveLength(empties.length)
-    // The donut's own empty state, not a blank box.
-    expect(screen.getByText('No defect data')).toBeInTheDocument()
   })
 
   it('passes animate={false} through every chart to every Recharts series', () => {
     const { container } = renderAt()
     const marks = [...container.querySelectorAll('[data-animate]')]
-    // Wave 1: line 4 + area 2 + bar 4 + pie 1 + radial bar 1, plus the empty
-    // trend (4) and the zero gauge (1) = 17. The empty donut draws no Pie.
     // Wave 2: four status donuts (1 Pie each; the all-zero one hands over to
     // the frame and draws nothing), six ranked bars (1 Bar each), three
     // status charts (4 Bars each) and the registry's two (a Pie and a Bar) = 24.
@@ -235,7 +228,7 @@ describe('ChartGalleryPage', () => {
     // Wave 3 adds none: the heatmap frames, the treemaps and the scatters are
     // ECharts canvases, and the failure groups are React SVG (their table's
     // trend is the hand-drawn Sparkline).
-    expect(marks.length).toBe(17 + 24 + 10 + 20 + 8 + 9 + 13 + 21 + 4 + 3 + 1)
+    expect(marks.length).toBe(24 + 10 + 20 + 8 + 9 + 13 + 21 + 4 + 3 + 1)
     for (const mark of marks) expect(mark).toHaveAttribute('data-animate', 'false')
   })
 

@@ -1138,6 +1138,15 @@ locally by default.
 
 ### Changed
 
+- **Chart legends, heatmaps and presentation mode** (wave W25c, HYG-08;
+  branch `feat/df-hygiene-c-20261031`).
+  - The colour swatch in chart legends is wider (22 × 14 instead of
+    14 × 14), so status patterns read at a glance. Legends keep their
+    height.
+  - The heatmaps on Trends and Coverage open with their colours fitted to
+    the data range. The caption says so, and the button turns it off.
+  - Turning presentation mode on or off in one tab now follows in every
+    other open tab.
 - **Deleting a run is faster on a large catalog** (wave W25b, HYG-05;
   migration 0249 `ctc_run_fk_indexes`).
   - Three partial indexes on the catalog's run pointers are built online,
@@ -1434,6 +1443,20 @@ locally by default.
   CA, or `NODE_TLS_REJECT_UNAUTHORIZED=0` to skip verification.
 
 ### Removed
+
+- **Unused chart and page code** (wave W25c, HYG-01). No page or route
+  changes.
+  - Removed: the legacy Recharts `TrendChart`, `PassRateGauge` and
+    `DefectDonut`, and their 8 chart-gallery items.
+  - Removed: the default-exported page shells of Flaky coach, Quarantine,
+    Reviews and Suite detail (their routes render the page bodies, which
+    stay).
+  - Removed: the suite shell's private KPI cards and test-case table.
+  - Removed: the `useAnalyticsView` widget-layout hook and its widget
+    registry.
+  - Removed: a dead backend stub, `run_intelligence_service.get_pipeline_timeline`.
+  - Every chart-gallery item must now expose no unnamed
+    `role="application"` region.
 
 - **Slack "Default Channel" and project "Jenkins Job Pattern" fields** (wave
   W10, INT-02, INT-03b; owner decisions D21, D22). Neither did anything: an

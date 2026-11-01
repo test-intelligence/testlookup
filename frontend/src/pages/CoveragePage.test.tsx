@@ -65,21 +65,6 @@ vi.mock('@/hooks/useSuiteOptions', () => ({
 vi.mock('@/hooks/useRuns', () => ({
   useRuns: () => ({ data: { items: [] }, isLoading: false }),
 }))
-// P2: the page no longer reads a widget selection. The hook stays mocked with
-// a saved EMPTY selection (a user who once unticked everything): it must not
-// hide a section.
-const analyticsControls = vi.hoisted(() => ({
-  widgetIds: [] as string[],
-}))
-
-vi.mock('@/hooks/useAnalyticsView', () => ({
-  useAnalyticsView: () => ({
-    instances: [], widgetIds: analyticsControls.widgetIds, addInstance: vi.fn(), removeInstance: vi.fn(),
-    save: vi.fn(), reset: vi.fn(), isDirty: false, savedViews: [],
-    activeViewId: null, setActiveView: vi.fn(), deleteView: vi.fn(),
-    updateInstance: vi.fn(), moveInstance: vi.fn(),
-  }),
-}))
 
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
@@ -129,10 +114,6 @@ function menuItems(): string[] {
 }
 
 describe('CoveragePage', () => {
-  beforeEach(() => {
-    analyticsControls.widgetIds = []
-  })
-
   // P2: the 4-stage "Coverage workflow" ribbon was invented (fixed stages and
   // an evidence count spread across them: "the rest get 1 each so users see the
   // workflow ran end-to-end") and is gone.
@@ -182,11 +163,10 @@ describe('CoveragePage', () => {
     expect(screen.queryByText(/% confidence/i)).toBeNull()
   })
 
-  // P2: the widget picker is gone, so a selection saved with it (here: none
-  // ticked) must not keep hiding a section forever.
+  // P2: the widget picker is gone, so a selection saved with it must not keep
+  // hiding a section forever (W25c: the hook that read it is deleted).
   it('renders every section whatever widget selection was saved', async () => {
     const { useCoverage } = await import('@/hooks/useMetrics')
-    analyticsControls.widgetIds = []
     ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({
       data: {
         summary: { unique_tests: 1, suite_count: 1, total_executions: 5, avg_pass_rate: 80, days_with_runs: 1 },
@@ -751,7 +731,6 @@ describe('CoveragePage — Wave 3 sections (VIZ-502 / 501)', () => {
     suites: [{ suite_name: 'Payments', unique_tests: 6, passed: 48, failed: 2, skipped: 1, pass_rate: 96 }],
   }
   beforeEach(async () => {
-    analyticsControls.widgetIds = []
     const { useCoverage } = await import('@/hooks/useMetrics')
     ;(useCoverage as ReturnType<typeof vi.fn>).mockReturnValue({ data: coverage, isLoading: false })
   })
@@ -821,7 +800,6 @@ describe('CoveragePage — suite breakdown fit (W3 C0 BEFORE notes 1 and 2)', ()
   // The rows' grid is measured too (F-18): a desktop card unless a test narrows it.
   let gridWidth = 800
   beforeEach(() => {
-    analyticsControls.widgetIds = []
     gridWidth = 800
     // The rows' grid reports `gridWidth`; every other measured element (the bars) reports `barWidth`.
     HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
@@ -1008,7 +986,6 @@ describe('CoveragePage — suite breakdown fit (W3 C0 BEFORE notes 1 and 2)', ()
 // invented. Each test fails if its item comes back.
 describe('CoveragePage P2: no stubs, no invented values', () => {
   beforeEach(async () => {
-    analyticsControls.widgetIds = []
     const { useTimeWindowStore } = await import('@/store/timeWindowStore')
     useTimeWindowStore.setState({ days: 30 })
     // W08 harness fix: an observer that never reports the Wave 3 sections
@@ -1175,7 +1152,6 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
 // `?tab=`). Every section was moved, none rebuilt.
 describe('CoveragePage P3: the page template', () => {
   beforeEach(async () => {
-    analyticsControls.widgetIds = []
     const { useTimeWindowStore } = await import('@/store/timeWindowStore')
     useTimeWindowStore.setState({ days: 30 })
     // An observer that never reports a section near: the Wave 3 sections stay placeholders (no chunk, no request).
