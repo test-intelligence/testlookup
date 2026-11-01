@@ -130,7 +130,7 @@ async def test_a_failed_object_delete_keeps_its_row_and_never_logs_the_key(monke
 def test_explicit_deletes_take_no_archive():
     plan = svc._ExecutionPlan(
         event_archive_where=(), access_audit_where=(), tc_audit_where=(), activity_where=(),
-        deletion_job_where=(), revoked_share_link_where=(), provenance_where=(),
+        deletion_job_where=(), revoked_share_link_where=(),
         memory_expired_ids=[], expired_packs=[],
     )
     assert plan.retained_archives == [], "the field defaults empty"

@@ -8,14 +8,13 @@ class                   what it covers
 ``raw_events_days``     ``TestRun.event_archive`` JSONB strip; Mongo
                         ``live_execution_events`` (keyed by run_id — TestRun
                         UUID string or LiveSession slug), ``raw_allure_json``
-                        (keyed by test_run_id), ``raw_testng_xml`` (keyed by
-                        test_case_id), ``rest_api_payloads`` (W23d: keyed by
-                        test_run_id — every captured-exchange doc carries it).
+                        (keyed by test_run_id), ``rest_api_payloads`` (W23d:
+                        keyed by test_run_id — every captured-exchange doc
+                        carries it).
 ``runs_days``           ``test_runs`` rows — a plain DELETE; every child is
                         ``ondelete="CASCADE"`` (22 direct children plus the
                         second hop via test_cases; zero RESTRICT). Run-scoped
-                        Mongo docs (``execution_logs``, ``ocp_pod_events``,
-                        ``run_summaries`` by test_run_id;
+                        Mongo docs (``run_summaries`` by test_run_id;
                         ``ai_analysis_payloads`` by test_case_id).
                         AI history (AIH-06, owner decision D41: runs clock):
                         Postgres ``ai_analysis_versions`` CASCADE with the run
@@ -39,8 +38,7 @@ class                   what it covers
                         run and must OUTLIVE it, so it rides the audit clock,
                         never the runs clock)
                         + terminal ``deletion_jobs``
-                        (project-scoped), ``ai_provenance_records`` (via the
-                        0113 project_id column — survives run deletion),
+                        (project-scoped),
                         Mongo ``pipeline_event_log`` (by pipeline_run_ids
                         materialized BEFORE the run delete), and expired
                         ``compliance_packs`` (rows past their own
@@ -127,7 +125,6 @@ from app.models.postgres import (
     AIEvalShadowPair,
     AgentPipelineRun,
     AgentMemoryEntry,
-    AIProvenanceRecord,
     CompliancePack,
     DeletionJob,
     EvidenceArtifact,
@@ -1038,7 +1035,6 @@ class _ExecutionPlan:
     activity_where: tuple
     deletion_job_where: tuple
     revoked_share_link_where: tuple
-    provenance_where: tuple
     memory_expired_ids: list
     expired_packs: list
     #: W22b E-12: ``(job_id, export_location)`` of the retained deletion
@@ -1057,7 +1053,6 @@ class _Candidates:
     purge_tc_strs: list[str]
     # raw-events clock — runs that still exist but whose raw events expire
     raw_run_strs: list[str]
-    raw_tc_strs: list[str]
     raw_live_run_keys: list[str]      # run uuids + live-session slugs
     # artifacts clock (∪ runs clock — a deleted run's objects must die too)
     artifact_prefixes: list[str]
@@ -1145,14 +1140,14 @@ async def _collect_candidates(
             if minio_prefix:
                 artifact_prefixes.add(minio_prefix)
 
-    # test-case ids for the Mongo collections keyed by test_case_id.
-    tc_scope_ids = list({*purge_run_ids, *raw_run_ids})
+    # test-case ids for the one Mongo collection keyed by test_case_id
+    # (``ai_analysis_payloads``, runs clock). W25d HYG-02: the raw-events clock
+    # no longer needs them (its one case-keyed collection never had a writer
+    # and left the deployment).
     purge_tc_strs: list[str] = []
-    raw_tc_strs: list[str] = []
-    if tc_scope_ids:
+    if purge_run_ids:
         purge_set = set(purge_run_ids)
-        raw_set = set(raw_run_ids)
-        for chunk in _chunks(tc_scope_ids, _PG_DELETE_CHUNK):
+        for chunk in _chunks(purge_run_ids, _PG_DELETE_CHUNK):
             tc_rows = (
                 await db.execute(
                     select(TestCase.id, TestCase.test_run_id).where(
@@ -1163,8 +1158,6 @@ async def _collect_candidates(
             for tc_id, tr_id in tc_rows:
                 if tr_id in purge_set:
                     purge_tc_strs.append(str(tc_id))
-                if tr_id in raw_set:
-                    raw_tc_strs.append(str(tc_id))
 
     # pipeline-run ids — artifacts clock for MinIO keys, audit clock for the
     # immutable pipeline_event_log stream. Materialized BEFORE the cascade.
@@ -1226,7 +1219,6 @@ async def _collect_candidates(
         purge_run_strs=[str(r) for r in purge_run_ids],
         purge_tc_strs=purge_tc_strs,
         raw_run_strs=raw_run_strs,
-        raw_tc_strs=raw_tc_strs,
         raw_live_run_keys=raw_live_run_keys,
         artifact_prefixes=sorted(artifact_prefixes),
         artifact_pipeline_strs=artifact_pipeline_strs,
@@ -1239,18 +1231,17 @@ async def _collect_candidates(
 
 # (collection, key field, candidate attribute) — raw-events + runs classes.
 # raw_allure_json docs carry test_run_id (the ingestion writer always sets
-# it); raw_testng_xml / ai_analysis_payloads are keyed only by test_case_id.
+# it); ai_analysis_payloads are keyed only by test_case_id.
 # W23d: rest_api_payloads moved to test_run_id — its only writer
 # (http_exchange_store) always sets it, and a live exchange whose result never
 # projected has no test_cases row, so a case-keyed purge could never reach it.
 # Held runs stay out of raw_run_strs (the hold anti-join), so their docs stay.
+# W25d HYG-02: three collections that never had a writer left this table
+# (and the deployment) together.
 _MONGO_PLANS: tuple[tuple[str, str, str], ...] = (
     (Collections.RAW_ALLURE_JSON, "test_run_id", "raw_run_strs"),
-    (Collections.RAW_TESTNG_XML, "test_case_id", "raw_tc_strs"),
     (Collections.REST_API_PAYLOADS, "test_run_id", "raw_run_strs"),
     (Collections.LIVE_EXECUTION_EVENTS, "run_id", "raw_live_run_keys"),
-    (Collections.EXECUTION_LOGS, "test_run_id", "purge_run_strs"),
-    (Collections.OCP_POD_EVENTS, "test_run_id", "purge_run_strs"),
     (Collections.RUN_SUMMARIES, "test_run_id", "purge_run_strs"),
     # AIH-06 (D41): the versioned run summaries and analysis digests ride the
     # RUNS clock, like the latest-pointer ``run_summaries`` above. The single-run
@@ -1447,11 +1438,6 @@ async def run_purge(
         ProjectActivityEvent.occurred_at < cutoffs["audit"],
         holds.activity_not_held(project_id, now=now),
     )
-    provenance_where = (
-        AIProvenanceRecord.project_id == project_id,
-        AIProvenanceRecord.created_at < cutoffs["audit"],
-        holds.run_not_held(AIProvenanceRecord.run_id, project_id, now=now),
-    )
     deletion_job_where = (
         *deletion_job_purge_filter(project_id, cutoffs["audit"]),
         holds.project_not_held(project_id, now=now),
@@ -1530,7 +1516,6 @@ async def run_purge(
         activity_where=activity_where,
         deletion_job_where=deletion_job_where,
         revoked_share_link_where=revoked_share_link_where,
-        provenance_where=provenance_where,
         memory_expired_ids=memory_expired_ids,
         expired_packs=expired_packs,
         retained_archives=retained_archives,
@@ -1648,7 +1633,6 @@ async def run_purge(
             "revoked_share_links": await _count(
                 ReportShareLink.id, revoked_share_link_where
             ),
-            "provenance_rows": await _count(AIProvenanceRecord.id, provenance_where),
             "compliance_packs_expired": len(expired_packs),
             # W22b E-12: retained deletion archives leaving with their job rows.
             "export_archives_expired": len(retained_archives),
@@ -1749,9 +1733,9 @@ async def resolve_run_candidates(
     cross-store ids BEFORE the Postgres CASCADE destroys the mapping — is the
     single hardest thing to get right and must not exist twice.
 
-    **The six project-wide filters are deliberately empty.** ``_ExecutionPlan``
+    **The project-wide filters are deliberately empty.** ``_ExecutionPlan``
     carries clocks that never reference a run: the access and test-case audit
-    logs, provenance records, deletion jobs, expired agent memory and expired
+    logs, the activity ledger, deletion jobs, expired agent memory and expired
     compliance packs. Those belong to the nightly policy purge. A per-run
     delete that inherited them would silently take a project's whole audit
     trail with one run — so each is pinned to ``false()``, which compiles to a
@@ -1814,7 +1798,6 @@ async def resolve_run_candidates(
         purge_run_strs=[str(run_id)],
         purge_tc_strs=tc_strs,
         raw_run_strs=[str(run_id)],
-        raw_tc_strs=tc_strs,
         raw_live_run_keys=live_keys,
         artifact_prefixes=safe_prefixes,
         artifact_pipeline_strs=pipeline_strs,
@@ -1837,7 +1820,6 @@ async def resolve_run_candidates(
         # already takes them. A filter here would be a second deletion of
         # rows that are already gone.
         revoked_share_link_where=never,
-        provenance_where=never,
         memory_expired_ids=[],
         expired_packs=[],
         retained_archives=[],
@@ -1921,21 +1903,7 @@ async def execute_candidates(
         )
         evidence_rows_deleted += int(getattr(result, "rowcount", 0) or 0)
 
-    # (3.6) Stamp provenance project scope BEFORE the run link detaches —
-    # 0113 backfilled existing rows, but a row written since (writers only
-    # set run_id) would orphan once run_id goes SET NULL below and escape
-    # the audit-clock delete forever.
-    for chunk in _chunks(cand.purge_run_ids, _PG_DELETE_CHUNK):
-        await db.execute(
-            update(AIProvenanceRecord)
-            .where(
-                AIProvenanceRecord.run_id.in_(chunk),
-                AIProvenanceRecord.project_id.is_(None),
-            )
-            .values(project_id=project_id)
-        )
-
-    # (3.7) H1 — same guarantee as (3.6), for evidence artifacts. Since 0146
+    # (3.7) H1 — evidence artifacts. Since 0146
     # ``evidence_artifacts.run_id`` is SET NULL rather than CASCADE, so an
     # artifact spared by the published-report filter above now SURVIVES the run
     # delete instead of being cascaded away behind the filter's back. Stamp the
@@ -2016,9 +1984,6 @@ async def execute_candidates(
     revoked_link_result = await db.execute(
         delete(ReportShareLink).where(*plan.revoked_share_link_where)
     )
-    provenance_result = await db.execute(
-        delete(AIProvenanceRecord).where(*plan.provenance_where)
-    )
 
     # Expired compliance packs: object first, row second — if the object
     # delete fails the row survives, so the next sweep retries (re-entrant).
@@ -2051,7 +2016,6 @@ async def execute_candidates(
             "activity_rows": int(getattr(activity_result, "rowcount", 0) or 0),
             "deletion_job_rows": int(getattr(deletion_job_result, "rowcount", 0) or 0),
             "revoked_share_links": int(getattr(revoked_link_result, "rowcount", 0) or 0),
-            "provenance_rows": int(getattr(provenance_result, "rowcount", 0) or 0),
             "compliance_packs": packs_deleted,
             "memory_entries_expired": memory_rows_expired,
         },

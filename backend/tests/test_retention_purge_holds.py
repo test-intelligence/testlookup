@@ -2,11 +2,14 @@
 
 A hold check missed on ONE purge class is silent evidence loss, so the source
 of truth here is the compiled SQL the purge actually sends: ``retention_holds``
-appears in the WHERE of every statement of a HELD class (the 12 clauses: both
+appears in the WHERE of every statement of a HELD class (the 11 clauses: both
 run selects, live sessions, evidence artifacts, event archive, access audit,
-test-case audit, activity, provenance, deletion jobs, share links, packs) and
+test-case audit, activity, deletion jobs, share links, packs) and
 in none of the not-held ones; every clause is ``NOT EXISTS``, never ``NOT IN``.
 The hold READS are stubbed through the hold service's own names.
+
+W25d HYG-02 (deliberate): P-12 (the provenance class) left with the
+``ai_provenance_records`` table (migration 0250) -- its plan entries are gone.
 """
 from __future__ import annotations
 
@@ -72,7 +75,6 @@ _HELD_PREVIEW = [
     ("select", "access_audit_logs", ""),              # P-9
     ("select", "test_case_audit_logs", ""),           # P-10
     ("select", "project_activity_events", ""),        # P-11
-    ("select", "ai_provenance_records", ""),          # P-12
     ("select", "deletion_jobs", ""),                  # P-13
     ("select", "report_share_links", ""),             # P-14
     ("select", "compliance_packs", ""),               # P-16
@@ -109,7 +111,6 @@ _HELD_DML = [
     ("delete", "project_activity_events"),
     ("delete", "deletion_jobs"),
     ("delete", "report_share_links"),
-    ("delete", "ai_provenance_records"),
 ]
 
 

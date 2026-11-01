@@ -198,22 +198,8 @@ class TestEvidenceArtifactModel:
         assert "relevance_score" in columns
 
 
-class TestAIProvenanceRecordModel:
-    def test_table_exists(self):
-        from app.models.postgres import AIProvenanceRecord
-        assert AIProvenanceRecord.__tablename__ == "ai_provenance_records"
-
-    def test_columns(self):
-        from app.models.postgres import AIProvenanceRecord
-        columns = {c.name for c in AIProvenanceRecord.__table__.columns}
-        assert "entity_type" in columns
-        assert "entity_id" in columns
-        assert "model_name" in columns
-        assert "confidence" in columns
-        assert "confidence_reason" in columns
-        assert "evidence_count" in columns
-        assert "sources_used" in columns
-        assert "deterministic_checks_used" in columns
+# (W25d HYG-02: the never-written ``ai_provenance_records`` table and its ORM class
+# were dropped by migration 0250; ``tests/test_migration_0250.py`` pins their absence.)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

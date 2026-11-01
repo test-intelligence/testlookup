@@ -1,6 +1,7 @@
 """W22a ACT-05 — holds inside the POLICY purge, against a real PostgreSQL (contract §2.1 P-rows, §6.3 G-C).
 
-A hold check missed on ONE purge class is silent evidence loss. PARAMETRISED over the 17 HELD purge inputs:
+A hold check missed on ONE purge class is silent evidence loss. PARAMETRISED over the 16 HELD purge inputs
+(W25d HYG-02: "P-12 provenance" left with the ``ai_provenance_records`` table, dropped by migration 0250):
 with the policy at ``keep_last_runs = 0`` and every seeded run ``FAILED`` (so no floor arm keeps it — the
 PASSED arms apply even at N = 0), seed one row of the class old enough to be purged, place a PROJECT hold
 (``entity_id NULL``), then
@@ -221,7 +222,7 @@ async def _cleanup(sessions, pid, *, audit_ids=()) -> None:
         await db.commit()
 
 
-# ── The 17 HELD purge inputs: each seeds ONE row and answers (is it there?, its preview count) ──
+# ── The 16 HELD purge inputs: each seeds ONE row and answers (is it there?, its preview count) ──
 
 
 class _Ctx:
@@ -335,13 +336,6 @@ def _activity(ctx):
                                 entity_id=str(ctx.pid), summary="gc activity", occurred_at=ctx.old())
 
 
-def _provenance(ctx):
-    from app.models.postgres import AIProvenanceRecord
-
-    return AIProvenanceRecord(id=uuid.uuid4(), project_id=ctx.pid, entity_type="analysis", entity_id=uuid.uuid4(),
-                              created_at=ctx.old())
-
-
 def _deletion_job(ctx):
     from app.models.postgres import DeletionJob
 
@@ -405,12 +399,11 @@ _CASES = {
     "P-04 upload objects": _p04_upload_object,
     "P-05 evidence artifacts": _p05_evidence_row,
     "P-06 decision reports (audit clock)": _mongo_case("decision_reports"),
-    "P-07 runs-clock Mongo (execution_logs)": _mongo_case("execution_logs"),
+    "P-07 runs-clock Mongo (run_summaries)": _mongo_case("run_summaries"),
     "P-08 event archive strip": _p08_event_archive,
     "P-09 access audit": _row_case("access_audit_logs", _access_audit, "audit_rows", audit=True),
     "P-10 test-case audit": _row_case("test_case_audit_logs", _tc_audit, "audit_rows", audit=True),
     "P-11 activity ledger": _row_case("project_activity_events", _activity, "audit_rows"),
-    "P-12 provenance": _row_case("ai_provenance_records", _provenance, "provenance_rows"),
     "P-13 terminal deletion jobs": _row_case("deletion_jobs", _deletion_job, "audit_rows"),
     "P-14 revoked share links": _p14_revoked_link,
     "P-16 expired compliance packs": _p16_expired_pack,

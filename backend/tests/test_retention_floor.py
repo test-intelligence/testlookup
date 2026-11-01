@@ -183,7 +183,7 @@ async def test_the_floor_protects_the_run_row_not_its_expired_raw_events():
     mongo, storage = _FakeMongo(events), _FakeStorage(events)
     out = await svc.run_purge(db, project_id=PROJECT_ID, mode="execute", now=now, mongo=mongo, storage=storage)
     purged, kept = str(runs[2][0]), {str(runs[0][0]), str(runs[1][0])}
-    (runs_clock,) = mongo.collections["execution_logs"].delete_filters
+    (runs_clock,) = mongo.collections["run_summaries"].delete_filters
     assert runs_clock["test_run_id"]["$in"] == [purged]
     (raw_clock,) = mongo.collections["raw_allure_json"].delete_filters
     assert set(raw_clock["test_run_id"]["$in"]) == kept | {purged}

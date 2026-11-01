@@ -221,8 +221,8 @@ async def test_an_artifact_with_no_project_scope_is_stamped_before_the_link_drop
 
     Without it a spared artifact survives with both ``run_id`` and
     ``project_id`` null — unreachable by every project-scoped sweep, so the fix
-    for one leak would have created another. Mirrors the guarantee step 3.6
-    already gives ``ai_provenance_records``.
+    for one leak would have created another. (Step 3.6 gave the same
+    guarantee to the provenance table until W25d HYG-02 dropped it.)
     """
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
