@@ -10,7 +10,7 @@ List Active Sessions
 
 
 
-Source: [backend/app/routers/stream.py:264](../../../backend/app/routers/stream.py#L264).
+Source: [backend/app/routers/stream.py:275](../../../backend/app/routers/stream.py#L275).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -139,7 +139,7 @@ Ingest Event Batch
 
 
 
-Source: [backend/app/routers/stream.py:143](../../../backend/app/routers/stream.py#L143).
+Source: [backend/app/routers/stream.py:150](../../../backend/app/routers/stream.py#L150).
 
 Dependency chain: .
 
@@ -216,7 +216,7 @@ session's project, and the body ``run_id`` must be the session's own. The
 exchanges were already cut and redacted by the model; the store redacts
 them again (idempotent) and never fails the request on a Mongo error.
 
-Source: [backend/app/routers/stream.py:207](../../../backend/app/routers/stream.py#L207).
+Source: [backend/app/routers/stream.py:218](../../../backend/app/routers/stream.py#L218).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -309,7 +309,7 @@ can derive ``project_id`` itself) and carry the ``stream:write`` scope.
 The first call for a given ``run_id`` auto-creates a live session;
 subsequent calls reuse it.
 
-Source: [backend/app/routers/stream.py:166](../../../backend/app/routers/stream.py#L166).
+Source: [backend/app/routers/stream.py:173](../../../backend/app/routers/stream.py#L173).
 
 Dependency chain: `get_db`, `get_streaming_api_key_context`.
 
@@ -631,7 +631,7 @@ Sse Stream
 
 
 
-Source: [backend/app/routers/stream.py:339](../../../backend/app/routers/stream.py#L339).
+Source: [backend/app/routers/stream.py:350](../../../backend/app/routers/stream.py#L350).
 
 Dependency chain: .
 

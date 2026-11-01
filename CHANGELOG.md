@@ -1138,6 +1138,29 @@ locally by default.
 
 ### Changed
 
+- **A closed live run is finalized in about a second, and the live page is
+  paced** (wave W25e, HYG-06; branch `feat/df-hygiene-e-20261101`; no
+  migration).
+  - Closing a live session (`DELETE /api/v1/stream/sessions/{id}`, a
+    `run_complete` on `/stream/ingest` or `/ws/events`, or the stale-session
+    sweep) now publishes the run's persist step right after the close commits,
+    instead of waiting up to a minute for the outbox relay. The relay stays the
+    safety net: a publish that fails or times out (3 s) is picked up by its next
+    tick with the same dispatch token, and is never counted as a failure.
+  - On a 500-run local stress test the time from the close to the finalized run
+    was 1.0 s at the 95th percentile.
+  - `/ws/live` sends each browser at most one data frame every 200 ms. A client
+    that sends `"protocol": 2` in its auth frame receives `live_batch` frames
+    (every event of that interval, with counts); other clients keep the old
+    frame types, paced. A backlog is announced with `reconcile_required` and a
+    `dropped` count instead of being lost silently.
+  - The live page asks for protocol 2 and merges each batch in one pass. Every
+    test result is still a feed row, or is counted in an "N more results not
+    listed" row. The footer now states the real interval ("Streaming · 200 ms
+    batches"); it said "100ms batch", which nothing did.
+  - The live-ingest stress harness closes every session the way the SDKs do and
+    reports per-protocol frame rates. W25a's 565 s finalize figure measured the
+    stale-session sweep closing sessions the harness never closed.
 - **Chart legends, heatmaps and presentation mode** (wave W25c, HYG-08;
   branch `feat/df-hygiene-c-20261031`).
   - The colour swatch in chart legends is wider (22 × 14 instead of
