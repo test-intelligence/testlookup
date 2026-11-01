@@ -20,9 +20,6 @@
  */
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import TrendChart from '@/components/charts/TrendChart'
-import DefectDonut from '@/components/charts/DefectDonut'
-import PassRateGauge from '@/components/charts/PassRateGauge'
 import HeatmapChart from '@/components/charts/HeatmapChart'
 import DonutChart from '@/components/charts/DonutChart'
 import BarChart, { BreakdownChart } from '@/components/charts/BarChart'
@@ -637,20 +634,6 @@ function renderChart(item: GalleryItem) {
           animate={false}
         />
       )
-    case 'trend':
-      return (
-        <TrendChart
-          data={item.data}
-          type={item.variant}
-          height={GALLERY_CANVAS.height}
-          animate={false}
-        />
-      )
-    case 'donut':
-      return <DefectDonut data={item.data} animate={false} />
-    case 'gauge':
-      // The gauge is square; fill the canvas height so its arc is a real size.
-      return <PassRateGauge value={item.value} size={GALLERY_CANVAS.height} animate={false} />
     case 'heatmap':
       // ECharts, canvas, lazy: the engine chunk is fetched when this mounts.
       return (
@@ -780,7 +763,7 @@ function renderChart(item: GalleryItem) {
       )
     }
     case 'ring-gauge':
-      // The gauge is square; fill the canvas height, as `PassRateGauge`'s item does.
+      // The gauge is square; fill the canvas height so its arc is a real size.
       return (
         <RingGauge
           value={item.ring.value}

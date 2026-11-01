@@ -1,19 +1,25 @@
 /**
  * Status is never colour-only (VIZ-102 / VIZ-105): the status hues are only
  * 1.07–1.38:1 against each other, so every status mark carries its fixed
- * pattern (fills) or dash (lines), and its legend swatch carries the same.
+ * pattern, and its legend swatch carries the same.
+ *
+ * Pinned on the chart that draws stacked status bars on every page —
+ * `BarChart variant="stacked"` (`StatusBarPlot`), which replaced the legacy
+ * `TrendChart` (deleted in W25c with its status areas and dashed status lines,
+ * which no kit chart draws). The status donut's patterns are pinned by
+ * `DonutChart.test.tsx`.
  *
  * Recharts is replaced by thin SVG stand-ins that echo the props the
- * components pass (fill, stroke dash, legend content), so the test reads what
- * the component asked Recharts to draw — and the `<defs>` the component puts in
+ * component passes (fill, legend content), so the test reads what the
+ * component asked Recharts to draw — and the `<defs>` the component puts in
  * the chart are real DOM.
  */
 import { render } from '@testing-library/react'
 import type { ReactElement, ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
-import { VIZ_STATUSES, type VizStatus } from '@/lib/viz/contracts'
-import TrendChart from './TrendChart'
-import DefectDonut from './DefectDonut'
+import type { ChartSeries, SeriesChart, VizStatus } from '@/lib/viz/contracts'
+import BarChart from './BarChart'
+import type { ChartResponse, ChartState } from './chartState'
 import { STATUS_ENCODING } from './tokens'
 
 vi.mock('recharts', () => {
@@ -29,29 +35,50 @@ vi.mock('recharts', () => {
     usePlotArea: () => undefined,
     useXAxisScale: () => undefined,
     ResponsiveContainer: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-    LineChart: chart('line'),
-    AreaChart: chart('area'),
     BarChart: chart('bar'),
+    // For the donut half of `BreakdownChart`, which `BarChart.tsx` also exports.
     PieChart: chart('pie'),
+    Pie: ({ children }: { children?: ReactNode }) => <g data-pie="">{children}</g>,
+    Label: () => null,
     CartesianGrid: () => null,
     XAxis: () => null,
     YAxis: () => null,
+    ReferenceLine: () => null,
+    LabelList: () => null,
     Tooltip: () => null,
     // The legend renders the component's own content (if any) outside the plot.
     Legend: ({ content }: { content?: ReactElement | ((props: object) => ReactNode) }) => (
       <foreignObject data-legend-host="">{typeof content === 'function' ? content({}) : (content ?? null)}</foreignObject>
     ),
     Bar: ({ dataKey, fill }: { dataKey: string; fill?: string }) => <rect data-key={dataKey} fill={fill} />,
-    Area: ({ dataKey, fill }: { dataKey: string; fill?: string }) => <path data-key={dataKey} fill={fill} />,
-    Line: ({ dataKey, strokeDasharray }: { dataKey: string; strokeDasharray?: string }) => (
-      <path data-key={dataKey} data-dash={strokeDasharray ?? 'solid'} />
-    ),
-    Pie: ({ children }: { children?: ReactNode }) => <g data-pie="">{children}</g>,
     Cell: ({ fill }: { fill?: string }) => <path data-cell="" fill={fill} />,
   }
 })
 
-const POINT = { date: '2026-09-01', passed: 5, failed: 2, skipped: 1, broken: 1, total: 9, pass_rate: 55.6 }
+const DRAWN: readonly VizStatus[] = ['passed', 'failed', 'broken', 'skipped']
+
+/** Results by suite and status, as `BarChart.test.tsx` builds them. */
+function statusState(rows: [string, Record<string, number>][]): ChartState<ChartResponse> {
+  const statuses = [...new Set(rows.flatMap(([, counts]) => Object.keys(counts)))]
+  const series: SeriesChart = {
+    kind: 'series',
+    dimensions: ['suite', 'status'],
+    x_type: 'category',
+    series: statuses.map((status) => ({
+      key: status,
+      label: status,
+      points: rows.map(([suite, counts]) => ({ x: suite, y: counts[status] ?? 0, n: counts[status] ?? 0 })),
+    })),
+  }
+  return { status: 'ready', data: { meta: null, series: series as ChartSeries }, meta: null, revalidating: false }
+}
+
+const SUITES = statusState([
+  ['checkout', { passed: 80, failed: 10, broken: 5, skipped: 5 }],
+  ['auth', { passed: 45, failed: 5, broken: 2, skipped: 1 }],
+])
+
+const stacked = () => <BarChart title="Results by suite" state={SUITES} variant="stacked" animate={false} />
 
 /** The `<pattern>` a `url(#id)` fill points at, or null. */
 function patternOf(fill: string | null): Element | null {
@@ -67,24 +94,31 @@ const expectStatusPattern = (fill: string | null, status: VizStatus) => {
   expect(pattern?.id.endsWith(STATUS_ENCODING[status].patternId), `${status}: ${pattern?.id}`).toBe(true)
 }
 
-describe('status patterns are drawn, not just declared', () => {
-  it('stacked bars: every status segment is filled with its own status pattern', () => {
-    const { container } = render(<TrendChart data={[POINT]} type="bar" />)
-    for (const status of ['passed', 'failed', 'skipped', 'broken'] as const) {
-      expectStatusPattern(container.querySelector(`rect[data-key="${status}"]`)?.getAttribute('fill') ?? null, status)
-    }
-    // One pattern per drawn status, all defined inside the chart's own svg.
+describe('status patterns are drawn, not just declared (BarChart variant="stacked")', () => {
+  it('stacked bars: every status segment is filled with its own status pattern, defined inside the chart\'s own svg', () => {
+    const { container } = render(stacked())
     const svg = container.querySelector('svg[data-chart="bar"]') as SVGElement
-    for (const status of VIZ_STATUSES.filter((s) => s !== 'unknown')) {
-      expect(svg.querySelector(`pattern[id$="${STATUS_ENCODING[status].patternId}"]`), status).not.toBeNull()
+    expect(svg).not.toBeNull()
+    expect(Array.from(svg.querySelectorAll('rect[data-key]'), (rect) => rect.getAttribute('data-key'))).toEqual([...DRAWN])
+    for (const status of DRAWN) {
+      const fill = svg.querySelector(`rect[data-key="${status}"]`)?.getAttribute('fill') ?? null
+      expectStatusPattern(fill, status)
+      // The pattern lives in THIS chart's svg, not somewhere else on the page.
+      const id = /^url\(#(.+)\)$/.exec(fill ?? '')?.[1] ?? ''
+      expect(svg.querySelector(`pattern[id="${id}"]`), status).not.toBeNull()
     }
+    // Four segments, four different patterns.
+    expect(new Set(DRAWN.map((s) => svg.querySelector(`rect[data-key="${s}"]`)?.getAttribute('fill'))).size).toBe(4)
   })
 
-  it('a status legend entry carries the same pattern as its marks', () => {
-    const { container } = render(<TrendChart data={[POINT]} type="bar" />)
+  it('a status legend entry carries its label and the same pattern as its marks', () => {
+    const { container } = render(stacked())
     const legend = container.querySelector('[data-chart-legend]') as HTMLElement
     expect(legend).not.toBeNull()
-    for (const status of ['passed', 'failed', 'skipped', 'broken'] as const) {
+    expect(Array.from(legend.querySelectorAll('[data-legend-status]'), (entry) => entry.getAttribute('data-legend-status'))).toEqual([
+      ...DRAWN,
+    ])
+    for (const status of DRAWN) {
       const entry = legend.querySelector(`[data-legend-status="${status}"]`) as HTMLElement
       expect(entry, status).not.toBeNull()
       expect(entry).toHaveTextContent(STATUS_ENCODING[status].label)
@@ -94,46 +128,17 @@ describe('status patterns are drawn, not just declared', () => {
     }
   })
 
-  it('areas: the passed area is filled with the passed pattern', () => {
-    const { container } = render(<TrendChart data={[POINT]} type="area" />)
-    expectStatusPattern(container.querySelector('path[data-key="passed"]')?.getAttribute('fill') ?? null, 'passed')
-  })
-
-  it('lines: each status line has its own dash, and the legend draws that dash', () => {
-    const { container } = render(<TrendChart data={[POINT]} type="line" />)
-    const dashes = (['passed', 'failed', 'skipped'] as const).map(
-      (status) => container.querySelector(`path[data-key="${status}"]`)?.getAttribute('data-dash'),
-    )
-    expect(new Set(dashes).size).toBe(3)
-    const legend = container.querySelector('[data-chart-legend]') as HTMLElement
-    for (const [i, status] of (['passed', 'failed', 'skipped'] as const).entries()) {
-      const line = legend.querySelector(`[data-legend-status="${status}"] [data-legend-swatch]`)
-      expect(line?.getAttribute('stroke-dasharray') ?? 'solid', status).toBe(dashes[i])
-    }
-  })
-
-  it('donut: every slice is patterned; P1 and P2 carry the failed and broken status patterns', () => {
-    const { container } = render(<DefectDonut data={[3, 7, 12, 5]} />)
-    const fills = Array.from(container.querySelectorAll('path[data-cell]'), (cell) => cell.getAttribute('fill'))
-    expect(fills).toHaveLength(4)
-    for (const fill of fills) expect(patternOf(fill), `${fill}`).not.toBeNull()
-    expect(new Set(fills).size).toBe(4)
-    expectStatusPattern(fills[0], 'failed')
-    expectStatusPattern(fills[1], 'broken')
-    const legend = container.querySelector('[data-chart-legend]') as HTMLElement
-    expect(legend.querySelectorAll('[data-legend-swatch]')).toHaveLength(4)
-    expect(legend.querySelector('[data-legend-swatch]')?.getAttribute('fill')).toBe(fills[0])
-  })
-
-  it('two charts on one page do not share (and so cannot clobber) pattern ids', () => {
+  it('two stacked charts on one page do not share (and so cannot clobber) pattern ids', () => {
     const { container } = render(
       <>
-        <TrendChart data={[POINT]} type="bar" />
-        <TrendChart data={[POINT]} type="bar" />
+        {stacked()}
+        {stacked()}
       </>,
     )
     const ids = Array.from(container.querySelectorAll('pattern'), (p) => p.id)
-    expect(ids.length).toBeGreaterThan(0)
+    // Both charts drew a pattern for each of their four statuses …
+    expect(ids).toHaveLength(2 * DRAWN.length)
+    // … and no id is used twice, so neither chart's `url(#…)` can resolve to the other's.
     expect(new Set(ids).size).toBe(ids.length)
   })
 })

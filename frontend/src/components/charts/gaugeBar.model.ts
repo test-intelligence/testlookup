@@ -338,7 +338,7 @@ export function layoutTickLabels(
 
 export type RingTone = 'good' | 'warn' | 'bad'
 
-/** `PassRateGauge`'s bands: 95 and up is good, 80 and up is a warning, below is bad. */
+/** The pass-rate ring's bands: 95 and up is good, 80 and up is a warning, below is bad. */
 export const PASS_RATE_BANDS: GaugeBands = { direction: 'higher-is-better', thresholds: [80, 95] }
 
 /**

@@ -1,22 +1,20 @@
 /**
- * `RingGauge` (VIZ-104, K4b) — one value on a 0-100 ring: `PassRateGauge`,
+ * `RingGauge` (VIZ-104, K4b) — one value on a 0-100 ring: the pass-rate ring,
  * generalised so the release gate's risk score can use it.
  *
- * With no props but `value` it draws exactly what `PassRateGauge` drew — the
- * gallery screenshots that ring, and `RingGauge.defaultRender.test.tsx` pins
- * every drawn byte against a snapshot written before this file existed. What
+ * With no props but `value` it is the pass-rate ring (95 / 80 bands, one
+ * decimal and "%", "Pass Rate" under it); `RingGauge.defaultRender.test.tsx`
+ * pins every drawn byte of that default render against its own snapshot. What
  * a caller can change is what the risk arc needs: the `caption`, the number
  * `format` and the `tone` bands — a pass rate is good HIGH, a risk score is
  * good LOW, so the direction is the caller's, through `bandsTone`.
  *
- * Two things differ from `PassRateGauge`, neither of them drawn:
- *   - Recharts' `accessibilityLayer` is OFF (RULES.md): on a gauge it was an
- *     unnamed `role="application"` tab stop that did nothing. The ring is a
- *     named `role="meter"` instead, with its value in `aria-value*`.
- *   - `null` is "not measured": an empty ring and a dash, announced as not
- *     measured — never a red ring at 0.
- * `PassRateGauge` keeps both old behaviours (`legacyApplicationLayer`) until
- * its tests and the gallery's LEGACY_APPLICATION_LAYER ratchet move with it.
+ *   - Recharts' `accessibilityLayer` is OFF (RULES.md), written explicitly
+ *     because Recharts 3 defaults it on: on a gauge it was an unnamed
+ *     `role="application"` tab stop that did nothing. The ring is a named
+ *     `role="meter"` instead, with its value in `aria-value*`.
+ *   - `null` (or NaN) is "not measured": an empty ring and a dash, announced
+ *     as not measured — never a red ring at 0.
  *
  * The number in the middle is measured in the reader's font and shrunk to
  * fit inside the ring (DejaVu Sans on the Linux CI runner is wider than the
@@ -71,16 +69,15 @@ function useFittedFontSize(
   text: string,
   font: { px: number; weight: number },
   available: number,
-  enabled: boolean,
 ): [RefObject<HTMLSpanElement | null>, number | undefined] {
   const ref = useRef<HTMLSpanElement | null>(null)
   const [fitted, setFitted] = useState<number | undefined>(undefined)
   useLayoutEffect(() => {
     const node = ref.current
-    if (!enabled || !node || node.getBoundingClientRect().width === 0) return setFitted(undefined)
+    if (!node || node.getBoundingClientRect().width === 0) return setFitted(undefined)
     const width = measureTextWidth(text, `${font.weight} ${font.px}px ${getComputedStyle(node).fontFamily}`)
     setFitted(width === null || width <= available ? undefined : Math.floor(((font.px * available) / width) * 10) / 10)
-  }, [text, font.px, font.weight, available, enabled])
+  }, [text, font.px, font.weight, available])
   return [ref, fitted]
 }
 
@@ -101,13 +98,7 @@ export interface RingGaugeProps {
   animate?: boolean
 }
 
-interface ViewProps extends RingGaugeProps {
-  /** `PassRateGauge` only: Recharts' accessibility layer on, no meter semantics, NaN drawn as before. */
-  legacyApplicationLayer?: boolean
-}
-
-/** @internal The one implementation; `RingGauge` and `PassRateGauge` are its two faces. */
-export function RingGaugeView({
+export default function RingGauge({
   value,
   caption = 'Pass Rate',
   label,
@@ -115,13 +106,11 @@ export function RingGaugeView({
   tone = passRateTone,
   size = 120,
   animate: requestedAnimate,
-  legacyApplicationLayer = false,
-}: ViewProps) {
+}: RingGaugeProps) {
   const animate = useChartAnimation(requestedAnimate)
-  const measured = value !== null && (legacyApplicationLayer || !Number.isNaN(value))
+  const measured = value !== null && !Number.isNaN(value)
   const v = measured ? (value as number) : 0
-  // `PassRateGauge` never had a not-measured state: its NaN fell through to the red band.
-  const color = measured ? RING_COLOR[legacyApplicationLayer && Number.isNaN(v) ? 'bad' : tone(v)] : CHART_VARS.neutral
+  const color = measured ? RING_COLOR[tone(v)] : CHART_VARS.neutral
   // ONE ring: the value arc drawn over its own background track. Two data
   // rows (a 100 "track" row plus the value) made Recharts lay out two
   // concentric rings, so the value sat beside the track instead of on it --
@@ -131,36 +120,32 @@ export function RingGaugeView({
   const data = [{ value: clamped, fill: color }]
   const text = measured ? format(v) : '—'
 
-  const fit = !legacyApplicationLayer
-  // `PassRateGauge` (legacy) keeps its pinned bytes in every mode.
   const presenting = usePresentationStore((s) => s.enabled)
-  const room = fit && presenting ? RING_PRESENTATION_ROOM : 1
+  const room = presenting ? RING_PRESENTATION_ROOM : 1
   const side = size * room
   const valueFont = scaled(VALUE_FONT, room)
   const captionFont = scaled(CAPTION_FONT, room)
   const available = ringTextWidth(side)
   // Measured at the size it is DRAWN: measuring at 20 px while drawing at 40
   // would let a wide value pass the check and overrun the hole.
-  const [valueRef, valuePx] = useFittedFontSize(text, valueFont, available, fit)
-  const [captionRef, captionPx] = useFittedFontSize(caption, captionFont, available, fit)
+  const [valueRef, valuePx] = useFittedFontSize(text, valueFont, available)
+  const [captionRef, captionPx] = useFittedFontSize(caption, captionFont, available)
   // Desk mode: the classes' own sizes unless fitted (no inline style: the
   // render is pinned). In the room, the scaled size is always written.
   const fontSize = (px: number | undefined, font: { px: number }): CSSProperties | undefined =>
     px !== undefined ? { fontSize: px } : room === 1 ? undefined : { fontSize: font.px }
 
   const name = label ?? caption
-  const semantics = legacyApplicationLayer
-    ? {}
-    : measured
-      ? {
-          role: 'meter' as const,
-          'aria-label': name,
-          'aria-valuenow': clamped,
-          'aria-valuemin': 0,
-          'aria-valuemax': 100,
-          'aria-valuetext': text,
-        }
-      : { role: 'img' as const, 'aria-label': `${name}: ${NOT_MEASURED}` }
+  const semantics = measured
+    ? {
+        role: 'meter' as const,
+        'aria-label': name,
+        'aria-valuenow': clamped,
+        'aria-valuemin': 0,
+        'aria-valuemax': 100,
+        'aria-valuetext': text,
+      }
+    : { role: 'img' as const, 'aria-label': `${name}: ${NOT_MEASURED}` }
 
   return (
     <div {...semantics} className="relative flex items-center justify-center" style={{ width: side, height: side }}>
@@ -170,7 +155,7 @@ export function RingGaugeView({
           innerRadius="65%" outerRadius="100%"
           startAngle={210} endAngle={-30}
           data={data} barSize={10}
-          accessibilityLayer={legacyApplicationLayer}
+          accessibilityLayer={false}
         >
           <PolarAngleAxis type="number" domain={[0, 100]} tick={false} axisLine={false} />
           <RadialBar
@@ -178,9 +163,8 @@ export function RingGaugeView({
             cornerRadius={5}
             // The track is the quiet grid colour (1.1-1.8:1 on the card), so its
             // extent — where the scale ends — is outlined in `NON_TEXT_EDGE`
-            // (3.7:1 or more, R2 F9); the value arc is drawn over it. The legacy
-            // `PassRateGauge` keeps its exact track: its render is pinned.
-            background={legacyApplicationLayer ? { fill: CHART_VARS.grid } : RING_TRACK}
+            // (3.7:1 or more, R2 F9); the value arc is drawn over it.
+            background={RING_TRACK}
             isAnimationActive={animate}
           />
         </RadialBarChart>
@@ -195,8 +179,4 @@ export function RingGaugeView({
       </div>
     </div>
   )
-}
-
-export default function RingGauge(props: RingGaugeProps) {
-  return <RingGaugeView {...props} />
 }

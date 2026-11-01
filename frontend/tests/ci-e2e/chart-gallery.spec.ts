@@ -52,6 +52,8 @@ import {
 } from '../../src/pages/dev/chartGalleryFixtures'
 // VIZ-404: the model only `import type`s from `@/…`, so it resolves in plain Node too.
 import { ALIGNED_X_TITLE, HIDDEN_SUFFIX, LEADER_GAP } from '../../src/components/charts/multiSeriesModel'
+// HYG-08: the legend fill swatch's size, imported so the box pin below follows the kit's one constant.
+import { LEGEND_FILL_SWATCH } from '../../src/components/charts/patterns'
 // Imported rather than retyped, so a reworded indicator fails here instead of
 // quietly passing. `timeSeriesModel` only `import type`s from `@/…`, so it
 // resolves in Playwright's plain-Node transform with no alias.
@@ -399,7 +401,8 @@ test.describe('chart gallery (/__charts)', () => {
 
   test('status marks carry their pattern, and each legend swatch carries the same one', async ({ page }) => {
     await openGallery(page)
-    const bar = page.locator('[data-gallery-item="trend-bar"]')
+    // `BarChart variant="stacked"`: four statuses (`data-bar-statuses` passed,failed,broken,skipped).
+    const bar = page.locator('[data-gallery-item="bar-stacked"]')
     await expect(bar.locator(`${CHART_SVG} path`).first()).toBeVisible()
     const found = await bar.evaluate((section) => {
       const fillOf = (el: Element | null) => el?.getAttribute('fill') ?? ''
@@ -428,6 +431,15 @@ test.describe('chart gallery (/__charts)', () => {
       expect(entry.pattern, `${entry.status} legend swatch`).toMatch(new RegExp(`chart-pattern-${entry.status}$`))
       expect(found.marks.map((mark) => mark.fill)).toContain(entry.fill)
     }
+    // HYG-08: each fill swatch is drawn at the kit's size (22 x 14), wide enough to show its pattern more than twice.
+    const swatches = bar.locator('[data-legend-status] svg')
+    await expect(swatches).toHaveCount(4)
+    for (const swatch of await swatches.all()) {
+      const box = await swatch.boundingBox()
+      expect(box, 'a legend swatch has a box').not.toBeNull()
+      expect(Math.abs((box?.width ?? 0) - LEGEND_FILL_SWATCH.width), `swatch width ${box?.width}`).toBeLessThanOrEqual(0.5)
+      expect(Math.abs((box?.height ?? 0) - LEGEND_FILL_SWATCH.height), `swatch height ${box?.height}`).toBeLessThanOrEqual(0.5)
+    }
 
     // The status matrix (canvas) has a legend drawn with the same patterns.
     const status = page.locator('[data-gallery-item="heatmap-status"]')
@@ -449,8 +461,9 @@ test.describe('chart gallery (/__charts)', () => {
     }))
     expect(overflow.scrollWidth, JSON.stringify(overflow)).toBeLessThanOrEqual(overflow.clientWidth)
     expect(overflow.bodyScrollWidth).toBeLessThanOrEqual(overflow.clientWidth)
-    // …because each fixed-size canvas scrolls inside its own keyboard-reachable box.
-    const scroller = page.locator('[data-gallery-scroller="trend-line"]')
+    // …because each fixed-size canvas scrolls inside its own keyboard-reachable box
+    // (`heatmap`: a non-framed item on the pinned 640 x 320 canvas).
+    const scroller = page.locator('[data-gallery-scroller="heatmap"]')
     await expect(scroller).toHaveAttribute('tabindex', '0')
     expect(await scroller.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true)
     // It carries NO role and no name of its own: a framed chart is already a
@@ -737,33 +750,18 @@ test.describe('chart gallery (/__charts)', () => {
     expect(await page.locator('[data-chart-frame] [data-chart-announcer]').count()).toBe(0)
 
     /**
-     * NO chart in the Wave-2 catalogue is an unnamed `role="application"`.
+     * NO chart in the gallery is an unnamed `role="application"`.
      *
-     * Round A could only claim this for four items; round B finished the rest,
-     * so the assertion now walks EVERY gallery item. The only charts excused
-     * are the two Wave-1 components that still pass Recharts'
-     * `accessibilityLayer` and belong to neither round's scope — `TrendChart`
-     * (`chart: 'trend'`) and `PassRateGauge` (`chart: 'gauge'`). They are named
-     * by COMPONENT rather than by item id, so adding another fixture of the
-     * same chart does not need a new exception; a new chart of any other kind
-     * that arrives with the default layer fails here.
+     * Round A could only claim this for four items; round B finished the rest.
+     * Since W25c (HYG-01) the assertion walks EVERY gallery item with no
+     * exception: the two Wave-1 components that kept Recharts'
+     * `accessibilityLayer` (`TrendChart`, `PassRateGauge`) are deleted, and a
+     * new chart that arrives with the default layer fails here.
      */
-    const LEGACY_APPLICATION_LAYER = ['trend', 'gauge']
-    const backlog = new Set(
-      GALLERY_ITEMS.filter((item) => LEGACY_APPLICATION_LAYER.includes(item.chart)).map((item) => item.id),
-    )
-    let backlogStillUnfixed = 0
     for (const item of GALLERY_ITEM_IDS) {
       const found = await page.locator(`[data-gallery-item="${item}"] [role="application"]`).count()
-      if (backlog.has(item)) backlogStillUnfixed += found
-      else expect(found, `${item} has an unnamed role="application"`).toBe(0)
+      expect(found, `${item} has an unnamed role="application"`).toBe(0)
     }
-    // The ratchet: once TrendChart and PassRateGauge are fixed too, this test
-    // fails until the exception above is deleted.
-    expect(
-      backlogStillUnfixed,
-      'no excused chart has role="application" any more — delete LEGACY_APPLICATION_LAYER',
-    ).toBeGreaterThan(0)
   })
 
   /**

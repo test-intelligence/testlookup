@@ -19,34 +19,6 @@ import type { HeatmapNouns } from '@/components/charts/heatmapFromMatrix'
 import type { SparklineTone } from '@/components/charts/Sparkline.model'
 import type { TimeSeriesRateTarget } from '@/components/charts/TimeSeriesChart'
 
-/** Same shape `TrendChart` takes; spelt out so a field rename there is a type error here. */
-export interface GalleryTrendPoint {
-  date: string
-  passed: number
-  failed: number
-  skipped: number
-  broken: number
-  total: number
-  pass_rate: number
-}
-
-/** One week; every status is non-zero every day so each stacked-bar segment draws. */
-export const GALLERY_TREND_DATA: GalleryTrendPoint[] = [
-  { date: '2026-09-01', passed: 182, failed: 12, skipped: 6, broken: 4, total: 204, pass_rate: 89.2 },
-  { date: '2026-09-02', passed: 190, failed: 9, skipped: 5, broken: 3, total: 207, pass_rate: 91.8 },
-  { date: '2026-09-03', passed: 171, failed: 24, skipped: 8, broken: 6, total: 209, pass_rate: 81.8 },
-  { date: '2026-09-04', passed: 188, failed: 14, skipped: 7, broken: 2, total: 211, pass_rate: 89.1 },
-  { date: '2026-09-05', passed: 201, failed: 6, skipped: 4, broken: 1, total: 212, pass_rate: 94.8 },
-  { date: '2026-09-06', passed: 196, failed: 10, skipped: 9, broken: 5, total: 220, pass_rate: 89.1 },
-  { date: '2026-09-07', passed: 207, failed: 5, skipped: 6, broken: 2, total: 220, pass_rate: 94.1 },
-]
-
-/** `[P1, P2, P3, P4]` — all four non-zero so all four sectors draw. */
-export const GALLERY_DEFECT_DATA: number[] = [3, 7, 12, 5]
-
-/** ≥ 95, so the gauge takes its "passed" colour. */
-export const GALLERY_PASS_RATE = 96.4
-
 /** Same shape as the heatmap's `NumericMatrix` (contracts C3 `matrix`), spelt out for the same reason. */
 export interface GalleryMatrix {
   kind: 'matrix'
@@ -747,9 +719,6 @@ interface GalleryItemBase {
 }
 
 export type GalleryItem =
-  | (GalleryItemBase & { chart: 'trend'; variant: 'line' | 'area' | 'bar'; data: GalleryTrendPoint[] })
-  | (GalleryItemBase & { chart: 'donut'; data: number[] })
-  | (GalleryItemBase & { chart: 'gauge'; value: number })
   | (GalleryItemBase & { chart: 'heatmap'; data: GalleryMatrix | GalleryStatusMatrix; description: string })
   // Wave 2 (VIZ-401 / VIZ-402): whole charts, inside a real ChartFrame.
   | (GalleryItemBase & { chart: 'status-donut'; counts: GalleryStatusCounts; caption?: string })
@@ -1044,49 +1013,6 @@ export function galleryCanvasSize(item: GalleryItem): { width: number; height: n
 
 export const GALLERY_ITEMS: GalleryItem[] = [
   {
-    id: 'trend-line',
-    title: 'TrendChart · line',
-    chart: 'trend',
-    variant: 'line',
-    data: GALLERY_TREND_DATA,
-    empty: false,
-    minMarks: 3, // passed, failed, skipped (pass_rate is hidden)
-  },
-  {
-    id: 'trend-area',
-    title: 'TrendChart · area',
-    chart: 'trend',
-    variant: 'area',
-    data: GALLERY_TREND_DATA,
-    empty: false,
-    minMarks: 2, // total, passed
-  },
-  {
-    id: 'trend-bar',
-    title: 'TrendChart · bar',
-    chart: 'trend',
-    variant: 'bar',
-    data: GALLERY_TREND_DATA,
-    empty: false,
-    minMarks: GALLERY_TREND_DATA.length, // at least one segment per day
-  },
-  {
-    id: 'defect-donut',
-    title: 'DefectDonut',
-    chart: 'donut',
-    data: GALLERY_DEFECT_DATA,
-    empty: false,
-    minMarks: GALLERY_DEFECT_DATA.length, // one sector per priority
-  },
-  {
-    id: 'pass-rate-gauge',
-    title: 'PassRateGauge',
-    chart: 'gauge',
-    value: GALLERY_PASS_RATE,
-    empty: false,
-    minMarks: 2, // track + value arc
-  },
-  {
     id: 'heatmap',
     title: 'HeatmapChart · pass rate by suite and day',
     chart: 'heatmap',
@@ -1112,31 +1038,6 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     description: 'Status of 3 suites over 6 runs; each status has its own pattern.',
     empty: false,
     minMarks: GALLERY_STATUS_MATRIX_DATA.cells.length,
-  },
-  {
-    id: 'trend-empty',
-    title: 'TrendChart · no data',
-    chart: 'trend',
-    variant: 'line',
-    data: [],
-    empty: true,
-    minMarks: 0,
-  },
-  {
-    id: 'defect-donut-empty',
-    title: 'DefectDonut · no data',
-    chart: 'donut',
-    data: [0, 0, 0, 0],
-    empty: true,
-    minMarks: 0,
-  },
-  {
-    id: 'pass-rate-gauge-empty',
-    title: 'PassRateGauge · zero',
-    chart: 'gauge',
-    value: 0,
-    empty: true,
-    minMarks: 0,
   },
   {
     id: 'heatmap-empty',
@@ -1837,8 +1738,8 @@ export const GALLERY_ITEMS: GalleryItem[] = [
     minMarks: 2, // the fill and the target
   },
 
-  // RingGauge (K4b), at the plot canvas's height as `PassRateGauge` is: a
-  // mark is the ring's track and its value arc.
+  // RingGauge (K4b), at the plot canvas's height: a mark is the ring's track
+  // and its value arc.
   {
     id: 'ring-gauge-risk',
     title: 'RingGauge · risk score, lower is better',

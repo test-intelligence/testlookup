@@ -230,7 +230,7 @@ unchanged. Migration 0196 (F1) retired the three rows, with the never-read `viz_
 - Two 2D engines must look like one. Both read the same token module and share one tooltip
   component; a gallery page renders the same fixture in both and is compared by screenshot.
 - jsdom has no canvas. Unit tests mock the engine modules and assert the props handed to
-  them, the way `TrendChart.test.tsx` already mocks Recharts; real rendering is asserted only
+  them, the way `BarChart.test.tsx` mocks Recharts; real rendering is asserted only
   in Playwright against the gallery.
 - The 3D view is verified in Chromium (SwiftShader, CI) and Firefox 155 (all seven cases of
   `rollout-scatter-3d.spec.ts`, run locally on 2026-10-04; six since Phase D removed the
