@@ -5,12 +5,25 @@
  * reads the server's sentence inline; "Show differences" reads the detail and lists it inline (no dialog); the
  * history polls only while a comparison runs or a queued one is awaited. REFRESH_INTERVALS.ACTIVE is 40 ms here;
  * `Date` is pinned to Fri 18 Sep 2026 12:00 UTC (timers stay real).
+ *
+ * W25d HYG-04 (contract §4.4): "Cut over now" only when the history says ready with legacy writes on; the
+ * confirmation opens IN the card and Cancel closes it; "Cut over" posts ONCE on its full path, toasts and re-reads;
+ * a 409 renders the server's sentence in `data-parity-refusal`; cut over / not written hide both buttons.
  */
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { SWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { parityDetail, parityHistory, parityHistoryOf, parityRunId } from '@/test/suiteParityMocks'
+import {
+  parityCutOverHistory,
+  parityDetail,
+  parityHistory,
+  parityHistoryOf,
+  parityLegacyOn,
+  parityNotWrittenHistory,
+  parityReadyHistory,
+  parityRunId,
+} from '@/test/suiteParityMocks'
 import type { SuiteParityHistory } from '@/types/suiteParity'
 
 const http = vi.hoisted(() => ({ getData: vi.fn(), postData: vi.fn() }))
@@ -230,5 +243,126 @@ describe('"Show differences"', () => {
     await screen.findByRole('table')
     expect(screen.getAllByText(hostile).length).toBeGreaterThan(0)
     expect(document.querySelector('img')).toBeNull()
+  })
+})
+
+// ── W25d HYG-04: the cutover ─────────────────────────────────────────────────
+
+const CUTOVER_PATH = '/api/v1/admin/maintenance/suite-membership-cutover'
+const cutOverNowButton = () => screen.queryByRole('button', { name: 'Cut over now' })
+const card = () => document.querySelector('[data-suite-parity]') as HTMLElement
+
+describe('W25d: "Cut over now" only when ready', () => {
+  it('before the cutover (legacy writes on, day 4) and a W25a server that says ready: no "Cut over now"', async () => {
+    histories = [parityLegacyOn(parityHistory({ streak: 4, now: NOW() }))]
+    const first = renderCard()
+    expect(await screen.findByText('Day 4 of 7 with no differences.')).toBeInTheDocument()
+    expect(cutOverNowButton()).toBeNull()
+    expect(compareButton()).toBeEnabled()
+    expect(card()).not.toHaveAttribute('data-parity-cutover')
+    first.unmount()
+
+    histories = [parityHistory({ streak: 7, now: NOW() })]   // no `cutover`: the server has no cutover route
+    renderCard()
+    expect(await screen.findByText('Ready for the cutover: 7 clean days in a row.')).toBeInTheDocument()
+    expect(cutOverNowButton()).toBeNull()
+  })
+
+  it('ready: "Cut over now" beside "Compare now"; it opens the confirmation IN the card, Cancel closes it, nothing is posted', async () => {
+    histories = [parityReadyHistory({ now: NOW() })]
+    renderCard()
+    expect(await screen.findByText('Ready for the cutover: 7 clean days in a row.')).toBeInTheDocument()
+    expect(card()).toHaveAttribute('data-parity-cutover', 'ready')
+    expect(compareButton()).toBeEnabled()
+    expect(cutOverNowButton()).toBeEnabled()
+    expect(screen.queryByText(PARITY_TEXT.confirmQuestion)).toBeNull()
+
+    fireEvent.click(cutOverNowButton() as HTMLElement)
+    const confirm = card().querySelector('[data-parity-confirm]') as HTMLElement
+    expect(confirm).not.toBeNull()
+    expect(within(confirm).getByText('Stop writing the old suite-membership tables and read the test catalog from now on?')).toBeInTheDocument()
+    expect(within(confirm).getByText('Reversible until the old tables are dropped in the next release.')).toBeInTheDocument()
+    expect(within(confirm).getByRole('button', { name: 'Cut over' })).toBeEnabled()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }))
+    expect(card().querySelector('[data-parity-confirm]')).toBeNull()
+    expect(http.postData).not.toHaveBeenCalled()
+  })
+})
+
+describe('W25d: "Cut over"', () => {
+  it('posts ONCE to the full path (a double click included), toasts "Cut over." and re-reads into the cut-over state', async () => {
+    histories = [parityReadyHistory({ now: NOW() }), parityCutOverHistory({ now: NOW() })]
+    let release: (value: unknown) => void = () => {}
+    http.postData.mockImplementation(() => new Promise((resolve) => { release = resolve }))
+    renderCard()
+    fireEvent.click((await screen.findByRole('button', { name: 'Cut over now' })))
+    const confirmButton = screen.getByRole('button', { name: 'Cut over' })
+    // Two clicks in ONE batch: the second lands before React re-renders the button disabled.
+    act(() => {
+      confirmButton.click()
+      confirmButton.click()
+    })
+    await waitFor(() => expect(confirmButton).toBeDisabled())
+    fireEvent.click(confirmButton)
+    expect(http.postData).toHaveBeenCalledTimes(1)
+    expect(http.postData).toHaveBeenCalledWith(CUTOVER_PATH, {}, { suppressToast: true })
+
+    release({ cut_over_at: '2026-09-18T10:12:00Z', streak_days: 7 })
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Cut over.'))
+    expect(await screen.findByText('Cut over on Fri 18 Sep after 7 clean days.')).toBeInTheDocument()
+    expect(http.postData).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it("a 409 renders the server's sentence in the refusal line — never 'Request failed with status code 409'", async () => {
+    histories = [parityReadyHistory({ now: NOW() })]
+    http.postData.mockRejectedValue(refusal(409, 'Not ready: day 3 of 7 with no differences.'))
+    renderCard()
+    fireEvent.click(await screen.findByRole('button', { name: 'Cut over now' }))
+    const before = historyCalls()
+    fireEvent.click(screen.getByRole('button', { name: 'Cut over' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Not ready: day 3 of 7 with no differences.')
+    expect(alert).toHaveAttribute('data-parity-refusal')
+    expect(screen.queryByText(/Request failed/)).toBeNull()
+    expect(toast.success).not.toHaveBeenCalled()
+    expect(card().querySelector('[data-parity-confirm]')).toBeNull()
+    await waitFor(() => expect(historyCalls()).toBeGreaterThan(before))
+  })
+})
+
+describe('W25d: after the cutover', () => {
+  it('cut over: both buttons hidden; the sentence, the detail, who (text, truncated with its title); the 7 dates ending at the cut-over date', async () => {
+    const hostile = '<img src=x onerror=alert(1)>'
+    histories = [parityCutOverHistory({ now: NOW(), daysAgo: 3, byName: hostile })]
+    renderCard()
+    expect(await screen.findByText('Cut over on Tue 15 Sep after 7 clean days.')).toBeInTheDocument()
+    expect(card()).toHaveAttribute('data-parity-status', 'cut_over')
+    expect(screen.queryAllByRole('button')).toHaveLength(0)
+    expect(screen.getByText(PARITY_TEXT.cutOverDetail)).toBeInTheDocument()
+    const by = card().querySelector('[data-parity-cut-over-by]') as HTMLElement
+    expect(by).toHaveTextContent(`Cut over by ${hostile}.`)
+    expect(by).toHaveAttribute('title', `Cut over by ${hostile}.`)
+    expect(by).toHaveClass('truncate')
+    expect(document.querySelector('img')).toBeNull()
+    expect(screen.getByText('The 7 days before the cutover (UTC)')).toBeInTheDocument()
+    const days = within(screen.getByRole('list', { name: 'The 7 days before the cutover (UTC)' })).getAllByRole('listitem')
+    expect(days.map((li) => li.querySelector('span')?.textContent)).toEqual(['Tue 15 Sep', 'Mon 14 Sep', 'Sun 13 Sep', 'Sat 12 Sep', 'Fri 11 Sep', 'Thu 10 Sep', 'Wed 9 Sep'])
+    expect(days.every((li) => li.getAttribute('data-day-kind') === 'clean')).toBe(true)
+    expect(screen.queryByText('Not run')).toBeNull()
+    expect(screen.queryByText('Not run yet')).toBeNull()
+  })
+
+  it('not written: the loud warning line, no button, the comparisons as they are', async () => {
+    histories = [parityNotWrittenHistory({ now: NOW() })]
+    renderCard()
+    expect(await screen.findByText('The old suite-membership tables are not written.')).toBeInTheDocument()
+    expect(card()).toHaveAttribute('data-parity-status', 'not_written')
+    expect(screen.getByText('The cut-over switch suite_membership_legacy_writes is off or missing; the comparison is retired.')).toBeInTheDocument()
+    expect(screen.queryAllByRole('button', { name: /Compare now|Cut over/ })).toHaveLength(0)
+    expect(screen.queryByText(/Cut over on/)).toBeNull()
+    expect(within(screen.getByRole('list', { name: PARITY_TEXT.daysHeading })).getAllByRole('listitem')).toHaveLength(7)
   })
 })

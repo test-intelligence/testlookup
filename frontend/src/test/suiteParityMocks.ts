@@ -10,6 +10,12 @@
  * - `parityHistory({ streak, newest, now })`: the common histories (see `ParityNewest`).
  * - `parityDetail(run, …)`: the detail GET's answer for a run — every reason counted (zeros included), the projects,
  *   and the sample (≤ 20 rows per reason, as the server caps it).
+ * - W25d HYG-04, the cut-over states (contract §1.4 / §3.2), each a history the server answers together:
+ *   `parityLegacyOn(history)` (+ the null-filled `cutover` a W25d server adds before the cutover),
+ *   `parityReadyHistory({ now })` (7 clean beat days ending today, legacy writes on),
+ *   `parityCutOverHistory({ now, … })` (the 7 clean days ending at the cut-over date, legacy writes off, the audit
+ *   row's time and actor, the streak at the cutover) and `parityNotWrittenHistory({ now })` (legacy writes off, no
+ *   audit row: the flag row deleted or flipped outside the trail).
  *
  * Names are non-hex words; timestamps are built at CALL time from `now` (never a module constant).
  */
@@ -19,6 +25,7 @@ import {
   INFO_COUNTS,
   REQUIRED_CLEAN_DAYS,
   SAMPLE_PER_REASON,
+  type SuiteParityCutover,
   type SuiteParityHistory,
   type SuiteParityRunDetail,
   type SuiteParityRunSummary,
@@ -140,6 +147,84 @@ export function parityHistory({
   if (newest === 'clean') days.push({ daysAgo: streak, status: 'diffs', blocking: PARITY_BLOCKING })
   else days.push({ daysAgo: 0, status: newest, blocking })
   return parityHistoryOf(days, { now })
+}
+
+// ── W25d HYG-04: the cut-over states ─────────────────────────────────────────
+
+/** The cut-over visual's actor (`cut_over_by_name`). */
+export const PARITY_CUT_OVER_BY = 'admin'
+
+/** The `cutover` object a W25d server answers before the cutover: legacy writes on, every other field null. */
+export function parityLegacyOnCutover(): SuiteParityCutover {
+  return { legacy_writes: true, cut_over_at: null, cut_over_by_name: null, streak_days_at_cutover: null }
+}
+
+/** `history` as a W25d server answers it before the cutover (the same runs, plus the null-filled `cutover`). */
+export function parityLegacyOn(history: SuiteParityHistory): SuiteParityHistory {
+  return { ...history, cutover: parityLegacyOnCutover() }
+}
+
+/** `count` clean beat days from `first` days ago back, ≈ 340 expected each (the same spread as `parityHistory`). */
+function cleanDays(count: number, first = 0): ParityDay[] {
+  return Array.from({ length: count }, (_, i) => ({ daysAgo: first + i, status: 'clean' as const, expected: PARITY_EXPECTED + ((i * 3) % 5) - 2 }))
+}
+
+/** Seven clean beat days ending today, legacy writes on: "Ready for the cutover: 7 clean days in a row." */
+export function parityReadyHistory({ now = new Date() }: { now?: Date } = {}): SuiteParityHistory {
+  return parityLegacyOn(parityHistoryOf(cleanDays(REQUIRED_CLEAN_DAYS), { now }))
+}
+
+/**
+ * After a guarded cutover `daysAgo` UTC days before `now`, at `hour:minute` UTC: the server's window ENDS at
+ * `cut_over_at` (contract §3.2), so `runs` are the clean beat days ending at the cut-over date that started before
+ * it, and `streak_days` / `cutover_ready` are computed over them. `streakAtCutover` defaults to that streak (`null`
+ * = the server could not say); `byName` defaults to `PARITY_CUT_OVER_BY` (`null` = a removed user).
+ */
+export function parityCutOverHistory({
+  now = new Date(),
+  daysAgo = 0,
+  hour = 10,
+  minute = 12,
+  cleanDaysBefore = REQUIRED_CLEAN_DAYS,
+  byName = PARITY_CUT_OVER_BY,
+  streakAtCutover,
+}: {
+  now?: Date
+  daysAgo?: number
+  hour?: number
+  minute?: number
+  cleanDaysBefore?: number
+  byName?: string | null
+  streakAtCutover?: number | null
+} = {}): SuiteParityHistory {
+  const date = new Date(now.getTime() - daysAgo * DAY_MS)
+  const at = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hour, minute))
+  const before = parityHistoryOf(cleanDays(cleanDaysBefore), { now: at })
+  const runs = before.runs.filter((run) => run.started_at < at.toISOString())
+  const streak = parityStreak(runs, at)
+  return {
+    ...before,
+    runs,
+    streak_days: streak,
+    cutover_ready: streak >= REQUIRED_CLEAN_DAYS,
+    cutover: {
+      legacy_writes: false,
+      cut_over_at: at.toISOString(),
+      cut_over_by_name: byName,
+      streak_days_at_cutover: streakAtCutover === undefined ? streak : streakAtCutover,
+    },
+  }
+}
+
+/**
+ * Legacy writes off with no audit row saying when (the flag row deleted, or flipped outside the audit trail): the
+ * W25a history of `parityHistory({ streak, now })` with `cutover = { legacy_writes: false }` and nulls.
+ */
+export function parityNotWrittenHistory({ now = new Date(), streak = 4 }: { now?: Date; streak?: number } = {}): SuiteParityHistory {
+  return {
+    ...parityHistory({ streak, now }),
+    cutover: { legacy_writes: false, cut_over_at: null, cut_over_by_name: null, streak_days_at_cutover: null },
+  }
 }
 
 /**

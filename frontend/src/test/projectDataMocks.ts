@@ -2,7 +2,7 @@
  * Fixtures for the project export / import vitests (W24 ADM-05 phase 1), in the REAL §1.2 shapes.
  *
  * - `jobFixture({kind, status, …})`: one `ProjectDataJob` whose fields match what the server returns for that
- *   kind + status together (a running export has progress 12 / 30; a succeeded export has bytes, 30 counted
+ *   kind + status together (a running export has progress 12 / 29; a succeeded export has bytes, 29 counted
  *   tables, a download path and an expiry; a failed job has an `error`; an import that succeeded carries
  *   `importReportFixture()`).
  * - `importReportFixture(overrides)`: three inserted entities, one switched-off line, one skipped row (the
@@ -32,11 +32,11 @@ export const IMPORTED_PROJECT_NAME = 'Payment Service (imported)'
 export const REQUESTER_NAME = 'Quinn Lead'
 const MB = 1024 * 1024
 
-/** The 30 exported entities in plan order (`project_export_entities.EXPORTED`). */
+/** The 29 exported entities in plan order (`project_export_entities.EXPORTED`; W25d HYG-02 dropped `quality_gates`). */
 export const EXPORTED_ENTITY_NAMES = [
   'projects', 'test_suites', 'managed_test_cases', 'test_case_versions', 'test_case_requirement_links',
   'dismissed_duplicate_pairs', 'canonical_test_cases', 'test_plans', 'test_plan_items', 'test_strategies',
-  'releases', 'release_phases', 'release_gate_policies', 'release_attribution_rules', 'quality_gates',
+  'releases', 'release_phases', 'release_gate_policies', 'release_attribution_rules',
   'quarantine_lifecycle_policies', 'notification_transition_policies', 'team_notification_channels',
   'webhook_subscriptions', 'github_integrations', 'gitlab_integrations', 'service_ownership_rules',
   'project_retention_policies', 'workflow_definitions', 'project_workflow_defaults', 'agent_configs',
@@ -54,7 +54,7 @@ function minutesFromNow(minutes: number): string {
   return new Date(Date.now() + minutes * 60_000).toISOString()
 }
 
-/** 4,210 rows across the 30 exported entities (one row each, the rest in managed_test_cases). */
+/** 4,210 rows across the 29 exported entities (one row each, the rest in managed_test_cases). */
 export function exportCounts(): Record<string, number> {
   const counts: Record<string, number> = {}
   for (const name of EXPORTED_ENTITY_NAMES) counts[name] = 1
@@ -107,13 +107,13 @@ export function jobFixture(overrides: JobOverrides = {}): ProjectDataJob {
     error: null,
     download_path: null,
   }
-  if (status === 'running') base.progress = isExport ? { done: 12, total: 30 } : { done: 5, total: 30 }
+  if (status === 'running') base.progress = isExport ? { done: 12, total: 29 } : { done: 5, total: 29 }
   if (status === 'succeeded' || status === 'expired') {
     base.finished_at = minutesFromNow(-1)
-    base.progress = { done: 30, total: 30 }
+    base.progress = { done: 29, total: 29 }
     if (isExport) {
       base.bytes = Math.round(2.1 * MB)
-      base.file_count = 33
+      base.file_count = 32
       base.manifest_sha256 = 'f00d'.repeat(16)
       base.signature = 'signed'
       base.counts = exportCounts()

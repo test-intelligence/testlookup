@@ -52,7 +52,6 @@ const PREVIEW = {
     minio_objects: 17,
     audit_rows: 5,
     event_archive_rows: 0,
-    provenance_rows: 0,
     compliance_packs_expired: 0,
     mongo_docs: {},
   },

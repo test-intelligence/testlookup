@@ -117,7 +117,6 @@ export interface RetentionPreviewCandidates {
   minio_objects: number
   event_archive_rows: number
   audit_rows: number
-  provenance_rows: number
   compliance_packs_expired: number
   evidence_artifact_rows: number
   memory_entries_expired: number

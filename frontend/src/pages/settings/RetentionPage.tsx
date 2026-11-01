@@ -148,7 +148,9 @@ const CANDIDATE_ROWS: Array<{
   { key: 'minio_objects', label: 'MinIO objects' },
   { key: 'event_archive_rows', label: 'Event-archive rows' },
   { key: 'audit_rows', label: 'Audit rows' },
-  { key: 'provenance_rows', label: 'Provenance rows' },
+  // W25d HYG-02: no "Provenance rows" row: the provenance table was dropped (it never had a writer). An older
+  // server that still sends `provenance_rows` gets no row for it, and an older tab reading this server finds the
+  // key absent and shows "not measured" (the `== null` render below), never a crash.
   { key: 'compliance_packs_expired', label: 'Expired compliance packs' },
   // The four the API returned and this table silently dropped. The response
   // model had already been widened once for exactly these; the regression

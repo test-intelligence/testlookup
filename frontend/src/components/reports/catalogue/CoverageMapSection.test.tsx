@@ -652,4 +652,19 @@ describe('CoverageMapSection: Other opens the next page; needs review (W08 TRND-
     fireEvent.click(within(group).getByRole('button', { name: 'Open the tests that need review' }))
     await waitFor(() => expect(where.search).toBe('?tab=suites&suite=Pay+%26+Co'))
   })
+
+  it('W25d HYG-04: the table view captions the counts as removed-and-unconfirmed — true before and after the cutover', async () => {
+    responses['1'] = wire([
+      node('all', null, 'All suites', { ...seen(9), needs_review_count: 3 }),
+      node('s:payments', 'all', 'Pay & Co', { ...seen(9), needs_review_count: 3 }),
+      node('s:auth', 'all', 'auth', { ...seen(3), needs_review_count: null }),
+    ])
+    renderSection()
+    await drawn()
+    fireEvent.click(within(frame()).getByRole('button', { name: /View as table/ }))
+    const table = frame().querySelector('[data-coverage-needs-review-table]') as HTMLTableElement
+    expect(table.caption?.textContent).toBe('Tests that need review (removed from their suite, not yet confirmed)')
+    expect(within(table).getAllByRole('row').map((row) => row.textContent)).toEqual(['Pay & Co3 need review'])
+    expect(within(frame()).queryByText(/last suite sync/)).toBeNull()
+  })
 })

@@ -138,13 +138,18 @@ function pageOfMeta(meta: EnvelopeMeta | null): number | null {
 /**
  * W08 TRND-12: the table view's companion for the review counts (the tree
  * table has no such column): every node of the level with tests to review.
+ * W25d HYG-04: the caption says what the count is in BOTH states of the
+ * suite-membership cutover (the old tables, then the test catalog): tests
+ * removed from their suite that no one has confirmed yet.
  */
+export const NEEDS_REVIEW_CAPTION = 'Tests that need review (removed from their suite, not yet confirmed)'
+
 function NeedsReviewTable({ view }: { view: CoverageLevelView }) {
   const rows = view.children.filter((child) => needsReviewOf(child) !== null)
   if (rows.length === 0) return null
   return (
     <table data-coverage-needs-review-table="" className="mt-2 w-full text-left text-xs">
-      <caption className="text-left font-semibold">Tests that need review (marked by the last suite sync)</caption>
+      <caption className="text-left font-semibold">{NEEDS_REVIEW_CAPTION}</caption>
       <tbody>
         {rows.map((child) => (
           <tr key={child.node.id}>

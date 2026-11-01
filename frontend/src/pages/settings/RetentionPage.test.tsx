@@ -221,7 +221,6 @@ describe('RetentionPage', () => {
         minio_objects: 12,
         event_archive_rows: 250,
         audit_rows: 3,
-        provenance_rows: 5,
         compliance_packs_expired: 1,
       },
     })
@@ -362,6 +361,43 @@ describe('RetentionPage', () => {
     expect(screen.getByText(/numbers may differ slightly/)).toBeTruthy()
   })
 
+  it('W25d HYG-02: no "Provenance rows" row; an older server that still sends the key gets nothing extra', async () => {
+    const CURRENT = {
+      cutoffs: { raw_events: '2026-05-04T00:00:00Z', runs: '2025-08-02T00:00:00Z', artifacts: '2026-02-03T00:00:00Z', audit: '2019-08-05T00:00:00Z' },
+      candidates: {
+        runs: 42, test_cases: 900, mongo_docs: { raw_allure_json: 15 }, minio_objects: 12, event_archive_rows: 250,
+        audit_rows: 3, compliance_packs_expired: 1, evidence_artifact_rows: 2, memory_entries_expired: 4,
+        analysis_cache_entries: 0, search_index_documents: 0, ai_history_versions: 0, search_usage_rows: 0,
+        shadow_pairs_unlabelled: 0, export_archives_expired: 0,
+      },
+      unmeasured: [],
+    }
+    const previewRows = async () => {
+      const view = renderPage()
+      await waitFor(() => expect(screen.getByText('Preview purge')).toBeTruthy())
+      await act(async () => {
+        fireEvent.click(screen.getByText('Preview purge'))
+      })
+      await waitFor(() => expect(screen.getByText('Test runs')).toBeTruthy())
+      const rows = Array.from(view.container.querySelectorAll('tbody tr')).map((tr) => tr.textContent)
+      view.unmount()
+      return rows
+    }
+    mockPreview.mockResolvedValue(CURRENT)
+    const current = await previewRows()
+    expect(current.some((row) => /provenance/i.test(row ?? ''))).toBe(false)
+    expect(current).toContain('Audit rows3')
+    expect(current[current.indexOf('Audit rows3') + 1]).toBe('Expired compliance packs1')
+    expect(current).toContain('Mongo docs — raw_allure_json15')
+    expect(current.join(' | ')).not.toMatch(/not measured/)
+
+    // A pre-W25d server: the same answer plus `provenance_rows` — no row for it, nothing else moves.
+    mockPreview.mockResolvedValue({ ...CURRENT, candidates: { ...CURRENT.candidates, provenance_rows: 5 } })
+    const older = await previewRows()
+    expect(older).toEqual(current)
+    expect(screen.queryByText('Provenance rows')).toBeNull()
+  })
+
   it('renders "not measured" for a store the purge could not reach', async () => {
     // RET-D15. `analysis_cache_entries` and `search_index_documents` come from
     // stores that can be down independently of Postgres, and both used to
@@ -381,7 +417,6 @@ describe('RetentionPage', () => {
         minio_objects: 12,
         event_archive_rows: 250,
         audit_rows: 3,
-        provenance_rows: 5,
         compliance_packs_expired: 1,
         evidence_artifact_rows: 2,
         memory_entries_expired: 4,
@@ -423,7 +458,6 @@ describe('RetentionPage', () => {
         minio_objects: 12,
         event_archive_rows: 250,
         audit_rows: 3,
-        provenance_rows: 5,
         compliance_packs_expired: 1,
         evidence_artifact_rows: 2,
         memory_entries_expired: 4,
@@ -721,7 +755,7 @@ describe('RetentionPage', () => {
       },
       candidates: {
         runs: 1, test_cases: 2, mongo_docs: {}, minio_objects: 3, event_archive_rows: 4, audit_rows: 5,
-        provenance_rows: 6, compliance_packs_expired: 7, evidence_artifact_rows: 8, memory_entries_expired: 9,
+        compliance_packs_expired: 7, evidence_artifact_rows: 8, memory_entries_expired: 9,
         analysis_cache_entries: 10, search_index_documents: 11, ai_history_versions: 12,
       },
       unmeasured: [],
@@ -760,7 +794,7 @@ describe('RetentionPage', () => {
       },
       candidates: {
         runs: 1, test_cases: 2, mongo_docs: {}, minio_objects: 3, event_archive_rows: 4, audit_rows: 5,
-        provenance_rows: 6, compliance_packs_expired: 7, evidence_artifact_rows: 8, memory_entries_expired: 9,
+        compliance_packs_expired: 7, evidence_artifact_rows: 8, memory_entries_expired: 9,
         analysis_cache_entries: 10, search_index_documents: 11, ai_history_versions: 12, search_usage_rows: 1234,
         shadow_pairs_unlabelled: 56,
         // W22b (deliberate): a current server counts the retained deletion archives too.
@@ -802,7 +836,7 @@ describe('RetentionPage', () => {
       },
       candidates: {
         runs: 1, test_cases: 2, mongo_docs: {}, minio_objects: 3, event_archive_rows: 4, audit_rows: 5,
-        provenance_rows: 6, compliance_packs_expired: 7, evidence_artifact_rows: 8, memory_entries_expired: 9,
+        compliance_packs_expired: 7, evidence_artifact_rows: 8, memory_entries_expired: 9,
         analysis_cache_entries: 10, search_index_documents: 11, ai_history_versions: 12, search_usage_rows: 13,
         shadow_pairs_unlabelled: 2048,
       },
@@ -983,7 +1017,7 @@ describe('RetentionPage — W22a holds and the keep-last floor', () => {
   it("the preview lists what holds and the floor keep, and the reference warnings", async () => {
     mockPreview.mockResolvedValue({
       cutoffs: { raw_events: '2026-05-04T00:00:00Z', runs: '2025-08-02T00:00:00Z', artifacts: '2026-02-03T00:00:00Z', audit: '2019-08-05T00:00:00Z' },
-      candidates: { runs: 4, test_cases: 9, mongo_docs: {}, minio_objects: 0, event_archive_rows: 0, audit_rows: 0, provenance_rows: 0, compliance_packs_expired: 0 },
+      candidates: { runs: 4, test_cases: 9, mongo_docs: {}, minio_objects: 0, event_archive_rows: 0, audit_rows: 0, compliance_packs_expired: 0 },
       holds: {
         project_held: false, runs_kept: 5, packs_kept: 0,
         active: [{ hold_id: 'h1', entity_type: 'release', entity_id: 'r1', entity_label: 'release 2026-Q4', reason: 'Audit Q4 sentinel', expires_at: null, runs_kept: 5, packs_kept: 0 }],
@@ -1126,7 +1160,7 @@ describe('RetentionPage — W22b inheritance, schedule and jobs', () => {
   it('the preview lists the retained deletion archives, "not measured" from an older server', async () => {
     mockPreview.mockResolvedValue({
       cutoffs: { raw_events: '2026-05-04T00:00:00Z', runs: '2025-08-02T00:00:00Z', artifacts: '2026-02-03T00:00:00Z', audit: '2019-08-05T00:00:00Z' },
-      candidates: { runs: 1, test_cases: 2, mongo_docs: {}, minio_objects: 0, event_archive_rows: 0, audit_rows: 0, provenance_rows: 0, compliance_packs_expired: 0, export_archives_expired: 2 },
+      candidates: { runs: 1, test_cases: 2, mongo_docs: {}, minio_objects: 0, event_archive_rows: 0, audit_rows: 0, compliance_packs_expired: 0, export_archives_expired: 2 },
     })
     await ready()
     await act(async () => {

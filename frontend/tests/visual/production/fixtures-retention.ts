@@ -164,17 +164,16 @@ export const BASELINE_LINKS_BROKEN = {
   label: '3 runs lose their baseline link',
 }
 
-/** `RetentionPreviewCandidates`: every class the server declares (17 keys + `mongo_docs`). */
+/** `RetentionPreviewCandidates`: every class the server declares (15 keys + `mongo_docs`). */
 export function worldCandidates(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     runs: 12,
     test_cases: 840,
-    mongo_docs: { execution_logs: 12, run_summaries: 12 },
+    mongo_docs: { raw_allure_json: 12, run_summaries: 12 },
     minio_objects: 36,
     event_archive_rows: 4,
     audit_rows: 0,
     revoked_share_links: 0,
-    provenance_rows: 0,
     compliance_packs_expired: 0,
     evidence_artifact_rows: 0,
     memory_entries_expired: 0,
@@ -217,7 +216,7 @@ function buildPreview(live: WorldHold[], policy: Record<string, unknown>, kept: 
   const zero = holds.project_held
     ? {
         runs: 0, test_cases: 0, mongo_docs: {}, minio_objects: 0, event_archive_rows: 0, audit_rows: 0,
-        revoked_share_links: 0, provenance_rows: 0, compliance_packs_expired: 0, evidence_artifact_rows: 0,
+        revoked_share_links: 0, compliance_packs_expired: 0, evidence_artifact_rows: 0,
         ai_history_versions: 0,
       }
     : {}

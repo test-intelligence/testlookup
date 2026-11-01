@@ -8,6 +8,11 @@
  *     run is "Not run" (absence is not health), today before its beat "Not run yet".
  *   - `sampleView(detail)` — the inline differences table (first 50 blocking rows, then "… and N more"), and the
  *     counts per reason, the expected ones as information.
+ *   - W25d HYG-04 (the cutover, contract §4.1): `cutoverState(history)` / `cardView(history, now)` — the card's four
+ *     states from the history's `cutover` object: before the cutover (no `cutover`, as a W25a server answers, or
+ *     legacy writes on and not ready: today's card, unchanged), ready ("Cut over now" beside "Compare now"), cut over
+ *     ("Cut over on … after 7 clean days.", no button, the 7 dates ending at the cut-over date) and "not written"
+ *     (the switch is off with no audit row saying when — said loudly, never read as a clean cutover).
  *
  * Dates and times are UTC (the comparison's days are UTC days), built from fixed English names — never the
  * browser's locale. Counts read in the singular for 1.
@@ -18,6 +23,7 @@ import {
   EXPECTED_REASONS,
   REASON_LABEL,
   REQUIRED_CLEAN_DAYS,
+  type SuiteParityCutover,
   type SuiteParityHistory,
   type SuiteParityRunDetail,
   type SuiteParityRunSummary,
@@ -48,6 +54,19 @@ export const PARITY_TEXT = {
   deletedProject: 'Deleted project',
   columns: { reason: 'Reason', project: 'Project', suite: 'Suite', test: 'Test' },
   daysHeading: 'Last 7 days (UTC)',
+  // W25d HYG-04: the cutover (widths measured under DejaVu Sans, contract §4.1; the card's inner width is 698 px).
+  cutOverNow: 'Cut over now',
+  confirmQuestion: 'Stop writing the old suite-membership tables and read the test catalog from now on?',
+  confirmNote: 'Reversible until the old tables are dropped in the next release.',
+  confirmCutOver: 'Cut over',
+  cancel: 'Cancel',
+  cutOverDone: 'Cut over.',
+  cutOverNotReady: 'Not ready for the cutover.',
+  couldNotCutOver: 'Could not cut over.',
+  cutOverDetail: 'The old tables are no longer written; Test Management reads the test catalog. The comparison is retired.',
+  notWritten: 'The old suite-membership tables are not written.',
+  notWrittenDetail: 'The cut-over switch suite_membership_legacy_writes is off or missing; the comparison is retired.',
+  cutOverDaysHeading: 'The 7 days before the cutover (UTC)',
 } as const
 
 /** Rows the inline differences table shows before "… and N more in this comparison." */
@@ -101,7 +120,7 @@ export function runErrorCode(run: SuiteParityRunSummary): string | null {
 
 // ── The status line ──────────────────────────────────────────────────────────
 
-export type StatusKind = 'none' | 'running' | 'ready' | 'streak' | 'diffs' | 'failed' | 'stale'
+export type StatusKind = 'none' | 'running' | 'ready' | 'streak' | 'diffs' | 'failed' | 'stale' | 'cut_over' | 'not_written'
 
 export interface StatusLine {
   kind: StatusKind
@@ -245,5 +264,108 @@ export function sampleView(detail: SuiteParityRunDetail): SampleView {
 export function queueRefusalSentence(error: unknown): string {
   const response = (error as { response?: { status?: number; data?: { detail?: unknown } } } | null)?.response
   const fallback = response?.status === 409 ? PARITY_TEXT.alreadyRunning : PARITY_TEXT.couldNotQueue
+  return extractErrorMessage(response?.data?.detail, fallback)
+}
+
+// ── The cutover (W25d HYG-04) ────────────────────────────────────────────────
+
+/**
+ * - `before`: no `cutover` object (a W25a server), or legacy writes on and not ready — today's card, unchanged.
+ * - `ready`: legacy writes on and `cutover_ready` — "Cut over now" beside "Compare now".
+ * - `cut_over`: legacy writes off with the audit row's time — no button; the 7 dates ending at the cut-over date.
+ * - `not_written`: legacy writes off and no time (the flag row deleted, or flipped outside the audit trail).
+ */
+export type CutoverState = 'before' | 'ready' | 'cut_over' | 'not_written'
+
+const isDate = (value: string | null | undefined): value is string =>
+  typeof value === 'string' && value !== '' && Number.isFinite(new Date(value).getTime())
+
+export function cutoverState(history: SuiteParityHistory): CutoverState {
+  const cutover = history.cutover
+  if (!cutover) return 'before'
+  if (cutover.legacy_writes) return history.cutover_ready ? 'ready' : 'before'
+  return isDate(cutover.cut_over_at) ? 'cut_over' : 'not_written'
+}
+
+/** "Cut over on Thu 6 Nov after 7 clean days." — without a streak "Cut over on Thu 6 Nov."; singular for 1. */
+export function cutOverSentence(cutover: SuiteParityCutover): string {
+  const day = formatUtcDay(cutover.cut_over_at as string)
+  const streak = cutover.streak_days_at_cutover
+  if (typeof streak !== 'number' || !Number.isFinite(streak)) return `Cut over on ${day}.`
+  return `Cut over on ${day} after ${formatNumber(streak)} clean ${streak === 1 ? 'day' : 'days'}.`
+}
+
+/** "Cut over by Avery Admin." — null when the server does not know the name (a removed user). */
+export function cutOverByLine(name: string | null | undefined): string | null {
+  const trimmed = typeof name === 'string' ? name.trim() : ''
+  return trimmed ? `Cut over by ${trimmed}.` : null
+}
+
+export interface CardView {
+  state: CutoverState
+  line: StatusLine
+  /** "Cut over by <name>." — the cut-over state with a known name only. */
+  byLine: string | null
+  /** "Compare now" — hidden once the old tables are not written (the comparison is retired). */
+  canCompare: boolean
+  /** "Cut over now" — the ready state only. */
+  canCutOver: boolean
+  days: DayRow[]
+  /** A visible heading above the days (the cut-over state); otherwise the list keeps its `daysHeading` label. */
+  daysHeading: string | null
+}
+
+/**
+ * The card for one history (contract §4.1). Before the cutover it is EXACTLY the W25a card (`statusLine` and
+ * `dayRows(history, now)`); cut over, the list ends at the cut-over date — or the date before it when the
+ * comparison had not run on that date yet (the streak does not count a today without a run, so neither does the
+ * list), so the dates after the cutover, when the comparison no longer runs, never read as missed days.
+ */
+export function cardView(history: SuiteParityHistory, now: Date): CardView {
+  const state = cutoverState(history)
+  const cutover = history.cutover
+  if (state === 'cut_over' && cutover) {
+    const at = new Date(cutover.cut_over_at as string)
+    const ranThatDay = (history.runs ?? []).some((run) => utcDateKey(run.started_at) === utcDateKey(at))
+    return {
+      state,
+      line: { kind: 'cut_over', text: cutOverSentence(cutover), detail: PARITY_TEXT.cutOverDetail },
+      byLine: cutOverByLine(cutover.cut_over_by_name),
+      canCompare: false,
+      canCutOver: false,
+      days: dayRows(history, ranThatDay ? at : new Date(at.getTime() - DAY_MS)),
+      daysHeading: PARITY_TEXT.cutOverDaysHeading,
+    }
+  }
+  if (state === 'not_written') {
+    return {
+      state,
+      line: { kind: 'not_written', text: PARITY_TEXT.notWritten, detail: PARITY_TEXT.notWrittenDetail },
+      byLine: null,
+      canCompare: false,
+      canCutOver: false,
+      days: dayRows(history, now),
+      daysHeading: null,
+    }
+  }
+  return {
+    state,
+    line: statusLine(history),
+    byLine: null,
+    canCompare: true,
+    canCutOver: state === 'ready',
+    days: dayRows(history, now),
+    daysHeading: null,
+  }
+}
+
+/**
+ * The words for a refused cutover: the server's fixed sentence (409 "Not ready: day 3 of 7 with no differences.",
+ * "Already cut over: …", "A comparison is running; …"), else "Not ready for the cutover." for a bare 409 and
+ * "Could not cut over." for anything else — never "Request failed with status code 409".
+ */
+export function cutoverRefusalSentence(error: unknown): string {
+  const response = (error as { response?: { status?: number; data?: { detail?: unknown } } } | null)?.response
+  const fallback = response?.status === 409 ? PARITY_TEXT.cutOverNotReady : PARITY_TEXT.couldNotCutOver
   return extractErrorMessage(response?.data?.detail, fallback)
 }
