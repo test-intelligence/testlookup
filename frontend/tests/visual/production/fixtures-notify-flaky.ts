@@ -393,7 +393,7 @@ export const REGRESSIONS_VIEW = savedView(
 )
 /** What the old "Save View" made: an empty filter set. */
 export const LEGACY_VIEW = savedView(VIEW_IDS.legacy, 'Old empty view', {}, { page: null, created_at: isoAgo(40) })
-/** A widget layout row (`useAnalyticsView`): never listed as a digest view. */
+/** A layout row (written by the retired widget-layout hook; they exist on deployments): never listed as a digest view. */
 export const LAYOUT_VIEW = savedView(VIEW_IDS.layout, 'Trends widget layout', { page: 'trends', instances: [{ id: 'w1', kind: 'pass-rate' }], version: 1 })
 /** A report view whose name is markup: drawn as text. */
 export const HOSTILE_VIEW = savedView(VIEW_IDS.hostile, HOSTILE_NAME, { kind: 'report_view', page: 'failures', window: 30 }, { page: 'failures' })

@@ -17,6 +17,8 @@
  *     (FLK-01); the Policy tab's card, the policy read on Policy and
  *     Quarantined only, the over-cap line (FLK-02); Sort by the flakiness
  *     score (FLK-03).
+ *   - W25c HYG-01: the release filter does not apply, and the header says so
+ *     (the cases moved here from the deleted Quarantine page shell's test).
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
@@ -79,6 +81,7 @@ vi.mock('@/store/projectStore', () => ({
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
 import FlakyTestsPage from './FlakyTestsPage'
+import { useReleaseStore } from '@/store/releaseStore'
 
 function entry(i: number, recommendation: FlakyCoachEntry['quarantine_recommendation']): FlakyCoachEntry {
   return {
@@ -526,5 +529,58 @@ describe('FlakyTestsPage — the Policy tab and the cap (FLK-02)', () => {
     const { container } = renderPage('/flaky?tab=policy')
     await waitFor(() => expect(container.querySelector('[data-quarantine-policy]')).toHaveTextContent('Only a QA lead can change the quarantine policy.'))
     expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+  })
+})
+
+// Moved from QuarantinePage.test.tsx (W25c HYG-01: the unrouted Quarantine page
+// shell is deleted; `/quarantine` redirects here, to the Quarantined tab).
+//
+// A quarantine request is a standing decision about a TEST — proposed,
+// approved, released — and `/flaky-quarantine` accepts no release at all. But
+// the release picker sits in the TopBar on every route, so with 2.4.0 selected
+// a reader takes the counts as 2.4.0's. They are the project's: a surface
+// ignoring a filter the header shows has to say so (S4b, `AllReleasesBadge`).
+describe('FlakyTestsPage — the release filter does not apply (moved from QuarantinePage.test.tsx)', () => {
+  beforeEach(() => {
+    useReleaseStore.setState({ activeReleaseId: null, scopedProjectId: null })
+  })
+
+  it('marks the page when a release is selected', async () => {
+    useReleaseStore.setState({ activeReleaseId: 'rel-1', scopedProjectId: 'p1' })
+    renderPage('/flaky?tab=quarantined')
+
+    expect(await screen.findByText('All releases')).toBeInTheDocument()
+  })
+
+  it('explains why, rather than only flagging it', async () => {
+    // A bare marker tells a reader something is different without telling them
+    // what, which is the same dead end the "select a project" prompts were.
+    useReleaseStore.setState({ activeReleaseId: 'rel-1', scopedProjectId: 'p1' })
+    renderPage('/flaky?tab=quarantined')
+
+    const badge = await screen.findByText('All releases')
+    expect(badge.getAttribute('title')).toMatch(/standing decision about a test/)
+  })
+
+  it('stays silent when no release is selected', async () => {
+    // The control. With no release chosen there is no discrepancy to explain,
+    // and the page looks exactly as it did before the release axis existed — a
+    // badge that always rendered would pass both tests above and turn into
+    // furniture people stop reading.
+    renderPage('/flaky?tab=quarantined')
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'Flaky tests' })).toBeInTheDocument()
+    expect(screen.queryByText('All releases')).toBeNull()
+  })
+
+  it('carries no Experimental badge beside it (W09 FLK-01: quarantine graduated)', async () => {
+    // The header's `actions` slot held the Experimental badge beside this one;
+    // removing it must not drop the release badge with it.
+    useReleaseStore.setState({ activeReleaseId: 'rel-1', scopedProjectId: 'p1' })
+    renderPage('/flaky?tab=quarantined')
+
+    expect(await screen.findByText('All releases')).toBeInTheDocument()
+    expect(screen.queryByText(/experimental/i)).toBeNull()
+    expect(document.querySelector('[title^="This feature is experimental"]')).toBeNull()
   })
 })

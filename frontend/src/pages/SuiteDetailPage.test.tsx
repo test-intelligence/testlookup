@@ -1,25 +1,28 @@
 /**
- * Regression: /coverage/suite trend chart + days-selector URL rewrite.
+ * The suite page's Charts tab body, `SuiteChartsPanel` (`/suites/:id?tab=charts`;
+ * the old `/coverage/suite` redirects there): the run history, the per-day pass
+ * rate and the Wave 3 sections.
  *
- * Two distinct bugs pinned in this file:
+ * Regression (2026-05-19): /coverage/suite had no per-day trend chart. The
+ * ``testManagementService.getSuiteTrend`` call powers a stacked chart of
+ * passed/failed/skipped/broken per day, gated on "at least one day with
+ * run_count > 0".
  *
- * 1) (2026-05-19) The days selector chips (7d/14d/30d/90d) had no
- *    effect when the URL already carried ``?days=``. The URL pin
- *    overrode the click. Fix: clicking a chip rewrites ?days= via
- *    ``setSearchParams(..., {replace: true})``.
- *
- * 2) (2026-05-19) /coverage/suite had no per-day trend chart. The new
- *    ``testManagementService.getSuiteTrend`` call powers a stacked
- *    bar chart of passed/failed/skipped/broken per day, gated on
- *    "at least one day with run_count > 0".
+ * W25c HYG-01: the unrouted `/coverage/suite` page shell and its body
+ * (`SuiteDetailBody`: KPI cards, per-test table, recent runs) are deleted. The
+ * chart cases that rendered the shell are retargeted at `SuiteChartsPanel`, the
+ * body the routed page mounts; the cases on the shell's own code went with it
+ * (its `?days=` parsing, the 2026-05-19 days-selector bug, is now
+ * `SuiteCasesPage`'s `useSuiteWindow`; its header's wrap; its KPI cards' stat
+ * token: the routed KPI strip is `SuiteCasesPage`'s).
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { cloneElement, isValidElement, type ReactElement } from 'react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter } from 'react-router-dom'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import SuiteDetailPage, { SUITE_CHART_HEIGHT, SuiteChartsPanel } from './SuiteDetailPage'
+import { SUITE_CHART_HEIGHT, SuiteChartsPanel } from './SuiteDetailPage'
 import { useSuiteDetail } from '@/hooks/useMetrics'
 
 const mockGetSuiteTrend = vi.fn()
@@ -30,8 +33,8 @@ vi.mock('@/services/testManagementService', () => ({
   },
 }))
 
-// ``useSuiteDetail`` is the page's primary fetch. Stub it to a
-// stable summary so the page renders past the loading branch.
+// ``useSuiteDetail`` is the body's primary fetch. Stub it to a
+// stable summary so the body renders past the loading branch.
 vi.mock('@/hooks/useMetrics', () => ({
   useSuiteDetail: vi.fn(() => ({
     data: {
@@ -56,16 +59,12 @@ vi.mock('@/hooks/useMetrics', () => ({
   })),
 }))
 
-// Wave 3: the page's one new mount, stubbed (its flag gate and sections have
-// their own tests): what the page passes it, and where it mounts.
+// Wave 3: the body's one mount of the composite, stubbed (its sections have
+// their own tests): what the body passes it, and where it mounts.
 vi.mock('@/components/reports/catalogue/SuiteDetailAdvanced', () => ({
   default: ({ days, suiteName }: { days: number; suiteName: string }) => (
     <div data-testid="suite-advanced" data-days={days} data-suite={suiteName} />
   ),
-}))
-
-vi.mock('@/hooks/useSuites', () => ({
-  useSuites: vi.fn(() => ({ data: { items: [] } })),
 }))
 
 vi.mock('@/store/projectStore', () => ({
@@ -89,13 +88,12 @@ vi.mock('recharts', async (importOriginal) => {
   }
 })
 
-function renderPage(url = '/coverage/suite?name=Auth&days=30') {
+/** The Charts tab body for the suite "Auth" and a window (the routed page passes both). */
+function renderPanel(days = 30) {
   return render(
     <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
-      <MemoryRouter initialEntries={[url]}>
-        <Routes>
-          <Route path="/coverage/suite" element={<SuiteDetailPage />} />
-        </Routes>
+      <MemoryRouter>
+        <SuiteChartsPanel suiteName="Auth" days={days} />
       </MemoryRouter>
     </SWRConfig>,
   )
@@ -124,7 +122,7 @@ function tableOf(frame: HTMLElement) {
   return { headers, row }
 }
 
-describe('SuiteDetailPage — regression', () => {
+describe('SuiteChartsPanel — the run history and the per-day pass rate (regression)', () => {
   beforeEach(() => {
     mockGetSuiteTrend.mockReset()
   })
@@ -140,7 +138,7 @@ describe('SuiteDetailPage — regression', () => {
       ],
     })
 
-    renderPage()
+    renderPanel()
 
     await waitFor(() => expect(mockGetSuiteTrend).toHaveBeenCalled())
     expect(await screen.findByText(/Run history/)).toBeInTheDocument()
@@ -158,7 +156,7 @@ describe('SuiteDetailPage — regression', () => {
       ],
     })
 
-    renderPage()
+    renderPanel()
 
     await waitFor(() => expect(mockGetSuiteTrend).toHaveBeenCalled())
     expect(screen.queryByText(/Run history/)).not.toBeInTheDocument()
@@ -166,7 +164,7 @@ describe('SuiteDetailPage — regression', () => {
 
   it('draws the run history as four statuses — Skipped and Broken no longer share a colour', async () => {
     mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: WEEK })
-    renderPage()
+    renderPanel()
     const frame = frameOf(await screen.findByRole('heading', { level: 3, name: 'Run history — last 30 days' }))
     const legend = Array.from(frame.querySelectorAll('[data-chart-legend] li'), (li) => li.textContent)
     expect(legend).toEqual(['Passed', 'Failed', 'Broken', 'Skipped'])
@@ -184,7 +182,7 @@ describe('SuiteDetailPage — regression', () => {
 
   it('draws the pass rate PER DAY over the same window, a day with nothing evaluated as a gap', async () => {
     mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: WEEK })
-    renderPage()
+    renderPanel()
     const frame = frameOf(await screen.findByRole('heading', { level: 3, name: 'Pass rate trend — last 30 days' }))
     // Per day, not per run: the old heading counted runs.
     expect(screen.queryByText(/Last \d+ Runs/i)).toBeNull()
@@ -215,7 +213,7 @@ describe('SuiteDetailPage — regression', () => {
       broken_count: 0,
     }))
     mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: alternate })
-    renderPage()
+    renderPanel()
     const frame = frameOf(await screen.findByRole('heading', { level: 3, name: 'Pass rate trend — last 30 days' }))
     expect(within(frame).getByText('One point per day with runs · a day without runs is a gap, never 0%')).toBeVisible()
   })
@@ -226,16 +224,6 @@ describe('SuiteDetailPage — regression', () => {
     expect(source).not.toMatch(/from 'recharts'/)
   })
 
-  it('passes the URL days param to the trend service', async () => {
-    mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 90, points: [] })
-
-    renderPage('/coverage/suite?name=Auth&days=90')
-
-    await waitFor(() => {
-      // Third positional arg is ``days``.
-      expect(mockGetSuiteTrend).toHaveBeenCalledWith('Auth', expect.anything(), 90)
-    })
-  })
 })
 
 // ── VIZ-106 / VIZ-408 (Wave 2.6) ────────────────────────────────────────────
@@ -244,7 +232,7 @@ describe('SuiteDetailPage — regression', () => {
 // overlays and the zoom — and only that frame. Since Phase D (S3) the page
 // asks no flag: there is no flag-off frame and no pending placeholder.
 
-describe('SuiteDetailPage — Wave 2.6', () => {
+describe('SuiteChartsPanel — Wave 2.6', () => {
   const bodyHeight = (frame: HTMLElement) =>
     (frame.querySelector('[data-chart-body]') as HTMLElement).style.minHeight
 
@@ -260,7 +248,7 @@ describe('SuiteDetailPage — Wave 2.6', () => {
   }
 
   it('both frames are 240 px tall', async () => {
-    renderPage()
+    renderPanel()
     const { history, passRate } = await frames()
     expect(SUITE_CHART_HEIGHT).toBe(240)
     expect(bodyHeight(history)).toBe('240px')
@@ -268,80 +256,54 @@ describe('SuiteDetailPage — Wave 2.6', () => {
   })
 
   it('the pass-rate frame has the overlays and the zoom, inside its catalogue section; the run history does not', async () => {
-    renderPage()
+    renderPanel()
     const { history, passRate } = await frames()
     const section = document.querySelector('[data-catalogue-section="suite-pass-rate"]') as HTMLElement
     expect(section).toContainElement(passRate)
     expect(document.querySelectorAll('[data-catalogue-section]')).toHaveLength(1)
     expect(passRate.querySelector('[data-trend-controls]')).toBeTruthy()
     expect(passRate.querySelector('[data-chart-brush]')).toBeTruthy()
-    // No "apply as window": this page's window is its own ?days.
+    // No "apply as window" on the suite's pass rate.
     expect(within(passRate).queryByRole('button', { name: /apply/i })).toBeNull()
     expect(history.querySelector('[data-trend-controls]')).toBeNull()
     expect(history.querySelector('[data-chart-brush]')).toBeNull()
-  })
-
-  it('the header actions wrap on a narrow screen', async () => {
-    renderPage()
-    await frames()
-    const periods = screen.getByRole('button', { name: '7d' }).parentElement?.parentElement as HTMLElement
-    expect(periods.className.split(/\s+/)).toEqual(expect.arrayContaining(['flex', 'flex-wrap']))
-  })
-
-  it('the KPI values sit on the stat token (24 px, as the text-2xl they replace)', async () => {
-    renderPage()
-    await frames()
-    const value = screen.getByText('Unique Tests').parentElement?.nextElementSibling as HTMLElement
-    expect(value.textContent).toBe('12')
-    expect(value.className).toContain('text-[length:var(--text-stat-lg)]')
-    expect(value.className).not.toMatch(/\btext-2xl\b/)
   })
 })
 
 // ── Wave 3 (VIZ-501 test x run, VIZ-506 scatter) ───────────────────────────
 //
-// The page's whole change is ONE import and ONE mount of the lazy composite,
-// unconditional since Phase D (S3); the composite reads the advanced flag itself.
+// ONE mount of the lazy composite, unconditional since Phase D (S3); the
+// composite reads the advanced flag itself.
 
-describe('SuiteDetailPage — Wave 3 advanced sections', () => {
+describe('SuiteChartsPanel — Wave 3 advanced sections', () => {
   beforeEach(() => {
     mockGetSuiteTrend.mockReset()
     mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: WEEK })
   })
 
-  it('mounted once, with the page window and its one suite, between the charts and the test table', async () => {
-    renderPage('/coverage/suite?name=Auth&days=14')
+  it('mounted once, with the window and its one suite, after the charts', async () => {
+    renderPanel(14)
     const advanced = await screen.findByTestId('suite-advanced')
     expect(screen.getAllByTestId('suite-advanced')).toHaveLength(1)
     expect(advanced).toHaveAttribute('data-days', '14')
     expect(advanced).toHaveAttribute('data-suite', 'Auth')
-    const table = screen.getByRole('heading', { level: 3, name: /^Test Cases/ })
-    expect(advanced.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const passRate = await screen.findByRole('heading', { level: 3, name: 'Pass rate trend — last 14 days' })
+    expect(passRate.compareDocumentPosition(advanced) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })
 
 // ── UX redesign P4: the body, extracted ─────────────────────────────────────
 //
 // `/coverage/suite` redirects to the suite page's Charts tab, which renders
-// `SuiteChartsPanel`: the charts and the Wave 3 sections of this body, and
-// none of what the suite page shows elsewhere (its KPI strip, its Tests tab's
-// per-test rows, its Runs tab's recent runs).
+// `SuiteChartsPanel`: the charts and the Wave 3 sections, and none of what the
+// suite page shows elsewhere (its KPI strip, its Tests tab's per-test rows, its
+// Runs tab's recent runs).
 
 describe('SuiteChartsPanel — the suite page Charts tab', () => {
   beforeEach(() => {
     mockGetSuiteTrend.mockReset()
     mockGetSuiteTrend.mockResolvedValue({ suite_name: 'Auth', days: 30, points: WEEK })
   })
-
-  function renderPanel(days = 30) {
-    return render(
-      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
-        <MemoryRouter>
-          <SuiteChartsPanel suiteName="Auth" days={days} />
-        </MemoryRouter>
-      </SWRConfig>,
-    )
-  }
 
   it('the run history (the primary content), the per-day pass rate and the Wave 3 sections, for its suite and window', async () => {
     renderPanel(14)
@@ -383,14 +345,5 @@ describe('SuiteChartsPanel — the suite page Charts tab', () => {
     } finally {
       if (original) vi.mocked(useSuiteDetail).mockImplementation(original)
     }
-  })
-
-  it('the full page still renders the whole body (KPI cards, per-test table, recent runs)', async () => {
-    renderPage()
-    await screen.findByRole('heading', { level: 3, name: /^Run history/ })
-    expect(screen.getByText('Unique Tests')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /^Test Cases/ })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Recent Runs (2)' })).toBeInTheDocument()
-    expect(document.querySelector('[data-primary]')).toBeNull()
   })
 })

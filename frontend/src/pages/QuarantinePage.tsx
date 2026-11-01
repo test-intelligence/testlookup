@@ -12,14 +12,10 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import CreateJiraIssueModal from '@/components/defects/CreateJiraIssueModal'
-import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
-import Tabs from '@/components/ui/Tabs'
-import AllReleasesBadge from '@/components/ui/AllReleasesBadge'
 import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
 import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
-import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { openHelp } from '@/store/helpStore'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useSlotCloser } from '@/hooks/useSlotCloser'
@@ -184,52 +180,6 @@ export function QuarantineBody({
         </div>
       )}
     </section>
-  )
-}
-
-const VIEW_TABS: { id: QuarantineView; label: string }[] = [
-  { id: 'proposals', label: 'Proposals' },
-  { id: 'active', label: 'Active' },
-  { id: 'history', label: 'History' },
-]
-
-/**
- * Flaky-test quarantine review page — Tier 1 item 3. No longer routed (UX
- * redesign P4: `/quarantine` redirects to Flaky tests › Quarantined, whose
- * Proposed · Quarantined · History tabs render the same `QuarantineBody`).
- */
-export default function QuarantinePage() {
-  const activeProjectId = useProjectStore((s) => s.activeProjectId)
-  const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId
-
-  const [view, setView] = useState<QuarantineView>('proposals')
-  const { stats } = useQuarantineStats(projectId)
-  const counts = quarantineCounts(stats)
-
-  return (
-    <div className="space-y-4">
-      <PageHeader
-        title="Flaky Quarantine"
-        subtitle="Review and approve flaky test quarantine proposals"
-        actions={
-          <span className="inline-flex items-center gap-2">
-            {/* A quarantine request is a standing decision about a TEST, with
-                no release dimension — the endpoint takes none. Without this
-                the counts below read as one release's proposals. */}
-            <AllReleasesBadge reason="A quarantine request is a standing decision about a test, not about one release's runs — a test is quarantined for the project or it is not." />
-          </span>
-        }
-        tabs={
-          <Tabs
-            ariaLabel="Quarantine requests"
-            items={VIEW_TABS.map((t) => ({ ...t, count: counts[t.id] }))}
-            value={view}
-            onChange={setView}
-          />
-        }
-      />
-      <QuarantineBody view={view} projectId={projectId} />
-    </div>
   )
 }
 

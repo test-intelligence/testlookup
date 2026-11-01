@@ -1,9 +1,12 @@
 /**
- * E8.5: the Review Queue page.
+ * E8.5: the AI-report review queue (`ReviewsBody`), rendered by Inbox ›
+ * Approvals as its "AI reports" source (`/reviews` redirects there).
  *
  * QA leads accept or reject pending AI reports (a reject needs a reason code);
- * everyone else sees the queue read-only; All Projects mode shows the project
- * picker instead of fetching a queue that does not exist.
+ * everyone else sees the queue read-only. All Projects mode is the host's
+ * (the project prompt, no queue fetched): that case moved to
+ * `inbox/ApprovalsTab.test.tsx` with the unrouted Review Queue page shell's
+ * deletion (W25c HYG-01).
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -15,7 +18,6 @@ const hookState = vi.hoisted(() => ({
   refresh: vi.fn(() => Promise.resolve()),
   lastState: '' as string,
   error: undefined as unknown,
-  projectId: 'proj-1',
   canAccessManagement: true,
 }))
 
@@ -36,13 +38,6 @@ vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ canAccessManagement: hookState.canAccessManagement }),
 }))
 
-vi.mock('@/store/projectStore', () => ({
-  ALL_PROJECTS_ID: '__ALL__',
-  useProjectStore: vi.fn((selector: (s: Record<string, unknown>) => unknown) =>
-    selector({ activeProjectId: hookState.projectId, projects: [], setActiveProject: vi.fn() }),
-  ),
-}))
-
 vi.mock('@/services/reviewService', () => ({
   reviewService: {
     accept: vi.fn(() => Promise.resolve({})),
@@ -52,7 +47,7 @@ vi.mock('@/services/reviewService', () => ({
 
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
-import ReviewsPage from './ReviewsPage'
+import { ReviewsBody } from './ReviewsPage'
 import { reviewService } from '@/services/reviewService'
 
 function review(i: number, overrides: Partial<Review> = {}): Review {
@@ -83,13 +78,12 @@ function review(i: number, overrides: Partial<Review> = {}): Review {
 const renderPage = () =>
   render(
     <MemoryRouter>
-      <ReviewsPage />
+      <ReviewsBody />
     </MemoryRouter>,
   )
 
 beforeEach(() => {
   hookState.reviews = [review(1)]
-  hookState.projectId = 'proj-1'
   hookState.canAccessManagement = true
   hookState.error = undefined
   hookState.refresh.mockClear()
@@ -97,14 +91,7 @@ beforeEach(() => {
   vi.mocked(reviewService.reject).mockClear()
 })
 
-describe('ReviewsPage', () => {
-  it('shows the project picker instead of a queue in All Projects mode', () => {
-    hookState.projectId = '__ALL__'
-    renderPage()
-    expect(screen.getByText('Select a project')).toBeInTheDocument()
-    expect(screen.queryByTestId('review-row')).not.toBeInTheDocument()
-  })
-
+describe('ReviewsBody', () => {
   it('lists the pending queue by default with its disclaimer and a link to the report', () => {
     renderPage()
     expect(hookState.lastState).toBe('pending_review')

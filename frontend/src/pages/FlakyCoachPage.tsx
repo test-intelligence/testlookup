@@ -1,25 +1,17 @@
 import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import {
-  HeartPulse, ShieldAlert, AlertTriangle, Eye, RefreshCw, CheckCircle,
+  HeartPulse, ShieldAlert, AlertTriangle, Eye, CheckCircle,
 } from 'lucide-react'
 import { clsx } from 'clsx'
-import toast from 'react-hot-toast'
-import PageHeader from '@/components/ui/PageHeader'
-import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { Table, Td, Th, Tr } from '@/components/ui/Table'
-import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import { isDetailToken } from '@/components/ui/inPage/ids'
 import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
 import { useDetailParam } from '@/components/ui/inPage/useDetailParam'
-import { useFlakyCoach } from '@/hooks/useTestHealth'
-import { usePermissions } from '@/hooks/usePermissions'
-import { testHealthService, type FlakyCoachEntry } from '@/services/testHealthService'
-import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
+import type { FlakyCoachEntry } from '@/services/testHealthService'
 import { formatDay } from '@/utils/formatters'
 import ChipFilter from './inbox/ChipFilter'
-import { flakySubtitle } from './flaky/flakyModel'
 import {
   INSUFFICIENT_NOTE,
   SCORE_HEADER_TITLE,
@@ -469,73 +461,6 @@ export function FlakyCoachBody({
           </div>
         )}
       </section>
-    </div>
-  )
-}
-
-/**
- * Flaky Coach, no longer routed (UX redesign P4: `/flaky-coach` redirects to
- * Flaky tests, `/flaky`, whose Detected tab renders the same `FlakyCoachBody`).
- */
-export default function FlakyCoachPage() {
-  const activeProjectId = useProjectStore(s => s.activeProjectId)
-  const isAllProjects = activeProjectId === ALL_PROJECTS_ID
-  const projectId = isAllProjects ? null : activeProjectId
-  const { coach, isLoading, refresh } = useFlakyCoach(projectId)
-  const { isQaEngineer: canRefresh } = usePermissions()
-  const [refreshing, setRefreshing] = useState(false)
-
-  const handleRefresh = async () => {
-    if (!projectId) return
-    setRefreshing(true)
-    try {
-      const result = await testHealthService.refreshFlakyCoach(projectId)
-      const found = result.flaky_tests_found
-      toast.success(`Found ${found} flaky test${found === 1 ? '' : 's'}`)
-      await refresh()
-    } catch {
-      // The API client already toasted the server's reason.
-    } finally {
-      setRefreshing(false)
-    }
-  }
-
-  if (isAllProjects) {
-    return (
-      <div className="space-y-4">
-        <PageHeader
-          title="Flaky Coach"
-          subtitle="Select a specific project to see flaky test coaching"
-        />
-        <ProjectRequiredEmptyState
-          icon={<HeartPulse className="h-10 w-10" />}
-          description="Flaky Coach analyses one project's test history at a time."
-        />
-      </div>
-    )
-  }
-
-  if (isLoading) {
-    return <div className="flex justify-center py-16"><LoadingSpinner size="lg" /></div>
-  }
-
-  return (
-    <div className="space-y-4">
-      <PageHeader
-        title="Flaky Coach"
-        subtitle={flakySubtitle(coach)}
-        actions={canRefresh ? (
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="btn-secondary text-sm flex items-center gap-2"
-          >
-            <RefreshCw className={clsx('h-4 w-4', refreshing && 'animate-spin')} />
-            {refreshing ? 'Refreshing…' : 'Refresh'}
-          </button>
-        ) : undefined}
-      />
-      <FlakyCoachBody entries={coach?.entries ?? []} />
     </div>
   )
 }

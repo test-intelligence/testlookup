@@ -3,16 +3,13 @@ import { Link } from 'react-router-dom'
 import { clsx } from 'clsx'
 import { Check, ClipboardCheck, X } from 'lucide-react'
 import toast from 'react-hot-toast'
-import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import DataUnavailable from '@/components/ui/DataUnavailable'
 import Pagination from '@/components/ui/Pagination'
-import ProjectRequiredEmptyState from '@/components/ui/ProjectRequiredEmptyState'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useProjectReviews } from '@/hooks/useReviews'
 import { reviewService } from '@/services/reviewService'
-import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { formatCompactDateTime } from '@/utils/formatters'
 import ChipFilter from './inbox/ChipFilter'
 import { INVOCATION_ROW_LABEL, invocationHref } from '@/components/agents/tryAgentModel'
@@ -126,32 +123,6 @@ export function ReviewsBody() {
 
       {reviews[0]?.ai_disclaimer && (
         <p className="text-xs text-[var(--color-text-muted)]">{reviews[0].ai_disclaimer}</p>
-      )}
-    </div>
-  )
-}
-
-/**
- * Review Queue, no longer routed (UX redesign P4, D4: `/reviews` redirects to
- * Inbox › Approvals, which renders the same `ReviewsBody`).
- */
-export default function ReviewsPage() {
-  const activeProjectId = useProjectStore((s) => s.activeProjectId)
-  const isAllProjects = activeProjectId === ALL_PROJECTS_ID
-
-  return (
-    <div className="space-y-4">
-      <PageHeader
-        title="Review Queue"
-        subtitle="AI-generated reports are drafts until a person accepts them. Accepting marks the pipeline run passed; rejecting marks it failed."
-      />
-      {isAllProjects ? (
-        <ProjectRequiredEmptyState
-          icon={<ClipboardCheck className="h-10 w-10" />}
-          description="Reviews belong to one project. Pick the project whose AI reports you want to review."
-        />
-      ) : (
-        <ReviewsBody />
       )}
     </div>
   )
