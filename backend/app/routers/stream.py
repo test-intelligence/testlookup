@@ -138,6 +138,13 @@ async def close_session(
 
         await bump_analytics_epoch(closed_project_id)
     await stream_service.finalize_closed_session_redis(session_id)
+    # W25e E-1: publish the staged persist_live_session now instead of at the
+    # next relay tick (0-60 s). Whether or not THIS call closed the session: an
+    # earlier close whose publish was deferred is picked up too. Never raises;
+    # a deferred publish stays relay-recoverable.
+    from app.worker.downstream_dispatch import publish_staged_now
+
+    await publish_staged_now(db, run_id=session_id)
 
 
 @router.post("/events/batch", response_model=stream_service.LiveEventBatchResponse, status_code=202)
@@ -201,6 +208,10 @@ async def ingest_via_api_key(
 
         await bump_analytics_epoch(auth.project_id)
         await stream_service.finalize_closed_session_redis(response.session_id)
+        # W25e E-1: the close staged persist_live_session; publish it now.
+        from app.worker.downstream_dispatch import publish_staged_now
+
+        await publish_staged_now(db, run_id=response.session_id)
     return response
 
 
