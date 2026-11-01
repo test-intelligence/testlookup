@@ -15,7 +15,6 @@
     "frontend/src/components/settings/MLTrainingCard.tsx": 1,
     "frontend/src/components/workflow/WorkflowTimeline.tsx": 1,
     "frontend/src/pages/AgentStatusPage.tsx": 3,
-    "frontend/src/pages/FlakyCoachPage.tsx": 1,
     "frontend/src/pages/FlakyTestsPage.tsx": 1,
     "frontend/src/pages/RunIntelligencePage.tsx": 1,
     "frontend/src/pages/WorkflowEditorPage.tsx": 1,
