@@ -58,6 +58,8 @@ import { clsx } from 'clsx'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { useLiveExecution, computeLiveStats } from '@/hooks/useLiveExecution'
+import { LIVE_RESULTS_OMITTED } from '@/hooks/liveFrameModel'
+import { LIVE_FRAME_INTERVAL_MS } from '@/types/liveFrames'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import type { LiveSessionState } from '@/types/live-stream'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
@@ -573,7 +575,11 @@ export default function LiveExecutionPage() {
   }
   const pipelineEvents: FeedEvent[] = useMemo(() => {
     return recentEvents.map(e => {
+      // W25e: the server listed fewer results than it folded into one frame —
+      // an info row saying how many (so it is never under "Errors").
+      const omitted = e.type === LIVE_RESULTS_OMITTED
       const tone: FeedEvent['tone'] =
+        omitted ? 'info' :
         e.type === 'live_warning' ? 'warning' :
         e.type === 'live_run_complete' ? 'success' :
         e.last_status?.toUpperCase() === 'FAILED' || e.last_status?.toUpperCase() === 'BROKEN' ? 'error' :
@@ -582,18 +588,21 @@ export default function LiveExecutionPage() {
       // What the event IS. These used to be the names of the four invented
       // "workflow" stages (Stream Connection, Run Monitoring, …).
       const label =
+        omitted ? 'More results' :
         e.type === 'live_run_complete' ? 'Run completed' :
         e.type === 'live_run_started' ? 'Run started' :
         e.type === 'live_test_result' ? 'Test result' :
         e.type === 'live_warning' ? 'Warning' :
         'Stream event'
+      // A warning the server folded N times inside one frame says so once.
+      const repeated = e.type === 'live_warning' && (e.coalesced ?? 0) > 1 && e.message
       return {
         label,
         time: formatClock(e.timestamp),
         ago: relativeTime(e.timestamp),
         kind: e.type,
         tone,
-        detail: e.message,
+        detail: repeated ? `${e.message} (${e.coalesced} times)` : e.message,
         runId: e.run_id,
       }
     })
@@ -1071,7 +1080,7 @@ export default function LiveExecutionPage() {
           )}
         </div>
         <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between">
-          <span>Streaming · 100ms batch</span>
+          <span>{`Streaming · ${LIVE_FRAME_INTERVAL_MS} ms batches`}</span>
           <span className="font-mono">{recentEvents.length} buffered</span>
         </div>
       </aside>

@@ -8,14 +8,22 @@
  * The WebSocket receives events from the live consumer (run_started,
  * live_test_result, live_warning, live_run_complete) and merges them into
  * the local state so the dashboard updates without polling.
+ *
+ * W25e: the auth frame asks for protocol 2, so the server sends at most one
+ * data frame per `LIVE_FRAME_INTERVAL_MS` — a `live_batch` when several
+ * events fell inside one interval. Every data frame (a batch, or a legacy
+ * frame from an older server) is expanded by `expandLiveFrame` and merged
+ * with ONE feed update and ONE sessions update (`liveFrameModel.ts`).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import useSWR from 'swr'
 import liveStreamService from '@/services/liveStreamService'
 import { useAuthStore } from '@/store/authStore'
 import type { LiveSessionState } from '@/types/live-stream'
+import { LIVE_PROTOCOL_BATCH, LIVE_RECONCILE_FRAME } from '@/types/liveFrames'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 import { keyPart, type ScopeValue } from '@/lib/scopeParams'
+import { applyLiveUpdates, expandLiveFrame, isRunCompletion } from './liveFrameModel'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -37,6 +45,10 @@ export interface LiveEvent {
   message?: string
   timestamp: number
   sequence_id?: string
+  /** Events of one run the server folded into this one (a `live_warning` repeated N times). */
+  coalesced?: number
+  /** A `live_results_omitted` feed row: results the server folded but did not list. */
+  omitted?: number
 }
 
 export type WsStatus = 'connecting' | 'open' | 'closed' | 'error'
@@ -223,64 +235,24 @@ export function useLiveExecution(projectId?: string, suiteName?: ScopeValue, day
       return
     }
 
-    const event: LiveEvent = { ...(msg as unknown as LiveEvent), timestamp: Date.now() }
+    // Every data frame — a `live_batch` or a legacy frame (an older server, a
+    // lone event) — is one pass: one feed update, one sessions update.
+    const { feed, updates } = expandLiveFrame(msg, Date.now())
 
-    // Append to recent events feed (keep last 200)
-    setRecentEvents(prev => [event, ...prev].slice(0, 200))
+    // Append to recent events feed, newest first (keep last 200)
+    if (feed.length > 0) {
+      setRecentEvents(prev => [...feed].reverse().concat(prev).slice(0, 200))
+    }
 
-    // Merge live state updates into sessions list
-    if (type === 'live_run_started') {
-      setSessions(prev => {
-        const exists = prev.some(s => s.run_id === event.run_id)
-        if (exists) return prev
-        return [
-          {
-            run_id: event.run_id ?? '',
-            project_id: event.project_id ?? '',
-            build_number: event.build_number ?? '',
-            status: 'running',
-            total: 0, passed: 0, failed: 0, skipped: 0, broken: 0,
-            pass_rate: 0,
-          },
-          ...prev,
-        ]
-      })
-    } else if (type === 'live_test_result' && event.run_id) {
-      setSessions(prev =>
-        prev.map(s =>
-          s.run_id === event.run_id
-            ? {
-                ...s,
-                passed:     event.passed  ?? s.passed,
-                failed:     event.failed  ?? s.failed,
-                skipped:    event.skipped ?? s.skipped,
-                broken:     event.broken  ?? s.broken,
-                total:      event.total   ?? s.total,
-                pass_rate:  event.pass_rate ?? s.pass_rate,
-                current_test: event.last_test ?? s.current_test,
-                status: 'running',
-              }
-            : s,
-        ),
-      )
-    } else if (type === 'live_run_complete' && event.run_id) {
-      setSessions(prev =>
-        prev.map(s =>
-          s.run_id === event.run_id
-            ? {
-                ...s,
-                status: 'completed',
-                // Stamp the completion time so the SWR-merge race-window bridge
-                // can time-box this row (see onSuccess). Without it the bridge
-                // can't tell a just-completed run from a stale one.
-                completed_at: s.completed_at ?? new Date().toISOString(),
-                pass_rate: event.pass_rate ?? s.pass_rate,
-              }
-            : s,
-        ),
-      )
-      // Refresh polling data so completed run fades out
-      mutate()
+    // Merge the frame's live state updates into the sessions list, in order
+    if (updates.length > 0) {
+      setSessions(prev => applyLiveUpdates(prev, updates).sessions)
+    }
+
+    // Refresh polling data once so a completed run fades out (and re-read on
+    // a reconcile signal folded into a batch, as when it arrives alone)
+    if (updates.some(u => isRunCompletion(u) || u.type === LIVE_RECONCILE_FRAME)) {
+      void mutate()
     }
   }, [mutate, projectId])
 
@@ -308,11 +280,13 @@ export function useLiveExecution(projectId?: string, suiteName?: ScopeValue, day
     ws.onopen = () => {
       if (!mountedRef.current) return
       setWsStatus('open')
-      // Send JWT for auth after connection — always pull the freshest token
+      // Send JWT for auth after connection — always pull the freshest token.
+      // `protocol` asks for paced `live_batch` frames; an older server ignores it.
       ws.send(JSON.stringify({
         type: 'auth',
         token: tokenRef.current,
         last_event_id: lastEventIdsRef.current[projectId] ?? null,
+        protocol: LIVE_PROTOCOL_BATCH,
       }))
     }
 
