@@ -86,6 +86,20 @@ class TestCreditCardRedaction:
         run_id = "05982379-5519-4289-a773-69151d742022"
         assert redact_text(f"run {run_id} failed") == f"run {run_id} failed"
 
+    def test_a_uuid_with_all_digit_trailing_groups_is_not_a_card(self):
+        # The last two groups of a uuid4 read as 16 digits too ("…-9193-192975115072"); masking them stored a revoked
+        # key's id as "42356009-d818-4ae1-[REDACTED_CC]" (test_key_revoke_cascade_postgres flake, 2026-10-30).
+        key_id = "42356009-d818-4ae1-9193-192975115072"
+        assert redact_text(key_id) == key_id
+        assert redact_text(f"cascade from key {key_id}") == f"cascade from key {key_id}"
+        # Nor may an all-digit last group run on into a date that follows the uuid.
+        logged = "key 42356009-d818-4ae1-a193-192975115072 2026-10-30 revoked"
+        assert redact_text(logged) == logged
+
+    def test_a_card_in_every_separator_shape_is_still_redacted(self):
+        for card in ("4111 1111 1111 1111", "4111-1111-1111-1111", "4111111111111111"):
+            assert redact_text(f"Card: {card} declined") == "Card: [REDACTED_CC] declined"
+
     def test_a_card_followed_by_text_is_still_redacted(self):
         result = redact_text("Card 4111-1111-1111-1111-abc and 4111111111111111 done")
         assert result.count("[REDACTED_CC]") == 2

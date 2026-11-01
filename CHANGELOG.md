@@ -1567,6 +1567,15 @@ locally by default.
   `[REDACTED_CC]-a773-…`, breaking the link to the run; a real card number is
   still redacted. Test: `test_privacy_redaction.py`.
 
+- PII redaction no longer masks the tail of an id as a card number either. A
+  uuid whose last two groups happen to be all digits (`…-4ae1-9193-192975115072`)
+  read as 16 digits and was stored as `…-4ae1-[REDACTED_CC]`; a revoked key's
+  id in the activity ledger's `cascade_from` was one (a rare flake in
+  `test_key_revoke_cascade_postgres.py`). Nor does an all-digit last group run
+  on into a date written after the id. Card numbers with spaces, hyphens or
+  neither are still redacted (branch `fix/cc-redaction-uuid-tail-20261030`).
+  Test: `test_privacy_redaction.py`.
+
 - On `/runs`, picking a branch and then an AI verdict before the list
   refreshed dropped the branch filter; both filters stay now (W29b).
 
