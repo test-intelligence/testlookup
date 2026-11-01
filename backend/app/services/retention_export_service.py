@@ -68,8 +68,6 @@ MONGO_ID_CHUNK = 500
 #: estimate's Mongo share (docs x ``collStats.avgObjSize``).
 RECLAIM_MONGO_COLLECTIONS = (
     Collections.RAW_ALLURE_JSON,
-    Collections.EXECUTION_LOGS,
-    Collections.OCP_POD_EVENTS,
     Collections.RUN_SUMMARIES,
     Collections.AI_RUN_VERSIONS,
     Collections.DECISION_EVIDENCE_SNAPSHOTS,
@@ -77,7 +75,7 @@ RECLAIM_MONGO_COLLECTIONS = (
 #: The run-keyed raw collections a ``full`` archive copies (the estimate's raw
 #: share; the test-case keyed ones are copied but not estimated -- counting them
 #: would need every test case id, beyond the estimate's one Postgres statement).
-FULL_RAW_RUN_COLLECTIONS = (Collections.RAW_ALLURE_JSON, Collections.EXECUTION_LOGS)
+FULL_RAW_RUN_COLLECTIONS = (Collections.RAW_ALLURE_JSON,)
 #: A preview must not wait a minute on an unreachable store: past this, the
 #: part is "not measured" (absence is not health -- never 0).
 ESTIMATE_STEP_TIMEOUT_SECONDS = 10.0

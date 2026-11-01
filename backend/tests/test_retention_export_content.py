@@ -79,6 +79,8 @@ def _world():
     mongo = MemMongo({
         "raw_allure_json": [{"_id": "a1", "test_run_id": str(R1), "message": SECRET_SENTENCE,
                              "steps": [{"name": f"step {i}"} for i in range(150)]}],
+        # W25d HYG-02: documents in the two retired collections are never
+        # archived (the full tier lists raw_allure_json + rest_api_payloads only).
         "execution_logs": [{"_id": "l1", "test_run_id": str(R2), "line": "ok"}],
         "raw_testng_xml": [{"_id": "t1", "test_case_id": str(C2), "xml": "<testng/>"}],
         "rest_api_payloads": [{"_id": "p1", "test_case_id": str(C3), "token": SENTINEL}],
@@ -120,7 +122,7 @@ _COMMON = ["README.md", "deletion.json", "runs.json"]
 
 
 def _raw(run):
-    return [f"raw/{run}/{c}.jsonl" for c in ("raw_allure_json", "execution_logs", "raw_testng_xml", "rest_api_payloads")]
+    return [f"raw/{run}/{c}.jsonl" for c in ("raw_allure_json", "rest_api_payloads")]
 
 
 EXPECTED = {

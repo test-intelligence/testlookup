@@ -278,7 +278,6 @@ async def _seed_releases_and_policies(db: AsyncSession, seed: SeededProject, s: 
     db.add(m.ReleaseAttributionRule(project_id=pid, name="Release branches", match_field="branch",
                                     match_pattern="release/*", target_release_name="2026.11",
                                     created_by_id=seed.author_id))
-    db.add(m.QualityGate(project_id=pid, name="Pass rate", rules={"pass_rate": 90}))
     db.add(m.QuarantineLifecyclePolicy(project_id=pid, auto_create_defect=True))                 # → off
     db.add(m.NotificationTransitionPolicy(project_id=pid, transitions_enabled=True, per_run_events_enabled=True))
     await db.flush()

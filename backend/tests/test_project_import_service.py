@@ -746,3 +746,156 @@ async def test_an_accepted_upload_is_stored_under_project_imports(created_jobs):
     assert key.startswith(vocab.STORAGE_PREFIX_IMPORT) and key.endswith(f"/{job.id}.zip")
     assert (size, bucket, job.storage_key, job.bytes) == (len(blob), "compliance-packs", key, len(blob))
     assert session.writes == ["flush"]
+
+
+# ── W25d HYG-02 / HYG-04: a RETIRED table is skipped with a report line; the I-7b mirror follows the flag ──
+
+
+class _ImportSession(RecordingSession):
+    """A recording session whose ``get`` answers the job row, so ``run_import`` reaches I-8."""
+
+    def __init__(self, answers: Optional[Callable[[str], list[Any]]] = None) -> None:
+        super().__init__(answers)
+        self.job_row = SimpleNamespace()
+
+    async def get(self, *_args: Any, **_kwargs: Any) -> Any:
+        return self.job_row
+
+
+@pytest.fixture
+def import_world(monkeypatch):
+    """``run_import`` end to end on a recording session. Faked: provisioning, the initial release and the
+    activity row (not this section's subject). Recorded, bound to the REAL signatures: the cutover flag read
+    (answering ``world.legacy_on``) and the I-7b mirror, which DELEGATES to the real ``reconcile_project``."""
+    import inspect
+
+    from app.services import suite_membership_cutover as cutover
+    from app.services import suite_membership_reconcile as rec
+
+    world = SimpleNamespace(legacy_on=True, flag_reads=[], mirrors=[])
+    real_flag, real_reconcile = cutover.legacy_model_active, rec.reconcile_project
+
+    async def provision(db, *, project, creator, provision_release=True, activity_context=None):
+        return []
+
+    async def ensure_release(db, project):
+        return None
+
+    async def record(db, **kwargs):
+        return None
+
+    async def legacy_model_active(db, *, fresh=False):
+        inspect.signature(real_flag).bind(db, fresh=fresh)
+        world.flag_reads.append((db, fresh))
+        return world.legacy_on
+
+    async def reconcile_project(db, project_id, *, apply):
+        inspect.signature(real_reconcile).bind(db, project_id, apply=apply)
+        world.mirrors.append((db, project_id, apply))
+        return await real_reconcile(db, project_id, apply=apply)
+
+    monkeypatch.setattr("app.services.project_provisioning.provision_new_project", provision)
+    monkeypatch.setattr("app.services.release_lifecycle_service.ensure_active_release_for_new_project", ensure_release)
+    monkeypatch.setattr("app.services.activity.service.record", record)
+    monkeypatch.setattr(cutover, "legacy_model_active", legacy_model_active)
+    monkeypatch.setattr(rec, "reconcile_project", reconcile_project)
+    return world
+
+
+async def _imported(blob: bytes) -> tuple[Any, _ImportSession]:
+    session = _ImportSession(_answers())
+    job = SimpleNamespace(id=uuid.uuid4(), project_name=None, storage_key="project-imports/x.zip")
+
+    async def on_table(done: int, total: int) -> None:
+        return None
+
+    report = await svc.run_import(
+        session, job=job, storage=FakeStorage(blob), actor=_actor(),
+        now=dt.datetime.now(dt.timezone.utc), on_table=on_table,
+    )
+    return report, session
+
+
+def _gate(**overrides: Any) -> dict[str, Any]:
+    row = {"id": str(uuid.uuid4()), "project_id": str(uuid.uuid4()), "name": "Pass rate",
+           "rules": {"pass_rate": 90}, "is_active": True}
+    row.update(overrides)
+    return row
+
+
+def test_quality_gates_is_retired_and_no_longer_exported():
+    from app.services.project_export_entities import EXPORTED_TABLES
+
+    assert vocab.RETIRED_ENTITIES == ("quality_gates",)
+    assert not set(vocab.RETIRED_ENTITIES) & set(EXPORTED_TABLES)
+    assert vocab.SKIP_REASONS["retired_table"] == "the table no longer exists in this version"
+
+
+async def test_a_retired_table_listed_empty_imports_with_no_skip_line(import_world):
+    blob = build_archive({"test_suites": [_suite()], "quality_gates": []})
+    assert json.loads(zipfile.ZipFile(io.BytesIO(blob)).read("manifest.json"))["entities"]["quality_gates"] == {
+        "rows": 0, "parts": 0}
+
+    report, session = await _imported(blob)
+
+    assert report.skipped == []
+    assert report.inserted["test_suites"] == 1 and "quality_gates" not in report.inserted
+    assert "quality_gates" not in session.job_row.counts
+    assert not any("quality_gates" in sql for sql in session.statements)
+
+
+async def test_a_retired_table_with_rows_is_skipped_with_one_report_line(import_world):
+    from app.models.schemas import ProjectDataSkip
+
+    report, session = await _imported(build_archive({"test_suites": [_suite()], "quality_gates": [_gate()]}))
+
+    assert report.skipped == [ProjectDataSkip(entity="quality_gates", column=None, reason="retired_table", count=1)]
+    assert session.job_row.report["skipped"] == [
+        {"entity": "quality_gates", "column": None, "reason": "retired_table", "count": 1}]
+    assert report.inserted["test_suites"] == 1 and "quality_gates" not in report.inserted
+    assert "quality_gates" not in session.job_row.counts and session.job_row.status == "succeeded"
+    assert not any("quality_gates" in sql for sql in session.statements), "a retired table is never written"
+
+
+async def test_a_retired_tables_parts_are_never_read_and_its_count_is_the_manifests(import_world):
+    # Bytes no row model would accept (the chain still covers them): read, they would refuse invalid_row.
+    blob = build_archive(
+        {"test_suites": [_suite()]},
+        extra_members={"entities/quality_gates/part-0001.jsonl": b"this is not json\n" * 3},
+        entity_patch={"quality_gates": {"rows": 3, "parts": 1, "columns": ["name", "a_column_dropped_with_it"]}},
+    )
+
+    report, _session = await _imported(blob)
+
+    assert [(s.entity, s.reason, s.count) for s in report.skipped] == [("quality_gates", "retired_table", 3)]
+
+
+async def test_a_retired_tables_listed_part_must_still_be_present():
+    blob = build_archive({"test_suites": [_suite()]}, entity_patch={"quality_gates": {"rows": 2, "parts": 1}})
+    failure, session, calls = await _refused(blob)
+    assert failure.code == "tampered" and "a listed part is missing" in failure.message
+    _assert_nothing_written(session, calls)
+
+
+async def test_any_other_unknown_table_is_still_refused_beside_a_retired_one():
+    failure, session, calls = await _refused(
+        build_archive({"quality_gates": [_gate()], "test_runs": [{"id": str(uuid.uuid4())}]}))
+    assert failure.code == "unknown_entity" and "contains test_runs" in failure.message
+    _assert_nothing_written(session, calls)
+
+
+@pytest.mark.parametrize("legacy_on", [True, False], ids=["legacy-writes-on", "cut-over"])
+async def test_the_i7b_mirror_runs_only_while_legacy_writes_are_on(import_world, legacy_on):
+    import_world.legacy_on = legacy_on
+
+    report, session = await _imported(build_archive({"test_suites": [_suite()]}))
+
+    assert import_world.flag_reads == [(session, False)], "one cached read, on the import's own session"
+    if legacy_on:
+        assert import_world.mirrors == [(session, report.project_id, True)]
+        assert any("suite_memberships" in sql for sql in session.statements)
+    else:
+        assert import_world.mirrors == []
+        assert not any("suite_memberships" in sql for sql in session.statements), (
+            "after the cutover the import neither reads nor writes the legacy table")
+    assert session.job_row.status == "succeeded" and report.inserted["test_suites"] == 1

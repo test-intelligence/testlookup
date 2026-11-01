@@ -215,6 +215,18 @@ describe('the import report', () => {
     expect(skippedSentence(1200, 'row_unresolved')).toMatch(/^1,200 rows were skipped: /)
   })
 
+  it('a table this version dropped (W25d retired_table): "1 row was skipped: the table no longer exists in this version"', () => {
+    const lines = importReportLines({
+      ...report,
+      skipped: [{ entity: 'quality_gates', column: null, reason: 'retired_table', count: 1 }],
+      cleared: [],
+    }).notImported
+    expect(lines.map((l) => [l.entity, l.text])).toEqual([
+      ['quality_gates', '1 row was skipped: the table no longer exists in this version'],
+    ])
+    expect(skippedSentence(3, 'retired_table')).toBe('3 rows were skipped: the table no longer exists in this version')
+  })
+
   it('the collapsed summary: rows in tables, singular for 1', () => {
     expect(importSummaryLine(report)).toBe('4 rows in 2 tables')
     expect(importSummaryLine({ inserted: { releases: 1 } })).toBe('1 row in 1 table')

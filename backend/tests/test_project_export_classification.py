@@ -40,7 +40,6 @@ SCHEMA_V1_REQUIRED_COLUMNS = frozenset({
     "release_gate_policies.version", "release_gate_policies.name", "release_gate_policies.rules",
     "release_attribution_rules.name", "release_attribution_rules.match_field",
     "release_attribution_rules.match_pattern", "release_attribution_rules.target_release_name",
-    "quality_gates.name",
     "team_notification_channels.team_name", "team_notification_channels.channel_type",
     "team_notification_channels.target",
     "webhook_subscriptions.name", "webhook_subscriptions.target_url",
@@ -274,12 +273,14 @@ def test_7_projects_row_columns_are_the_settings_plus_the_cleared_assignments():
 def test_8_pinned_counts():
     counts = (len(e.EXPORTED), len(e.EXCLUDED), len(e.NOT_PROJECT_SCOPED))
     # W25a HYG-04 (deliberate): + suite_membership_parity_runs under NOT_PROJECT_SCOPED (23 → 24)
-    assert counts == (30, 107, 24), (
+    # W25d HYG-02 (deliberate): quality_gates leaves EXPORTED (30 → 29); contract_violations (run_history),
+    # tenant_metric_snapshots (derived) and ai_provenance_records (ai_history) leave EXCLUDED (107 → 104)
+    assert counts == (29, 104, 24), (
         f"EXPORTED / EXCLUDED / NOT_PROJECT_SCOPED = {counts}: a table was added or moved — "
         "classify it in project_export_entities.py and update this pin deliberately"
     )
     assert sum(counts) == len(TABLES)
-    assert sum(1 for r in e.EXCLUDED.values() if r == "run_history") == 37 + 8
+    assert sum(1 for r in e.EXCLUDED.values() if r == "run_history") == 36 + 8   # W25d: contract_violations dropped
 
 
 # ── (9) fail-open ────────────────────────────────────────────────────────────

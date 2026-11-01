@@ -65,8 +65,11 @@ EVIDENCE_ARTIFACT_COLUMNS = (
     "media_type", "sensitivity", "observed_at", "created_at",
 )
 #: full: raw collections, keyed by the run or by its test cases.
-RAW_BY_RUN = (Collections.RAW_ALLURE_JSON, Collections.EXECUTION_LOGS)
-RAW_BY_CASE = (Collections.RAW_TESTNG_XML, Collections.REST_API_PAYLOADS)
+#: (W25d HYG-02: execution_logs and raw_testng_xml left these -- nothing ever
+#: wrote them. An older archive that lists their parts still verifies: the
+#: verifier reads the archive's own manifest, not these tuples.)
+RAW_BY_RUN = (Collections.RAW_ALLURE_JSON,)
+RAW_BY_CASE = (Collections.REST_API_PAYLOADS,)
 MONGO_ID_CHUNK = 500
 
 TIER_FILES = {

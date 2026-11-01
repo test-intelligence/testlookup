@@ -51,8 +51,6 @@ _UPLOADS_PREFIX = "uploads/{project_id}/"
 #: which is why the caller passes them in rather than us re-deriving them.
 _RUN_SCOPED_COLLECTIONS = (
     Collections.RAW_ALLURE_JSON,
-    Collections.EXECUTION_LOGS,
-    Collections.OCP_POD_EVENTS,
     Collections.RUN_SUMMARIES,
     # AIH-06: the versioned run summaries and analysis digests (runs clock).
     Collections.AI_RUN_VERSIONS,
@@ -64,7 +62,7 @@ _RUN_SCOPED_COLLECTIONS = (
 #: Reports are measured SEPARATELY from the run-scoped collections, not
 #: folded into the Mongo total. "How much are my reports costing me" was the
 #: brief's first question, and it is unanswerable from a single Mongo figure
-#: that also contains raw Allure payloads and pod events.
+#: that also contains raw Allure payloads and run summaries.
 #:
 #: They also sit on a different clock — the audit clock, because a report is
 #: evidence about a run and outlives it — so a reader comparing this line to
