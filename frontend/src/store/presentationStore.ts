@@ -13,6 +13,10 @@
  * PresentationToggle), which runs before React renders, so a presenter never
  * sees the desk-sized page flash before the room-sized one. Writing it from a
  * component effect would paint one frame at desk size first.
+ *
+ * Every other open tab of the same profile follows a change (HYG-08): the
+ * `storage` listener below reads the preference back and re-applies the
+ * attribute.
  */
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -55,6 +59,31 @@ export const usePresentationStore = create<PresentationState>()(
     },
   ),
 )
+
+/** One live `storage` listener per window, whatever re-evaluates this module (HMR, `vi.resetModules`). */
+const STORAGE_SYNC = Symbol.for('testlookup.presentation.storage-sync')
+
+/**
+ * Another tab of this browser profile turned the mode on or off (HYG-08): read the preference back and
+ * re-apply the <html> attribute. `rehydrate()` sets the store with zustand's raw `set` -- it neither writes
+ * storage (no echo between tabs) nor runs `setEnabled` -- so the attribute is applied here. `key === null`
+ * is a `localStorage.clear()` in the other tab: the preference is gone, so the mode is off.
+ */
+export function syncPresentationFromStorage(event: StorageEvent): void {
+  if (event.key !== PRESENTATION_STORAGE_KEY && event.key !== null) return
+  if (typeof localStorage !== 'undefined' && event.storageArea !== null && event.storageArea !== localStorage) return
+  void Promise.resolve(usePresentationStore.persist.rehydrate()).then(() =>
+    applyPresentation(usePresentationStore.getState().enabled),
+  )
+}
+
+if (typeof window !== 'undefined') {
+  const slot = window as unknown as Record<symbol, ((event: StorageEvent) => void) | undefined>
+  const previous = slot[STORAGE_SYNC]
+  if (previous) window.removeEventListener('storage', previous)
+  slot[STORAGE_SYNC] = syncPresentationFromStorage
+  window.addEventListener('storage', syncPresentationFromStorage)
+}
 
 // localStorage hydration is synchronous, so the persisted value is already in
 // the store here: apply it before the first paint.

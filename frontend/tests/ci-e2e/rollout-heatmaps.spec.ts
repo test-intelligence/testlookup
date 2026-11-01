@@ -84,7 +84,9 @@ test.describe('heatmaps, everything on screen (1280 x 4000)', () => {
     // One kind on Trends: no kind selector; the rows order and the fit toggle are offered.
     await expect(frame.locator('[data-heatmap-kinds]')).toHaveCount(0)
     await expect(frame.locator('[data-heatmap-sort]')).toHaveValue('worst')
-    await expect(frame.locator('[data-heatmap-fit]')).toHaveAttribute('aria-pressed', 'false')
+    // HYG-08: the colours are fitted to the measured range at first paint, and the footer says so.
+    await expect(frame.locator('[data-heatmap-fit]')).toHaveAttribute('aria-pressed', 'true')
+    await expect(frame.locator('[data-heatmap-rows]')).toContainText('Colour scale fitted to the data:')
     await expectHostileAsText(page, section(page, TRENDS.id), 'Trends heatmap')
     expect(api.unhandled).toEqual([])
     expect(errors).toEqual([])
@@ -141,14 +143,21 @@ test.describe('heatmaps, everything on screen (1280 x 4000)', () => {
 
   test('Coverage: the environment kind first; the kind selector switches to releases with ONE new read', async ({ page }) => {
     const { api, errors } = await openCoverage(page)
-    await expectDrawn(sectionFrame(page, ENV.id, ENV.title), ENV.id)
+    const envFrame = sectionFrame(page, ENV.id, ENV.title)
+    await expectDrawn(envFrame, ENV.id)
+    // HYG-08: fitted at first paint, the footer naming the range.
+    await expect(envFrame.locator('[data-heatmap-fit]')).toHaveAttribute('aria-pressed', 'true')
+    await expect(envFrame.locator('[data-heatmap-rows]')).toContainText('Colour scale fitted to the data:')
     await networkQuiet(page, api)
     expect(requestsTo(api, HEATMAP_PATH)).toEqual([`GET ${HEATMAP_PATH}?kind=suite_environment&project_id=${P}&days=30`])
     const kinds = section(page, ENV.id).locator('[data-heatmap-kinds]')
     await expect(kinds.getByRole('radio')).toHaveCount(2)
     await kinds.getByRole('radio', { name: 'Release', exact: true }).check()
     await expect(section(page, ENV.id)).toHaveAttribute('data-heatmap-kind', 'suite_release')
-    await expectDrawn(sectionFrame(page, ENV.id, RELEASE_TITLE), 'release kind')
+    const releaseFrame = sectionFrame(page, ENV.id, RELEASE_TITLE)
+    await expectDrawn(releaseFrame, 'release kind')
+    // One fit state for the section: the kind switch keeps it.
+    await expect(releaseFrame.locator('[data-heatmap-fit]')).toHaveAttribute('aria-pressed', 'true')
     await networkQuiet(page, api)
     expect(requestsTo(api, HEATMAP_PATH)).toEqual([
       `GET ${HEATMAP_PATH}?kind=suite_environment&project_id=${P}&days=30`,

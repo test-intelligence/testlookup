@@ -7,8 +7,9 @@
  *   - **row order**: worst first (the default), by name, most executions
  *     first — a pure permutation of the server's rows, keys included;
  *   - **fit the colour scale to the data** (a pressed toggle, rate kinds
- *     only): off by default, so the ramp means 0..100% as on every other
- *     heatmap.
+ *     only): on by default for the rate kinds (HYG-08), so rows a few points
+ *     apart differ at first paint and the frame's footer names the fitted
+ *     range; the toggle is kept, and gives the 0..100% ramp back.
  *
  * Hosts: Trends (`suite_day`, through `TrendsCatalogue`), Suite detail
  * (`test_run`, `SuiteDetailAdvanced`), Coverage (`suite_environment`,
@@ -145,7 +146,9 @@ function HeatmapSectionBody({ days, suiteFilter, kinds, title, sectionId }: Heat
   // A host that changes its kinds never leaves the selector on one it no longer offers.
   const kind = kinds.includes(chosen) ? chosen : kinds[0]
   const [sort, setSort] = useState<HeatmapRowSort>('worst')
-  const [fit, setFit] = useState(false)
+  // On by default (HYG-08, owner E-35): the colours span the measured range, so 92 % and 98 % rows differ at
+  // first paint; the frame's footer names that range (`fittedDomainNote`); the toggle gives the 0..100 % ramp back.
+  const [fit, setFit] = useState(true)
   const announcer = useChartAnnouncer()
   const spec = HEATMAP_KIND_SPECS[kind]
   const sortId = useId()

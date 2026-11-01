@@ -111,6 +111,15 @@ export interface LegendEntry {
 }
 
 /**
+ * A legend entry's fill swatch (HYG-08): as wide as the line swatch, as tall as before. The status decals
+ * tile every 8 px (`DECAL_TILE`), so 22 px shows each pattern 2¾ times across (14 px showed 1¾), and the
+ * row keeps its 16 px line box: no legend row, plot or frame grows.
+ */
+export const LEGEND_FILL_SWATCH = { width: 22, height: 14 } as const
+/** A line entry's swatch (unchanged): long enough for every dash period. */
+export const LEGEND_LINE_SWATCH = { width: 24, height: 10 } as const
+
+/**
  * The legend for a Recharts chart (pass as `<Legend content={() => <ChartLegend … />} />`).
  * Each swatch is drawn with the same fill / dash as the marks, so a reader who
  * cannot tell the hues apart matches the pattern instead.
@@ -124,27 +133,35 @@ export function ChartLegend({ entries }: { entries: readonly LegendEntry[] }) {
       {entries.map((entry) => (
         <li key={entry.key} data-legend-status={entry.status} className="flex items-center gap-1.5">
           {entry.stroke ? (
-            <svg width={24} height={10} aria-hidden="true" focusable="false">
+            <svg width={LEGEND_LINE_SWATCH.width} height={LEGEND_LINE_SWATCH.height} aria-hidden="true" focusable="false">
               <line
                 data-legend-swatch=""
                 x1={1}
-                y1={5}
-                x2={23}
-                y2={5}
+                y1={LEGEND_LINE_SWATCH.height / 2}
+                x2={LEGEND_LINE_SWATCH.width - 1}
+                y2={LEGEND_LINE_SWATCH.height / 2}
                 stroke={entry.stroke}
                 strokeWidth={2}
                 strokeDasharray={entry.dash}
               />
-              {entry.dot && <circle data-legend-dot="" cx={12} cy={5} r={3} fill={entry.stroke} />}
+              {entry.dot && (
+                <circle
+                  data-legend-dot=""
+                  cx={LEGEND_LINE_SWATCH.width / 2}
+                  cy={LEGEND_LINE_SWATCH.height / 2}
+                  r={3}
+                  fill={entry.stroke}
+                />
+              )}
             </svg>
           ) : (
-            <svg width={14} height={14} aria-hidden="true" focusable="false">
+            <svg width={LEGEND_FILL_SWATCH.width} height={LEGEND_FILL_SWATCH.height} aria-hidden="true" focusable="false">
               <rect
                 data-legend-swatch=""
                 x={0.5}
                 y={0.5}
-                width={13}
-                height={13}
+                width={LEGEND_FILL_SWATCH.width - 1}
+                height={LEGEND_FILL_SWATCH.height - 1}
                 rx={2}
                 fill={entry.fill}
                 stroke={CHART_VARS.border}
