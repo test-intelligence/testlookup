@@ -37180,10 +37180,6 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Mongo Docs",
       "type": "object"
     },
-    "provenance_rows": {
-      "title": "Provenance Rows",
-      "type": "integer"
-    },
     "revoked_share_links": {
       "default": 0,
       "title": "Revoked Share Links",
@@ -37225,7 +37221,6 @@ These are the full generated JSON Schema definitions, including required fields,
     "minio_objects",
     "event_archive_rows",
     "audit_rows",
-    "provenance_rows",
     "compliance_packs_expired"
   ],
   "title": "RetentionPreviewCandidates",
@@ -45223,11 +45218,98 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## SuiteParityCutover
+
+```json
+{
+  "properties": {
+    "cut_over_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cut Over At"
+    },
+    "cut_over_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cut Over By Name"
+    },
+    "legacy_writes": {
+      "title": "Legacy Writes",
+      "type": "boolean"
+    },
+    "streak_days_at_cutover": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Streak Days At Cutover"
+    }
+  },
+  "required": [
+    "legacy_writes"
+  ],
+  "title": "SuiteParityCutover",
+  "type": "object"
+}
+```
+
+## SuiteParityCutoverResult
+
+```json
+{
+  "description": "``POST /api/v1/admin/maintenance/suite-membership-cutover`` → 200.",
+  "properties": {
+    "cut_over_at": {
+      "format": "date-time",
+      "title": "Cut Over At",
+      "type": "string"
+    },
+    "streak_days": {
+      "title": "Streak Days",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "cut_over_at",
+    "streak_days"
+  ],
+  "title": "SuiteParityCutoverResult",
+  "type": "object"
+}
+```
+
 ## SuiteParityHistory
 
 ```json
 {
   "properties": {
+    "cutover": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/SuiteParityCutover"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "cutover_ready": {
       "title": "Cutover Ready",
       "type": "boolean"

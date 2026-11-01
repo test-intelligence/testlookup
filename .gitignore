@@ -212,6 +212,9 @@ Thumbs.db
 
 # Large binary/design assets — use GitHub Releases or Git LFS instead
 *.zip
+# …except the one 21 KB W24 project archive the import's retired-table test reads (W25d HYG-02): a real
+# pre-W25d export, which the exporter can no longer produce once quality_gates is dropped.
+!backend/tests/fixtures/project_export_w24_schema1.zip
 *.tar.gz
 *.tar.bz2
 

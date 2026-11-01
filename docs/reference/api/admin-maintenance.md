@@ -17,7 +17,7 @@ the signal to purge that collection could not be seen. Instance admins
 only: the counts span tenants. A cache that cannot be read is a 503, never
 a page of zeros.
 
-Source: [backend/app/routers/admin_maintenance.py:236](../../../backend/app/routers/admin_maintenance.py#L236).
+Source: [backend/app/routers/admin_maintenance.py:240](../../../backend/app/routers/admin_maintenance.py#L240).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -110,7 +110,7 @@ Idempotent — subsequent calls produce zero rows once the first run
 has filled the gaps. Returns the Celery task id so the caller can
 correlate with worker logs.
 
-Source: [backend/app/routers/admin_maintenance.py:48](../../../backend/app/routers/admin_maintenance.py#L48).
+Source: [backend/app/routers/admin_maintenance.py:52](../../../backend/app/routers/admin_maintenance.py#L52).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -213,7 +213,7 @@ next 15-minute beat tick.
 Idempotent — only writes to NULL rows, only provisions missing
 leads, never over-writes a manual reassignment.
 
-Source: [backend/app/routers/admin_maintenance.py:100](../../../backend/app/routers/admin_maintenance.py#L100).
+Source: [backend/app/routers/admin_maintenance.py:104](../../../backend/app/routers/admin_maintenance.py#L104).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -312,7 +312,7 @@ failed, but never what. Instance admins only -- the entries are
 cross-tenant (run and project ids, error text, sanitized event payloads).
 A store that cannot be read is a 503, never an empty list.
 
-Source: [backend/app/routers/admin_maintenance.py:182](../../../backend/app/routers/admin_maintenance.py#L182).
+Source: [backend/app/routers/admin_maintenance.py:186](../../../backend/app/routers/admin_maintenance.py#L186).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -411,7 +411,7 @@ Normally runs every 30s. Useful when an operator wants to confirm
 the drain is functional after a deploy without waiting for the
 next tick.
 
-Source: [backend/app/routers/admin_maintenance.py:146](../../../backend/app/routers/admin_maintenance.py#L146).
+Source: [backend/app/routers/admin_maintenance.py:150](../../../backend/app/routers/admin_maintenance.py#L150).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -507,7 +507,7 @@ Requeue a stranded N27 intent only after its pipeline is marked failed: a
 pipeline left ``running`` refuses the retry until the stale-pipeline reaper
 (every 10 minutes, after 30) has failed it.
 
-Source: [backend/app/routers/admin_maintenance.py:329](../../../backend/app/routers/admin_maintenance.py#L329).
+Source: [backend/app/routers/admin_maintenance.py:333](../../../backend/app/routers/admin_maintenance.py#L333).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -594,6 +594,96 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
+## POST `/api/v1/admin/maintenance/suite-membership-cutover`
+
+Cut Over Suite Membership
+
+Stop writing (and reading) the legacy suite-membership tables: turn ``suite_membership_legacy_writes`` OFF.
+
+Refused (409, fixed sentences, never an exception text) when it is already
+off, while a fresh comparison is running, or unless the SAME readiness the
+history GET shows says ``cutover_ready`` (seven clean UTC days). Under the
+flag service's own lock the row is re-read, so two clicks make one change.
+The flag's ``settings_audit_log`` row (actor + reason, no names in the
+reason) is the record; ONE commit; then the flag cache is dropped and every
+project's analytics epoch is bumped (the coverage map's ``needs_review``
+source changes) — best effort, a Redis error is logged by TYPE and never
+fails the POST. The body is ignored. Reversible until F-W25-2: turning the
+flag back ON at /settings/feature-flags resumes legacy reads and writes.
+
+Source: [backend/app/routers/admin_maintenance.py:607](../../../backend/app/routers/admin_maintenance.py#L607).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=409, detail=suite_cutover.ALREADY_CUT_OVER_SENTENCE)
+HTTPException(status_code=409, detail=suite_cutover.COMPARISON_RUNNING_SENTENCE)
+HTTPException(status_code=409, detail=suite_cutover.NOT_READY_SENTENCE.format(streak=streak, required=parity_vocab.REQUIRED_CLEAN_DAYS))
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "cut_over_suite_membership_api_v1_admin_maintenance_suite_membership_cutover_post",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/SuiteParityCutoverResult"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/admin/maintenance/suite-membership-parity`
 
 Read Suite Membership Parity
@@ -605,7 +695,12 @@ comparison is clean. A day with no finished comparison breaks the streak
 (absence is not health); today without one does not, until it is over. An
 empty ``runs`` list means no comparison has run yet — never "0 differences".
 
-Source: [backend/app/routers/admin_maintenance.py:467](../../../backend/app/routers/admin_maintenance.py#L467).
+W25d: ``cutover`` is the derived cut-over state. After a cutover the window
+ENDS at ``cutover.cut_over_at`` (the 14 UTC days ending on that date, runs
+started before it), so the evidence stays readable and the dates after the
+cutover never read as missed days. Before it the answer is today's.
+
+Source: [backend/app/routers/admin_maintenance.py:469](../../../backend/app/routers/admin_maintenance.py#L469).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -676,12 +771,13 @@ Trigger Suite Membership Parity
 
 "Compare now": enqueue one read-only comparison on the worker.
 
-409 while a comparison started less than ``RUN_STALE_MINUTES`` ago is still
-running (read before enqueueing; the runner's unique claim is the real
-guard). 503 when the broker refuses the task — its exception TYPE is
-logged, never echoed.
+409 once cut over (W25d: the old tables are no longer written, so the
+comparison is retired — checked first). 409 while a comparison started less
+than ``RUN_STALE_MINUTES`` ago is still running (read before enqueueing;
+the runner's unique claim is the real guard). 503 when the broker refuses
+the task — its exception TYPE is logged, never echoed.
 
-Source: [backend/app/routers/admin_maintenance.py:551](../../../backend/app/routers/admin_maintenance.py#L551).
+Source: [backend/app/routers/admin_maintenance.py:566](../../../backend/app/routers/admin_maintenance.py#L566).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -695,6 +791,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=409, detail=parity_vocab.ALREADY_RUNNING_SENTENCE)
+HTTPException(status_code=409, detail=suite_cutover.COMPARISON_RETIRED_SENTENCE)
 HTTPException(status_code=503, detail=parity_vocab.DISPATCH_FAILED_SENTENCE)
 ```
 
@@ -763,7 +860,7 @@ One comparison: its counts per reason, the projects with differences and the sam
 
 Project names are resolved at read time (None for a project deleted since).
 
-Source: [backend/app/routers/admin_maintenance.py:503](../../../backend/app/routers/admin_maintenance.py#L503).
+Source: [backend/app/routers/admin_maintenance.py:507](../../../backend/app/routers/admin_maintenance.py#L507).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
