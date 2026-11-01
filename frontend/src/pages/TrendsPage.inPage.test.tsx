@@ -45,7 +45,6 @@ vi.mock('@/hooks/useRunCadences', async () => {
 })
 vi.mock('@/hooks/useRuns', () => ({ useRuns: vi.fn() }))
 vi.mock('@/hooks/useSuiteOptions', () => ({ useSuiteOptions: vi.fn(() => ({ options: ['Checkout'], isLoading: false })) }))
-vi.mock('@/hooks/useAnalyticsView', () => ({ useAnalyticsView: () => ({ widgetIds: [], setWidgets: vi.fn(), save: vi.fn() }) }))
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (state: { activeProjectId: string; activeProject: { name: string } | null }) => unknown) =>

@@ -95,21 +95,6 @@ vi.mock('@/hooks/useSuiteOptions', () => ({
   useSuiteOptions: vi.fn(() => ({ options: ['Checkout'], isLoading: false })),
 }))
 
-// P2: the page no longer reads a widget selection. The hook stays mocked with
-// a saved EMPTY selection (a user who once unticked everything): it must not
-// hide a section.
-const analyticsControls = vi.hoisted(() => ({
-  widgetIds: [] as string[],
-}))
-
-vi.mock('@/hooks/useAnalyticsView', () => ({
-  useAnalyticsView: () => ({
-    widgetIds: analyticsControls.widgetIds,
-    setWidgets: vi.fn(),
-    save: vi.fn(),
-  }),
-}))
-
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (state: { activeProjectId: string; activeProject: { name: string } | null }) => unknown) =>
@@ -277,7 +262,6 @@ function cadenceRows(): string[][] {
 
 describe('TrendsPage', () => {
   beforeEach(() => {
-    analyticsControls.widgetIds = []
     frames.stacked.length = 0
     frames.timeSeries.length = 0
   })
@@ -329,12 +313,11 @@ describe('TrendsPage', () => {
     expect(screen.queryByText(/evidence items/)).toBeNull()
   })
 
-  // P2: the widget picker is gone, so a selection saved with it (here: none
-  // ticked) must not keep hiding a section forever.
+  // P2: the widget picker is gone, so a selection saved with it must not keep
+  // hiding a section forever (W25c: the hook that read it is deleted).
   it('renders every section whatever widget selection was saved', async () => {
     const { useTrendData, useDashboardSummary, useCoverage } = await import('@/hooks/useMetrics')
     const { useRuns } = await import('@/hooks/useRuns')
-    analyticsControls.widgetIds = []
     ;(useTrendData as ReturnType<typeof vi.fn>).mockReturnValue({
       data: { data: [{ date: '2026-04-01', passed: 4, failed: 1, skipped: 0, broken: 0, pass_rate: 80 }] },
       isLoading: false,
@@ -492,7 +475,6 @@ describe('TrendsPage', () => {
 // only BROKEN failures, a day of only skips, a clean day, and a 6-day silence.
 describe('TrendsPage on the chart kit', () => {
   beforeEach(() => {
-    analyticsControls.widgetIds = []
     frames.stacked.length = 0
     frames.timeSeries.length = 0
   })
@@ -725,7 +707,6 @@ describe('TrendsPage on the chart kit', () => {
 // page's own responsive rework.
 describe('TrendsPage rollout (Wave 2.6)', () => {
   beforeEach(async () => {
-    analyticsControls.widgetIds = []
     frames.stacked.length = 0
     frames.timeSeries.length = 0
     catalogue.props.length = 0
@@ -940,7 +921,6 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
 // invented. Each test fails if its item comes back.
 describe('TrendsPage P2: no stubs, no invented values', () => {
   beforeEach(async () => {
-    analyticsControls.widgetIds = []
     frames.stacked.length = 0
     frames.timeSeries.length = 0
     const { useTimeWindowStore } = await import('@/store/timeWindowStore')
@@ -1236,7 +1216,6 @@ describe('TrendsPage P3: the page template', () => {
 // `pass_rate_delta_pp` and names the window it compares against.
 describe('TrendsPage TRND-05: the pass-rate delta is in percentage points', () => {
   beforeEach(async () => {
-    analyticsControls.widgetIds = []
     frames.stacked.length = 0
     frames.timeSeries.length = 0
     const { useTimeWindowStore } = await import('@/store/timeWindowStore')

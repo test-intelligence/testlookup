@@ -4,9 +4,9 @@
  *
  * A named view is a `saved_views` row whose `filters` carry
  * `kind: 'report_view'` and the report scope: the page, the releases, the
- * suites and the window. Layout rows (`useAnalyticsView`: `{page, instances,
- * version}`) carry no kind and are never listed here; the layout hook skips
- * report views in turn, so the two never read each other's row.
+ * suites and the window. Layout rows (`{page, instances, version}`, written by
+ * the retired widget-layout hook; they exist on deployments) carry no kind and
+ * are never listed here.
  *
  * Reading a view back never trusts it: the server re-authorises every
  * release for the reader (`view.release`), and anything malformed is dropped
@@ -18,10 +18,11 @@ import type { ReportRoute } from './reportRoutes'
 export const REPORT_VIEW_KIND = 'report_view'
 
 /**
- * The one SWR key for a page's `saved_views` rows. The widget layout
- * (`useAnalyticsView`) and the Views menu read the same rows, so they share
- * the entry and a page that has both asks once; each keeps its own rows
- * (`isReportView` here, `kind !== 'report_view'` there).
+ * The one SWR key for a page's `saved_views` rows. Every reader keys its
+ * page's rows with it (the Views menu, `useSavedSearches`, `useCaseViews`), so
+ * two readers of one page share the entry and ask once; each keeps its own
+ * rows (`isReportView` here). Layout rows (written by the retired widget-layout
+ * hook; they exist on deployments) are listed by none.
  */
 export function savedViewsKey(projectId: string | null, page: string): readonly ['saved-views', string | null, string] {
   return ['saved-views', projectId, page]

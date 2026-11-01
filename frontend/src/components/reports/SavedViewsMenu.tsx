@@ -13,8 +13,10 @@
  * saved by someone else never widens what the reader can see: the data
  * requests re-authorise every release for the reader.
  *
- * The rows come from the SWR entry the page's widget layout already reads
- * (`savedViewsKey`), so a page with both asks once.
+ * The rows come from the page's shared saved-views SWR entry (`savedViewsKey`),
+ * so another reader of the same page's rows does not ask again. Layout rows
+ * (written by the retired widget-layout hook; they exist on deployments) are
+ * never listed (`isReportView`).
  *
  * W27b PAN-07: a view's Delete asks IN THE POPOVER, in a strip right under that
  * view's row (`Delete the view "<name>"?` [Cancel] [Delete]); only the strip's
@@ -125,9 +127,10 @@ export default function SavedViewsMenu({
     setConfirmingDelete(null)
   }
 
-  // The layout hook's entry (`savedViewsKey`). Not revalidated when this menu
-  // mounts over rows already read: the page's layout asked for them moments
-  // ago, and a second GET would be the same answer. A save revalidates.
+  // The page's shared entry (`savedViewsKey`). Not revalidated when this menu
+  // mounts over rows already in the cache (an earlier mount, or another reader
+  // of the entry, read them): a second GET would be the same answer. A save
+  // revalidates.
   const { data, mutate, isLoading } = useSWR(savedViewsKey(projectId, page), () => listSavedViews(projectId, page), {
     revalidateOnFocus: false,
     revalidateIfStale: false,

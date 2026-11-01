@@ -7,7 +7,7 @@
 import { useEffect, useState, type ComponentProps, type ReactNode } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { SWRConfig } from 'swr'
+import useSWR, { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SavedView } from '@/services/savedViewsService'
 
@@ -22,7 +22,8 @@ vi.mock('@/store/authStore', () => ({
   useAuthStore: (select: (s: { user: { id: string } }) => unknown) => select({ user: { id: 'me' } }),
 }))
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
-// P1: the widget-layout hook, which reads the same rows through its own fetcher.
+// P1: another reader of the page's saved-views entry (`savedViewsKey`), which reads the same rows through its own
+// fetcher, as `useSavedSearches` / `useTestLibrary` read theirs.
 const http = vi.hoisted(() => ({ getData: vi.fn(), postData: vi.fn(), patchData: vi.fn() }))
 vi.mock('@/services/http', () => http)
 vi.mock('@/store/projectStore', () => ({
@@ -30,7 +31,6 @@ vi.mock('@/store/projectStore', () => ({
   useProjectStore: (select: (s: { activeProjectId: string }) => unknown) => select({ activeProjectId: 'p1' }),
 }))
 
-import { useAnalyticsView } from '@/hooks/useAnalyticsView'
 import SavedViewsMenu from './SavedViewsMenu'
 import {
   defaultAppliedKey,
@@ -38,6 +38,7 @@ import {
   orderViews,
   readReportView,
   reportViewFilters,
+  savedViewsKey,
 } from './savedViewsModel'
 
 const view = (over: Partial<SavedView>): SavedView => ({
@@ -296,22 +297,24 @@ describe('SavedViewsMenu', () => {
     await waitFor(() => expect(unlinked).toHaveBeenCalledTimes(1))
   })
 
-  it("P1: shares the widget layout's request — one GET when both read the page's saved views", async () => {
+  it('P1: reads through the shared saved-views entry: one GET when another reader asked first, and a layout row is never listed', async () => {
     const layout = view({ id: 'layout', name: 'trends view', filters: { page: 'trends', instances: [] } })
     const rows = [view({}), layout]
     http.getData.mockResolvedValue(rows)
     service.listSavedViews.mockResolvedValue(rows)
-    // As on the pages: the layout hook asks first, and the header (with the
-    // menu) renders once the page's own data has loaded, here well after the
-    // layout's rows arrived (and after SWR's dedupe window, 0 ms below).
+    // Another reader of the page's entry asks first, and the header (with the
+    // menu) renders well after its rows arrived (and after SWR's dedupe
+    // window, 0 ms below).
     function Page() {
-      const { loading } = useAnalyticsView('trends')
+      const { isLoading } = useSWR(savedViewsKey('p1', 'trends'), () =>
+        http.getData('/api/v1/saved-views', { params: { project_id: 'p1', page: 'trends' } }),
+      )
       const [header, setHeader] = useState(false)
       useEffect(() => {
-        if (loading) return
+        if (isLoading) return
         const timer = setTimeout(() => setHeader(true), 30)
         return () => clearTimeout(timer)
-      }, [loading])
+      }, [isLoading])
       return header ? <SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={vi.fn()} linked={false} variant="ghost" /> : null
     }
     render(

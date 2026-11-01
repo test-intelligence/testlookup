@@ -81,20 +81,6 @@ vi.mock('@/hooks/useInsights', async (importOriginal) => {
     },
   }
 })
-// P2: the page no longer reads the saved widget selection — the seven KPI
-// cards always render. The hook stays mocked with an EMPTY selection, so a
-// re-introduced `widgetIds` gate would hide every card and fail the KPI tests;
-// one test below also hands it a narrow selection explicitly.
-const analyticsViewState: { widgetIds: string[] } = { widgetIds: [] }
-vi.mock('@/hooks/useAnalyticsView', () => ({
-  useAnalyticsView: () => ({
-    instances: [], widgetIds: analyticsViewState.widgetIds,
-    addInstance: vi.fn(), removeInstance: vi.fn(),
-    save: vi.fn(), reset: vi.fn(), isDirty: false, savedViews: [],
-    activeViewId: null, setActiveView: vi.fn(), deleteView: vi.fn(),
-    updateInstance: vi.fn(), moveInstance: vi.fn(),
-  }),
-}))
 
 const runsState: {
   windowed: unknown[]
@@ -183,7 +169,6 @@ function mockDashboardData(useDashboardSummary: unknown, useTrendData: unknown) 
 
 describe('OverviewPage', () => {
   beforeEach(() => {
-    analyticsViewState.widgetIds = []
     useValueMetrics.mockClear()
   })
 
@@ -499,26 +484,21 @@ describe('OverviewPage', () => {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     mockDashboardData(useDashboardSummary, useTrendData)
     // A saved selection of one card used to hide the other six, forever once
-    // the picker that wrote it was gone.
-    analyticsViewState.widgetIds = ['total_executions_kpi']
-    try {
-      render(
-        <MemoryRouter initialEntries={['/overview']}>
-          <Routes><Route path="/overview" element={<OverviewPage />} /></Routes>
-        </MemoryRouter>,
-      )
-      await findBanner()
-      const strip = document.querySelector('[data-kpi-strip]') as HTMLElement
-      expect(Array.from(strip.querySelectorAll('[data-metric-card="compact"] > p:first-child'), (p) => p.textContent)).toEqual(ALL_KPIS)
-      // P3: the two tiles that left the strip, and the one that moved to Reports › Value.
-      for (const gone of ['Infra-caused failures', 'Avg run duration', 'Eng-hours saved']) {
-        expect(screen.queryByText(gone), gone).toBeNull()
-      }
-      expect(screen.queryByRole('button', { name: /Customize/i })).toBeNull()
-      expect(screen.queryByRole('dialog')).toBeNull()
-    } finally {
-      analyticsViewState.widgetIds = []
+    // the picker that wrote it was gone (W25c: the hook that read it is deleted).
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes><Route path="/overview" element={<OverviewPage />} /></Routes>
+      </MemoryRouter>,
+    )
+    await findBanner()
+    const strip = document.querySelector('[data-kpi-strip]') as HTMLElement
+    expect(Array.from(strip.querySelectorAll('[data-metric-card="compact"] > p:first-child'), (p) => p.textContent)).toEqual(ALL_KPIS)
+    // P3: the two tiles that left the strip, and the one that moved to Reports › Value.
+    for (const gone of ['Infra-caused failures', 'Avg run duration', 'Eng-hours saved']) {
+      expect(screen.queryByText(gone), gone).toBeNull()
     }
+    expect(screen.queryByRole('button', { name: /Customize/i })).toBeNull()
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('drops the blocks that repeated the KPI row: reason cards and the coverage strip with its "—" MTTF tile (P2)', async () => {
@@ -617,10 +597,6 @@ describe('OverviewPage — executions are not runs', () => {
   // larger than it was. The coverage strip (removed in P2) compounded it by
   // printing the relative trend as an absolute: "702 runs · +680 this period"
   // for +680%.
-
-  beforeEach(() => {
-    analyticsViewState.widgetIds = []
-  })
 
   async function renderWithExecutions(value: number, trend: number | null = null) {
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
@@ -968,7 +944,6 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
   // two figures still read as a contradiction.
 
   it('renders the pass-rate basis the API supplies', async () => {
-    analyticsViewState.widgetIds = []
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     mockDashboardData(useDashboardSummary, useTrendData)
     ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -1000,7 +975,6 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
   it('falls back to the old copy when the API omits the basis', async () => {
     // A cached pre-#778 payload has no basis. Rendering "undefined · 30d" would
     // be worse than the vague word it replaced.
-    analyticsViewState.widgetIds = []
     const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
     mockDashboardData(useDashboardSummary, useTrendData)   // no basis in the mock
     runsState.windowed = [{ id: 'r1', created_at: new Date().toISOString() }]
@@ -1027,7 +1001,6 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
 // keyed on the active project id (`proj-1` in this suite's projectStore mock).
 describe('OverviewPage — first-run guide dismissal is scoped to the project', () => {
   beforeEach(() => {
-    analyticsViewState.widgetIds = []
     // Purge only this feature's keys; leave the rest of localStorage alone.
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const k = localStorage.key(i)

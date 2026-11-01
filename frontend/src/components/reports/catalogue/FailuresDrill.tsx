@@ -13,7 +13,8 @@
  * path is validated before use: what the C5 rules or this ladder cannot apply
  * is cut, and the page says so (the report filter bar's notice when the page
  * has one, under the breadcrumb otherwise). The path is never written into a
- * saved view: nothing here touches `useAnalyticsView`.
+ * saved view: nothing here writes a `saved_views` row (layout rows were written
+ * by the retired widget-layout hook; they exist on deployments).
  *
  * WHAT A MARK DOES (OD-2): a click or Enter drills (a stacked segment drills
  * into its suite AND status in one step: the AC's "payments failed segment");
