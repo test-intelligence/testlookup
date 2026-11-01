@@ -71,18 +71,24 @@ def _tag() -> str:
 
 async def _reset_app_clients() -> None:
     from app.db import postgres as app_postgres
-    from app.db.redis_client import close_redis
+    from app.db import redis_client
 
     try:
-        await close_redis()
+        await redis_client.close_redis()
+    except RuntimeError:
+        # A pool an EARLIER module opened on its own (now closed) event loop cannot be closed
+        # from this loop ("Event loop is closed"): drop it, the next get_redis() opens a fresh one.
+        redis_client._client = None
+        redis_client._pool = None
     finally:
         await app_postgres.dispose_engine_for_loop()
 
 
 @pytest_asyncio.fixture(loop_scope="module", scope="module")
 async def env() -> Any:
+    dsn = _dsn()  # skip BEFORE touching the app's clients (the unit job runs without a DSN)
     await _reset_app_clients()
-    engine = create_async_engine(_dsn(), pool_size=2, max_overflow=1, pool_timeout=10)
+    engine = create_async_engine(dsn, pool_size=2, max_overflow=1, pool_timeout=10)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
         yield sessions
