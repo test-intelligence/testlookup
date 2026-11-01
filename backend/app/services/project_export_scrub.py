@@ -95,7 +95,6 @@ TEXT_PASS_EXEMPT: Mapping[str, frozenset[str]] = {
     "release_phases": frozenset({"name", "phase_type", "status"}),
     "release_gate_policies": frozenset({"name"}),
     "release_attribution_rules": frozenset({"name", "match_field", "match_pattern", "target_release_name"}),
-    "quality_gates": frozenset({"name"}),
     "team_notification_channels": frozenset({"team_name", "channel_type"}),
     "webhook_subscriptions": frozenset({"name", "disabled_reason"}),
     "github_integrations": frozenset({"repo_owner", "repo_name", "auth_kind", "pr_comment_mode"}),

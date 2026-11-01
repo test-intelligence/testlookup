@@ -1075,7 +1075,7 @@ and keeps its own default of every status. Columns 1-18 are unchanged;
 ``ID``, ``Suite`` and ``Description`` are appended as 19-21 (an import
 reads them back; prepending would renumber the pinned columns).
 
-Source: [backend/app/routers/test_management_exports.py:82](../../../backend/app/routers/test_management_exports.py#L82).
+Source: [backend/app/routers/test_management_exports.py:83](../../../backend/app/routers/test_management_exports.py#L83).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3569,7 +3569,7 @@ Export Test Plan Pdf
 
 Export a test plan to a PDF document.
 
-Source: [backend/app/routers/test_management_exports.py:421](../../../backend/app/routers/test_management_exports.py#L421).
+Source: [backend/app/routers/test_management_exports.py:422](../../../backend/app/routers/test_management_exports.py#L422).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3662,7 +3662,7 @@ Export Test Plan Word
 
 Export a test plan to a Word (.docx) document.
 
-Source: [backend/app/routers/test_management_exports.py:326](../../../backend/app/routers/test_management_exports.py#L326).
+Source: [backend/app/routers/test_management_exports.py:327](../../../backend/app/routers/test_management_exports.py#L327).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4542,7 +4542,7 @@ Export Test Strategy Pdf
 
 Export a test strategy to a PDF document.
 
-Source: [backend/app/routers/test_management_exports.py:652](../../../backend/app/routers/test_management_exports.py#L652).
+Source: [backend/app/routers/test_management_exports.py:653](../../../backend/app/routers/test_management_exports.py#L653).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4635,7 +4635,7 @@ Export Test Strategy Word
 
 Export a test strategy to a Word (.docx) document.
 
-Source: [backend/app/routers/test_management_exports.py:540](../../../backend/app/routers/test_management_exports.py#L540).
+Source: [backend/app/routers/test_management_exports.py:541](../../../backend/app/routers/test_management_exports.py#L541).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5309,7 +5309,7 @@ summary of the analytics envelope (ids and counts, no names, <= 2 KB;
 ``analytics_meta.header_summary``) travels in the ``X-Analytics-Meta``
 header (VIZ-204).
 
-Source: [backend/app/routers/test_management_exports.py:778](../../../backend/app/routers/test_management_exports.py#L778).
+Source: [backend/app/routers/test_management_exports.py:779](../../../backend/app/routers/test_management_exports.py#L779).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5452,7 +5452,7 @@ Suite-match semantics: per-row ``tc.suite_name`` OR run-level
 the Java class as the per-row name but ``testlookup.suite`` at the
 run level still surfaces the case under the run-level suite.
 
-Source: [backend/app/routers/test_management_exports.py:1300](../../../backend/app/routers/test_management_exports.py#L1300).
+Source: [backend/app/routers/test_management_exports.py:1301](../../../backend/app/routers/test_management_exports.py#L1301).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5597,7 +5597,7 @@ Get Suite Changes
 
 Return suite membership change events, optionally filtered by run.
 
-Source: [backend/app/routers/test_management_exports.py:1548](../../../backend/app/routers/test_management_exports.py#L1548).
+Source: [backend/app/routers/test_management_exports.py:1560](../../../backend/app/routers/test_management_exports.py#L1560).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5720,6 +5720,7 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 ```python
 []
 [{'id': str(e.id), 'suite_name': e.suite_name, 'test_fingerprint': e.test_fingerprint, 'test_name': e.test_name, 'event_type': e.event_type, 'run_id': str(e.run_id) if e.run_id else None, 'old_values': e.old_values, 'new_values': e.new_values, 'details': e.details, 'created_at': e.created_at.isoformat() if e.created_at else None} for e in rows]
+await suite_cutover.canonical_changes(db, suite_name=suite_name, project_id=project_id, run_id=run_id, limit=limit)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -5730,7 +5731,7 @@ Get Suite Deleted
 
 Return deleted/needs_review members from the <suite>-deleted bucket.
 
-Source: [backend/app/routers/test_management_exports.py:1595](../../../backend/app/routers/test_management_exports.py#L1595).
+Source: [backend/app/routers/test_management_exports.py:1611](../../../backend/app/routers/test_management_exports.py#L1611).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5824,6 +5825,7 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 ```python
 []
 [{'id': str(m.id), 'original_suite': suite_name, 'test_fingerprint': m.test_fingerprint, 'test_name': m.test_name, 'class_name': m.class_name, 'status': m.status, 'review_tag': m.review_tag, 'deleted_at_run_id': str(m.deleted_at_run_id) if m.deleted_at_run_id else None, 'last_seen_run_id': str(m.last_seen_run_id) if m.last_seen_run_id else None, 'created_at': m.created_at.isoformat() if m.created_at else None} for m in rows]
+await suite_cutover.canonical_deleted(db, suite_name=suite_name, project_id=project_id)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -5834,7 +5836,7 @@ Get Suite Membership
 
 Return current suite membership records from the traceability model.
 
-Source: [backend/app/routers/test_management_exports.py:1498](../../../backend/app/routers/test_management_exports.py#L1498).
+Source: [backend/app/routers/test_management_exports.py:1506](../../../backend/app/routers/test_management_exports.py#L1506).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5945,6 +5947,7 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 ```python
 []
 [{'id': str(m.id), 'suite_name': m.suite_name, 'test_fingerprint': m.test_fingerprint, 'test_name': m.test_name, 'class_name': m.class_name, 'source': m.source, 'status': m.status, 'review_tag': m.review_tag, 'last_seen_run_id': str(m.last_seen_run_id) if m.last_seen_run_id else None, 'first_seen_run_id': str(m.first_seen_run_id) if m.first_seen_run_id else None, 'managed_test_case_id': str(m.managed_test_case_id) if m.managed_test_case_id else None, 'created_at': m.created_at.isoformat() if m.created_at else None} for m in rows]
+await suite_cutover.canonical_membership(db, suite_name=suite_name, project_id=project_id, status=status)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -5959,7 +5962,7 @@ Per-day trend points for one suite over the time window.
 suite is the path segment; a ``suite_name`` query parameter cannot widen
 or narrow it and is reported in ``meta.ignored_filters``.
 
-Source: [backend/app/routers/test_management_exports.py:1207](../../../backend/app/routers/test_management_exports.py#L1207).
+Source: [backend/app/routers/test_management_exports.py:1208](../../../backend/app/routers/test_management_exports.py#L1208).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

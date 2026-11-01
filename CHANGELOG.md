@@ -1138,6 +1138,25 @@ locally by default.
 
 ### Changed
 
+- **The suite-membership cutover is built, not switched** (wave W25d, HYG-04
+  phase 2; migration 0251 seeds the switch `suite_membership_legacy_writes`
+  ON).
+  - Until an administrator cuts over, nothing changes: the old
+    suite-membership tables are still written and read, and the daily
+    comparison still runs.
+  - Settings › Storage shows "Cut over now" only after seven clean UTC days of
+    the comparison, with an inline confirmation. The server refuses an early
+    request with 409 (`POST /api/v1/admin/maintenance/suite-membership-cutover`).
+  - After the cutover the old tables stop being written. Test Management's
+    suite expander and the coverage map's "need review" count read the test
+    catalog: a test leaves its suite after the catalog's five-run window
+    instead of one absent run, "Recent Changes" lists added and retired tests
+    only, and a confirmed retirement leaves "Deleted from Suite". The catalog
+    records "N tests were removed from suite …", and the daily comparison is
+    retired.
+  - Turning the switch back on at Settings › Feature flags is the rollback. The
+    old tables are dropped one release after the cutover.
+  - Confirming a test's retirement now refreshes the coverage map at once.
 - **A closed live run is finalized in about a second, and the live page is
   paced** (wave W25e, HYG-06; branch `feat/df-hygiene-e-20261101`; no
   migration).
@@ -1467,6 +1486,22 @@ locally by default.
 
 ### Removed
 
+- **Four tables and three MongoDB collections that nothing ever wrote**
+  (wave W25d, HYG-02; migration 0250 `drop_dead_tables`).
+  - `quality_gates`, `contract_violations`, `tenant_metric_snapshots` and
+    `ai_provenance_records` are dropped. The migration counts each table first
+    and refuses, naming every table that holds a row and its count, so nothing
+    is dropped where any of them was used. Its downgrade recreates them empty
+    with their exact earlier shapes.
+  - MongoDB `execution_logs`, `ocp_pod_events` and `raw_testng_xml` are no
+    longer created at start-up. `backend/scripts/drop_dead_mongo_collections.py`
+    drops the empty collections (dry run by default; `--apply` drops only when
+    all three are empty).
+  - The retention purge preview no longer reports provenance rows, and the
+    purge no longer visits those collections.
+  - Project export lists 29 tables. An older export that lists `quality_gates`
+    still imports: its rows are skipped with the line "1 row was skipped: the
+    table no longer exists in this version".
 - **Unused chart and page code** (wave W25c, HYG-01). No page or route
   changes.
   - Removed: the legacy Recharts `TrendChart`, `PassRateGauge` and

@@ -1029,6 +1029,9 @@ class SuiteParityHistory(BaseModel):
     required_days: int = 7                         # suite_parity_vocab.REQUIRED_CLEAN_DAYS
     cutover_ready: bool
     window_runs_now: int                           # settings.CANONICAL_DELETION_WINDOW_RUNS today (0 = the reconciler is off)
+    # W25d HYG-04 phase 2 (additive): the cut-over state, derived from the flag row + its audit trail. Defined
+    # below SuiteParityRunDetail; the forward reference is resolved by the model_rebuild() after it.
+    cutover: Optional["SuiteParityCutover"] = None
 
 
 class SuiteParityProjectLine(BaseModel):
@@ -1055,6 +1058,30 @@ class SuiteParityRunDetail(SuiteParityRunSummary):
     per_project: list[SuiteParityProjectLine]
     sample: list[SuiteParitySampleRow]
     error_code: Optional[str] = None               # an exception TYPE name or "interrupted"; never a message
+
+
+# ── W25d HYG-04 phase 2: the cutover (services/suite_membership_cutover.py) ─
+# The switch is the feature flag ``suite_membership_legacy_writes`` (seeded ON by 0251). The state below is
+# DERIVED (the flag row + its settings_audit_log trail + the parity runs) — nothing stores a cutover record.
+
+class SuiteParityCutover(BaseModel):
+    legacy_writes: bool                            # legacy_model_active(db) now
+    cut_over_at: Optional[datetime] = None         # newest settings_audit_log row of feature_flag:<FEATURE_FLAG> whose
+                                                   # changed_fields contains "enabled_global", ONLY while legacy_writes is False
+                                                   # (the row stores field names, never values: while the flag is off, the newest
+                                                   # change of enabled_global is the change TO off); None when ON or no such row
+    cut_over_by_name: Optional[str] = None         # that audit row's actor_name (only instance admins read this GET)
+    streak_days_at_cutover: Optional[int] = None   # streak_days(runs started in the HISTORY_DAYS UTC days before cut_over_at,
+                                                   # today = cut_over_at's UTC date) — computed from the rows, never stored
+
+
+SuiteParityHistory.model_rebuild()
+
+
+class SuiteParityCutoverResult(BaseModel):
+    """``POST /api/v1/admin/maintenance/suite-membership-cutover`` → 200."""
+    cut_over_at: datetime
+    streak_days: int
 
 
 class ProjectResetResponse(BaseModel):
@@ -10146,7 +10173,6 @@ class RetentionPreviewCandidates(BaseModel):
     #: Revoked share links past the artifacts clock. Dead on revoke, but
     #: the row only ever died via the run CASCADE.
     revoked_share_links: int = 0
-    provenance_rows: int
     compliance_packs_expired: int
     evidence_artifact_rows: int = 0
     memory_entries_expired: int = 0

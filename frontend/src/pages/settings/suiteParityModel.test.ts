@@ -3,12 +3,30 @@
  * (the LAST run of a UTC date decides it; a date with no run is "Not run", never "No differences"), the inline
  * differences, the sentence of a refused "Compare now", and a label for every reason. The unit suite runs in
  * America/Chicago (west of UTC), so a local-time slip shows here as the wrong date.
+ *
+ * W25d HYG-04 (contract §4.1 / §4.4): the card's four cut-over states from the history builders — before the cutover
+ * the view is EQUAL to the W25a model's output for the same input — the cut-over sentence with / without the streak
+ * and the name, the 7 dates ending at the cut-over date, and the sentence of a refused cutover.
  */
 import { describe, expect, it } from 'vitest'
 
-import { parityDetail, parityHistory, parityHistoryOf, parityRun } from '@/test/suiteParityMocks'
+import {
+  parityCutOverHistory,
+  parityDetail,
+  parityHistory,
+  parityHistoryOf,
+  parityLegacyOn,
+  parityNotWrittenHistory,
+  parityReadyHistory,
+  parityRun,
+} from '@/test/suiteParityMocks'
 import { BLOCKING_REASONS, EXPECTED_REASONS, REASON_LABEL } from '@/types/suiteParity'
 import {
+  cardView,
+  cutOverByLine,
+  cutoverRefusalSentence,
+  cutOverSentence,
+  cutoverState,
   dayRows,
   differencesNoun,
   formatUtcDay,
@@ -188,5 +206,145 @@ describe('REASON_LABEL', () => {
       expect(REASON_LABEL[reason].length, reason).toBeLessThanOrEqual('Missing from the old tables'.length)
     }
     expect(Object.keys(REASON_LABEL).sort()).toEqual([...BLOCKING_REASONS, ...EXPECTED_REASONS].sort())
+  })
+})
+
+describe('W25d HYG-04: the cut-over states (cutoverState / cardView)', () => {
+  const now = new Date('2026-09-18T12:00:00Z')
+  const labelsAndResults = (rows: ReturnType<typeof dayRows>) => rows.map((r) => [r.label, r.result])
+
+  it('before the cutover — no `cutover` (a W25a server), or legacy writes on and not ready — the view IS the W25a output', () => {
+    const histories = [
+      parityHistory({ streak: 4, now }),
+      parityHistory({ streak: 2, newest: 'diffs', now }),
+      parityHistory({ streak: 5, newest: 'failed', now }),
+      parityHistory({ streak: 3, newest: 'running', now }),
+      parityHistory({ newest: 'none', now }),
+    ]
+    for (const w25a of histories) {
+      for (const history of [w25a, parityLegacyOn(w25a)]) {
+        expect(cutoverState(history)).toBe('before')
+        expect(cardView(history, now)).toEqual({
+          state: 'before',
+          line: statusLine(w25a),
+          byLine: null,
+          canCompare: true,
+          canCutOver: false,
+          days: dayRows(w25a, now),
+          daysHeading: null,
+        })
+      }
+    }
+    // And literally, for the existing visual region's history ("Day 4 of 7", the diffs day, two dates never run).
+    const view = cardView(parityHistory({ streak: 4, now }), now)
+    expect(view.line).toEqual({ kind: 'streak', text: 'Day 4 of 7 with no differences.', detail: null })
+    expect(labelsAndResults(view.days).slice(4)).toEqual([['Mon 14 Sep', '12 differences · 340 expected'], ['Sun 13 Sep', 'Not run'], ['Sat 12 Sep', 'Not run']])
+  })
+
+  it('a W25a server that says ready (no `cutover` object) keeps the W25a card: the ready line, no "Cut over now"', () => {
+    const history = parityHistory({ streak: 7, now })
+    expect(history.cutover).toBeUndefined()
+    expect(cardView(history, now)).toMatchObject({ state: 'before', canCutOver: false, line: { kind: 'ready' } })
+  })
+
+  it('ready — legacy writes on and cutover_ready: "Cut over now" beside "Compare now", the W25a ready line, 7 clean days', () => {
+    const view = cardView(parityReadyHistory({ now }), now)
+    expect(view).toMatchObject({ state: 'ready', canCompare: true, canCutOver: true, byLine: null, daysHeading: null })
+    expect(view.line).toEqual({ kind: 'ready', text: 'Ready for the cutover: 7 clean days in a row.', detail: null })
+    expect(labelsAndResults(view.days)).toEqual([
+      ['Fri 18 Sep', 'No differences · 338 expected'],
+      ['Thu 17 Sep', 'No differences · 341 expected'],
+      ['Wed 16 Sep', 'No differences · 339 expected'],
+      ['Tue 15 Sep', 'No differences · 342 expected'],
+      ['Mon 14 Sep', 'No differences · 340 expected'],
+      ['Sun 13 Sep', 'No differences · 338 expected'],
+      ['Sat 12 Sep', 'No differences · 341 expected'],
+    ])
+    // Legacy writes on but not ready (day 6): no button.
+    const six = parityLegacyOn(parityHistory({ streak: 6, now }))
+    expect(cardView(six, now)).toMatchObject({ state: 'before', canCutOver: false, line: { text: 'Day 6 of 7 with no differences.' } })
+  })
+
+  it('cut over: the sentence, the retired detail, who did it; no button; the heading; the 7 dates ending at the cut-over date', () => {
+    const view = cardView(parityCutOverHistory({ now }), now)
+    expect(view.state).toBe('cut_over')
+    expect(view.line).toEqual({
+      kind: 'cut_over',
+      text: 'Cut over on Fri 18 Sep after 7 clean days.',
+      detail: 'The old tables are no longer written; Test Management reads the test catalog. The comparison is retired.',
+    })
+    expect(view).toMatchObject({ byLine: 'Cut over by admin.', canCompare: false, canCutOver: false, daysHeading: 'The 7 days before the cutover (UTC)' })
+    expect(view.days.map((r) => r.kind)).toEqual(Array(7).fill('clean'))
+    expect(view.days[0].label).toBe('Fri 18 Sep')
+  })
+
+  it('cut over 12 days ago: the list still ends at the cut-over date — the dates after it never read as missed days', () => {
+    const later = new Date('2026-09-30T12:00:00Z')
+    const view = cardView(parityCutOverHistory({ now: later, daysAgo: 12 }), later)
+    expect(view.line.text).toBe('Cut over on Fri 18 Sep after 7 clean days.')
+    expect(view.days.map((r) => r.label)).toEqual(['Fri 18 Sep', 'Thu 17 Sep', 'Wed 16 Sep', 'Tue 15 Sep', 'Mon 14 Sep', 'Sun 13 Sep', 'Sat 12 Sep'])
+    expect(view.days.every((r) => r.kind === 'clean')).toBe(true)
+  })
+
+  it('cut over before that day’s comparison ran: the list ends the day before (the streak does not count it either)', () => {
+    const history = parityCutOverHistory({ now, hour: 5, minute: 0, cleanDaysBefore: 8 })
+    expect(history.cutover?.streak_days_at_cutover).toBe(7)
+    const view = cardView(history, now)
+    expect(view.days[0].label).toBe('Thu 17 Sep')
+    expect(view.days.map((r) => r.kind)).toEqual(Array(7).fill('clean'))
+  })
+
+  it('the cut-over sentence without the streak, with 12 and with 1; the by-line only with a name', () => {
+    const at = '2026-11-06T10:12:00Z'
+    expect(cutOverSentence({ legacy_writes: false, cut_over_at: at, streak_days_at_cutover: null })).toBe('Cut over on Fri 6 Nov.')
+    expect(cutOverSentence({ legacy_writes: false, cut_over_at: at })).toBe('Cut over on Fri 6 Nov.')
+    expect(cutOverSentence({ legacy_writes: false, cut_over_at: '2026-11-26T09:00:00Z', streak_days_at_cutover: 12 })).toBe('Cut over on Thu 26 Nov after 12 clean days.')
+    expect(cutOverSentence({ legacy_writes: false, cut_over_at: at, streak_days_at_cutover: 1 })).toBe('Cut over on Fri 6 Nov after 1 clean day.')
+    expect(cutOverSentence({ legacy_writes: false, cut_over_at: '2026-09-18T00:30:00Z', streak_days_at_cutover: 7 })).toBe('Cut over on Fri 18 Sep after 7 clean days.')   // 19:30 on the 17th in Chicago
+    expect(cutOverByLine('Avery Admin')).toBe('Cut over by Avery Admin.')
+    expect(cutOverByLine('  ')).toBeNull()
+    expect(cutOverByLine(null)).toBeNull()
+    expect(cardView(parityCutOverHistory({ now, byName: null, streakAtCutover: null }), now)).toMatchObject({
+      byLine: null,
+      line: { text: 'Cut over on Fri 18 Sep.' },
+    })
+  })
+
+  it('not written — legacy writes off and no time (or an unreadable one): the loud line, no button, today’s list', () => {
+    const history = parityNotWrittenHistory({ now })
+    for (const h of [history, { ...history, cutover: { ...history.cutover, legacy_writes: false, cut_over_at: 'not a date' } }]) {
+      expect(cutoverState(h)).toBe('not_written')
+      const view = cardView(h, now)
+      expect(view.line).toEqual({
+        kind: 'not_written',
+        text: 'The old suite-membership tables are not written.',
+        detail: 'The cut-over switch suite_membership_legacy_writes is off or missing; the comparison is retired.',
+      })
+      expect(view).toMatchObject({ byLine: null, canCompare: false, canCutOver: false, daysHeading: null })
+      expect(view.days).toEqual(dayRows(h, now))
+      expect(view.line.text).not.toMatch(/Cut over on|clean days/)
+    }
+  })
+})
+
+describe('cutoverRefusalSentence', () => {
+  const refusal = (status: number, detail?: unknown) =>
+    Object.assign(new Error(`Request failed with status code ${status}`), { isAxiosError: true, response: { status, data: detail === undefined ? {} : { detail } } })
+
+  it("reads the server's fixed sentence — never 'Request failed with status code 409'", () => {
+    for (const sentence of [
+      'Not ready: day 3 of 7 with no differences.',
+      'Already cut over: the old suite-membership tables are not written.',
+      'A comparison is running; cut over when it has finished.',
+    ]) {
+      expect(cutoverRefusalSentence(refusal(409, sentence))).toBe(sentence)
+    }
+  })
+
+  it('without a body: "Not ready for the cutover." for a 409, "Could not cut over." for a 503 or a network error', () => {
+    expect(cutoverRefusalSentence(refusal(409))).toBe('Not ready for the cutover.')
+    expect(cutoverRefusalSentence(refusal(503))).toBe('Could not cut over.')
+    expect(cutoverRefusalSentence(new Error('Network Error'))).toBe('Could not cut over.')
+    expect(PARITY_TEXT.cutOverNotReady).toBe('Not ready for the cutover.')
   })
 })

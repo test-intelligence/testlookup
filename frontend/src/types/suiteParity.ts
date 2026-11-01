@@ -82,6 +82,21 @@ export interface SuiteParityRunSummary {
   expected_divergences: number
 }
 
+/**
+ * W25d HYG-04 (the cutover): the cut-over state (`SuiteParityHistory.cutover`), derived on the server from the
+ * feature flag `suite_membership_legacy_writes` and its audit trail. Absent on a pre-W25d server.
+ */
+export interface SuiteParityCutover {
+  /** True while the old suite-membership tables are still written and read (before the cutover). */
+  legacy_writes: boolean
+  /** When the switch was turned off; null while legacy writes are on, or when no audit row says when. */
+  cut_over_at?: string | null
+  /** The admin who turned it off (customer data: React text only, never HTML, never an href). */
+  cut_over_by_name?: string | null
+  /** The clean-day streak over the HISTORY_DAYS UTC days ending at `cut_over_at`. */
+  streak_days_at_cutover?: number | null
+}
+
 export interface SuiteParityHistory {
   /** Runs started in the last HISTORY_DAYS UTC days, newest first. */
   runs: SuiteParityRunSummary[]
@@ -90,6 +105,8 @@ export interface SuiteParityHistory {
   cutover_ready: boolean
   /** The reconciler's window today (0 = the reconciler is off). */
   window_runs_now?: number
+  /** W25d: absent on a pre-W25d server (render today's card, unchanged). */
+  cutover?: SuiteParityCutover | null
 }
 
 export interface SuiteParityProjectLine {
@@ -128,4 +145,10 @@ export interface SuiteParityQueued {
   queued: boolean
   task_id: string
   task_name: string
+}
+
+/** `POST /api/v1/admin/maintenance/suite-membership-cutover` → 200 (409 carries a fixed sentence in `detail`). */
+export interface SuiteParityCutoverResult {
+  cut_over_at: string
+  streak_days: number
 }

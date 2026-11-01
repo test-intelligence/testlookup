@@ -3,6 +3,9 @@
 ``services/suite_membership_parity`` only reads; this module is what the daily
 beat task and "Compare now" run, in the Celery worker (never on a request path):
 
+* **R-0 skip** (W25d HYG-04): once the cutover turned ``suite_membership_legacy_writes``
+  off, the legacy tables are not written and there is nothing to compare →
+  ``{"skipped": "cut_over"}`` (no row, no metric; the beat entry stays until F-W25-2);
 * **R-1 claim**, committed before any work: a ``running`` row older than
   ``RUN_STALE_MINUTES`` (a dead worker's) is failed ``interrupted``, then ONE
   ``running`` row is inserted; ``uq_smpr_one_running`` makes a second
@@ -39,6 +42,7 @@ from app.core.metrics import suite_parity_runs_total
 from app.models.postgres import Project, SuiteMembershipParityRun
 from app.services import suite_membership_parity as parity
 from app.services import suite_parity_vocab as vocab
+from app.services.suite_membership_cutover import legacy_model_active
 
 _slog = structlog.get_logger(__name__)
 
@@ -130,7 +134,8 @@ async def run_parity(
     session_factory: Optional[Callable[[], Any]] = None,
 ) -> dict[str, Any]:
     """Claim → compare every project → record the outcome. Returns
-    ``{"run_id", "status", "projects", "blocking", "expected"}`` or ``{"skipped": "already_running"}``.
+    ``{"run_id", "status", "projects", "blocking", "expected"}``, ``{"skipped": "already_running"}`` or
+    (W25d, after the cutover) ``{"skipped": "cut_over"}``.
     Never raises out of the comparison: a failure is a ``failed`` row (the streak breaks)."""
     if trigger not in vocab.RUN_TRIGGERS:
         raise ValueError(f"unknown parity trigger {trigger!r}")
@@ -141,6 +146,12 @@ async def run_parity(
     summary: dict[str, Any] = {}
     async with factory() as db:
         try:
+            # R-0 (W25d HYG-04): once cut over, the legacy tables are not written, so there is nothing to
+            # compare — no row, no metric. The flag row itself (``fresh``: never the shared cache), read on
+            # this ONE session; a failing read is "no row claimed", like a failing claim.
+            if not await legacy_model_active(db, fresh=True):
+                _slog.info("suite_membership_parity_skipped", reason="cut_over", trigger=trigger)
+                return {"skipped": "cut_over"}
             run_id = await _claim(db, trigger, requested_by_id, window_runs)
         except Exception as exc:  # noqa: BLE001 - no row was claimed: a missing day, never a clean one
             suite_parity_runs_total.labels(status="failed").inc()

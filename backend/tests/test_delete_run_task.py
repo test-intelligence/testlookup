@@ -52,7 +52,7 @@ async def test_the_run_scoped_plan_pins_every_project_wide_clock_to_false():
     )
 
     for field in ("access_audit_where", "tc_audit_where",
-                  "deletion_job_where", "provenance_where"):
+                  "deletion_job_where"):
         clause = getattr(plan, field)
         rendered = " ".join(
             str(c.compile(dialect=postgresql.dialect(),

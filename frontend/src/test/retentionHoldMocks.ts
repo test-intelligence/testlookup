@@ -88,11 +88,10 @@ function basePreview(): RetentionPreview {
     candidates: {
       runs: 4,
       test_cases: 120,
-      mongo_docs: { execution_logs: 4 },
+      mongo_docs: { raw_allure_json: 4 },
       minio_objects: 8,
       event_archive_rows: 2,
       audit_rows: 0,
-      provenance_rows: 0,
       compliance_packs_expired: 0,
       evidence_artifact_rows: 0,
       memory_entries_expired: 0,

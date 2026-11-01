@@ -258,8 +258,10 @@ async def test_the_cross_store_ids_are_resolved_before_the_cascade():
         by_collection = {name: ids for name, ids in journal}
         # The run id reaches Mongo through THREE independent candidate lists,
         # so "some collection got it" is satisfied while one of them is empty.
-        # Each collection is asserted against the list that actually feeds it.
-        for collection in ("raw_allure_json", "execution_logs", "run_summaries",
+        # Each collection is asserted against the list that actually feeds it
+        # (raw_run_strs, purge_run_strs, raw_live_run_keys; W25d HYG-02 dropped
+        # the writer-less execution_logs, a second purge_run_strs reader).
+        for collection in ("raw_allure_json", "run_summaries",
                            "live_execution_events"):
             assert collection in by_collection, (
                 f"{collection} was never visited by the delete"

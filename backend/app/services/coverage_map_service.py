@@ -117,6 +117,15 @@ _SUITE_LABEL_SQL = DIMENSIONS["suite"].label_sql
 _CANONICAL_SUITE_LABEL_SQL = f"COALESCE(NULLIF(TRIM(ts.name), ''), '{NO_SUITE}')"
 _CANONICAL_SUITE_KEY_SQL = f"LOWER({_CANONICAL_SUITE_LABEL_SQL})"
 
+#: W25d HYG-04: where ``needs_review_count`` comes from. ``legacy`` = the suite
+#: sync's ``suite_memberships`` rows (while ``suite_membership_legacy_writes``
+#: is ON, the seeded state); ``canonical`` = the catalog's unconfirmed
+#: retirements, the SAME rows Test Management's "Deleted from Suite" lists
+#: after the cutover (one predicate, two readers).
+REVIEW_SOURCE_LEGACY: Final = "legacy"
+REVIEW_SOURCE_CANONICAL: Final = "canonical"
+REVIEW_SOURCES = (REVIEW_SOURCE_LEGACY, REVIEW_SOURCE_CANONICAL)
+
 
 @dataclass(frozen=True)
 class CoverageLevel:
@@ -257,10 +266,16 @@ _CHILD_SQL = {
 
 
 def build_statement(
-    level: CoverageLevel, scope: AnalyticsScope, *, now: Optional[datetime] = None
+    level: CoverageLevel,
+    scope: AnalyticsScope,
+    *,
+    now: Optional[datetime] = None,
+    review_source: str = REVIEW_SOURCE_LEGACY,
 ) -> tuple[str, dict]:
     """``(sql, params)`` for one level. Exposed so the injection tests read the
-    text without a database.
+    text without a database. ``review_source`` picks the ``nr`` CTE behind
+    ``needs_review_count`` (:data:`REVIEW_SOURCES`; the default is the legacy
+    text, unchanged).
 
     Stages, all server-side:
 
@@ -328,7 +343,23 @@ def build_statement(
     # project: ``suite_memberships`` is the legacy sync's table and the only
     # live writer of ``needs_review`` (HYG-04 must move this read with it).
     # Outside one project the count is not measured: NULL, never 0.
-    if scope.project_id is not None:
+    # W25d HYG-04: after the cutover (``review_source="canonical"``) the same
+    # count reads the catalog's retired, unconfirmed rows -- the predicate
+    # ``suite_membership_cutover.canonical_deleted`` lists.
+    if review_source not in REVIEW_SOURCES:
+        raise ValueError(f"unknown needs_review source {review_source!r}")
+    if scope.project_id is not None and review_source == REVIEW_SOURCE_CANONICAL:
+        params["cm_project"] = scope.project_id
+        needs_review_cte = """, nr AS (
+            SELECT c.test_fingerprint AS fp
+            FROM canonical_test_cases c
+            WHERE c.project_id = :cm_project
+              AND c.status <> 'active'
+              AND c.retirement_confirmed_at IS NULL
+        )"""
+        needs_review_flag = ",\n                   (tests.fp IN (SELECT fp FROM nr)) AS needs_review"
+        needs_review_count = "COUNT(*) FILTER (WHERE needs_review) AS needs_review_count"
+    elif scope.project_id is not None:
         params["cm_project"] = scope.project_id
         needs_review_cte = """, nr AS (
             SELECT DISTINCT sm.test_fingerprint AS fp
@@ -601,8 +632,30 @@ def assemble(level: CoverageLevel, rows: list[Any], now: datetime) -> dict:
     }
 
 
-def definitions(level: CoverageLevel, now: datetime) -> dict:
-    """What the numbers mean, shipped with them (``meta.definitions``)."""
+#: ``definitions.needs_review`` per source (W25d HYG-04): what the count means
+#: where it is read from. Both say the null rule.
+NEEDS_REVIEW_DEFINITIONS: Final = {
+    REVIEW_SOURCE_LEGACY: (
+        "needs_review_count: the node's tests whose fingerprint the last suite "
+        "sync marked for review in this project (a suite_memberships row with "
+        "status 'needs_review': the test was absent from its suite's latest "
+        "run). Test Management lists them under the suite's 'Deleted from "
+        "Suite'. Counted for one project only; null otherwise, never 0."
+    ),
+    REVIEW_SOURCE_CANONICAL: (
+        "needs_review_count: the node's tests the catalog retired (absent from "
+        "the project's last N runs) and no one has confirmed yet, in this "
+        "project. Test Management lists them under the suite's 'Deleted from "
+        "Suite'. Counted for one project only; null otherwise, never 0."
+    ),
+}
+
+
+def definitions(
+    level: CoverageLevel, now: datetime, *, review_source: str = REVIEW_SOURCE_LEGACY
+) -> dict:
+    """What the numbers mean, shipped with them (``meta.definitions``).
+    ``needs_review`` states the meaning of ``review_source``'s count."""
     return {
         "coverage": "test_execution",
         "coverage_note": (
@@ -682,13 +735,7 @@ def definitions(level: CoverageLevel, now: datetime) -> dict:
         ),
         "page": level.other_page,
         "children_offset": level.children_offset,
-        "needs_review": (
-            "needs_review_count: the node's tests whose fingerprint the last suite "
-            "sync marked for review in this project (a suite_memberships row with "
-            "status 'needs_review': the test was absent from its suite's latest "
-            "run). Test Management lists them under the suite's 'Deleted from "
-            "Suite'. Counted for one project only; null otherwise, never 0."
-        ),
+        "needs_review": NEEDS_REVIEW_DEFINITIONS[review_source],
         "ordering": (
             "Children by test_count descending, then key ascending in code-point "
             "order (not the database's locale), so the same data gives the same "
@@ -710,16 +757,28 @@ async def build_coverage_map(
     now: Optional[datetime] = None,
 ) -> dict:
     """The C3 ``tree`` payload for ``level`` under ``scope`` plus ``definitions``
-    and the envelope keys (``truncated``, ``truncated_total``) the route lifts."""
+    and the envelope keys (``truncated``, ``truncated_total``) the route lifts.
+
+    W25d HYG-04: the ``needs_review_count`` source follows the cutover flag,
+    read ONCE on the caller's session (``legacy_model_active(db)``: the legacy
+    table while ``suite_membership_legacy_writes`` is ON, the catalog after the
+    cutover). A denied scope reads nothing at all (no flag read either) and
+    states the default source.
+    """
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    review_source = REVIEW_SOURCE_LEGACY
     if scope.denied:
         rows: list[Any] = []
     else:
-        sql, params = build_statement(level, scope, now=now)
+        from app.services.suite_membership_cutover import legacy_model_active
+
+        if not await legacy_model_active(db):
+            review_source = REVIEW_SOURCE_CANONICAL
+        sql, params = build_statement(level, scope, now=now, review_source=review_source)
         result = await db.execute(scoped_text(sql, params), params)
         rows = list(result.fetchall())
     payload = assemble(level, rows, now)
-    payload["definitions"] = definitions(level, now)
+    payload["definitions"] = definitions(level, now, review_source=review_source)
     logger.info(
         "coverage_map_built",
         depth=level.depth,
@@ -741,10 +800,14 @@ __all__ = [
     "KEY_SEPARATOR",
     "MAX_CHILDREN",
     "MAX_KEY_LENGTH",
+    "NEEDS_REVIEW_DEFINITIONS",
     "NO_CLASS_KEY",
     "NO_CLASS_LABEL",
     "NO_SUITE",
     "OTHER_PAGE_MAX",
+    "REVIEW_SOURCES",
+    "REVIEW_SOURCE_CANONICAL",
+    "REVIEW_SOURCE_LEGACY",
     "ROOT_ID",
     "ROOT_LABEL",
     "assemble",

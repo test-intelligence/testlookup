@@ -262,9 +262,11 @@ async def test_the_estimate_applies_the_tier_formulas_over_measured_parts():
         (None, f"uploads/{PROJECT}/{runs[0]}/a.json"): b"x" * 1000,
         (None, f"uploads/{PROJECT}/{runs[1]}/b.png"): b"y" * 5000,
     })
-    mongo = MemMongo({"raw_allure_json": [{"_id": 1, "test_run_id": str(runs[0])}],
-                      "execution_logs": [{"_id": 2, "test_run_id": str(runs[1])}],
-                      "run_summaries": [{"_id": 3, "test_run_id": str(runs[0])}]}, avg=100)
+    mongo = MemMongo({"raw_allure_json": [{"_id": 1, "test_run_id": str(runs[0])},
+                                          {"_id": 2, "test_run_id": str(runs[1])}],
+                      "run_summaries": [{"_id": 3, "test_run_id": str(runs[0])}],
+                      # W25d HYG-02: a retired collection is neither reclaimed nor archived.
+                      "execution_logs": [{"_id": 4, "test_run_id": str(runs[1])}]}, avg=100)
     db = _estimate_db(runs)
 
     est = await svc.estimate_export(db, project_id=PROJECT, run_ids=runs, mongo=mongo,
@@ -272,7 +274,7 @@ async def test_the_estimate_applies_the_tier_formulas_over_measured_parts():
 
     summary = 2048 * 2 + 256 * 20
     evidence = summary + 4096 * 6 + 32768 * 2
-    full = evidence + 200 + 1000          # raw allure + logs (2 docs x 100) + the one text object
+    full = evidence + 200 + 1000          # raw allure (2 docs x 100) + the one text object
     assert [t["tier"] for t in est["tiers"]] == ["summary", "evidence", "full"]
     assert [t["archive_bytes"] for t in est["tiers"]] == [summary, evidence, full]
     assert all(t["measured"] and not t["over_cap"] for t in est["tiers"])

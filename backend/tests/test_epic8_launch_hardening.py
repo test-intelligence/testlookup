@@ -98,9 +98,8 @@ class TestEpic4ProvenanceFlows:
         assert prov["confidence"] >= 0
 
     def test_evidence_models(self):
-        from app.models.postgres import EvidenceArtifact, AIProvenanceRecord
+        from app.models.postgres import EvidenceArtifact
         assert EvidenceArtifact.__tablename__ == "evidence_artifacts"
-        assert AIProvenanceRecord.__tablename__ == "ai_provenance_records"
 
 
 class TestEpic5TriageFlows:
@@ -274,14 +273,14 @@ class TestEdgeCases:
             FeatureFlag, IntegrationHealthCheck,
             AccessAuditLog, TenantOnboardingStatus, ProductUsageEvent,
             RunIntelligenceSnapshot, RunBaseline, RunDiff,
-            EvidenceArtifact, AIProvenanceRecord, DefectCandidate,
+            EvidenceArtifact, DefectCandidate,
             SecretRef, SettingsAuditLog,
         )
         tables = [
             FeatureFlag, IntegrationHealthCheck,
             AccessAuditLog, TenantOnboardingStatus, ProductUsageEvent,
             RunIntelligenceSnapshot, RunBaseline, RunDiff,
-            EvidenceArtifact, AIProvenanceRecord, DefectCandidate,
+            EvidenceArtifact, DefectCandidate,
             SecretRef, SettingsAuditLog,
         ]
         for model in tables:

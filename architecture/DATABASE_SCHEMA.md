@@ -935,11 +935,8 @@ verify against `backend/app/db/mongo.py`, `redis_client.py`, `storage.py`,
 | Collection | Keyed by | Holds |
 |------------|----------|-------|
 | `raw_allure_json` | `test_case_id` | Raw Allure result JSON per test |
-| `raw_testng_xml` | `test_case_id` | Raw TestNG XML fragment per test |
 | `rest_api_payloads` | `test_run_id`, `test_case_id`, `seq` | Captured HTTP exchanges, redacted before storage (W23d AGT-14; see below) |
 | `ai_analysis_payloads` | `test_case_id` | Full LLM chain-of-thought + token counts per classification |
-| `ocp_pod_events` | `test_run_id`, `timestamp` | OpenShift pod events correlated to a run |
-| `execution_logs` | `test_run_id`, `timestamp` | Splunk/OCP logs correlated to a run |
 | `run_summaries` | `test_run_id` (unique) | Generated executive run summary |
 | `live_execution_events` | `session_id`, `seq` | Raw live-runner event timeline |
 
@@ -1004,7 +1001,7 @@ After changing `models/postgres.py`:
 ---
 ## Full schema reference
 
-Generated incrementally from `backend/app/models/postgres.py` — **112 of 140 declared tables** are currently documented. The extractor reports the remaining historical gaps. Types are the SQLAlchemy column types (PostgreSQL dialect). `PK`=primary key, `FK →`=foreign key target, `NN`=NOT NULL, `U`=unique, `IX`=indexed, `def`=has default/server_default.
+Generated incrementally from `backend/app/models/postgres.py` — **152 of 157 declared tables** are currently documented. The extractor reports the remaining historical gaps. Types are the SQLAlchemy column types (PostgreSQL dialect). `PK`=primary key, `FK →`=foreign key target, `NN`=NOT NULL, `U`=unique, `IX`=indexed, `def`=has default/server_default.
 
 ### Identity, Tenancy & Access
 
@@ -1673,23 +1670,6 @@ _Constraints:_ Index(`ix_failure_clusters_run`, `test_run_id`)
 
 _Constraints:_ Index(`ix_deep_findings_run`, `test_run_id`)
 
-#### `contract_violations`  <sub>(model `ContractViolation`)</sub>
-
-| Column | Type | Key | Flags | References |
-|---|---|---|---|---|
-| `id` | `UUID` | PK | NN def |  |
-| `test_run_id` | `UUID` | FK | NN | → `test_runs.id` |
-| `test_case_id` | `UUID` | FK | NN | → `test_cases.id` |
-| `endpoint` | `String(500)` |  |  |  |
-| `violation_type` | `String(50)` |  | NN |  |
-| `field_path` | `String(500)` |  |  |  |
-| `expected` | `String(500)` |  |  |  |
-| `actual` | `String(500)` |  |  |  |
-| `severity` | `String(20)` |  | NN def |  |
-| `created_at` | `DateTime` |  | NN def |  |
-
-_Constraints:_ Index(`ix_contract_violations_run`, `test_run_id`); Index(`ix_contract_violations_tc`, `test_case_id`)
-
 #### `agent_memory_entries`  <sub>(model `AgentMemoryEntry`)</sub>
 
 | Column | Type | Key | Flags | References |
@@ -1709,26 +1689,6 @@ _Constraints:_ Index(`ix_contract_violations_run`, `test_run_id`); Index(`ix_con
 | `created_at` | `DateTime` |  | NN def |  |
 
 _Constraints:_ Index(`ix_ame_project_id`, `project_id`); Index(`ix_ame_run_id`, `run_id`); Index(`ix_ame_entity`, `entity_type`, `entity_id`); Index(`ix_ame_project_entity`, `project_id`, `entity_type`); Index(`ix_ame_created`, `created_at`)
-
-#### `ai_provenance_records`  <sub>(model `AIProvenanceRecord`)</sub>
-
-| Column | Type | Key | Flags | References |
-|---|---|---|---|---|
-| `id` | `UUID` | PK | NN def |  |
-| `entity_type` | `String(50)` |  | NN |  |
-| `entity_id` | `UUID` |  | NN |  |
-| `run_id` | `ForeignKey` | FK |  | `test_runs.id` |
-| `project_id` | `ForeignKey` | FK |  | `projects.id` |
-| `model_name` | `String(200)` |  |  |  |
-| `fallback_used` | `Boolean` |  | NN def |  |
-| `confidence` | `Integer` |  |  |  |
-| `confidence_reason` | `Text` |  |  |  |
-| `evidence_count` | `Integer` |  | NN def |  |
-| `sources_used` | `JSON` |  |  |  |
-| `deterministic_checks_used` | `JSON` |  |  |  |
-| `created_at` | `DateTime` |  | NN def |  |
-
-_Constraints:_ Index(`ix_provenance_entity`, `entity_type`, `entity_id`); Index(`ix_provenance_run`, `run_id`)
 
 #### `run_intelligence_snapshots`  <sub>(model `RunIntelligenceSnapshot`)</sub>
 
@@ -2278,19 +2238,6 @@ _Constraints:_ Index(`ix_compliance_packs_release`, `release_id`); Index(`ix_com
 
 _Constraints:_ Index(`uq_compliance_signing_keys_active`, `algorithm`, unique, WHERE `retired_at IS NULL`)
 
-#### `quality_gates`  <sub>(model `QualityGate`)</sub>
-
-| Column | Type | Key | Flags | References |
-|---|---|---|---|---|
-| `id` | `UUID` | PK | NN def |  |
-| `project_id` | `UUID` | FK | NN | → `projects.id` |
-| `name` | `String(255)` |  | NN |  |
-| `rules` | `JSON` |  | NN def |  |
-| `is_active` | `Boolean` |  | NN def |  |
-| `created_at` | `DateTime` |  | NN def |  |
-
-_Constraints:_ Index(`ix_quality_gates_project`, `project_id`)
-
 #### `coverage_snapshots`  <sub>(model `CoverageSnapshot`)</sub>
 
 | Column | Type | Key | Flags | References |
@@ -2754,23 +2701,6 @@ _Constraints:_ UniqueConstraint(`project_id`, `left_run_id`, `right_run_id`, `su
 | `updated_at` | `DateTime` |  | NN def |  |
 
 _Constraints:_ Index(`ix_perf_baseline_project`, `project_id`); UniqueConstraint(`project_id`, `test_fingerprint`)
-
-#### `tenant_metric_snapshots`  <sub>(model `TenantMetricSnapshot`)</sub>
-
-| Column | Type | Key | Flags | References |
-|---|---|---|---|---|
-| `id` | `UUID` | PK | NN def |  |
-| `project_id` | `UUID` | FK | NN | → `projects.id` |
-| `recorded_at` | `DateTime` |  | NN def |  |
-| `total_runs` | `Integer` |  | NN def |  |
-| `total_tests` | `Integer` |  | NN def |  |
-| `avg_pass_rate` | `Float` |  |  |  |
-| `failed_runs` | `Integer` |  | NN def |  |
-| `ai_analyses_count` | `Integer` |  | NN def |  |
-| `release_decisions_count` | `Integer` |  | NN def |  |
-| `audit_events_count` | `Integer` |  | NN def |  |
-
-_Constraints:_ Index(`ix_tms_project_time`, `project_id`, `recorded_at`)
 
 #### `tenant_onboarding_status`  <sub>(model `TenantOnboardingStatus`)</sub>
 
@@ -3600,3 +3530,22 @@ requested_at TIMESTAMPTZ NOT NULL now(); started_at / finished_at / expires_at T
 `search_query_events` (migration 0227, SRCH-05) is described above, beside `saved_views`: no query text, no user
 id, a keyed hash, a fixed 30-day window. Its two indexes are plain builds on the table the migration creates.
 - Field-level entries: the generated [data dictionary](../docs/reference/data-dictionary.md#semantic_reindex_jobs).
+
+## Dead storage dropped and the suite-membership cutover switch (migrations 0250 / 0251, W25d)
+
+- **Dropped (migration 0250, HYG-02):** `quality_gates`, `contract_violations`, `tenant_metric_snapshots` and
+  `ai_provenance_records` — tables nothing ever wrote. The upgrade counts each table first and refuses, naming every table
+  that holds a row with its count, so nothing is dropped from a database where any of them was used. `downgrade()`
+  recreates them empty with their exact 0249 shapes (the DDL of migrations 0001 / 0006 / 0026 + 0113 / 0037 / 0082, not
+  the ORM). The `contract_violations` JSONB column on `deep_findings` is unrelated and stays.
+- **MongoDB:** `execution_logs`, `ocp_pod_events` and `raw_testng_xml` had no writer and existed only because start-up
+  index creation re-created them. Their index specs are gone; the empty collections are dropped by
+  `backend/scripts/drop_dead_mongo_collections.py` (dry run by default; `--apply` drops only when all three are empty).
+- **W24 export / import:** `quality_gates` leaves the export (29 exported tables). An older archive that lists it still
+  imports: a retired table with rows is skipped with a report line (`retired_table`), never refused.
+- **`feature_flags` row `suite_membership_legacy_writes` (migration 0251, HYG-04 phase 2):** seeded ON on every install.
+  ON = the legacy `suite_memberships` / `suite_membership_events` tables are still written (ingestion, finalize, the W24
+  import's mirror) and read (the suite routes, the coverage map's needs-review count). OFF (the cutover, a guarded admin
+  action on Settings › Storage after 7 clean parity days) = they stop being written and the reads come from
+  `canonical_test_cases`. The legacy tables are dropped one release after the cutover (F-W25-2).
+- **Rollback:** `downgrade()` of 0251 deletes the flag row only while untouched; of 0250 recreates the four tables empty.

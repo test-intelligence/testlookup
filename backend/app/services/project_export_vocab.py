@@ -114,5 +114,11 @@ SKIP_REASONS = {      # import_report.skipped[*] / cleared[*].reason → the sen
     "user_not_found": "the person does not exist here",            # a user_refs column set NULL (cleared[])
     "assignment": "the new project has no other members yet",       # a `cleared` column that was non-null (cleared[])
     "row_unresolved": "it pointed at a row that is not in the export",   # optional FK → NULL (cleared[]); required FK → row skipped (skipped[])
+    "retired_table": "the table no longer exists in this version",    # a RETIRED_ENTITIES table listed with rows (skipped[], column null)
 }
+#: Tables a schema_version 1 archive may list that this deployment dropped (W25d HYG-02). Every W24 export
+#: lists all its tables, empty ones included: with 0 rows such a table is ignored silently; with N rows its
+#: parts are never read and the report says N rows were skipped ("retired_table"). Any other unknown table is
+#: still refused "unknown_entity".
+RETIRED_ENTITIES = ("quality_gates",)
 REVIEW_RESET_STATES = ("review_requested", "under_review")   # managed_test_cases.status arriving as "draft" (contract §2.1 row 3)

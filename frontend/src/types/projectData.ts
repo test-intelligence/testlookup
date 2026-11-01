@@ -93,6 +93,7 @@ export const SKIP_REASONS = {
   user_not_found: 'the person does not exist here',
   assignment: 'the new project has no other members yet',
   row_unresolved: 'it pointed at a row that is not in the export',
+  retired_table: 'the table no longer exists in this version',
 } as const
 export type ProjectDataSkipReason = keyof typeof SKIP_REASONS
 

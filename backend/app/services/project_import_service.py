@@ -14,14 +14,16 @@ Two entry points (contract §1.4, §2.3):
   ``scan_zip`` with the import caps, the manifest's format / scope / schema
   version, the member names, ``verify_archive_file`` (chain intact; signature
   ``valid`` / ``unknown_key`` / ``unsigned``, never ``invalid``), the listed
-  entities / columns / parts, and EVERY row through its typed model
+  entities / columns / parts (a ``RETIRED_ENTITIES`` table is accepted, never
+  read, and its rows reported as skipped), and EVERY row through its typed model
   (``project_import_rows``) — plus I-3 the user directory, all BEFORE the
   first INSERT (only SELECTs run until then); I-4 the project row +
   ``provision_new_project``; I-5 the entities in ``plan()`` order with the id
   remap, batched; I-6 the self-reference second pass; I-7 the one-active-
   release invariant; I-7b the legacy ``suite_memberships`` mirror of the
   imported catalog (``suite_membership_reconcile``: a derived table, never
-  exported, so the parity harness sees an imported project as clean); I-8 the
+  exported, so the parity harness sees an imported project as clean) — only
+  while ``legacy_model_active`` (before the HYG-04 cutover); I-8 the
   job outcome + the ``project.imported`` activity.
 
 An archive is attacker-controlled and never grants access: no member name is
@@ -353,6 +355,7 @@ class _Preflight:
     rows: dict[str, int] = dataclasses.field(default_factory=dict)              # table → validated rows
     directory: dict[uuid.UUID, str] = dataclasses.field(default_factory=dict)   # source user id → lower(username)
     release_keeper: Optional[uuid.UUID] = None                                  # the imported release that stays active
+    retired: dict[str, int] = dataclasses.field(default_factory=dict)           # RETIRED_ENTITIES table → manifest rows (never read)
 
 
 def _scan(spool: IO[bytes]) -> int:
@@ -441,8 +444,18 @@ def _verify(spool: IO[bytes], public_keys: Mapping[str, str]) -> str:
     return signature
 
 
-def _check_entities(raw: dict[str, Any], names: list[str]) -> tuple[_Manifest, dict[str, list[str]]]:
-    """(e) every listed entity is EXPORTED, every listed column known, every listed part present."""
+def _check_entities(
+    raw: dict[str, Any], names: list[str]
+) -> tuple[_Manifest, dict[str, list[str]], dict[str, int]]:
+    """(e) every listed entity is EXPORTED (or RETIRED), every listed column known, every listed part present.
+
+    A ``RETIRED_ENTITIES`` table (dropped by this deployment, W25d HYG-02) is not
+    "unknown": its listed parts must be present like any other (the chain already
+    covers their bytes) but they are NEVER read — it gets no entry in ``parts``
+    and its manifest row count comes back in the third value (table → rows), which
+    the import reports as skipped ("retired_table") when it is not 0. Any other
+    table outside ``plan()`` is still refused ``unknown_entity``.
+    """
     from app.services.project_import_rows import column_names
 
     try:
@@ -450,16 +463,17 @@ def _check_entities(raw: dict[str, Any], names: list[str]) -> tuple[_Manifest, d
     except ValidationError:
         raise ProjectImportFailed("not_a_project_export") from None
     exported = {spec.table: spec for spec in plan()}
+    retired = frozenset(vocab.RETIRED_ENTITIES) - set(exported)
     by_table: dict[str, list[tuple[int, str]]] = {}
     for name in names:
         match = _PART_NAME.match(name)
         if match:
             by_table.setdefault(match["table"], []).append((int(match["index"]), name))
     for table in sorted(set(manifest.entities) | set(by_table)):
-        if table not in exported:
+        if table not in exported and table not in retired:
             raise ProjectImportFailed("unknown_entity", entity=_safe_ident(table, "an unknown table"))
     for table, entry in sorted(manifest.entities.items()):
-        if entry.columns is not None:
+        if entry.columns is not None and table not in retired:
             known = column_names(row_model_for(exported[table]))
             for column in entry.columns:
                 if column not in known:
@@ -476,10 +490,12 @@ def _check_entities(raw: dict[str, Any], names: list[str]) -> tuple[_Manifest, d
         if present != expected:
             missing = set(expected) - set(present)
             raise ProjectImportFailed("tampered", reason="a listed part is missing" if missing else "an unexpected member")
-        parts[table] = expected
+        if table not in retired:
+            parts[table] = expected
     if "projects" not in manifest.entities:
         raise ProjectImportFailed("not_a_project_export")
-    return manifest, parts
+    retired_rows = {table: entry.rows for table, entry in sorted(manifest.entities.items()) if table in retired}
+    return manifest, parts, retired_rows
 
 
 def _single_row_tables() -> frozenset[str]:
@@ -592,7 +608,7 @@ def _preflight_sync(spool: IO[bytes], public_keys: Mapping[str, str], file_count
     signature = _verify(spool, public_keys)
     spool.seek(0)
     with zipfile.ZipFile(spool) as zf:
-        manifest, parts = _check_entities(raw, names)
+        manifest, parts, retired = _check_entities(raw, names)
         pre = _Preflight(
             manifest_sha256=manifest_sha256,
             signature=signature,
@@ -602,6 +618,7 @@ def _preflight_sync(spool: IO[bytes], public_keys: Mapping[str, str], file_count
             exported_at=manifest.generated_at,
             file_count=file_count,
             parts=parts,
+            retired=retired,
         )
         _validate_rows(zf, manifest, pre)
         pre.directory = _read_directory(zf, names)
@@ -888,6 +905,7 @@ async def run_import(
     from app.services.compliance_pack_service import COMPLIANCE_BUCKET, sha256_of_file
     from app.services.release_lifecycle_service import ensure_active_release_for_new_project
     from app.services.retention_export_service import new_spool
+    from app.services.suite_membership_cutover import legacy_model_active
     from app.services.suite_membership_reconcile import reconcile_project
 
     requested = clean_name(job.project_name)
@@ -933,7 +951,15 @@ async def run_import(
             await ensure_active_release_for_new_project(db, project)
         # I-7b: suite_memberships is derived (never exported), so the legacy table mirrors the imported
         # catalog here, in this transaction — else every import is a parity missing_in_legacy (W25a Day-0).
-        mirrored = await reconcile_project(db, project.id, apply=True)
+        # Only while the legacy model is written (W25d HYG-04, D-W25d-7): after the cutover nothing reads
+        # or compares it. The flag is read on the import's own session.
+        legacy_memberships = 0
+        if await legacy_model_active(db):
+            mirrored = await reconcile_project(db, project.id, apply=True)
+            legacy_memberships = mirrored.legacy_inserted
+        for table, rows in pre.retired.items():                     # W25d HYG-02: a dropped table's rows
+            if rows > 0:
+                ctx.skipped[(table, None, "retired_table")] += rows
     finally:
         spool.close()
 
@@ -975,6 +1001,6 @@ async def run_import(
     _slog.info(
         "project_import_succeeded", job_id=str(job.id), project_id=str(project.id),
         rows=sum(inserted.values()), tables=total, signature=pre.signature,
-        legacy_memberships=mirrored.legacy_inserted,
+        legacy_memberships=legacy_memberships, retired_rows_skipped=sum(pre.retired.values()),
     )
     return report

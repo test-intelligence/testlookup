@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
-from datetime import time as dt_time
 from typing import Any, Optional
 
 import structlog
@@ -26,16 +25,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_instance_admin
 from app.db.postgres import get_db
-from app.models.postgres import Project, SuiteMembershipParityRun, User
+from app.models.postgres import FeatureFlag, Project, SuiteMembershipParityRun, User
 from app.models.schemas import (
+    SuiteParityCutover,
+    SuiteParityCutoverResult,
     SuiteParityHistory,
     SuiteParityProjectLine,
     SuiteParityRunDetail,
     SuiteParityRunSummary,
     SuiteParitySampleRow,
 )
+from app.services import feature_flags
+from app.services import suite_membership_cutover as suite_cutover
 from app.services import suite_membership_parity as parity_service
 from app.services import suite_parity_vocab as parity_vocab
+from app.services.agent_authority_lock import lock_global_agent_authority
 
 logger = structlog.get_logger(__name__)
 
@@ -416,14 +420,12 @@ async def requeue_failed_outbox_operations(
 # write. The POST reads whether a fresh comparison is running, then enqueues the
 # worker task (the comparison never runs in the API process). Instance admins
 # only; project names are shown to them alone.
-
-_PARITY_SUMMARY_COLUMNS = (
-    SuiteMembershipParityRun.id, SuiteMembershipParityRun.trigger, SuiteMembershipParityRun.status,
-    SuiteMembershipParityRun.started_at, SuiteMembershipParityRun.finished_at,
-    SuiteMembershipParityRun.requested_by_id, SuiteMembershipParityRun.window_runs,
-    SuiteMembershipParityRun.projects_checked, SuiteMembershipParityRun.keys_compared,
-    SuiteMembershipParityRun.blocking_diffs, SuiteMembershipParityRun.expected_divergences,
-)
+#
+# W25d HYG-04 (the cutover): the history GET also reads the cut-over state
+# (the flag ``suite_membership_legacy_writes`` + its settings_audit_log trail,
+# ``suite_cutover.cutover_state``) and still writes nothing; the cutover POST is
+# the ONE action that turns the flag off, refused (409) unless the same
+# readiness the GET shows says ``cutover_ready``.
 
 
 def _as_uuid(value: object) -> Optional[uuid.UUID]:
@@ -479,24 +481,26 @@ async def read_suite_membership_parity(
     comparison is clean. A day with no finished comparison breaks the streak
     (absence is not health); today without one does not, until it is over. An
     empty ``runs`` list means no comparison has run yet — never "0 differences".
+
+    W25d: ``cutover`` is the derived cut-over state. After a cutover the window
+    ENDS at ``cutover.cut_over_at`` (the 14 UTC days ending on that date, runs
+    started before it), so the evidence stays readable and the dates after the
+    cutover never read as missed days. Before it the answer is today's.
     """
     from app.core.config import settings
 
-    today = datetime.now(timezone.utc).date()
-    since = datetime.combine(today - timedelta(days=parity_vocab.HISTORY_DAYS - 1), dt_time.min, tzinfo=timezone.utc)
-    rows = (await db.execute(
-        select(*_PARITY_SUMMARY_COLUMNS)
-        .where(SuiteMembershipParityRun.started_at >= since)
-        .order_by(SuiteMembershipParityRun.started_at.desc(), SuiteMembershipParityRun.id)
-    )).all()
+    now = datetime.now(timezone.utc)
+    state = await suite_cutover.cutover_state(db, now=now)
+    cut_over_at = state["cut_over_at"]
+    rows, streak, ready = await suite_cutover.readiness(db, now=cut_over_at or now, until=cut_over_at)
     names = await _usernames(db, {r.requested_by_id for r in rows if r.requested_by_id is not None})
-    streak = parity_service.streak_days(rows, today)
     return SuiteParityHistory(
         runs=[SuiteParityRunSummary(**_summary(r, names)) for r in rows],
         streak_days=streak,
         required_days=parity_vocab.REQUIRED_CLEAN_DAYS,
-        cutover_ready=streak >= parity_vocab.REQUIRED_CLEAN_DAYS,
+        cutover_ready=ready,
         window_runs_now=int(settings.CANONICAL_DELETION_WINDOW_RUNS),
+        cutover=SuiteParityCutover(**state),
     )
 
 
@@ -548,6 +552,17 @@ async def read_suite_membership_parity_run(
     )
 
 
+async def _a_comparison_is_running(db: AsyncSession) -> bool:
+    """A ``running`` parity row started less than ``RUN_STALE_MINUTES`` ago (an older one is a dead worker's)."""
+    fresh_since = datetime.now(timezone.utc) - timedelta(minutes=parity_vocab.RUN_STALE_MINUTES)
+    running = (await db.execute(
+        select(SuiteMembershipParityRun.id)
+        .where(SuiteMembershipParityRun.status == "running", SuiteMembershipParityRun.started_at >= fresh_since)
+        .limit(1)
+    )).first()
+    return running is not None
+
+
 @router.post(
     "/suite-membership-parity",
     status_code=202,
@@ -559,18 +574,15 @@ async def trigger_suite_membership_parity(
 ) -> dict[str, Any]:
     """"Compare now": enqueue one read-only comparison on the worker.
 
-    409 while a comparison started less than ``RUN_STALE_MINUTES`` ago is still
-    running (read before enqueueing; the runner's unique claim is the real
-    guard). 503 when the broker refuses the task — its exception TYPE is
-    logged, never echoed.
+    409 once cut over (W25d: the old tables are no longer written, so the
+    comparison is retired — checked first). 409 while a comparison started less
+    than ``RUN_STALE_MINUTES`` ago is still running (read before enqueueing;
+    the runner's unique claim is the real guard). 503 when the broker refuses
+    the task — its exception TYPE is logged, never echoed.
     """
-    fresh_since = datetime.now(timezone.utc) - timedelta(minutes=parity_vocab.RUN_STALE_MINUTES)
-    running = (await db.execute(
-        select(SuiteMembershipParityRun.id)
-        .where(SuiteMembershipParityRun.status == "running", SuiteMembershipParityRun.started_at >= fresh_since)
-        .limit(1)
-    )).first()
-    if running is not None:
+    if not await suite_cutover.legacy_model_active(db):
+        raise HTTPException(status_code=409, detail=suite_cutover.COMPARISON_RETIRED_SENTENCE)
+    if await _a_comparison_is_running(db):
         raise HTTPException(status_code=409, detail=parity_vocab.ALREADY_RUNNING_SENTENCE)
     try:
         from app.worker.tasks import run_suite_membership_parity
@@ -587,4 +599,72 @@ async def trigger_suite_membership_parity(
         raise HTTPException(status_code=503, detail=parity_vocab.DISPATCH_FAILED_SENTENCE) from None
     logger.info("admin_triggered_suite_parity", actor_user_id=str(current_user.id), task_id=result.id)
     return {"queued": True, "task_id": str(result.id), "task_name": parity_vocab.TASK_NAME}
+
+
+# ── W25d HYG-04: the cutover (the card's "Cut over now") ─────────────────────
+
+
+@router.post(
+    "/suite-membership-cutover",
+    response_model=SuiteParityCutoverResult,
+    dependencies=[Depends(require_instance_admin())],
+)
+async def cut_over_suite_membership(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+) -> SuiteParityCutoverResult:
+    """Stop writing (and reading) the legacy suite-membership tables: turn ``suite_membership_legacy_writes`` OFF.
+
+    Refused (409, fixed sentences, never an exception text) when it is already
+    off, while a fresh comparison is running, or unless the SAME readiness the
+    history GET shows says ``cutover_ready`` (seven clean UTC days). Under the
+    flag service's own lock the row is re-read, so two clicks make one change.
+    The flag's ``settings_audit_log`` row (actor + reason, no names in the
+    reason) is the record; ONE commit; then the flag cache is dropped and every
+    project's analytics epoch is bumped (the coverage map's ``needs_review``
+    source changes) — best effort, a Redis error is logged by TYPE and never
+    fails the POST. The body is ignored. Reversible until F-W25-2: turning the
+    flag back ON at /settings/feature-flags resumes legacy reads and writes.
+    """
+    if not await suite_cutover.legacy_model_active(db, fresh=True):
+        raise HTTPException(status_code=409, detail=suite_cutover.ALREADY_CUT_OVER_SENTENCE)
+    if await _a_comparison_is_running(db):
+        raise HTTPException(status_code=409, detail=suite_cutover.COMPARISON_RUNNING_SENTENCE)
+    _rows, streak, ready = await suite_cutover.readiness(db, now=datetime.now(timezone.utc))
+    if not ready:
+        raise HTTPException(
+            status_code=409,
+            detail=suite_cutover.NOT_READY_SENTENCE.format(streak=streak, required=parity_vocab.REQUIRED_CLEAN_DAYS),
+        )
+    # Re-entrant transaction lock (the flag service takes it again). The re-read selects the COLUMN, so it sees the
+    # committed value even though the ORM row is already in this session's identity map from the first read.
+    await lock_global_agent_authority(db)
+    current = (await db.execute(
+        select(FeatureFlag.enabled_global).where(FeatureFlag.key == suite_cutover.FEATURE_FLAG)
+    )).first()
+    if current is None or not current[0]:
+        raise HTTPException(status_code=409, detail=suite_cutover.ALREADY_CUT_OVER_SENTENCE)
+    flag = await feature_flags.update_flag(
+        db,
+        key=suite_cutover.FEATURE_FLAG,
+        updates={"enabled_global": False},
+        actor=current_user,
+        reason=suite_cutover.CUTOVER_REASON.format(streak=streak),
+    )
+    cut_over_at = flag.updated_at or datetime.now(timezone.utc)
+    await db.commit()
+    await feature_flags.invalidate_flag_cache(suite_cutover.FEATURE_FLAG)
+    try:
+        from app.services.cache_service import bump_analytics_epochs
+
+        project_ids = (await db.execute(select(Project.id))).scalars().all()
+        await bump_analytics_epochs(project_ids)
+    except Exception as exc:  # noqa: BLE001 - the flip has committed; the cache TTL is the backstop
+        logger.warning(
+            "suite_membership_cutover_epoch_bump_failed",
+            actor_user_id=str(current_user.id),
+            error_type=type(exc).__name__,
+        )
+    logger.info("suite_membership_cutover", actor_user_id=str(current_user.id), streak_days=streak)
+    return SuiteParityCutoverResult(cut_over_at=cut_over_at, streak_days=streak)
 

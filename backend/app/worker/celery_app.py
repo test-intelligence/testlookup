@@ -426,7 +426,8 @@ celery_app.conf.update(
         # reconcile, so the night's canonical retirements are applied before
         # the comparison reads them. Read-only over the catalog; its only write
         # is its own suite_membership_parity_runs row. Seven consecutive clean
-        # days unlock the W25d cutover; W25d removes this entry at the cutover.
+        # days unlock the W25d cutover; the runner skips once the cutover flag
+        # is off; F-W25-2 removes this entry.
         "daily-suite-membership-parity": {
             "task": "app.worker.tasks.run_suite_membership_parity",
             "schedule": crontab(hour=6, minute=15),

@@ -170,7 +170,7 @@ Ids that don't resolve to an existing canonical are surfaced in
 ``missing_ids`` so the UI can clear stale rows from its selection
 without re-fetching the whole page.
 
-Source: [backend/app/routers/suites.py:597](../../../backend/app/routers/suites.py#L597).
+Source: [backend/app/routers/suites.py:603](../../../backend/app/routers/suites.py#L603).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -542,7 +542,7 @@ Move a canonical test case to a different suite within the same
 project. Refuses cross-project moves (different project's suites are
 isolated by design).
 
-Source: [backend/app/routers/suites.py:569](../../../backend/app/routers/suites.py#L569).
+Source: [backend/app/routers/suites.py:575](../../../backend/app/routers/suites.py#L575).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -821,7 +821,7 @@ confidence, engine/model, review flag, root-cause excerpt, version count) or
 ``None``; only the newest 2,000 rows get it (``ai_truncated``). The case ids
 are this canonical's own, so the project scope is the canonical's.
 
-Source: [backend/app/routers/suites.py:637](../../../backend/app/routers/suites.py#L637).
+Source: [backend/app/routers/suites.py:643](../../../backend/app/routers/suites.py#L643).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

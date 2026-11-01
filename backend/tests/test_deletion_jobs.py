@@ -563,6 +563,6 @@ def test_the_module_docstring_lists_what_the_audit_clock_covers():
         len(lines),
     )
     joined = " ".join(lines[starts[0]:end])
-    for table in ("access_audit_logs", "test_case_audit_logs",
-                  "ai_provenance_records", "deletion_jobs"):
+    # (W25d HYG-02: ai_provenance_records was dropped by migration 0250 and left the audit clock.)
+    for table in ("access_audit_logs", "test_case_audit_logs", "deletion_jobs"):
         assert table in joined, f"{table} is purged on the audit clock but undocumented"

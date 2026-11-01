@@ -1457,6 +1457,44 @@ async def test_canonical_link_route_bumps_after_its_commit(journal, monkeypatch)
     _assert_bumped_after_commit(journal, project_id)
 
 
+async def test_canonical_confirm_retirement_route_bumps_after_its_commit(journal, monkeypatch):
+    """W25d: after the cutover the coverage map's needs-review count reads
+    ``retirement_confirmed_at``, so confirming a retirement must bump the
+    project's analytics epoch after its commit — as the link route does.
+    (The W25d demo found the tile still counting a confirmed retirement.)"""
+    from app.services import test_suite_service as svc
+
+    project_id = uuid.uuid4()
+    canonical = _canonical_row(project_id)
+    suites = _suite_routes(monkeypatch, canonical=canonical)
+    monkeypatch.setattr(svc, "confirm_canonical_retirement", AsyncMock(return_value=canonical))
+    monkeypatch.setattr(suites, "emit_staged_test_management_metrics", AsyncMock())
+
+    await suites.confirm_canonical_retirement(
+        canonical.id, SimpleNamespace(reason="zz-retired-on-purpose"),
+        db=_JournalSession(journal), current_user=SimpleNamespace(),
+    )
+
+    _assert_bumped_after_commit(journal, project_id)
+
+
+async def test_canonical_confirm_retirement_rollback_does_not_bump(journal, monkeypatch):
+    from app.services import test_suite_service as svc
+
+    project_id = uuid.uuid4()
+    canonical = _canonical_row(project_id)
+    suites = _suite_routes(monkeypatch, canonical=canonical)
+    monkeypatch.setattr(svc, "confirm_canonical_retirement", AsyncMock(return_value=canonical))
+    monkeypatch.setattr(suites, "emit_staged_test_management_metrics", AsyncMock())
+
+    with pytest.raises(RuntimeError):
+        await suites.confirm_canonical_retirement(
+            canonical.id, SimpleNamespace(reason="zz-retired-on-purpose"),
+            db=_JournalSession(journal, fail_commit=True), current_user=SimpleNamespace(),
+        )
+    assert _bumps(journal) == []
+
+
 async def test_canonical_link_route_rollback_does_not_bump(journal, monkeypatch):
     project_id = uuid.uuid4()
     canonical = _canonical_row(project_id)
@@ -1587,6 +1625,15 @@ def test_nightly_retirement_sweep_bumps_only_projects_it_retired_in(journal, mon
     ]
     monkeypatch.setattr(pg, "AsyncSessionLocal", _factory(*sessions))
     monkeypatch.setattr(metrics, "emit_staged_test_management_metrics", AsyncMock())
+    # W25d HYG-04: a retiring reconciler now asks the cutover flag (one SELECT) before staging its activity
+    # line, and these hand-built sessions answer only the reconciler's own three reads. Legacy writes ON is
+    # the seeded state: the reconciler stages nothing extra, exactly as before.
+    from app.services import suite_membership_cutover
+
+    async def _legacy_writes_on(db, *, fresh=False):
+        return True
+
+    monkeypatch.setattr(suite_membership_cutover, "legacy_model_active", _legacy_writes_on)
     journal.append(("mutate", "retire"))  # the status flips the reconciler makes
 
     result = tasks.reconcile_canonical_deletions.run()

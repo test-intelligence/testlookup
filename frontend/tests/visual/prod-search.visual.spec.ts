@@ -19,6 +19,13 @@
  * `PINNED_TALL`'s 1280 × 4000 viewport (the card is the page's last block): "Day 4 of 7 with no differences.", the diffs day (12
  * differences · 340 expected), four clean days and the two dates that never ran ("Not run", never "No differences").
  *
+ * W25d HYG-04 (`W25d-contract.md` §4.3, NEW, same page and viewport): `storage-suite-parity-ready` — seven clean
+ * days, legacy writes on: "Ready for the cutover: 7 clean days in a row.", "Compare now" and "Cut over now" on one
+ * row, and the inline confirmation OPEN (its two lines unwrapped); `storage-suite-parity-cut-over` — cut over on
+ * day 0 at 10:12 UTC by "admin": no button, "Cut over on Fri 18 Sep after 7 clean days.", the retired line, the
+ * by-line and "The 7 days before the cutover (UTC)" over seven clean days. `storage-suite-parity-card` is
+ * UNCHANGED (its world still sends the W25a history, with no `cutover` object).
+ *
  * CHANGED: none (§6.5 proves each candidate). The focus ring is not part of a baseline: the page is blurred before
  * each region, except the typeahead's (a blur closes that list by design; its region is the list, not the input).
  * Hermetic fixtures: `production/fixtures-search.ts`. PNGs are rendered by CI only (`visual-baselines.yml`, Linux);
@@ -171,6 +178,59 @@ for (const theme of THEMES_WITH_PAPER) {
       expect(cut, 'truncated text in the cutover card').toEqual([])
       await blur(page)
       await visualRegion(page, 'storage-suite-parity-card', theme, card)
+      assertHermetic(api, errors)
+    })
+
+    test(`W25d: ready for the cutover, the inline confirmation open — ${theme}`, async ({ page }) => {
+      const world = embeddingWorld({ index: INDEX_MINILM_IN_SYNC, parity: 'ready' })
+      const { api, errors } = await open(page, '/settings/storage', theme, world.handlers, ADMIN, h1('Data & Storage'))
+      const card = page.locator('[data-suite-parity]')
+      await expect(card.locator('[data-parity-status-line]')).toHaveText('Ready for the cutover: 7 clean days in a row.')
+      await expect(card.locator('[data-day-kind="clean"]')).toHaveCount(7)
+      const compare = card.getByRole('button', { name: 'Compare now', exact: true })
+      const cutOverNow = card.getByRole('button', { name: 'Cut over now', exact: true })
+      await cutOverNow.click()
+      const confirm = card.locator('[data-parity-confirm]')
+      await expect(confirm.locator('p')).toHaveText([
+        'Stop writing the old suite-membership tables and read the test catalog from now on?',
+        'Reversible until the old tables are dropped in the next release.',
+      ])
+      await expect(confirm.getByRole('button')).toHaveText(['Cut over', 'Cancel'])
+      await networkQuiet(page, api)
+      // Both header buttons on ONE row at 1280; the confirmation's lines on one line each; nothing cut.
+      const [a, b] = await Promise.all([compare.boundingBox(), cutOverNow.boundingBox()])
+      expect(a && b && Math.abs(a.y + a.height / 2 - (b.y + b.height / 2)) < 1, 'Compare now and Cut over now share a row').toBe(true)
+      const wrapped = await confirm.locator('p').evaluateAll((els) =>
+        els.filter((el) => { const range = document.createRange(); range.selectNodeContents(el); return range.getClientRects().length > 1 }).map((el) => el.textContent))
+      expect(wrapped, 'wrapped confirmation lines').toEqual([])
+      const cut = await card.locator('.truncate').evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth).map((el) => el.textContent))
+      expect(cut, 'truncated text in the cutover card').toEqual([])
+      await blur(page)
+      await visualRegion(page, 'storage-suite-parity-ready', theme, card)
+      assertHermetic(api, errors)
+    })
+
+    test(`W25d: cut over on day 0 after 7 clean days — no button, the 7 days before the cutover — ${theme}`, async ({ page }) => {
+      const world = embeddingWorld({ index: INDEX_MINILM_IN_SYNC, parity: 'cut_over' })
+      const { api, errors } = await open(page, '/settings/storage', theme, world.handlers, ADMIN, h1('Data & Storage'))
+      const card = page.locator('[data-suite-parity]')
+      await expect(card.locator('[data-parity-status-line] p')).toHaveText([
+        'Cut over on Fri 18 Sep after 7 clean days.',
+        'The old tables are no longer written; Test Management reads the test catalog. The comparison is retired.',
+        'Cut over by admin.',
+      ])
+      await expect(card.getByRole('button')).toHaveCount(0)
+      await expect(card.locator('[data-parity-days-heading]')).toHaveText('The 7 days before the cutover (UTC)')
+      await expect(card.locator('[data-day-kind="clean"]')).toHaveCount(7)
+      await expect(card.locator('[data-parity-day]').first()).toContainText('Fri 18 Sep')
+      await networkQuiet(page, api)
+      const wrapped = await card.locator('[data-parity-status-line] p').evaluateAll((els) =>
+        els.filter((el) => { const range = document.createRange(); range.selectNodeContents(el); return range.getClientRects().length > 1 }).map((el) => el.textContent))
+      expect(wrapped, 'wrapped status lines').toEqual([])
+      const cut = await card.locator('.truncate').evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth).map((el) => el.textContent))
+      expect(cut, 'truncated text in the cutover card').toEqual([])
+      await blur(page)
+      await visualRegion(page, 'storage-suite-parity-cut-over', theme, card)
       assertHermetic(api, errors)
     })
   })

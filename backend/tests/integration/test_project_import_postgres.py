@@ -22,6 +22,10 @@ the ASGI route (``POST /api/v1/projects/import`` as an ADMIN) and the REAL runne
    statements during the job and ``projects`` is unchanged.
 5. authz — an engineer / a QA lead POST → 403; another ADMIN's import job → the
    SAME 404 body as an unknown id.
+6. W25d HYG-02 — the step-0 FIXTURE ``tests/fixtures/project_export_w24_schema1.zip`` (a REAL
+   pre-W25d export: 30 entities, ``quality_gates`` 1 row) imports; ``quality_gates`` is
+   reported skipped (``retired_table``, 1 row) and every exported table arrives with
+   exactly the manifest's rows.
 
 Fixture rule (§6.3): ``dispose_engine_for_loop()`` before the engine is built and
 after it is disposed; the route's ``get_db`` and the runner run on THIS module's
@@ -39,6 +43,7 @@ import uuid
 import zipfile
 from collections import Counter
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
@@ -644,3 +649,44 @@ async def test_the_import_runs_inside_a_two_connection_worker_pool(env):
     job = await _job(env, job_id)
     assert status == "succeeded", (job.error_code, job.error)
     assert job.project_id is not None
+
+
+# ── 6. W25d HYG-02: a REAL pre-W25d archive (it lists the dropped quality_gates) still imports ──
+
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "project_export_w24_schema1.zip"
+
+
+async def test_a_pre_w25d_archive_imports_with_quality_gates_skipped_and_nothing_else_lost(env):
+    """The step-0 FIXTURE (written by the W24 exporter on the pre-W25d tree; signed by a key that exists only in
+    the database it came from). Every W24 export lists all its tables, so without the RETIRED_ENTITIES tolerance
+    it would be refused ``unknown_entity`` for ``quality_gates``."""
+    from app.services import project_export_vocab as vocab
+    from app.services.project_export_entities import EXPORTED_TABLES
+    from tests.integration.project_transfer_seed import exported_counts
+
+    archive = FIXTURE.read_bytes()
+    members = _members(archive)
+    manifest = json.loads(members["manifest.json"])
+    listed = {table: entry["rows"] for table, entry in manifest["entities"].items()}
+    assert manifest["schema_version"] == 1 and len(listed) == 30 and listed["quality_gates"] == 1
+    assert set(listed) == set(EXPORTED_TABLES) | set(vocab.RETIRED_ENTITIES)
+    assert "entities/quality_gates/part-0001.jsonl" in members and "signature.json" in members
+
+    job = await _import(env, archive)
+
+    assert job.status == "succeeded", (job.error_code, job.error)
+    report = job.report
+    assert report["skipped"] == [{"entity": "quality_gates", "column": None, "reason": "retired_table", "count": 1}]
+    expected = {table: listed[table] for table in EXPORTED_TABLES}
+    assert all(rows > 0 for rows in expected.values()), expected               # declaration is not emission
+    assert report["inserted"] == expected == job.counts                         # nothing else was lost
+    async with env.sessions() as db:
+        assert await exported_counts(db, job.project_id) == expected
+    # Signed by the key of the database step 0 ran in: "unknown_key" everywhere else (CI), "valid" only there.
+    async with env.sessions() as db:
+        from app.services import compliance_signing
+
+        known = json.loads(members["signature.json"])["key_id"] in await compliance_signing.public_keys(db)
+    assert report["signature"] == ("valid" if known else "unknown_key") == job.signature
+    assert report["source_project_name"] == manifest["project"]["name"]
+    assert await _scalar(env, "SELECT to_regclass('quality_gates') IS NULL")    # the table is gone (0250)

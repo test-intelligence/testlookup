@@ -19,6 +19,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/admin/maintenance/dlq` | Read Dead Letters | [Admin Maintenance](api/admin-maintenance.md) |
 | POST | `/api/v1/admin/maintenance/drain-active-live-sessions` | Trigger Drain Active Sessions | [Admin Maintenance](api/admin-maintenance.md) |
 | POST | `/api/v1/admin/maintenance/outbox/requeue` | Requeue Failed Outbox Operations | [Admin Maintenance](api/admin-maintenance.md) |
+| POST | `/api/v1/admin/maintenance/suite-membership-cutover` | Cut Over Suite Membership | [Admin Maintenance](api/admin-maintenance.md) |
 | GET | `/api/v1/admin/maintenance/suite-membership-parity` | Read Suite Membership Parity | [Admin Maintenance](api/admin-maintenance.md) |
 | POST | `/api/v1/admin/maintenance/suite-membership-parity` | Trigger Suite Membership Parity | [Admin Maintenance](api/admin-maintenance.md) |
 | GET | `/api/v1/admin/maintenance/suite-membership-parity/{parity_run_id}` | Read Suite Membership Parity Run | [Admin Maintenance](api/admin-maintenance.md) |
@@ -723,4 +724,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **714 HTTP operations**, **603 paths**, **91 domain pages**.
+Total: **715 HTTP operations**, **604 paths**, **91 domain pages**.

@@ -206,6 +206,9 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     # W25a Day-0 follow-up: the legacy-membership reconcile stages INSERT / UPDATE statements on the caller's
     # session (the import's one transaction; the in-pod script commits one project at a time).
     "suite_membership_reconcile.py",
+    # W25d HYG-04 phase 2: the cutover switch's reads, gates and canonical reads, on the caller's session
+    # (the cutover POST in routers/admin_maintenance.py commits once; the parity runner keeps its two commits).
+    "suite_membership_cutover.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

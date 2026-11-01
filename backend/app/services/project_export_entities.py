@@ -155,7 +155,7 @@ _RELEASE_GATE_POLICIES = EntitySpec(
     "release_gate_policies", user_refs=("created_by", "activated_by"), natural_key=("version",),
 )
 _RELEASE_ATTRIBUTION_RULES = EntitySpec("release_attribution_rules", user_refs=("created_by_id",))
-_QUALITY_GATES = EntitySpec("quality_gates")
+# (W25d HYG-02: quality_gates is dropped — an older archive that lists it is read through RETIRED_ENTITIES.)
 _QUARANTINE_LIFECYCLE_POLICIES = EntitySpec(
     "quarantine_lifecycle_policies", inert={"auto_create_defect": False},   # a Jira call-out once runs arrive
 )
@@ -216,7 +216,7 @@ EXPORTED: tuple[EntitySpec, ...] = (
     _PROJECTS,
     _TEST_SUITES, _MANAGED_TEST_CASES, _TEST_CASE_VERSIONS, _TEST_CASE_REQUIREMENT_LINKS,
     _DISMISSED_DUPLICATE_PAIRS, _CANONICAL_TEST_CASES, _TEST_PLANS, _TEST_PLAN_ITEMS, _TEST_STRATEGIES,
-    _RELEASES, _RELEASE_PHASES, _RELEASE_GATE_POLICIES, _RELEASE_ATTRIBUTION_RULES, _QUALITY_GATES,
+    _RELEASES, _RELEASE_PHASES, _RELEASE_GATE_POLICIES, _RELEASE_ATTRIBUTION_RULES,
     _QUARANTINE_LIFECYCLE_POLICIES, _NOTIFICATION_TRANSITION_POLICIES, _TEAM_NOTIFICATION_CHANNELS,
     _WEBHOOK_SUBSCRIPTIONS, _GITHUB_INTEGRATIONS, _GITLAB_INTEGRATIONS, _SERVICE_OWNERSHIP_RULES,
     _PROJECT_RETENTION_POLICIES, _WORKFLOW_DEFINITIONS, _PROJECT_WORKFLOW_DEFAULTS, _AGENT_CONFIGS,
@@ -235,11 +235,11 @@ PROJECT_ROW_COLUMNS: tuple[str, ...] = (
 _RUN_HISTORY = "run_history"
 #: Project-scoped tables that do NOT travel → one EXCLUSION_REASONS key each.
 EXCLUDED: Mapping[str, str] = {
-    # test_runs + its ON DELETE CASCADE closure (run_history_tables(), 37) — phase 2 (F-1)
+    # test_runs + its ON DELETE CASCADE closure (run_history_tables(), 36) — phase 2 (F-1)
     **{t: _RUN_HISTORY for t in (
         "agent_child_dispatch_outbox", "agent_investigations", "agent_invocations", "agent_memory_entries",
         "agent_pipeline_runs", "agent_stage_results", "ai_analysis", "ai_analysis_versions", "ai_feedback",
-        "contract_violations", "decision_report_feedback", "decision_report_supersession_requests",
+        "decision_report_feedback", "decision_report_supersession_requests",
         "deep_findings", "defect_candidates", "failure_attribution", "failure_clusters", "live_event_receipts",
         "live_ingestion_attempts", "live_projection_checkpoints", "release_decisions", "release_test_run_links",
         "report_share_links", "run_baselines", "run_commit_ranges", "run_comparison_reports", "run_diffs",
@@ -295,7 +295,6 @@ EXCLUDED: Mapping[str, str] = {
     "systemic_flake_cluster": "derived",
     "systemic_flake_cluster_member": "derived",
     "coverage_snapshots": "derived",
-    "tenant_metric_snapshots": "derived",
     "project_insights": "derived",
     "insight_detector_states": "derived",
     "run_cadence_windows": "derived",
@@ -311,7 +310,6 @@ EXCLUDED: Mapping[str, str] = {
     "ai_eval_shadow_pairs": "ai_history",
     "ai_eval_baselines": "ai_history",
     "ai_eval_item_outputs": "ai_history",
-    "ai_provenance_records": "ai_history",
     "generation_batches": "ai_history",
     "generation_case_sources": "ai_history",
     "requirement_coverage": "ai_history",

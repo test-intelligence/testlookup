@@ -217,7 +217,7 @@ def test_a_container_deeper_than_the_cap_is_redacted() -> None:
     ("table", "column"),
     [("projects", "component_owner_map"), ("projects", "source_roots"), ("managed_test_cases", "steps"),
      ("managed_test_cases", "parameters"), ("test_case_versions", "steps"), ("agent_configs", "config"),
-     ("workflow_definitions", "definition"), ("release_gate_policies", "rules"), ("quality_gates", "rules")],
+     ("workflow_definitions", "definition"), ("release_gate_policies", "rules")],
 )
 def test_every_named_json_column_is_scrubbed_in_a_row(table: str, column: str) -> None:
     sentinels = _sentinels()

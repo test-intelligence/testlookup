@@ -322,7 +322,6 @@ class Project(Base):
 
     # Relationships
     test_runs: Mapped[list["TestRun"]] = relationship("TestRun", back_populates="project", lazy="dynamic")
-    quality_gates: Mapped[list["QualityGate"]] = relationship("QualityGate", back_populates="project")
     test_suites: Mapped[list["TestSuite"]] = relationship(
         "TestSuite", back_populates="project", cascade="all, delete-orphan"
     )
@@ -1805,26 +1804,6 @@ class DefectCandidate(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
 
-class QualityGate(Base):
-    """Quality gate rule configuration per project."""
-    __tablename__ = "quality_gates"
-    # FK index added in migration 0082: PostgreSQL does not index a
-    # foreign key by itself, and gates are read per project.
-    __table_args__ = (
-        Index("ix_quality_gates_project", "project_id"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    rules: Mapped[list] = mapped_column(JSON, default=list)  # List of rule objects
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-    # Relationships
-    project: Mapped["Project"] = relationship("Project", back_populates="quality_gates")
-
-
 class CoverageSnapshot(Base):
     """One coverage snapshot a project a UTC day (W08 TRND-07, migration 0217).
 
@@ -2993,7 +2972,7 @@ class DeepFinding(Base):
     causal_chain: Mapped[Optional[list]] = mapped_column(JSON)                    # list[{step, service, finding}]
     evidence: Mapped[Optional[list]] = mapped_column(JSON)                        # list[{source, excerpt}]
     affected_services: Mapped[Optional[list]] = mapped_column(JSON)               # list[str]
-    contract_violations: Mapped[Optional[list]] = mapped_column(JSON)             # list[ContractViolation dicts]
+    contract_violations: Mapped[Optional[list]] = mapped_column(JSON)             # list[contract-violation dicts]
     log_evidence: Mapped[Optional[dict]] = mapped_column(JSON)
     recommended_actions: Mapped[Optional[list]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -3031,26 +3010,6 @@ class ReleaseDecision(Base):
     policy_evaluation: Mapped[Optional[dict]] = mapped_column(JSON)              # full evaluation result
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
-
-
-class ContractViolation(Base):
-    """API contract violation detected by ContractAgent."""
-    __tablename__ = "contract_violations"
-    __table_args__ = (
-        Index("ix_contract_violations_run", "test_run_id"),
-        Index("ix_contract_violations_tc", "test_case_id"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    test_run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"), nullable=False)
-    test_case_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=False)
-    endpoint: Mapped[Optional[str]] = mapped_column(String(500))
-    violation_type: Mapped[str] = mapped_column(String(50), nullable=False)       # missing_field|type_mismatch|schema_drift|constraint_violation
-    field_path: Mapped[Optional[str]] = mapped_column(String(500))
-    expected: Mapped[Optional[str]] = mapped_column(String(500))
-    actual: Mapped[Optional[str]] = mapped_column(String(500))
-    severity: Mapped[str] = mapped_column(String(20), default="warning")          # critical|warning|info
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class NotificationLog(Base):
@@ -4670,39 +4629,6 @@ class EvidenceArtifact(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class AIProvenanceRecord(Base):
-    """Tracks which model/method produced each AI conclusion.
-
-    Retention (US-11.4, migration 0113): provenance is AUDIT-class data —
-    it must outlive the run it describes. ``run_id`` therefore detaches
-    (``SET NULL``) when the run is purged on the runs clock, and the row
-    itself is deleted only by the retention audit clock via the dedicated
-    ``project_id`` scope column (backfilled from test_runs in 0113).
-    """
-    __tablename__ = "ai_provenance_records"
-    __table_args__ = (
-        Index("ix_provenance_entity", "entity_type", "entity_id"),
-        Index("ix_provenance_run", "run_id"),
-        Index("ix_provenance_project", "project_id"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    entity_type: Mapped[str] = mapped_column(String(50), nullable=False)        # run_summary | cluster_analysis | release_decision | defect_candidate
-    entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="SET NULL"), nullable=True)
-    project_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), nullable=True,
-    )
-    model_name: Mapped[Optional[str]] = mapped_column(String(200))
-    fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
-    confidence: Mapped[Optional[int]] = mapped_column(Integer)                  # 0-100
-    confidence_reason: Mapped[Optional[str]] = mapped_column(Text)
-    evidence_count: Mapped[int] = mapped_column(Integer, default=0)
-    sources_used: Mapped[Optional[list]] = mapped_column(JSON)                  # ["splunk", "stacktrace"]
-    deterministic_checks_used: Mapped[Optional[list]] = mapped_column(JSON)     # ["flaky_detection", "regression_classification"]
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
 class RunBaseline(Base):
     """Records which baseline was selected for a run and why."""
     __tablename__ = "run_baselines"
@@ -5707,28 +5633,6 @@ class DigestSubscription(Base):
     delivery_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
-
-
-# ── Tenant-Scoped Observability (OPS-04) ──────────────────────────────────────
-
-
-class TenantMetricSnapshot(Base):
-    """Per-project observability metric snapshot — aggregated periodically."""
-    __tablename__ = "tenant_metric_snapshots"
-    __table_args__ = (
-        Index("ix_tms_project_time", "project_id", "recorded_at"),
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    total_runs: Mapped[int] = mapped_column(Integer, default=0)
-    total_tests: Mapped[int] = mapped_column(Integer, default=0)
-    avg_pass_rate: Mapped[Optional[float]] = mapped_column(Float)
-    failed_runs: Mapped[int] = mapped_column(Integer, default=0)
-    ai_analyses_count: Mapped[int] = mapped_column(Integer, default=0)
-    release_decisions_count: Mapped[int] = mapped_column(Integer, default=0)
-    audit_events_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 # ── AI Evaluation (OPS-02) ────────────────────────────────────────────────────
@@ -8184,7 +8088,7 @@ class ProjectRetentionPolicy(Base):
     * ``runs_days``        — TestRun rows (Postgres CASCADE) + run-scoped
       Mongo docs + the run's MinIO uploads.
     * ``artifacts_days``   — MinIO report/upload/pipeline artifacts.
-    * ``audit_days``       — access/test-case audit rows, AI provenance,
+    * ``audit_days``       — access/test-case audit rows,
       pipeline event log, expired compliance packs. Must be ≥
       ``runs_days`` (enforced in the service) so audit records always
       outlive the runs they describe. ``settings_audit_log`` (which holds

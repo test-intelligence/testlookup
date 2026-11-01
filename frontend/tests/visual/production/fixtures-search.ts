@@ -20,7 +20,7 @@
  * logged here either. Not a spec file.
  */
 import { respond, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
-import { parityHistory } from '../../../src/test/suiteParityMocks'
+import { parityCutOverHistory, parityHistory, parityReadyHistory } from '../../../src/test/suiteParityMocks'
 import type { SuiteParityHistory } from '../../../src/types/suiteParity'
 import { isoAgo, LAYOUT, NOW, PROJECT_ID, RUN_ID, USER } from './fixtures'
 import { aiConfig, aiConfigHandlers, EMBEDDING_INDEX_IN_SYNC, MODEL_STATUS } from './fixtures-ai-config'
@@ -1006,13 +1006,21 @@ export interface EmbeddingWorldOptions {
   /**
    * W25a HYG-04: `GET /admin/maintenance/suite-membership-parity` (default `SUITE_PARITY_HISTORY`: a deploy four days
    * before `NOW` — day −4 found 12 differences, days −3…0 clean, the two dates before never ran: "Day 4 of 7").
+   * W25d: `'ready'` (`SUITE_PARITY_READY`) or `'cut_over'` (`SUITE_PARITY_CUT_OVER`) for the card's cutover states.
    */
-  parity?: SuiteParityHistory
+  parity?: SuiteParityHistory | 'ready' | 'cut_over'
 }
 
 export const SUITE_PARITY_API = '/api/v1/admin/maintenance/suite-membership-parity'
 /** The cutover card's history after a deploy four days before `NOW` (a state the product produces together). */
 export const SUITE_PARITY_HISTORY: SuiteParityHistory = parityHistory({ streak: 4, now: NOW })
+/** W25d: days −6…0 clean (≈ 340 expected each), `cutover_ready`, legacy writes on: "Cut over now" is offered. */
+export const SUITE_PARITY_READY: SuiteParityHistory = parityReadyHistory({ now: NOW })
+/**
+ * W25d: cut over on day 0 at 10:12 UTC by "admin" after 7 clean days — the history window ends at the cutover, so
+ * `runs` are the 7 clean beat days ending day 0.
+ */
+export const SUITE_PARITY_CUT_OVER: SuiteParityHistory = parityCutOverHistory({ now: NOW, hour: 10, minute: 12 })
 
 /**
  * Settings › AI + Settings › Data & storage as a W12 server answers them (§2.4, §3): GET `/settings/ai` carries
@@ -1043,7 +1051,8 @@ export function embeddingWorld(options: EmbeddingWorldOptions = {}) {
     state.index = { ...INDEX_BUILDING, active, configured: target, in_sync: false, target, requested_at: NOW.toISOString() }
     state.indexPolls = 0
   }
-  const parity = options.parity ?? SUITE_PARITY_HISTORY
+  const parity =
+    options.parity === 'ready' ? SUITE_PARITY_READY : options.parity === 'cut_over' ? SUITE_PARITY_CUT_OVER : (options.parity ?? SUITE_PARITY_HISTORY)
   const config = () => ({ ...aiConfig({ embedding_provider: state.provider, embedding_model: state.model }), embedding_index: state.index })
   const base = aiConfigHandlers({ config: { embedding_provider: state.provider, embedding_model: state.model } })
 

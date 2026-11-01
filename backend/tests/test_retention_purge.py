@@ -11,8 +11,10 @@ suite pins:
 * cutoff math — runs clock vs raw-events clock vs audit clock;
 * re-entrancy — a second run with the same cutoffs finds zero candidates
   (and the beat sweep still writes a zero-count audit row);
-* ai_provenance_records survives the run purge (0113 flips run_id to
-  SET NULL) and dies only on the audit clock;
+* W25d HYG-02: the purge names none of the dropped storage -- no statement
+  reads or deletes ``ai_provenance_records`` (migration 0250), no Mongo call
+  reaches ``execution_logs`` / ``ocp_pod_events`` / ``raw_testng_xml``, and
+  neither the preview nor the counts carry ``provenance_rows``;
 * migration 0113 chain + downgrade contract;
 * StorageProvider deletes — Local traversal guard + prefix counting;
 * purge gating — confirmation mismatch, disabled policy, missing project;
@@ -173,8 +175,6 @@ class _FakeDB:
                 return _Rows([self.counts.get("access_audit", 0)])
             if "test_case_audit_logs" in s:
                 return _Rows([self.counts.get("tc_audit", 0)])
-            if "ai_provenance_records" in s:
-                return _Rows([self.counts.get("provenance", 0)])
             if "test_runs" in s:
                 return _Rows([self.counts.get("event_archive", 0)])
             return _Rows([0])
@@ -399,19 +399,18 @@ def _purge_fixture(*, run_ages_days=(400,), policy=None):
         tc_rows=tc_rows,
         pipeline_rows=pipeline_rows,
         live_slugs=["slug-1"],
-        counts={"event_archive": 3, "access_audit": 2, "tc_audit": 1, "provenance": 4},
+        counts={"event_archive": 3, "access_audit": 2, "tc_audit": 1},
         delete_rowcounts={
             "test_runs": len(run_ages_days),
             "access_audit_logs": 2,
             "test_case_audit_logs": 1,
-            "ai_provenance_records": 4,
         },
         events=events,
     )
     mongo = _FakeMongo(
         events,
         counts={"raw_allure_json": 7, "decision_evidence_snapshots": 1},
-        delete_counts={"execution_logs": 5, "decision_evidence_snapshots": 1},
+        delete_counts={"run_summaries": 5, "decision_evidence_snapshots": 1},
     )
     storage = _FakeStorage(events, prefix_counts={}, list_map={})
     return db, mongo, storage, events
@@ -438,7 +437,7 @@ async def test_preview_writes_nothing_and_returns_all_count_keys():
     assert set(out["candidates"]) == {
         "runs", "test_cases", "mongo_docs", "minio_objects",
         "event_archive_rows", "audit_rows", "revoked_share_links",
-        "provenance_rows",
+        # (W25d HYG-02, deliberate: "provenance_rows" left with the dropped table.)
         "compliance_packs_expired", "evidence_artifact_rows",
         "analysis_cache_entries", "memory_entries_expired",
         # W22b E-12 (a deliberate key): retained deletion archives leaving with
@@ -465,7 +464,6 @@ async def test_preview_writes_nothing_and_returns_all_count_keys():
     assert out["candidates"]["test_cases"] == 1
     assert out["candidates"]["event_archive_rows"] == 3
     assert out["candidates"]["audit_rows"] == 3  # access(2) + test-case(1)
-    assert out["candidates"]["provenance_rows"] == 4
     assert out["candidates"]["mongo_docs"]["raw_allure_json"] == 7
     assert out["candidates"]["mongo_docs"]["decision_evidence_snapshots"] == 1
     snapshot_collection = mongo.collections["decision_evidence_snapshots"]
@@ -574,8 +572,8 @@ async def test_cutoff_math_run_clock_vs_raw_events_clock():
     run_400 = "aaaaaaaa-0000-0000-0000-000000000001"
 
     # Runs-class collection sees ONLY the 400d run.
-    exec_logs = mongo.collections["execution_logs"]
-    (filt,) = exec_logs.delete_filters
+    run_summaries = mongo.collections["run_summaries"]
+    (filt,) = run_summaries.delete_filters
     assert filt["test_run_id"]["$in"] == [run_400]
 
     # Raw-events collection sees BOTH (both are past the 90d raw cutoff).
@@ -632,7 +630,7 @@ async def test_audit_clock_separate_from_run_clock():
     )
     audit_cutoff = NOW - timedelta(days=2555)
     runs_cutoff = NOW - timedelta(days=365)
-    for table in ("access_audit_logs", "test_case_audit_logs", "ai_provenance_records"):
+    for table in ("access_audit_logs", "test_case_audit_logs"):
         stmt = next(s for s in db.delete_stmts if s.table.name == table)
         params = stmt.compile().params.values()
         assert audit_cutoff in params, f"{table} must use the audit clock"
@@ -663,33 +661,43 @@ async def test_reentrant_second_run_finds_zero_candidates_and_deletes_nothing():
     assert "minio_delete_prefix" not in kinds
 
 
-# ── Provenance survives the run purge ────────────────────────────────────────
+# ── W25d HYG-02: the dropped storage is never touched ────────────────────────
+
+#: The three Mongo collections that never had a writer (W25d HYG-02, dropped in-pod).
+_DROPPED_COLLECTIONS = frozenset({"execution_logs", "ocp_pod_events", "raw_testng_xml"})
 
 
-def test_provenance_fk_set_null_and_project_scope_cascade():
-    from app.models.postgres import AIProvenanceRecord
+@pytest.mark.parametrize("mode", ["preview", "execute"])
+async def test_the_purge_names_no_dropped_table_or_collection(mode):
+    # A 100-day run (raw-events clock only -- the clock raw_testng_xml rode) and
+    # a 3000-day run (runs + audit clocks -- execution_logs, ocp_pod_events and
+    # the provenance delete all rode those).
+    db, mongo, storage, _ = _purge_fixture(run_ages_days=(100, 3000))
+    statements: list[str] = []
+    real_execute = db.execute
 
-    table = AIProvenanceRecord.__table__
-    run_fks = list(table.c.run_id.foreign_keys)
-    assert run_fks and run_fks[0].ondelete == "SET NULL", (
-        "ai_provenance_records.run_id must be SET NULL so provenance "
-        "survives the run purge (audit-class data, migration 0113)"
-    )
-    project_fks = list(table.c.project_id.foreign_keys)
-    assert project_fks and project_fks[0].ondelete == "CASCADE"
-    assert table.c.run_id.nullable and table.c.project_id.nullable
+    async def _recording(stmt):
+        statements.append(str(stmt))
+        return await real_execute(stmt)
 
-
-async def test_provenance_deleted_only_by_audit_clock_and_project_scope():
-    db, mongo, storage, _ = _purge_fixture(run_ages_days=(3000,))
+    db.execute = _recording
     out = await svc.run_purge(
-        db, project_id=PROJECT_ID, mode="execute", now=NOW,
+        db, project_id=PROJECT_ID, mode=mode, now=NOW,
         mongo=mongo, storage=storage,
     )
-    stmt = next(s for s in db.delete_stmts if s.table.name == "ai_provenance_records")
-    text = str(stmt)
-    assert "project_id" in text and "created_at" in text
-    assert out["counts"]["postgres"]["provenance_rows"] == 4
+
+    assert len(statements) > 5, "the purge issued its reads -- the scan proved something"
+    assert [s for s in statements if "ai_provenance_records" in s] == []
+    assert not _DROPPED_COLLECTIONS & set(mongo.collections), sorted(mongo.collections)
+    # The live run-keyed collections WERE reached (the scan is not vacuous).
+    assert {"raw_allure_json", "run_summaries"} <= set(mongo.collections)
+    if mode == "preview":
+        assert "provenance_rows" not in out["candidates"]
+        assert not _DROPPED_COLLECTIONS & set(out["candidates"]["mongo_docs"])
+    else:
+        assert "provenance_rows" not in out["counts"]["postgres"]
+        assert not _DROPPED_COLLECTIONS & set(out["counts"]["mongo"])
+        assert {s.table.name for s in db.delete_stmts} >= {"test_runs", "access_audit_logs"}
 
 
 # ── Migration 0113 chain + downgrade contract ────────────────────────────────

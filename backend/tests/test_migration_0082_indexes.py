@@ -64,8 +64,12 @@ def test_downgrade_is_symmetric_and_safe_to_rerun():
 def test_orm_declares_the_indexes_so_schema_does_not_drift():
     """The ORM ``__table_args__`` must reference the same index names the
     migration creates, so a metadata-only smoke test (Base.metadata.create_all
-    in dev) produces a schema that matches a migrated database."""
-    from app.models.postgres import Defect, QualityGate, TestCaseHistory
+    in dev) produces a schema that matches a migrated database.
+
+    W25d HYG-02: migration 0250 dropped ``quality_gates`` (and its index with it),
+    so its ORM class is gone and the fourth index has no twin to match any more.
+    """
+    from app.models.postgres import Base, Defect, TestCaseHistory
 
     def index_names(model):
         return {idx.name for idx in model.__table__.indexes}
@@ -73,4 +77,4 @@ def test_orm_declares_the_indexes_so_schema_does_not_drift():
     assert "ix_history_test_case_id" in index_names(TestCaseHistory)
     assert "ix_history_test_run_id"  in index_names(TestCaseHistory)
     assert "ix_defects_project_id"   in index_names(Defect)
-    assert "ix_quality_gates_project" in index_names(QualityGate)
+    assert "quality_gates" not in Base.metadata.tables

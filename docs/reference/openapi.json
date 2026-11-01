@@ -34687,10 +34687,6 @@
             "title": "Mongo Docs",
             "type": "object"
           },
-          "provenance_rows": {
-            "title": "Provenance Rows",
-            "type": "integer"
-          },
           "revoked_share_links": {
             "default": 0,
             "title": "Revoked Share Links",
@@ -34732,7 +34728,6 @@
           "minio_objects",
           "event_archive_rows",
           "audit_rows",
-          "provenance_rows",
           "compliance_packs_expired"
         ],
         "title": "RetentionPreviewCandidates",
@@ -42143,8 +42138,85 @@
         "title": "SuiteOwnerUpdate",
         "type": "object"
       },
+      "SuiteParityCutover": {
+        "properties": {
+          "cut_over_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cut Over At"
+          },
+          "cut_over_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cut Over By Name"
+          },
+          "legacy_writes": {
+            "title": "Legacy Writes",
+            "type": "boolean"
+          },
+          "streak_days_at_cutover": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Streak Days At Cutover"
+          }
+        },
+        "required": [
+          "legacy_writes"
+        ],
+        "title": "SuiteParityCutover",
+        "type": "object"
+      },
+      "SuiteParityCutoverResult": {
+        "description": "``POST /api/v1/admin/maintenance/suite-membership-cutover`` → 200.",
+        "properties": {
+          "cut_over_at": {
+            "format": "date-time",
+            "title": "Cut Over At",
+            "type": "string"
+          },
+          "streak_days": {
+            "title": "Streak Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "cut_over_at",
+          "streak_days"
+        ],
+        "title": "SuiteParityCutoverResult",
+        "type": "object"
+      },
       "SuiteParityHistory": {
         "properties": {
+          "cutover": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SuiteParityCutover"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "cutover_ready": {
             "title": "Cutover Ready",
             "type": "boolean"
@@ -51351,9 +51423,64 @@
         ]
       }
     },
+    "/api/v1/admin/maintenance/suite-membership-cutover": {
+      "post": {
+        "description": "Stop writing (and reading) the legacy suite-membership tables: turn ``suite_membership_legacy_writes`` OFF.\n\nRefused (409, fixed sentences, never an exception text) when it is already\noff, while a fresh comparison is running, or unless the SAME readiness the\nhistory GET shows says ``cutover_ready`` (seven clean UTC days). Under the\nflag service's own lock the row is re-read, so two clicks make one change.\nThe flag's ``settings_audit_log`` row (actor + reason, no names in the\nreason) is the record; ONE commit; then the flag cache is dropped and every\nproject's analytics epoch is bumped (the coverage map's ``needs_review``\nsource changes) — best effort, a Redis error is logged by TYPE and never\nfails the POST. The body is ignored. Reversible until F-W25-2: turning the\nflag back ON at /settings/feature-flags resumes legacy reads and writes.",
+        "operationId": "cut_over_suite_membership_api_v1_admin_maintenance_suite_membership_cutover_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuiteParityCutoverResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Cut Over Suite Membership",
+        "tags": [
+          "Admin Maintenance"
+        ]
+      }
+    },
     "/api/v1/admin/maintenance/suite-membership-parity": {
       "get": {
-        "description": "The comparisons started in the last 14 UTC days (newest first) and the clean-day streak.\n\n``cutover_ready`` is true on the 7th consecutive UTC day whose LAST finished\ncomparison is clean. A day with no finished comparison breaks the streak\n(absence is not health); today without one does not, until it is over. An\nempty ``runs`` list means no comparison has run yet — never \"0 differences\".",
+        "description": "The comparisons started in the last 14 UTC days (newest first) and the clean-day streak.\n\n``cutover_ready`` is true on the 7th consecutive UTC day whose LAST finished\ncomparison is clean. A day with no finished comparison breaks the streak\n(absence is not health); today without one does not, until it is over. An\nempty ``runs`` list means no comparison has run yet — never \"0 differences\".\n\nW25d: ``cutover`` is the derived cut-over state. After a cutover the window\nENDS at ``cutover.cut_over_at`` (the 14 UTC days ending on that date, runs\nstarted before it), so the evidence stays readable and the dates after the\ncutover never read as missed days. Before it the answer is today's.",
         "operationId": "read_suite_membership_parity_api_v1_admin_maintenance_suite_membership_parity_get",
         "parameters": [
           {
@@ -51406,7 +51533,7 @@
         ]
       },
       "post": {
-        "description": "\"Compare now\": enqueue one read-only comparison on the worker.\n\n409 while a comparison started less than ``RUN_STALE_MINUTES`` ago is still\nrunning (read before enqueueing; the runner's unique claim is the real\nguard). 503 when the broker refuses the task — its exception TYPE is\nlogged, never echoed.",
+        "description": "\"Compare now\": enqueue one read-only comparison on the worker.\n\n409 once cut over (W25d: the old tables are no longer written, so the\ncomparison is retired — checked first). 409 while a comparison started less\nthan ``RUN_STALE_MINUTES`` ago is still running (read before enqueueing;\nthe runner's unique claim is the real guard). 503 when the broker refuses\nthe task — its exception TYPE is logged, never echoed.",
         "operationId": "trigger_suite_membership_parity_api_v1_admin_maintenance_suite_membership_parity_post",
         "parameters": [
           {

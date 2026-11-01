@@ -767,16 +767,19 @@ async def finalize_run(
         lambda d: evaluate_duration_regressions(d, rid),
     )
 
-    from app.services.suite_sync_service import sync_suite_membership
+    from app.services.suite_membership_cutover import sync_legacy_if_active
     from app.services.test_suite_service import (
         reconcile_canonical_deletions,
         sync_canonical_test_cases,
     )
     from app.services.auto_tagging_service import auto_tag_test_cases, auto_tag_test_run
 
+    # W25d HYG-04: the legacy writer runs only while the flag
+    # ``suite_membership_legacy_writes`` is ON (seeded ON; the guarded cutover
+    # turns it off). Same step name, same failure counter.
     await _run_isolated(
         "suite_sync",
-        lambda d: sync_suite_membership(d, pid, rid),
+        lambda d: sync_legacy_if_active(d, pid, rid),
     )
 
     # Phase 2 dual-write: reconcile canonical_test_cases against this run. Runs

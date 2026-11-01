@@ -152,13 +152,8 @@ class TestAuditCategories:
 
 
 class TestORMModels:
-    def test_tenant_metric_snapshot_fields(self):
-        from app.models.postgres import TenantMetricSnapshot
-
-        for field in ("project_id", "recorded_at", "total_runs", "total_tests",
-                       "avg_pass_rate", "failed_runs", "ai_analyses_count",
-                       "release_decisions_count", "audit_events_count"):
-            assert hasattr(TenantMetricSnapshot, field)
+    # (W25d HYG-02: the never-written tenant_metric_snapshots table and its ORM class were
+    # dropped by migration 0250; tests/test_migration_0250.py pins their absence.)
 
     def test_access_audit_log_fields(self):
         from app.models.postgres import AccessAuditLog
