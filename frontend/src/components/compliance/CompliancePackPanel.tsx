@@ -120,7 +120,7 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
         <h3 className="text-sm font-semibold text-[var(--color-text)]">
           Compliance Pack
         </h3>
-        <span className="ml-auto text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+        <span className="ml-auto eyebrow uppercase text-[var(--color-text-muted)]">
           Audit ZIP · SHA-256 manifest
         </span>
       </header>
@@ -208,7 +208,7 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
                       <PackHoldChip pack={pack} />
                     </div>
                     <div
-                      className="font-mono text-[10px] text-[var(--color-text-muted)] truncate"
+                      className="font-mono text-2xs text-[var(--color-text-muted)] truncate"
                       title={pack.manifest_sha256}
                     >
                       sha256: {pack.manifest_sha256}

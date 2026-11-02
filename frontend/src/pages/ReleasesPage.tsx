@@ -431,7 +431,7 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
     <div className="space-y-2 p-3 bg-[var(--color-bg-hover)]/50 rounded-lg border border-[var(--color-border)]">
       <div className="grid grid-cols-[1fr_auto] gap-2">
         <div>
-          <label htmlFor="release-field-7" className="block text-[10px] text-[var(--color-text-muted)] mb-1">Phase Name</label>
+          <label htmlFor="release-field-7" className="block text-2xs text-[var(--color-text-muted)] mb-1">Phase Name</label>
           <input id="release-field-7"
             value={name}
             onChange={e => setName(e.target.value)}
@@ -442,7 +442,7 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
           />
         </div>
         <div>
-          <label htmlFor="release-field-8" className="block text-[10px] text-[var(--color-text-muted)] mb-1">Type</label>
+          <label htmlFor="release-field-8" className="block text-2xs text-[var(--color-text-muted)] mb-1">Type</label>
           <select id="release-field-8"
             value={type}
             onChange={e => setType(e.target.value)}
@@ -456,7 +456,7 @@ function AddPhaseRow({ releaseId, existingPhaseNames, onSaved }: {
         <p className="text-xs text-[var(--status-failed)]">A phase with this name already exists in this release.</p>
       )}
       <div className="flex items-center justify-between">
-        <p className="text-[10px] text-[var(--color-text-faint)]">Press Enter to add, Escape to cancel</p>
+        <p className="text-2xs text-[var(--color-text-faint)]">Press Enter to add, Escape to cancel</p>
         <div className="flex gap-2">
           <button
             onClick={() => { setOpen(false); setName('') }}
@@ -746,7 +746,7 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
           { label: 'Pass Rate', value: passRate,           color: passColor },
         ].map(({ label, value, color }) => (
           <div key={label} className="card py-2.5">
-            <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider">{label}</p>
+            <p className="eyebrow text-[var(--color-text-muted)] uppercase">{label}</p>
             <p className={clsx('text-xl font-bold tabular-nums mt-0.5', color)}>{value}</p>
           </div>
         ))}
@@ -906,7 +906,7 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
                         onClick={() => void recordPhaseGate(phase)}
                         disabled={recordingPhaseId !== null}
                         data-testid="phase-record-gate"
-                        className="text-[11px] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
+                        className="text-2xs px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50"
                       >
                         {recordingPhaseId === phase.id ? 'Recording…' : 'Record gate verdict'}
                       </button>
@@ -1749,14 +1749,14 @@ export default function ReleasesPage() {
                     key={s}
                     onClick={() => setStatusFilter(s)}
                     className={clsx(
-                      'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[12px] font-medium transition-colors capitalize',
+                      'inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors capitalize',
                       statusFilter === s
                         ? 'bg-[var(--color-accent-muted)] text-[var(--color-text)] border border-[color-mix(in srgb, var(--color-accent) 40%, transparent)]'
                         : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] border border-transparent',
                     )}
                   >
                     <span>{s === 'all' ? 'All' : s.replace('_', ' ')}</span>
-                    <span className="text-[10.5px] text-[var(--color-text-faint)] tabular-nums">{count}</span>
+                    <span className="text-2xs text-[var(--color-text-faint)] tabular-nums">{count}</span>
                   </button>
                 )
               })}
@@ -1769,7 +1769,7 @@ export default function ReleasesPage() {
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="Search releases, owners, versions…"
-                  className="bg-transparent outline-none text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] w-[260px]"
+                  className="bg-transparent outline-none text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] w-[260px]"
                 />
               </label>
               {canEvaluateAll && (
@@ -1778,7 +1778,7 @@ export default function ReleasesPage() {
                   data-testid="release-evaluate-all"
                   onClick={() => void evaluateAllInProgress()}
                   disabled={evaluateAllProgress !== null}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[var(--color-border)] text-[12px] font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-[var(--color-border)] text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-60"
                 >
                   {evaluateAllProgress
                     ? `Evaluating ${evaluateAllProgress.index} of ${evaluateAllProgress.total}…`
@@ -1840,7 +1840,7 @@ export default function ReleasesPage() {
                     />
                   ) : filteredDerived.length === 0 ? (
                     <div
-                      className="rounded-md border px-4 py-3 text-[12.5px] text-[var(--color-text-muted)] flex items-center justify-between"
+                      className="rounded-md border px-4 py-3 text-sm text-[var(--color-text-muted)] flex items-center justify-between"
                       style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
                     >
                       <span>No releases match these filters.</span>

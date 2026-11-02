@@ -160,7 +160,7 @@ function SearchCommandBar({
           onChange={(e) => onChange(e.target.value)}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          className="flex-1 bg-transparent outline-none border-0 text-[18px] font-medium text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] tabular-nums"
+          className="flex-1 bg-transparent outline-none border-0 text-lg font-medium text-[var(--color-text)] placeholder:text-[var(--color-text-faint)] tabular-nums"
         />
         {value && (
           <button
@@ -249,7 +249,7 @@ function Chip({
       disabled={disabled}
       title={title}
       onClick={onClick}
-      className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
+      className="inline-flex items-center gap-1 px-2.5 py-1 text-sm rounded-full border transition-colors"
       style={{
         background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
         borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
@@ -299,8 +299,8 @@ function VerdictRibbon({
     >
       <div className="min-w-0" style={{ padding: '14px 18px' }}>
         <span
-          className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase"
-          style={{ color: 'var(--status-passed)', letterSpacing: 'var(--tracking-wider)' }}
+          className="inline-flex items-center gap-1.5 eyebrow uppercase"
+          style={{ color: 'var(--status-passed)' }}
         >
           <span
             className="h-1.5 w-1.5 rounded-full"
@@ -316,7 +316,7 @@ function VerdictRibbon({
           {formatNumber(totalItems)} item{totalItems === 1 ? '' : 's'} indexed across {typeCount} entity type{typeCount === 1 ? '' : 's'}
         </h2>
         {/* Exactly the columns global_search_service.py matches with ILIKE. */}
-        <p className="text-[13px] m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5, maxWidth: '80ch' }} data-testid="search-matched-fields">
+        <p className="text-sm m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5, maxWidth: '80ch' }} data-testid="search-matched-fields">
           Case-insensitive substring match on test names, suite names, error messages and tags;
           run build numbers, branches, jobs and tags; defect Jira IDs; flaky test names; and
           release names and versions.
@@ -341,12 +341,12 @@ function VerdictStat({
 }) {
   return (
     <div className="flex flex-col justify-center gap-0.5" style={{ padding: '14px 18px' }}>
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+      <div className="eyebrow uppercase text-[var(--color-text-muted)]">
         {label}
       </div>
-      <div className="font-bold tabular-nums leading-[1.1]" style={{ fontSize: 18, color: 'var(--color-text)', letterSpacing: '-0.01em' }}>
+      <div className="text-lg font-bold tabular-nums leading-[1.1]" style={{ color: 'var(--color-text)', letterSpacing: '-0.01em' }}>
         {value}
-        {sub && <span className="text-[11px] font-medium text-[var(--color-text-muted)] ml-1">{sub}</span>}
+        {sub && <span className="text-2xs font-medium text-[var(--color-text-muted)] ml-1">{sub}</span>}
       </div>
     </div>
   )
@@ -797,7 +797,7 @@ export default function SearchPage() {
       {response?.result_status === 'partial' && (
         <div
           role="status"
-          className="mb-3 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] px-3 py-2 text-[12px] text-[var(--status-broken)]"
+          className="mb-3 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] px-3 py-2 text-xs text-[var(--status-broken)]"
         >
           {response.failed_entity_types?.length
             ? `Some search sources were unavailable: ${response.failed_entity_types.join(', ')}. `
@@ -812,7 +812,7 @@ export default function SearchPage() {
           <SearchCardShell
             title={
               <>
-                Results <span className="text-[11.5px] font-normal text-[var(--color-text-muted)] ml-2">
+                Results <span className="text-xs font-normal text-[var(--color-text-muted)] ml-2">
                   <strong>{formatNumber(response.total)}{response.counts_are_exact === false ? '+' : ''}</strong> across {scope === 'all' ? '6' : '1'} type{scope === 'all' ? 's' : ''}
                 </span>
                 {/* The header's release picker is visible on this page and does
@@ -951,14 +951,14 @@ function ResultRow({ row, onOpen }: { row: GlobalSearchResult; onOpen: () => voi
         <Icon className="h-3 w-3" />
       </span>
       <div className="min-w-0">
-        <div className="text-[12.5px] text-[var(--color-text)] truncate font-medium">{row.title}</div>
-        <div className="text-[10.5px] text-[var(--color-text-muted)] truncate">
+        <div className="text-sm text-[var(--color-text)] truncate font-medium">{row.title}</div>
+        <div className="text-2xs text-[var(--color-text-muted)] truncate">
           {row.entity_type.replace('_', ' ')}
           {row.subtitle ? <> · {row.subtitle}</> : null}
           {row.project_name ? <> · {row.project_name}</> : null}
         </div>
       </div>
-      <span className="text-[10.5px] text-[var(--color-text-faint)] tabular-nums whitespace-nowrap">
+      <span className="text-2xs text-[var(--color-text-faint)] tabular-nums whitespace-nowrap">
         rel {row.relevance_score.toFixed(2)}
       </span>
       <ChevronRight className="h-3.5 w-3.5 text-[var(--color-text-faint)]" />

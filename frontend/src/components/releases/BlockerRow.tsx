@@ -46,7 +46,7 @@ export default function BlockerRow({ blocker }: BlockerRowProps) {
   return (
     <div
       className={clsx(
-        'flex items-center gap-2 px-3 py-2 rounded-md border text-[12.5px]',
+        'flex items-center gap-2 px-3 py-2 rounded-md border text-sm',
       )}
       style={{ borderColor: s.border, background: `${s.bg}, var(--color-bg)` }}
     >
@@ -63,7 +63,7 @@ export default function BlockerRow({ blocker }: BlockerRowProps) {
           {blocker.linkedTicketId && (
             <>
               <span className="text-[var(--color-text-muted)]"> · </span>
-              <code className="font-mono text-[11.5px] px-1 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
+              <code className="font-mono text-xs px-1 rounded bg-[var(--color-bg-secondary)] border border-[var(--color-border)]">
                 {blocker.linkedTicketId}
               </code>
             </>
@@ -97,7 +97,7 @@ export default function BlockerRow({ blocker }: BlockerRowProps) {
   )
 }
 
-const ACTION_CLASS = 'inline-flex items-center gap-1 text-[12px] text-[var(--color-accent)] hover:underline shrink-0'
+const ACTION_CLASS = 'inline-flex items-center gap-1 text-xs text-[var(--color-accent)] hover:underline shrink-0'
 
 /** The link follows its own route; the card around it must not also open the side panel. */
 function stopToCard(e: MouseEvent) {

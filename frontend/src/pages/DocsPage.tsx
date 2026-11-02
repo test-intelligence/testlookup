@@ -114,13 +114,13 @@ export default function DocsPage() {
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="Filter topics…"
-              className="w-full rounded-lg border pl-8 pr-2 py-1.5 text-[13px] bg-transparent"
+              className="w-full rounded-lg border pl-8 pr-2 py-1.5 text-sm bg-transparent"
               style={{ borderColor: 'var(--color-border)', color: 'var(--color-text)' }}
             />
           </label>
 
           {matches.length === 0 && (
-            <p className="px-2 py-3 text-[13px] text-[var(--color-text-muted)]">
+            <p className="px-2 py-3 text-sm text-[var(--color-text-muted)]">
               No topic matches “{filter}”. Try a feature name such as “flaky”, “ingest” or
               “release gate”.
             </p>
@@ -131,7 +131,7 @@ export default function DocsPage() {
             if (pages.length === 0) return null
             return (
               <div key={group}>
-                <div className="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                <div className="px-3 pt-2 pb-1 eyebrow uppercase text-[var(--color-text-muted)]">
                   {group}
                 </div>
                 {pages.map((p) => {
@@ -143,7 +143,7 @@ export default function DocsPage() {
                       type="button"
                       onClick={() => navigate(`/docs/${p.id}`)}
                       aria-current={on ? 'page' : undefined}
-                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[13px] text-left transition-colors"
+                      className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-left transition-colors"
                       style={{
                         background: on
                           ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)'
@@ -164,13 +164,13 @@ export default function DocsPage() {
 
         <div className="min-w-0">
           <div className="card p-5 min-w-0">
-            <p className="text-[12px] text-[var(--color-text-muted)] mb-1">
+            <p className="text-xs text-[var(--color-text-muted)] mb-1">
               {active.group} · {active.summary}
             </p>
 
             {toc.length > 2 && (
               <details className="mb-4 rounded-lg border p-3" style={{ borderColor: 'var(--color-border)' }}>
-                <summary className="text-[13px] font-medium text-[var(--color-text)] cursor-pointer">
+                <summary className="text-sm font-medium text-[var(--color-text)] cursor-pointer">
                   On this page
                 </summary>
                 <ul className="mt-2 space-y-1">
@@ -178,7 +178,7 @@ export default function DocsPage() {
                     <li key={h.id} style={{ paddingLeft: h.depth === 3 ? 12 : 0 }}>
                       <a
                         href={`#${h.id}`}
-                        className="text-[13px] underline underline-offset-2"
+                        className="text-sm underline underline-offset-2"
                         style={{ color: 'var(--color-accent)' }}
                       >
                         {h.text}
@@ -193,7 +193,7 @@ export default function DocsPage() {
               {source ? (
                 <DocMarkdown source={source} />
               ) : (
-                <p className="text-[13.5px] text-[var(--color-text-muted)]">
+                <p className="text-base text-[var(--color-text-muted)]">
                   This topic has no content yet.
                 </p>
               )}
@@ -222,8 +222,8 @@ export default function DocsPage() {
                   >
                     <ChevronLeft className="h-4 w-4 flex-none text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)]" aria-hidden="true" />
                     <span className="min-w-0">
-                      <span className="block text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">Previous</span>
-                      <span className="block truncate text-[13px] font-medium text-[var(--color-text)]">{prev.label}</span>
+                      <span className="block eyebrow uppercase text-[var(--color-text-muted)]">Previous</span>
+                      <span className="block truncate text-sm font-medium text-[var(--color-text)]">{prev.label}</span>
                     </span>
                   </button>
                 ) : (
@@ -237,8 +237,8 @@ export default function DocsPage() {
                     className="group flex-1 min-w-0 flex items-center justify-end gap-2 rounded-lg border border-[var(--color-border)] px-3 py-2.5 text-right transition-colors hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-secondary)]"
                   >
                     <span className="min-w-0">
-                      <span className="block text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">Next</span>
-                      <span className="block truncate text-[13px] font-medium text-[var(--color-text)]">{next.label}</span>
+                      <span className="block eyebrow uppercase text-[var(--color-text-muted)]">Next</span>
+                      <span className="block truncate text-sm font-medium text-[var(--color-text)]">{next.label}</span>
                     </span>
                     <ChevronRight className="h-4 w-4 flex-none text-[var(--color-text-muted)] group-hover:text-[var(--color-accent)]" aria-hidden="true" />
                   </button>

@@ -114,7 +114,7 @@ export default function SyncReleasesDialog({ projectId, onClose, onDone, slot }:
       )}
     >
       <div className="max-w-2xl">
-        <p className="text-[12.5px] text-[var(--color-text-muted)] mb-4">
+        <p className="text-sm text-[var(--color-text-muted)] mb-4">
           Pulls release names and links from the source. Phases, gate policy and run attribution stay in TestLookup.
         </p>
         <fieldset className="space-y-2" disabled={busy}>
@@ -152,7 +152,7 @@ export default function SyncReleasesDialog({ projectId, onClose, onDone, slot }:
             role="alert"
             data-sync-error=""
             data-status={failure.status ?? ''}
-            className="mt-4 rounded-md border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)]/10 px-3 py-2 text-[12.5px] text-[var(--status-failed)]"
+            className="mt-4 rounded-md border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)]/10 px-3 py-2 text-sm text-[var(--status-failed)]"
           >
             <p className="whitespace-pre-wrap break-words">{failure.detail}</p>
             {failure.status === 503 && (

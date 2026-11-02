@@ -392,3 +392,28 @@ describe('the planning callout: Copy phases from… and Draft from a PRD… (W11
     }
   })
 })
+
+// W29d UIX-04c: the card's sizes are on the scale. The initials circle is sized
+// in em of its own 11 px text (rule 6: both classes on the SAME element); the
+// "ACTIVE" capitals are the label style; the 16 px name truncates and keeps the
+// whole name in its title (fit remedy 2).
+describe('the type scale (W29d)', () => {
+  it('owner circles in em of text-2xs, ACTIVE as eyebrow, the name h3 at text-md titled with the name', () => {
+    const longName = 'Checkout platform hardening release for the winter freeze'
+    const { unmount } = renderCard({ release: release({ name: longName, is_active: true }) })
+    const chip = document.querySelector('[data-owner-chip="set"]') as HTMLElement
+    expect(chip).toHaveClass('h-[1.8em]', 'w-[1.8em]', 'text-2xs')
+    expect(chip.className).not.toMatch(/\b[wh]-5\b|text-\[\d/)
+    const active = document.querySelector('[data-release-active]') as HTMLElement
+    expect(active).toHaveClass('eyebrow')
+    expect(active.className).not.toMatch(/text-\[\d|tracking-|font-semibold/)
+    const name = screen.getByRole('heading', { level: 3, name: longName })
+    expect(name).toHaveClass('text-md', 'truncate')
+    expect(name).toHaveAttribute('title', longName)
+    expect(name.className).not.toMatch(/text-\[\d/)
+    unmount()
+
+    renderCard({ release: release({ owner: null }) })
+    expect(document.querySelector('[data-owner-chip="none"]')).toHaveClass('h-[1.8em]', 'w-[1.8em]', 'text-2xs')
+  })
+})

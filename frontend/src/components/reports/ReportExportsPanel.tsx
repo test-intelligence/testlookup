@@ -115,20 +115,20 @@ export default function ReportExportsPanel({ projectId, refreshToken }: ReportEx
       className="mb-4 rounded-lg border px-4 py-3"
       style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-card)' }}
     >
-      <h2 className="text-[13px] font-semibold mb-2 text-[var(--color-text)]">Background exports</h2>
+      <h2 className="text-sm font-semibold mb-2 text-[var(--color-text)]">Background exports</h2>
       <ul className="divide-y" style={{ borderColor: 'var(--color-border)' }}>
         {data.map(exp => (
-          <li key={exp.id} data-export-status={exp.status} className="flex items-center gap-3 py-1.5 text-[12.5px]">
+          <li key={exp.id} data-export-status={exp.status} className="flex items-center gap-3 py-1.5 text-sm">
             <span className="font-medium min-w-[5.5rem]" style={{ color: STATUS_COLOUR[exp.status] }}>
               {STATUS_LABEL[exp.status]}
             </span>
             <span className="flex-1 text-[var(--color-text)]">
               {scopeSummary(exp)}
               {exp.status === 'failed' && exp.error ? (
-                <span className="block text-[11.5px] text-[var(--color-text-muted)]">{exp.error}</span>
+                <span className="block text-xs text-[var(--color-text-muted)]">{exp.error}</span>
               ) : null}
             </span>
-            <span className="text-[11.5px] text-[var(--color-text-muted)] tabular-nums">
+            <span className="text-xs text-[var(--color-text-muted)] tabular-nums">
               {formatCompactDateTime(exp.requested_at)}
               {exp.size_bytes !== null ? ` · ${formatBytes(exp.size_bytes)}` : ''}
             </span>
@@ -136,7 +136,7 @@ export default function ReportExportsPanel({ projectId, refreshToken }: ReportEx
               <button
                 type="button"
                 onClick={() => void downloadReportExport(exp)}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[12px]"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs"
                 style={{ borderColor: 'var(--color-border)', color: 'var(--color-accent)' }}
               >
                 <Download className="h-3.5 w-3.5" />
@@ -147,7 +147,7 @@ export default function ReportExportsPanel({ projectId, refreshToken }: ReportEx
                 type="button"
                 onClick={() => void handleRetry(exp)}
                 disabled={retrying === exp.id}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border text-[12px] disabled:opacity-50"
+                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border text-xs disabled:opacity-50"
                 style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
               >
                 <RotateCcw className="h-3.5 w-3.5" />

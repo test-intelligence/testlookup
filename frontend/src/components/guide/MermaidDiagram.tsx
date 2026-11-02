@@ -168,12 +168,12 @@ export default function MermaidDiagram({ source }: { source: string }) {
 
       {state === 'failed' && (
         <>
-          <figcaption className="text-[12px] text-[var(--color-text-muted)] mb-1">
+          <figcaption className="text-xs text-[var(--color-text-muted)] mb-1">
             This diagram could not be drawn. Its source is below, and the same flow is
             described in words underneath.
           </figcaption>
           <pre
-            className="overflow-x-auto rounded-lg border p-3 text-[12px] leading-relaxed"
+            className="overflow-x-auto rounded-lg border p-3 text-xs leading-relaxed"
             style={{
               borderColor: 'var(--color-border)',
               background: 'var(--color-bg-secondary)',

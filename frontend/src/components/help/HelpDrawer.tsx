@@ -73,7 +73,7 @@ export default function HelpDrawer({ reserveSpaceIn }: { reserveSpaceIn?: RefObj
           to={fullDocs}
           onClick={close}
           data-help-full-docs=""
-          className="inline-flex items-center gap-1.5 text-[13px] font-medium text-[var(--color-accent)] hover:underline"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-[var(--color-accent)] hover:underline"
         >
           Open in full docs
           <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />

@@ -365,7 +365,7 @@ export default function SummaryReportPage() {
       <div className="flex items-center gap-3 flex-wrap" data-summary-toolbar="">
         <WindowPicker options={DAYS_OPTIONS} />
         <span className="w-px h-4" style={{ background: 'var(--color-border)' }} aria-hidden />
-        <span className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] tracking-wider">Aggregation</span>
+        <span className="eyebrow uppercase text-[var(--color-text-muted)]">Aggregation</span>
         <div role="radiogroup" aria-label="Aggregation mode" className="flex items-center gap-1.5">
           {(Object.keys(MODE_LABELS) as SummaryReportMode[]).map(m => {
             const active = mode === m
@@ -376,7 +376,7 @@ export default function SummaryReportPage() {
                 role="radio"
                 aria-checked={active}
                 onClick={() => setMode(m)}
-                className="inline-flex items-center gap-1 px-2.5 py-1 text-[12.5px] rounded-full border transition-colors"
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-sm rounded-full border transition-colors"
                 style={{
                   background: active ? 'color-mix(in srgb, var(--status-flaky) 14%, transparent)' : 'transparent',
                   borderColor: active ? 'color-mix(in srgb, var(--status-flaky) 30%, transparent)' : 'var(--color-border)',
@@ -394,7 +394,7 @@ export default function SummaryReportPage() {
             `meta.scope.releases` — rather than what the client asked for. */}
         <SummaryScopeBadge meta={data?.meta} requestedReleaseId={scope.release_id ?? null} />
         {data?.generated_at && (
-          <span className="ml-auto text-[11px] text-[var(--color-text-faint)]">
+          <span className="ml-auto text-2xs text-[var(--color-text-faint)]">
             Generated {fmtDateTime(data.generated_at)}
           </span>
         )}
@@ -436,9 +436,9 @@ export default function SummaryReportPage() {
             </SectionErrorBoundary>
 
             <section>
-              <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
                 <Layers className="h-3.5 w-3.5" /> Per-suite breakdown
-                <span className="ml-1 text-[10px] font-normal text-[var(--color-text-faint)] normal-case tracking-normal">{suites.length} suite{suites.length === 1 ? '' : 's'}</span>
+                <span className="ml-1 text-2xs font-normal text-[var(--color-text-faint)] normal-case tracking-normal">{suites.length} suite{suites.length === 1 ? '' : 's'}</span>
               </h2>
               <SuiteTable rows={suites} />
             </section>
@@ -461,12 +461,12 @@ export default function SummaryReportPage() {
               top ten of these same rows; the table lists every one, with its
               suite, class and count. */}
           <section>
-            <h2 className="text-[13px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
               <TriangleAlert className="h-3.5 w-3.5" /> Top failing tests
-              <span className="ml-1 text-[10px] font-normal text-[var(--color-text-faint)] normal-case tracking-normal">{topFailing.length} test{topFailing.length === 1 ? '' : 's'}</span>
+              <span className="ml-1 text-2xs font-normal text-[var(--color-text-faint)] normal-case tracking-normal">{topFailing.length} test{topFailing.length === 1 ? '' : 's'}</span>
             </h2>
             {topFailing.length === 0 ? (
-              <p className="text-[12.5px] text-[var(--color-text-muted)]">No failures in this window.</p>
+              <p className="text-sm text-[var(--color-text-muted)]">No failures in this window.</p>
             ) : (
               // `overflow-x-auto`, not `overflow-hidden` (VIZ-106): a narrow
               // viewport scrolls the table inside its card instead of cutting
@@ -518,7 +518,7 @@ const ALL_RELEASES_REASON =
   'This report and its PDF export cover the selected time window across all releases.'
 
 const BADGE_CLASS =
-  'inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]'
+  'inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full border border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]'
 
 /**
  * States which releases this report — and therefore its PDF export, which is
@@ -622,7 +622,7 @@ function SummaryKpis({ report }: { report: SummaryReport }) {
             // Wraps inside its own box ("weighted" over "82.8%") rather than
             // taking a line of its own under the value: at 1280 px on CI's
             // font, one unbroken line put the strip 20 px taller.
-            <span data-summary-weighted="" className="block text-right text-[11px] leading-tight text-[var(--color-text-secondary)]">
+            <span data-summary-weighted="" className="block text-right text-2xs leading-tight text-[var(--color-text-secondary)]">
               weighted {fmtPct(t.weighted_pass_rate_pct)}
             </span>
           }
@@ -725,7 +725,7 @@ function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
   )
 
   if (sorted.length === 0) {
-    return <p className="text-[12.5px] text-[var(--color-text-muted)]">No suites with executions in this window.</p>
+    return <p className="text-sm text-[var(--color-text-muted)]">No suites with executions in this window.</p>
   }
   const arrow = (k: SuiteSortKey) => sortKey === k ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''
   return (
@@ -785,11 +785,13 @@ function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
               <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-skipped)]">{fmtInt(s.skipped)}</td>
               <td className="px-4 py-2.5 text-right text-xs tabular-nums text-[var(--status-broken)]">{fmtInt(s.broken)}</td>
               <td className="px-4 py-2.5 text-right text-xs tabular-nums">
-                <span className={clsx('inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium', passPctClass(s.pass_rate_pct))}>{fmtPct(s.pass_rate_pct)}</span>
+                {/* W29d fit remedy 4: `leading-tight` keeps the 11 px chip inside the row's 12 px line
+                    (its own 16 px line made each row 1.3 px taller: /reports/summary has 1 px of fold slack). */}
+                <span className={clsx('inline-flex items-center px-2 py-0.5 rounded text-2xs leading-tight font-medium', passPctClass(s.pass_rate_pct))}>{fmtPct(s.pass_rate_pct)}</span>
               </td>
               {hasStepData && (
                 <td
-                  className="px-4 py-2.5 text-right text-[11px] text-[var(--color-text-muted)] tabular-nums"
+                  className="px-4 py-2.5 text-right text-2xs text-[var(--color-text-muted)] tabular-nums"
                   title={
                     s.total_steps != null
                       ? `${fmtInt(s.passed_steps)} / ${fmtInt(s.total_steps)} steps passed`
@@ -799,7 +801,7 @@ function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
                   {s.step_success_rate != null ? fmtPct(s.step_success_rate) : '—'}
                 </td>
               )}
-              <td className="px-4 py-2.5 text-right text-[11px] text-[var(--color-text-muted)]">{fmtDateTime(s.last_run_at)}</td>
+              <td className="px-4 py-2.5 text-right text-2xs text-[var(--color-text-muted)]">{fmtDateTime(s.last_run_at)}</td>
             </tr>
           ))}
         </tbody>

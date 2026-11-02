@@ -87,7 +87,7 @@ export default function PhaseReasonDialog({
       <div className="max-w-2xl">
         <blockquote
           data-phase-gate-detail=""
-          className="mb-4 border-l-2 border-[var(--status-broken)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[12.5px] text-[var(--color-text-secondary)] whitespace-pre-wrap break-words"
+          className="mb-4 border-l-2 border-[var(--status-broken)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text-secondary)] whitespace-pre-wrap break-words"
         >
           {serverMessage}
         </blockquote>
@@ -104,7 +104,7 @@ export default function PhaseReasonDialog({
           className="input w-full resize-y"
           autoFocus
         />
-        <p id="phase-reason-hint" className="mt-1 text-[11px] text-[var(--color-text-faint)]">At least 3 characters.</p>
+        <p id="phase-reason-hint" className="mt-1 text-2xs text-[var(--color-text-faint)]">At least 3 characters.</p>
       </div>
     </InlineFormSection>
   )

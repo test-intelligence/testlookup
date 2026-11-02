@@ -66,16 +66,16 @@ function PanelShell({
       style={{ borderColor: 'var(--color-border)' }}
     >
       <header className="flex items-center justify-between px-3.5 py-2.5 border-b" style={{ borderColor: 'var(--color-border)' }}>
-        <h4 className="m-0 text-[13px] font-semibold text-[var(--color-text)]">{title}</h4>
+        <h4 className="m-0 text-sm font-semibold text-[var(--color-text)]">{title}</h4>
         <div className="flex items-center gap-3">
           {count != null && (
-            <span className="text-[11px] text-[var(--color-text-muted)]">{count}</span>
+            <span className="text-2xs text-[var(--color-text-muted)]">{count}</span>
           )}
           {action && (
             <button
               type="button"
               onClick={action.onClick}
-              className="text-[11.5px] text-[var(--color-accent)] hover:underline"
+              className="text-xs text-[var(--color-accent)] hover:underline"
             >
               {action.label}
             </button>
@@ -88,7 +88,7 @@ function PanelShell({
 }
 
 function EmptyRow({ children }: { children: React.ReactNode }) {
-  return <div className="px-3.5 py-3 text-[12px] text-[var(--color-text-muted)]">{children}</div>
+  return <div className="px-3.5 py-3 text-xs text-[var(--color-text-muted)]">{children}</div>
 }
 
 // ── Shipping this week ─────────────────────────────────────────────────────
@@ -123,14 +123,16 @@ export function ShippingThisWeek({ releases, onOpen }: { releases: DerivedReleas
               : 'var(--color-text-muted)'
             return (
               <li key={r.id} className="flex items-center gap-3 px-3.5 py-2.5">
+                {/* W29d fit remedy 1: 52 px wide (was 42) — "TODAY" as an eyebrow is ≈ 45.8 px on CI's
+                    DejaVu Sans Bold, 50 px inside the border holds it with 4 px to spare. */}
                 <div
-                  className="w-[42px] h-[42px] rounded-md border flex flex-col items-center justify-center shrink-0"
+                  className="w-[52px] h-[42px] rounded-md border flex flex-col items-center justify-center shrink-0"
                   style={{ borderColor: 'var(--color-border)', background: 'var(--color-bg-secondary)' }}
                 >
-                  <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+                  <div className="eyebrow uppercase text-[var(--color-text-muted)]">
                     {label}
                   </div>
-                  <div className="text-[16px] font-semibold text-[var(--color-text)] leading-none mt-0.5 tabular-nums">
+                  <div className="text-md font-semibold text-[var(--color-text)] leading-none mt-0.5 tabular-nums">
                     {r.dueAt ? new Date(r.dueAt).getDate() : '—'}
                   </div>
                 </div>
@@ -140,8 +142,8 @@ export function ShippingThisWeek({ releases, onOpen }: { releases: DerivedReleas
                   className="min-w-0 overflow-hidden text-left flex-1"
                   style={{ minWidth: 0 }}
                 >
-                  <div className="text-[12.5px] font-medium text-[var(--color-text)] truncate">{r.name}</div>
-                  <div className="text-[11.5px] text-[var(--color-text-muted)] truncate">
+                  <div className="text-sm font-medium text-[var(--color-text)] truncate">{r.name}</div>
+                  <div className="text-xs text-[var(--color-text-muted)] truncate">
                     {/* `blockerCount`, not `blockers.length`: the card keeps only the first few. */}
                     {r.version ? `${r.version} · ` : ''}{r.blockerCount} blocker{r.blockerCount === 1 ? '' : 's'}
                   </div>
@@ -196,14 +198,14 @@ export function AgingSignals({ releases, onOpen }: { releases: DerivedRelease[];
                 className="min-w-0 overflow-hidden text-left flex-1"
                 style={{ minWidth: 0 }}
               >
-                <div className="text-[12.5px] font-medium text-[var(--color-text)] whitespace-nowrap overflow-hidden text-ellipsis">
+                <div className="text-sm font-medium text-[var(--color-text)] whitespace-nowrap overflow-hidden text-ellipsis">
                   {r.name}{r.version && ` ${r.version}`}
                 </div>
-                <div className="text-[11.5px] text-[var(--color-text-muted)]">{reason}</div>
+                <div className="text-xs text-[var(--color-text-muted)]">{reason}</div>
               </button>
               <span
                 className={clsx(
-                  'shrink-0 inline-flex items-center text-[10.5px] font-semibold tabular-nums px-1.5 py-0.5 rounded-full border',
+                  'shrink-0 inline-flex items-center text-2xs font-semibold tabular-nums px-1.5 py-0.5 rounded-full border',
                 )}
                 // W29a UIX-07: an aging release is a UI warning / danger, not a test result;
                 // the amber chip's tint and border are the warning hue (were skipped-gold).
@@ -309,7 +311,7 @@ export function CompliancePacks({
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-[12.5px] font-medium text-[var(--color-text)] truncate">
+                  <span className="text-sm font-medium text-[var(--color-text)] truncate">
                     {pack.release_name == null
                       ? '(release deleted)'
                       : `${pack.release_name}${pack.release_version ? ` ${pack.release_version}` : ''}`}
@@ -317,21 +319,21 @@ export function CompliancePacks({
                   {pack.retired && (
                     <span
                       data-rail-pack-retired=""
-                      className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.06em] px-1.5 py-px rounded border text-[var(--color-text-muted)]"
+                      className="shrink-0 eyebrow uppercase px-1.5 py-px rounded border text-[var(--color-text-muted)]"
                       style={{ borderColor: 'var(--color-border)' }}
                     >
                       Retired
                     </span>
                   )}
                 </div>
-                <div className="text-[11px] text-[var(--color-text-muted)] truncate" title={`sha256:${pack.manifest_sha256}`}>
+                <div className="text-2xs text-[var(--color-text-muted)] truncate" title={`sha256:${pack.manifest_sha256}`}>
                   {packSizeText(pack.bytes)} · <span className="font-mono">sha256:{pack.manifest_sha256.slice(0, 8)}</span> · {ageText(pack.generated_at, now)}
                 </div>
               </div>
               <button
                 type="button"
                 onClick={() => void downloadPack(pack)}
-                className="shrink-0 inline-flex items-center gap-1 text-[11.5px] text-[var(--color-accent)] hover:underline"
+                className="shrink-0 inline-flex items-center gap-1 text-xs text-[var(--color-accent)] hover:underline"
               >
                 <Download className="h-3 w-3" />
                 Download
@@ -342,7 +344,7 @@ export function CompliancePacks({
       )}
       {ready.length > 0 && (
         <div data-rail-ready="" className="border-t" style={{ borderColor: 'var(--color-border)' }}>
-          <div className="px-3.5 pt-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+          <div className="px-3.5 pt-2 eyebrow uppercase text-[var(--color-text-muted)]">
             Ready for a pack
           </div>
           <ul className="m-0 p-0 list-none">
@@ -361,17 +363,17 @@ export function CompliancePacks({
                     <Clock className="h-3.5 w-3.5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[12.5px] font-medium text-[var(--color-text)] truncate">
+                    <div className="text-sm font-medium text-[var(--color-text)] truncate">
                       {r.name}{r.version && ` ${r.version}`}
                     </div>
-                    <div className="text-[11px] text-[var(--color-text-muted)] truncate">
+                    <div className="text-2xs text-[var(--color-text-muted)] truncate">
                       {isReleased ? 'Released — no pack yet' : 'In progress — no pack yet'}
                     </div>
                   </div>
                   <button
                     type="button"
                     onClick={() => onOpen(r.id)}
-                    className="shrink-0 inline-flex items-center gap-1 text-[11.5px] text-[var(--color-accent)] hover:underline"
+                    className="shrink-0 inline-flex items-center gap-1 text-xs text-[var(--color-accent)] hover:underline"
                   >
                     <FileText className="h-3 w-3" />
                     View packs
@@ -448,12 +450,12 @@ export function RecentActivity({
                 className="grid grid-cols-[52px_1fr] gap-3 px-3.5 py-2 items-start hover:bg-[var(--color-bg-hover)]"
               >
                 <span
-                  className="text-[11px] font-mono text-[var(--color-text-muted)] pt-0.5"
+                  className="text-2xs font-mono text-[var(--color-text-muted)] pt-0.5"
                   title={event.occurred_at ?? undefined}
                 >
                   {ageText(event.occurred_at, now)}
                 </span>
-                <span className="text-[12px] text-[var(--color-text-secondary)] min-w-0 break-words">
+                <span className="text-xs text-[var(--color-text-secondary)] min-w-0 break-words">
                   {activityText(event)}
                 </span>
               </Link>
@@ -461,7 +463,7 @@ export function RecentActivity({
           ))}
         </ul>
       )}
-      <div className="px-3.5 py-2 border-t text-center text-[11px]" style={{ borderColor: 'var(--color-border)' }}>
+      <div className="px-3.5 py-2 border-t text-center text-2xs" style={{ borderColor: 'var(--color-border)' }}>
         {/* HON-09: `/audit` was never a route (the catch-all sent it to
             Overview). The release events live in the Activity feed, opened
             on its Release category; an in-app link keeps the SPA session. */}

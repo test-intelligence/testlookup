@@ -95,11 +95,11 @@ export function ReleaseHealthDetails({ highlighted, releases }: Omit<HealthProps
       <div className="space-y-3" data-release-health-details="">
         {highlighted && (
           <div>
-            <p className="m-0 text-[13px] text-[var(--color-text-secondary)]">{releaseLede(highlighted, now)}</p>
+            <p className="m-0 text-sm text-[var(--color-text-secondary)]">{releaseLede(highlighted, now)}</p>
             {highlighted.blockers.length > 0 && (
               <ul aria-label={`Top blockers on ${highlighted.name}`} className="mt-2.5 space-y-1.5 m-0 p-0 list-none">
                 {highlighted.blockers.slice(0, 3).map((b) => (
-                  <li key={b.id} className="flex items-center gap-2 text-[12.5px]">
+                  <li key={b.id} className="flex items-center gap-2 text-sm">
                     <BlockerIcon tone={b.severity} />
                     <span className="text-[var(--color-text)]">{b.title}</span>
                     {b.context && <span className="text-[var(--color-text-muted)]">· {b.context}</span>}
