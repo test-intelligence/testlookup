@@ -37,7 +37,7 @@ const STATUS_COLOR: Record<string, string> = {
 function StatusPill({ status }: { status: string }) {
   const cls = STATUS_COLOR[status] || 'bg-[var(--color-bg-hover)]/10 text-[var(--color-text-muted)] ring-[var(--color-border)]/30'
   return (
-    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ring-1 ring-inset ${cls}`}>
+    <span className={`inline-flex items-center rounded px-1.5 py-0.5 eyebrow uppercase ring-1 ring-inset ${cls}`}>
       {status}
     </span>
   )
@@ -194,7 +194,7 @@ export default function SuiteTestsTable({
                 </td>
                 <td className="px-3 py-2">
                   <StatusPill status={c.status} />
-                  <p data-case-source="" className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">{c.source}</p>
+                  <p data-case-source="" className="mt-0.5 text-2xs text-[var(--color-text-muted)]">{c.source}</p>
                 </td>
                 <td className="px-3 py-2 text-right">
                   <div className="inline-flex items-center gap-1">

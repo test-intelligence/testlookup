@@ -295,7 +295,7 @@ export default function OwnershipEditorPage() {
               <span className="text-[var(--color-text-secondary)] truncate flex items-center gap-1.5">
                 {rule.service_name === CODEOWNERS_SERVICE ? (
                   <span
-                    className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[color-mix(in srgb, var(--color-accent) 14%, transparent)] text-[var(--color-accent)] border border-[color-mix(in srgb, var(--color-accent) 30%, transparent)]"
+                    className="inline-flex items-center px-1.5 py-0.5 rounded text-2xs font-medium bg-[color-mix(in srgb, var(--color-accent) 14%, transparent)] text-[var(--color-accent)] border border-[color-mix(in srgb, var(--color-accent) 30%, transparent)]"
                     title="Imported from a CODEOWNERS file"
                   >
                     CODEOWNERS
@@ -474,7 +474,7 @@ function ImportCodeownersDialog({
               className="w-full text-xs font-mono px-2 py-1.5 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text)] focus:outline-none focus:border-[var(--color-accent)]"
             />
             {previewCount != null && (
-              <p className="text-[11px] text-[var(--color-text-muted)] mt-1">
+              <p className="text-2xs text-[var(--color-text-muted)] mt-1">
                 {previewCount} owner line{previewCount === 1 ? '' : 's'} detected
               </p>
             )}

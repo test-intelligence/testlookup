@@ -346,7 +346,7 @@ describe('SavedViewsMenu', () => {
     render(<SavedViewsMenu page="trends" projectId="p1" current={CURRENT} onApply={vi.fn()} linked={false} variant="ghost" />, { wrapper })
     const trigger = screen.getByRole('button', { name: /Views/ })
     expect(trigger.className).toBe(
-      'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50',
+      'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50',
     )
     expect(trigger.style.borderColor).toBe('var(--color-border)')
     expect(trigger.querySelector('svg')?.getAttribute('class')).toContain('h-3.5 w-3.5')

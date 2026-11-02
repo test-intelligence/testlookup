@@ -1473,6 +1473,20 @@ describe('OverviewPage — the catalogue row (VIZ-408)', () => {
     expect(screen.queryByTestId('verdict-details')).toBeNull()
   })
 
+  it('W29e (UIX-04c e4): the verdict details\' "Pass rate" is the eyebrow label, with no inline letter-spacing', async () => {
+    await renderPage()
+    const details = await openVerdictDetails()
+    const label = within(details).getByText('Pass rate', { exact: true })
+    expect(label).toHaveClass('eyebrow', 'uppercase')
+    // Its own colour stays (no colour change): the utility beats `.eyebrow`'s muted.
+    expect(label).toHaveClass('text-[var(--color-text-muted)]')
+    // Role rule 2c: the inline letterSpacing left with the style attribute; no arbitrary size, no weight utility.
+    expect(label).not.toHaveAttribute('style')
+    expect(label.style.letterSpacing).toBe('')
+    expect(label.className).not.toMatch(/text-\[\d/)
+    expect(label.className).not.toContain('font-medium')
+  })
+
   it('the donut’s totals equal the KPI and the window’s status counts (OD-5)', async () => {
     await renderPage()
     const donut = (await screen.findByRole('heading', { level: 3, name: 'Status breakdown' }, { timeout: 10_000 })).closest('[data-chart-frame]') as HTMLElement

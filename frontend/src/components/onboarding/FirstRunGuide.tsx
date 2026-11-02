@@ -21,7 +21,7 @@ function CommandRow({ command }: { command: string }) {
   return (
     <div className="mt-2">
       <div className="flex items-center justify-between gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2">
-        <code className="font-mono text-[12.5px] text-[var(--color-text-secondary)] truncate select-all">{command}</code>
+        <code className="font-mono text-sm text-[var(--color-text-secondary)] truncate select-all">{command}</code>
         <button
           type="button"
           onClick={onCopy}
@@ -34,7 +34,7 @@ function CommandRow({ command }: { command: string }) {
         </button>
       </div>
       {status === 'failed' && (
-        <p role="status" className="mt-1 text-[11px] text-[var(--status-broken)]">
+        <p role="status" className="mt-1 text-2xs text-[var(--status-broken)]">
           Couldn't copy automatically — select the command above and press{' '}
           <kbd className="font-mono">Ctrl/⌘-C</kbd>.
         </p>
@@ -103,11 +103,11 @@ export default function FirstRunGuide({
             </span>
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-[var(--color-text)]">{s.title}</p>
-              <p className="text-[13px] text-[var(--color-text-muted)]">{s.body}</p>
+              <p className="text-sm text-[var(--color-text-muted)]">{s.body}</p>
               {s.command && <CommandRow command={s.command} />}
               {s.cliInstall && (
                 <>
-                  <p className="mt-2 text-[11px] text-[var(--color-text-faint)]">
+                  <p className="mt-2 text-2xs text-[var(--color-text-faint)]">
                     No <code className="font-mono">testlookup</code> command yet?{' '}
                     {s.cliFromDeployment
                       ? 'Install the CLI from this deployment once:'
@@ -118,11 +118,11 @@ export default function FirstRunGuide({
               )}
               {s.apiCommand && (
                 <>
-                  <p className="mt-2 text-[11px] text-[var(--color-text-faint)]">
+                  <p className="mt-2 text-2xs text-[var(--color-text-faint)]">
                     Or POST straight to the ingest API from any CI runner:
                   </p>
                   <CommandRow command={s.apiCommand} />
-                  <p className="mt-1.5 text-[11px] text-[var(--color-text-faint)]">
+                  <p className="mt-1.5 text-2xs text-[var(--color-text-faint)]">
                     Generate a project key under{' '}
                     <ScopedLink
                       to="/settings/api-keys"

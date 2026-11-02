@@ -204,7 +204,7 @@ export default function SourceRootsSection({
             >
               {busy === 'save' ? 'Saving…' : 'Save'}
             </button>
-            {dirty && <span className="text-[11px] text-[var(--color-text-muted)]">Unsaved changes</span>}
+            {dirty && <span className="text-2xs text-[var(--color-text-muted)]">Unsaved changes</span>}
           </div>
 
           {previewResult && (
@@ -215,7 +215,7 @@ export default function SourceRootsSection({
                   : `${previewResult.located} of ${previewResult.java_frames} recent Java failures map to a path; ${previewResult.matched} match a path rule (last ${previewResult.lookback_days} days).`}
               </p>
               {previewResult.examples.length > 0 && (
-                <ul className="m-0 pl-4 list-disc text-[11px] text-[var(--color-text-muted)]">
+                <ul className="m-0 pl-4 list-disc text-2xs text-[var(--color-text-muted)]">
                   {previewResult.examples.map((ex, i) => (
                     <li key={`${ex.path}|${i}`} className="font-mono break-all">{`${ex.test_name} → ${ex.path}`}</li>
                   ))}

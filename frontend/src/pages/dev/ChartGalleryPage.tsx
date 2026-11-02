@@ -745,7 +745,7 @@ function renderChart(item: GalleryItem) {
             <div key={width} data-sparkline-cell={width} style={{ width }}>
               <Sparkline {...props} format={galleryFormat(format)} />
               {item.empty && (
-                <p className="border-t border-dashed border-[var(--color-border)] pt-1 text-[11px] text-[var(--color-text-secondary)]">
+                <p className="border-t border-dashed border-[var(--color-border)] pt-1 text-2xs text-[var(--color-text-secondary)]">
                   No trend line: fewer than 2 measured days
                 </p>
               )}

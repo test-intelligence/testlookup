@@ -179,7 +179,7 @@ function ReviewRow({
           {invocation
             ? <div className="text-[var(--color-text)]">{INVOCATION_ROW_LABEL}</div>
             : <div className="text-[var(--color-text)] capitalize">{review.workflow_type ?? review.kind} report</div>}
-          <div className="text-[10px] font-mono text-[var(--color-text-muted)]">{review.subject_type.replace(/_/g, ' ')}</div>
+          <div className="text-2xs font-mono text-[var(--color-text-muted)]">{review.subject_type.replace(/_/g, ' ')}</div>
         </td>
         <td className="px-3 py-2 text-xs">
           {invocation && review.test_run_id ? (

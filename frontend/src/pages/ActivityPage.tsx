@@ -215,7 +215,7 @@ export default function ActivityPage() {
             }}
             onBlur={() => setQ(queryText)}
             placeholder="Search activity…"
-            className="w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] py-1.5 pl-8 pr-3 text-[13px] text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]"
+            className="w-56 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] py-1.5 pl-8 pr-3 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-muted)]"
           />
         </div>
 
@@ -223,7 +223,7 @@ export default function ActivityPage() {
           aria-label="Filter by category"
           value={activeCategory}
           onChange={e => setCategory(e.target.value)}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1.5 text-[13px] text-[var(--color-text)]"
+          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1.5 text-sm text-[var(--color-text)]"
         >
           <option value="">All categories</option>
           {(eventTypes?.categories ?? []).map(c => (
@@ -237,7 +237,7 @@ export default function ActivityPage() {
           aria-label="Filter by who acted"
           value={actorType}
           onChange={e => setActorType(e.target.value)}
-          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1.5 text-[13px] text-[var(--color-text)]"
+          className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)] px-3 py-1.5 text-sm text-[var(--color-text)]"
         >
           <option value="">Anyone</option>
           {(eventTypes?.actor_types ?? []).map(a => (
@@ -256,8 +256,8 @@ export default function ActivityPage() {
               onClick={() => setStoredDays(d)}
               className={
                 days === d
-                  ? 'rounded px-2.5 py-1 text-[12px] font-medium tabular-nums bg-[var(--color-accent-muted)] text-[var(--color-accent-ink)]'
-                  : 'rounded px-2.5 py-1 text-[12px] font-medium tabular-nums text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]'
+                  ? 'rounded px-2.5 py-1 text-xs font-medium tabular-nums bg-[var(--color-accent-muted)] text-[var(--color-accent-ink)]'
+                  : 'rounded px-2.5 py-1 text-xs font-medium tabular-nums text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]'
               }
             >
               {/* The shared label: "24h" for one day, as on every other windowed page. */}
@@ -293,7 +293,7 @@ export default function ActivityPage() {
           />
         ) : isLoading || categoryPending ? (
           <p
-            className="px-4 py-10 text-center text-[13px] text-[var(--color-text-muted)]"
+            className="px-4 py-10 text-center text-sm text-[var(--color-text-muted)]"
             aria-busy="true"
           >
             Loading activity…
@@ -330,7 +330,7 @@ export default function ActivityPage() {
             </ul>
 
             <div className="flex items-center justify-between border-t border-[var(--color-border)] px-4 py-3">
-              <p className="text-[11px] text-[var(--color-text-muted)]">
+              <p className="text-2xs text-[var(--color-text-muted)]">
                 {formatNumber(events.length)} event
                 {events.length === 1 ? '' : 's'}
                 {ledgerStartedAt &&
@@ -342,7 +342,7 @@ export default function ActivityPage() {
                 {error && (
                   <span
                     role="status"
-                    className="text-[11px] text-[var(--status-failed)]"
+                    className="text-2xs text-[var(--status-failed)]"
                   >
                     Couldn&apos;t load older events
                   </span>
@@ -352,7 +352,7 @@ export default function ActivityPage() {
                     type="button"
                     onClick={loadMore}
                     disabled={isValidating}
-                    className="rounded border border-[var(--color-border)] px-3 py-1.5 text-[12px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
+                    className="rounded border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
                   >
                     {isValidating ? 'Loading…' : error ? 'Try again' : 'Load older'}
                   </button>

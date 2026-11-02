@@ -412,7 +412,7 @@ export default function SuitesPage() {
                         {/* One line: "All Tests" broke as "All / Tests" in a squeezed column (P4 baselines). */}
                         <span data-suite-name="" className="whitespace-nowrap font-medium text-[var(--color-text)]">{s.name}</span>
                         {s.is_default && (
-                          <span className="inline-flex items-center gap-1 rounded bg-[var(--status-broken-bg)]/10 px-1.5 py-0.5 text-[10px] font-medium text-[var(--status-broken)] ring-1 ring-[var(--status-broken)]/30">
+                          <span className="inline-flex items-center gap-1 rounded bg-[var(--status-broken-bg)]/10 px-1.5 py-0.5 text-2xs font-medium text-[var(--status-broken)] ring-1 ring-[var(--status-broken)]/30">
                             <Star className="h-3 w-3" /> Default
                           </span>
                         )}

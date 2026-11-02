@@ -29,12 +29,12 @@ export default function NotFoundPage() {
     <div className="space-y-4" data-testid="not-found-page">
       <PageHeader compact title="Page not found" />
       <section className="card max-w-2xl space-y-3 !p-5">
-        <p className="m-0 text-[15px] font-semibold text-[var(--color-text)]">This page does not exist.</p>
-        <p className="m-0 text-[13px] text-[var(--color-text-secondary)]">
+        <p className="m-0 text-base font-semibold text-[var(--color-text)]">This page does not exist.</p>
+        <p className="m-0 text-sm text-[var(--color-text-secondary)]">
           Nothing in TestLookup lives at{' '}
           <code
             data-testid="not-found-path"
-            className="break-all rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-1 font-mono text-[12px]"
+            className="break-all rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-1 font-mono text-xs"
           >
             {attempted}
           </code>

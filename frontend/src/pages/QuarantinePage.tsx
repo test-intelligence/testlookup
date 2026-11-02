@@ -109,7 +109,7 @@ export function QuarantineBody({
       {overCap && (
         <p
           data-quarantine-over-cap=""
-          className="flex items-center gap-1.5 text-[12px] text-[var(--status-broken)]"
+          className="flex items-center gap-1.5 text-xs text-[var(--status-broken)]"
           title="The cap is the project's quarantine policy (Flaky tests › Policy). It warns; nothing is blocked."
         >
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -285,7 +285,7 @@ function QuarantineRow({
                 </a>
                 {row.defect_external_status && (
                   <span
-                    className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
+                    className="text-2xs px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
                     title="Jira status (mirrored every ~15 min)"
                   >
                     {row.defect_external_status}
@@ -293,7 +293,7 @@ function QuarantineRow({
                 )}
                 {row.defect_external_status_conflict && (
                   <span
-                    className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border border-[var(--status-broken-bd)]/40 text-[var(--status-broken)] bg-[var(--status-broken-bg)]/10"
+                    className="inline-flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded border border-[var(--status-broken-bd)]/40 text-[var(--status-broken)] bg-[var(--status-broken-bg)]/10"
                     title="Jira reports this issue as done, but the test still failed within the last 7 days."
                   >
                     <AlertTriangle className="h-2.5 w-2.5" />
@@ -315,7 +315,7 @@ function QuarantineRow({
             <StatusPill status={row.status} />
             {row.stale && (
               <span
-                className="text-[10px] px-2 py-0.5 rounded border border-[var(--status-failed-bd)]/40 text-[var(--status-failed)] bg-[var(--status-failed-bg)]/10"
+                className="text-2xs px-2 py-0.5 rounded border border-[var(--status-failed-bd)]/40 text-[var(--status-failed)] bg-[var(--status-failed-bg)]/10"
                 title={row.sla_days != null ? `SLA: ${row.sla_days} days` : undefined}
               >
                 stale — {daysOverSla(row.stale_at)}d over SLA
@@ -325,7 +325,7 @@ function QuarantineRow({
               // W09 FLK-02: when the policy's SLA runs out for this quarantine.
               <span
                 data-quarantine-sla-due=""
-                className="text-[10px] text-[var(--color-text-muted)] whitespace-nowrap"
+                className="text-2xs text-[var(--color-text-muted)] whitespace-nowrap"
                 title={row.sla_days != null ? `SLA: ${row.sla_days} days` : undefined}
               >
                 {slaDue}
@@ -333,7 +333,7 @@ function QuarantineRow({
             )}
             {row.ready_to_promote && (
               <span
-                className="text-[10px] px-2 py-0.5 rounded border border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10"
+                className="text-2xs px-2 py-0.5 rounded border border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10"
                 title={`${row.consecutive_passes} consecutive passing runs since quarantine`}
               >
                 Ready to promote
@@ -341,7 +341,7 @@ function QuarantineRow({
             )}
           </div>
         </td>
-        <td className="px-3 py-2 text-right text-[11px] text-[var(--color-text-faint)]">
+        <td className="px-3 py-2 text-right text-2xs text-[var(--color-text-faint)]">
           {formatDay(row.updated_at)}
         </td>
         <td className="px-3 py-2 text-right whitespace-nowrap">
@@ -493,7 +493,7 @@ function StatusPill({ status }: { status: QuarantineStatus }) {
       ? 'border-[var(--status-failed-bd)]/40 text-[var(--status-failed)] bg-[var(--status-failed-bg)]/10'
       : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
   return (
-    <span className={`text-[10px] px-2 py-0.5 rounded border ${toneClass}`}>
+    <span className={`text-2xs px-2 py-0.5 rounded border ${toneClass}`}>
       {status.replace(/_/g, ' ')}
     </span>
   )

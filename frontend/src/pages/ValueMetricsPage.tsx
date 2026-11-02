@@ -285,7 +285,7 @@ function AssumptionsEditor({ projectId, assumptions, onSaved }: {
         >
           <Save className="h-3 w-3" /> {saving ? 'Saving…' : 'Save assumptions'}
         </button>
-        {dirty && <span className="text-[11px] text-[var(--color-text-faint)]">Unsaved changes</span>}
+        {dirty && <span className="text-2xs text-[var(--color-text-faint)]">Unsaved changes</span>}
       </div>
     </div>
   )
@@ -375,7 +375,7 @@ const counter = (value: number) => (value === 0 ? '—' : formatNumber(value))
  */
 function CounterNote({ children }: { children: ReactNode }) {
   return (
-    <span data-counter-note="" className="block max-w-[11rem] text-right text-[11px] leading-tight text-[var(--color-text-muted)]">
+    <span data-counter-note="" className="block max-w-[11rem] text-right text-2xs leading-tight text-[var(--color-text-muted)]">
       {children}
     </span>
   )
@@ -408,7 +408,7 @@ function ValueViewSwitch({ view, onChange }: { view: ValueView; onChange: (view:
             aria-checked={active}
             data-value-view={option.id}
             onClick={() => onChange(option.id)}
-            className="inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-[12.5px] transition-colors"
+            className="inline-flex items-center whitespace-nowrap rounded-full border px-2.5 py-1 text-sm transition-colors"
             style={{
               background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
               borderColor: active ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)',
@@ -566,7 +566,7 @@ export default function ValueMetricsPage() {
           className="card flex flex-wrap items-center gap-x-4 gap-y-1 !py-2.5"
           style={{ borderColor: 'color-mix(in srgb, var(--color-accent) 35%, var(--color-border))' }}
         >
-          <span className="inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-[var(--color-text-secondary)]">
+          <span className="inline-flex items-center gap-2 eyebrow uppercase text-[var(--color-text-secondary)]">
             <Timer className="h-4 w-4" aria-hidden /> <span data-testid="hours-saved-window">Eng-hours saved · last {headlineDays} days</span>
           </span>
           {/* The headline number itself links to the math (AC: credibility
@@ -608,9 +608,9 @@ export default function ValueMetricsPage() {
             Not enough data yet to estimate engineering hours saved.
           </p>
           {metrics.insufficient_data_reason && (
-            <p className="text-[12.5px] leading-relaxed">{metrics.insufficient_data_reason}</p>
+            <p className="text-sm leading-relaxed">{metrics.insufficient_data_reason}</p>
           )}
-          <p className="text-[12.5px] leading-relaxed text-[var(--color-text-muted)]">
+          <p className="text-sm leading-relaxed text-[var(--color-text-muted)]">
             The model only reports once it has real triage, quarantine, and duplicate-absorption signal — an
             honest blank beats a made-up zero.
           </p>
@@ -714,7 +714,7 @@ export default function ValueMetricsPage() {
         // the signals they track: said once, and what fills each one is a
         // click away, so nobody reads the dashes as a data bug.
         <Disclosure title="No value-generating activity yet for this window" summary="what fills these counters">
-          <ul className="text-[12.5px] space-y-0.5 list-disc list-inside text-[var(--color-text-muted)]">
+          <ul className="text-sm space-y-0.5 list-disc list-inside text-[var(--color-text-muted)]">
             <li><strong className="text-[var(--color-text-secondary)]">Defects grouped</strong> · run deep investigation on failing builds to cluster failures.</li>
             <li><strong className="text-[var(--color-text-secondary)]">Duplicates avoided</strong> · file a defect from a cluster and the system detects duplicates of prior ones.</li>
             <li><strong className="text-[var(--color-text-secondary)]">Flaky tests found</strong> · the Flaky Coach scans history; needs ≥ 5 runs per fingerprint to flag.</li>

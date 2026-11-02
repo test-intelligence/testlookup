@@ -72,7 +72,7 @@ export default function ActivityRow({ event, onOpen, compact = false, meta, onEn
       {!compact && (
         <span
           className={clsx(
-            'shrink-0 mt-0.5 px-2 py-0.5 rounded text-[11px] font-medium capitalize',
+            'shrink-0 mt-0.5 px-2 py-0.5 rounded text-2xs font-medium capitalize',
             CATEGORY_STYLE[event.category] ??
               'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]',
           )}
@@ -89,15 +89,15 @@ export default function ActivityRow({ event, onOpen, compact = false, meta, onEn
           <button
             type="button"
             onClick={() => onOpen(event)}
-            className="text-left text-[13px] text-[var(--color-text)] hover:text-[var(--color-accent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] rounded-sm"
+            className="text-left text-sm text-[var(--color-text)] hover:text-[var(--color-accent)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)] rounded-sm"
           >
             {event.summary}
           </button>
         ) : (
-          <p className="text-[13px] text-[var(--color-text)]">{event.summary}</p>
+          <p className="text-sm text-[var(--color-text)]">{event.summary}</p>
         )}
 
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-[var(--color-text-muted)]">
           <span className="inline-flex items-center gap-1">
             <ActorIcon className="h-3 w-3" aria-hidden="true" />
             <span>{event.actor.name || 'Unknown'}</span>
