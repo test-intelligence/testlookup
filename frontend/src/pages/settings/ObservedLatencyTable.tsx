@@ -5,6 +5,9 @@
  * route with no requests in the window says "No requests" — absence is not 0 ms. Operations with
  * no HTTP route (Celery work, harness-only paths) are listed with their budget and "Not an HTTP
  * route", because only the load harness measures them.
+ *
+ * The description sits under the operation, not in a column of its own: beside five number columns a description
+ * column got ~110 px, and its long endpoint paths pushed the table past the settings column at 1280 px.
  */
 import { useState } from 'react'
 
@@ -75,7 +78,6 @@ export function ObservedLatencyTable({ budgets }: { budgets: LatencyBudget[] }) 
             <Th numeric>Observed p95</Th>
             <Th numeric>Observed p99</Th>
             <Th numeric>Requests</Th>
-            <Th>Description</Th>
           </tr>
         </thead>
         <tbody>
@@ -85,7 +87,10 @@ export function ObservedLatencyTable({ budgets }: { budgets: LatencyBudget[] }) 
               <tr key={b.operation} data-operation={b.operation}>
                 <Td>
                   <div className="font-mono text-xs text-[var(--color-text)]">{b.operation}</div>
-                  {o && <div className="text-2xs text-[var(--color-text-faint)]">{o.http_method} {o.http_handler}</div>}
+                  {o && <div className="text-2xs text-[var(--color-text-faint)] [overflow-wrap:anywhere]">{o.http_method} {o.http_handler}</div>}
+                  <div className="mt-0.5 text-xs text-[var(--color-text-muted)] [overflow-wrap:anywhere]" data-testid="budget-description">
+                    {b.description}
+                  </div>
                 </Td>
                 <Td numeric className="whitespace-nowrap">{b.p95_ms} ms</Td>
                 {o ? (
@@ -102,7 +107,6 @@ export function ObservedLatencyTable({ budgets }: { budgets: LatencyBudget[] }) 
                     {isLoading ? 'Loading…' : 'Not an HTTP route — measured by the load harness only'}
                   </Td>
                 )}
-                <Td className="text-xs text-[var(--color-text-muted)]">{b.description}</Td>
               </tr>
             )
           })}

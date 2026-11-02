@@ -91,6 +91,17 @@ describe('PerformancePage', () => {
     expect(screen.getByTestId('observed-source')).toHaveTextContent('1 over budget')
   })
 
+  it('the description sits under its operation, not in a column of its own (the table fits at 1280)', () => {
+    render(<PerformancePage />)
+    const table = screen.getByTestId('latency-budgets')
+    expect([...table.querySelectorAll('thead th')].map((th) => th.textContent)).toEqual([
+      'Operation', 'Budget p95', 'Observed p50', 'Observed p95', 'Observed p99', 'Requests',
+    ])
+    const operationCell = table.querySelector('[data-operation="search.query"] td') as HTMLElement
+    expect(operationCell).toHaveTextContent('search.query')
+    expect(operationCell.querySelector('[data-testid="budget-description"]')).toHaveTextContent('Full-text search')
+  })
+
   it('W17b ADM-06: a route with no requests says so instead of 0 ms', () => {
     mockObserved.mockReturnValue({ data: { window: '1h', source: 'in_app', measured: false, slot_seconds: 300, budgets: [{ ...OBSERVED_ROW, observed_p50_ms: null, observed_p95_ms: null, observed_p99_ms: null, count: 0, measured: false, breach: false }] }, isLoading: false })
     render(<PerformancePage />)
