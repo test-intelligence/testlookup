@@ -102,6 +102,16 @@ describe('PreviousRunAICard — expanded', () => {
     expect(card.querySelector('[data-previous-branch-mismatch]')).toHaveTextContent('different branch (release/1.2 vs main)')
     expect(state.compareCalls[0]).toEqual([RUN_ID, { baselineRunId: '44444444-4444-4444-8444-100000000005' }])
   })
+
+  it('W29d UIX-04c: each changed-test row tag is an eyebrow in the 96 px column (fit remedy 1)', () => {
+    const { card } = renderCard()
+    const tags = [...card.querySelectorAll<HTMLElement>('[data-previous-tests-changed] li.flex > span:first-child')]
+    expect(tags.map((t) => t.textContent)).toContain('changed')
+    for (const tag of tags) {
+      expect(tag).toHaveClass('w-24', 'eyebrow')
+      expect(tag.className).not.toMatch(/w-\[76px\]|text-\[\d/)
+    }
+  })
 })
 
 describe('PreviousRunAICard — the other states', () => {

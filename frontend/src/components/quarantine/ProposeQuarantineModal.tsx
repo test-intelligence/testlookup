@@ -76,8 +76,8 @@ export default function ProposeQuarantineModal({
     <InlineFormSection
       title="Propose quarantine"
       description={
-        <span className="text-[12.5px]">
-          Proposes <code className="font-mono text-[11.5px] [overflow-wrap:anywhere]">{prefill.test_name}</code> for
+        <span className="text-sm">
+          Proposes <code className="font-mono text-xs [overflow-wrap:anywhere]">{prefill.test_name}</code> for
           quarantine. A QA Lead approves or rejects it under Flaky tests › Proposed —
           nothing is muted until then.
         </span>
@@ -93,7 +93,7 @@ export default function ProposeQuarantineModal({
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
           >
             Cancel
           </button>
@@ -109,14 +109,14 @@ export default function ProposeQuarantineModal({
         </>
       }
     >
-      <label className="block max-w-2xl text-[12px] font-medium text-[var(--color-text)]">
+      <label className="block max-w-2xl text-xs font-medium text-[var(--color-text)]">
         Reason <span style={{ color: 'var(--status-failed)' }}>*</span>
         <textarea
           value={reason}
           onChange={e => setReason(e.target.value)}
           rows={3}
           placeholder="Why should this test stop gating runs? (goes to the quarantine audit trail)"
-          className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
+          className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
         />
       </label>
     </InlineFormSection>

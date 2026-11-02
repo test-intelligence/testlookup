@@ -95,7 +95,7 @@ export function BasisChip({ basis }: { basis: ConfidenceBasisValue | null | unde
   return (
     <span
       data-testid="ai-basis-chip"
-      className="text-[10px] px-2 py-0.5 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] cursor-help"
+      className="text-2xs px-2 py-0.5 rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] cursor-help"
       title={d.title}
     >
       {d.label}
@@ -231,10 +231,8 @@ export function AIBadge({ text = 'AI-suggested', title, compact }: {
   return (
     <span
       data-testid="ai-suggested-badge"
-      className="inline-flex items-center gap-1 rounded-full font-semibold uppercase whitespace-nowrap"
+      className="inline-flex items-center gap-1 rounded-full eyebrow uppercase whitespace-nowrap"
       style={{
-        fontSize: compact ? 9.5 : 10,
-        letterSpacing: 'var(--tracking-wide)',
         padding: compact ? '1px 6px' : '2px 8px',
         background: 'var(--color-bg-hover)',
         border: '1px solid var(--color-border)',
@@ -300,14 +298,14 @@ export default function AISuggestion({
         <span className="flex items-center gap-2 min-w-0 flex-wrap">
           <AIBadge text={badgeText} title={badgeTitle} />
           {label != null && label !== false && (
-            <span className="text-[11px] text-[var(--color-text-muted)] inline-flex items-center gap-1.5 min-w-0">
+            <span className="text-2xs text-[var(--color-text-muted)] inline-flex items-center gap-1.5 min-w-0">
               {label}
             </span>
           )}
           {lowConfidence && (
             <span
               data-testid="ai-low-confidence"
-              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full"
+              className="inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded-full"
               style={{
                 background: 'color-mix(in srgb, var(--gate-conditional) 12%, transparent)',
                 border: '1px solid color-mix(in srgb, var(--gate-conditional) 32%, transparent)',
@@ -335,7 +333,7 @@ export default function AISuggestion({
       {provBits.length > 0 && (
         <p
           data-testid="ai-provenance"
-          className="text-[11px] text-[var(--color-text-muted)] m-0"
+          className="text-2xs text-[var(--color-text-muted)] m-0"
           title="Which engine produced this output, and on which model."
         >
           Produced by {provBits.join(' · ')}
@@ -349,7 +347,7 @@ export default function AISuggestion({
       {showFallback && (
         <p
           data-testid="ai-fallback-notice"
-          className="flex items-start gap-1.5 text-[11px] m-0 rounded-md px-2.5 py-1.5"
+          className="flex items-start gap-1.5 text-2xs m-0 rounded-md px-2.5 py-1.5"
           style={{
             background: 'color-mix(in srgb, var(--gate-conditional) 10%, transparent)',
             border: '1px solid color-mix(in srgb, var(--gate-conditional) 30%, transparent)',
@@ -374,12 +372,13 @@ export default function AISuggestion({
       {/* Evidence links. */}
       {evidence && evidence.length > 0 && (
         <div data-testid="ai-evidence">
-          <p className="text-[10px] uppercase tracking-wider font-medium text-[var(--color-text-muted)] m-0 mb-1">
+          {/* leading-tight: fit remedy 4 (W29d) — the eyebrow's own 16 px line raised the test-case page's fold 1 px on CI. */}
+          <p className="eyebrow uppercase leading-tight text-[var(--color-text-muted)] m-0 mb-1">
             Evidence
           </p>
           <ul className="list-none m-0 p-0 space-y-1">
             {evidence.map((ev, i) => (
-              <li key={`${ev.label}-${i}`} className="text-[11.5px] leading-snug">
+              <li key={`${ev.label}-${i}`} className="text-xs leading-snug">
                 {ev.href ? (
                   <a
                     href={ev.href}
@@ -408,7 +407,7 @@ export default function AISuggestion({
           {onConfirm &&
             (confirmed ? (
               <span
-                className="inline-flex items-center gap-1 text-[11.5px] text-[var(--color-text-muted)]"
+                className="inline-flex items-center gap-1 text-xs text-[var(--color-text-muted)]"
                 data-testid="ai-confirmed"
               >
                 <Check aria-hidden className="h-3 w-3" style={{ color: 'var(--status-passed)' }} />
@@ -419,7 +418,7 @@ export default function AISuggestion({
                 type="button"
                 onClick={onConfirm}
                 disabled={busy}
-                className="inline-flex items-center gap-1.5 text-[11.5px] font-medium px-2.5 py-1 rounded-md border transition-colors disabled:opacity-50 hover:bg-[var(--color-bg-hover)]"
+                className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md border transition-colors disabled:opacity-50 hover:bg-[var(--color-bg-hover)]"
                 style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
               >
                 <Check aria-hidden className="h-3 w-3" />
@@ -431,7 +430,7 @@ export default function AISuggestion({
               type="button"
               onClick={onCorrect}
               disabled={busy}
-              className="inline-flex items-center gap-1.5 text-[11.5px] font-medium px-2.5 py-1 rounded-md border transition-colors disabled:opacity-50 hover:bg-[var(--color-bg-hover)]"
+              className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-md border transition-colors disabled:opacity-50 hover:bg-[var(--color-bg-hover)]"
               style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
             >
               <Pencil aria-hidden className="h-3 w-3" />

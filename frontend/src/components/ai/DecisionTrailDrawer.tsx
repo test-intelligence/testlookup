@@ -188,7 +188,7 @@ function FilterBar({
         </select>
       </div>
       {queryActive && (
-        <p className="text-[10px] text-[var(--color-text-faint)]">
+        <p className="text-2xs text-[var(--color-text-faint)]">
           {matchCounts.stages} stage{matchCounts.stages === 1 ? '' : 's'} ·{' '}
           {matchCounts.workflowEvents} workflow event
           {matchCounts.workflowEvents === 1 ? '' : 's'} ·{' '}
@@ -365,7 +365,7 @@ function MiniStat({
     <div
       className={`rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 ${tone === 'warn' ? 'border-[var(--status-broken-bd)]/40' : ''}`}
     >
-      <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+      <div className="eyebrow uppercase text-[var(--color-text-muted)]">
         {label}
       </div>
       <div className="text-sm font-semibold text-[var(--color-text)]">{value}</div>
@@ -480,7 +480,7 @@ function StageCard({ stage }: { stage: StageDecisionSummary }) {
       </div>
 
       {/* Subheader — mode, fallback, cost */}
-      <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-text-muted)]">
+      <div className="flex flex-wrap items-center gap-1.5 text-2xs text-[var(--color-text-muted)]">
         {stage.analysis_mode && <BadgePill label={`mode: ${stage.analysis_mode}`} />}
         {stage.fallback_used && (
           <BadgePill
@@ -549,7 +549,7 @@ function BadgePill({
       : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
   return (
     <span
-      className={`inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border bg-[var(--color-bg-card)] ${toneClass}`}
+      className={`inline-flex items-center text-2xs px-1.5 py-0.5 rounded border bg-[var(--color-bg-card)] ${toneClass}`}
     >
       {label}
     </span>
@@ -558,13 +558,13 @@ function BadgePill({
 
 function DecisionLogRow({ entry }: { entry: DecisionLogEntry }) {
   return (
-    <li className="text-[11px] leading-relaxed border-l-2 border-[var(--color-accent)]/50 pl-2">
+    <li className="text-2xs leading-relaxed border-l-2 border-[var(--color-accent)]/50 pl-2">
       <div className="flex items-center gap-1 text-[var(--color-text)]">
         <span className="font-mono font-semibold">{entry.decision_point}</span>
         <ChevronRight className="h-3 w-3 text-[var(--color-text-muted)]" />
         <span className="font-semibold text-[var(--color-accent)]">{entry.chosen}</span>
         {entry.test_case_id && (
-          <span className="ml-auto text-[10px] font-mono text-[var(--color-text-faint)]">
+          <span className="ml-auto text-2xs font-mono text-[var(--color-text-faint)]">
             {entry.test_case_id.slice(0, 8)}
           </span>
         )}
@@ -604,13 +604,13 @@ function PerTestSection({
         label={`Per-test routing (${perTest.length})`}
       />
       {fallbackCount > 0 && (
-        <p className="text-[11px] text-[var(--status-broken)]/90">
+        <p className="text-2xs text-[var(--status-broken)]/90">
           {fallbackCount} test{fallbackCount === 1 ? '' : 's'} fell back from the requested engine —
           shown first below.
         </p>
       )}
       <div className="overflow-hidden rounded-md border border-[var(--color-border)]">
-        <table className="w-full text-[11px]">
+        <table className="w-full text-2xs">
           <thead className="bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]">
             <tr>
               <th className="text-left px-2 py-1.5">Test</th>
@@ -649,7 +649,7 @@ function PerTestSection({
         </table>
       </div>
       {sorted.length > 100 && (
-        <p className="text-[10px] text-[var(--color-text-faint)] text-right">
+        <p className="text-2xs text-[var(--color-text-faint)] text-right">
           Showing 100 of {sorted.length} tests.
         </p>
       )}
@@ -661,7 +661,7 @@ function PerTestSection({
 
 function SectionHeader({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+    <div className="flex items-center gap-1.5 eyebrow uppercase text-[var(--color-text-muted)]">
       {icon}
       {label}
     </div>

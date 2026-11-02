@@ -164,12 +164,12 @@ export default function RunComparePage() {
           </button>
         </div>
         {!selectedProjectId && (
-          <p className="text-[11px] text-[var(--status-broken)] m-0">
+          <p className="text-2xs text-[var(--status-broken)] m-0">
             Select a single project in the top project selector to compare latest suite runs.
           </p>
         )}
         {activeProject && (
-          <p className="text-[11px] text-[var(--color-text-faint)] m-0">
+          <p className="text-2xs text-[var(--color-text-faint)] m-0">
             Project scope: {activeProject.name}
           </p>
         )}
@@ -229,7 +229,7 @@ export default function RunComparePage() {
           </button>
         </div>
         {runsLoading && (
-          <p className="text-[11px] text-[var(--color-text-muted)] m-0">Loading available suites…</p>
+          <p className="text-2xs text-[var(--color-text-muted)] m-0">Loading available suites…</p>
         )}
       </section>
 
@@ -343,7 +343,7 @@ function RunsInSuiteSummary({ suiteName, onPickBaseline }: { suiteName: string; 
           <button
             type="button"
             onClick={onPickBaseline}
-            className="shrink-0 text-[12px] text-[var(--color-accent)] hover:underline"
+            className="shrink-0 text-xs text-[var(--color-accent)] hover:underline"
           >
             Pick a different baseline
           </button>
@@ -431,7 +431,7 @@ function SelectionNotice({
           <p className="text-xs text-[var(--color-text-muted)] m-0">
             {selection.selection_reason}
           </p>
-          <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-[var(--color-text-muted)]">
+          <div className="mt-2 flex flex-wrap gap-2 text-2xs text-[var(--color-text-muted)]">
             {compare.suite_name && <span>suite: <code>{compare.suite_name}</code></span>}
             <span>left branch: <code>{leftBranch}</code></span>
             <span>right branch: <code>{rightBranch}</code></span>
@@ -490,7 +490,7 @@ function AIReportPanel({ report }: { report: RunCompareAIReport }) {
 function MiniList({ title, items, max = 4 }: { title: string; items: string[]; max?: number }) {
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-2">
-      <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] mb-1">{title}</div>
+      <div className="eyebrow uppercase text-[var(--color-text-muted)] mb-1">{title}</div>
       {items.length === 0 ? (
         <p className="text-xs text-[var(--color-text-faint)] m-0">None</p>
       ) : (
@@ -517,7 +517,7 @@ function SideCard({
 }) {
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] p-3">
-      <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+      <div className="eyebrow uppercase text-[var(--color-text-muted)]">
         {label}
       </div>
       <div className="text-sm font-semibold text-[var(--color-text)]">{buildLabel}</div>
@@ -563,7 +563,7 @@ function DeltaTile({
       : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
   return (
     <div className={`rounded-md border ${tone} bg-[var(--color-bg-card)] p-3`}>
-      <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] flex items-center gap-1">
+      <div className="eyebrow uppercase text-[var(--color-text-muted)] flex items-center gap-1">
         <Icon className="h-3 w-3" />
         {label}
       </div>
@@ -674,7 +674,7 @@ function DeltaTable({
                   </div>
                   {isRenamed && (
                     <div
-                      className="text-[10px] text-[var(--color-text-faint)] truncate"
+                      className="text-2xs text-[var(--color-text-faint)] truncate"
                       title={d.previous_test_name ?? undefined}
                     >
                       was: {d.previous_test_name}
@@ -706,7 +706,7 @@ function DeltaTable({
         </table>
       </div>
       {truncated && (
-        <p className="text-[10px] text-[var(--color-text-faint)]">
+        <p className="text-2xs text-[var(--color-text-faint)]">
           Showing the first 500 deltas, sorted by urgency.
         </p>
       )}
@@ -745,7 +745,7 @@ function ClassificationBadge({ c }: { c: RunCompareClassification }) {
     : c === 'renamed' ? ArrowLeftRight
     : AlertTriangle
   return (
-    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${cfg.tone} inline-flex items-center gap-1`}>
+    <span className={`text-2xs px-1.5 py-0.5 rounded border ${cfg.tone} inline-flex items-center gap-1`}>
       <Icon className="h-2.5 w-2.5" />
       {cfg.label}
     </span>

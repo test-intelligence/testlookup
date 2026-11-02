@@ -89,12 +89,11 @@ const TRIGGER_LABEL: Record<string, string> = {
 function ModeChip({ mode }: { mode: string }) {
   return (
     <span
-      className="inline-flex items-center px-1.5 py-px rounded-full text-[10px] font-semibold uppercase"
+      className="inline-flex items-center px-1.5 py-px rounded-full eyebrow uppercase"
       style={{
         background: 'var(--color-bg-secondary)',
         border: '1px solid var(--color-border)',
         color: 'var(--color-text-secondary)',
-        letterSpacing: 'var(--tracking-wide)',
       }}
     >
       {mode}
@@ -131,7 +130,7 @@ function BudgetBar({ label, used, max, format }: { label: string; used: number; 
   const over = max > 0 && used >= max
   return (
     <div className="min-w-0">
-      <div className="flex justify-between text-[10.5px] text-[var(--color-text-muted)] mb-0.5">
+      <div className="flex justify-between text-2xs text-[var(--color-text-muted)] mb-0.5">
         <span>{label}</span>
         <span className="tabular-nums">{fmt(used)} / {fmt(max)}</span>
       </div>
@@ -170,7 +169,7 @@ function HypothesisCard({ id, hypothesis }: { id: HypothesisId; hypothesis: Inve
     >
       <div className="flex items-center gap-2">
         <Icon className="h-3.5 w-3.5 text-[var(--color-text-muted)]" />
-        <span className="text-[12.5px] font-semibold text-[var(--color-text)] flex-1 truncate">
+        <span className="text-sm font-semibold text-[var(--color-text)] flex-1 truncate">
           {hypothesis?.title || meta.title}
         </span>
         <HypothesisStatusIcon status={status} />
@@ -179,18 +178,18 @@ function HypothesisCard({ id, hypothesis }: { id: HypothesisId; hypothesis: Inve
       <div className="flex items-center gap-1.5">
         {hypothesis ? (
           <>
-            <span className="text-[13px] font-bold tabular-nums" style={{ color: confColor }}>
+            <span className="text-sm font-bold tabular-nums" style={{ color: confColor }}>
               {hypothesis.confidence}%
             </span>
             <BasisChip basis={hypothesis.confidence_basis} />
           </>
         ) : (
-          <span className="text-[11px] text-[var(--color-text-faint)]">awaiting agent</span>
+          <span className="text-2xs text-[var(--color-text-faint)]">awaiting agent</span>
         )}
       </div>
 
       {hypothesis?.summary && (
-        <p className="text-[11.5px] m-0 leading-[1.45]" style={{ color: 'var(--color-text-secondary)' }}>
+        <p className="text-xs m-0 leading-[1.45]" style={{ color: 'var(--color-text-secondary)' }}>
           {hypothesis.summary}
         </p>
       )}
@@ -201,7 +200,7 @@ function HypothesisCard({ id, hypothesis }: { id: HypothesisId; hypothesis: Inve
             type="button"
             onClick={() => setExpanded((e) => !e)}
             aria-expanded={expanded}
-            className="inline-flex items-center gap-1 text-[11px] font-medium hover:underline"
+            className="inline-flex items-center gap-1 text-2xs font-medium hover:underline"
             style={{ color: 'var(--color-accent)' }}
           >
             {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -212,14 +211,14 @@ function HypothesisCard({ id, hypothesis }: { id: HypothesisId; hypothesis: Inve
               {hypothesis.evidence.map((ev, i) => (
                 <li
                   key={i}
-                  className="rounded border px-2 py-1.5 text-[11px]"
+                  className="rounded border px-2 py-1.5 text-2xs"
                   style={{ background: 'var(--color-bg-secondary)', borderColor: 'var(--color-border)' }}
                 >
                   <div className="flex items-center gap-1.5">
                     <span className="font-semibold text-[var(--color-text)]">{ev.label}</span>
                     <span
-                      className="text-[9.5px] uppercase px-1 rounded-sm"
-                      style={{ background: 'var(--color-bg-hover)', color: 'var(--color-text-muted)', letterSpacing: 'var(--tracking-wide)' }}
+                      className="eyebrow uppercase px-1 rounded-sm"
+                      style={{ background: 'var(--color-bg-hover)', color: 'var(--color-text-muted)' }}
                     >
                       {ev.kind}
                     </span>
@@ -343,45 +342,44 @@ function VerdictPanel({ detail, isQaLead }: { detail: InvestigationDetail; isQaL
     >
       <div className="flex items-center gap-2 flex-wrap">
         <span
-          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold uppercase"
+          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full eyebrow uppercase"
           style={{
             background: 'var(--color-bg-secondary)',
             border: '1px solid var(--color-border-light)',
             color: verdict.primary_cause === 'unknown' ? 'var(--color-text-muted)' : 'var(--status-passed)',
-            letterSpacing: 'var(--tracking-wide)',
           }}
         >
           Primary cause · {causeTitle}
         </span>
-        <span className="text-[12px] font-semibold tabular-nums text-[var(--color-text-secondary)]">
+        <span className="text-xs font-semibold tabular-nums text-[var(--color-text-secondary)]">
           {verdict.confidence}% confidence
         </span>
         <span
-          className="ml-auto inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full uppercase font-semibold"
-          style={{ background: 'var(--color-bg-hover)', color: 'var(--color-text-muted)', letterSpacing: 'var(--tracking-wide)' }}
+          className="ml-auto inline-flex items-center gap-1 eyebrow px-2 py-0.5 rounded-full uppercase"
+          style={{ background: 'var(--color-bg-hover)', color: 'var(--color-text-muted)' }}
           title="This narrative was generated by the Investigator AI agent. Verify against the linked evidence."
         >
           <Sparkles className="h-3 w-3" /> AI-generated
         </span>
       </div>
-      <p className="text-[12.5px] m-0 mt-2 leading-[1.55]" style={{ color: 'var(--color-text-secondary)' }}>
+      <p className="text-sm m-0 mt-2 leading-[1.55]" style={{ color: 'var(--color-text-secondary)' }}>
         {verdict.narrative}
       </p>
       {verdict.recommended_actions.length > 0 && (
         <div className="mt-2">
-          <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+          <div className="eyebrow uppercase text-[var(--color-text-muted)]">
             Recommended actions
           </div>
           <ul className="m-0 mt-1 pl-4 flex flex-col gap-0.5">
             {verdict.recommended_actions.map((a, i) => (
-              <li key={i} className="text-[12px]" style={{ color: 'var(--color-text-secondary)' }}>{a}</li>
+              <li key={i} className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>{a}</li>
             ))}
           </ul>
         </div>
       )}
       <ProposedActions detail={detail} isQaLead={isQaLead} />
       {detail.mode === 'shadow' && (
-        <div className="text-[11px] mt-2 italic" style={{ color: 'var(--color-text-muted)' }}>
+        <div className="text-2xs mt-2 italic" style={{ color: 'var(--color-text-muted)' }}>
           Shadow mode — no actions were taken. The agent only recorded what it would do.
         </div>
       )}
@@ -407,7 +405,7 @@ function HistoryList({
   if (items.length === 0) return null
   return (
     <div className="mt-3">
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] mb-1.5" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+      <div className="eyebrow uppercase text-[var(--color-text-muted)] mb-1.5">
         Past investigations
       </div>
       <div className="flex flex-col gap-1">
@@ -421,7 +419,7 @@ function HistoryList({
               type="button"
               onClick={() => onSelect(it.id)}
               className={clsx(
-                'flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-left text-[11.5px] transition-colors hover:bg-[var(--color-bg-hover)]',
+                'flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors hover:bg-[var(--color-bg-hover)]',
               )}
               style={{
                 background: 'var(--color-bg)',
@@ -534,10 +532,10 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
     >
       {/* Header */}
       <div className="flex items-center justify-between gap-2.5 px-4 py-3 flex-wrap" style={{ borderBottom: '1px solid var(--color-border)' }}>
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)] inline-flex items-center gap-2">
+        <h3 className="text-sm font-semibold m-0 text-[var(--color-text)] inline-flex items-center gap-2">
           <Sparkles className="h-3.5 w-3.5" style={{ color: 'var(--color-accent)' }} />
           Agent Investigation
-          <span className="text-[10px] uppercase font-medium text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+          <span className="eyebrow uppercase text-[var(--color-text-muted)]">
             hypothesis loop
           </span>
           {detail && <ModeChip mode={detail.mode} />}
@@ -548,7 +546,7 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
               type="button"
               onClick={onCancel}
               data-testid="cancel-investigation"
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-md border transition-colors hover:bg-[var(--color-bg-hover)]"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors hover:bg-[var(--color-bg-hover)]"
               style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-secondary)' }}
             >
               <StopCircle className="h-3.5 w-3.5" />
@@ -573,7 +571,7 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
       <div className="px-4 py-3.5">
         {policyDisabled && (
           <div
-            className="rounded-md border px-3 py-2 mb-3 text-[12px]"
+            className="rounded-md border px-3 py-2 mb-3 text-xs"
             style={{ borderColor: 'var(--gate-conditional-border, var(--color-border))', background: 'var(--gate-conditional-bg, var(--color-bg-secondary))', color: 'var(--color-text-secondary)' }}
             data-testid="policy-disabled-note"
           >
@@ -585,7 +583,7 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
         )}
 
         {!detail && (
-          <p className="text-[12.5px] m-0 text-[var(--color-text-muted)]">
+          <p className="text-sm m-0 text-[var(--color-text-muted)]">
             No investigations yet for {runId ? 'this run' : 'this project'}. The Investigator agent tests five root-cause
             hypotheses in parallel — infrastructure, commit-caused, environment, known-flaky, regression — and links every
             claim to queryable evidence. It launches in shadow mode: it reports, it never acts.
@@ -596,19 +594,19 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
           <>
             {/* Status strip while active / terminal notice */}
             {isActive && (
-              <div className="flex items-center gap-2 mb-3 text-[12px]" style={{ color: 'var(--color-text-secondary)' }}>
+              <div className="flex items-center gap-2 mb-3 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: 'var(--color-accent)' }} />
                 <span className="capitalize font-medium">{detail.status}</span>
                 <span className="text-[var(--color-text-muted)]">— hypotheses update live every 2.5 s</span>
               </div>
             )}
             {detail.status === 'cancelled' && (
-              <div className="mb-3 text-[12px]" style={{ color: 'var(--color-text-muted)' }}>
+              <div className="mb-3 text-xs" style={{ color: 'var(--color-text-muted)' }}>
                 Investigation cancelled{detail.cancelled_by ? <> by {detail.cancelled_by}</> : null}.
               </div>
             )}
             {detail.status === 'failed' && (
-              <div className="mb-3 text-[12px]" style={{ color: 'var(--gate-no-go)' }}>
+              <div className="mb-3 text-xs" style={{ color: 'var(--gate-no-go)' }}>
                 Investigation failed before producing a verdict. Partial hypothesis results are shown below.
               </div>
             )}
@@ -641,7 +639,7 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
 
             {/* Details footer */}
             <div
-              className="flex items-center gap-1.5 flex-wrap mt-3 pt-2.5 text-[10.5px] text-[var(--color-text-muted)]"
+              className="flex items-center gap-1.5 flex-wrap mt-3 pt-2.5 text-2xs text-[var(--color-text-muted)]"
               style={{ borderTop: '1px dashed var(--color-border)' }}
             >
               <span>Triggered {TRIGGER_LABEL[detail.triggered_by] ?? detail.triggered_by}</span>

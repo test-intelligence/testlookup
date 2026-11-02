@@ -24,7 +24,7 @@ function verdictColor(verdict: string | null | undefined): string | undefined {
 
 function Note({ children, kind }: { children: React.ReactNode; kind: string }) {
   return (
-    <p data-ai-compare-note={kind} className="m-0 text-[12px] text-[var(--color-text-muted)]">{children}</p>
+    <p data-ai-compare-note={kind} className="m-0 text-xs text-[var(--color-text-muted)]">{children}</p>
   )
 }
 
@@ -34,12 +34,12 @@ function SideColumn({ side, title, runName, data }: { side: 'baseline' | 'curren
   const verdictHue = verdictColor(data?.verdict)
   return (
     <div data-ai-compare-side={side} className="min-w-0 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3">
-      <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">{title}</div>
-      <div className="text-[13px] font-semibold text-[var(--color-text)]">{runName}</div>
+      <div className="eyebrow uppercase text-[var(--color-text-muted)]">{title}</div>
+      <div className="text-sm font-semibold text-[var(--color-text)]">{runName}</div>
       {!data ? (
-        <p className="m-0 mt-1 text-[12px] text-[var(--color-text-muted)]">No AI analysis for this run.</p>
+        <p className="m-0 mt-1 text-xs text-[var(--color-text-muted)]">No AI analysis for this run.</p>
       ) : (
-        <div className="mt-1.5 space-y-1.5 text-[12px]">
+        <div className="mt-1.5 space-y-1.5 text-xs">
           <p className="m-0">
             <span
               data-ai-compare-verdict=""
@@ -53,17 +53,17 @@ function SideColumn({ side, title, runName, data }: { side: 'baseline' | 'curren
           <p className="m-0 text-[var(--color-text-secondary)]">
             {engineWord(data.engine)}{model ? ` ${model}` : ''}
             {data.deterministic && (
-              <span className="ml-1.5 rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              <span className="ml-1.5 rounded-full border border-[var(--color-border)] px-1.5 py-0.5 eyebrow uppercase text-[var(--color-text-muted)]">
                 deterministic
               </span>
             )}
-            {data.fallback_used && <span className="ml-1.5 text-[11px] text-[var(--status-broken)]">fallback used</span>}
+            {data.fallback_used && <span className="ml-1.5 text-2xs text-[var(--status-broken)]">fallback used</span>}
             <span className="ml-1.5 text-[var(--color-text-muted)]">· {data.analysed_tests} analysed</span>
           </p>
           {categories.length > 0 && (
             <ul className="m-0 flex list-none flex-wrap gap-1 p-0">
               {categories.map(([category, n]) => (
-                <li key={category} className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] text-[var(--color-text-secondary)]">
+                <li key={category} className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-2xs text-[var(--color-text-secondary)]">
                   <FailureCategoryMark category={category} size={8} />
                   {category} {n}
                 </li>
@@ -72,7 +72,7 @@ function SideColumn({ side, title, runName, data }: { side: 'baseline' | 'curren
           )}
           {(data.top_clusters ?? []).length > 0 && (
             <div>
-              <p className="m-0 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">Top suggested root causes</p>
+              <p className="m-0 eyebrow uppercase text-[var(--color-text-muted)]">Top suggested root causes</p>
               <ol className="m-0 list-decimal pl-5">
                 {data.top_clusters.slice(0, 5).map((c) => (
                   <li key={c.signature} className="text-[var(--color-text-secondary)]">
@@ -145,7 +145,7 @@ export default function AIAnalysisCompareSection({
           />
         )}
         {data.narrative && (
-          <p className="m-0 text-[11px] text-[var(--color-text-muted)]">
+          <p className="m-0 text-2xs text-[var(--color-text-muted)]">
             Narrative: <span data-ai-compare-narrative-label="" className="font-medium text-[var(--color-text-secondary)]">{data.narrative.label}</span>
             {data.narrative.report_status === 'queued' && ' (the AI narrative is being written)'}
           </p>

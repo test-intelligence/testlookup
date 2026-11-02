@@ -27,7 +27,7 @@ const TEST_ROWS = 50
 function SnapshotSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
     <section data-ai-snapshot-section={id} aria-label={title} className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] p-4">
-      <h3 className="m-0 mb-2 text-[13px] font-semibold text-[var(--color-text)]">{title}</h3>
+      <h3 className="m-0 mb-2 text-sm font-semibold text-[var(--color-text)]">{title}</h3>
       {children}
     </section>
   )
@@ -46,12 +46,12 @@ function PairedSummary({ runId, summaryVersion }: { runId: string; summaryVersio
   const versionId = summaries.data?.versions?.find((v) => v.version === summaryVersion)?.version_id ?? null
   const summary = useAIVersion(runId, versionId)
   if (summaryVersion == null) {
-    return <p className="m-0 text-[12px] text-[var(--color-text-muted)]">No summary was stored for this version.</p>
+    return <p className="m-0 text-xs text-[var(--color-text-muted)]">No summary was stored for this version.</p>
   }
   if (summaries.isLoading || summary.isLoading) return <LoadingSpinner size="sm" />
   const text = summaryText(summary.data?.payload as AIRunSummaryPayload | undefined)
   if (!text) {
-    return <p className="m-0 text-[12px] text-[var(--color-text-muted)]">No summary was stored for this version.</p>
+    return <p className="m-0 text-xs text-[var(--color-text-muted)]">No summary was stored for this version.</p>
   }
   return <ChatMarkdown text={text} />
 }
@@ -70,7 +70,7 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
     <div
       data-ai-snapshot-banner=""
       role="note"
-      className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[12px]"
+      className="flex flex-wrap items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs"
     >
       <Archive aria-hidden className="h-4 w-4 text-[var(--color-accent)]" />
       <span className="text-[var(--color-text)]">
@@ -82,7 +82,7 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
         type="button"
         data-ai-snapshot-back=""
         onClick={backToCurrent}
-        className="ml-auto inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-2 py-0.5 text-[12px] text-[var(--color-text)] hover:bg-[var(--color-bg-hover)]"
+        className="ml-auto inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-text)] hover:bg-[var(--color-bg-hover)]"
       >
         <ArrowLeft aria-hidden className="h-3 w-3" /> Back to current
       </button>
@@ -134,12 +134,12 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
       {banner}
 
       <SnapshotSection id="verdict" title="Verdict">
-        <p className="m-0 text-[14px] font-semibold text-[var(--color-text)]">
+        <p className="m-0 text-base font-semibold text-[var(--color-text)]">
           {verdict?.recommendation ?? 'No verdict was recorded'}
-          {verdict?.risk_score != null && <span className="ml-2 text-[12px] font-normal text-[var(--color-text-muted)]">risk {verdict.risk_score}/100</span>}
-          {verdict?.overridden && <span className="ml-2 text-[11px] font-normal text-[var(--color-text-muted)]">(the AI verdict before a human override)</span>}
+          {verdict?.risk_score != null && <span className="ml-2 text-xs font-normal text-[var(--color-text-muted)]">risk {verdict.risk_score}/100</span>}
+          {verdict?.overridden && <span className="ml-2 text-2xs font-normal text-[var(--color-text-muted)]">(the AI verdict before a human override)</span>}
         </p>
-        <p className="m-0 mt-1 text-[11px] text-[var(--color-text-muted)]">
+        <p className="m-0 mt-1 text-2xs text-[var(--color-text-muted)]">
           {digest.analysed_tests} analysed test{digest.analysed_tests === 1 ? '' : 's'}
           {digest.avg_confidence != null && ` · average confidence ${digest.avg_confidence}%`}
           {digest.flaky_count > 0 && ` · ${digest.flaky_count} flaky`}
@@ -149,7 +149,7 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
           <Link
             data-ai-snapshot-report=""
             to={evidenceHref(runId, reportRef.report_version, version)}
-            className="mt-2 inline-block text-[12px] text-[var(--color-accent)] underline underline-offset-2"
+            className="mt-2 inline-block text-xs text-[var(--color-accent)] underline underline-offset-2"
           >
             Open decision report v{reportRef.report_version}
           </Link>
@@ -164,7 +164,7 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
         <SnapshotSection id="categories" title="Failure categories">
           <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">
             {categories.map(([category, count]) => (
-              <li key={category} className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] text-[var(--color-text-secondary)]">
+              <li key={category} className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-2xs text-[var(--color-text-secondary)]">
                 <FailureCategoryMark category={category} size={8} />
                 {category} {count}
               </li>
@@ -177,11 +177,11 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
         <SnapshotSection id="clusters" title={`Failure clusters (${clusters.length})`}>
           <ul className="m-0 list-none space-y-1.5 p-0">
             {clusters.map((c) => (
-              <li key={c.signature} className="text-[12px]">
+              <li key={c.signature} className="text-xs">
                 <span className="font-medium text-[var(--color-text)]">{c.label || c.signature}</span>
                 <span className="ml-1 text-[var(--color-text-muted)]">({c.size} test{c.size === 1 ? '' : 's'})</span>
                 {c.representative_error && (
-                  <p className="m-0 mt-0.5 truncate font-mono text-[11px] text-[var(--color-text-faint)]" title={c.representative_error}>
+                  <p className="m-0 mt-0.5 truncate font-mono text-2xs text-[var(--color-text-faint)]" title={c.representative_error}>
                     {c.representative_error}
                   </p>
                 )}
@@ -193,9 +193,9 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
 
       {tests.length > 0 && (
         <SnapshotSection id="tests" title={`Analysed tests (${tests.length})`}>
-          <table className="w-full text-left text-[12px]">
+          <table className="w-full text-left text-xs">
             <thead>
-              <tr className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              <tr className="eyebrow uppercase text-[var(--color-text-muted)]">
                 <th className="py-1 pr-2 font-medium">Test</th>
                 <th className="py-1 pr-2 font-medium">Category</th>
                 <th className="py-1 pr-2 font-medium">Confidence</th>
@@ -226,13 +226,13 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
             <button
               type="button"
               onClick={() => setAllTests((v) => !v)}
-              className="mt-2 text-[12px] text-[var(--color-accent)] underline underline-offset-2"
+              className="mt-2 text-xs text-[var(--color-accent)] underline underline-offset-2"
             >
               {allTests ? `Show the first ${TEST_ROWS}` : `Show all ${tests.length}`}
             </button>
           )}
           {digest.limits?.tests_truncated && (
-            <p className="m-0 mt-1 text-[11px] text-[var(--color-text-faint)]">
+            <p className="m-0 mt-1 text-2xs text-[var(--color-text-faint)]">
               The stored version kept {tests.length} of {digest.limits.tests_total} analysed tests.
             </p>
           )}
@@ -240,7 +240,7 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
       )}
 
       <SnapshotSection id="provenance" title="How this version was produced">
-        <dl className="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-[12px]">
+        <dl className="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-0.5 text-xs">
           <dt className="text-[var(--color-text-muted)]">Engine</dt>
           <dd className="m-0 text-[var(--color-text)]">{engineWord(provenance?.engine ?? summary.analysis_mode)}{summary.deterministic ? ' (deterministic)' : ''}</dd>
           <dt className="text-[var(--color-text-muted)]">Model</dt>
@@ -259,13 +259,13 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
           <dd className="m-0 text-[var(--color-text)]">{summary.trigger === 'backfill' ? 'backfilled from the stored analysis' : summary.trigger}</dd>
         </dl>
         {provenance?.carried_over_tests != null && provenance.carried_over_tests > 0 && (
-          <p data-ai-snapshot-carried-over="" className="m-0 mt-2 text-[11px] text-[var(--color-text-muted)]">
+          <p data-ai-snapshot-carried-over="" className="m-0 mt-2 text-2xs text-[var(--color-text-muted)]">
             {provenance.carried_over_tests} test{provenance.carried_over_tests === 1 ? ' was' : 's were'} not re-analysed by this pipeline:
             their conclusions were carried over from an earlier analysis.
           </p>
         )}
         {(provenance?.partial ?? []).length > 0 && (
-          <p className="m-0 mt-1 text-[11px] text-[var(--color-text-muted)]">Partial: {(provenance?.partial ?? []).join(', ')}</p>
+          <p className="m-0 mt-1 text-2xs text-[var(--color-text-muted)]">Partial: {(provenance?.partial ?? []).join(', ')}</p>
         )}
       </SnapshotSection>
     </div>

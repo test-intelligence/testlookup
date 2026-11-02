@@ -384,3 +384,35 @@ describe('InvestigatorCockpit — proposed actions', () => {
     expect(screen.getByTestId('investigation-verdict')).toHaveTextContent('Recommended actions')
   })
 })
+
+// ── W29d UIX-04c: the type scale (contract §6.2) ──────────────────────────
+
+describe('InvestigatorCockpit — the type scale', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('with a completed investigation on screen no element carries a text-[Npx] class or an inline font-size, and "hypothesis loop" is an eyebrow', async () => {
+    await asRole(true)
+    await mockHooks({
+      detail: completedDetail(),
+      items: [{ id: 'inv-1', run_id: 'run-1', run_build_number: 812, status: 'completed', mode: 'suggest', triggered_by: 'manual', primary_cause: 'known_flaky', confidence: 84, started_at: '2026-07-15T10:00:00Z', completed_at: '2026-07-15T10:05:00Z' }],
+    })
+    renderCockpit()
+    // Every state-dependent atom on screen: an evidence list (its kind chips), the in-page Propose form, the history.
+    fireEvent.click(screen.getByRole('button', { name: /2 evidence items/i }))
+    fireEvent.click(within(screen.getAllByTestId('cockpit-action-row')[0]).getByRole('button', { name: 'Do it myself' }))
+    expect(screen.getByText('Splunk span')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Propose quarantine' })).toBeInTheDocument()
+    expect(screen.getByText('Past investigations')).toBeInTheDocument()
+
+    const cockpit = screen.getByTestId('investigator-cockpit')
+    const offScale = [cockpit, ...cockpit.querySelectorAll<HTMLElement | SVGElement>('*')].filter(
+      (el) => /(?<![\w-])text-\[\d+(?:\.\d+)?px\]/.test(el.getAttribute('class') ?? '') || el.style.fontSize !== '',
+    )
+    expect(offScale.map((el) => el.outerHTML.slice(0, 120))).toEqual([])
+    const loop = screen.getByText('hypothesis loop')
+    expect(loop).toHaveClass('eyebrow')
+    expect(loop.style.letterSpacing).toBe('')
+  })
+})

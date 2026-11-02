@@ -34,7 +34,7 @@ export default function AIVersionPicker({
   const ordered = [...versions].sort((a, b) => b.version - a.version)
   if (!loading && ordered.length === 0) {
     return (
-      <div data-ai-version-picker="" className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+      <div data-ai-version-picker="" className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
         <History aria-hidden className="h-3.5 w-3.5" />
         <span data-ai-version-empty="">
           {FIRST_ANALYSIS_TEXT}: earlier analyses appear here after the run is analysed again.
@@ -46,10 +46,10 @@ export default function AIVersionPicker({
   // Comparing the current data with itself says nothing: "Current data" is offered only while a stored version is viewed.
   const compareOptions = ordered.filter((v) => v.version !== selected)
   return (
-    <div data-ai-version-picker="" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12px]">
+    <div data-ai-version-picker="" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
       <span className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]">
         <History aria-hidden className="h-3.5 w-3.5" />
-        <span className="font-semibold uppercase tracking-wide text-[11px]">AI history</span>
+        <span className="eyebrow uppercase">AI history</span>
       </span>
       <span data-ai-version-meta="" className="font-medium text-[var(--color-text)]">
         {shown ? versionLabel(shown) : 'Loading versions…'}
@@ -58,7 +58,7 @@ export default function AIVersionPicker({
       {shown?.deterministic && (
         <span
           data-ai-version-deterministic=""
-          className="rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]"
+          className="rounded-full border border-[var(--color-border)] px-1.5 py-0.5 eyebrow uppercase text-[var(--color-text-muted)]"
         >
           deterministic
         </span>
@@ -72,7 +72,7 @@ export default function AIVersionPicker({
           const value = Number(event.target.value)
           onSelect(event.target.value === '' || !Number.isInteger(value) ? null : value)
         }}
-        className="max-w-[320px] rounded border border-[var(--color-border)] bg-[var(--color-bg-card)] px-2 py-1 text-[12px] text-[var(--color-text)] disabled:opacity-50"
+        className="max-w-[320px] rounded border border-[var(--color-border)] bg-[var(--color-bg-card)] px-2 py-1 text-xs text-[var(--color-text)] disabled:opacity-50"
       >
         <option value="">Current</option>
         {ordered.map((v) => (
@@ -89,7 +89,7 @@ export default function AIVersionPicker({
           const value = Number(raw)
           onCompare(raw === '' ? null : raw === 'live' ? 'live' : Number.isInteger(value) ? value : null)
         }}
-        className="max-w-[320px] rounded border border-[var(--color-border)] bg-[var(--color-bg-card)] px-2 py-1 text-[12px] text-[var(--color-text)] disabled:opacity-50"
+        className="max-w-[320px] rounded border border-[var(--color-border)] bg-[var(--color-bg-card)] px-2 py-1 text-xs text-[var(--color-text)] disabled:opacity-50"
       >
         <option value="">Compare with…</option>
         {compareOptions.map((v) => (

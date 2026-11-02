@@ -117,14 +117,14 @@ function ClaimsSection({ claims, actions, actionStatuses, onInspect }: { claims:
           const items = claims.filter(item => item.kind === kind)
           return (
             <div key={kind} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3">
-              <h4 className="m-0 text-[12px] font-semibold">{label} · {items.length}</h4>
-              {items.length === 0 ? <p className="mb-0 mt-2 text-[12px] text-[var(--color-text-muted)]">None recorded</p> : (
-                <ul className="mt-2 mb-0 list-none space-y-2 p-0 text-[12px]">
+              <h4 className="m-0 text-xs font-semibold">{label} · {items.length}</h4>
+              {items.length === 0 ? <p className="mb-0 mt-2 text-xs text-[var(--color-text-muted)]">None recorded</p> : (
+                <ul className="mt-2 mb-0 list-none space-y-2 p-0 text-xs">
                   {items.slice(0, 8).map(item => (
                     <li key={item.claim_id}>
                       <p className="m-0 text-[var(--color-text)]">{item.text}</p>
-                      <span className="text-[11px] text-[var(--color-text-muted)]">Confidence {Math.round(item.confidence * 100)}% · {item.confidence_basis}</span>
-                      <button type="button" className="mt-1 block text-[11px] font-semibold text-[var(--color-accent)] hover:underline" onClick={() => onInspect(item)} aria-label={`Inspect evidence for ${item.claim_id}`}>
+                      <span className="text-2xs text-[var(--color-text-muted)]">Confidence {Math.round(item.confidence * 100)}% · {item.confidence_basis}</span>
+                      <button type="button" className="mt-1 block text-2xs font-semibold text-[var(--color-accent)] hover:underline" onClick={() => onInspect(item)} aria-label={`Inspect evidence for ${item.claim_id}`}>
                         Inspect evidence
                       </button>
                     </li>
@@ -136,11 +136,11 @@ function ClaimsSection({ claims, actions, actionStatuses, onInspect }: { claims:
         })}
       </div>
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3" data-proposed-actions="">
-        <h4 className="m-0 text-[12px] font-semibold">Proposed actions · {actions.length}</h4>
-        {actions.length === 0 ? <p className="mb-0 mt-2 text-[12px] text-[var(--color-text-muted)]">No actions proposed</p> : (
-          <ul className="mt-2 mb-0 list-none space-y-2 p-0 text-[12px]">
+        <h4 className="m-0 text-xs font-semibold">Proposed actions · {actions.length}</h4>
+        {actions.length === 0 ? <p className="mb-0 mt-2 text-xs text-[var(--color-text-muted)]">No actions proposed</p> : (
+          <ul className="mt-2 mb-0 list-none space-y-2 p-0 text-xs">
             {actions.slice(0, 8).map(action => {
-              const meta = <span className="text-[11px] text-[var(--color-text-muted)]">Owner {action.owner} · {action.required_permission} · {action.risk} risk</span>
+              const meta = <span className="text-2xs text-[var(--color-text-muted)]">Owner {action.owner} · {action.required_permission} · {action.risk} risk</span>
               const status = actionStatuses?.[action.idempotency_key]
               return (
                 <li key={action.idempotency_key}>
@@ -171,17 +171,17 @@ function ClaimsSection({ claims, actions, actionStatuses, onInspect }: { claims:
 function EvidenceDrawer({ claim, reportHash, reportVersion, runId, onClose }: { claim: DecisionClaim; reportHash: string; reportVersion?: DecisionReportVersion | null; runId: string; onClose: () => void }) {
   const renderEvidence = (items: Array<Record<string, unknown>>, label: string) => (
     <section className="mt-3">
-      <h4 className="m-0 text-[12px] font-semibold">{label} · {items.length}</h4>
-      {items.length === 0 ? <p className="mb-0 mt-2 text-[12px] text-[var(--color-text-muted)]">None recorded</p> : (
-        <ul className="mt-2 mb-0 list-none space-y-2 p-0 text-[12px]">
+      <h4 className="m-0 text-xs font-semibold">{label} · {items.length}</h4>
+      {items.length === 0 ? <p className="mb-0 mt-2 text-xs text-[var(--color-text-muted)]">None recorded</p> : (
+        <ul className="mt-2 mb-0 list-none space-y-2 p-0 text-xs">
           {items.slice(0, 10).map((item, index) => (
             <li key={`${String(item.id ?? item.evidence_id ?? 'evidence')}-${index}`} className="rounded border border-[var(--color-border)] p-2">
               <strong>{text(item.source, text(item.type, 'Evidence'))}</strong>
               <span className="ml-2 text-[var(--color-text-muted)]">{text(item.kind, text(item.definition_version, 'reference'))}</span>
               {typeof item.excerpt === 'string' && item.excerpt && <p className="mb-0 mt-1 whitespace-pre-wrap">{item.excerpt}</p>}
-              <span className="mt-1 block font-mono text-[10px] text-[var(--color-text-muted)]">{text(item.id, text(item.evidence_id, 'unidentified'))}</span>
-              {reportVersion && item.type === 'artifact' && <Link className="mt-1 inline-block text-[11px] font-semibold text-[var(--color-accent)] hover:underline" to={runAnalysisHref(runId, { report_id: reportVersion.report_id, report_version: String(reportVersion.report_version), test_case_id: String((item.scope as Record<string, unknown> | undefined)?.test_case_id ?? '') })}>Open source context</Link>}
-              {reportVersion && item.type === 'metric' && <Link className="mt-1 inline-block text-[11px] font-semibold text-[var(--color-accent)] hover:underline" to={`${runAnalysisHref(runId, { report_id: reportVersion.report_id, report_version: String(reportVersion.report_version) })}#decision-metrics`}>Open metric definition</Link>}
+              <span className="mt-1 block font-mono text-2xs text-[var(--color-text-muted)]">{text(item.id, text(item.evidence_id, 'unidentified'))}</span>
+              {reportVersion && item.type === 'artifact' && <Link className="mt-1 inline-block text-2xs font-semibold text-[var(--color-accent)] hover:underline" to={runAnalysisHref(runId, { report_id: reportVersion.report_id, report_version: String(reportVersion.report_version), test_case_id: String((item.scope as Record<string, unknown> | undefined)?.test_case_id ?? '') })}>Open source context</Link>}
+              {reportVersion && item.type === 'metric' && <Link className="mt-1 inline-block text-2xs font-semibold text-[var(--color-accent)] hover:underline" to={`${runAnalysisHref(runId, { report_id: reportVersion.report_id, report_version: String(reportVersion.report_version) })}#decision-metrics`}>Open metric definition</Link>}
             </li>
           ))}
         </ul>
@@ -197,12 +197,12 @@ function EvidenceDrawer({ claim, reportHash, reportVersion, runId, onClose }: { 
       closeLabel="Close evidence"
       onClose={onClose}
       description={
-        <p className="m-0 text-[11px] text-[var(--color-text-muted)]">
+        <p className="m-0 text-2xs text-[var(--color-text-muted)]">
           <span className="uppercase tracking-wider">Claim evidence</span> · Source stage: {claim.source_stage} · Confidence {Math.round(claim.confidence * 100)}% · Report {reportHash.slice(0, 12)}…
         </p>
       }
     >
-      <p className="m-0 text-[12px] text-[var(--color-text-secondary)]"><strong>Confidence basis:</strong> {claim.confidence_basis}</p>
+      <p className="m-0 text-xs text-[var(--color-text-secondary)]"><strong>Confidence basis:</strong> {claim.confidence_basis}</p>
       {renderEvidence(claim.evidence, 'Evidence')}
       {renderEvidence(claim.counter_evidence, 'Counter-evidence')}
     </InlineFormSection>
@@ -249,11 +249,11 @@ function EvidenceGroup({ title, count, children }: {
 }) {
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3">
-      <h4 className="m-0 text-[12px] font-semibold text-[var(--color-text)]">{title} · {count}</h4>
+      <h4 className="m-0 text-xs font-semibold text-[var(--color-text)]">{title} · {count}</h4>
       {count === 0 ? (
-        <p className="mb-0 text-[12px] text-[var(--color-text-muted)]">No findings</p>
+        <p className="mb-0 text-xs text-[var(--color-text-muted)]">No findings</p>
       ) : (
-        <ul className="mt-2 mb-0 space-y-2 p-0 list-none text-[12px]">
+        <ul className="mt-2 mb-0 space-y-2 p-0 list-none text-xs">
           {children}
         </ul>
       )}
@@ -297,18 +297,18 @@ export default function DecisionIntelligencePanel({
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="m-0 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+          <p className="m-0 eyebrow uppercase text-[var(--color-text-muted)]">
             Agentic decision report
           </p>
-          <h2 id={headingId} className="mt-1 mb-0 text-[18px] font-semibold">
+          <h2 id={headingId} className="mt-1 mb-0 text-lg font-semibold">
             Decision intelligence
           </h2>
           {reportVersions.length > 0 && onSelectReportVersion && (
-            <label className="mt-2 flex items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
+            <label className="mt-2 flex items-center gap-2 text-2xs text-[var(--color-text-muted)]">
               <span>Report version</span>
               <select
                 aria-label="Decision report version"
-                className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)] px-2 py-1 text-[11px] text-[var(--color-text)]"
+                className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)] px-2 py-1 text-2xs text-[var(--color-text)]"
                 value={selectedReportVersion ?? reportVersion?.report_version ?? reportVersions[0]?.report_version ?? ''}
                 onChange={(event) => {
                   const value = Number(event.target.value)
@@ -324,7 +324,7 @@ export default function DecisionIntelligencePanel({
             </label>
           )}
         </div>
-        <span role={verified ? 'status' : undefined} className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[12px] font-semibold">
+        <span role={verified ? 'status' : undefined} className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold">
           {verified ? <ShieldCheck aria-hidden className="h-4 w-4 text-[var(--status-passed)]" />
             : state === 'pending' ? <Clock3 aria-hidden className="h-4 w-4 text-[var(--color-text-muted)]" />
             : <ShieldX aria-hidden className="h-4 w-4 text-[var(--status-failed)]" />}
@@ -342,7 +342,7 @@ export default function DecisionIntelligencePanel({
       </div>
 
       {(state === 'rejected_stale' || state === 'rejected_empty') && (
-        <div role="alert" className="mt-3 flex gap-2 rounded-md border border-[var(--alert-border-soft)] bg-[var(--alert-bg-soft)] p-3 text-[13px]">
+        <div role="alert" className="mt-3 flex gap-2 rounded-md border border-[var(--alert-border-soft)] bg-[var(--alert-bg-soft)] p-3 text-sm">
           <AlertTriangle aria-hidden className="h-4 w-4 flex-none text-[var(--status-failed)]" />
           <div>
             <strong>{stale ? 'Showing the last verified report.' : 'No verified decision report is available.'}</strong>{' '}
@@ -356,40 +356,40 @@ export default function DecisionIntelligencePanel({
       )}
 
       {state === 'pending' && (
-        <p className="mt-3 mb-0 text-[13px] text-[var(--color-text-secondary)]">
+        <p className="mt-3 mb-0 text-sm text-[var(--color-text-secondary)]">
           Terminal verification is still pending. No decision-ready recommendation is shown.
         </p>
       )}
 
       {state === 'inconsistent' && (
-        <p className="mt-3 mb-0 text-[13px] text-[var(--status-failed)]">
+        <p className="mt-3 mb-0 text-sm text-[var(--status-failed)]">
           Verification metadata is missing or inconsistent. This report is not decision-ready.
         </p>
       )}
 
       {!displayReport ? null : (
         <>
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-[var(--color-text-muted)]">
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-2xs text-[var(--color-text-muted)]">
             <span>Report generated <time dateTime={displayReport.generated_at}>{formatTime(displayReport.generated_at)}</time></span>
             {latestAttempt?.at && <span>Latest attempt <time dateTime={latestAttempt.at}>{formatTime(latestAttempt.at)}</time></span>}
             <span className="font-mono">Evidence {displayReport.evidence_bundle_sha256.slice(0, 12)}…</span>
           </div>
           <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_2fr]">
             <div className="rounded-lg border border-[var(--color-border)] p-3">
-              <p className="m-0 text-[11px] uppercase tracking-wider text-[var(--color-text-muted)]">Release policy</p>
+              <p className="m-0 eyebrow uppercase text-[var(--color-text-muted)]">Release policy</p>
               <div className="mt-1 flex items-end gap-2">
-                <strong className="text-[22px]">{text(release?.recommendation, 'Unavailable')}</strong>
-                <span className="pb-0.5 text-[12px] text-[var(--color-text-muted)]">{risk === null ? 'Risk unavailable' : `Risk ${Math.round(risk)}/100`}</span>
+                <strong className="text-2xl">{text(release?.recommendation, 'Unavailable')}</strong>
+                <span className="pb-0.5 text-xs text-[var(--color-text-muted)]">{risk === null ? 'Risk unavailable' : `Risk ${Math.round(risk)}/100`}</span>
               </div>
-              {release?.reasoning && <p className="mb-0 text-[12px] text-[var(--color-text-secondary)]">{release.reasoning}</p>}
+              {release?.reasoning && <p className="mb-0 text-xs text-[var(--color-text-secondary)]">{release.reasoning}</p>}
             </div>
             <dl className="m-0 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {metricLabels.map(([key, label]) => {
                 const value = number(displayReport.metrics[key])
                 return (
                   <div key={key} className="rounded-lg border border-[var(--color-border)] p-2.5">
-                    <dt className="text-[11px] text-[var(--color-text-muted)]">{label}</dt>
-                    <dd className="m-0 mt-1 text-[16px] font-semibold">{value === null ? '—' : displayMetric(key, value)}</dd>
+                    <dt className="text-2xs text-[var(--color-text-muted)]">{label}</dt>
+                    <dd className="m-0 mt-1 text-md font-semibold">{value === null ? '—' : displayMetric(key, value)}</dd>
                   </div>
                 )
               })}
@@ -411,7 +411,7 @@ export default function DecisionIntelligencePanel({
             || displayReport.quality_review.missing_or_failed_specialists.length > 0
             || displayReport.quality_review.contradictions.length > 0
             || (displayReport.quality_review.data_quality_flags?.length ?? 0) > 0) && (
-            <div className="mt-3 rounded-md border border-[var(--alert-border-soft)] bg-[var(--alert-bg-soft)] p-3 text-[12px]">
+            <div className="mt-3 rounded-md border border-[var(--alert-border-soft)] bg-[var(--alert-bg-soft)] p-3 text-xs">
               <strong>Human review required.</strong>{' '}
               {coverage?.hasAnalysisGaps && coverageNote && (
                 <span>{coverageNote} </span>
@@ -432,7 +432,7 @@ export default function DecisionIntelligencePanel({
             </div>
           )}
 
-          <div className="mt-3 rounded-md border border-[var(--color-border)] px-3 py-2 text-[12px]">
+          <div className="mt-3 rounded-md border border-[var(--color-border)] px-3 py-2 text-xs">
             <button type="button" className="font-semibold" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded(value => !value)}>
               Verification and provenance
             </button>
@@ -452,7 +452,7 @@ export default function DecisionIntelligencePanel({
             </div>
             }
           </div>
-          <div className="mt-3 flex flex-wrap gap-3 text-[12px]">
+          <div className="mt-3 flex flex-wrap gap-3 text-xs">
             <Link className="text-[var(--color-accent)] hover:underline" to={runAnalysisHref(runId)}>Inspect evidence</Link>
             <Link className="text-[var(--color-accent)] hover:underline" to={`/release-gate/${runId}`}>Review policy and overrides</Link>
           </div>

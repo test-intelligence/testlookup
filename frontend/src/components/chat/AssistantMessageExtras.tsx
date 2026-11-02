@@ -78,7 +78,7 @@ export default function AssistantMessageExtras({
             <ul className="mt-1.5 ml-4 space-y-1">
               {toolTrace.map((entry, i) => (
                 <li key={i} className="text-xs text-[var(--color-text-muted)]">
-                  <span className="font-mono text-[11px] text-[var(--color-text-secondary)]">{entry.tool}</span>
+                  <span className="font-mono text-2xs text-[var(--color-text-secondary)]">{entry.tool}</span>
                   {' — '}
                   {entry.summary}
                 </li>

@@ -27,7 +27,7 @@ const DIRECTION_TONE: Record<string, string> = {
 
 function More({ hidden }: { hidden: number }) {
   if (hidden <= 0) return null
-  return <li className="text-[11px] text-[var(--color-text-faint)]">+{hidden} more</li>
+  return <li className="text-2xs text-[var(--color-text-faint)]">+{hidden} more</li>
 }
 
 function TestRow({ row, runId, fromRunId }: { row: DiffTestRow; runId: string; fromRunId?: string }) {
@@ -48,14 +48,14 @@ function TestRow({ row, runId, fromRunId }: { row: DiffTestRow; runId: string; f
         data-ai-diff-row="test"
         data-test-fingerprint={row.fingerprint}
         to={runTestHref(targetRun, row.testId)}
-        className="block rounded px-1 py-0.5 text-[12px] hover:bg-[var(--color-bg-hover)]"
+        className="block rounded px-1 py-0.5 text-xs hover:bg-[var(--color-bg-hover)]"
       >
         {body}
       </Link>
     )
   }
   return (
-    <span data-ai-diff-row="test" data-test-fingerprint={row.fingerprint} className="block px-1 py-0.5 text-[12px]">
+    <span data-ai-diff-row="test" data-test-fingerprint={row.fingerprint} className="block px-1 py-0.5 text-xs">
       {body}
     </span>
   )
@@ -71,7 +71,7 @@ function TestGroups({ groups, runId, fromRunId, maxRows }: {
     <div className="grid gap-2">
       {groups.map((group) => (
         <div key={group.id} data-ai-diff-group={group.id}>
-          <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+          <p className="m-0 eyebrow uppercase text-[var(--color-text-muted)]">
             {group.label} ({group.rows.length})
           </p>
           <ul className="m-0 list-none p-0">
@@ -93,12 +93,12 @@ function ClusterGroups({ groups, maxRows }: { groups: DiffClusterGroup[]; maxRow
     <div className="grid gap-2 md:grid-cols-3">
       {groups.map((group) => (
         <div key={group.id} data-ai-diff-group={group.id}>
-          <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+          <p className="m-0 eyebrow uppercase text-[var(--color-text-muted)]">
             {group.label} ({group.rows.length})
           </p>
           <ul className="m-0 list-none p-0">
             {group.rows.slice(0, maxRows).map((row) => (
-              <li key={row.key} data-ai-diff-row="cluster" data-matched-by={row.matchedBy ?? undefined} className="py-0.5 text-[12px]">
+              <li key={row.key} data-ai-diff-row="cluster" data-matched-by={row.matchedBy ?? undefined} className="py-0.5 text-xs">
                 <span className="text-[var(--color-text)] break-words">{row.label}</span>
                 <span className="ml-1 text-[var(--color-text-muted)]">({row.detail})</span>
               </li>
@@ -114,7 +114,7 @@ function ClusterGroups({ groups, maxRows }: { groups: DiffClusterGroup[]; maxRow
 function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
     <div data-ai-diff-section={id} className="space-y-1.5">
-      <h4 className="m-0 text-[12px] font-semibold text-[var(--color-text-secondary)]">{title}</h4>
+      <h4 className="m-0 text-xs font-semibold text-[var(--color-text-secondary)]">{title}</h4>
       {children}
     </div>
   )
@@ -142,13 +142,13 @@ export default function AIDigestDiff({
   const model = buildDiffModel(diff, { mode })
   return (
     <section data-ai-diff="" data-ai-diff-mode={model.mode} aria-label="AI analysis differences" className="space-y-3">
-      <p className="m-0 text-[11px] text-[var(--color-text-muted)]">
+      <p className="m-0 text-2xs text-[var(--color-text-muted)]">
         <span className="font-medium text-[var(--color-text-secondary)]">{fromLabel}</span>
         {' -> '}
         <span className="font-medium text-[var(--color-text-secondary)]">{toLabel}</span>
       </p>
       {model.isEmpty && (
-        <p data-ai-diff-empty="" className="m-0 text-[12px] text-[var(--color-text-muted)]">{model.emptyText}</p>
+        <p data-ai-diff-empty="" className="m-0 text-xs text-[var(--color-text-muted)]">{model.emptyText}</p>
       )}
       {model.sections.map((id) => {
         switch (id) {
@@ -158,13 +158,13 @@ export default function AIDigestDiff({
                 key={id}
                 data-ai-diff-section="provenance"
                 role="note"
-                className="flex items-start gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-[12px]"
+                className="flex items-start gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-xs"
               >
                 <Info aria-hidden className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-[var(--color-accent)]" />
                 <div className="min-w-0">
                   <p className="m-0 text-[var(--color-text)]">{model.provenance.note}</p>
                   {model.provenance.changes.length > 0 && (
-                    <p className="m-0 mt-0.5 text-[11px] text-[var(--color-text-muted)]">{model.provenance.changes.join(' · ')}</p>
+                    <p className="m-0 mt-0.5 text-2xs text-[var(--color-text-muted)]">{model.provenance.changes.join(' · ')}</p>
                   )}
                 </div>
               </div>
@@ -172,10 +172,10 @@ export default function AIDigestDiff({
           case 'verdict':
             return model.verdict && (
               <Section key={id} id="verdict" title="Verdict">
-                <p className={clsx('m-0 text-[13px] font-semibold', DIRECTION_TONE[model.verdict.direction] ?? 'text-[var(--color-text)]')}>
+                <p className={clsx('m-0 text-sm font-semibold', DIRECTION_TONE[model.verdict.direction] ?? 'text-[var(--color-text)]')}>
                   {model.verdict.text}
                   {model.verdict.risk && (
-                    <span className="ml-2 text-[12px] font-normal text-[var(--color-text-muted)]">{model.verdict.risk}</span>
+                    <span className="ml-2 text-xs font-normal text-[var(--color-text-muted)]">{model.verdict.risk}</span>
                   )}
                 </p>
               </Section>
@@ -189,7 +189,7 @@ export default function AIDigestDiff({
                       key={row.category}
                       data-ai-diff-category={row.category}
                       title={`${row.from} -> ${row.to}`}
-                      className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] text-[var(--color-text-secondary)]"
+                      className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-1.5 py-0.5 text-2xs text-[var(--color-text-secondary)]"
                     >
                       <FailureCategoryMark category={row.category} size={8} />
                       {row.text}
@@ -209,7 +209,7 @@ export default function AIDigestDiff({
               <Section key={id} id="tests" title="Tests">
                 <TestGroups groups={model.tests.groups} runId={runId} fromRunId={fromRunId} maxRows={maxRows} />
                 {(model.tests.persistingUnchanged > 0 || model.tests.truncated) && (
-                  <p className="m-0 text-[11px] text-[var(--color-text-faint)]">
+                  <p className="m-0 text-2xs text-[var(--color-text-faint)]">
                     {model.tests.persistingUnchanged > 0 && `${model.tests.persistingUnchanged} analysed test${model.tests.persistingUnchanged === 1 ? '' : 's'} unchanged.`}
                     {model.tests.truncated && ' The list was cut at 200 changes per group; the counts are complete.'}
                   </p>
@@ -219,7 +219,7 @@ export default function AIDigestDiff({
           case 'actions':
             return (
               <Section key={id} id="actions" title="Recommended actions">
-                <ul className="m-0 list-none space-y-0.5 p-0 text-[12px]">
+                <ul className="m-0 list-none space-y-0.5 p-0 text-xs">
                   {model.actions.added.map((a) => (
                     <li key={`+${a}`} data-ai-diff-action="added" className="text-[var(--color-text)]">+ {a}</li>
                   ))}

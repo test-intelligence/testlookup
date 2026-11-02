@@ -103,19 +103,19 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
   return (
     <div className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3" data-testid="decision-report-feedback">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-[12px] font-semibold">Was this report useful?</span>
+        <span className="text-xs font-semibold">Was this report useful?</span>
         {utilityChoices.map(([rating, label]) => (
-          <button key={rating} type="button" className="rounded border border-[var(--color-border)] px-2 py-1 text-[11px] hover:border-[var(--color-accent)]" onClick={() => void submitUtility(rating)}>
+          <button key={rating} type="button" className="rounded border border-[var(--color-border)] px-2 py-1 text-2xs hover:border-[var(--color-accent)]" onClick={() => void submitUtility(rating)}>
             {label}
           </button>
         ))}
-        {utilityStatus && <span role="status" className="text-[11px] text-[var(--color-text-secondary)]">{utilityStatus}</span>}
+        {utilityStatus && <span role="status" className="text-2xs text-[var(--color-text-secondary)]">{utilityStatus}</span>}
       </div>
       {claims.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
-          <span className="text-[11px] text-[var(--color-text-muted)]">Correct a claim:</span>
+          <span className="text-2xs text-[var(--color-text-muted)]">Correct a claim:</span>
           {claims.slice(0, 8).map(claim => (
-            <button key={claim.claim_id} type="button" className="text-[11px] font-semibold text-[var(--color-accent)] hover:underline" onClick={() => {
+            <button key={claim.claim_id} type="button" className="text-2xs font-semibold text-[var(--color-accent)] hover:underline" onClick={() => {
               setSelectedClaim(claim)
               setEvidenceId(refId(claim.evidence[0] ?? claim.counter_evidence[0] ?? {}))
               setError(null)
@@ -133,7 +133,7 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
           title="Correct claim"
           titleId="claim-correction-heading"
           headingLevel={3}
-          description={<span className="text-[12px] text-[var(--color-text-secondary)]">{selectedClaim.text}</span>}
+          description={<span className="text-xs text-[var(--color-text-secondary)]">{selectedClaim.text}</span>}
           onClose={() => setSelectedClaim(null)}
           canClose={!submitting}
           // The dialog had no X: Cancel and Escape close it.
@@ -142,25 +142,25 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
           onSubmit={submitCorrection}
           footer={
             <>
-              <button type="button" className="rounded border border-[var(--color-border)] px-3 py-1.5 text-[12px]" onClick={() => setSelectedClaim(null)}>Cancel</button>
+              <button type="button" className="rounded border border-[var(--color-border)] px-3 py-1.5 text-xs" onClick={() => setSelectedClaim(null)}>Cancel</button>
               <button type="submit" disabled={submitting || evidenceOptions.length === 0} className="btn-primary btn-sm">{submitting ? 'Recording…' : 'Record correction'}</button>
             </>
           }
         >
           <div className="max-w-2xl">
-            <label className="block text-[12px] font-semibold">Correction type
-              <select className="mt-1 block w-full rounded border border-[var(--color-border)] bg-transparent p-2 text-[12px]" value={correctionType} onChange={event => setCorrectionType(event.target.value as DecisionReportCorrectionType)}>
+            <label className="block text-xs font-semibold">Correction type
+              <select className="mt-1 block w-full rounded border border-[var(--color-border)] bg-transparent p-2 text-xs" value={correctionType} onChange={event => setCorrectionType(event.target.value as DecisionReportCorrectionType)}>
                 {correctionChoices.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </label>
-            <label className="mt-3 block text-[12px] font-semibold">Correct value
-              <input required value={correctedValue} onChange={event => setCorrectedValue(event.target.value)} className="mt-1 block w-full rounded border border-[var(--color-border)] bg-transparent p-2 text-[12px]" placeholder={correctionType === 'flaky' ? 'true or false' : 'Your correction'} />
+            <label className="mt-3 block text-xs font-semibold">Correct value
+              <input required value={correctedValue} onChange={event => setCorrectedValue(event.target.value)} className="mt-1 block w-full rounded border border-[var(--color-border)] bg-transparent p-2 text-xs" placeholder={correctionType === 'flaky' ? 'true or false' : 'Your correction'} />
             </label>
-            <label className="mt-3 block text-[12px] font-semibold">Reason
-              <textarea required value={reason} onChange={event => setReason(event.target.value)} className="mt-1 block min-h-20 w-full rounded border border-[var(--color-border)] bg-transparent p-2 text-[12px]" placeholder="What should change and why?" />
+            <label className="mt-3 block text-xs font-semibold">Reason
+              <textarea required value={reason} onChange={event => setReason(event.target.value)} className="mt-1 block min-h-20 w-full rounded border border-[var(--color-border)] bg-transparent p-2 text-xs" placeholder="What should change and why?" />
             </label>
-            <label className="mt-3 block text-[12px] font-semibold">Supporting evidence
-              <select required value={evidenceId} onChange={event => setEvidenceId(event.target.value)} className="mt-1 block w-full rounded border border-[var(--color-border)] bg-transparent p-2 text-[12px]">
+            <label className="mt-3 block text-xs font-semibold">Supporting evidence
+              <select required value={evidenceId} onChange={event => setEvidenceId(event.target.value)} className="mt-1 block w-full rounded border border-[var(--color-border)] bg-transparent p-2 text-xs">
                 <option value="">Select bound evidence</option>
                 {evidenceOptions.map(id => <option key={id} value={id}>{id}</option>)}
               </select>
@@ -168,7 +168,7 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
           </div>
         </InlineFormSection>
       )}
-      {error && <p role="alert" className="mb-0 mt-2 text-[11px] text-[var(--status-failed)]">{error}</p>}
+      {error && <p role="alert" className="mb-0 mt-2 text-2xs text-[var(--status-failed)]">{error}</p>}
     </div>
   )
 }
