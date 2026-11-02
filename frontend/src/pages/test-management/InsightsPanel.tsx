@@ -55,8 +55,8 @@ export function CasesCardShell({
         className="flex items-center justify-between gap-2.5 px-4 py-3"
         style={{ borderBottom: '1px solid var(--color-border)' }}
       >
-        <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">{title}</h3>
-        {rightSlot && <div className="flex items-center gap-2.5 text-[12px] text-[var(--color-text-muted)]">{rightSlot}</div>}
+        <h3 className="text-sm font-semibold m-0 text-[var(--color-text)]">{title}</h3>
+        {rightSlot && <div className="flex items-center gap-2.5 text-xs text-[var(--color-text-muted)]">{rightSlot}</div>}
       </div>
       {children}
     </div>
@@ -188,12 +188,12 @@ export function AutomationCoverageCard({ auto, manual }: { auto: number; manual:
     <CasesCardShell title="Automation coverage">
       <div className="px-4 py-3.5">
         {total === 0 ? (
-          <p className="text-[12px] text-[var(--color-text-muted)] m-0">
+          <p className="text-xs text-[var(--color-text-muted)] m-0">
             No authored cases yet — nothing to split.
           </p>
         ) : (
           <>
-            <p className="text-[12px] text-[var(--color-text-muted)] m-0 mb-3">
+            <p className="text-xs text-[var(--color-text-muted)] m-0 mb-3">
               <strong className="text-[var(--color-text)] font-semibold">{total}</strong> authored case{total === 1 ? '' : 's'} · <strong className="text-[var(--color-text)] font-semibold">{auto}</strong> automated (<strong className="text-[var(--color-text)] font-semibold">{pct(auto)}%</strong>)
             </p>
             <div
@@ -203,17 +203,17 @@ export function AutomationCoverageCard({ auto, manual }: { auto: number; manual:
               aria-label={`Automation coverage: ${auto} automated, ${manual} manual`}
             >
               {auto > 0 && (
-                <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: auto, background: 'color-mix(in srgb, var(--status-passed) 55%, transparent)', color: 'white' }}>
+                <div className="flex items-center justify-center text-2xs font-semibold tabular-nums" style={{ flex: auto, background: 'color-mix(in srgb, var(--status-passed) 55%, transparent)', color: 'white' }}>
                   {auto} auto
                 </div>
               )}
               {manual > 0 && (
-                <div className="flex items-center justify-center text-[10.5px] font-semibold tabular-nums" style={{ flex: manual, background: 'color-mix(in srgb, var(--color-accent) 50%, transparent)', color: 'white' }}>
+                <div className="flex items-center justify-center text-2xs font-semibold tabular-nums" style={{ flex: manual, background: 'color-mix(in srgb, var(--color-accent) 50%, transparent)', color: 'white' }}>
                   {manual} manual
                 </div>
               )}
             </div>
-            <div className="flex flex-wrap gap-3 mt-2 text-[11px] text-[var(--color-text-muted)]">
+            <div className="flex flex-wrap gap-3 mt-2 text-2xs text-[var(--color-text-muted)]">
               <Legend color="color-mix(in srgb, var(--status-passed) 55%, transparent)" label={`Automated · ${autoPct}%`} />
               <Legend color="color-mix(in srgb, var(--color-accent) 50%, transparent)" label={`Manual · ${manualPct}%`} />
             </div>
@@ -355,7 +355,7 @@ export function RecentActivityCard({ events }: { events: RecentEvent[] }) {
   return (
     <CasesCardShell title="Recent activity">
       {events.length === 0 ? (
-        <div className="px-4 py-6 text-center text-[12.5px] text-[var(--color-text-secondary)]">
+        <div className="px-4 py-6 text-center text-sm text-[var(--color-text-secondary)]">
           No recent activity.
         </div>
       ) : (
@@ -383,18 +383,18 @@ export function RecentActivityCard({ events }: { events: RecentEvent[] }) {
                 <span className="inline-flex items-center justify-center rounded-full" style={{ width: 22, height: 22, background: palette.bg, color: palette.fg }}>
                   <FileText className="h-3 w-3" />
                 </span>
-                <div className="text-[12px] text-[var(--color-text-secondary)] truncate">
+                <div className="text-xs text-[var(--color-text-secondary)] truncate">
                   <strong className="text-[var(--color-text)] font-medium">{e.actor_name ?? 'Someone'}</strong>
                   {' '}
                   {action.replace(/_/g, ' ')}
                   {' '}
                   {e.entity_id && (
-                    <code className="font-mono text-[11px]" style={{ color: 'var(--color-accent)' }}>
+                    <code className="font-mono text-2xs" style={{ color: 'var(--color-accent)' }}>
                       TC-{e.entity_id.slice(0, 6).toUpperCase()}
                     </code>
                   )}
                 </div>
-                <span className="text-[10.5px] tabular-nums text-[var(--color-text-muted)]">{ageLabel}</span>
+                <span className="text-2xs tabular-nums text-[var(--color-text-muted)]">{ageLabel}</span>
               </div>
             )
           })}

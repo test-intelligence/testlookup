@@ -53,7 +53,7 @@ export default function RoleActionCard({ roleActions, filterRoles, compact }: Ro
                   if (next.size > 0) setActiveFilter(next)
                 }}
                 className={clsx(
-                  'px-2 py-0.5 rounded text-[10px] font-medium transition-colors border',
+                  'px-2 py-0.5 rounded text-2xs font-medium transition-colors border',
                   activeFilter.has(key)
                     ? `${cfg.colour} border-current bg-[var(--color-bg-secondary)]`
                     : 'text-[var(--color-text-faint)] border-[var(--color-border)] bg-transparent hover:text-[var(--color-text-muted)]',
@@ -76,7 +76,8 @@ export default function RoleActionCard({ roleActions, filterRoles, compact }: Ro
             >
               <Icon className={clsx('h-4 w-4 mt-0.5 shrink-0', cfg.colour)} />
               <div className="flex-1 min-w-0">
-                <p className="text-[10px] font-medium text-[var(--color-text-muted)] uppercase tracking-wider">{cfg.label}</p>
+                {/* leading-tight (W29d fit remedy 4): the eyebrow's 16 px line pushed the test-case page past its fold budget on CI's DejaVu. */}
+                <p className="eyebrow leading-tight text-[var(--color-text-muted)] uppercase">{cfg.label}</p>
                 <p className="text-sm text-[var(--color-text-secondary)] leading-relaxed">{roleActions[key]}</p>
               </div>
               <button

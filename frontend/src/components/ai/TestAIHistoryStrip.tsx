@@ -50,7 +50,7 @@ export default function TestAIHistoryStrip({
 
   return (
     <section data-test-ai-strip="" aria-label="AI analysis across runs" className="space-y-1.5">
-      <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+      <p className="eyebrow uppercase text-[var(--color-text-muted)]">
         AI analysis across runs (oldest → newest)
       </p>
       <div className="flex flex-wrap items-center gap-1.5">
@@ -70,7 +70,7 @@ export default function TestAIHistoryStrip({
               title={chip.title}
               onClick={() => setOpenKey((key) => (key === chip.key ? null : chip.key))}
               className={clsx(
-                'inline-flex items-center gap-1 rounded border bg-[var(--color-bg-secondary)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]',
+                'inline-flex items-center gap-1 rounded border bg-[var(--color-bg-secondary)] px-1.5 py-0.5 font-mono text-2xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]',
                 chip.isCurrentRun ? 'border-[var(--color-accent)]' : 'border-[var(--color-border)]',
                 changedCategory && 'ring-1 ring-[var(--status-broken)]',
                 selected && 'bg-[var(--color-bg-hover)]',

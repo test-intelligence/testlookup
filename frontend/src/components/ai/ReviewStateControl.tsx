@@ -142,7 +142,7 @@ export default function ReviewStateControl({ testCaseId }: Props) {
           : <span>⏳</span>}
         {currentLabel}
         {data?.reviewed_by_username && (
-          <span className="ml-1 text-[10px] opacity-70">
+          <span className="ml-1 text-2xs opacity-70">
             · by {data.reviewed_by_full_name || data.reviewed_by_username}
           </span>
         )}
@@ -154,7 +154,7 @@ export default function ReviewStateControl({ testCaseId }: Props) {
           role="listbox"
           className="absolute z-20 mt-1 right-0 min-w-[260px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] shadow-lg"
         >
-          <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+          <div className="px-3 py-2 eyebrow uppercase text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
             Transition review state
           </div>
           {STATE_OPTIONS.map(opt => {
@@ -172,12 +172,12 @@ export default function ReviewStateControl({ testCaseId }: Props) {
                 <span className="flex-1">
                   <span className="font-medium text-[var(--color-text)]">{opt.label}</span>
                   {opt.helper && (
-                    <span className="block text-[10.5px] text-[var(--color-text-muted)] mt-0.5">
+                    <span className="block text-2xs text-[var(--color-text-muted)] mt-0.5">
                       {opt.helper}
                     </span>
                   )}
                 </span>
-                {isCurrent && <span className="text-[10px] text-[var(--color-text-faint)] mt-0.5">current</span>}
+                {isCurrent && <span className="text-2xs text-[var(--color-text-faint)] mt-0.5">current</span>}
               </button>
             )
           })}
@@ -213,7 +213,7 @@ export default function ReviewStateControl({ testCaseId }: Props) {
         <div
           className="absolute z-20 mt-1 right-0 min-w-[320px] rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] shadow-lg p-3 space-y-2"
         >
-          <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+          <div className="eyebrow uppercase text-[var(--color-text-muted)]">
             Defect filed — capture the tracker link
           </div>
           <input

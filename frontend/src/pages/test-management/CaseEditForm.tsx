@@ -316,7 +316,7 @@ export default function CaseEditForm({ caseItem, suiteOptions, slot, onCancel, o
                       <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
                     </button>
                   </div>
-                  <label htmlFor={fid(`step-${step.key}-action`)} className="mt-1.5 block text-[11px] text-[var(--color-text-muted)]">Action</label>
+                  <label htmlFor={fid(`step-${step.key}-action`)} className="mt-1.5 block text-2xs text-[var(--color-text-muted)]">Action</label>
                   <textarea
                     id={fid(`step-${step.key}-action`)}
                     aria-label={`Step ${n} action`}
@@ -324,7 +324,7 @@ export default function CaseEditForm({ caseItem, suiteOptions, slot, onCancel, o
                     value={step.action}
                     onChange={(e) => setForm((f) => ({ ...f, steps: updateStep(f.steps, index, 'action', e.target.value) }))}
                   />
-                  <label htmlFor={fid(`step-${step.key}-expected`)} className="mt-1.5 block text-[11px] text-[var(--color-text-muted)]">Expected result</label>
+                  <label htmlFor={fid(`step-${step.key}-expected`)} className="mt-1.5 block text-2xs text-[var(--color-text-muted)]">Expected result</label>
                   <textarea
                     id={fid(`step-${step.key}-expected`)}
                     aria-label={`Step ${n} expected result`}
@@ -343,7 +343,7 @@ export default function CaseEditForm({ caseItem, suiteOptions, slot, onCancel, o
           >
             <Plus aria-hidden="true" className="h-3 w-3" /> Add step
           </button>
-          <p className="m-0 mt-1 text-[11px] text-[var(--color-text-muted)]">A step without an action is left out when you save.</p>
+          <p className="m-0 mt-1 text-2xs text-[var(--color-text-muted)]">A step without an action is left out when you save.</p>
         </fieldset>
 
         {field('expected', 'Overall expected result', (

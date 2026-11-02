@@ -42,7 +42,7 @@ interface DupCaseCardProps { ref_: DuplicateCandidate['case_a']; label: string }
 function DupCaseCard({ ref_, label }: DupCaseCardProps) {
   return (
     <div className="flex-1 min-w-0 bg-[var(--color-bg-secondary)] rounded-lg p-3 border border-[var(--color-border)]">
-      <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1">{label}</p>
+      <p className="eyebrow uppercase text-[var(--color-text-faint)] mb-1">{label}</p>
       <p className="text-sm font-medium text-[var(--color-text)] leading-snug break-words">{ref_.title}</p>
       <div className="flex items-center gap-2 mt-1.5 flex-wrap">
         {ref_.suite_name && (
@@ -155,7 +155,7 @@ export function DuplicateCandidateCard({ projectId, candidate, onResolved }: Dup
       {/* Component score breakdown */}
       {componentEntries.length > 0 && (
         <div className="mt-3">
-          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mb-1.5">Component scores</p>
+          <p className="eyebrow uppercase text-[var(--color-text-faint)] mb-1.5">Component scores</p>
           <div className="flex flex-wrap gap-1.5">
             {componentEntries.map(([k, v]) => (
               <span

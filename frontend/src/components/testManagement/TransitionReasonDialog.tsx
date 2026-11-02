@@ -76,7 +76,7 @@ export default function TransitionReasonDialog({
         className="input mt-1 w-full resize-none"
         placeholder={placeholder}
       />
-      <div id={countId} aria-live="polite" className="mt-1 text-right text-[11px] text-[var(--color-text-muted)]">
+      <div id={countId} aria-live="polite" className="mt-1 text-right text-2xs text-[var(--color-text-muted)]">
         {reason.length}/500
       </div>
       {/* The buttons wrap in a narrow host (the evidence-gap card is ~316 px wide at 1280). */}

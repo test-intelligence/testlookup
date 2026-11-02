@@ -202,13 +202,13 @@ export default function CaseHistoryPanel({ caseItem, versions, isLoading, canRes
               )}
               {chip && (
                 <span
-                  className="rounded-full border border-[var(--color-border-light)] bg-[var(--color-bg-hover)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-text-secondary)]"
+                  className="rounded-full border border-[var(--color-border-light)] bg-[var(--color-bg-hover)] px-1.5 py-0.5 text-2xs font-semibold text-[var(--color-text-secondary)]"
                   data-history-source={v.source ?? ''}
                 >
                   {chip}
                 </span>
               )}
-              {isCurrent && <span className="text-[11px] text-[var(--color-text-faint)]">current</span>}
+              {isCurrent && <span className="text-2xs text-[var(--color-text-faint)]">current</span>}
             </div>
 
             {v.change_summary && (
@@ -218,13 +218,13 @@ export default function CaseHistoryPanel({ caseItem, versions, isLoading, canRes
             {previous ? (
               changes.length > 0 && (
                 <div data-history-changes="">
-                  <p className="m-0 mb-1 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">What changed</p>
+                  <p className="m-0 mb-1 eyebrow uppercase text-[var(--color-text-muted)]">What changed</p>
                   <ChangeList changes={changes} testId={`history-changes-v${v.version}`} />
                 </div>
               )
             ) : (
               v.changed_fields && v.changed_fields.length > 0 && (
-                <p className="m-0 text-[11px] text-[var(--color-text-muted)]">Changed: {changedFieldLabels(v.changed_fields).join(', ')}</p>
+                <p className="m-0 text-2xs text-[var(--color-text-muted)]">Changed: {changedFieldLabels(v.changed_fields).join(', ')}</p>
               )
             )}
 
@@ -264,7 +264,7 @@ export default function CaseHistoryPanel({ caseItem, versions, isLoading, canRes
                 className="w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] p-3 space-y-1"
                 data-history-compare=""
               >
-                <p className="m-0 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+                <p className="m-0 eyebrow uppercase text-[var(--color-text-muted)]">
                   v{v.version} → current (v{caseItem.version})
                 </p>
                 {compareChanges.length > 0 ? (

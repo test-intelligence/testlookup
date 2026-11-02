@@ -148,7 +148,7 @@ function InvestigationTrail({
     <div className="bg-[var(--color-bg-secondary)]/60 border border-[var(--color-border)] rounded-xl p-4 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs font-medium text-[var(--color-text-muted)] uppercase tracking-wider">Investigation Trail</p>
-        <span className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider">
+        <span className="eyebrow text-[var(--color-text-muted)] uppercase">
           {confidenceWhy.investigation_depth.replace(/_/g, ' ')}
         </span>
       </div>
@@ -167,7 +167,7 @@ function InvestigationTrail({
           </div>
         ))}
       </div>
-      <div className="flex flex-wrap gap-2 text-[10px] text-[var(--color-text-muted)]">
+      <div className="flex flex-wrap gap-2 text-2xs text-[var(--color-text-muted)]">
         <span className="px-2 py-0.5 rounded-full bg-[var(--color-bg-card)]/70 border border-[var(--color-border)]">
           {confidenceWhy.is_llm_inference ? 'LLM inference used' : 'Deterministic path'}
         </span>

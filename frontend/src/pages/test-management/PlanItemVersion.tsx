@@ -99,7 +99,7 @@ export function PlanItemVersionSteps({ item }: { item: TestPlanItem }) {
 
   return (
     <div className="space-y-1" data-plan-item-steps={String(ran)}>
-      <p className="m-0 text-[11px] font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">
+      <p className="m-0 eyebrow uppercase text-[var(--color-text-muted)]">
         Steps it ran against (v{ran})
       </p>
       {body}
