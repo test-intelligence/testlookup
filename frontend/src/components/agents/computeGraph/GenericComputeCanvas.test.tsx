@@ -5,6 +5,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
+import { CHART_FONT } from '@/components/charts/tokens'
 import GenericComputeCanvas from './GenericComputeCanvas'
 import { truncatedLine, type RuntimeInput, type RuntimeTaskInput } from './dagLayout'
 
@@ -84,6 +85,22 @@ describe('GenericComputeCanvas', () => {
     const { container } = render(<GenericComputeCanvas run={investigation()} />)
     fireEvent.click(container.querySelector('[data-stage-id="hypothesis_regression"]') as HTMLElement)
     expect(container.querySelector('img')).toBeNull()
+  })
+
+  it('sizes a node\'s metric text from the chart kit\'s font table, not the page scale (W29d rule 5)', () => {
+    const { container } = render(<GenericComputeCanvas run={investigation()} />)
+    const node = container.querySelector('[data-stage-id="investigator_plan"]') as HTMLElement
+    const label = within(node).getByText('duration')
+    // A fixed 226 x 132 box: the label keeps its desk size in presentation mode,
+    // so it is a CHART_FONT number, never `text-2xs` / `eyebrow` (16 px there).
+    expect(label).toHaveStyle({ fontSize: `${CHART_FONT.tick}px` })
+    expect(label).toHaveClass('uppercase')
+    expect(label).not.toHaveClass('text-2xs')
+    expect(label).not.toHaveClass('eyebrow')
+    expect(label.className).not.toMatch(/text-\[\d/)
+    const value = label.nextElementSibling as HTMLElement
+    expect(value).toHaveStyle({ fontSize: `${CHART_FONT.legend}px` })
+    expect(value.className).not.toMatch(/text-\[\d|text-(2xs|xs)\b/)
   })
 
   it('lists an unresolvable dependency under the canvas instead of drawing it', () => {

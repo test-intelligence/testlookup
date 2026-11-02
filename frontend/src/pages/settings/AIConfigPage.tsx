@@ -162,7 +162,7 @@ export function llmTierBadge(
 
 function StatusChip({ ok, children }: { ok: boolean; children: React.ReactNode }) {
   return (
-    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${ok ? OK_CLS : BAD_CLS}`}>
+    <span className={`text-2xs font-medium px-1.5 py-0.5 rounded border ${ok ? OK_CLS : BAD_CLS}`}>
       {children}
     </span>
   )
@@ -183,7 +183,7 @@ function ChainRow({ entry, isActive }: { entry: FallbackChainEntry; isActive: bo
           {entry.available ? 'available' : 'unavailable'}
         </span>
         {isActive && (
-          <span className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
+          <span className={`ml-2 text-2xs font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
             Active
           </span>
         )}
@@ -490,29 +490,29 @@ export default function AIConfigPage() {
                         used to assert "requires running LLM" and never look. */}
                     {mode.value === 'llm' && llmTier && !llmTier.available && (
                       <span
-                        className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${BAD_CLS}`}
+                        className={`ml-2 text-2xs font-medium px-1.5 py-0.5 rounded border ${BAD_CLS}`}
                         title={llmTier.reason ?? undefined}
                       >
                         {llmTierBadge(llmTier, modelStatus)}
                       </span>
                     )}
                     {mode.value === 'llm' && llmTier?.available && (
-                      <span className={`ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
+                      <span className={`ml-2 text-2xs font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
                         Ready
                       </span>
                     )}
                     {mode.value === 'ml' && !mlAvailable && (
-                      <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
+                      <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
                         Not Trained
                       </span>
                     )}
                     {mode.value === 'ml' && mlAvailable && (
-                      <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">
+                      <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">
                         Ready ({((mlAccuracy ?? 0) * 100).toFixed(0)}% accuracy)
                       </span>
                     )}
                     {mode.value === 'ml' && mlAvailable && mlMaturity !== 'human_calibrated' && (
-                      <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
+                      <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
                         Bootstrap (LLM-imitating)
                       </span>
                     )}
@@ -697,7 +697,7 @@ export default function AIConfigPage() {
                   className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
                 Offline Mode (air-gapped, Ollama only)
                 {offlinePinned && (
-                  <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
+                  <span className={`text-2xs font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
                     Pinned by environment
                   </span>
                 )}
@@ -760,9 +760,9 @@ export default function AIConfigPage() {
               <div>
                 <span className="text-sm font-medium text-[var(--color-text)]">Enable Knowledge RAG</span>
                 {config.knowledge_rag_enabled ? (
-                  <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">Active</span>
+                  <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">Active</span>
                 ) : (
-                  <span className="ml-2 text-[10px] font-medium px-1.5 py-0.5 rounded bg-[var(--color-bg-hover)]/20 text-[var(--color-text-secondary)]">Disabled</span>
+                  <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--color-bg-hover)]/20 text-[var(--color-text-secondary)]">Disabled</span>
                 )}
                 <p className="text-xs text-[var(--color-text-muted)] mt-0.5">
                   When enabled, the &quot;Knowledge Generation&quot; tab appears in Test Management,
@@ -779,7 +779,7 @@ export default function AIConfigPage() {
                 <h4 className="text-xs font-semibold text-[var(--color-text-secondary)]">Faithfulness evaluator</h4>
                 {config.rag_faithfulness_gate_enabled && evaluatorInUse && (
                   <span
-                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}
+                    className={`text-2xs font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}
                     data-testid="faithfulness-evaluator-in-use"
                   >
                     In use: {evaluatorInUse.label}

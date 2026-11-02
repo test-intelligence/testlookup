@@ -81,7 +81,7 @@ function AttemptDetail({ attemptId }: { attemptId: string }) {
         </AISuggestion>
       )}
       <div>
-        <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] tracking-wider mb-1">Patch</div>
+        <div className="eyebrow uppercase text-[var(--color-text-muted)] mb-1">Patch</div>
         {data.patch ? (
           <pre
             className="text-xs font-mono m-0 p-3 rounded-md overflow-x-auto max-h-80"
@@ -93,7 +93,7 @@ function AttemptDetail({ attemptId }: { attemptId: string }) {
           <p className="text-xs text-[var(--color-text-faint)] m-0">No patch was produced for this attempt.</p>
         )}
       </div>
-      <div className="flex items-center gap-3 flex-wrap text-[11px] text-[var(--color-text-muted)]">
+      <div className="flex items-center gap-3 flex-wrap text-2xs text-[var(--color-text-muted)]">
         {data.runner_log_digest && (
           <span>
             runner log{' '}
@@ -230,12 +230,12 @@ export default function FixAttemptsSection({ projectId }: { projectId: string })
           <table className="w-full text-sm" style={{ minWidth: 760 }}>
             <thead>
               <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-                <th className="px-3 py-2 text-left text-[10.5px] uppercase tracking-wider font-medium text-[var(--color-text-muted)]">Test</th>
-                <th className="px-3 py-2 text-left text-[10.5px] uppercase tracking-wider font-medium text-[var(--color-text-muted)]">Status</th>
-                <th className="px-3 py-2 text-right text-[10.5px] uppercase tracking-wider font-medium text-[var(--color-text-muted)]">Attempt #</th>
-                <th className="px-3 py-2 text-left text-[10.5px] uppercase tracking-wider font-medium text-[var(--color-text-muted)]">Validation</th>
-                <th className="px-3 py-2 text-left text-[10.5px] uppercase tracking-wider font-medium text-[var(--color-text-muted)]">PR</th>
-                <th className="px-3 py-2 text-right text-[10.5px] uppercase tracking-wider font-medium text-[var(--color-text-muted)]">Created</th>
+                <th className="px-3 py-2 text-left eyebrow uppercase text-[var(--color-text-muted)]">Test</th>
+                <th className="px-3 py-2 text-left eyebrow uppercase text-[var(--color-text-muted)]">Status</th>
+                <th className="px-3 py-2 text-right eyebrow uppercase text-[var(--color-text-muted)]">Attempt #</th>
+                <th className="px-3 py-2 text-left eyebrow uppercase text-[var(--color-text-muted)]">Validation</th>
+                <th className="px-3 py-2 text-left eyebrow uppercase text-[var(--color-text-muted)]">PR</th>
+                <th className="px-3 py-2 text-right eyebrow uppercase text-[var(--color-text-muted)]">Created</th>
               </tr>
             </thead>
             <tbody>

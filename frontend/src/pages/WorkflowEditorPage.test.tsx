@@ -4,6 +4,7 @@ import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import WorkflowEditorPage, { buildWorkflowGraph } from './WorkflowEditorPage'
+import { CHART_FONT } from '@/components/charts/tokens'
 import {
   evaluateWorkflow,
   forkWorkflow,
@@ -184,6 +185,30 @@ describe('WorkflowEditorPage', () => {
       { workflow_id: 'wf.offline_copy', name: 'Offline copy', description: 'Quick analysis' },
       1,
     ))
+  })
+
+  it('sizes the preview\'s node texts from the chart kit\'s font table, clipped inside the node with the full ids in its title (W29d rule 5)', async () => {
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /Fast triage/i }))
+    const graph = screen.getByRole('img', { name: /workflow graph with 2 steps and 1 edges/i })
+    const texts = Array.from(graph.querySelectorAll('text'))
+    // Two 160 x 56 nodes, each a step id over its agent id.
+    expect(texts.map((t) => t.textContent)).toEqual(['ingest', 'agent.ingestion.v1', 'summary', 'agent.summary.v1'])
+    const sizes = texts.map((t) => t.getAttribute('font-size'))
+    expect(sizes).toEqual([
+      String(CHART_FONT.legend), String(CHART_FONT.tick),
+      String(CHART_FONT.legend), String(CHART_FONT.tick),
+    ])
+    // Fit remedy 2: a long id is cut at the node's inner edge, never drawn past it, and stays whole on hover.
+    for (const text of texts) {
+      const viewport = text.parentElement as Element
+      expect(viewport.tagName.toLowerCase()).toBe('svg')
+      expect(viewport.getAttribute('width')).toBe('158')
+      expect(viewport.getAttribute('overflow')).toBe('hidden')
+    }
+    expect(Array.from(graph.querySelectorAll('g > title')).map((t) => t.textContent)).toEqual([
+      'ingest — agent.ingestion.v1', 'summary — agent.summary.v1',
+    ])
   })
 
   it('edits drafts, validates before publishing, evaluates, and carries a regression reason', async () => {

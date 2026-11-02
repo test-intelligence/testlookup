@@ -258,19 +258,19 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
         <div className="flex items-center gap-2 shrink-0">
           {/* Phase 6: Token and cost badges (hidden in rules/ML mode) */}
           {showLLMMetrics && stage.total_tokens != null && stage.total_tokens > 0 && (
-            <span className="text-[10px] bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)] px-1.5 py-0.5 rounded"
+            <span className="text-2xs bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)] px-1.5 py-0.5 rounded"
               title={`Input: ${stage.input_tokens ?? 0} / Output: ${stage.output_tokens ?? 0}`}
             >
               {formatNumber(stage.total_tokens)} tok
             </span>
           )}
           {showLLMMetrics && stage.cost_usd != null && stage.cost_usd > 0 && (
-            <span className="text-[10px] bg-[var(--status-broken-bg)] text-[var(--status-broken)] px-1.5 py-0.5 rounded">
+            <span className="text-2xs bg-[var(--status-broken-bg)] text-[var(--status-broken)] px-1.5 py-0.5 rounded">
               ${stage.cost_usd.toFixed(4)}
             </span>
           )}
           {stage.confidence_score != null && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+            <span className={`text-2xs px-1.5 py-0.5 rounded ${
               stage.confidence_score >= 80 ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' :
               stage.confidence_score >= 50 ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' :
               'bg-[var(--status-failed-bg)] text-[var(--status-failed)]'
@@ -290,7 +290,7 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
 
       {/* All-green skip context shown inline without requiring expand */}
       {stage.status === 'skipped' && stage.skipped_reason && (
-        <p className="mt-1 ml-10 text-[10px] text-[var(--color-text-faint)] italic">{stage.skipped_reason}</p>
+        <p className="mt-1 ml-10 text-2xs text-[var(--color-text-faint)] italic">{stage.skipped_reason}</p>
       )}
 
       {open && (stage.result_data || stage.error || stage.route_rationale || stage.total_tokens) && (
@@ -301,25 +301,25 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
               {showLLMMetrics && stage.llm_calls_count != null && stage.llm_calls_count > 0 && (
                 <div className="bg-[var(--color-bg-card)]/60 rounded p-2 text-center">
                   <div className="text-sm font-bold text-[var(--color-text)]">{stage.llm_calls_count}</div>
-                  <div className="text-[9px] text-[var(--color-text-muted)]">LLM Calls</div>
+                  <div className="text-2xs text-[var(--color-text-muted)]">LLM Calls</div>
                 </div>
               )}
               {showLLMMetrics && stage.total_tokens != null && stage.total_tokens > 0 && (
                 <div className="bg-[var(--color-bg-card)]/60 rounded p-2 text-center">
                   <div className="text-sm font-bold text-[var(--color-accent)]">{formatNumber(stage.total_tokens)}</div>
-                  <div className="text-[9px] text-[var(--color-text-muted)]">Tokens ({stage.input_tokens ?? 0}in/{stage.output_tokens ?? 0}out)</div>
+                  <div className="text-2xs text-[var(--color-text-muted)]">Tokens ({stage.input_tokens ?? 0}in/{stage.output_tokens ?? 0}out)</div>
                 </div>
               )}
               {showLLMMetrics && stage.cost_usd != null && stage.cost_usd > 0 && (
                 <div className="bg-[var(--color-bg-card)]/60 rounded p-2 text-center">
                   <div className="text-sm font-bold text-[var(--status-broken)]">${stage.cost_usd.toFixed(4)}</div>
-                  <div className="text-[9px] text-[var(--color-text-muted)]">Est. Cost</div>
+                  <div className="text-2xs text-[var(--color-text-muted)]">Est. Cost</div>
                 </div>
               )}
               {stage.evidence_count != null && (
                 <div className="bg-[var(--color-bg-card)]/60 rounded p-2 text-center">
                   <div className="text-sm font-bold text-[var(--color-accent)]">{stage.evidence_count}</div>
-                  <div className="text-[9px] text-[var(--color-text-muted)]">Evidence Items</div>
+                  <div className="text-2xs text-[var(--color-text-muted)]">Evidence Items</div>
                 </div>
               )}
             </div>
@@ -331,7 +331,7 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
             </div>
           )}
           {stage.error_category && (
-            <div className="text-[10px] text-[var(--color-text-muted)]">
+            <div className="text-2xs text-[var(--color-text-muted)]">
               Error category: <span className="text-[var(--status-failed)] font-mono">{stage.error_category}</span>
             </div>
           )}
@@ -437,7 +437,7 @@ function usePipelineRowActions(pipeline: AgentPipelineRun, onChanged: () => void
 }
 
 const ROW_ACTION_BTN =
-  'inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-2 py-0.5 text-[11px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:hover:bg-transparent'
+  'inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-2 py-0.5 text-2xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:hover:bg-transparent'
 
 /**
  * One pipeline run as one row of the pipelines list (UX redesign P5: a
@@ -518,7 +518,7 @@ function PipelineRow({
             {isDegradedPipeline(pipeline) && (
               <span
                 data-testid="pipeline-quality-tag"
-                className={`text-[10px] font-mono ${STATUS_COLOUR.degraded}`}
+                className={`text-2xs font-mono ${STATUS_COLOUR.degraded}`}
               >
                 DEGRADED
               </span>
@@ -532,24 +532,24 @@ function PipelineRow({
               {PUBLIC_PIPELINE_STATUS_LABEL[publicPipelineStatus(pipeline)]}
             </span>
             {reviewedAt && (
-              <span data-testid="pipeline-reviewed-at" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+              <span data-testid="pipeline-reviewed-at" className="text-2xs font-mono text-[var(--color-text-muted)]">
                 · reviewed {reviewedAt}
               </span>
             )}
             {/* E8.5: a finished report pipeline rests at `completed` until a person
                 accepts its report (section 7.2); accepting moves it to `passed`. */}
             {publicPipelineStatus(pipeline) === 'completed' && (
-              <span data-testid="pipeline-awaiting-review" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+              <span data-testid="pipeline-awaiting-review" className="text-2xs font-mono text-[var(--color-text-muted)]">
                 awaiting review
               </span>
             )}
             {pipeline.status === 'retry_wait' && pipeline.attempt != null && (
-              <span data-testid="pipeline-retry-detail" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+              <span data-testid="pipeline-retry-detail" className="text-2xs font-mono text-[var(--color-text-muted)]">
                 retrying · {pipeline.attempt}/{pipeline.max_attempts ?? '?'}
               </span>
             )}
             {pipeline.cancel_requested && isPipelineInProgress(pipeline.status) && (
-              <span data-testid="pipeline-stopping" className="text-[10px] font-mono text-[var(--color-text-muted)]">
+              <span data-testid="pipeline-stopping" className="text-2xs font-mono text-[var(--color-text-muted)]">
                 stopping
               </span>
             )}
@@ -597,7 +597,7 @@ function PipelineRow({
               </button>
             )}
             {showStop && actions.confirmingStop && (
-              <span data-testid="pipeline-stop-confirm" className="inline-flex items-center gap-1.5 text-[11px] text-[var(--color-text-secondary)]">
+              <span data-testid="pipeline-stop-confirm" className="inline-flex items-center gap-1.5 text-2xs text-[var(--color-text-secondary)]">
                 Stop this run?
                 <button
                   type="button"
@@ -670,7 +670,7 @@ function LiveRunCard({ run }: { run: ActiveLiveRun }) {
         {(() => {
           const when = formatRunWhen(run.started_at)
           return when ? (
-            <span className="text-[10px] font-mono text-[var(--color-text-faint)] shrink-0 whitespace-nowrap">
+            <span className="text-2xs font-mono text-[var(--color-text-faint)] shrink-0 whitespace-nowrap">
               {when}
             </span>
           ) : null
@@ -725,7 +725,7 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
         <Activity className="h-4 w-4 text-[var(--color-text)]" />
         <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Pipeline Observability</h3>
         {alerts.length > 0 && (
-          <span className="ml-auto text-[10px] px-2 py-0.5 rounded bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
+          <span className="ml-auto text-2xs px-2 py-0.5 rounded bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
             {alerts.length} alert{alerts.length === 1 ? '' : 's'}
           </span>
         )}
@@ -735,23 +735,23 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 mb-3">
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
             <div className={`text-sm font-semibold ${costTone}`}>{formatMoney(obs.cost.total_usd)}</div>
-            <div className="text-[10px] text-[var(--color-text-muted)]">Cost / {formatMoney(obs.cost.budget_usd)}</div>
+            <div className="text-2xs text-[var(--color-text-muted)]">Cost / {formatMoney(obs.cost.budget_usd)}</div>
           </div>
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
             <div className="text-sm font-semibold text-[var(--color-accent)]">{formatNumber(obs.tokens.total)}</div>
-            <div className="text-[10px] text-[var(--color-text-muted)]">{obs.tokens.llm_calls} LLM calls</div>
+            <div className="text-2xs text-[var(--color-text-muted)]">{obs.tokens.llm_calls} LLM calls</div>
           </div>
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
             <div className="text-sm font-semibold text-[var(--color-text)]">{avgStageDuration}</div>
-            <div className="text-[10px] text-[var(--color-text-muted)]">Avg stage</div>
+            <div className="text-2xs text-[var(--color-text-muted)]">Avg stage</div>
           </div>
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
             <div className={`text-sm font-semibold ${fallbackTone}`}>{obs.fallback.count}</div>
-            <div className="text-[10px] text-[var(--color-text-muted)]">Fallbacks</div>
+            <div className="text-2xs text-[var(--color-text-muted)]">Fallbacks</div>
           </div>
           <div className="rounded border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-2">
             <div className={`text-sm font-semibold ${errorTone}`}>{obs.errors.count}</div>
-            <div className="text-[10px] text-[var(--color-text-muted)]">Stage errors</div>
+            <div className="text-2xs text-[var(--color-text-muted)]">Stage errors</div>
           </div>
         </div>
       )}
@@ -765,14 +765,14 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
                 <div className="min-w-0">
                   <p className="text-xs font-medium text-[var(--status-failed)]">{alert.message}</p>
                   {alert.routing && (
-                    <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-[var(--color-text-muted)]">
+                    <div className="mt-1 flex flex-wrap gap-1.5 text-2xs text-[var(--color-text-muted)]">
                       <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)]">owner: {alert.routing.primary_owner}</span>
                       <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)]">escalate: {alert.routing.escalation_owner}</span>
                       <span className="px-1.5 py-0.5 rounded bg-[var(--color-bg-secondary)]">{alert.routing.priority}</span>
                     </div>
                   )}
                   {alert.routing?.recommended_action && (
-                    <p className="mt-1 text-[10px] text-[var(--color-text-muted)]">{alert.routing.recommended_action}</p>
+                    <p className="mt-1 text-2xs text-[var(--color-text-muted)]">{alert.routing.recommended_action}</p>
                   )}
                 </div>
               </div>
@@ -807,7 +807,7 @@ function PlainStageList({ stages }: { stages: AgentStageResult[] }) {
           key={s.stage_name}
           className="flex items-center justify-between text-sm border-b border-[var(--color-border)] py-1.5"
         >
-          <span className="font-mono text-[13px]">{s.stage_name}</span>
+          <span className="font-mono text-sm">{s.stage_name}</span>
           <span className="text-[var(--color-text-muted)]">{s.status}</span>
         </li>
       ))}

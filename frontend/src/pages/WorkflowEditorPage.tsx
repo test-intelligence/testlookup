@@ -19,6 +19,7 @@ import toast from 'react-hot-toast'
 import { InlineConfirm } from '@/components/ui/inPage/InlineConfirm'
 import WorkflowDefaultSwitch from '@/components/workflow/WorkflowDefaultSwitch'
 
+import { CHART_FONT } from '@/components/charts/tokens'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import PageHeader from '@/components/ui/PageHeader'
 import { helpTopicParam } from '@/components/help/helpTopics'
@@ -200,9 +201,14 @@ function GraphPreview({ body }: { body: WorkflowBody }) {
         })}
         {graph.nodes.map(node => (
           <g key={node.id} transform={`translate(${node.x} ${node.y})`}>
+            {/* W29d fit remedy 2 (truncate, the full text kept): SVG text cannot ellipsize, so an
+                inner viewport clips both lines inside the 160 px node's border and its title holds them whole. */}
+            <title>{`${node.id} — ${node.agentId}`}</title>
             <rect width="160" height="56" rx="8" fill="var(--color-bg-card)" stroke="var(--color-border-light)" />
-            <text x="10" y="22" fill="var(--color-text)" fontSize="12" fontWeight="600">{node.id}</text>
-            <text x="10" y="41" fill="var(--color-text-muted)" fontSize="9.5">{node.agentId}</text>
+            <svg width="158" height="56" overflow="hidden">
+              <text x="10" y="22" fill="var(--color-text)" fontSize={CHART_FONT.legend} fontWeight="600">{node.id}</text>
+              <text x="10" y="41" fill="var(--color-text-muted)" fontSize={CHART_FONT.tick}>{node.agentId}</text>
+            </svg>
           </g>
         ))}
       </svg>
@@ -488,9 +494,9 @@ export default function WorkflowEditorPage() {
                     >
                       <div className="flex items-center justify-between gap-2">
                         <span className="truncate text-sm font-semibold text-[var(--color-text)]">{item.name}</span>
-                        <span className="font-mono text-[10px] text-[var(--color-text-muted)]">v{item.version}</span>
+                        <span className="font-mono text-2xs text-[var(--color-text-muted)]">v{item.version}</span>
                       </div>
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10.5px] text-[var(--color-text-muted)]">
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-2xs text-[var(--color-text-muted)]">
                         <span>{item.workflow_id}</span>
                         <span>·</span>
                         <span>{item.built_in ? 'built-in' : item.status}</span>
@@ -516,8 +522,8 @@ export default function WorkflowEditorPage() {
                   <div>
                     <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-lg font-semibold text-[var(--color-text)]">{selected.name}</h2>
-                      <span className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 font-mono text-[10px] text-[var(--color-text-muted)]">{ref(selected)}</span>
-                      <span className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 text-[10px] uppercase text-[var(--color-text-muted)]">{selected.status}</span>
+                      <span className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 font-mono text-2xs text-[var(--color-text-muted)]">{ref(selected)}</span>
+                      <span className="rounded bg-[var(--color-bg-secondary)] px-2 py-0.5 eyebrow uppercase text-[var(--color-text-muted)]">{selected.status}</span>
                     </div>
                     <p className="mt-1 text-sm text-[var(--color-text-muted)]">{selected.description || 'No description.'}</p>
                     <div className="mt-2 flex flex-wrap gap-3 text-xs text-[var(--color-text-muted)]">
@@ -595,7 +601,7 @@ export default function WorkflowEditorPage() {
                       <FileJson className="h-4 w-4 text-[var(--color-text-muted)]" />
                       <h3 className="text-sm font-semibold text-[var(--color-text)]">Definition JSON</h3>
                     </div>
-                    {dirty && <span className="text-[10px] uppercase tracking-wider text-[var(--status-broken)]">Unsaved</span>}
+                    {dirty && <span className="eyebrow uppercase text-[var(--status-broken)]">Unsaved</span>}
                   </div>
                   <textarea
                     aria-label="Workflow definition JSON"
