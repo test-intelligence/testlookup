@@ -1571,6 +1571,14 @@ locally by default.
 
 ### Fixed
 
+- **The AI analysis's Investigation Trail fits the run page's test pane**
+  (seen in the W29d baselines, branch `fix/investigation-trail-overflow-20261102`).
+  The steps were laid out by screen width, so at 1280 px and wider the ~450 px
+  pane still got four ~70 px columns and words such as "evidence" ran out of
+  their boxes. The steps now take as many columns as the panel holds: one in the
+  pane at 1280, two at 1440, one row when the pane is expanded. The trail also
+  says "1 evidence item", not "1 evidence items".
+  `tests/ci-e2e/run-test-pane-trail.spec.ts` checks every label against its box.
 - **Settings › Performance fits a 1280 px screen** (F-W29e-1, branch
   `fix/perf-budgets-overflow-20261102`). The latency budgets table had a
   Description column beside five number columns, and descriptions that name an

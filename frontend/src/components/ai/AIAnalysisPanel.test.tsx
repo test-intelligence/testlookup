@@ -287,6 +287,25 @@ describe('AIAnalysisPanel', () => {
       expect(screen.getByText('Investigation Trail')).toBeInTheDocument()
     })
 
+    it('sizes the trail steps from the panel, not the screen, and keeps each label inside its box', async () => {
+      await renderResolvedResult()
+      const steps = screen.getByTestId('investigation-trail-steps')
+      // xl:grid-cols-4 made four ~70 px columns in the run page's ~450 px test pane at 1280.
+      expect(steps.className).toContain('grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]')
+      expect(steps.className).not.toMatch(/\b(sm|md|lg|xl|2xl):grid-cols-/)
+      const boxes = [...steps.querySelectorAll<HTMLElement>('[data-trail-step]')]
+      expect(boxes.map((box) => box.textContent)).toEqual(['Fetched stack trace', 'Queried Splunk logs', '1 evidence item', 'AI summary generated'])
+      for (const box of boxes) {
+        expect(box.className).toContain('min-w-0')
+        expect(box.querySelector('p')?.className).toContain('[overflow-wrap:anywhere]')
+      }
+    })
+
+    it('counts the trail evidence in the plural for anything but one', async () => {
+      await renderResolvedResult({ confidence_why: { ...MOCK_ANALYSIS.confidence_why, investigation_depth: 'standard', evidence_count: 3 } })
+      expect(screen.getAllByText('3 evidence items')).toHaveLength(3)
+    })
+
     it('shows Standard ReAct investigation label for standard depth', async () => {
       await renderResolvedResult()
       expect(screen.getByText('Standard ReAct investigation')).toBeInTheDocument()
@@ -322,7 +341,9 @@ describe('AIAnalysisPanel', () => {
 
     it('shows evidence count badge', async () => {
       await renderResolvedResult()
-      expect(screen.getByText('1 evidence item')).toBeInTheDocument()
+      // This badge, the trail's evidence step and the trail's chip: all three in the singular.
+      expect(screen.getAllByText('1 evidence item')).toHaveLength(3)
+      expect(screen.queryByText('1 evidence items')).not.toBeInTheDocument()
     })
 
     it('shows data source badge for splunk', async () => {

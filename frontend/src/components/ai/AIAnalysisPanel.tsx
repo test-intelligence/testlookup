@@ -118,6 +118,9 @@ function ConfidencePanel({ score, why }: { score: number; why: ConfidenceWhy }) 
   )
 }
 
+/** The steps are as many columns as the panel's own width holds, not the screen's: in the run page's test pane
+ *  (~450 px at 1280) the old `xl:grid-cols-4` cut each step to ~70 px and its words ran out of the box. 11rem
+ *  holds the longest label word ("Deterministic") beside the tick; a longer tool name still wraps inside. */
 function InvestigationTrail({
   toolsUsed,
   confidenceWhy,
@@ -127,6 +130,7 @@ function InvestigationTrail({
   confidenceWhy: ConfidenceWhy
   evidenceCount: number
 }) {
+  const evidenceItems = `${evidenceCount} evidence ${evidenceCount === 1 ? 'item' : 'items'}`
   const steps = toolsUsed.length > 0
     ? toolsUsed.map((tool, index) => ({
         id: `${tool}-${index}`,
@@ -136,7 +140,7 @@ function InvestigationTrail({
 
   steps.push({
     id: 'evidence',
-    label: evidenceCount > 0 ? `${evidenceCount} evidence items` : 'No external evidence required',
+    label: evidenceCount > 0 ? evidenceItems : 'No external evidence required',
   })
 
   steps.push({
@@ -152,14 +156,14 @@ function InvestigationTrail({
           {confidenceWhy.investigation_depth.replace(/_/g, ' ')}
         </span>
       </div>
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]" data-testid="investigation-trail-steps">
         {steps.map((step, index) => (
-          <div key={step.id} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-3">
+          <div key={step.id} className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-3" data-trail-step>
             <div className="flex items-center gap-2">
-              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--status-passed-bg)]/30 text-[var(--status-passed)]">
+              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--status-passed-bg)]/30 text-[var(--status-passed)]">
                 <CheckCircle className="h-3 w-3" />
               </div>
-              <p className="text-sm text-[var(--color-text)]">{step.label}</p>
+              <p className="min-w-0 text-sm text-[var(--color-text)] [overflow-wrap:anywhere]">{step.label}</p>
             </div>
             {index < steps.length - 1 && (
               <div className="mt-2 h-px w-full bg-gradient-to-r from-[var(--color-text-muted)] to-transparent" />
@@ -172,7 +176,7 @@ function InvestigationTrail({
           {confidenceWhy.is_llm_inference ? 'LLM inference used' : 'Deterministic path'}
         </span>
         <span className="px-2 py-0.5 rounded-full bg-[var(--color-bg-card)]/70 border border-[var(--color-border)]">
-          {evidenceCount} evidence items
+          {evidenceItems}
         </span>
       </div>
     </div>
