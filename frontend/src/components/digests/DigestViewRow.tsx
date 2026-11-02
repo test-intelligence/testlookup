@@ -10,7 +10,7 @@ import type { SavedView } from '@/services/savedViewsService'
 import type { Release } from '@/types/releases'
 import { viewPageText, viewScopeText } from './digestScopeModel'
 
-const CHIP = 'ml-2 px-1.5 py-0.5 text-[10px] rounded'
+const CHIP = 'ml-2 px-1.5 py-0.5 text-2xs rounded'
 
 export default function DigestViewRow({
   view,

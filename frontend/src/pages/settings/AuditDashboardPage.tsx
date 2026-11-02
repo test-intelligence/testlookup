@@ -133,7 +133,7 @@ export default function AuditDashboardPage() {
                 return (
                 <div key={i} className="bg-[var(--color-bg-secondary)] rounded px-3 py-2 flex justify-between items-center gap-3 text-sm">
                   <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5">
-                    <span className={clsx('px-2 py-0.5 rounded text-[10px] font-medium', SOURCE_COLORS[ev.source] || 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]')}>
+                    <span className={clsx('px-2 py-0.5 rounded text-2xs font-medium', SOURCE_COLORS[ev.source] || 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]')}>
                       {ev.source}
                     </span>
                     <span className="text-[var(--color-text-secondary)] font-mono text-xs">{ev.action}</span>

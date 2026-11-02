@@ -283,7 +283,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
                   {resettingDefaultLead ? <LoadingSpinner size="sm" /> : <KeyRound className="h-3.5 w-3.5" />}
                   {resettingDefaultLead ? 'Resetting…' : 'Reset QA Lead password'}
                 </button>
-                <span className="text-[11px] text-[var(--color-text-faint)]">
+                <span className="text-2xs text-[var(--color-text-faint)]">
                   New password is copied to your clipboard.
                 </span>
               </div>

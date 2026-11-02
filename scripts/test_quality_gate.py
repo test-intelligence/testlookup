@@ -5318,6 +5318,117 @@ def test_committed_baselines_of_the_w29b_count_guards_are_count_json() -> None:
         assert not (qg.BASELINE_DIR / f"{name.replace('.', '__')}.txt").exists(), name
 
 
+# ── W29e UIX-04c: the type-scale floor and the sizes the gate cannot see ─────
+#
+# Since W29e every page and component is on the type scale except the logo.
+# frontend.type-scale reads its allow-list from the committed counts JSON (a
+# file's entry is that file's ceiling); these two cases keep that list named
+# and complete without editing quality_gate.py.
+
+# Every size off the scale that stays, with its reason. Moving one of them is a
+# deliberate edit of this dict (and of the counts JSON).
+TYPE_SCALE_FLOOR: dict[str, int] = {
+    # The logo's bracket glyphs, sized in em of the word (`fontSize: '1.4em'` x2,
+    # `'1.45em'` x2): a proportion of the mark, not a step of a type scale (OR-06).
+    "frontend/src/components/ui/AppLogo.tsx": 4,
+    # The sign-in mark, `<AppLogo className="text-[42px]" />`: between `text-4xl`
+    # (36 px) and `--text-display-lg` (44 px, a hero-number token presentation
+    # mode raises). OR-06: no rebrand.
+    "frontend/src/pages/LoginPage.tsx": 1,
+    "frontend/src/pages/ResetPasswordPage.tsx": 1,
+}
+
+
+def _floor_diff(counts: dict[str, int]) -> list[str]:
+    """Each key whose count differs from TYPE_SCALE_FLOOR, with both numbers."""
+    return [
+        f"{rel}: {counts.get(rel, 0)} (TYPE_SCALE_FLOOR: {TYPE_SCALE_FLOOR.get(rel, 0)})"
+        for rel in sorted(set(counts) | set(TYPE_SCALE_FLOOR))
+        if counts.get(rel, 0) != TYPE_SCALE_FLOOR.get(rel, 0)
+    ]
+
+
+def test_type_scale_floor_is_the_named_allow_list() -> None:
+    """The TREE holds no size off the scale but the floor, and the COMMITTED
+    counts JSON (the allow-list the gate reads) is exactly the floor."""
+    problems: list[str] = []
+    tree = qg._type_scale_counts()
+    if tree != TYPE_SCALE_FLOOR:
+        problems.append(
+            "the tree has sizes off the type scale outside TYPE_SCALE_FLOOR (move each to a scale step, "
+            "or name it in TYPE_SCALE_FLOOR with its reason):\n    " + "\n    ".join(_floor_diff(tree))
+        )
+    committed = _ui_counts("frontend.type-scale")["counts"]
+    if committed != TYPE_SCALE_FLOOR:
+        problems.append(
+            "scripts/quality-gate-baselines/frontend__type-scale.counts.json is not TYPE_SCALE_FLOOR — lower it "
+            "with `python scripts/quality_gate.py --only frontend.type-scale --update-baseline`:\n    "
+            + "\n    ".join(_floor_diff(committed))
+        )
+    assert not problems, "\n".join(problems)
+
+
+# A style property `fontSize: …` up to the first `,` `}` or newline (so the
+# neighbours `minHeight: 28` / `lineHeight: 1.15` are not read), and a JSX / SVG
+# attribute `fontSize="…"` / `fontSize={…}`. After dropping `var(...)` reads, a
+# numeric literal in either is a size the gate's regex cannot see.
+_FONT_SIZE_PROP_RE = re.compile(r"\bfontSize\s*\??\s*:([^,}\n]*)")
+_FONT_SIZE_ATTR_RE = re.compile(r"""\bfontSize\s*=\s*(\{[^}\n]*\}|"[^"\n]*"|'[^'\n]*')""")
+_CSS_VAR_READ_RE = re.compile(r"var\([^)]*\)")
+_NUMERIC_LITERAL_RE = re.compile(r"(?<![\w.$-])\d+(?:\.\d+)?(?![\w-])")
+
+
+def _uncounted_font_sizes(text: str) -> list[str]:
+    """``"<line>: <snippet>"`` for each numeric font size in ``text`` that
+    ``frontend.type-scale`` does not count (a ternary, an expression, a JSX
+    attribute). ``fontSize: 12`` / ``'9px'`` are the gate's own: skipped here."""
+    hits: list[tuple[int, str]] = []
+    for m in _FONT_SIZE_PROP_RE.finditer(text):
+        if qg._TYPE_SCALE_INLINE_RE.match(text, m.start()):
+            continue
+        if _NUMERIC_LITERAL_RE.search(_CSS_VAR_READ_RE.sub("", m.group(1))):
+            hits.append((m.start(), m.group(0).strip()))
+    for m in _FONT_SIZE_ATTR_RE.finditer(text):
+        if _NUMERIC_LITERAL_RE.search(_CSS_VAR_READ_RE.sub("", m.group(1))):
+            hits.append((m.start(), m.group(0).strip()))
+    return [f"{text.count(chr(10), 0, pos) + 1}: {snippet}" for pos, snippet in sorted(hits)]
+
+
+def test_type_scale_has_no_uncounted_numeric_font_size() -> None:
+    """No numeric font size the gate's regex misses, over the gate's own sources
+    (non-test pages/ + components/, outside the chart kit)."""
+    flagged = (
+        "const s = { fontSize: compact ? 9.5 : 10, letterSpacing: '0.04em' }",
+        '<text x={4} fontSize="9.5">x</text>',
+        "<text fontSize={12}>x</text>",
+        "<text fontSize={dense ? 10 : 11}>x</text>",
+        "const s = { fontSize: base * 1.2 }",
+    )
+    clean = (
+        "const s = { fontSize: CHART_FONT.tick, minHeight: 28, lineHeight: 1.4 }",
+        "<text fontSize={CHART_FONT.legend}>x</text>",
+        "const s = { fontSize: 'var(--text-display-lg)', lineHeight: 1.15 }",
+        "function label(fontSize: number) { return fontSize }",
+        "interface Props { fontSize?: number }",
+        "const s = { fontSize: 12 }",  # the gate's own form: counted by frontend.type-scale, not here
+    )
+    for planted in flagged:
+        assert _uncounted_font_sizes(planted), f"self-check: not flagged: {planted}"
+    for planted in clean:
+        assert _uncounted_font_sizes(planted) == [], f"self-check: flagged: {planted}"
+
+    found = [
+        f"{rel}:{hit}"
+        for rel, path in qg._ui_sources(qg._UI_PAGES_COMPONENTS)
+        if not rel.startswith(qg._UI_CHART_KIT)
+        for hit in _uncounted_font_sizes(qg._ui_read(path))
+    ]
+    assert found == [], (
+        "numeric font sizes frontend.type-scale cannot count — use a scale class, or CHART_FONT inside a "
+        "fixed-geometry drawing:\n  " + "\n  ".join(found)
+    )
+
+
 # ── backend.activity-registry-emitted (W21 ACT-01) ───────────────────────────
 
 

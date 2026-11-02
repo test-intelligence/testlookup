@@ -58,7 +58,7 @@ export default function OtpAuthQr({
             title={`TOTP enrollment QR code for ${accountName}`}
           />
         </div>
-        <p className="flex items-center gap-1 text-[11px] text-[var(--color-text-muted)]">
+        <p className="flex items-center gap-1 text-2xs text-[var(--color-text-muted)]">
           <QrCode className="h-3 w-3" />
           Scan with your authenticator app
         </p>

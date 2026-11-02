@@ -181,7 +181,7 @@ export default function GitHubIntegrationPage() {
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Repository</h3>
           {existing && (
             <span
-              className={`ml-auto text-[10px] px-2 py-0.5 rounded border ${
+              className={`ml-auto text-2xs px-2 py-0.5 rounded border ${
                 existing.enabled
                   ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
                   : 'border-[var(--color-border)] text-[var(--color-text-muted)]'

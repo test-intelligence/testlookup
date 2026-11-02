@@ -143,7 +143,7 @@ function EventCheckboxes({
                 {option.label}
               </span>
               {suppression && (
-                <span id={hintId} data-event-hint={suppression} className="block text-[11px] leading-[14px] text-[var(--color-text-muted)]">
+                <span id={hintId} data-event-hint={suppression} className="block text-2xs leading-tight text-[var(--color-text-muted)]">
                   {suppressionText(suppression, policyContext.projectName)}
                   {policyContext.canChange && (
                     <>
@@ -377,7 +377,7 @@ function ChannelCard({
           <div>
             <p className="block text-xs font-medium text-[var(--color-text-muted)] mb-2">Notify me when</p>
             {policyContext.allProjects && (
-              <p data-policy-note="" className="text-[11px] text-[var(--color-text-muted)] -mt-1 mb-2">
+              <p data-policy-note="" className="text-2xs text-[var(--color-text-muted)] -mt-1 mb-2">
                 {ALL_PROJECTS_POLICY_NOTE}
               </p>
             )}

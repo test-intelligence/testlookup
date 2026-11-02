@@ -196,7 +196,7 @@ export default function TeamChannelsPage() {
                     <tr data-team-row={team}>
                       <td className="px-4 py-2.5 align-middle">
                         <div className="truncate text-[var(--color-text)]" title={team}>{team}</div>
-                        <div className={`text-[11px] ${routing.className}`}>{routing.label}</div>
+                        <div className={`text-2xs ${routing.className}`}>{routing.label}</div>
                       </td>
                       <td className="px-4 py-2.5 align-middle">
                         <select

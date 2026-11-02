@@ -297,7 +297,7 @@ export default function FeatureFlagsPage() {
               <tr data-flag-group={group.id} className="border-t border-[var(--color-border)] bg-[var(--color-bg-secondary)]/60">
                 <th colSpan={7} scope="colgroup" className="px-3 py-2 text-left font-normal">
                   <span className="block text-xs font-semibold text-[var(--color-text)]">{group.title}</span>
-                  <span className="block text-[11px] text-[var(--color-text-muted)]">{group.blurb}</span>
+                  <span className="block text-2xs text-[var(--color-text-muted)]">{group.blurb}</span>
                 </th>
               </tr>
               {members.map((flag) => (
@@ -351,7 +351,7 @@ function FlagRow({
             <span
               data-flag-mutating=""
               title="This stage writes data (it creates defects), unlike the read-only stages"
-              className="font-sans text-[9.5px] font-semibold tracking-wide px-1.5 py-0.5 rounded border border-[var(--status-broken-bd)]/50 text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20"
+              className="font-sans eyebrow px-1.5 py-0.5 rounded border border-[var(--status-broken-bd)]/50 text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20"
             >
               MUTATING
             </span>
@@ -391,7 +391,7 @@ function FlagRow({
           className="w-14 px-1 py-0.5 text-xs text-center bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
         />
       </td>
-      <td className="px-3 py-2 text-center text-[10px] text-[var(--color-text-muted)]">
+      <td className="px-3 py-2 text-center text-2xs text-[var(--color-text-muted)]">
         {flag.enabled_projects?.length || flag.enabled_roles?.length
           ? `${flag.enabled_projects?.length ?? 0}p / ${flag.enabled_roles?.length ?? 0}r`
           : 'all'}

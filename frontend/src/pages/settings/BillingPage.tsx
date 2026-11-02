@@ -190,7 +190,7 @@ function SummaryTile({
       : 'border-[var(--color-border)]'
   return (
     <div data-testid={testId} className={`rounded-md border ${borderClass} bg-[var(--color-bg-card)] p-3`}>
-      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+      <div className="flex items-center gap-1.5 eyebrow uppercase text-[var(--color-text-muted)]">
         {icon}
         {label}
       </div>
@@ -267,7 +267,7 @@ function ProjectRow({
           <div
             data-billing-projection=""
             title={projectionTitle(row.projection_basis, elapsed)}
-            className="text-[10px] font-sans text-[var(--color-text-muted)]"
+            className="text-2xs font-sans text-[var(--color-text-muted)]"
           >
             {/* Two unbreakable halves, so the Charge column stays as narrow as "proj. $47.14". */}
             <span className="whitespace-nowrap">proj. {formatUsd(row.projected_overage_charge_usd)}</span>{' '}
@@ -501,7 +501,7 @@ function QuotaEditor({
             </label>
 
             <fieldset className="space-y-2">
-              <legend className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+              <legend className="eyebrow uppercase text-[var(--color-text-muted)]">
                 At-cap action
               </legend>
               {CAP_ACTION_OPTIONS.map((opt) => (
@@ -567,7 +567,7 @@ function NumberInput({
         className="mt-1 w-full px-2 py-1.5 text-sm bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded"
       />
       {hint && (
-        <span data-billing-hint={hint.key} className="mt-1 block text-[10.5px] leading-snug text-[var(--color-text-muted)]">
+        <span data-billing-hint={hint.key} className="mt-1 block text-2xs leading-snug text-[var(--color-text-muted)]">
           {hint.text}
         </span>
       )}
