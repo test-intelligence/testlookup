@@ -31,7 +31,7 @@ export const UserMessage = memo(function UserMessage({ content }: { content: str
   return (
     <div className="flex gap-3 flex-row-reverse" data-testid="chat-user-message">
       <Avatar role="user" />
-      <div className="max-w-[80%] rounded-xl px-4 py-2.5 text-[13.5px] leading-relaxed bg-[var(--color-bg-hover)] text-[var(--color-text)]">
+      <div className="max-w-[80%] rounded-xl px-4 py-2.5 text-base leading-relaxed bg-[var(--color-bg-hover)] text-[var(--color-text)]">
         <p className="whitespace-pre-wrap break-words">{content}</p>
       </div>
     </div>
@@ -88,7 +88,7 @@ export const SavedAnswer = memo(function SavedAnswer({
         </div>
       )}
       <AssistantMessageExtras toolTrace={toolTrace} suggestedActions={suggestedActions} provenanceRaw={provenanceRaw} />
-      {line && <p className="mt-1.5 text-[11px] text-[var(--color-text-faint)]" data-testid="chat-answer-meta">{line}</p>}
+      {line && <p className="mt-1.5 text-2xs text-[var(--color-text-faint)]" data-testid="chat-answer-meta">{line}</p>}
     </AssistantShell>
   )
 })
@@ -124,7 +124,7 @@ export function PendingAnswer({
         </div>
       )}
       {working && (
-        <div className="flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]" role="status" data-testid="chat-status">
+        <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]" role="status" data-testid="chat-status">
           <LoadingSpinner size="sm" />
           <span>{pending.status ?? (pending.phase === 'sending' ? 'Sending…' : 'Thinking…')}</span>
           {elapsed >= 2 && <span className="text-[var(--color-text-faint)]">· {elapsed} s</span>}
@@ -135,7 +135,7 @@ export function PendingAnswer({
       )}
       {pending.phase === 'error' && pending.error && (
         <div
-          className="mt-1 flex items-start gap-2 rounded-lg border px-3 py-2 text-[13px]"
+          className="mt-1 flex items-start gap-2 rounded-lg border px-3 py-2 text-sm"
           style={{ borderColor: 'var(--status-failed-bd)', background: 'color-mix(in srgb, var(--status-failed-bg) 35%, transparent)' }}
           role="alert"
           data-testid="chat-error"

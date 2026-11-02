@@ -85,7 +85,7 @@ export default function CorrectClassificationModal({
     <InlineFormSection
       title="Correct classification"
       ariaLabel="Correct classification"
-      description={<code className="font-mono text-[11.5px]">{testName}</code>}
+      description={<code className="font-mono text-xs">{testName}</code>}
       onClose={onClose}
       canClose={!submitting}
       // The dialog had no X: Cancel (or Close) and Escape close it.
@@ -98,7 +98,7 @@ export default function CorrectClassificationModal({
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="text-[12px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
+            className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-3 py-1.5 disabled:opacity-50"
           >
             {analysisId ? 'Cancel' : 'Close'}
           </button>
@@ -118,24 +118,24 @@ export default function CorrectClassificationModal({
     >
       <div className="max-w-2xl">
         {isLoading && !skipLookup ? (
-          <p className="mt-4 text-[12.5px] text-[var(--color-text-muted)]">
+          <p className="mt-4 text-sm text-[var(--color-text-muted)]">
             Looking up the AI analysis…
           </p>
         ) : isError && !skipLookup ? (
-          <p className="mt-4 text-[12.5px]" style={{ color: 'var(--gate-no-go)' }}>
+          <p className="mt-4 text-sm" style={{ color: 'var(--gate-no-go)' }}>
             Could not look up the AI analysis — try again in a moment.
           </p>
         ) : !analysisId ? (
-          <p className="mt-4 text-[12.5px] text-[var(--color-text-secondary)]">
+          <p className="mt-4 text-sm text-[var(--color-text-secondary)]">
             No AI analysis recorded for this test yet. Corrections overwrite an
             existing AI suggestion — once the analyzer has triaged a failure of
             this test, you can correct it here.
           </p>
         ) : (
           <>
-            <p className="mt-3 text-[12.5px] text-[var(--color-text-secondary)]">
+            <p className="mt-3 text-sm text-[var(--color-text-secondary)]">
               Current category:{' '}
-              <span className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">
+              <span className="font-mono text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">
                 {currentCategory}
               </span>
             </p>
@@ -156,20 +156,20 @@ export default function CorrectClassificationModal({
                       : 'border-[var(--color-border)] hover:border-[var(--color-accent)] hover:bg-[var(--color-bg-hover)]/40',
                   )}
                 >
-                  <div className="text-[13px] font-medium text-[var(--color-text)]">{c.label}</div>
-                  <div className="text-[11.5px] text-[var(--color-text-muted)] mt-0.5">{c.desc}</div>
+                  <div className="text-sm font-medium text-[var(--color-text)]">{c.label}</div>
+                  <div className="text-xs text-[var(--color-text-muted)] mt-0.5">{c.desc}</div>
                 </button>
               ))}
             </div>
 
-            <label className="block mt-3 text-[12px] font-medium text-[var(--color-text)]">
+            <label className="block mt-3 text-xs font-medium text-[var(--color-text)]">
               Comment <span className="text-[var(--color-text-faint)] font-normal">(optional)</span>
               <textarea
                 value={comment}
                 onChange={e => setComment(e.target.value)}
                 rows={2}
                 placeholder="What gave the misclassification away?"
-                className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-[12.5px] text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
+                className="mt-1 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-bg)] px-2.5 py-2 text-sm text-[var(--color-text)] placeholder:text-[var(--color-text-faint)]"
               />
             </label>
           </>

@@ -87,8 +87,8 @@ export default function PromotionAction({
         {saving ? <LoadingSpinner size="sm" /> : <GitMerge className="h-3.5 w-3.5" />}
         {saving ? 'Promoting…' : alreadyLinked ? 'Promoted' : 'Promote'}
       </button>
-      {error && <span role="alert" className="max-w-56 text-right text-[11px] text-[var(--status-failed)]">{error}</span>}
-      {refreshWarning && <span role="status" className="max-w-72 text-right text-[11px] text-[var(--status-broken)]">{refreshWarning}</span>}
+      {error && <span role="alert" className="max-w-56 text-right text-2xs text-[var(--status-failed)]">{error}</span>}
+      {refreshWarning && <span role="status" className="max-w-72 text-right text-2xs text-[var(--status-broken)]">{refreshWarning}</span>}
     </span>
   )
 }

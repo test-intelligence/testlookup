@@ -140,7 +140,7 @@ export default function AIEvalDashboardPage() {
                       : `All ${dashboard.eval_provenance.total_runs} recent runs resolve to an eval manifest.`}
                   </p>
                   {dashboard.eval_provenance.unresolvable_checksums.length > 0 && (
-                    <p className="mt-2 break-all font-mono text-[10px] text-[var(--color-text-muted)]">
+                    <p className="mt-2 break-all font-mono text-2xs text-[var(--color-text-muted)]">
                       Unknown: {dashboard.eval_provenance.unresolvable_checksums.join(', ')}
                     </p>
                   )}
@@ -170,23 +170,23 @@ export default function AIEvalDashboardPage() {
                       <div className="text-2xl font-bold text-[var(--status-passed)]">
                         {dashboard.agreement.agreement_rate != null ? `${(dashboard.agreement.agreement_rate * 100).toFixed(1)}%` : 'N/A'}
                       </div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Agreement Rate</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Agreement Rate</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{dashboard.agreement.total_feedback}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Total Feedback</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Total Feedback</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--status-passed)]">{dashboard.agreement.correct}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Correct</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Correct</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--status-broken)]">{dashboard.agreement.partially_correct}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Partially Correct</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Partially Correct</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--status-failed)]">{dashboard.agreement.incorrect}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Incorrect</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Incorrect</div>
                     </div>
                   </div>
                 </div>
@@ -197,7 +197,7 @@ export default function AIEvalDashboardPage() {
                 <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4">
                   <div className="flex items-center gap-3 mb-3">
                     <h2 className="text-sm font-semibold text-[var(--color-text)]">Training Label Health</h2>
-                    <span className={clsx('px-2 py-0.5 rounded text-[10px] font-medium', {
+                    <span className={clsx('px-2 py-0.5 rounded text-2xs font-medium', {
                       'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': dashboard.label_health.ml_maturity === 'human_calibrated',
                       'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)]': dashboard.label_health.ml_maturity === 'bootstrap_llm_imitating',
                       'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]': dashboard.label_health.ml_maturity === 'not_trained',
@@ -212,17 +212,17 @@ export default function AIEvalDashboardPage() {
                       <div className={clsx('text-2xl font-bold', dashboard.label_health.meets_human_label_floor ? 'text-[var(--status-passed)]' : 'text-[var(--status-broken)]')}>
                         {dashboard.label_health.human_label_total}
                       </div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">
+                      <div className="text-2xs text-[var(--color-text-muted)]">
                         Human Labels (floor: {dashboard.label_health.human_label_floor})
                       </div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{dashboard.label_health.human_direct}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Direct Corrections</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Direct Corrections</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{dashboard.label_health.llm_pseudo_candidates}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">LLM Pseudo-labels</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">LLM Pseudo-labels</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">
@@ -230,7 +230,7 @@ export default function AIEvalDashboardPage() {
                           ? `${(dashboard.label_health.human_share_of_pool * 100).toFixed(1)}%`
                           : 'N/A'}
                       </div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Human Share of Pool</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Human Share of Pool</div>
                     </div>
                   </div>
                   {dashboard.label_health.last_trained_composition && (
@@ -277,27 +277,27 @@ export default function AIEvalDashboardPage() {
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{reportCycles[0].report_count}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Reports in latest cycle</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Reports in latest cycle</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{reportCycles[0].consecutive_passes}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Consecutive passes</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Consecutive passes</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{reportCycles[0].corpus_version}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Corpus version</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Corpus version</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{reportCycles.length}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Recorded cycles</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Recorded cycles</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">
                         {typeof latestActionCount === 'number' ? latestActionCount : 'N/A'}
                       </div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Proposed actions</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Proposed actions</div>
                       {typeof latestActionResolution === 'number' && (
-                        <div className="text-[10px] text-[var(--color-text-muted)]">
+                        <div className="text-2xs text-[var(--color-text-muted)]">
                           {`${(latestActionResolution * 100).toFixed(0)}% resolved`}
                         </div>
                       )}
@@ -393,7 +393,7 @@ export default function AIEvalDashboardPage() {
                         <div className="flex items-center gap-2">
                           <span className="text-[var(--color-text-secondary)]">{v.model_name}</span>
                           <span className="text-xs text-[var(--color-text-muted)]">{v.track}</span>
-                          <span className={clsx('px-2 py-0.5 rounded text-[10px]', {
+                          <span className={clsx('px-2 py-0.5 rounded text-2xs', {
                             'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': v.status === 'active',
                             'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]': v.status === 'training' || v.status === 'evaluating',
                             'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]': v.status === 'retired',

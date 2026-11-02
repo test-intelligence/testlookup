@@ -169,7 +169,7 @@ export default function DefectApprovals({ projectId }: { projectId: string }) {
                     </span>
                     {severity && (
                       <span
-                        className={`inline-flex flex-shrink-0 items-center rounded-full border px-1.5 py-0.5 text-[10.5px] font-semibold ${tone ? '' : NEUTRAL_TONE}`}
+                        className={`inline-flex flex-shrink-0 items-center rounded-full border px-1.5 py-0.5 text-2xs font-semibold ${tone ? '' : NEUTRAL_TONE}`}
                         style={tone ? { color: tone.fg, background: tone.bg, borderColor: tone.bd } : undefined}
                         data-defect-severity=""
                       >
@@ -177,11 +177,11 @@ export default function DefectApprovals({ projectId }: { projectId: string }) {
                       </span>
                     )}
                   </div>
-                  <div className="truncate text-[11.5px] text-[var(--color-text-muted)]" data-defect-owner="">
+                  <div className="truncate text-xs text-[var(--color-text-muted)]" data-defect-owner="">
                     {blank(defect.component)} · {blank(defect.owner_team)}
                   </div>
                   {defect.policy_reasons.length > 0 && (
-                    <div className="text-[11.5px] text-[var(--color-text-secondary)]">
+                    <div className="text-xs text-[var(--color-text-secondary)]">
                       <span>Waiting because:</span>
                       <ul className="ml-4 list-disc">
                         {defect.policy_reasons.map((reason, i) => (
@@ -190,7 +190,7 @@ export default function DefectApprovals({ projectId }: { projectId: string }) {
                       </ul>
                     </div>
                   )}
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-[var(--color-text-muted)]">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--color-text-muted)]">
                     <span data-defect-jira-project="">
                       {defect.jira_project_key
                         ? `Jira project ${defect.jira_project_key}`

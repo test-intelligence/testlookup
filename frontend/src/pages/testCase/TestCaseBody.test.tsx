@@ -160,6 +160,18 @@ describe('TestCaseBody — the answer first (P4)', () => {
     }
     expect(within(result).getByRole('link', { name: 'run-1' })).toHaveAttribute('href', '/runs/run-1')
   })
+
+  // W29d UIX-04c: ThisResult's labels are the scale's eyebrow (11 px, was 10), and leading-tight keeps
+  // each label | value baseline row from growing 1 px on CI's DejaVu (contract §1.7 fit remedy 4).
+  it("Details: ThisResult's labels carry eyebrow leading-tight and no arbitrary size", () => {
+    renderBody('/runs/run-1/tests/test-1?tab=details')
+    const result = screen.getByRole('region', { name: 'This result' })
+    for (const text of ['Result ID', 'Run', 'Severity', 'Owner', 'Failure category']) {
+      const label = within(result).getByText(text, { exact: true })
+      expect(label, text).toHaveClass('eyebrow', 'leading-tight', 'uppercase')
+      expect(label.className, text).not.toMatch(/text-\[\d|tracking-/)
+    }
+  })
 })
 
 describe('TestCaseBody — the tabs (?tab=)', () => {

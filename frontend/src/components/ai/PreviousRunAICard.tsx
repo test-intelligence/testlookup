@@ -44,7 +44,7 @@ function BaselinePicker({ runId, suiteName, baselineRunId, onChange }: {
       disabled={isLoading}
       value={baselineRunId ?? ''}
       onChange={(event) => onChange(event.target.value || null)}
-      className="max-w-[340px] rounded border border-[var(--color-border)] bg-[var(--color-bg-card)] px-2 py-1 text-[12px] text-[var(--color-text)]"
+      className="max-w-[340px] rounded border border-[var(--color-border)] bg-[var(--color-bg-card)] px-2 py-1 text-xs text-[var(--color-text)]"
     >
       <option value="">Default (previous on this branch)</option>
       {runs.map((r) => (
@@ -71,12 +71,12 @@ function TestChangeRow({ row, runId }: { row: DiffTestRow; runId: string }) {
       data-ai-diff-row="test"
       data-test-fingerprint={row.fingerprint}
       to={runTestHref(runId, row.testId)}
-      className="block rounded px-1 py-0.5 text-[12px] hover:bg-[var(--color-bg-hover)]"
+      className="block rounded px-1 py-0.5 text-xs hover:bg-[var(--color-bg-hover)]"
     >
       {body}
     </Link>
   ) : (
-    <span data-ai-diff-row="test" data-test-fingerprint={row.fingerprint} className="block px-1 py-0.5 text-[12px]">{body}</span>
+    <span data-ai-diff-row="test" data-test-fingerprint={row.fingerprint} className="block px-1 py-0.5 text-xs">{body}</span>
   )
 }
 
@@ -84,15 +84,15 @@ function ListBlock({ attr, title, items }: { attr: string; title: string; items:
   if (items.length === 0) return null
   return (
     <div {...{ [attr]: '' }}>
-      <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">{title} ({items.length})</p>
+      <p className="m-0 eyebrow uppercase text-[var(--color-text-muted)]">{title} ({items.length})</p>
       <ul className="m-0 list-none p-0">
         {items.slice(0, 5).map((item) => (
-          <li key={item.key} className="py-0.5 text-[12px]">
+          <li key={item.key} className="py-0.5 text-xs">
             <span className="text-[var(--color-text)] break-words">{item.label}</span>
             <span className="ml-1 text-[var(--color-text-muted)]">({item.detail})</span>
           </li>
         ))}
-        {items.length > 5 && <li className="text-[11px] text-[var(--color-text-faint)]">+{items.length - 5} more</li>}
+        {items.length > 5 && <li className="text-2xs text-[var(--color-text-faint)]">+{items.length - 5} more</li>}
       </ul>
     </div>
   )
@@ -134,7 +134,7 @@ export default function PreviousRunAICard({
         type="button"
         data-previous-change-baseline=""
         onClick={() => setPicking((v) => !v)}
-        className="text-[12px] text-[var(--color-accent)] underline underline-offset-2"
+        className="text-xs text-[var(--color-accent)] underline underline-offset-2"
       >
         {picking ? 'Done' : 'Change baseline'}
       </button>
@@ -153,7 +153,7 @@ export default function PreviousRunAICard({
   )
 
   const chip = baseline && (
-    <span data-previous-baseline="" title={baseline.selection_reason || undefined} className="text-[12px] text-[var(--color-text-secondary)]">
+    <span data-previous-baseline="" title={baseline.selection_reason || undefined} className="text-xs text-[var(--color-text-secondary)]">
       {baselineChipText(baseline, current)}
     </span>
   )
@@ -182,24 +182,24 @@ export default function PreviousRunAICard({
       className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-3"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+        <span className="inline-flex items-center gap-1.5 eyebrow uppercase text-[var(--color-text-muted)]">
           <GitCompare aria-hidden className="h-3.5 w-3.5" /> vs previous run
         </span>
         {chip}
         {state === 'collapsed' && (
-          <span data-previous-no-changes="" className="text-[12px] text-[var(--color-text-muted)]">
+          <span data-previous-no-changes="" className="text-xs text-[var(--color-text-muted)]">
             No changes vs {runLabel(baseline)}
           </span>
         )}
         {baseline?.branch_mismatch && (
-          <span data-previous-branch-mismatch="" className="text-[11px] text-[var(--status-broken)]">
+          <span data-previous-branch-mismatch="" className="text-2xs text-[var(--status-broken)]">
             different branch ({baseline.branch ?? 'no branch'} vs {current?.branch ?? 'no branch'})
           </span>
         )}
         <span className="ml-auto inline-flex items-center gap-3">
           {changeBaseline}
           {compareHref && state !== 'empty' && (
-            <Link to={compareHref} className="text-[12px] text-[var(--color-accent)] underline underline-offset-2">
+            <Link to={compareHref} className="text-xs text-[var(--color-accent)] underline underline-offset-2">
               Open Run Compare
             </Link>
           )}
@@ -207,11 +207,11 @@ export default function PreviousRunAICard({
       </div>
 
       {state === 'loading' && (
-        <p className="m-0 mt-1 text-[12px] text-[var(--color-text-muted)]">Comparing with the previous run…</p>
+        <p className="m-0 mt-1 text-xs text-[var(--color-text-muted)]">Comparing with the previous run…</p>
       )}
 
       {state === 'unavailable' && (
-        <p className="m-0 mt-1 flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+        <p className="m-0 mt-1 flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
           The comparison with the previous run is unavailable right now.
           <button
             type="button"
@@ -225,7 +225,7 @@ export default function PreviousRunAICard({
       )}
 
       {state === 'empty' && (
-        <p data-previous-empty={data?.reason ?? ''} className="m-0 mt-1 text-[12px] text-[var(--color-text-muted)]">
+        <p data-previous-empty={data?.reason ?? ''} className="m-0 mt-1 text-xs text-[var(--color-text-muted)]">
           {previousRunEmptyText(data?.reason ?? null, {
             branch: current?.branch ?? prev?.rule?.branch ?? null,
             baseline,
@@ -237,7 +237,7 @@ export default function PreviousRunAICard({
       {state === 'expanded' && model && data && (
         <div className="mt-2 space-y-2.5">
           {model.provenance && (
-            <p data-previous-provenance="" role="note" className="m-0 rounded-md bg-[var(--color-bg-secondary)] px-2 py-1 text-[12px] text-[var(--color-text)]">
+            <p data-previous-provenance="" role="note" className="m-0 rounded-md bg-[var(--color-bg-secondary)] px-2 py-1 text-xs text-[var(--color-text)]">
               {model.provenance.note}
             </p>
           )}
@@ -245,12 +245,12 @@ export default function PreviousRunAICard({
             <p
               data-previous-verdict=""
               className={clsx(
-                'm-0 text-[13px] font-semibold',
+                'm-0 text-sm font-semibold',
                 diff.verdict.direction === 'worse' ? 'text-[var(--status-failed)]' : diff.verdict.direction === 'better' ? 'text-[var(--status-passed)]' : 'text-[var(--color-text)]',
               )}
             >
               {model.verdict?.text}
-              {model.verdict?.risk && <span className="ml-2 text-[12px] font-normal text-[var(--color-text-muted)]">{model.verdict.risk}</span>}
+              {model.verdict?.risk && <span className="ml-2 text-xs font-normal text-[var(--color-text-muted)]">{model.verdict.risk}</span>}
             </p>
           )}
           <div className="grid gap-3 md:grid-cols-3">
@@ -260,32 +260,32 @@ export default function PreviousRunAICard({
           </div>
           {testRows.length > 0 && (
             <div data-previous-tests-changed="">
-              <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+              <p className="m-0 eyebrow uppercase text-[var(--color-text-muted)]">
                 Tests whose AI conclusion changed ({testRows.length})
               </p>
               <ul className="m-0 list-none p-0">
                 {testRows.slice(0, MAX_TEST_ROWS).map((row) => (
                   <li key={row.key} className="flex items-baseline gap-2">
-                    <span className="w-[76px] flex-shrink-0 text-[10px] uppercase tracking-wide text-[var(--color-text-faint)]">{row.tag}</span>
+                    <span className="w-24 flex-shrink-0 eyebrow uppercase text-[var(--color-text-faint)]">{row.tag}</span>
                     <span className="min-w-0 flex-1"><TestChangeRow row={row} runId={runId} /></span>
                   </li>
                 ))}
                 {testRows.length > MAX_TEST_ROWS && (
-                  <li className="text-[11px] text-[var(--color-text-faint)]">+{testRows.length - MAX_TEST_ROWS} more in Run Compare</li>
+                  <li className="text-2xs text-[var(--color-text-faint)]">+{testRows.length - MAX_TEST_ROWS} more in Run Compare</li>
                 )}
               </ul>
             </div>
           )}
           {data.narrative && (
             <div data-previous-narrative="" className="rounded-md border border-[var(--color-border)] px-3 py-2">
-              <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+              <p className="m-0 eyebrow uppercase text-[var(--color-text-muted)]">
                 <span data-previous-narrative-label="">{data.narrative.label}</span>
               </p>
               {data.narrative.executive_summary && (
-                <p className="m-0 mt-1 text-[12px] text-[var(--color-text-secondary)]">{data.narrative.executive_summary}</p>
+                <p className="m-0 mt-1 text-xs text-[var(--color-text-secondary)]">{data.narrative.executive_summary}</p>
               )}
               {(data.narrative.ai_changes ?? []).length > 0 && (
-                <ul className="m-0 mt-1 list-disc pl-5 text-[12px] text-[var(--color-text-secondary)]">
+                <ul className="m-0 mt-1 list-disc pl-5 text-xs text-[var(--color-text-secondary)]">
                   {data.narrative.ai_changes.map((line, i) => <li key={`${i}-${line}`}>{line}</li>)}
                 </ul>
               )}

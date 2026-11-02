@@ -44,9 +44,9 @@ function statusEntries(counts: Record<string, number>): Array<[string, number]> 
 function Tile({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
     <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)]/40 px-2.5 py-2">
-      <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider">{label}</p>
+      <p className="eyebrow text-[var(--color-text-muted)] uppercase">{label}</p>
       <p className="text-lg font-bold tabular-nums mt-0.5 text-[var(--color-text)]">{value}</p>
-      {sub && <p className="text-[10.5px] text-[var(--color-text-faint)]">{sub}</p>}
+      {sub && <p className="text-2xs text-[var(--color-text-faint)]">{sub}</p>}
     </div>
   )
 }
@@ -63,12 +63,12 @@ function Scorecard({ gate }: { gate: ReleaseGateDetail }) {
         <Tile label="Runs" value={card.run_count} sub="in this verdict" />
       </div>
       {counts.length > 0 && (
-        <p className="text-[11.5px] text-[var(--color-text-muted)] tabular-nums" data-gate-status-counts="">
+        <p className="text-xs text-[var(--color-text-muted)] tabular-nums" data-gate-status-counts="">
           {counts.map(([k, n]) => `${STATUS_LABEL[k] ?? k} ${n}`).join(' · ')}
         </p>
       )}
       {!card.measured && card.insufficient_reason && (
-        <p className="text-[11.5px] text-[var(--color-text-muted)]" data-gate-insufficient="">{card.insufficient_reason}</p>
+        <p className="text-xs text-[var(--color-text-muted)]" data-gate-insufficient="">{card.insufficient_reason}</p>
       )}
     </div>
   )
@@ -81,13 +81,13 @@ function Blocking({ gate }: { gate: ReleaseGateDetail }) {
   return (
     <div>
       <h4 className="text-xs font-semibold text-[var(--color-text)] mb-1">Blocking</h4>
-      <ul aria-label="Blocking" className="max-h-64 overflow-y-auto space-y-0.5 text-[12px] text-[var(--color-text-secondary)]">
+      <ul aria-label="Blocking" className="max-h-64 overflow-y-auto space-y-0.5 text-xs text-[var(--color-text-secondary)]">
         {shown.map((reason, i) => (
           <li key={`${i}-${reason}`} className="break-words">{reason}</li>
         ))}
       </ul>
       {total > shown.length && (
-        <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)]" data-gate-truncated="">+{total - shown.length} more</p>
+        <p className="mt-1 text-xs text-[var(--color-text-muted)]" data-gate-truncated="">+{total - shown.length} more</p>
       )}
     </div>
   )
@@ -116,7 +116,7 @@ function Baseline({ baseline, baselineName, failed }: {
   return (
     <div>
       <h4 className="text-xs font-semibold text-[var(--color-text)] mb-1">Against the baseline</h4>
-      <div className="text-[12px] text-[var(--color-text-secondary)]">{body}</div>
+      <div className="text-xs text-[var(--color-text-secondary)]">{body}</div>
     </div>
   )
 }
@@ -149,7 +149,7 @@ export default function GatePanel({ releaseId, onEvaluate, evaluating = false }:
             <time
               dateTime={gate?.decided_at ?? undefined}
               title={gate?.decided_at ?? undefined}
-              className="text-[11.5px] text-[var(--color-text-muted)]"
+              className="text-xs text-[var(--color-text-muted)]"
             >
               Evaluated {formatCompactDateTime(decidedAt)}
             </time>
@@ -171,12 +171,12 @@ export default function GatePanel({ releaseId, onEvaluate, evaluating = false }:
       {isLoading ? (
         <div className="flex items-center justify-center py-4"><LoadingSpinner size="sm" /></div>
       ) : error ? (
-        <p className="text-[12.5px] text-[var(--status-failed)]">
+        <p className="text-sm text-[var(--status-failed)]">
           The release gate could not be loaded.{' '}
           <button type="button" onClick={() => void mutate()} className="text-[var(--color-accent)] hover:underline">Retry</button>
         </p>
       ) : !gate ? (
-        <p className="text-[12.5px] text-[var(--color-text-muted)]">This release has not been evaluated yet.</p>
+        <p className="text-sm text-[var(--color-text-muted)]">This release has not been evaluated yet.</p>
       ) : (
         <div className="space-y-3">
           <Scorecard gate={gate} />

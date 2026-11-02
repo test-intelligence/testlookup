@@ -40,7 +40,7 @@ export default function GateBadge({ decision, reason, className }: GateBadgeProp
   const aria = reason ? `${s.label} — ${reason}` : s.label
   return (
     <span
-      className={clsx('inline-flex items-center text-[11px] font-semibold px-2 py-0.5 rounded-full border', className)}
+      className={clsx('inline-flex items-center text-2xs font-semibold px-2 py-0.5 rounded-full border', className)}
       style={{ color: s.fg, background: s.bg, borderColor: s.bd }}
       aria-label={aria}
       data-gate-decision={decision}

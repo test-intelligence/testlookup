@@ -201,7 +201,7 @@ function MetricCell({ label, value, valueClass, title }: {
   return (
     <div className="text-center bg-[var(--color-bg-secondary)]/40 rounded-lg px-2 py-2" title={title}>
       <dd className={clsx('text-lg font-bold tabular-nums', valueClass ?? 'text-[var(--color-text)]')}>{value}</dd>
-      <dt className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider mt-0.5">{label}</dt>
+      <dt className="eyebrow text-[var(--color-text-muted)] uppercase mt-0.5">{label}</dt>
     </div>
   )
 }

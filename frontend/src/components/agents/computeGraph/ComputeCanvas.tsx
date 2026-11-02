@@ -9,6 +9,7 @@
  */
 import { clsx } from 'clsx'
 import { Fragment } from 'react'
+import { CHART_FONT } from '@/components/charts/tokens'
 import type { ComputeStage, ComputeDecision, ComputeEdge, SelectedId } from './types'
 import {
   CANVAS_H,
@@ -137,8 +138,9 @@ export default function ComputeCanvas({
             return (
               <div
                 key={`label-${edge.from}-${edge.to}-${i}`}
-                className="absolute font-mono text-[9.5px] px-1.5 py-0.5 rounded-sm border"
+                className="absolute font-mono px-1.5 py-0.5 rounded-sm border"
                 style={{
+                  fontSize: CHART_FONT.tick,
                   left: x,
                   top: y,
                   transform: 'translate(-50%, -50%)',

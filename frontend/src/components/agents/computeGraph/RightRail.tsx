@@ -37,7 +37,7 @@ const STATUS_TONE: Record<ComputeStage['status'], { dot: string; pillBg: string;
 function Blob({ children }: { children: React.ReactNode }) {
   return (
     <pre
-      className="rounded-md border p-2.5 text-[11px] font-mono whitespace-pre-wrap break-words"
+      className="rounded-md border p-2.5 text-2xs font-mono whitespace-pre-wrap break-words"
       style={{
         background: 'var(--color-bg)',
         borderColor: 'var(--color-border)',
@@ -55,7 +55,7 @@ function KV({ k, v, tone }: { k: string; v: React.ReactNode; tone?: 'ok' | 'bad'
     : tone === 'bad' ? 'var(--status-failed)'
     : 'var(--color-text)'
   return (
-    <div className="flex gap-3 text-[11.5px] py-1">
+    <div className="flex gap-3 text-xs py-1">
       <dt className="text-[var(--color-text-muted)] w-[95px] shrink-0">{k}</dt>
       <dd className="font-mono" style={{ color: valueColor }}>{v}</dd>
     </div>
@@ -80,7 +80,7 @@ function StageBody({ stage, events }: { stage: RailStage; events: ComputeEdgeEve
     <>
       {/* Head — status dot + pill + duration, then name, then desc. */}
       <div className="px-3.5 pt-3.5 pb-3 border-b border-[var(--color-border)]">
-        <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-[0.08em]">
+        <div className="flex items-center gap-1.5 eyebrow uppercase">
           <span className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: tone.dot }} aria-hidden />
           <span
             className="px-1.5 py-0.5 rounded"
@@ -92,12 +92,12 @@ function StageBody({ stage, events }: { stage: RailStage; events: ComputeEdgeEve
             <span className="text-[var(--color-text-muted)]">· {stage.dur}</span>
           )}
         </div>
-        <h3 className="mt-1.5 text-[16px] font-semibold text-[var(--color-text)] m-0">{stage.name}</h3>
-        <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)] m-0">{stage.desc}</p>
+        <h3 className="mt-1.5 text-md font-semibold text-[var(--color-text)] m-0">{stage.name}</h3>
+        <p className="mt-1 text-xs text-[var(--color-text-muted)] m-0">{stage.desc}</p>
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-3 px-3.5 border-b border-[var(--color-border)] text-[11.5px]">
+      <div className="flex gap-3 px-3.5 border-b border-[var(--color-border)] text-xs">
         {(['overview', 'output', 'activity', 'logs'] as Tab[]).map(t => (
           <button
             key={t}
@@ -112,7 +112,7 @@ function StageBody({ stage, events }: { stage: RailStage; events: ComputeEdgeEve
           >
             {t}
             {t === 'activity' && stageEvents.length > 0 && (
-              <span className="ml-1 text-[10px] text-[var(--color-text-muted)]">({stageEvents.length})</span>
+              <span className="ml-1 text-2xs text-[var(--color-text-muted)]">({stageEvents.length})</span>
             )}
           </button>
         ))}
@@ -124,14 +124,14 @@ function StageBody({ stage, events }: { stage: RailStage; events: ComputeEdgeEve
           <>
             {stage.status === 'failed' && stage.error && (
               <div className="mb-3">
-                <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] mb-1">Error</div>
+                <div className="eyebrow uppercase text-[var(--color-text-muted)] mb-1">Error</div>
                 <Blob>{stage.error}</Blob>
               </div>
             )}
             {stage.status === 'skipped' && stage.skipReason && (
               <div className="mb-3">
-                <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] mb-1">Skipped</div>
-                <p className="text-[12.5px] text-[var(--color-text-secondary)]">{stage.skipReason}</p>
+                <div className="eyebrow uppercase text-[var(--color-text-muted)] mb-1">Skipped</div>
+                <p className="text-sm text-[var(--color-text-secondary)]">{stage.skipReason}</p>
               </div>
             )}
             <dl className="m-0">
@@ -147,11 +147,11 @@ function StageBody({ stage, events }: { stage: RailStage; events: ComputeEdgeEve
         {tab === 'output' && (
           stage.output
             ? <Blob>{stage.output}</Blob>
-            : <p className="text-[12.5px] text-[var(--color-text-muted)]">No output recorded for this stage.</p>
+            : <p className="text-sm text-[var(--color-text-muted)]">No output recorded for this stage.</p>
         )}
         {tab === 'activity' && (
           stageEvents.length === 0
-            ? <p className="text-[12.5px] text-[var(--color-text-muted)]">No events for this stage yet.</p>
+            ? <p className="text-sm text-[var(--color-text-muted)]">No events for this stage yet.</p>
             : (
               <ul className="space-y-2 m-0 p-0 list-none">
                 {stageEvents.map((e, i) => {
@@ -162,11 +162,11 @@ function StageBody({ stage, events }: { stage: RailStage; events: ComputeEdgeEve
                     e.kind === 'retry'     ? <Sparkles     className="w-3.5 h-3.5 text-[var(--status-broken)]" /> :
                                               <ChevronRight className="w-3.5 h-3.5 text-[var(--color-text-muted)]" />
                   return (
-                    <li key={`${e.stage}-${e.at}-${i}`} className="flex items-start gap-2 text-[12px]">
+                    <li key={`${e.stage}-${e.at}-${i}`} className="flex items-start gap-2 text-xs">
                       <span className="mt-0.5 shrink-0">{icon}</span>
                       <div>
                         <div className="text-[var(--color-text)]">{e.what}</div>
-                        <div className="text-[10.5px] text-[var(--color-text-muted)]">{e.at}</div>
+                        <div className="text-2xs text-[var(--color-text-muted)]">{e.at}</div>
                       </div>
                     </li>
                   )
@@ -177,7 +177,7 @@ function StageBody({ stage, events }: { stage: RailStage; events: ComputeEdgeEve
         {tab === 'logs' && (
           stage.logs
             ? <Blob>{stage.logs}</Blob>
-            : <p className="text-[12.5px] text-[var(--color-text-muted)]">No logs captured for this stage.</p>
+            : <p className="text-sm text-[var(--color-text-muted)]">No logs captured for this stage.</p>
         )}
       </div>
     </>
@@ -188,17 +188,17 @@ function DecisionBody({ decision }: { decision: ComputeDecision }) {
   return (
     <div className="px-3.5 py-3.5 overflow-auto">
       <span
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-[0.08em]"
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded eyebrow uppercase"
         style={{ background: 'var(--color-purple-soft, color-mix(in srgb, var(--status-flaky) 14%, transparent))', color: 'var(--color-purple, var(--status-flaky))' }}
       >
         ◇ Decision
       </span>
-      <h3 className="mt-2 text-[16px] font-semibold text-[var(--color-text)] m-0">{decision.label}</h3>
-      <p className="mt-1 text-[11.5px] text-[var(--color-text-muted)] m-0">
+      <h3 className="mt-2 text-md font-semibold text-[var(--color-text)] m-0">{decision.label}</h3>
+      <p className="mt-1 text-xs text-[var(--color-text-muted)] m-0">
         A branch chosen by the orchestrator at runtime.
       </p>
 
-      <div className="mt-3 text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">Outcome</div>
+      <div className="mt-3 eyebrow uppercase text-[var(--color-text-muted)]">Outcome</div>
       <dl className="m-0 mb-3">
         <KV
           k="chosen"
@@ -208,11 +208,11 @@ function DecisionBody({ decision }: { decision: ComputeDecision }) {
         {decision.at && <KV k="at" v={decision.at} />}
       </dl>
 
-      <div className="mt-2 text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] mb-1">Branches</div>
+      <div className="mt-2 eyebrow uppercase text-[var(--color-text-muted)] mb-1">Branches</div>
       <div className="space-y-1.5 mb-3">
         {decision.chosen && (
           <div
-            className="flex items-center justify-between px-2 py-1.5 rounded border text-[11.5px] font-mono"
+            className="flex items-center justify-between px-2 py-1.5 rounded border text-xs font-mono"
             style={{
               background: 'var(--color-accent-muted)',
               borderColor: 'color-mix(in srgb, var(--color-accent) 40%, transparent)',
@@ -228,7 +228,7 @@ function DecisionBody({ decision }: { decision: ComputeDecision }) {
           .map(alt => (
             <div
               key={alt}
-              className="flex items-center justify-between px-2 py-1.5 rounded border text-[11.5px] font-mono"
+              className="flex items-center justify-between px-2 py-1.5 rounded border text-xs font-mono"
               style={{
                 background: 'var(--color-bg-secondary)',
                 borderColor: 'var(--color-border)',
@@ -243,8 +243,8 @@ function DecisionBody({ decision }: { decision: ComputeDecision }) {
 
       {decision.rationale && (
         <>
-          <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] mb-1">Rationale</div>
-          <p className="text-[12.5px] text-[var(--color-text-secondary)] m-0">{decision.rationale}</p>
+          <div className="eyebrow uppercase text-[var(--color-text-muted)] mb-1">Rationale</div>
+          <p className="text-sm text-[var(--color-text-secondary)] m-0">{decision.rationale}</p>
         </>
       )}
     </div>
@@ -265,7 +265,7 @@ export default function RightRail({ selectedId, stages, decision, events = [] }:
         if (selectedId === null) {
           return (
             <div className="flex-1 flex items-center justify-center px-7 py-7 text-center">
-              <p className="text-[12px] text-[var(--color-text-muted)] m-0">
+              <p className="text-xs text-[var(--color-text-muted)] m-0">
                 Select a stage in the flow to inspect it.
               </p>
             </div>
@@ -278,7 +278,7 @@ export default function RightRail({ selectedId, stages, decision, events = [] }:
         if (!stage) {
           return (
             <div className="flex-1 flex items-center justify-center px-7 py-7 text-center">
-              <p className="text-[12px] text-[var(--color-text-muted)] m-0">
+              <p className="text-xs text-[var(--color-text-muted)] m-0">
                 Selection not found — pick another node.
               </p>
             </div>

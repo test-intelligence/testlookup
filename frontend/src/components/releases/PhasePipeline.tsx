@@ -54,7 +54,7 @@ export default function PhasePipeline({ phases, className }: PhasePipelineProps)
             key={p.key}
             role="listitem"
             className={clsx(
-              'flex-1 min-w-0 flex items-center gap-1.5 px-2.5 py-1.5 text-[11.5px]',
+              'flex-1 min-w-0 flex items-center gap-1.5 px-2.5 py-1.5 text-xs',
               i > 0 && 'border-l',
             )}
             style={{
@@ -82,7 +82,7 @@ export default function PhasePipeline({ phases, className }: PhasePipelineProps)
         <div
           role="listitem"
           data-phase-more=""
-          className="shrink-0 flex items-center px-2.5 py-1.5 text-[11.5px] border-l text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
+          className="shrink-0 flex items-center px-2.5 py-1.5 text-xs border-l text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]"
           style={{ borderLeftColor: 'var(--color-border)' }}
           aria-label={`${hidden.length} more phase${hidden.length === 1 ? '' : 's'}`}
           title={hidden.map(p => `${p.label} — ${p.state}`).join(', ')}

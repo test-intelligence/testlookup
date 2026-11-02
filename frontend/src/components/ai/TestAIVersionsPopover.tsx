@@ -38,7 +38,7 @@ function VersionRow({ version, latest }: { version: AITestVersion; latest: boole
           {versionLabel(version)}
         </span>
         {latest && (
-          <span className="rounded bg-[var(--color-bg-secondary)] px-1 text-[10px] text-[var(--color-text-muted)]">
+          <span className="rounded bg-[var(--color-bg-secondary)] px-1 text-2xs text-[var(--color-text-muted)]">
             latest
           </span>
         )}
@@ -150,7 +150,7 @@ export default function TestAIVersionsPopover({
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 space-y-1">
-          <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+          <p className="eyebrow uppercase text-[var(--color-text-muted)]">
             AI analysis on {runLabel}
           </p>
           <div data-test-ai-current="" className="flex flex-wrap items-center gap-1.5">
@@ -159,7 +159,7 @@ export default function TestAIVersionsPopover({
             <span className="text-[var(--color-text-muted)]">{engineText(ai.analysis_mode, ai.model)}</span>
             {ai.is_flaky && <span className="badge-flaky">flaky</span>}
             {ai.requires_human_review && (
-              <span className="rounded border border-[var(--status-broken)]/40 px-1 text-[10px] text-[var(--status-broken)]">
+              <span className="rounded border border-[var(--status-broken)]/40 px-1 text-2xs text-[var(--status-broken)]">
                 needs human review
               </span>
             )}
@@ -183,7 +183,7 @@ export default function TestAIVersionsPopover({
       </div>
 
       <div className="border-t border-[var(--color-border)] pt-2">
-        <p className="mb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+        <p className="mb-1 eyebrow uppercase text-[var(--color-text-muted)]">
           Stored versions{hasVersions ? ` (${ai.version_count})` : ''}
         </p>
         {body}

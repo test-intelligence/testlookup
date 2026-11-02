@@ -51,6 +51,23 @@ describe('Test Management owner avatar', () => {
     render(<OwnerCell owner="QA Platform" userId={null} />)
     expect(avatar().getAttribute('style')).toBe(first)
   })
+
+  // W29d UIX-04c rule 6: the initials circle is sized in em of its own text-2xs (11 px → 19.8 px), so it
+  // follows the scale and presentation mode; the inline 18 px box and 9 px font are gone.
+  it.each([
+    ['a named owner', { owner: 'Priya Nair', userId: null }],
+    ['an assignee id', { owner: null, userId: '12345678-abcd-4000-8000-000000000001' }],
+    ['nobody (the dashed circle)', { owner: null, userId: null }],
+  ] as const)('%s: the circle is h-[1.8em] w-[1.8em] text-2xs, with no inline width, height or font size', (_name, props) => {
+    render(<OwnerCell {...props} />)
+    const circle = (document.querySelector('[data-owner-avatar]')
+      ?? screen.getByLabelText('Unassigned').querySelector('[aria-hidden]')) as HTMLElement
+    for (const cls of ['h-[1.8em]', 'w-[1.8em]', 'text-2xs']) expect(circle).toHaveClass(cls)
+    expect(circle.style.width).toBe('')
+    expect(circle.style.height).toBe('')
+    expect(circle.style.fontSize).toBe('')
+    expect(circle.className).not.toMatch(/text-\[\d/)
+  })
 })
 
 // W29a UIX-07: a case's priority tag is the ONE severity palette's P-level.

@@ -108,7 +108,7 @@ export default function TestCaseBody({ runId, testId, compact = false }: TestCas
   return (
     <div className="space-y-4" data-test-case-body="" data-compact={compact ? 'true' : 'false'}>
       {compact && (tc.full_name ?? tc.class_name) && (
-        <p className="m-0 break-all font-mono text-[12px] text-[var(--color-text-muted)]">{tc.full_name ?? tc.class_name}</p>
+        <p className="m-0 break-all font-mono text-xs text-[var(--color-text-muted)]">{tc.full_name ?? tc.class_name}</p>
       )}
 
       <div className="flex flex-wrap items-center gap-2" data-test-case-chips="">
@@ -134,7 +134,7 @@ export default function TestCaseBody({ runId, testId, compact = false }: TestCas
           {stackTrace && errorMessage && (
             <p
               data-test-case-error=""
-              className="m-0 line-clamp-3 whitespace-pre-wrap break-words font-mono text-[12.5px] text-[var(--status-failed)]"
+              className="m-0 line-clamp-3 whitespace-pre-wrap break-words font-mono text-sm text-[var(--status-failed)]"
               title={errorMessage}
             >
               {errorMessage}
@@ -230,7 +230,9 @@ function ThisResult({
       <h2 className="mb-1 text-sm font-semibold text-[var(--color-text-secondary)]">This result</h2>
       {rows.filter(r => r.value).map(r => (
         <div key={r.label} className="flex items-baseline justify-between gap-3 py-0.5">
-          <span className="shrink-0 text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{r.label}</span>
+          {/* leading-tight: an 11 px eyebrow on one baseline with 12 px text rounds 1 px lower per row on
+              CI's DejaVu (W29b fix-fold); its own shorter line lets the value's line set the row. */}
+          <span className="shrink-0 eyebrow leading-tight uppercase text-[var(--color-text-muted)]">{r.label}</span>
           <span className="min-w-0 truncate text-right text-xs text-[var(--color-text-secondary)]">{r.value}</span>
         </div>
       ))}

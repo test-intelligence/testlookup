@@ -273,7 +273,7 @@ function EvidenceListCard({
               {items.map((item) => (
                 <li key={item.id} className="rounded-md bg-[var(--color-bg-secondary)] p-2">
                   <p className="truncate text-xs font-medium text-[var(--color-text)]">{item.title}</p>
-                  <p className="mt-0.5 text-[11px] capitalize text-[var(--color-text-muted)]">
+                  <p className="mt-0.5 text-2xs capitalize text-[var(--color-text-muted)]">
                     {item.status.replace(/_/g, ' ')} · {formatObservedAt(item.deleted_observed_at ?? item.last_executed_at)}
                   </p>
                 </li>
@@ -333,7 +333,7 @@ function OrphanedListCard({ open, onToggle, items, total, loading, error, onRetr
                   <li className="flex items-center justify-between gap-2 rounded-md bg-[var(--color-bg-secondary)] p-2">
                     <span className="min-w-0">
                       <span className="block truncate text-xs font-medium text-[var(--color-text)]">{item.test_name}</span>
-                      <span className="block text-[11px] text-[var(--color-text-muted)]">Observed {formatObservedAt(item.deleted_observed_at)}</span>
+                      <span className="block text-2xs text-[var(--color-text-muted)]">Observed {formatObservedAt(item.deleted_observed_at)}</span>
                     </span>
                     {canConfirmRetirement && (
                       <button type="button" className="btn-secondary flex-shrink-0 text-xs" onClick={() => onConfirm(item)}>
@@ -372,7 +372,7 @@ function OrphanPager({ page, pageSize, total, shown, onPage }: {
   const offset = (page - 1) * pageSize
   const label = shown > 0 ? `Showing ${offset + 1}–${offset + shown} of ${total}` : `Page ${page} · ${total} total`
   return (
-    <nav aria-label="Unconfirmed retirements pages" className="mt-2 flex items-center justify-between gap-2 text-[11px] text-[var(--color-text-muted)]">
+    <nav aria-label="Unconfirmed retirements pages" className="mt-2 flex items-center justify-between gap-2 text-2xs text-[var(--color-text-muted)]">
       <span>{label}</span>
       <span className="flex gap-1">
         <button type="button" className="btn-secondary text-xs" disabled={page <= 1} onClick={() => onPage(page - 1)}>

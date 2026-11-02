@@ -64,9 +64,10 @@ function GateCell({ label, value, sub, tone = 'neutral' }: GateCellProps) {
     : 'var(--color-text)'
   return (
     <div data-gate-tile={label}>
-      <div className="text-[9.5px] uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{label}</div>
-      <div className="text-[16px] tabular-nums font-semibold leading-none mt-1" style={{ color }}>{value}</div>
-      <div className="text-[10.5px] text-[var(--color-text-faint)] mt-0.5">{sub}</div>
+      {/* W29d fit remedy 4: `leading-tight` on the eyebrow (its 16 px line made each tile row 2 px taller). */}
+      <div className="eyebrow uppercase leading-tight text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-md tabular-nums font-semibold leading-none mt-1" style={{ color }}>{value}</div>
+      <div className="text-2xs text-[var(--color-text-faint)] mt-0.5">{sub}</div>
     </div>
   )
 }
@@ -119,7 +120,7 @@ function PassFailBar({ totals }: { totals: NonNullable<DerivedRelease['totals']>
           <span key={s.label} style={{ flex: s.flex, background: s.color }} />
         ))}
       </div>
-      <div className="flex items-center gap-2 text-[11px] text-[var(--color-text-muted)] tabular-nums shrink-0">
+      <div className="flex items-center gap-2 text-2xs text-[var(--color-text-muted)] tabular-nums shrink-0">
         <Dot color="var(--status-passed)" label="passed" /> {totals.passed}
         <Dot color="var(--status-failed)" label="failed" /> {totals.failed}
         <Dot color="var(--status-broken)" label="broken" /> {totals.broken}
@@ -148,8 +149,8 @@ export type PlanPhasesMode = 'clone' | 'draft'
 function PlanningCallout({ releaseName, onPlan }: { releaseName: string; onPlan?: (mode: PlanPhasesMode) => void }) {
   const text = (
     <>
-      <div className="text-[12.5px] font-medium text-[var(--color-text)]">No phases scoped yet</div>
-      <div className="text-[11.5px] text-[var(--color-text-muted)]">
+      <div className="text-sm font-medium text-[var(--color-text)]">No phases scoped yet</div>
+      <div className="text-xs text-[var(--color-text-muted)]">
         Add {releaseName}&apos;s phases in its detail.
       </div>
     </>
@@ -264,18 +265,18 @@ export default function ReleaseCard({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-[15px] font-semibold text-[var(--color-text)] m-0 truncate max-w-[280px]">{release.name}</h3>
+              <h3 className="text-md font-semibold text-[var(--color-text)] m-0 truncate max-w-[280px]" title={release.name}>{release.name}</h3>
               {release.version && (
-                <code className="font-mono text-[11.5px] bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{release.version}</code>
+                <code className="font-mono text-xs bg-[var(--color-bg-secondary)] border border-[var(--color-border)] px-1.5 py-px rounded-sm">{release.version}</code>
               )}
-              <span className="text-[10px] uppercase tracking-[0.08em] text-[var(--color-text-muted)] px-1.5 py-0.5 rounded-sm border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
+              <span className="eyebrow uppercase text-[var(--color-text-muted)] px-1.5 py-0.5 rounded-sm border border-[var(--color-border)] bg-[var(--color-bg-secondary)]">
                 {release.stage.replace('_', ' ')}
               </span>
               {release.isActive && (
                 <span
                   data-release-active=""
                   title="The project's active release: runs that no other rule matches land here"
-                  className="text-[10px] font-semibold tracking-[0.08em] px-1.5 py-0.5 rounded-sm border text-[var(--color-accent)] bg-[var(--color-accent-muted)]"
+                  className="eyebrow px-1.5 py-0.5 rounded-sm border text-[var(--color-accent)] bg-[var(--color-accent-muted)]"
                   style={{ borderColor: 'color-mix(in srgb, var(--color-accent) 40%, transparent)' }}
                 >
                   ACTIVE
@@ -289,19 +290,19 @@ export default function ReleaseCard({
                   onClick={stopToCard}
                   data-release-external=""
                   title={`Open in ${sourceLabel}`}
-                  className="inline-flex items-center gap-1 text-[11px] text-[var(--color-accent)] hover:underline"
+                  className="inline-flex items-center gap-1 text-2xs text-[var(--color-accent)] hover:underline"
                 >
                   <ExternalLink aria-hidden className="h-3 w-3" />
                   {sourceLabel}
                 </a>
               )}
             </div>
-            <div className="mt-1 flex items-center gap-2 text-[11.5px] text-[var(--color-text-muted)] flex-wrap">
+            <div className="mt-1 flex items-center gap-2 text-xs text-[var(--color-text-muted)] flex-wrap">
               {release.hasOwner ? (
                 <>
                   <span
                     data-owner-chip="set"
-                    className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-[var(--color-accent-muted)] text-[var(--color-accent)] text-[9px] font-semibold"
+                    className="inline-flex items-center justify-center h-[1.8em] w-[1.8em] rounded-full bg-[var(--color-accent-muted)] text-[var(--color-accent)] text-2xs font-semibold"
                     title={release.ownerName}
                   >{release.ownerInitials}</span>
                   <span>{release.ownerName}</span>
@@ -311,7 +312,7 @@ export default function ReleaseCard({
                   <span
                     data-owner-chip="none"
                     aria-hidden
-                    className="inline-flex items-center justify-center w-5 h-5 rounded-full border border-dashed text-[var(--color-text-faint)] text-[9px]"
+                    className="inline-flex items-center justify-center h-[1.8em] w-[1.8em] rounded-full border border-dashed text-[var(--color-text-faint)] text-2xs"
                     style={{ borderColor: 'var(--color-border)' }}
                   >–</span>
                   <span className="text-[var(--color-text-faint)]">No owner</span>
@@ -341,7 +342,7 @@ export default function ReleaseCard({
               <span
                 data-gate-evaluated=""
                 title={gate.decidedAt ?? undefined}
-                className="text-[10.5px] text-[var(--color-text-faint)] text-right max-w-[240px]"
+                className="text-2xs text-[var(--color-text-faint)] text-right max-w-[240px]"
               >
                 {verdictLine}
               </span>
@@ -358,7 +359,7 @@ export default function ReleaseCard({
                     e.stopPropagation()
                     onEvaluate(release.id)
                   }}
-                  className="h-8 px-2.5 rounded-md border text-[12px] font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-60 disabled:cursor-wait whitespace-nowrap"
+                  className="h-8 px-2.5 rounded-md border text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-bg-hover)] disabled:opacity-60 disabled:cursor-wait whitespace-nowrap"
                   style={{ borderColor: 'var(--color-border)' }}
                 >
                   {evaluating ? 'Evaluating…' : evaluated ? 'Re-evaluate' : 'Evaluate gate'}
@@ -408,7 +409,7 @@ export default function ReleaseCard({
             <div data-card-blockers="" className="space-y-1.5 w-0 min-w-full">
               {release.blockers.slice(0, 3).map(b => <BlockerRow key={b.id} blocker={b} />)}
               {release.blockerCount > 3 && (
-                <div data-blockers-more="" className="text-[11.5px] text-[var(--color-text-muted)] flex items-center gap-1">
+                <div data-blockers-more="" className="text-xs text-[var(--color-text-muted)] flex items-center gap-1">
                   <ChevronRight className="h-3 w-3" />
                   +{release.blockerCount - 3} more · open the release for the full list
                 </div>

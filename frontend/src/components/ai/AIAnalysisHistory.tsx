@@ -44,7 +44,7 @@ function DiffDrawer({ runId, versions, viewed, compare, onClose }: {
       className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3"
     >
       <div className="mb-2 flex items-center gap-2">
-        <p className="m-0 text-[12px] font-semibold text-[var(--color-text)]">What changed between the two analyses</p>
+        <p className="m-0 text-xs font-semibold text-[var(--color-text)]">What changed between the two analyses</p>
         <button
           type="button"
           data-ai-diff-close=""
@@ -56,13 +56,13 @@ function DiffDrawer({ runId, versions, viewed, compare, onClose }: {
         </button>
       </div>
       {sides.problem === 'missing' ? (
-        <p className="m-0 text-[12px] text-[var(--color-text-muted)]">
+        <p className="m-0 text-xs text-[var(--color-text-muted)]">
           That version no longer exists (it may have been pruned by the retention policy).
         </p>
       ) : sides.problem === 'nothing' ? (
-        <p className="m-0 text-[12px] text-[var(--color-text-muted)]">Pick another version to compare with.</p>
+        <p className="m-0 text-xs text-[var(--color-text-muted)]">Pick another version to compare with.</p>
       ) : diff.error ? (
-        <p className="m-0 flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+        <p className="m-0 flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
           The comparison could not be loaded.
           <button type="button" onClick={() => void diff.mutate()} className="inline-flex items-center gap-1 text-[var(--color-accent)] underline underline-offset-2">
             <RefreshCw aria-hidden className="h-3 w-3" /> Retry
@@ -98,7 +98,7 @@ export default function AIAnalysisHistory({ runId }: { runId: string }) {
       )}
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-2.5">
         {history.error ? (
-          <p data-ai-history-unavailable="" className="m-0 flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+          <p data-ai-history-unavailable="" className="m-0 flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
             The AI history of this run is unavailable right now.
             <button
               type="button"

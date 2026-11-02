@@ -47,12 +47,11 @@ function StatusChip({ status }: { status: string }) {
 function ModeChip({ mode }: { mode: string }) {
   return (
     <span
-      className="inline-flex items-center px-1.5 py-px rounded-full text-[10px] font-semibold uppercase"
+      className="inline-flex items-center px-1.5 py-px rounded-full eyebrow uppercase"
       style={{
         background: 'var(--color-bg-secondary)',
         border: '1px solid var(--color-border)',
         color: 'var(--color-text-secondary)',
-        letterSpacing: 'var(--tracking-wide)',
       }}
     >
       {mode}
@@ -63,7 +62,7 @@ function ModeChip({ mode }: { mode: string }) {
 function ActionList({ title, actions }: { title: string; actions: string[] }) {
   return (
     <div>
-      <div className="text-[10.5px] uppercase font-medium text-[var(--color-text-muted)] tracking-wider mb-1">{title}</div>
+      <div className="eyebrow uppercase text-[var(--color-text-muted)] mb-1">{title}</div>
       {actions.length === 0 ? (
         <p className="text-xs text-[var(--color-text-faint)] m-0">none</p>
       ) : (
@@ -112,7 +111,7 @@ function LedgerRow({ entry }: { entry: AgentRunEntry }) {
               <ActionList title="Actions proposed" actions={entry.actions_proposed} />
               <ActionList title="Actions taken" actions={entry.actions_taken} />
             </div>
-            <div className="flex items-center gap-2 flex-wrap mt-3 text-[11px] text-[var(--color-text-muted)]">
+            <div className="flex items-center gap-2 flex-wrap mt-3 text-2xs text-[var(--color-text-muted)]">
               {entry.prompt_registry_digest && (
                 <span>
                   prompt digest{' '}
@@ -216,10 +215,10 @@ export default function AgentActivityPage() {
             <thead>
               <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
                 {['Agent', 'Mode', 'Trigger', 'Status', 'Summary'].map((h) => (
-                  <th key={h} className="px-3 py-2 text-left text-[10.5px] uppercase tracking-wider font-medium text-[var(--color-text-muted)]">{h}</th>
+                  <th key={h} className="px-3 py-2 text-left eyebrow uppercase text-[var(--color-text-muted)]">{h}</th>
                 ))}
                 {['Tokens', 'Cost', 'Duration', 'When'].map((h) => (
-                  <th key={h} className="px-3 py-2 text-right text-[10.5px] uppercase tracking-wider font-medium text-[var(--color-text-muted)]">{h}</th>
+                  <th key={h} className="px-3 py-2 text-right eyebrow uppercase text-[var(--color-text-muted)]">{h}</th>
                 ))}
               </tr>
             </thead>

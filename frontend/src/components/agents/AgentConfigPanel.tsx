@@ -256,7 +256,7 @@ function AgentConfigForm({
               <NumberInput key={f.id} field={f} doc={doc} onChange={(v) => update((d) => f.set(d, v))} />
             ))}
           </div>
-          <p className="text-[11px] text-[var(--color-text-faint)] m-0 mt-1" data-testid="worst-case">
+          <p className="text-2xs text-[var(--color-text-faint)] m-0 mt-1" data-testid="worst-case">
             Worst case {Number.isFinite(worstCase) ? `${doc.retry.max_attempts} × ${doc.timeout_seconds} s = ${worstCase} s` : '—'};
             it must fit the pipeline deadline.
           </p>
@@ -295,7 +295,7 @@ function AgentConfigForm({
                   />
                   <span className="font-mono text-xs text-[var(--color-text-secondary)]">{name}</span>
                   {permission !== 'read_only' && (
-                    <span className="text-[10px] px-1.5 py-px rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]">
+                    <span className="text-2xs px-1.5 py-px rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]">
                       {permission}
                     </span>
                   )}

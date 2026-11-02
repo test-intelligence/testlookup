@@ -19,6 +19,7 @@ import {
   Shield,
   Stethoscope,
 } from 'lucide-react'
+import { CHART_FONT } from '@/components/charts/tokens'
 import type { ComputeStage, ComputeStageId, GenericComputeStage } from './types'
 import { NODE_W, NODE_H, POS } from './layout'
 
@@ -122,12 +123,12 @@ function MetricCell({ k, v, tone = 'neutral' }: MetricCellProps) {
       style={{ background: 'var(--color-bg)', borderColor: 'var(--color-border)' }}
     >
       <div
-        className="text-[9.5px] uppercase text-[var(--color-text-faint)]"
-        style={{ letterSpacing: '0.06em' }}
+        className="uppercase leading-tight text-[var(--color-text-faint)]"
+        style={{ fontSize: CHART_FONT.tick, letterSpacing: '0.06em' }}
       >
         {k}
       </div>
-      <div className="text-[11.5px] font-mono leading-tight" style={{ color: valueColor }}>
+      <div className="font-mono leading-tight" style={{ fontSize: CHART_FONT.legend, color: valueColor }}>
         {v ?? '—'}
       </div>
     </div>
@@ -236,12 +237,12 @@ export default function ComputeNode({ stage, selected, onSelect, position }: Com
         >
           <Icon className="w-3.5 h-3.5" />
         </div>
-        <div className="text-[13px] font-semibold text-[var(--color-text)] truncate flex-1">
+        <div className="text-sm font-semibold text-[var(--color-text)] truncate flex-1">
           {stage.name}
         </div>
         <span
-          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9.5px] border"
-          style={{ color: style.pillText, background: style.pillBg, borderColor: style.pillBorder }}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border"
+          style={{ fontSize: CHART_FONT.tick, color: style.pillText, background: style.pillBg, borderColor: style.pillBorder }}
         >
           {stage.status === 'running' && (
             <span
@@ -256,8 +257,8 @@ export default function ComputeNode({ stage, selected, onSelect, position }: Com
 
       {/* Description — reserved height so cards align across rows */}
       <div
-        className="mt-2 text-[11px] text-[var(--color-text-muted)] line-clamp-2"
-        style={{ minHeight: 28, lineHeight: 1.4 }}
+        className="mt-2 text-[var(--color-text-muted)] line-clamp-2"
+        style={{ fontSize: CHART_FONT.tick, minHeight: 28, lineHeight: 1.4 }}
       >
         {stage.desc}
         {note && <span data-stage-note=""> · {note}</span>}
@@ -277,7 +278,7 @@ export default function ComputeNode({ stage, selected, onSelect, position }: Com
 
       {/* Failed-state retry suffix */}
       {stage.status === 'failed' && (
-        <div className="mt-1.5 flex items-center gap-1.5 text-[10.5px]" style={{ color: 'var(--status-failed)' }}>
+        <div className="mt-1.5 flex items-center gap-1.5 leading-tight" style={{ fontSize: CHART_FONT.tick, color: 'var(--status-failed)' }}>
           <CircleAlert className="w-3 h-3" />
           retry 1/3 queued
         </div>
@@ -287,7 +288,10 @@ export default function ComputeNode({ stage, selected, onSelect, position }: Com
       {stage.status === 'running' && (
         <div className="mt-1.5">
           <ProgressBar pct={runningPct} />
-          <div className="mt-1 flex justify-between text-[10px] font-mono text-[var(--color-text-muted)]">
+          <div
+            className="mt-1 flex justify-between font-mono leading-tight text-[var(--color-text-muted)]"
+            style={{ fontSize: CHART_FONT.tick }}
+          >
             <span>{stage.dur ?? '—'}</span>
             {etaSeconds != null && <span>ETA {etaSeconds}s total</span>}
           </div>

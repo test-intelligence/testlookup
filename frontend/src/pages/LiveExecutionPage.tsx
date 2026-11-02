@@ -679,7 +679,7 @@ export default function LiveExecutionPage() {
             <span
               data-live-badge={liveSummary.isLive ? 'live' : 'idle'}
               className={clsx(
-                'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium border',
+                'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs font-medium border',
                 liveSummary.isLive
                   ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border-[var(--status-passed-bd)]'
                   : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)] border-[var(--color-border)]',
@@ -715,21 +715,21 @@ export default function LiveExecutionPage() {
                 : <Pause className="w-4 h-4 text-[var(--color-text-muted)]" />}
             </div>
             <div>
-              <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Current</p>
+              <p className="eyebrow uppercase text-[var(--color-text-muted)]">Current</p>
               <p className="text-sm font-semibold text-[var(--color-text)]">{liveSummary.hero}</p>
-              <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">{liveSummary.sub}</p>
+              <p className="text-2xs text-[var(--color-text-muted)] mt-0.5">{liveSummary.sub}</p>
             </div>
           </div>
           <div className="hidden sm:block w-px h-12 bg-[var(--color-border)]" />
           {/* Inline KPIs */}
           <div className="flex items-baseline gap-1">
             <p className="text-2xl font-semibold tabular-nums text-[var(--color-text)]">{formatNumber(visibleStats.totalTests)}</p>
-            <p className="text-[11px] text-[var(--color-text-muted)] ml-1.5 leading-tight">
+            <p className="text-2xs text-[var(--color-text-muted)] ml-1.5 leading-tight">
               tests across<br />{dedupedSessions.length} session{dedupedSessions.length === 1 ? '' : 's'}
             </p>
           </div>
           <div>
-            <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Pass rate</p>
+            <p className="eyebrow uppercase text-[var(--color-text-muted)]">Pass rate</p>
             <div className="flex items-center gap-2 mt-0.5">
               <p className={clsx('text-2xl font-semibold tabular-nums', passRateColor(visibleStats.overallPassRate, passRateBands))}>
                 {visibleStats.overallPassRate}%
@@ -741,7 +741,7 @@ export default function LiveExecutionPage() {
           </div>
           {/* Pass/fail bar */}
           <div className="flex-1 min-w-[240px]">
-            <div className="flex items-center justify-between text-[11px] text-[var(--color-text-muted)] mb-1.5">
+            <div className="flex items-center justify-between text-2xs text-[var(--color-text-muted)] mb-1.5">
               <span>
                 {visibleStats.totalPassed} passed
                 {visibleStats.totalFailed > 0 && (
@@ -810,7 +810,7 @@ export default function LiveExecutionPage() {
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
-            <thead className="text-[var(--color-text-muted)] text-[10px] uppercase tracking-wider">
+            <thead className="text-[var(--color-text-muted)] eyebrow uppercase">
               <tr className="border-b border-[var(--color-border)]">
                 <th
                   className="px-5 py-2.5 text-left font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
@@ -888,7 +888,7 @@ export default function LiveExecutionPage() {
                           </Link>
                           {/* "Run #N" repeats per (project, suite); show when the
                               run started so same-numbered rows are distinguishable. */}
-                          <div className="font-mono text-[10px] text-[var(--color-text-faint)]">
+                          <div className="font-mono text-2xs text-[var(--color-text-faint)]">
                             {s.build_number || s.run_id.slice(0, 8)}
                             {(() => {
                               const when = formatRunWhen(s.started_at)
@@ -914,7 +914,7 @@ export default function LiveExecutionPage() {
                         const stale = isStaleRunning(s)
                         return (
                           <span className={clsx(
-                            'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border',
+                            'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium border',
                             stale
                               ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border-[var(--status-broken-bd)]'
                               : s.status === 'running'
@@ -952,7 +952,7 @@ export default function LiveExecutionPage() {
                     </td>
                     <td className="px-3 py-3">
                       {s.release_name ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[var(--status-flaky-bg)]/30 text-[var(--status-flaky)] border-[var(--status-flaky-bd)]/30">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium border bg-[var(--status-flaky-bg)]/30 text-[var(--status-flaky)] border-[var(--status-flaky-bd)]/30">
                           <Package className="w-2.5 h-2.5" />
                           {s.release_name}
                         </span>
@@ -967,7 +967,7 @@ export default function LiveExecutionPage() {
                       started={s.started_at}
                       end={s.completed_at ?? s.last_event_at}
                       live={!s.completed_at}
-                      className="px-5 py-3 font-mono text-[11px]"
+                      className="px-5 py-3 font-mono text-2xs"
                     />
                   </tr>
                 )
@@ -981,7 +981,7 @@ export default function LiveExecutionPage() {
           total={sessionsForTable.length}
           onChange={setTablePage}
         />
-        <div className="px-5 py-2.5 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between flex-wrap gap-2">
+        <div className="px-5 py-2.5 border-t border-[var(--color-border)] text-2xs text-[var(--color-text-muted)] flex items-center justify-between flex-wrap gap-2">
           <span>
             {dedupedSessions.length} session{dedupedSessions.length === 1 ? '' : 's'}
             {visibleSessions.length > dedupedSessions.length && (
@@ -1017,7 +1017,7 @@ export default function LiveExecutionPage() {
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-[var(--color-border)]">
           <div className="flex items-center gap-2">
             <p className="text-sm font-semibold text-[var(--color-text)]">Pipeline events</p>
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border-[var(--color-border)]">
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-medium border bg-[var(--color-bg-hover)] text-[var(--color-text-muted)] border-[var(--color-border)]">
               {pipelineEvents.length}
             </span>
           </div>
@@ -1028,7 +1028,7 @@ export default function LiveExecutionPage() {
                 type="button"
                 onClick={() => setFeedFilter(f)}
                 className={clsx(
-                  'px-2 py-0.5 rounded text-[10px] uppercase tracking-wider',
+                  'px-2 py-0.5 rounded eyebrow uppercase',
                   feedFilter === f
                     ? 'bg-[var(--color-bg-hover)] text-[var(--color-text)]'
                     : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
@@ -1064,13 +1064,13 @@ export default function LiveExecutionPage() {
                       <div className="flex items-center justify-between gap-2">
                         <p className="text-xs font-medium text-[var(--color-text)] truncate">{e.label}</p>
                         {/* relativeTime already says "… ago" / "just now". */}
-                        <span className="text-[10px] text-[var(--color-text-faint)] font-mono whitespace-nowrap">
+                        <span className="text-2xs text-[var(--color-text-faint)] font-mono whitespace-nowrap">
                           {e.ago}
                         </span>
                       </div>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] font-mono text-[var(--color-text-muted)]">{e.kind}</span>
-                        {e.detail && <span className="text-[10px] text-[var(--color-text-muted)] truncate">· {e.detail}</span>}
+                        <span className="text-2xs font-mono text-[var(--color-text-muted)]">{e.kind}</span>
+                        {e.detail && <span className="text-2xs text-[var(--color-text-muted)] truncate">· {e.detail}</span>}
                       </div>
                     </div>
                   </div>
@@ -1079,7 +1079,7 @@ export default function LiveExecutionPage() {
             })
           )}
         </div>
-        <div className="px-4 py-2 border-t border-[var(--color-border)] text-[11px] text-[var(--color-text-muted)] flex items-center justify-between">
+        <div className="px-4 py-2 border-t border-[var(--color-border)] text-2xs text-[var(--color-text-muted)] flex items-center justify-between">
           <span>{`Streaming · ${LIVE_FRAME_INTERVAL_MS} ms batches`}</span>
           <span className="font-mono">{recentEvents.length} buffered</span>
         </div>
@@ -1094,11 +1094,11 @@ export default function LiveExecutionPage() {
             </div>
             <div className="flex-1">
               <p className="text-sm font-semibold text-[var(--color-text)]">Connect a test runner</p>
-              <p className="text-[11px] text-[var(--color-text-muted)] mt-0.5">
+              <p className="text-2xs text-[var(--color-text-muted)] mt-0.5">
                 Stream pytest, Robot, JUnit, TestNG, Jest, Mocha, Playwright, Vitest, Cypress, Cucumber or Go test events into this dashboard
               </p>
             </div>
-            <span className="text-[11px] text-[var(--color-text-muted)] mr-2">Python · Java · JS · Go SDKs</span>
+            <span className="text-2xs text-[var(--color-text-muted)] mr-2">Python · Java · JS · Go SDKs</span>
             <ChevronDown className="w-4 h-4 text-[var(--color-text-muted)] transition-transform [details[open]_&]:rotate-180" />
           </summary>
           <div className="px-5 py-4 border-t border-[var(--color-border)]">

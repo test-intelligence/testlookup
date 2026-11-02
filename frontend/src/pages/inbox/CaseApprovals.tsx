@@ -138,7 +138,7 @@ export default function CaseApprovals() {
                   <tr className="border-t border-[var(--color-border)]" data-testid="case-approval-row">
                     <td className="px-3 py-2 max-w-[420px]">
                       <div className="truncate text-[var(--color-text)]" title={tc.title}>{tc.title}</div>
-                      <div className="truncate text-[11px] text-[var(--color-text-muted)]">
+                      <div className="truncate text-2xs text-[var(--color-text-muted)]">
                         <span className="capitalize">{tc.test_type}</span>
                         {tc.feature_area && <span> · {tc.feature_area}</span>}
                         {tc.steps && <span> · {tc.steps.length} steps</span>}

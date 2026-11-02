@@ -150,7 +150,7 @@ function DocCodeBlock({ source }: { source: string }) {
         )}
       </button>
       <pre
-        className="overflow-x-auto rounded-lg border p-3 pr-12 text-[12.5px] leading-relaxed"
+        className="overflow-x-auto rounded-lg border p-3 pr-12 text-sm leading-relaxed"
         style={{
           borderColor: 'var(--color-border)',
           background: 'var(--color-bg-secondary)',
@@ -178,21 +178,21 @@ const MARKDOWN_COMPONENTS = {
   h3: (p: { children?: React.ReactNode }) => (
     <h3
       id={slugify(nodeText(p.children))}
-      className="text-[14px] font-semibold text-[var(--color-text)] mt-4 mb-2 scroll-mt-4"
+      className="text-base font-semibold text-[var(--color-text)] mt-4 mb-2 scroll-mt-4"
     >
       {p.children}
     </h3>
   ),
   p: (p: { children?: React.ReactNode }) => (
-    <p className="text-[13.5px] leading-relaxed text-[var(--color-text-muted)] mb-3">{p.children}</p>
+    <p className="text-base leading-relaxed text-[var(--color-text-muted)] mb-3">{p.children}</p>
   ),
   ul: (p: { children?: React.ReactNode }) => (
-    <ul className="list-disc pl-5 mb-3 text-[13.5px] leading-relaxed text-[var(--color-text-muted)] space-y-1">
+    <ul className="list-disc pl-5 mb-3 text-base leading-relaxed text-[var(--color-text-muted)] space-y-1">
       {p.children}
     </ul>
   ),
   ol: (p: { children?: React.ReactNode }) => (
-    <ol className="list-decimal pl-5 mb-3 text-[13.5px] leading-relaxed text-[var(--color-text-muted)] space-y-1">
+    <ol className="list-decimal pl-5 mb-3 text-base leading-relaxed text-[var(--color-text-muted)] space-y-1">
       {p.children}
     </ol>
   ),
@@ -201,7 +201,7 @@ const MARKDOWN_COMPONENTS = {
   ),
   blockquote: (p: { children?: React.ReactNode }) => (
     <div
-      className="rounded-lg border px-3 py-2.5 mb-3 text-[13px] leading-relaxed"
+      className="rounded-lg border px-3 py-2.5 mb-3 text-sm leading-relaxed"
       style={{
         borderColor: 'color-mix(in srgb, var(--color-accent) 35%, transparent)',
         background: 'color-mix(in srgb, var(--color-accent) 8%, transparent)',
@@ -213,7 +213,7 @@ const MARKDOWN_COMPONENTS = {
   ),
   table: (p: { children?: React.ReactNode }) => (
     <div className="overflow-x-auto mb-3">
-      <table className="w-full text-[13px] border border-[var(--color-border)] rounded-lg overflow-hidden">
+      <table className="w-full text-sm border border-[var(--color-border)] rounded-lg overflow-hidden">
         {p.children}
       </table>
     </div>
@@ -256,7 +256,7 @@ const MARKDOWN_COMPONENTS = {
   // Inline code only — a fenced block is handled by `pre` above.
   code: (p: { children?: React.ReactNode }) => (
     <code
-      className="rounded px-1 py-0.5 text-[12.5px]"
+      className="rounded px-1 py-0.5 text-sm"
       style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text)' }}
     >
       {p.children}

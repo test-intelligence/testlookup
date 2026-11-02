@@ -119,7 +119,7 @@ export default function CriticalityMatrix({
       {expanded && (
         <div className="space-y-3">
           {source && (
-            <p className="text-[11px] text-[var(--color-text-muted)]" data-testid="criticality-weight-source">
+            <p className="text-2xs text-[var(--color-text-muted)]" data-testid="criticality-weight-source">
               {source}
             </p>
           )}
@@ -148,7 +148,7 @@ export default function CriticalityMatrix({
                     <span className={clsx('font-mono font-medium', scoreTextColour(d.score))}>
                       {d.score.toFixed(0)}
                     </span>
-                    <span className="text-[var(--color-text-faint)] text-[10px]" data-testid={`criticality-weight-${d.name}`}>
+                    <span className="text-[var(--color-text-faint)] text-2xs" data-testid={`criticality-weight-${d.name}`}>
                       ×{(d.weight * 100).toFixed(0)}%
                     </span>
                   </div>
@@ -165,9 +165,9 @@ export default function CriticalityMatrix({
                 {/* "Why this score?" expandable description */}
                 {isOpen && description && (
                   <div className="bg-[var(--color-bg-secondary)]/80 border border-[var(--color-border)] rounded-lg px-3 py-2 mt-1">
-                    <p className="text-[11px] text-[var(--color-text-muted)] leading-relaxed">{description}</p>
+                    <p className="text-2xs text-[var(--color-text-muted)] leading-relaxed">{description}</p>
                     {source && (
-                      <p className="mt-1 text-[11px] text-[var(--color-text-faint)]" data-testid={`criticality-why-weight-${d.name}`}>
+                      <p className="mt-1 text-2xs text-[var(--color-text-faint)]" data-testid={`criticality-why-weight-${d.name}`}>
                         Weight {d.weight.toFixed(2)} · {source}
                       </p>
                     )}

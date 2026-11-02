@@ -12,7 +12,7 @@
  */
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import AISuggestion, { basisLabel, engineLabel, normalizeProvenance } from './AISuggestion'
+import AISuggestion, { AIBadge, basisLabel, engineLabel, normalizeProvenance } from './AISuggestion'
 
 describe('AISuggestion', () => {
   it('always renders the AI-suggested badge', () => {
@@ -105,6 +105,18 @@ describe('AISuggestion', () => {
     render(<AISuggestion analysisId="an-1" confirmed onConfirm={vi.fn()} onCorrect={vi.fn()} />)
     expect(screen.getByTestId('ai-confirmed')).toHaveTextContent('Confirmed')
     expect(screen.queryByRole('button', { name: /^Correct$/ })).not.toBeInTheDocument()
+  })
+
+  it('W29d UIX-04c: the AI badge is an eyebrow in both variants, with no inline font-size; compact keeps only its padding', () => {
+    const { rerender } = render(<AIBadge />)
+    for (const compact of [false, true]) {
+      rerender(<AIBadge compact={compact} />)
+      const badge = screen.getByTestId('ai-suggested-badge')
+      expect(badge).toHaveClass('eyebrow')
+      expect(badge.style.fontSize).toBe('')
+      expect(badge.style.letterSpacing).toBe('')
+      expect(badge.style.padding).toBe(compact ? '1px 6px' : '2px 8px')
+    }
   })
 })
 

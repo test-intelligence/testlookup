@@ -29,7 +29,7 @@ export default function PhaseGateChip({ result }: { result: PhaseGateResult }) {
       data-testid="phase-gate-chip"
       data-verdict={result.verdict}
       title={result.blocking_reasons?.[0] || LIVE_PREVIEW}
-      className="text-[11px] px-1.5 py-0.5 rounded border font-medium bg-[var(--color-bg-card)]"
+      className="text-2xs px-1.5 py-0.5 rounded border font-medium bg-[var(--color-bg-card)]"
       style={{ color: tone.fg, borderColor: tone.bd }}
     >
       Gate: {verdictWord(result.verdict)}

@@ -4,6 +4,7 @@
  * un-rotates so the eyebrow + key read horizontally.
  */
 import { clsx } from 'clsx'
+import { CHART_FONT } from '@/components/charts/tokens'
 import type { ComputeDecision } from './types'
 import { DECISION_SIZE, POS } from './layout'
 
@@ -47,8 +48,9 @@ export default function DecisionDiamond({ decision, selected, onSelect }: Decisi
         style={{ transform: 'rotate(-45deg)' }}
       >
         <div
-          className="text-[8.5px] uppercase"
+          className="uppercase"
           style={{
+            fontSize: CHART_FONT.tick,
             letterSpacing: '0.12em',
             color: 'var(--color-purple, var(--status-flaky))',
             opacity: 0.8,
@@ -57,8 +59,8 @@ export default function DecisionDiamond({ decision, selected, onSelect }: Decisi
           decide
         </div>
         <div
-          className="text-[10px] font-mono"
-          style={{ color: 'var(--color-purple, var(--status-flaky))' }}
+          className="font-mono"
+          style={{ fontSize: CHART_FONT.tick, color: 'var(--color-purple, var(--status-flaky))' }}
         >
           {compactKey}
         </div>

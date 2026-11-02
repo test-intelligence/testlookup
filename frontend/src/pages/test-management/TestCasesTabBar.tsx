@@ -64,7 +64,7 @@ export default function TestCasesTabBar({ value, onChange }: { value: TmTab; onC
                 onChange(t.id)
               }}
               className={clsx(
-                'flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-[13px] hover:bg-[var(--color-bg-hover)]',
+                'flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm hover:bg-[var(--color-bg-hover)]',
                 t.id === value ? 'font-semibold text-[var(--color-text)]' : 'text-[var(--color-text-secondary)]',
               )}
             >

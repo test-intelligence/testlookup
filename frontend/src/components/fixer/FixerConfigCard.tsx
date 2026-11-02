@@ -216,7 +216,7 @@ function FixerForm({ config, projectId, onSaved }: { config: FixerConfig; projec
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold text-[var(--color-text)]">{info.label}</span>
                   {info.disabled && (
-                    <span className="text-[10px] px-1.5 py-px rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]">
+                    <span className="text-2xs px-1.5 py-px rounded-full bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]">
                       never
                     </span>
                   )}
@@ -401,7 +401,7 @@ function FixerForm({ config, projectId, onSaved }: { config: FixerConfig; projec
                   className={clsx(inputClass, 'tabular-nums')}
                   style={{ border: `1px solid ${invalid ? 'var(--gate-no-go)' : 'var(--color-border)'}` }}
                 />
-                <span className="text-[10px] text-[var(--color-text-faint)]">{f.hint}</span>
+                <span className="text-2xs text-[var(--color-text-faint)]">{f.hint}</span>
               </label>
             )
           })}

@@ -523,7 +523,7 @@ function CaseDetailPanel({
           <span className="text-xs text-[var(--color-text-muted)]">{caseItem.test_type}</span>
           <span
             data-testid="tm-case-source"
-            className="text-[10.5px] font-semibold uppercase tracking-wider text-[var(--color-accent)]"
+            className="eyebrow uppercase text-[var(--color-accent)]"
           >
             {isAutomation ? 'From automation' : 'Authored'}
           </span>
@@ -1673,14 +1673,14 @@ export function TestCasesTab({ projectId, lifecycleV2, requirementTraceability =
             <div className="px-4 py-3 space-y-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-4 flex-wrap min-w-0">
-                <h3 className="text-[13px] font-semibold m-0 text-[var(--color-text)]">
-                  Cases <span className="font-normal text-[var(--color-text-muted)] text-[11.5px] ml-2">{totalShown} of {casesTotal} · sorted by {sortLabel}</span>
+                <h3 className="text-sm font-semibold m-0 text-[var(--color-text)]">
+                  Cases <span className="font-normal text-[var(--color-text-muted)] text-xs ml-2">{totalShown} of {casesTotal} · sorted by {sortLabel}</span>
                 </h3>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
                   onClick={handleExportExcel}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors"
                   style={{ borderColor: 'var(--color-border)' }}
                   title="Export to Excel"
                   aria-label="Export"
@@ -1703,7 +1703,7 @@ export function TestCasesTab({ projectId, lifecycleV2, requirementTraceability =
                       onClick={() => topSlot.open('ai')}
                       aria-label="AI Generate"
                       title="AI Generate"
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border transition-colors"
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-md border transition-colors"
                       style={{ color: 'var(--status-flaky)', borderColor: 'color-mix(in srgb, var(--status-flaky) 30%, transparent)', background: 'color-mix(in srgb, var(--status-flaky) 6%, transparent)' }}
                     >
                       <Sparkles className="h-3.5 w-3.5" />{!activeCase && ' AI Generate'}
@@ -1858,11 +1858,11 @@ function CasesFilterBar({
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder={searchPlaceholder}
-          className="bg-transparent text-[13px] text-[var(--color-text)] outline-none flex-1"
+          className="bg-transparent text-sm text-[var(--color-text)] outline-none flex-1"
           aria-label="Search cases"
         />
         <kbd
-          className="font-mono text-[10.5px] px-1.5 py-px rounded-sm"
+          className="font-mono text-2xs px-1.5 py-px rounded-sm"
           style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
         >
           /
@@ -1872,7 +1872,7 @@ function CasesFilterBar({
       {/* Include automation-ingested tests — merges synthesised rows from
           per-run test_cases into the listing alongside ManagedTestCase. */}
       <label
-        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-[12px] text-[var(--color-text-secondary)] cursor-pointer select-none"
+        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-[var(--color-text-secondary)] cursor-pointer select-none"
         style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', height: 32 }}
         title="Include test cases discovered via automation runs (dedup'd by fingerprint)"
       >
@@ -1986,7 +1986,7 @@ export function CasesTableBody({
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-[12.5px]" role="table">
+      <table className="w-full text-sm" role="table">
         <thead>
           <tr style={{ background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)' }}>
             {/* ID, Priority and Automation lost their fixed columns — they now
@@ -2047,14 +2047,12 @@ function Th({ label, width, align, flex, leading }: {
 }) {
   return (
     <th
+      className="eyebrow"
       style={{
         padding: '8px 12px',
         textAlign: align ?? 'left',
         color: 'var(--color-text-muted)',
-        fontWeight: 500,
-        fontSize: 10.5,
         textTransform: 'uppercase',
-        letterSpacing: 'var(--tracking-wider)',
         width: flex ? '100%' : width,
         maxWidth: flex ? 0 : undefined,
         whiteSpace: 'nowrap',
@@ -2126,19 +2124,19 @@ function CaseRow({
               className={SELECT_BOX}
             />
           )}
-          <span className="text-[12.5px] font-medium text-[var(--color-text)] truncate" title={tc.title}>{tc.title}</span>
+          <span className="text-sm font-medium text-[var(--color-text)] truncate" title={tc.title}>{tc.title}</span>
           {tc.ai_generated && <Sparkles className="h-3 w-3 text-[var(--status-flaky)] flex-shrink-0" aria-label="AI generated" />}
           {tc.source === 'automation' && (
             <span
               title="Discovered via an automation run — not authored in the test catalog"
-              className="inline-flex items-center px-1.5 py-0 rounded-full text-[9.5px] font-semibold uppercase tracking-wider flex-shrink-0"
-              style={{ background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 30%, transparent)', color: 'var(--color-accent)', letterSpacing: '0.06em' }}
+              className="inline-flex items-center px-1.5 py-0 rounded-full eyebrow uppercase flex-shrink-0"
+              style={{ background: 'color-mix(in srgb, var(--color-accent) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-accent) 30%, transparent)', color: 'var(--color-accent)' }}
             >
               Auto
             </span>
           )}
         </div>
-        <div className="flex items-center gap-1.5 text-[11px] text-[var(--color-text-muted)] mt-0.5 min-w-0">
+        <div className="flex items-center gap-1.5 text-2xs text-[var(--color-text-muted)] mt-0.5 min-w-0">
           <span className="font-mono flex-shrink-0">TC-{tc.id.slice(0, 6).toUpperCase()}</span>
           <span aria-hidden className="flex-shrink-0">·</span>
           <span className="flex-shrink-0"><CasePriorityTag priority={tc.priority} /></span>
@@ -2224,7 +2222,7 @@ function CaseStatusPill({ status }: { status: string }) {
   const p = map[status] ?? { bg: 'var(--color-bg-secondary)', bd: 'var(--color-border)', fg: 'var(--color-text-muted)', label: status.replace(/_/g, ' ') }
   return (
     <span
-      className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-[10.5px]"
+      className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded-full text-2xs"
       style={{
         background: p.bg,
         border: `1px solid ${p.bd}`,
@@ -2249,8 +2247,8 @@ export function CasePriorityTag({ priority }: { priority: string }) {
   return (
     <span
       data-priority-level={level}
-      className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10.5px] font-semibold uppercase"
-      style={{ background: p.bg, border: `1px solid ${p.bd}`, color: p.fg, letterSpacing: '0.04em' }}
+      className="inline-flex items-center px-1.5 py-0.5 rounded-sm eyebrow uppercase"
+      style={{ background: p.bg, border: `1px solid ${p.bd}`, color: p.fg }}
     >
       {level}
     </span>
@@ -2270,12 +2268,12 @@ export function OwnerCell({ owner, userId }: { owner: string | null; userId: str
     // W29a UIX-01 / UIX-13: the one avatar map — legible fg initials on its bg, never white.
     const c = avatarColorForName(displayOwner)
     return (
-      <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-secondary)]">
+      <span className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)]">
         <span
           aria-hidden
           data-owner-avatar=""
-          className="inline-flex items-center justify-center rounded-full font-bold"
-          style={{ width: 18, height: 18, background: c.bg, color: c.fg, fontSize: 9 }}
+          className="inline-flex items-center justify-center rounded-full font-bold text-2xs h-[1.8em] w-[1.8em]"
+          style={{ background: c.bg, color: c.fg }}
         >
           {initials || '?'}
         </span>
@@ -2285,11 +2283,11 @@ export function OwnerCell({ owner, userId }: { owner: string | null; userId: str
   }
   if (!userId) {
     return (
-      <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-muted)]" aria-label="Unassigned">
+      <span className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]" aria-label="Unassigned">
         <span
           aria-hidden
-          className="inline-flex items-center justify-center rounded-full text-[9px]"
-          style={{ width: 18, height: 18, background: 'var(--color-bg-secondary)', border: '1px dashed var(--color-border-light)', color: 'var(--color-text-muted)' }}
+          className="inline-flex items-center justify-center rounded-full text-2xs h-[1.8em] w-[1.8em]"
+          style={{ background: 'var(--color-bg-secondary)', border: '1px dashed var(--color-border-light)', color: 'var(--color-text-muted)' }}
         >?</span>
         Unassigned
       </span>
@@ -2298,12 +2296,12 @@ export function OwnerCell({ owner, userId }: { owner: string | null; userId: str
   const initials = userId.slice(0, 2).toUpperCase()
   const c = avatarColorForName(userId)
   return (
-    <span className="inline-flex items-center gap-1.5 text-[11.5px] text-[var(--color-text-secondary)]">
+    <span className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)]">
       <span
         aria-hidden
         data-owner-avatar=""
-        className="inline-flex items-center justify-center rounded-full font-bold"
-        style={{ width: 18, height: 18, background: c.bg, color: c.fg, fontSize: 9 }}
+        className="inline-flex items-center justify-center rounded-full font-bold text-2xs h-[1.8em] w-[1.8em]"
+        style={{ background: c.bg, color: c.fg }}
       >
         {initials}
       </span>
@@ -2314,9 +2312,9 @@ export function OwnerCell({ owner, userId }: { owner: string | null; userId: str
 
 function LastRunCell({ status, at }: { status: string | undefined; at: string | undefined }) {
   const now = useNow()  // hook before any early return — avoids impure Date.now() in render
-  if (!at) return <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>
+  if (!at) return <span className="text-xs text-[var(--color-text-faint)]">—</span>
   const ms = now - new Date(at).getTime()
-  if (Number.isNaN(ms) || ms < 0) return <span className="text-[11.5px] text-[var(--color-text-faint)]">—</span>
+  if (Number.isNaN(ms) || ms < 0) return <span className="text-xs text-[var(--color-text-faint)]">—</span>
   const m = Math.floor(ms / 60000)
   const ageLabel = m < 1 ? 'just now'
     : m < 60 ? `${m}m`
@@ -2326,12 +2324,12 @@ function LastRunCell({ status, at }: { status: string | undefined; at: string | 
   const isPass = /pass/i.test(s)
   const isFail = /fail|error|broken/i.test(s)
   if (isFail) {
-    return <span className="text-[11.5px]" style={{ color: 'var(--status-failed)' }}>FAIL · {ageLabel}</span>
+    return <span className="text-xs" style={{ color: 'var(--status-failed)' }}>FAIL · {ageLabel}</span>
   }
   if (isPass) {
-    return <span className="text-[11.5px]" style={{ color: 'var(--status-passed)' }}>PASS · {ageLabel}</span>
+    return <span className="text-xs" style={{ color: 'var(--status-passed)' }}>PASS · {ageLabel}</span>
   }
-  return <span className="text-[11.5px] text-[var(--color-text-muted)]">{ageLabel} ago</span>
+  return <span className="text-xs text-[var(--color-text-muted)]">{ageLabel} ago</span>
 }
 
 function CasesTableFooter({ shown, total, pages, page, onPage, bulkHint = null }: {
@@ -2346,7 +2344,7 @@ function CasesTableFooter({ shown, total, pages, page, onPage, bulkHint = null }
 }) {
   return (
     <div
-      className="flex items-center justify-between gap-3 px-4 py-2.5 text-[11.5px] text-[var(--color-text-muted)]"
+      className="flex items-center justify-between gap-3 px-4 py-2.5 text-xs text-[var(--color-text-muted)]"
       style={{ borderTop: '1px solid var(--color-border)' }}
     >
       <span data-cases-footer-count="">{shown} of {total}{bulkHint ? ` · ${bulkHint}` : ''}</span>
@@ -2367,12 +2365,12 @@ function EmptyStateBlock({
   return (
     <div className="flex flex-col items-center text-center px-4 py-12">
       <ClipboardList className="h-10 w-10 text-[var(--color-text-faint)] mb-3" />
-      <p className="text-[13px] m-0 font-medium text-[var(--color-text)]">No test cases match your filters.</p>
-      <p className="text-[12px] m-0 mt-1 text-[var(--color-text-muted)]">Reset filters, or generate cases from your knowledge graph.</p>
+      <p className="text-sm m-0 font-medium text-[var(--color-text)]">No test cases match your filters.</p>
+      <p className="text-xs m-0 mt-1 text-[var(--color-text-muted)]">Reset filters, or generate cases from your knowledge graph.</p>
       <div className="flex gap-2 mt-3 flex-wrap justify-center">
         <button
           onClick={onReset}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md"
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md"
           style={{ borderColor: 'var(--color-border)' }}
         >
           Reset filters
@@ -2381,7 +2379,7 @@ function EmptyStateBlock({
           <>
             <button
               onClick={onAiGenerate}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] rounded-md border"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm rounded-md border"
               style={{ color: 'var(--status-flaky)', borderColor: 'color-mix(in srgb, var(--status-flaky) 30%, transparent)', background: 'color-mix(in srgb, var(--status-flaky) 6%, transparent)' }}
             >
               <Sparkles className="h-3.5 w-3.5" /> AI Generate
@@ -3168,7 +3166,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
   // a suite before any ingest has happened.
   const suitesHeader = (
     <div className="flex items-center justify-between gap-3 mb-3">
-      <div className="text-[12.5px] text-[var(--color-text-muted)]">
+      <div className="text-sm text-[var(--color-text-muted)]">
         {suites.length === 0 ? 'No test suites yet' : `${suites.length} suite${suites.length === 1 ? '' : 's'}`}
         {projectId ? null : ' · pick a project to add a new suite'}
       </div>
@@ -3267,7 +3265,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       Empty
                     </span>
                   ) : (
-                  <span className={clsx('text-[10px] px-1.5 py-0.5 rounded font-medium', reviewStyle.cls)}>
+                  <span className={clsx('text-2xs px-1.5 py-0.5 rounded font-medium', reviewStyle.cls)}>
                     {reviewStyle.label}
                   </span>
                   )}
@@ -3345,7 +3343,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                   {!isEmpty && suiteIdByName.get(suite.suite_name) && (
                     <Link
                       to={`/suites/${suiteIdByName.get(suite.suite_name)}?tab=charts`}
-                      className="text-[var(--color-accent)] hover:underline text-[11px]"
+                      className="text-[var(--color-accent)] hover:underline text-2xs"
                       onClick={e => e.stopPropagation()}
                       title="View per-day trend"
                     >
@@ -3357,7 +3355,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                     {isEditingOwner ? (
                       ownerCandidates.length === 0 ? (
                         <span
-                          className="text-[10.5px] italic text-[var(--status-broken)]"
+                          className="text-2xs italic text-[var(--status-broken)]"
                           title="Add a project member with role QA_LEAD before assigning."
                         >
                           No QA_LEAD members on this project
@@ -3365,7 +3363,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       ) : (
                         <select
                           autoFocus
-                          className="input h-6 py-0 text-[11px]"
+                          className="input h-6 py-0 text-2xs"
                           defaultValue={suite.owner_user_id ?? ''}
                           onChange={e => handleAssignOwner(suite, e.target.value || null)}
                           onBlur={() => setEditingOwnerFor(null)}
@@ -3386,7 +3384,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                           <button
                             type="button"
                             onClick={() => setEditingOwnerFor(suite.suite_name)}
-                            className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] underline text-[11px]"
+                            className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] underline text-2xs"
                           >
                             change
                           </button>
@@ -3398,7 +3396,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                 </div>
                 {!isEmpty && suite.last_run_id && (
                   <div className="mt-2 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-                    <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-faint)] mr-1">AI verdict:</span>
+                    <span className="eyebrow uppercase text-[var(--color-text-faint)] mr-1">AI verdict:</span>
                     {(['confirmed', 'acknowledged', 'review_later'] as SuiteReviewState[]).map(s => (
                       <button
                         key={s}
@@ -3406,7 +3404,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                         disabled={savingReview === suite.suite_name}
                         onClick={() => handleReview(suite, s)}
                         className={clsx(
-                          'text-[11px] px-2 py-0.5 rounded font-medium transition-colors disabled:opacity-50',
+                          'text-2xs px-2 py-0.5 rounded font-medium transition-colors disabled:opacity-50',
                           reviewState === s
                             ? REVIEW_STATE_STYLES[s].cls
                             : 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] hover:text-[var(--color-text)]',
@@ -3416,7 +3414,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       </button>
                     ))}
                     {review?.reviewer_email && (
-                      <span className="text-[10px] text-[var(--color-text-faint)] ml-1">
+                      <span className="text-2xs text-[var(--color-text-faint)] ml-1">
                         by {review.reviewer_email}{review.reviewed_at ? ` · ${fmtDate(review.reviewed_at)}` : ''}
                       </span>
                     )}
@@ -3526,7 +3524,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       confirmation. */}
                   {(suiteCasesPages[suite.suite_name] ?? 1) > 1 && (
                     <div className="px-4 py-2.5 border-t border-[var(--color-border)] flex items-center justify-between gap-2 flex-wrap">
-                      <span className="text-[11px] text-[var(--color-text-muted)]">
+                      <span className="text-2xs text-[var(--color-text-muted)]">
                         Page {suiteCasesPage[suite.suite_name] ?? 1} of {suiteCasesPages[suite.suite_name] ?? 1}
                         {' · '}
                         {suiteCasesTotal[suite.suite_name] ?? 0} test case{(suiteCasesTotal[suite.suite_name] ?? 0) === 1 ? '' : 's'} total
@@ -3536,7 +3534,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                           type="button"
                           disabled={(suiteCasesPage[suite.suite_name] ?? 1) <= 1 || loadingCases === suite.suite_name}
                           onClick={() => handleSuiteCasesPageChange(suite.suite_name, (suiteCasesPage[suite.suite_name] ?? 1) - 1)}
-                          className="text-[11px] px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
+                          className="text-2xs px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
                         >
                           Prev
                         </button>
@@ -3547,7 +3545,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                             || loadingCases === suite.suite_name
                           }
                           onClick={() => handleSuiteCasesPageChange(suite.suite_name, (suiteCasesPage[suite.suite_name] ?? 1) + 1)}
-                          className="text-[11px] px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
+                          className="text-2xs px-2.5 py-1 rounded border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-40"
                         >
                           Next
                         </button>
@@ -3588,7 +3586,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                         <span className="text-[var(--status-failed)]">✕</span>
                         <span className="text-[var(--color-text-secondary)]">{d.test_name}</span>
                         {d.review_tag && (
-                          <span className="bg-[var(--status-broken-bg)] text-[var(--status-broken)] px-1.5 py-0.5 rounded text-[10px] font-medium">{d.review_tag}</span>
+                          <span className="bg-[var(--status-broken-bg)] text-[var(--status-broken)] px-1.5 py-0.5 rounded text-2xs font-medium">{d.review_tag}</span>
                         )}
                         {d.class_name && <span className="text-[var(--color-text-faint)] ml-auto">{d.class_name}</span>}
                       </div>
@@ -3702,7 +3700,7 @@ function AddTestSuiteModal({
               maxLength={500}
             />
             {isDuplicate && (
-              <p className="text-[11px] text-[var(--status-failed)] mt-1">
+              <p className="text-2xs text-[var(--status-failed)] mt-1">
                 A suite named “{trimmedName}” already exists in this project.
               </p>
             )}
@@ -3723,7 +3721,7 @@ function AddTestSuiteModal({
           <div>
             <label htmlFor="tm-suite-owner" className="block text-xs text-[var(--color-text-muted)] mb-1">Owner</label>
             {ownerCandidates.length === 0 ? (
-              <p className="text-[11px] text-[var(--status-broken)] bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)] rounded px-2 py-1.5">
+              <p className="text-2xs text-[var(--status-broken)] bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)] rounded px-2 py-1.5">
                 No project members have the QA_LEAD role yet. Leave unset to inherit the project's default QA lead, or add a QA_LEAD member first.
               </p>
             ) : (

@@ -471,14 +471,14 @@ function StageNode({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <p className="text-sm font-semibold text-[var(--color-text)] truncate">{stage.label ?? meta.label}</p>
-            <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{status.label}</span>
+            <span className="eyebrow uppercase text-[var(--color-text-muted)]">{status.label}</span>
           </div>
           {!compact && <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{stage.description ?? meta.description}</p>}
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {duration && <span className="badge bg-[var(--color-bg-secondary)]/80 text-[var(--color-text-secondary)] border border-[var(--color-border)]/70 text-[10px]">{duration}</span>}
+            {duration && <span className="badge bg-[var(--color-bg-secondary)]/80 text-[var(--color-text-secondary)] border border-[var(--color-border)]/70 text-2xs">{duration}</span>}
             {stage.confidence_score != null && (
               <span className={clsx(
-                'badge text-[10px]',
+                'badge text-2xs',
                 stage.confidence_score >= 80
                   ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border-[var(--status-passed-bd)]'
                   : stage.confidence_score >= 50
@@ -489,17 +489,17 @@ function StageNode({
               </span>
             )}
             {stage.evidence_count != null && (
-              <span className="badge bg-[var(--color-accent-muted)]/20 text-[var(--color-accent)] border border-[var(--color-accent)]/30 text-[10px]">
+              <span className="badge bg-[var(--color-accent-muted)]/20 text-[var(--color-accent)] border border-[var(--color-accent)]/30 text-2xs">
                 {stage.evidence_count} evidence
               </span>
             )}
             {stage.total_tokens != null && stage.total_tokens > 0 && (
-              <span className="badge bg-[var(--color-accent-muted)]/20 text-[var(--color-accent)] border border-[var(--color-accent)]/30 text-[10px]">
+              <span className="badge bg-[var(--color-accent-muted)]/20 text-[var(--color-accent)] border border-[var(--color-accent)]/30 text-2xs">
                 {formatNumber(stage.total_tokens)} tok
               </span>
             )}
             {stage.cost_usd != null && stage.cost_usd > 0 && (
-              <span className="badge bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)] text-[10px]">
+              <span className="badge bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)] text-2xs">
                 ${stage.cost_usd.toFixed(4)}
               </span>
             )}
@@ -539,7 +539,7 @@ function WorkflowEventFeed({ events }: { events: WorkflowEventNode[] }) {
           <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="text-sm text-[var(--color-text)]">{eventLabel(event)}</p>
-                {event.stage_name && <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">{stageDisplayName(event.stage_name)}</span>}
+                {event.stage_name && <span className="eyebrow uppercase text-[var(--color-text-muted)]">{stageDisplayName(event.stage_name)}</span>}
               </div>
             {/* The record's own time; an undated event shows no date line
                 rather than an invented or "Invalid Date" one (HON-06). */}
@@ -725,7 +725,7 @@ export default function WorkflowTimeline({
                   </p>
                 </div>
                 {selectedStage.execution_path && (
-                  <span className="badge bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-[10px]">
+                  <span className="badge bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] border border-[var(--color-border)] text-2xs">
                     {selectedStage.execution_path.replace(/_/g, ' ')}
                   </span>
                 )}
@@ -733,19 +733,19 @@ export default function WorkflowTimeline({
 
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
                 <div className="rounded-xl bg-[var(--color-bg-card)]/60 p-3">
-                  <p className="text-[var(--color-text-muted)] uppercase tracking-wider text-[10px]">Status</p>
+                  <p className="text-[var(--color-text-muted)] eyebrow uppercase">Status</p>
                   <p className="mt-1 text-[var(--color-text)] font-medium capitalize">{selectedStage.status}</p>
                 </div>
                 <div className="rounded-xl bg-[var(--color-bg-card)]/60 p-3">
-                  <p className="text-[var(--color-text-muted)] uppercase tracking-wider text-[10px]">Confidence</p>
+                  <p className="text-[var(--color-text-muted)] eyebrow uppercase">Confidence</p>
                   <p className="mt-1 text-[var(--color-text)] font-medium">{selectedStage.confidence_score != null ? `${selectedStage.confidence_score}%` : '—'}</p>
                 </div>
                 <div className="rounded-xl bg-[var(--color-bg-card)]/60 p-3">
-                  <p className="text-[var(--color-text-muted)] uppercase tracking-wider text-[10px]">Evidence</p>
+                  <p className="text-[var(--color-text-muted)] eyebrow uppercase">Evidence</p>
                   <p className="mt-1 text-[var(--color-text)] font-medium">{selectedStage.evidence_count ?? 0}</p>
                 </div>
                 <div className="rounded-xl bg-[var(--color-bg-card)]/60 p-3">
-                  <p className="text-[var(--color-text-muted)] uppercase tracking-wider text-[10px]">Cost</p>
+                  <p className="text-[var(--color-text-muted)] eyebrow uppercase">Cost</p>
                   <p className="mt-1 text-[var(--color-text)] font-medium">{selectedStage.cost_usd != null ? `$${selectedStage.cost_usd.toFixed(4)}` : '—'}</p>
                 </div>
               </div>
@@ -753,13 +753,13 @@ export default function WorkflowTimeline({
               <div className="grid lg:grid-cols-2 gap-3 text-sm">
                 {selectedStage.skipped_reason && (
                   <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)]/40 p-3">
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Skip reason</p>
+                    <p className="eyebrow uppercase text-[var(--color-text-muted)]">Skip reason</p>
                     <p className="mt-1 text-[var(--color-text-secondary)]">{selectedStage.skipped_reason}</p>
                   </div>
                 )}
                 {selectedStage.route_rationale && (
                   <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)]/40 p-3">
-                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">Route rationale</p>
+                    <p className="eyebrow uppercase text-[var(--color-text-muted)]">Route rationale</p>
                     <p className="mt-1 text-[var(--color-text-secondary)]">{selectedStage.route_rationale}</p>
                   </div>
                 )}
@@ -768,15 +768,15 @@ export default function WorkflowTimeline({
               {(selectedStage.input_tokens || selectedStage.output_tokens || selectedStage.llm_calls_count) && (
                 <div className="grid grid-cols-3 gap-3 text-xs">
                   <div className="rounded-xl bg-[var(--color-bg-card)]/60 p-3">
-                    <p className="text-[var(--color-text-muted)] uppercase tracking-wider text-[10px]">Input</p>
+                    <p className="text-[var(--color-text-muted)] eyebrow uppercase">Input</p>
                     <p className="mt-1 text-[var(--color-text)] font-medium">{selectedStage.input_tokens ?? 0}</p>
                   </div>
                   <div className="rounded-xl bg-[var(--color-bg-card)]/60 p-3">
-                    <p className="text-[var(--color-text-muted)] uppercase tracking-wider text-[10px]">Output</p>
+                    <p className="text-[var(--color-text-muted)] eyebrow uppercase">Output</p>
                     <p className="mt-1 text-[var(--color-text)] font-medium">{selectedStage.output_tokens ?? 0}</p>
                   </div>
                   <div className="rounded-xl bg-[var(--color-bg-card)]/60 p-3">
-                    <p className="text-[var(--color-text-muted)] uppercase tracking-wider text-[10px]">LLM calls</p>
+                    <p className="text-[var(--color-text-muted)] eyebrow uppercase">LLM calls</p>
                     <p className="mt-1 text-[var(--color-text)] font-medium">{selectedStage.llm_calls_count ?? 0}</p>
                   </div>
                 </div>
@@ -784,7 +784,7 @@ export default function WorkflowTimeline({
 
               {selectedStage.result_data && Object.keys(selectedStage.result_data).length > 0 && (
                 <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)]/40 p-3">
-                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mb-2">Result data</p>
+                  <p className="eyebrow uppercase text-[var(--color-text-muted)] mb-2">Result data</p>
                   <div className="space-y-1 text-xs font-mono text-[var(--color-text-secondary)]">
                     {Object.entries(selectedStage.result_data).map(([key, value]) => (
                       <div key={key} className="flex gap-2">

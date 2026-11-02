@@ -15,7 +15,7 @@ export function AICategoryChip({ category }: { category: string | null }) {
   return (
     <span
       data-ai-category={category ?? ''}
-      className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-secondary)]"
+      className="inline-flex items-center gap-1 rounded border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-1.5 py-0.5 font-mono text-2xs text-[var(--color-text-secondary)]"
     >
       <FailureCategoryMark category={category} size={8} />
       {categoryText(category)}

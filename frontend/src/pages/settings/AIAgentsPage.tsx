@@ -260,7 +260,7 @@ function PolicyCard({ policy, projectId, onSaved }: { policy: AgentPolicy; proje
                   className="mt-1 w-full rounded-md px-2 py-1.5 text-sm tabular-nums bg-[var(--color-bg)] text-[var(--color-text)]"
                   style={{ border: `1px solid ${invalid ? 'var(--gate-no-go)' : 'var(--color-border)'}` }}
                 />
-                <span className="text-[10px] text-[var(--color-text-faint)]">{f.hint}</span>
+                <span className="text-2xs text-[var(--color-text-faint)]">{f.hint}</span>
               </label>
             )
           })}
