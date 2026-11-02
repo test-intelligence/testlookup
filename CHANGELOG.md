@@ -1138,6 +1138,17 @@ locally by default.
 
 ### Changed
 
+- **The type scale reaches 73 more files** (wave W29d, UIX-04c part 1). The
+  investigator cockpit, the run-analysis AI panels, compare, Ask AI, test
+  management and approvals, the test-case page, agents and the compute graph,
+  workflows, AI settings, releases, live execution, the summary report, search
+  and the docs use only the scale's sizes. Deep investigation has no text
+  under 11 px, including a completed investigation's cockpit. Small uppercase
+  labels share one label style; compute-graph and workflow-editor drawings
+  take the chart text sizes. Where a larger size no longer fitted, a label
+  column widens or the full text shows on hover, never a smaller size; no
+  colour changes. The off-scale count falls from 753 sizes in 115 files to
+  145 in 42.
 - **The suite-membership cutover is built, not switched** (wave W25d, HYG-04
   phase 2; migration 0251 seeds the switch `suite_membership_legacy_writes`
   ON).
