@@ -1571,6 +1571,14 @@ locally by default.
 
 ### Fixed
 
+- **Settings › Performance fits a 1280 px screen** (F-W29e-1, branch
+  `fix/perf-budgets-overflow-20261102`). The latency budgets table had a
+  Description column beside five number columns, and descriptions that name an
+  endpoint (`GET /analytics/execution/suite-history, …`) could not wrap, so the
+  table was 801 px in a 726 px column and the page scrolled sideways. Each
+  description now sits under its operation's name and handler, and the table is
+  also shorter. `tests/ci-e2e/settings-performance-width.spec.ts` checks the
+  table at 1280 and 1440 px.
 - **The compliance-pack failure alert can fire** (wave W25b, HYG-09).
   Nothing counted `testlookup_compliance_pack_generated_total{result="error"}`,
   so the alert on it could never trigger. A pack build that fails is now
