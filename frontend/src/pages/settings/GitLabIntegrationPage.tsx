@@ -248,7 +248,7 @@ export default function GitLabIntegrationPage() {
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Project</h3>
           {config && (
             <span
-              className={`ml-auto text-[10px] px-2 py-0.5 rounded border ${
+              className={`ml-auto text-2xs px-2 py-0.5 rounded border ${
                 config.enabled
                   ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
                   : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
@@ -290,7 +290,7 @@ export default function GitLabIntegrationPage() {
               <button
                 type="button"
                 onClick={() => setRemovingToken(false)}
-                className="text-[11px] text-[var(--color-text-muted)] hover:underline"
+                className="text-2xs text-[var(--color-text-muted)] hover:underline"
               >
                 Cancel — keep the stored token
               </button>
@@ -317,7 +317,7 @@ export default function GitLabIntegrationPage() {
                     setReplacing(false)
                     setTokenDraft('')
                   }}
-                  className="text-[11px] text-[var(--color-text-muted)] hover:underline"
+                  className="text-2xs text-[var(--color-text-muted)] hover:underline"
                 >
                   Cancel — keep the stored token
                 </button>

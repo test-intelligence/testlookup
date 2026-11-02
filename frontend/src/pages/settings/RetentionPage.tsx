@@ -673,7 +673,7 @@ export default function RetentionPage() {
             Retention policy
           </h2>
           <span
-            className={`ml-auto text-[10px] px-2 py-0.5 rounded border ${
+            className={`ml-auto text-2xs px-2 py-0.5 rounded border ${
               policy.source === 'custom'
                 ? 'border-[var(--color-accent)]/40 text-[var(--color-accent)] bg-[var(--color-accent)]/10'
                 : 'border-[var(--color-border)] text-[var(--color-text-muted)]'
@@ -778,7 +778,7 @@ export default function RetentionPage() {
           <p data-retention-ai-summary="" className="text-xs text-[var(--color-text)]">
             {aiHistorySummary(seededPolicy)}
           </p>
-          <p className="text-[11px] text-[var(--color-text-faint)]">
+          <p className="text-2xs text-[var(--color-text-faint)]">
             Every AI analysis is kept as a version: the run summary and analysis digest of each
             run, and the analysis of each test result. The caps apply each time a version is
             stored, even while scheduled purging is off.
@@ -840,7 +840,7 @@ export default function RetentionPage() {
           >
             <Save className="h-3 w-3" /> {saving ? 'Saving…' : 'Save policy'}
           </button>
-          <span className="text-[11px] text-[var(--color-text-faint)]">
+          <span className="text-2xs text-[var(--color-text-faint)]">
             Only changed fields are sent; the backend re-validates all bounds.
           </span>
         </div>
@@ -960,7 +960,7 @@ export default function RetentionPage() {
                 the purge would break (warnings, never blocks). */}
             <PreviewKeptLines preview={preview} />
 
-            <p className="text-[11px] text-[var(--color-text-faint)]">
+            <p className="text-2xs text-[var(--color-text-faint)]">
               Counts are computed right now; the scheduled job runs later against live data, so its
               numbers may differ slightly.
             </p>

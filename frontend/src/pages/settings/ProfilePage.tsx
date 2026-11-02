@@ -223,7 +223,7 @@ export default function ProfilePage() {
           <div className="grid grid-cols-2 gap-4 xl:grid-cols-1">
             <div>
               <label htmlFor="profile-field-1" className="block text-sm font-medium text-[var(--color-text-muted)] mb-1">
-                Username <span className="text-[10px] font-normal">(read-only)</span>
+                Username <span className="text-2xs font-normal">(read-only)</span>
               </label>
               <input id="profile-field-1"
                 type="text"
@@ -234,7 +234,7 @@ export default function ProfilePage() {
             </div>
             <div>
               <label htmlFor="profile-field-2" className="block text-sm font-medium text-[var(--color-text-muted)] mb-1">
-                Email <span className="text-[10px] font-normal">(read-only)</span>
+                Email <span className="text-2xs font-normal">(read-only)</span>
               </label>
               <input id="profile-field-2"
                 type="email"

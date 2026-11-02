@@ -108,8 +108,8 @@ const EXCLUDABLE_KINDS = [
 const FIELD = 'input mt-1 disabled:opacity-70';
 const FIELD_SM = 'input mt-0.5 px-2 py-1 text-xs disabled:opacity-70';
 const LABEL = 'text-xs text-[var(--color-text-muted)]';
-const LABEL_SM = 'text-[10px] text-[var(--color-text-muted)]';
-const HINT = 'text-[10px] text-[var(--color-text-muted)] mt-0.5';
+const LABEL_SM = 'text-2xs text-[var(--color-text-muted)]';
+const HINT = 'text-2xs text-[var(--color-text-muted)] mt-0.5';
 const SECTION = 'card space-y-3';
 const SECTION_TITLE = 'text-sm font-semibold text-[var(--color-text)]';
 
@@ -619,7 +619,7 @@ export default function PolicyEditorPage() {
                 {bandsValid ? 'Bands valid' : 'Bands must be strictly increasing (orange < yellow < green)'}
               </span>
             </div>
-            <p className="text-[11px] text-[var(--color-text-muted)]">
+            <p className="text-2xs text-[var(--color-text-muted)]">
               Build colour by pass rate. Verdict: green/yellow → GO · orange → CONDITIONAL · red → NO-GO.
               Hard caps can downgrade the band one step at a time.
             </p>
@@ -816,7 +816,7 @@ export default function PolicyEditorPage() {
             summary={`P0 defects ≤ ${caps.max_p0_defects} · flaky ≤ ${caps.max_flaky_count} · new failures (24h) ≤ ${caps.max_new_failures_24h}`}
           >
             <div className="space-y-3">
-              <p className="text-[11px] text-[var(--color-text-muted)]">
+              <p className="text-2xs text-[var(--color-text-muted)]">
                 Each cap downgrades the resolved band one step when exceeded (green → yellow → orange → red).
                 Set to 0 to disable a cap, except the P0 cap where 0 means "no P0 defects allowed".
               </p>
@@ -866,7 +866,7 @@ export default function PolicyEditorPage() {
                 />
                 Enabled (opt-in)
               </label>
-              <p className="text-[11px] text-[var(--color-text-muted)]">
+              <p className="text-2xs text-[var(--color-text-muted)]">
                 Weight failure kinds differently in the gate verdict. Failure kinds are AI-classified
                 (derived from the failure-category classifier) — not ground truth. Infrastructure or
                 test-code failures within their budget are excluded from the NO-GO trigger but always
@@ -894,7 +894,7 @@ export default function PolicyEditorPage() {
                           />
                           <span className="text-sm text-[var(--color-text)] font-medium">{label} budget</span>
                         </div>
-                        <p className="text-[10px] text-[var(--color-text-muted)]">{hint}. No budget = failures of this kind count in full.</p>
+                        <p className="text-2xs text-[var(--color-text-muted)]">{hint}. No budget = failures of this kind count in full.</p>
                         {budget != null && (
                           <div className="grid grid-cols-2 gap-2">
                             <div>

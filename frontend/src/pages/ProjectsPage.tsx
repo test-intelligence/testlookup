@@ -270,7 +270,7 @@ export default function ProjectsPage() {
                   {p.tags && p.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
                       {p.tags.map(t => (
-                        <span key={t} className="text-[10px] px-1.5 py-0.5 bg-[var(--color-bg-hover)] text-[var(--color-text)] rounded">{t}</span>
+                        <span key={t} className="text-2xs px-1.5 py-0.5 bg-[var(--color-bg-hover)] text-[var(--color-text)] rounded">{t}</span>
                       ))}
                     </div>
                   )}

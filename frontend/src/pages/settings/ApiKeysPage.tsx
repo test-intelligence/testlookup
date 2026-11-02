@@ -150,7 +150,7 @@ function GenerateKeyForm({
             onChange={e => setExpiresDays(e.target.value === '' ? '' : Number(e.target.value))}
             className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-[var(--color-ring)]"
           />
-          <span className="text-[10px] text-[var(--color-text-muted)]">Leave blank for no expiry</span>
+          <span className="text-2xs text-[var(--color-text-muted)]">Leave blank for no expiry</span>
         </label>
       </div>
 
@@ -475,7 +475,7 @@ function ApiKeysPageContent({ isAdmin }: { isAdmin: boolean }) {
                         {key.scopes.map(scope => (
                           <span
                             key={scope}
-                            className="rounded bg-[var(--color-bg-secondary)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--color-text-secondary)]"
+                            className="rounded bg-[var(--color-bg-secondary)] px-1.5 py-0.5 text-2xs font-mono text-[var(--color-text-secondary)]"
                           >
                             {scope}
                           </span>

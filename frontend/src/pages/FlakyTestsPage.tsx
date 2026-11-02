@@ -258,7 +258,7 @@ function FlakyTests({ projectId }: { projectId: string }) {
               // One line at 1280 and 1440 (11 px: the longer W09 copy measured
               // ~1010 px at 12 px in a Verdana-wide face, over the 976 px box
               // at 1280; the page has no height to spare for a second line).
-              <p data-quarantine-off="" className="text-[11px] text-[var(--color-text-muted)]">
+              <p data-quarantine-off="" className="text-2xs text-[var(--color-text-muted)]">
                 Quarantine is off for this project, so no test can be proposed for it. Its flag,{' '}
                 <code className="font-mono">flaky_auto_quarantine</code> in Settings › Feature flags, is switched off
                 or limited to other projects.

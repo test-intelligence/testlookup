@@ -80,7 +80,7 @@ const BUTTON =
 // The report pages' `GhostBtn`, verbatim (Trends, Coverage, Failures,
 // Defects): no class here is new to the stylesheet.
 const GHOST_BUTTON =
-  'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[13px] text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50'
+  'inline-flex items-center gap-1.5 px-2.5 py-1.5 text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] border rounded-md transition-colors disabled:opacity-50'
 const ICON_BUTTON =
   'inline-flex h-7 w-7 items-center justify-center rounded text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-ring)]'
 

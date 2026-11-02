@@ -84,7 +84,7 @@ export default function PerformancePage() {
             ] as [string, string | number][]).map(([label, value]) => (
               <div key={label} className="bg-[var(--color-bg)]/50 rounded-lg p-3">
                 <div className="text-lg font-bold text-[var(--color-text)]">{value}</div>
-                <div className="text-[10px] text-[var(--color-text-muted)]">{label}</div>
+                <div className="text-2xs text-[var(--color-text-muted)]">{label}</div>
               </div>
             ))}
           </div>
@@ -101,19 +101,19 @@ export default function PerformancePage() {
               <div className="grid grid-cols-4 gap-3 mt-3">
                 <div className="text-center">
                   <div className="text-lg font-bold text-[var(--color-text)]">{s.projects}</div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">Projects</div>
+                  <div className="text-2xs text-[var(--color-text-muted)]">Projects</div>
                 </div>
                 <div className="text-center">
                   <div className="text-lg font-bold text-[var(--status-passed)]">{s.runs_per_day}</div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">Runs/Day</div>
+                  <div className="text-2xs text-[var(--color-text-muted)]">Runs/Day</div>
                 </div>
                 <div className="text-center">
                   <div className="text-lg font-bold text-[var(--status-flaky)]">{s.tests_per_run}</div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">Tests/Run</div>
+                  <div className="text-2xs text-[var(--color-text-muted)]">Tests/Run</div>
                 </div>
                 <div className="text-center">
                   <div className="text-lg font-bold text-[var(--status-broken)]">{s.concurrent_users}</div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">Concurrent Users</div>
+                  <div className="text-2xs text-[var(--color-text-muted)]">Concurrent Users</div>
                 </div>
               </div>
             </div>

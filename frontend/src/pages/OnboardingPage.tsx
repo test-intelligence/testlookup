@@ -64,7 +64,7 @@ function StepCard({
         <p className={clsx('font-medium', isDone ? 'text-[var(--status-passed)]' : 'text-[var(--color-text)]')}>{step.label}</p>
         <p className="text-xs text-[var(--color-text-muted)] mt-0.5">{step.description}</p>
         {step.completed_at && (
-          <p className="text-[10px] text-[var(--color-text-faint)] mt-1">
+          <p className="text-2xs text-[var(--color-text-faint)] mt-1">
             Completed {formatDay(step.completed_at)}
           </p>
         )}

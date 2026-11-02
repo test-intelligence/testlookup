@@ -59,7 +59,7 @@ export default function ActivityDrawer({ projectId, eventId, onClose, rejected =
       dataAttributes={{ 'data-activity-detail': '' }}
       className="min-w-0"
     >
-      <div className="min-w-0 space-y-5 text-[13px]">
+      <div className="min-w-0 space-y-5 text-sm">
         {rejected && (
           <p className="text-[var(--status-failed)]">That is not a valid event link.</p>
         )}
@@ -117,7 +117,7 @@ export default function ActivityDrawer({ projectId, eventId, onClose, rejected =
             {/* Changed fields first — that is what a reader came for. */}
             {changed.length > 0 && (
               <section>
-                <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                <h3 className="mb-2 eyebrow uppercase text-[var(--color-text-muted)]">
                   Changed
                 </h3>
                 <ul className="space-y-1">
@@ -134,7 +134,7 @@ export default function ActivityDrawer({ projectId, eventId, onClose, rejected =
                         {formatValue(after[field]) ?? '—'}
                       </span>
                       {before[field] !== undefined && (
-                        <span className="col-span-3 text-[11px] text-[var(--color-text-muted)]">
+                        <span className="col-span-3 text-2xs text-[var(--color-text-muted)]">
                           was {formatValue(before[field]) ?? '—'}
                         </span>
                       )}
@@ -146,7 +146,7 @@ export default function ActivityDrawer({ projectId, eventId, onClose, rejected =
 
             {event.context && Object.keys(event.context).length > 0 && (
               <section>
-                <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
+                <h3 className="mb-2 eyebrow uppercase text-[var(--color-text-muted)]">
                   Details
                 </h3>
                 <dl className="grid grid-cols-[130px_1fr] gap-x-3 gap-y-1">
@@ -165,7 +165,7 @@ export default function ActivityDrawer({ projectId, eventId, onClose, rejected =
             )}
 
             {event.source && (
-              <p className="text-[11px] text-[var(--color-text-muted)]">
+              <p className="text-2xs text-[var(--color-text-muted)]">
                 Compliance record: {event.source.table}
                 {event.source.id ? ` · ${event.source.id}` : ''}
               </p>
@@ -176,12 +176,12 @@ export default function ActivityDrawer({ projectId, eventId, onClose, rejected =
                 <button
                   type="button"
                   onClick={() => setShowRaw(v => !v)}
-                  className="text-[11px] text-[var(--color-accent)] hover:underline"
+                  className="text-2xs text-[var(--color-accent)] hover:underline"
                 >
                   {showRaw ? 'Hide raw payload' : 'Show raw payload'}
                 </button>
                 {showRaw && (
-                  <pre className="mt-2 max-h-64 overflow-auto rounded bg-[var(--color-bg-secondary)] p-3 text-[11px] text-[var(--color-text-secondary)]">
+                  <pre className="mt-2 max-h-64 overflow-auto rounded bg-[var(--color-bg-secondary)] p-3 text-2xs text-[var(--color-text-secondary)]">
                     {JSON.stringify(event.diff, null, 2)}
                   </pre>
                 )}
@@ -191,7 +191,7 @@ export default function ActivityDrawer({ projectId, eventId, onClose, rejected =
             <button
               type="button"
               onClick={copyPermalink}
-              className="rounded border border-[var(--color-border)] px-3 py-1.5 text-[12px] text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
+              className="rounded border border-[var(--color-border)] px-3 py-1.5 text-xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)]"
             >
               Copy link to this event
             </button>

@@ -28,7 +28,7 @@ export const BY_TEAM_PICK_PROJECT = 'Pick a project to see value by team'
 export const NO_RULES_TITLE = 'No ownership rules yet'
 export const NO_RULES_ASK = 'Ask a QA lead to set up ownership rules.'
 
-const MESSAGE = 'rounded-xl border px-4 py-6 text-center text-[12.5px] text-[var(--color-text-muted)]'
+const MESSAGE = 'rounded-xl border px-4 py-6 text-center text-sm text-[var(--color-text-muted)]'
 const NUM = 'px-2 py-1.5 text-right tabular-nums'
 
 export function ownershipTeamHref(team: string): string {
@@ -99,11 +99,11 @@ export default function ValueMetricsByTeam({ projectId, days, canEditOwnership }
       className="rounded-xl"
       style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '14px 16px' }}
     >
-      <h2 className="m-0 mb-2 text-[13px] font-semibold text-[var(--color-text)]">Value by team · last {answer.window_days || days} days</h2>
+      <h2 className="m-0 mb-2 text-sm font-semibold text-[var(--color-text)]">Value by team · last {answer.window_days || days} days</h2>
       {rows.length === 0 ? (
-        <p className="m-0 py-4 text-center text-[12.5px] text-[var(--color-text-muted)]">No team's tests ran in this window.</p>
+        <p className="m-0 py-4 text-center text-sm text-[var(--color-text-muted)]">No team's tests ran in this window.</p>
       ) : (
-        <table className="w-full text-[12.5px] text-[var(--color-text)]" style={{ tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+        <table className="w-full text-sm text-[var(--color-text)]" style={{ tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <colgroup>
             {/* The team column takes what is left (>= 160 px); six 96 px number columns. */}
             <col style={{ minWidth: 160 }} />
@@ -112,7 +112,7 @@ export default function ValueMetricsByTeam({ projectId, days, canEditOwnership }
             ))}
           </colgroup>
           <thead>
-            <tr className="text-[11px] uppercase text-[var(--color-text-muted)]" style={{ borderBottom: '1px solid var(--color-border)' }}>
+            <tr className="eyebrow uppercase text-[var(--color-text-muted)]" style={{ borderBottom: '1px solid var(--color-border)' }}>
               <th scope="col" className="px-2 py-1.5 text-left font-medium">Team</th>
               <th scope="col" className={`${NUM} font-medium`}>Tests</th>
               <th scope="col" className={`${NUM} font-medium`}>Pass rate</th>
@@ -157,7 +157,7 @@ export default function ValueMetricsByTeam({ projectId, days, canEditOwnership }
           </tbody>
         </table>
       )}
-      <div data-value-by-team-totals="" className="mt-3 flex flex-col gap-0.5 text-[11.5px] text-[var(--color-text-secondary)]">
+      <div data-value-by-team-totals="" className="mt-3 flex flex-col gap-0.5 text-xs text-[var(--color-text-secondary)]">
         <span>
           Not attributable to a team: {hours(answer.not_attributable_hours)} (runs unblocked by quarantine are counted per run)
         </span>

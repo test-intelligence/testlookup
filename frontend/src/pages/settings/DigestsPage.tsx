@@ -539,7 +539,7 @@ export default function DigestsPage() {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--status-passed)]">{preview.avg_pass_rate?.toFixed(1) ?? 'N/A'}%</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Avg Pass Rate
+                      <div className="text-2xs text-[var(--color-text-muted)]">Avg Pass Rate
                         {preview.pass_rate_trend != null && (
                           <span className={preview.pass_rate_trend >= 0 ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]'}>
                             {' '}({preview.pass_rate_trend >= 0 ? '+' : ''}{preview.pass_rate_trend.toFixed(1)}%)
@@ -549,15 +549,15 @@ export default function DigestsPage() {
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--color-text)]">{preview.total_runs}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Runs</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Runs</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--status-failed)]">{preview.new_regressions}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Regressions</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Regressions</div>
                     </div>
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-xl font-bold text-[var(--status-broken)]">{preview.flaky_test_count}</div>
-                      <div className="text-[10px] text-[var(--color-text-muted)]">Flaky Tests</div>
+                      <div className="text-2xs text-[var(--color-text-muted)]">Flaky Tests</div>
                     </div>
                   </div>
 

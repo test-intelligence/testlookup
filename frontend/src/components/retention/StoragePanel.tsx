@@ -56,10 +56,10 @@ function StoreValue({ store }: { store: StoreFootprint }) {
     >
       {formatBytes(store.bytes)}
       {!store.exact && (
-        <span className="ml-1 text-[10px] text-[var(--color-text-muted)]">est.</span>
+        <span className="ml-1 text-2xs text-[var(--color-text-muted)]">est.</span>
       )}
       {!store.complete && (
-        <span className="ml-1 text-[10px] text-[var(--status-broken)]">partial</span>
+        <span className="ml-1 text-2xs text-[var(--status-broken)]">partial</span>
       )}
     </span>
   )
@@ -127,7 +127,7 @@ export default function StoragePanel({ projectId, canReadDeployment = true }: Pr
                 <td className="py-1 font-semibold text-[var(--color-text)]">
                   Total
                   {data.total_is_estimate && (
-                    <span className="ml-1 text-[10px] font-normal text-[var(--color-text-muted)]">
+                    <span className="ml-1 text-2xs font-normal text-[var(--color-text-muted)]">
                       (estimate)
                     </span>
                   )}
@@ -150,7 +150,7 @@ export default function StoragePanel({ projectId, canReadDeployment = true }: Pr
 
           {!data.fully_measured && (
             <p
-              className="flex items-start gap-1.5 text-[11px] text-[var(--status-broken)]"
+              className="flex items-start gap-1.5 text-2xs text-[var(--status-broken)]"
               data-testid="storage-partial-warning"
             >
               <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
@@ -162,7 +162,7 @@ export default function StoragePanel({ projectId, canReadDeployment = true }: Pr
           {/* The caveat the API states and the UI has to repeat, because an
               operator reading "Database rows" will otherwise assume deleting
               them frees disk. It does not, on its own. */}
-          <p className="text-[11px] text-[var(--color-text-muted)]">
+          <p className="text-2xs text-[var(--color-text-muted)]">
             Test-run and test-case rows are counted exactly, but not sized: rows
             share tables across projects, and deleting them does not return disk
             to the operating system without a VACUUM FULL. Bytes for five
@@ -185,7 +185,7 @@ export default function StoragePanel({ projectId, canReadDeployment = true }: Pr
                 : `${formatBytes(deleted.total_bytes)} held by deleted projects`}
             </span>
           </div>
-          <p className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+          <p className="mt-1 text-2xs text-[var(--color-text-muted)]">
             {deleted.unreachable_by_retention > 0 ? (
               <>
                 <strong className="text-[var(--color-text)]">

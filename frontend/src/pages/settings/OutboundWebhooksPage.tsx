@@ -305,20 +305,20 @@ export default function OutboundWebhooksPage() {
               </button>
               {/* The URL is what gives way when the row is narrow (min-w-0 lets truncate work in the flex row); the
                   name, the counts and the actions never break mid-word. */}
-              <span className="min-w-0 font-mono text-[10px] text-[var(--color-text-faint)] truncate max-w-[240px]" title={sub.target_url}>
+              <span className="min-w-0 font-mono text-2xs text-[var(--color-text-faint)] truncate max-w-[240px]" title={sub.target_url}>
                 {sub.target_url}
               </span>
               <div className="flex flex-wrap gap-1 ml-2">
                 {sub.events.map((e) => (
                   <span
                     key={e}
-                    className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
+                    className="text-2xs px-1.5 py-0.5 rounded border border-[var(--color-border)] text-[var(--color-text-muted)]"
                   >
                     {e}
                   </span>
                 ))}
               </div>
-              <span className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-[11px] text-[var(--color-text-faint)]">
+              <span className="ml-auto flex shrink-0 items-center gap-2 whitespace-nowrap text-2xs text-[var(--color-text-faint)]">
                 <span title={`Delivered ${sub.total_delivered} · Failed ${sub.failure_count}`}>
                   ✓ {sub.total_delivered} · ✗ {sub.failure_count}{streak && <span data-webhook-streak=""> · {streak}</span>}
                 </span>
@@ -327,7 +327,7 @@ export default function OutboundWebhooksPage() {
                   onClick={() => toggleEnabled(sub)}
                   disabled={!canEdit}
                   data-webhook-state={paused ? 'paused' : sub.enabled ? 'enabled' : 'disabled'}
-                  className={`text-[10px] px-2 py-0.5 rounded border ${
+                  className={`text-2xs px-2 py-0.5 rounded border ${
                     sub.enabled
                       ? 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10'
                       : paused
@@ -387,7 +387,7 @@ export default function OutboundWebhooksPage() {
                 {pausedLine(sub)}
               </div>
             ) : sub.last_error && (
-              <div className="px-3 pb-2 text-[11px] text-[var(--status-broken)]">
+              <div className="px-3 pb-2 text-2xs text-[var(--status-broken)]">
                 Last error: {sub.last_error}
               </div>
             )}
@@ -517,7 +517,7 @@ function CreateForm({
       </div>
 
       <fieldset className="space-y-1.5">
-        <legend className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">
+        <legend className="eyebrow uppercase text-[var(--color-text-muted)]">
           Events
         </legend>
         {/* The event checklist in two columns at >= 1280 px. */}
@@ -569,14 +569,14 @@ function DeliveryHistoryPanel({
   }
   return (
     <div className="border-t border-[var(--color-border)] px-3 py-2 space-y-1">
-      <div className="text-[10px] uppercase tracking-wide text-[var(--color-text-muted)] flex items-center gap-1">
+      <div className="eyebrow uppercase text-[var(--color-text-muted)] flex items-center gap-1">
         <ActivitySquare className="h-3 w-3" /> Recent deliveries
       </div>
       <ul className="space-y-0.5">
         {deliveries.map((d) => {
           const replayable = d.status === 'FAILED' || d.status === 'DLQ'
           return (
-          <li key={d.id} className="flex items-center gap-2 text-[11px]">
+          <li key={d.id} className="flex items-center gap-2 text-2xs">
             {d.status === 'SUCCESS' ? (
               <CheckCircle2 className="h-3 w-3 text-[var(--status-passed)]" />
             ) : d.status === 'PENDING' ? (
@@ -603,7 +603,7 @@ function DeliveryHistoryPanel({
               <button
                 type="button"
                 onClick={() => { void onReplay(d.id) }}
-                className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--color-accent)]/40 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/10 inline-flex items-center gap-1"
+                className="text-2xs px-1.5 py-0.5 rounded border border-[var(--color-accent)]/40 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/10 inline-flex items-center gap-1"
                 title="Replay this failed delivery as a fresh attempt"
               >
                 <RefreshCw className="h-2.5 w-2.5" /> Replay

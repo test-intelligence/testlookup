@@ -161,6 +161,17 @@ describe('W04 AIC-07: agent stage flags are grouped', () => {
     expect(description).toHaveAttribute('title', SEEDED[0].description)
   })
 
+  it('W29e UIX-04c: the MUTATING pill is the label style (eyebrow) in its sans face and status colour, with no size, weight or tracking of its own', () => {
+    flagList = SEEDED
+    render(<FeatureFlagsPage />)
+    const pill = document.querySelector('[data-flag-mutating]') as HTMLElement
+    expect(pill).toHaveClass('eyebrow', 'font-sans', 'text-[var(--status-broken)]')
+    const classes = pill.getAttribute('class') ?? ''
+    expect(classes).not.toMatch(/text-\[9/)
+    expect(classes).not.toMatch(/tracking-/)
+    expect(classes).not.toMatch(/font-semibold/)
+  })
+
   it('a group with no flag present renders nothing; a missing key is simply absent', () => {
     flagList = [FLAG, flag('llm_cost_budget', true)]
     const { unmount } = render(<FeatureFlagsPage />)

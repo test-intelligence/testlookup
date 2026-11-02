@@ -147,14 +147,23 @@ a KPI or callout number → the KPI tile (md in a strip, sm in a panel); a hero
 score at 42-44 px → `--text-display-lg`. **Role rule 2:** a class string that
 holds `uppercase` is a LABEL whatever its size: its size, weight and
 letter-spacing become `eyebrow` (a colour utility and the `uppercase` class
-stay). Mono text keeps `font-mono` at the table's size. `frontend.type-scale`
-counts what is left (§5); W29b moved the shared primitives (`components/ui`,
-`components/layout`), the chart kit and the seven analysis pages (Failures,
-Runs and a run, Run intelligence, Flaky, My failures, Defects, Deep
-investigation, Coverage, Trends) with their in-page components to zero; Test
-management, Search, `components/ai`, the releases / settings / agents pages
-are later waves. `AppLogo`'s em-relative bracket sizes are the logo's glyph
-proportions, not type, and stay.
+stay). Mono text keeps `font-mono` at the table's size. Since W29e (UIX-04c)
+every page and component is on the scale; `frontend.type-scale` counts **6**,
+the floor, pinned by
+`scripts/test_quality_gate.py::test_type_scale_floor_is_the_named_allow_list`
+(`TYPE_SCALE_FLOOR`): `components/ui/AppLogo.tsx` 4 — the brackets' `1.4em` /
+`1.45em`, the logo's glyph proportions, not type — and `pages/LoginPage.tsx` /
+`pages/ResetPasswordPage.tsx` 1 each — the 42 px sign-in mark (OR-06: no
+rebrand). A numeric size the gate's regex cannot see (a ternary, a JSX / SVG
+attribute) is refused by `test_type_scale_has_no_uncounted_numeric_font_size`.
+Three rules joined the map in wave 2: a number or verdict word outside the KPI
+tile takes the step at or above its size, never a `--text-stat-*` token
+(rule 4); text inside a fixed-geometry drawing (the compute graph, the
+workflow editor's SVG) reads its size from the chart kit's `CHART_FONT`
+(rule 5); an initials circle is sized `1.8em` of its own `text-2xs` (rule 6).
+A size that no longer fits is fixed by the fit-remedy order (a fixed label
+column widens, `truncate` + `title`, a shorter word, `leading-tight` on a
+label beside larger text), never by a smaller size.
 
 **`.eyebrow` is THE label style** (eyebrows, KPI labels, table headers,
 section kickers): `--text-2xs` (11 px, 16 in presentation mode), a 16 px line,

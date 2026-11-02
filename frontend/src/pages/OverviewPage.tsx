@@ -266,7 +266,7 @@ function VerdictDetails({
   return (
     <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between" data-testid="verdict-details">
       <div className="min-w-0 space-y-2">
-        <p className="m-0 max-w-[72ch] text-[13px] text-[var(--color-text-secondary)]">{lede}</p>
+        <p className="m-0 max-w-[72ch] text-sm text-[var(--color-text-secondary)]">{lede}</p>
         {/* W11 GATE-04: which policy decided, with a way to it. Nothing was
             decided while PENDING, and an unstated policy is not claimed. */}
         {verdict !== 'PENDING' && policy !== undefined && (
@@ -285,7 +285,7 @@ function VerdictDetails({
             </ul>
           </div>
         )}
-        <p className="m-0 flex items-center gap-1.5 text-[12px] text-[var(--color-text-muted)]">
+        <p className="m-0 flex items-center gap-1.5 text-xs text-[var(--color-text-muted)]">
           <Clock className="h-3.5 w-3.5" aria-hidden />
           <span>
             Verdict {totalExecutions > 0 ? `for ${windowWords(windowDays)}` : `awaiting data · ${windowWords(windowDays)}`}, from the{' '}
@@ -294,7 +294,7 @@ function VerdictDetails({
         </p>
       </div>
       <div className="flex shrink-0 flex-col items-start gap-1 md:items-end">
-        <div className="text-[11px] font-medium uppercase text-[var(--color-text-muted)]" style={{ letterSpacing: 'var(--tracking-wider)' }}>
+        <div className="eyebrow uppercase text-[var(--color-text-muted)]">
           Pass rate
         </div>
         {/* PENDING has no pass rate to draw: an empty track, never a bar at 0. */}
@@ -308,7 +308,7 @@ function VerdictDetails({
           format={(v) => `${v}%`}
         />
         {verdict !== 'PENDING' && (
-          <div className="text-[11px] tabular-nums text-[var(--color-text-muted)]" data-testid="verdict-pass-rate-basis">
+          <div className="text-2xs tabular-nums text-[var(--color-text-muted)]" data-testid="verdict-pass-rate-basis">
             {passRatePct}% · {passRateBasis}
           </div>
         )}
@@ -568,7 +568,7 @@ export default function OverviewPage() {
     }
     const hint = measuredDays === 0 ? `${windowShort(days)} · no executions recorded` : `${measuredDays} of ${days} days has data · no trend line`
     return (
-      <span data-spark-hint="" title={hint} className="block max-w-[9.5rem] text-right text-[11px] leading-tight text-[var(--color-text-faint)]">
+      <span data-spark-hint="" title={hint} className="block max-w-[9.5rem] text-right text-2xs leading-tight text-[var(--color-text-faint)]">
         {hint}
       </span>
     )
@@ -645,12 +645,12 @@ export default function OverviewPage() {
         helpTopic={HELP_TOPIC}
         actions={
           <>
-            <label className="inline-flex items-center gap-2 text-[13px] text-[var(--color-text-muted)]">
+            <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
               <span>Suite</span>
               <select
                 value={selectedSuite}
                 onChange={(event) => setSelectedSuite(event.target.value)}
-                className="h-8 min-w-[180px] rounded-md border bg-[var(--color-bg-secondary)] px-2 text-[13px] text-[var(--color-text)]"
+                className="h-8 min-w-[180px] rounded-md border bg-[var(--color-bg-secondary)] px-2 text-sm text-[var(--color-text)]"
                 style={{ borderColor: 'var(--color-border)' }}
                 title="Filter dashboard metrics by test suite"
               >
@@ -699,7 +699,7 @@ export default function OverviewPage() {
                 <button
                   type="button"
                   onClick={() => setDays(emptyWindow.suggestedDays as number)}
-                  className="px-2.5 py-1 text-[13px] font-medium rounded-md border transition-colors"
+                  className="px-2.5 py-1 text-sm font-medium rounded-md border transition-colors"
                   style={{ borderColor: 'var(--gate-conditional-border)', color: 'var(--gate-conditional)' }}
                 >
                   Show last {emptyWindow.suggestedDays} days

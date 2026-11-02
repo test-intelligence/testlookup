@@ -1138,6 +1138,13 @@ locally by default.
 
 ### Changed
 
+- **The type scale on the rest of the app** (wave W29e, UIX-04c part 2).
+  Overview, activity, value metrics, quarantine, suites, the policy and
+  ownership editors, the settings pages, users, projects and the 404 page use
+  only the scale's sizes: no text under 11 px anywhere outside the logo. The
+  six report pages' Views button matches their other header buttons. The
+  off-scale count falls from 145 to 6, the logo's own proportions, and two
+  quality-gate tests pin that floor and refuse a size the count cannot see.
 - **The type scale reaches 73 more files** (wave W29d, UIX-04c part 1). The
   investigator cockpit, the run-analysis AI panels, compare, Ask AI, test
   management and approvals, the test-case page, agents and the compute graph,

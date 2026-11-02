@@ -217,6 +217,20 @@ describe('MyNotificationsPage: the project policy hints (NTF-02)', () => {
     expect(new Set(policyHook.calls)).toEqual(new Set([P]))
   })
 
+  it('W29e UIX-04c: a suppression hint is on the scale (text-2xs) with a ratio line-height, never a px one', () => {
+    inCheckout()
+    policyHook.policy = policy({ per_run_events_enabled: false })
+    prefs.data = [pref('email', ['run_failed'])]
+    const { container } = renderPage()
+    const card = container.querySelector('[data-channel-card="email"]') as HTMLElement
+    const hint = optionLabel(card, 'Run failed').querySelector('[data-event-hint]') as HTMLElement
+    expect(hint).toHaveTextContent('Not sent in Checkout: per-run notifications are off')
+    expect(hint).toHaveClass('text-2xs', 'leading-tight')
+    const classes = hint.getAttribute('class') ?? ''
+    expect(classes).not.toMatch(/leading-\[/)
+    expect(classes).not.toMatch(/text-\[\d/)
+  })
+
   it('per-run on: no per-run hint', () => {
     inCheckout()
     policyHook.policy = policy({ per_run_events_enabled: true })

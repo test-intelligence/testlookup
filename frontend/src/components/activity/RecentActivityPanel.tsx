@@ -30,10 +30,10 @@ export default function RecentActivityPanel({ days = 30 }: { days?: number }) {
   if (isAllProjects) {
     return (
       <div className="card" style={{ padding: '14px 18px 18px' }}>
-        <h3 className="m-0 text-[13px] font-semibold text-[var(--color-text)]">
+        <h3 className="m-0 text-sm font-semibold text-[var(--color-text)]">
           Recent activity
         </h3>
-        <p className="m-0 mt-2 text-[11px] text-[var(--color-text-muted)]">
+        <p className="m-0 mt-2 text-2xs text-[var(--color-text-muted)]">
           Pick a single project to see what has been happening in it.
         </p>
       </div>
@@ -44,10 +44,10 @@ export default function RecentActivityPanel({ days = 30 }: { days?: number }) {
     <div className="card" style={{ padding: '14px 18px 18px' }}>
       <div className="flex items-start justify-between gap-2.5">
         <div>
-          <h3 className="m-0 text-[13px] font-semibold text-[var(--color-text)]">
+          <h3 className="m-0 text-sm font-semibold text-[var(--color-text)]">
             Recent activity
           </h3>
-          <p className="m-0 mt-0.5 text-[11px] text-[var(--color-text-muted)]">
+          <p className="m-0 mt-0.5 text-2xs text-[var(--color-text-muted)]">
             Runs, releases and changes in this project
           </p>
         </div>
@@ -59,7 +59,7 @@ export default function RecentActivityPanel({ days = 30 }: { days?: number }) {
             registry every other link already asks. */}
         <ScopedLink
           to="/activity"
-          className="text-[11px] text-[var(--color-accent)] hover:underline"
+          className="text-2xs text-[var(--color-accent)] hover:underline"
         >
           View all
         </ScopedLink>
@@ -68,15 +68,15 @@ export default function RecentActivityPanel({ days = 30 }: { days?: number }) {
       <div className="mt-3">
         {error ? (
           // Not "nothing happened" — those mean opposite things to a reader.
-          <p className="text-[12px] text-[var(--color-text-muted)]">
+          <p className="text-xs text-[var(--color-text-muted)]">
             Activity could not be loaded right now.
           </p>
         ) : isLoading ? (
-          <p className="text-[12px] text-[var(--color-text-muted)]" aria-busy="true">
+          <p className="text-xs text-[var(--color-text-muted)]" aria-busy="true">
             Loading…
           </p>
         ) : events.length === 0 ? (
-          <div className="flex items-center gap-2 text-[12px] text-[var(--color-text-muted)]">
+          <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
             <ActivityIcon className="h-3.5 w-3.5" />
             <span>Nothing recorded in the last {days} days.</span>
           </div>

@@ -83,3 +83,18 @@ describe('SuiteTestsTable latest-run date', () => {
     }
   })
 })
+
+describe('SuiteTestsTable catalog status pill (W29e UIX-04c)', () => {
+  it('is the eyebrow label in its STATUS_COLOR hue, with no arbitrary size and no weight utility', () => {
+    renderTable([canonical('live'), canonical('review', { status: 'needs_review' })])
+    const pill = within(rowOf('test_live')).getByText('active')
+    expect(pill).toHaveClass('eyebrow', 'uppercase', 'text-[var(--status-passed)]')
+    expect(pill.className).not.toMatch(/text-\[\d/)
+    expect(pill.className).not.toContain('font-medium')
+    const review = within(rowOf('test_review')).getByText('needs_review')
+    expect(review).toHaveClass('eyebrow', 'uppercase', 'text-[var(--status-broken)]')
+    expect(review.className).not.toMatch(/text-\[\d/)
+    // The source line under the pill is on the scale too.
+    expect(within(rowOf('test_live')).getByText('execution')).toHaveClass('text-2xs')
+  })
+})
