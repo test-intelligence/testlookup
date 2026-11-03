@@ -119,8 +119,9 @@ function ConfidencePanel({ score, why }: { score: number; why: ConfidenceWhy }) 
 }
 
 /** The steps are as many columns as the panel's own width holds, not the screen's: in the run page's test pane
- *  (~450 px at 1280) the old `xl:grid-cols-4` cut each step to ~70 px and its words ran out of the box. 11rem
- *  holds the longest label word ("Deterministic") beside the tick; a longer tool name still wraps inside. */
+ *  (~450 px at 1280) and the test case page's AI column (~410 px) the old `xl:grid-cols-4` cut each step to
+ *  70-100 px and its words ran out of the box. 11rem holds the longest label word ("Deterministic") beside the
+ *  tick; a longer tool name still wraps inside. */
 function InvestigationTrail({
   toolsUsed,
   confidenceWhy,
