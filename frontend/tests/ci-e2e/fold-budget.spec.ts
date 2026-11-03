@@ -127,8 +127,10 @@ const ROUTES: FoldRoute[] = [
     ready: (p) => p.getByRole('heading', { level: 1, name: TEST_CASE_NAME }),
     settle: (p) => expect(p.locator('[data-primary]').getByText(TEST_CASE_ROOT_CAUSE)).toBeVisible(),
     // 1,877 / 1,887 (single-entity page); 1,910 with EXEC-04's "Duration across runs"
-    // on the History tab, collapsed to its one stats line (the chart opens on demand).
-    budget: 1_920,
+    // on the History tab, collapsed to its one stats line (the chart opens on demand);
+    // 1,934 / 1,934 once the AI column's Investigation Trail steps sit 2 + 1 inside their
+    // boxes instead of four ~100 px columns whose words ran out of them (+16 px).
+    budget: 1_950,
     table: false,
   },
   {
