@@ -1571,6 +1571,14 @@ locally by default.
 
 ### Fixed
 
+- **The Investigation Trail names the memory recall step** (seen on the
+  homelab, branch `fix/trail-recall-label-20261103`). The ReAct agent's
+  `recall_similar_failures` tool had no label in the panel, so the trail showed
+  the raw "recall similar failures" between "Analysed OpenShift pod events" and
+  the evidence count. It now reads "Recalled similar failures", like the other
+  steps. `AIAnalysisPanel.test.tsx` checks the label, and
+  `tests/regression/test_trail_labels_every_react_tool.py` fails when a tool
+  the agent binds has no label.
 - **The AI analysis's Investigation Trail fits the run page's test pane**
   (seen in the W29d baselines, branch `fix/investigation-trail-overflow-20261102`).
   The steps were laid out by screen width, so at 1280 px and wider the ~450 px

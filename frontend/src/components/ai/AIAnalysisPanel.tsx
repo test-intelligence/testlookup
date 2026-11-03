@@ -36,6 +36,7 @@ const TOOL_LABELS: Record<string, string> = {
   query_splunk_logs:            'Queried Splunk logs',
   check_test_flakiness:         'Checked flakiness history',
   analyze_openshift_pod_events: 'Analysed OpenShift pod events',
+  recall_similar_failures:      'Recalled similar failures',
 }
 
 /** The category badge's tint and border from the one taxonomy map (W29a UIX-02): the colour is a mark, the words
