@@ -236,6 +236,12 @@ describe('AIAnalysisPanel', () => {
       expect(screen.getByText('Queried Splunk logs')).toBeInTheDocument()
     })
 
+    it('labels the memory recall step like the other tools, not with its raw name', async () => {
+      await renderResolvedResult({ tools_used: ['recall_similar_failures'] })
+      expect(screen.getByText('Recalled similar failures')).toBeInTheDocument()
+      expect(screen.queryByText('recall similar failures')).not.toBeInTheDocument()
+    })
+
     it('shows fast-path message when tools_used is empty', async () => {
       await renderResolvedResult({
         tools_used: [],
