@@ -3,6 +3,7 @@ import hashlib
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from typing import Any, Optional, cast
 
 import bcrypt
@@ -42,8 +43,24 @@ def _bcrypt_bytes(password: str) -> bytes:
     return password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
 
 
+@lru_cache(maxsize=1)
+def _unusable_hash_stand_in() -> bytes:
+    """A real bcrypt hash of a random value, built once: checked against when the stored value is not a
+    bcrypt hash, so such an account answers in the same time as a wrong password."""
+    return bcrypt.hashpw(secrets.token_bytes(16), bcrypt.gensalt())
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(_bcrypt_bytes(plain_password), hashed_password.encode("utf-8"))
+    """True when ``plain_password`` matches the stored bcrypt hash. A stored value that is not a bcrypt
+    hash — the erased account's marker (W31 ``ERASED_HASH_MARKER``), an empty or malformed value — is
+    False, never a raise (``bcrypt.checkpw`` raises ``ValueError`` on it, which would 500 the login)."""
+    if not isinstance(hashed_password, str) or not hashed_password.startswith("$2"):
+        bcrypt.checkpw(_bcrypt_bytes(plain_password or ""), _unusable_hash_stand_in())
+        return False
+    try:
+        return bcrypt.checkpw(_bcrypt_bytes(plain_password), hashed_password.encode("utf-8"))
+    except ValueError:
+        return False
 
 
 def get_password_hash(password: str) -> str:

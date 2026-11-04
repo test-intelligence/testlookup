@@ -290,11 +290,12 @@ async def approve_action(
         )
     )
     if result.rowcount > 0:
+        # W31 E-10: the approver's ID, never their name (``approver_name`` stays in the signature for callers)
         logger.info(
-            "Action approved: %s %s by %s",
+            "Action approved: %s %s by user_id=%s",
             model_class.__tablename__,
             record_id,
-            approver_name,
+            approver_id,
         )
         return True
     return False
@@ -328,11 +329,12 @@ async def reject_action(
         )
     )
     if result.rowcount > 0:
+        # W31 E-10: the rejector's ID, never their name (``rejector_name`` stays in the signature for callers)
         logger.info(
-            "Action rejected: %s %s by %s — reason: %s",
+            "Action rejected: %s %s by user_id=%s — reason: %s",
             model_class.__tablename__,
             record_id,
-            rejector_name,
+            rejector_id,
             reason,
         )
         return True

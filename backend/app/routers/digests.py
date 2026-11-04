@@ -149,7 +149,7 @@ async def create_subscription(
     db.add(sub)
     await db.commit()
     await db.refresh(sub)
-    logger.info("Digest subscription created: %s (%s) by %s", sub.name, sub.schedule, current_user.username)
+    logger.info("Digest subscription created: %s (%s) by user_id=%s", sub.id, sub.schedule, current_user.id)
     await decorate_subscriptions(db, [sub])
     return sub
 

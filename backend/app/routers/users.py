@@ -44,6 +44,10 @@ from app.services.notification.email_templates import render_invitation_email
 from app.services.one_time_tokens import fragment_link, new_token
 from app.services.password_reset_service import create_password_reset_token, email_password_reset
 from app.services.sql_utils import escape_like
+# W31 (contract §0.21): the last-admin rule MOVED to user_account_guards (the erasure reuses it); the old
+# private name stays importable for this router and its tests.
+from app.services.user_account_guards import assert_not_last_admin as _assert_not_last_admin
+from app.services.user_account_guards import refuse_erased, refuse_reserved_username
 
 logger = structlog.get_logger(__name__)
 
@@ -99,32 +103,6 @@ def _enforce_grant_ceiling(current_user: User, granted_role: UserRole, target_us
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You cannot grant a project role higher than your own",
-        )
-
-
-async def _assert_not_last_admin(db: AsyncSession, target_user: User) -> None:
-    """Block demoting/deactivating the last remaining active ADMIN.
-
-    Self-changes are already blocked upstream; this guards the case where an
-    ADMIN removes admin access from the *only other* admin, locking everyone out.
-    """
-    if _normalize_user_role(target_user.role) != UserRole.ADMIN or not target_user.is_active:
-        return
-    other_admins = (
-        await db.execute(
-            select(func.count())
-            .select_from(User)
-            .where(
-                User.role == UserRole.ADMIN,
-                User.is_active == True,  # noqa: E712
-                User.id != target_user.id,
-            )
-        )
-    ).scalar() or 0
-    if other_admins == 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot remove the last active administrator",
         )
 
 
@@ -235,6 +213,7 @@ async def update_user_role(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    refuse_erased(user)  # W31: an erased account is never changed or restored (409, string detail)
     if user.id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot change your own role")
     # Last-admin guard: refuse to strip ADMIN from the only other active admin.
@@ -261,6 +240,7 @@ async def update_user_status(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    refuse_erased(user)  # W31: an erased account cannot be re-activated
     if user.id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own account")
     # Last-admin guard: refuse to deactivate the only other active admin.
@@ -287,6 +267,12 @@ async def update_user_profile(
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    refuse_erased(user)  # W31: an erased account is never changed or restored
+    # W31 (E-4): the pseudonym space "erased-…" is reserved — checked only for a value that CHANGES
+    refuse_reserved_username(
+        username=payload.username if payload.username not in (None, user.username) else None,
+        email=payload.email if payload.email not in (None, user.email) else None,
+    )
 
     # Check email uniqueness if changing
     if payload.email is not None and payload.email != user.email:
@@ -332,6 +318,7 @@ async def admin_create_user(
     current_user: User = Depends(require_role(UserRole.ADMIN)),
 ):
     """Admin creates a user directly with a temporary password. Requires ADMIN."""
+    refuse_reserved_username(username=payload.username, email=payload.email)  # W31 E-4
     existing = await db.execute(
         select(User).where(
             (User.email == payload.email) | (User.username == payload.username)
@@ -344,7 +331,7 @@ async def admin_create_user(
         )
 
     temp_password = secrets.token_urlsafe(12)
-    logger.info("admin_creating_user", email=payload.email, role=str(payload.role), by=str(current_user.id))
+    logger.info("admin_creating_user", role=str(payload.role), by=str(current_user.id))
     user = User(
         email=payload.email,
         username=payload.username,
@@ -382,6 +369,7 @@ async def invite_user(
     returned so the admin can copy it (the offline path).
     """
     email = str(payload.email)
+    refuse_reserved_username(email=email)  # W31 E-4: an "erased-…" local part is reserved
     existing = await db.execute(select(User).where(func.lower(User.email) == email.lower()))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
@@ -591,6 +579,7 @@ async def issue_password_reset_link(
     user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    refuse_erased(user)  # W31: before the deactivated check — an erased account is never restored
     if not user.is_active:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The account is deactivated; activate it first")
 
@@ -701,6 +690,7 @@ async def add_project_member(
     user = user_result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    refuse_erased(user)  # W31: an erased account never regains a membership
 
     # Privilege-escalation guard: a non-admin cannot grant a project role above
     # their own, nor add themselves above their current standing.
@@ -759,6 +749,7 @@ async def update_project_member_role(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project membership not found")
 
     member, user = row
+    refuse_erased(user)  # W31 (an erased account's memberships are deleted; defence in depth)
     # Captured BEFORE the mutation: `member` is a live ORM object, so reading
     # `member.role` after the assignment would record the new value as the old
     # one and the audit row would show a change from X to X.

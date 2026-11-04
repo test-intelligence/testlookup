@@ -311,8 +311,25 @@ async def _assert_smtp_allowed(host: str, recipients: str | list[str] | None = N
         assert_recipients_allowed_async,
     )
 
+    _refuse_erased_recipients(recipients)
     await assert_delivery_allowed_async("SMTP", host, deployment_wide=True)
     await assert_recipients_allowed_async(host, recipients)
+
+
+def _refuse_erased_recipients(recipients: str | list[str] | None) -> None:
+    """W31 STRAT-12 (E-10): an erased account's placeholder address (``…@erased.invalid``) is never mailed,
+    online or offline, by any of the three senders — raised as the module's existing refusal (the callers
+    already treat it as "not sent"). Beside the residency check, not instead of it."""
+    from email.utils import getaddresses
+
+    from app.services.notification.egress import OfflineEgressBlocked
+    from app.services.subject_rights_vocab import ERASED_EMAIL_DOMAIN
+
+    raw = [recipients] if isinstance(recipients, str) else list(recipients or [])
+    for _name, address in getaddresses(raw):
+        domain = address.rpartition("@")[2].strip().rstrip(".").lower()
+        if domain == ERASED_EMAIL_DOMAIN or domain.endswith("." + ERASED_EMAIL_DOMAIN):
+            raise OfflineEgressBlocked("the recipient is an erased account -- refusing to deliver")
 
 
 async def send_notification(

@@ -52,6 +52,7 @@ from app.models.postgres import (
     User,
 )
 from app.services.case_automation_identity import automation_fingerprint
+from app.services.subject_rights_vocab import ERASED_DISPLAY
 
 AUTOMATION_KINDS = frozenset({"automated_execution", "defect"})
 REQUIREMENT_EVENTS = ("test_case.requirement_linked", "test_case.requirement_unlinked")
@@ -303,7 +304,10 @@ async def _defects(db: AsyncSession, case: ManagedTestCase, fingerprint: str, cu
 async def _requirement_events(db: AsyncSession, case: ManagedTestCase, cursor: Any, n: int) -> list[dict]:
     e = ProjectActivityEvent
     stmt = (
-        select(e.id, e.occurred_at, e.event_type, e.actor_id, e.actor_name, e.context)
+        # W31 E-9: the ledger keeps the STORED actor name (an audit table); users.erased_at (one extra column on
+        # a LEFT JOIN) lets the timeline show "Erased user" for an erased actor.
+        select(e.id, e.occurred_at, e.event_type, e.actor_id, e.actor_name, e.context, User.erased_at)
+        .outerjoin(User, User.id == e.actor_id)
         .where(e.project_id == case.project_id, e.entity_type == "test_case", e.entity_id == str(case.id),
                e.event_type.in_(REQUIREMENT_EVENTS), *_after("requirement", e.occurred_at, e.id, cursor))
         .order_by(e.occurred_at.desc(), e.id.desc())
@@ -317,7 +321,8 @@ async def _requirement_events(db: AsyncSession, case: ManagedTestCase, cursor: A
         out.append(_entry(
             "requirement", str(r.id), r.occurred_at,
             title=timeline_title("requirement", requirement_key=key, link_type=link_type, linked=linked),
-            actor_id=r.actor_id, actor_name=_name(None, None, r.actor_name),
+            actor_id=r.actor_id,
+            actor_name=ERASED_DISPLAY if r.erased_at is not None else _name(None, None, r.actor_name),
             status=str(link_type) if link_type else None,
         ))
     return out

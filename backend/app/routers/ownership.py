@@ -87,7 +87,7 @@ async def create_ownership_rule(
     )
     await db.commit()
     await db.refresh(rule)
-    logger.info("Ownership rule created: %s → %s by %s", payload.match_pattern, payload.team_name, current_user.username)
+    logger.info("Ownership rule created: %s → %s by user_id=%s", payload.match_pattern, payload.team_name, current_user.id)
     return rule
 
 
@@ -199,7 +199,7 @@ async def bulk_import_rules(
     for rule in created:
         await db.refresh(rule)
 
-    logger.info("Bulk imported %d ownership rules for project %s by %s", len(created), project_id, current_user.username)
+    logger.info("Bulk imported %d ownership rules for project %s by user_id=%s", len(created), project_id, current_user.id)
     return created
 
 
@@ -280,8 +280,8 @@ async def import_codeowners(
     await db.commit()
 
     logger.info(
-        "CODEOWNERS imported for project %s: %d rules (source=%s) by %s",
-        project_id, summary["rules_created"], payload.source, current_user.username,
+        "CODEOWNERS imported for project %s: %d rules (source=%s) by user_id=%s",
+        project_id, summary["rules_created"], payload.source, current_user.id,
     )
     return CodeownersImportResponse(
         imported=summary["imported"],
@@ -486,8 +486,8 @@ async def upsert_team_channel(
     await db.commit()
     await db.refresh(row)
     logger.info(
-        "Team channel upserted: %s → %s (%s) by %s",
-        team, payload.channel_type, project_id, current_user.username,
+        "Team channel upserted: %s → %s (%s) by user_id=%s",
+        team, payload.channel_type, project_id, current_user.id,
     )
     return row
 

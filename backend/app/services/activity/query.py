@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.activity.events import entity_href
 from app.services.csv_safe import neutralise_csv_value
+from app.services.subject_rights_vocab import ERASED_DISPLAY
 
 logger = structlog.get_logger("services.activity.query")
 
@@ -150,6 +151,16 @@ def _apply_filters(stmt: Select, model: Any, filters: ActivityFilters) -> Select
     return stmt
 
 
+def _events_with_actor_erased(model: Any) -> Select:
+    """``SELECT <event>, users.erased_at … LEFT JOIN users ON users.id = actor_id`` — the W31 read
+    projection (E-9) as ONE extra column on the existing statement: a stored ``actor_name`` is kept in
+    the ledger (an audit table, never updated), and the product renders "Erased user" for an erased actor.
+    The join only projects; every filter stays an ANDed column of the ledger table."""
+    from app.models.postgres import User
+
+    return select(model, User.erased_at).outerjoin(User, User.id == model.actor_id)
+
+
 async def list_events(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -160,7 +171,7 @@ async def list_events(
 
     limit = max(1, min(int(filters.limit or DEFAULT_LIMIT), MAX_LIMIT))
 
-    stmt = select(M).where(M.project_id == project_id)
+    stmt = _events_with_actor_erased(M).where(M.project_id == project_id)
     stmt = _apply_filters(stmt, M, filters)
 
     if filters.cursor:
@@ -173,18 +184,18 @@ async def list_events(
     stmt = stmt.order_by(M.occurred_at.desc(), M.id.desc()).limit(limit + 1)
 
     result = await db.execute(stmt)
-    rows = list(result.scalars().all())
+    rows = list(result.all())
 
     has_more = len(rows) > limit
     page = rows[:limit]
     next_cursor = (
-        encode_cursor(page[-1].occurred_at, page[-1].id, project_id)
+        encode_cursor(page[-1][0].occurred_at, page[-1][0].id, project_id)
         if has_more and page
         else None
     )
 
     return {
-        "items": [serialize(row) for row in page],
+        "items": [serialize(row, actor_erased=erased_at is not None) for row, erased_at in page],
         "next_cursor": next_cursor,
         "ledger_started_at": await ledger_started_at(db, project_id),
         "window": {
@@ -220,12 +231,13 @@ async def get_event(
     from app.models.postgres import ProjectActivityEvent as M
 
     result = await db.execute(
-        select(M).where(M.id == event_id, M.project_id == project_id)
+        _events_with_actor_erased(M).where(M.id == event_id, M.project_id == project_id)
     )
-    row = result.scalar_one_or_none()
-    if row is None:
+    found = result.one_or_none()
+    if found is None:
         return None
-    payload = serialize(row)
+    row, erased_at = found
+    payload = serialize(row, actor_erased=erased_at is not None)
     payload["diff"] = row.diff
     return payload
 
@@ -241,7 +253,7 @@ async def entity_timeline(
     from app.models.postgres import ProjectActivityEvent as M
 
     result = await db.execute(
-        select(M)
+        _events_with_actor_erased(M)
         .where(
             M.project_id == project_id,
             M.entity_type == entity_type,
@@ -250,18 +262,21 @@ async def entity_timeline(
         .order_by(M.occurred_at.desc(), M.id.desc())
         .limit(max(1, min(int(limit), MAX_LIMIT)))
     )
-    return [serialize(row) for row in result.scalars().all()]
+    return [serialize(row, actor_erased=erased_at is not None) for row, erased_at in result.all()]
 
 
 # ── Serialisation ────────────────────────────────────────────────────────────
 
 
-def serialize(row: Any) -> dict:
+def serialize(row: Any, *, actor_erased: bool = False) -> dict:
     """Feed shape. ``diff`` is omitted — only the single-event endpoint has it.
 
     ``href`` is resolved server-side rather than in the SPA so the CLI and the
     MCP tool get working links too, instead of three clients each re-deriving
     the route map and drifting apart.
+
+    ``actor_erased`` (W31 E-9): the actor's account was erased — the stored name
+    stays in the ledger (an audit table) and the product shows "Erased user".
     """
     return {
         "id": str(row.id),
@@ -273,7 +288,7 @@ def serialize(row: Any) -> dict:
         "actor": {
             "type": row.actor_type,
             "id": str(row.actor_id) if row.actor_id else None,
-            "name": row.actor_name,
+            "name": ERASED_DISPLAY if actor_erased else row.actor_name,
             "ref": row.actor_ref,
         },
         "entity": {
@@ -328,23 +343,23 @@ async def iter_export_rows(
     """
     from app.models.postgres import ProjectActivityEvent as M
 
-    stmt = select(M).where(M.project_id == project_id)
+    stmt = _events_with_actor_erased(M).where(M.project_id == project_id)
     stmt = _apply_filters(stmt, M, filters)
     stmt = stmt.order_by(M.occurred_at.desc(), M.id.desc()).limit(EXPORT_MAX_ROWS + 1)
 
     result = await db.execute(stmt)
-    rows = list(result.scalars().all())
+    rows = list(result.all())
     truncated = len(rows) > EXPORT_MAX_ROWS
-    return [_export_row(r) for r in rows[:EXPORT_MAX_ROWS]], truncated
+    return [_export_row(r, actor_erased=erased_at is not None) for r, erased_at in rows[:EXPORT_MAX_ROWS]], truncated
 
 
-def _export_row(row: Any) -> dict:
+def _export_row(row: Any, *, actor_erased: bool = False) -> dict:
     return {
         "occurred_at": row.occurred_at.isoformat() if row.occurred_at else "",
         "category": row.category,
         "event_type": row.event_type,
         "actor_type": row.actor_type,
-        "actor_name": row.actor_name or "",
+        "actor_name": ERASED_DISPLAY if actor_erased else (row.actor_name or ""),
         "entity_type": row.entity_type,
         "entity_id": row.entity_id,
         "entity_label": row.entity_label or "",

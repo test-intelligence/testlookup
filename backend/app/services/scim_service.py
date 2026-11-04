@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,12 @@ from app.models.postgres import (
     UserRole,
 )
 from app.services.sso_service import log_identity_event, resolve_role_from_groups
+from app.services.user_account_guards import (
+    USER_ERASED_DETAIL,
+    USERNAME_RESERVED_DETAIL,
+    is_erased,
+    is_reserved_identity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +51,20 @@ class SCIMUserNotFoundError(ValueError):
 
 class SCIMInvalidFilterError(ValueError):
     """Raised when a SCIM filter is unsupported or syntactically invalid."""
+
+
+def _reserved_value_refused() -> HTTPException:
+    """W31 E-4: a userName / e-mail local part starting with ``erased-`` (the pseudonym space) — SCIM's
+    own envelope (400 ``invalidValue``, the router's SCIMProjectionError shape)."""
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"detail": USERNAME_RESERVED_DETAIL, "scimType": "invalidValue"},
+    )
+
+
+def _erased_refused() -> HTTPException:
+    """W31 §3.2: an erased account is never changed or restored by an IdP (SCIM 409)."""
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=USER_ERASED_DETAIL)
 
 
 def normalize_scim_pagination(start_index: int, count: int) -> tuple[int, int]:
@@ -209,6 +230,8 @@ async def scim_create_user(
     """Create a new user via SCIM provisioning."""
     username = _canonical_scim_username(username)
     email = _canonical_scim_email(email)
+    if is_reserved_identity(username=username, email=email):
+        raise _reserved_value_refused()
     if external_id is not None:
         external_id = _canonical_scim_external_id(external_id)
     if sso_config_id is not None and external_id is not None:
@@ -302,6 +325,15 @@ async def scim_update_user(
     user = result.scalar_one_or_none()
     if user is None:
         raise SCIMUserNotFoundError(f"User {user_id} not found")
+    deactivation_only = (
+        active is False and username is None and email is None and display_name is None
+        and external_id is None and groups is None and group_refs is None and not group_operations
+        and not full_replace and not clear_display_name
+    )
+    if is_erased(user) and not deactivation_only:
+        # W31: PUT / PATCH (incl. active=true) of an erased account → 409; DELETE (deactivate) stays a no-op.
+        # An IdP-bound token never reaches here for an erased row: the erasure deleted its federated link.
+        raise _erased_refused()
 
     if external_id is not None:
         external_id = _canonical_scim_external_id(external_id)
@@ -352,6 +384,8 @@ async def scim_update_user(
     if username is not None:
         username = _canonical_scim_username(username)
     if username is not None and username != user.username:
+        if is_reserved_identity(username=username):
+            raise _reserved_value_refused()
         # Check uniqueness
         dup = await db.execute(
             select(User).where(func.lower(User.username) == username, User.id != user_id)
@@ -364,6 +398,8 @@ async def scim_update_user(
     if email is not None:
         email = _canonical_scim_email(email)
     if email is not None and email != user.email:
+        if is_reserved_identity(email=email):
+            raise _reserved_value_refused()
         dup = await db.execute(
             select(User).where(func.lower(User.email) == email, User.id != user_id)
         )

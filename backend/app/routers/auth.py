@@ -164,6 +164,9 @@ async def accept_invitation(
     from app.models.postgres import Project, ProjectMember
     from app.services.access_audit_service import log_access_change
 
+    from app.services.user_account_guards import refuse_reserved_username
+
+    refuse_reserved_username(username=payload.username)  # W31 E-4: "erased-…" is the pseudonym space
     invitation = await _redeemable_invitation(db, payload.token, for_update=True)
     if await _invite_needs_sso(db, invitation.role):
         raise HTTPException(
@@ -340,6 +343,9 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
     """
     if not settings.REGISTRATION_ENABLED:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=REGISTRATION_DISABLED)
+    from app.services.user_account_guards import refuse_reserved_username
+
+    refuse_reserved_username(username=payload.username, email=payload.email)  # W31 E-4
 
     existing = await db.execute(
         select(User).where(
@@ -433,7 +439,8 @@ async def login(
     lock_expires = mfa_service.locked_until(user) if user is not None else None
 
     if not user or not password_ok:
-        logger.warning("Failed login attempt for: %s", form_data.username)
+        # W31 E-10: never the typed username / e-mail — the account id when there is one
+        logger.warning("Failed login attempt (user_id=%s)", str(user.id) if user is not None else "unknown")
         # Only count against a real account, and never while it is already
         # locked — otherwise an attacker hammering a locked account would keep
         # extending the lock and the legitimate owner could never wait it out.
