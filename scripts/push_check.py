@@ -529,6 +529,15 @@ KNOWN_MYPY_SKEW: dict[str, tuple[int, str]] = {
         "CI 1, local 0 (run 40074018078; .venv311 --check-stale on the W12 branch "
         "agrees with CI)."
     )),
+    # Found when W31 (STRAT-12) changed two of its log lines (2026-11-04): CI's ratchet
+    # passed with the baseline's 2 on #325 (run 41792110112, merged as c4469646), and the
+    # py3.11 venv's --check-stale on the W31 branch also counts 2 (Result.rowcount
+    # [attr-defined] at :292 and :331); the hook's Python 3.12 install (older SQLAlchemy)
+    # reads 0.
+    "app/services/action_policy.py": (2, (
+        "CI 2, local 0 (run 41792110112; .venv311 --check-stale on the W31 branch "
+        "agrees with CI)."
+    )),
 }
 
 
