@@ -375,38 +375,62 @@ def test_history_identifiers_stay_byte_exact() -> None:
     """TEXT_PASS_EXEMPT's W30 additions: values the text pass WOULD change (a 40+ character run) round-trip."""
     project, run = "3f1c9e2a-6b7d-4e8f-9a0b-1c2d3e4f5a6b", "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d"
     long_name = "test_refund_is_rejected_when_the_card_has_expired_and_retry_is_off"
+    import hashlib
+
     sha = "c0ffee" + "deadbeef" * 7 + "0123456789"[:2]
     commit = "Plugh" + "9" * 35
+
+    def git_sha(seed: str) -> str:
+        return hashlib.sha1(("commit " + seed).encode()).hexdigest()          # 40 hex, like `git rev-parse`
+
+    real_sha256 = hashlib.sha256(b"evidence excerpt").hexdigest()
+    assert len(git_sha("base")) == 40 and len(real_sha256) == 64
     cases = [
         ("test_runs", {"minio_prefix": f"{project}/builds/build-2001/", "commit_hash": commit,
                        "ingestion_identity": sha, "build_number": "build-" + "7" * 40,
-                       "jenkins_job": "payments/" + "integration-suite-" * 3, "branch": "feature/" + "x" * 45,
-                       "primary_suite_name": "PaymentServiceIntegrationTestsForRefundFlows"}),
+                       "jenkins_job": "payments/" + "integration-suite-" * 3}),
         ("test_cases", {"minio_s3_prefix": f"{project}/builds/build-2001/{run}/", "test_fingerprint": sha,
-                        "test_name": long_name, "full_name": "tests.payments." + long_name,
-                        "class_name": "PaymentServiceIntegrationTestsForRefundFlows", "suite_name": long_name,
-                        "package_name": "com_example_payments_integration_refunds_v2", "source_uuid": sha,
-                        "source_history_id": sha, "source_test_case_id": sha}),
+                        "source_uuid": sha, "source_history_id": sha, "source_test_case_id": sha}),
         ("test_case_history", {"test_fingerprint": sha}),
-        ("suite_executions", {"suite_key": long_name, "suite_name": long_name, "branch": "release/" + "y" * 40}),
-        ("suite_run_reviews", {"suite_name": long_name}),
+        ("suite_executions", {"suite_key": long_name}),
+        ("suite_run_reviews", {"suite_name": long_name}),          # UNIQUE (test_run_id, suite_name)
         ("test_attachments", {"source_ref": "attachments/" + sha + "-attachment.png"}),
         ("failure_clusters", {"cluster_id": "C-" + "1" * 18}),
-        ("agent_stage_results", {"task_key": "analyze:" + sha, "idempotency_key": sha}),
+        ("agent_stage_results", {"task_key": "analyze:" + sha, "idempotency_key": sha}),   # UNIQUE per pipeline
         ("ai_analysis_versions", {"test_fingerprint": sha, "content_sha256": sha}),
         ("failure_attribution", {"test_fingerprint": sha}),
         ("deep_findings", {"cluster_id": "C-" + "2" * 18}),
-        ("run_baselines", {"baseline_build_number": "build-" + "8" * 40}),
-        ("run_commit_ranges", {"base_commit": commit, "head_commit": commit}),
-        ("test_health_recommendations", {"test_name": long_name}),
-        ("evidence_artifacts", {"cluster_id": "C-" + "3" * 18, "content_sha256": sha}),
-        ("timeline_notes", {"suite_name": long_name}),
+        # a real-looking 40-hex git SHA and a sha256: the bisect range and the evidence digest of an imported run
+        ("run_commit_ranges", {"base_commit": git_sha("base"), "head_commit": git_sha("head")}),
+        ("evidence_artifacts", {"cluster_id": "C-" + "3" * 18, "content_sha256": real_sha256}),
     ]
     for table, row in cases:
         for column, value in row.items():
-            assert scrub.scrub_text(value) != value or len(value) < 40 or table == "failure_clusters", (
+            assert scrub.scrub_text(value) != value or len(value) < 40 or "cluster_id" == column, (
                 f"{table}.{column}: the sample would not exercise the exemption")
         assert scrub.scrub_row(_spec(table), row) == row, table
+
+
+def test_history_names_get_the_text_pass_like_any_free_text() -> None:
+    """Orchestrator decision (W30): only what the round trip NEEDS stays byte-exact. A test / suite / branch name
+    can carry a token — the scrub is the safety net (a redacted name is cosmetic, a leaked token is not)."""
+    sentinels = _sentinels()
+    carrier = "test_login_with_" + sentinels["ghp"]
+    cases = [
+        ("test_runs", ("branch", "primary_suite_name")),
+        ("test_cases", ("test_name", "full_name", "suite_name", "class_name", "package_name")),
+        ("suite_executions", ("suite_name", "branch")),
+        ("test_health_recommendations", ("test_name",)),
+        ("timeline_notes", ("suite_name",)),
+        ("run_baselines", ("baseline_build_number",)),          # a label, like a name
+    ]
+    for table, columns in cases:
+        assert not set(columns) & scrub.TEXT_PASS_EXEMPT.get(table, frozenset()), table
+        out = scrub.scrub_row(_spec(table), {column: carrier for column in columns})
+        for column in columns:
+            assert sentinels["ghp"] not in out[column] and REDACTED in out[column], (table, column)
+    short = {"test_name": "test_login", "class_name": "tests.payments.TestCheckout"}
+    assert scrub.scrub_row(_spec("test_cases"), short) == short          # an ordinary name is unchanged
 
 
 # ── W30 S-8: history URLs ───────────────────────────────────────────────────

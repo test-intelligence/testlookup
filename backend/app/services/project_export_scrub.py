@@ -120,22 +120,21 @@ TEXT_PASS_EXEMPT: Mapping[str, frozenset[str]] = {
     "classification_hints": frozenset({"match_field", "pattern", "category"}),
     "project_llm_quota": frozenset({"period_type", "at_cap_action"}),
     # ── W30 S-7: run-history identifiers that must round-trip byte-exact (every other history text column —
-    # error messages, stack traces, assertion values, AI summaries, review notes — gets the text pass). Beyond the
-    # contract's list: the stored prefixes R-1 rebuilds (minio_prefix / minio_s3_prefix — always a 40+ run the
-    # pass would replace), the columns of a per-run / per-pipeline UNIQUE key (a redacted value would collide on
-    # import: suite_run_reviews.suite_name, agent_stage_results.task_key / idempotency_key), test_attachments'
-    # source_ref (§2.1 H-10 "kept verbatim"), digests / commit hashes / build numbers / labels of the same kind as
-    # the listed ones, and the test / suite / branch names a long pytest name or branch would otherwise lose. ──
-    "test_runs": frozenset({
-        "build_number", "jenkins_job", "commit_hash", "ingestion_identity", "minio_prefix", "branch",
-        "primary_suite_name",
-    }),
+    # error messages, stack traces, assertion values, AI summaries, review notes, AND test / suite / branch names —
+    # gets the text pass: a name can carry a token, and a redacted name is cosmetic where a leaked token is not).
+    # The contract's list, plus ONLY what the round trip needs (orchestrator decision): the stored prefixes R-1
+    # rebuilds (minio_prefix / minio_s3_prefix — always a 40+ run the pass would replace, orphaning every object),
+    # the text columns of a per-run / per-pipeline UNIQUE key (a redacted value would collide on import:
+    # suite_run_reviews.suite_name, agent_stage_results.task_key / idempotency_key) and test_attachments.source_ref
+    # (§2.1 H-10 "kept verbatim"), and the digests / commit SHAs of the same kind as the listed ones (a 40-hex git
+    # SHA or a sha256 is exactly what the token pass redacts: an imported run would lose its bisect commit range
+    # and its evidence digest — data loss). A label such as run_baselines.baseline_build_number keeps the pass. ──
+    "test_runs": frozenset({"build_number", "jenkins_job", "commit_hash", "ingestion_identity", "minio_prefix"}),
     "test_cases": frozenset({
         "test_fingerprint", "source_uuid", "source_history_id", "source_test_case_id", "minio_s3_prefix",
-        "test_name", "full_name", "suite_name", "class_name", "package_name",
     }),
     "test_case_history": frozenset({"test_fingerprint"}),
-    "suite_executions": frozenset({"suite_key", "suite_name", "branch"}),
+    "suite_executions": frozenset({"suite_key"}),
     "suite_run_reviews": frozenset({"suite_name"}),
     "test_attachments": frozenset({"source_ref"}),
     "failure_clusters": frozenset({"cluster_id"}),
@@ -143,11 +142,8 @@ TEXT_PASS_EXEMPT: Mapping[str, frozenset[str]] = {
     "ai_analysis_versions": frozenset({"test_fingerprint", "content_sha256"}),
     "failure_attribution": frozenset({"test_fingerprint"}),
     "deep_findings": frozenset({"cluster_id"}),
-    "run_baselines": frozenset({"baseline_build_number"}),
     "run_commit_ranges": frozenset({"base_commit", "head_commit"}),
-    "test_health_recommendations": frozenset({"test_name"}),
     "evidence_artifacts": frozenset({"cluster_id", "content_sha256"}),
-    "timeline_notes": frozenset({"suite_name"}),
 }
 
 _SECRET_FIELD_NAMES: frozenset[str] = frozenset(name for names in SECRET_FIELDS.values() for name in names)
