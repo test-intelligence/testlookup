@@ -152,7 +152,7 @@ export function jobFixture(overrides: JobOverrides = {}): ProjectDataJob {
   return { ...base, ...overrides, kind, status, id }
 }
 
-// ── W30 ADM-05 phase 2: run history ──────────────────────────────────────────
+// ── W30 ADM-05: run history ─────────────────────────────────────────────────
 
 /** The 27 history entities in plan order (`project_export_entities.HISTORY_TABLES`). */
 export const HISTORY_ENTITY_NAMES = [

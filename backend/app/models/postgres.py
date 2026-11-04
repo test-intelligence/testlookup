@@ -7938,11 +7938,12 @@ class ProjectDataJob(Base):
     #: route / runner fixtures can create the table without patching it)
     options: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'"))
     #: W30: a parted import while status == "uploading": {"parts", "bytes", "received", "received_bytes",
-    #: "part_sha256": {"<n>": hex}, "part_bytes": {"<n>": int}}; NULL otherwise
-    upload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    #: "part_sha256": {"<n>": hex}, "part_bytes": {"<n>": int}}; NULL otherwise (none_as_null: a Python None is SQL
+    #: NULL, never the JSON null a plain JSONB column stores)
+    upload: Mapped[Optional[dict]] = mapped_column(JSONB(none_as_null=True), nullable=True)
     #: W30: an import's ledger of what it wrote OUTSIDE Postgres ({"project_id", "run_ids", "pipeline_ids"});
     #: deferred — never loaded by the list / job reads (undefer it where the runner / janitor needs it)
-    cleanup: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, deferred=True)
+    cleanup: Mapped[Optional[dict]] = mapped_column(JSONB(none_as_null=True), nullable=True, deferred=True)
 
 
 class RetentionHold(Base):

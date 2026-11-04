@@ -1146,11 +1146,14 @@ async def _fill_spool(storage: Any, job: Any, spool: IO[bytes]) -> int:
     return spool.tell()
 
 
-async def _retention_pause(db: AsyncSession, ctx: _Context, project: Project, *, imported_row: bool) -> tuple[int, bool]:
+async def _retention_pause(
+    db: AsyncSession, ctx: _Context, project: Project, *, imported_row: bool,
+) -> tuple[int, bool, Optional[int]]:
     """I-H4 / §2.7 (same transaction): the copy's purge is paused until import + 90 days — set on the
     imported policy row by ``_entity_rules``, or a NEW all-inherit row (every inheritable field NULL,
     ``updated_by_user_id`` = the importer) when the archive had none. Returns ``(runs older than the copy's
-    EFFECTIVE runs window, effective enabled)`` — read with ``get_effective_policy`` (SELECTs)."""
+    EFFECTIVE runs window, effective enabled, the window in days or None when retention is off)`` — read with
+    ``get_effective_policy`` (SELECTs). The days let the card choose ``retention_note`` / ``retention_off_note``."""
     from app.services.retention_service import get_effective_policy
 
     if not imported_row:
@@ -1160,7 +1163,10 @@ async def _retention_pause(db: AsyncSession, ctx: _Context, project: Project, *,
         ))
     policy = await get_effective_policy(db, project.id, now=ctx.now)
     cutoff = ctx.now - dt.timedelta(days=int(policy.runs_days))
-    return sum(1 for created in ctx.run_times if created < cutoff), bool(policy.enabled)
+    enabled = bool(policy.enabled)
+    return (
+        sum(1 for created in ctx.run_times if created < cutoff), enabled, int(policy.runs_days) if enabled else None,
+    )
 
 
 def _case_runs(db: AsyncSession, new_run_ids: frozenset[uuid.UUID]) -> history.CaseRuns:
@@ -1218,7 +1224,7 @@ async def _outside_postgres(
 
 def _history_report(
     ctx: _Context, pre: _Preflight, *, documents: dict[str, int], objects: tuple[int, int],
-    skipped: dict[str, int], past_retention: int, retention_on: bool,
+    skipped: dict[str, int], past_retention: int, retention_on: bool, retention_days: Optional[int] = None,
 ) -> Any:
     """The report's ``history`` block (§1.2): counts the import WROTE, the retention pause, the digest note."""
     from app.models.schemas import ProjectDataHistoryReport, ProjectDataSkip
@@ -1244,6 +1250,7 @@ def _history_report(
         ],
         retention_paused_until=ctx.retention_paused_until(),
         runs_past_retention=past_retention,
+        retention_days=retention_days,
         recent_runs=sum(1 for created in ctx.run_times if created >= lookback),
         search_reindex="queued",
     )
@@ -1310,7 +1317,7 @@ async def run_import(
     documents: dict[str, int] = {}
     objects = (0, 0)
     history_skipped: dict[str, int] = {}
-    past_retention, retention_on = 0, False
+    past_retention, retention_on, retention_days = 0, False, None
     try:
         if own_spool:                                               # I-1 / I-H1
             size = await _fill_spool(storage, job, work)
@@ -1366,7 +1373,7 @@ async def run_import(
             if rows > 0:
                 ctx.skipped[(table, None, "retired_table")] += rows
         if remap is not None and pre.history_pre is not None:
-            past_retention, retention_on = await _retention_pause(   # I-H4, same transaction
+            past_retention, retention_on, retention_days = await _retention_pause(   # I-H4, same transaction
                 db, ctx, project, imported_row=ctx.inserted.get("project_retention_policies", 0) > 0,
             )
             documents, objects = await _outside_postgres(           # I-H5 … I-H7
@@ -1381,7 +1388,7 @@ async def run_import(
     inserted = {spec.table: ctx.inserted.get(spec.table, 0) for spec in specs}
     history_report = (
         _history_report(ctx, pre, documents=documents, objects=objects, skipped=history_skipped,
-                        past_retention=past_retention, retention_on=retention_on)
+                        past_retention=past_retention, retention_on=retention_on, retention_days=retention_days)
         if remap is not None else None
     )
     report = ProjectDataImportReport(

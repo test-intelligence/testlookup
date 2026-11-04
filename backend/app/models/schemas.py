@@ -1094,6 +1094,7 @@ class ProjectDataHistoryReport(BaseModel):
     skipped: list[ProjectDataSkip] = []            # rows / documents / objects NOT written, by entity + reason
     retention_paused_until: Optional[datetime] = None
     runs_past_retention: int = 0                   # imported runs older than the copy's effective runs window
+    retention_days: Optional[int] = None           # the copy's effective runs window; None = retention off
     recent_runs: int = 0                           # imported runs created within DIGEST_LOOKBACK_DAYS of the import
     search_reindex: str                            # "queued" | "not_queued"
 

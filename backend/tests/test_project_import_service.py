@@ -1055,6 +1055,7 @@ async def test_a_history_import_reports_its_history_and_pauses_retention(history
     now = dt.datetime.now(dt.timezone.utc)
     assert abs((history.retention_paused_until - now) - dt.timedelta(days=vocab.IMPORTED_PURGE_PAUSE_DAYS)) < dt.timedelta(minutes=5)
     assert history.runs_past_retention == 1 and history.recent_runs == 1 and history.search_reindex == "queued"
+    assert history.retention_days == 1             # the copy's effective runs window, for the card's retention_note
     # the archive had no policy row → a NEW all-inherit row carries the pause, in the import's transaction
     assert any(s.startswith("INSERT INTO project_retention_policies") for s in session.statements)
     assert history_world.policy_reads == [report.project_id]
@@ -1083,6 +1084,17 @@ async def test_an_imported_policy_row_carries_the_pause_itself(history_world):
     inserts = [s for s in session.statements if s.startswith("INSERT INTO project_retention_policies")]
     assert len(inserts) == 1 and "purge_paused_until" in inserts[0]      # the imported row, not a second one
     assert report.history.retention_paused_until is not None
+
+
+async def test_retention_off_reports_no_window(history_world):
+    """The card reads ``retention_days``: a number → ``retention_note`` (when runs are past it), None → the
+    copy's retention is off (``retention_off_note``). Never a window for a disabled policy."""
+    from tests.test_project_import_history import World, build_history_archive
+
+    history_world.retention_on = False
+    report, _session, _storage = await _imported_history(history_world, build_history_archive(World()))
+    assert report.history.retention_days is None
+    assert report.history.retention_paused_until is not None              # the pause is set either way
 
 
 async def test_a_catalog_import_has_no_history_block_and_no_pause(history_world):

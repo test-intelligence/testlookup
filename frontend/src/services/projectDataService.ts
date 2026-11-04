@@ -20,7 +20,7 @@ import { getData, postData } from './http'
 
 /**
  * W24 ADM-05 phase 1: export a project's settings + catalog, import an export as a NEW project.
- * W30 phase 2: the export may carry run history (an optional body), an estimate is read first, and an archive
+ * W30 (ADM-05 run history): the export may carry run history (an optional body), an estimate is read first, and an archive
  * larger than IMPORT_UPLOAD_MAX_BYTES is imported through the PARTED upload (start → parts → complete).
  *
  * Every request path is written out in full (the SPA wire contract reads the

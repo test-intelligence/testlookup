@@ -702,6 +702,8 @@ async def test_the_copys_purge_is_paused_and_the_report_says_what_was_written(en
     assert ("evidence_artifacts", "pipeline_scratch") in reported
     assert ("agent_pipeline_runs", "pipeline_not_terminal") in reported
     assert await _ledger_is_sql_null(env, imported.job.id) and imported.job.storage_key is None
+    # The parted upload's state is cleared at completion to SQL NULL (none_as_null), not to a JSON null.
+    assert await _scalar(env, "SELECT upload IS NULL FROM project_data_jobs WHERE id = :j", j=uuid.UUID(str(imported.job.id)))
     assert imported.job.options.get("schema_version") == 2
     from app.services.compliance_pack_service import COMPLIANCE_BUCKET
 

@@ -1,6 +1,6 @@
 /**
  * W24 ADM-05 phase 1: export a project's settings + catalog, import it as a NEW project.
- * W30 ADM-05 phase 2: optionally WITH run history (schema 2), imported through a parted upload.
+ * W30 ADM-05 run history: optionally WITH run history (schema 2), imported through a parted upload.
  *
  * The constants mirror `backend/app/services/project_export_vocab.py` value for
  * value (pinned by `backend/tests/test_project_export_vocab_parity.py`, which
