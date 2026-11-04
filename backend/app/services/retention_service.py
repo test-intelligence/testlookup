@@ -1572,16 +1572,33 @@ async def run_purge(
         from app.services.analysis_cache_retention import (
             purge_project_analysis_caches,
         )
-        from app.services.semantic_search import purge_project_documents
+        from app.services.semantic_search import (
+            purge_project_documents,
+            purge_runs_documents,
+        )
 
         cache_counts = await purge_project_analysis_caches(
             str(project_id),
             cutoff=max(cutoffs["raw_events"], cutoffs["artifacts"]),
             execute=mode == "execute",
         )
-        search_index_documents = await purge_project_documents(
-            str(project_id), execute=mode == "execute",
-        )
+        # Owner, 2026-11-03: only a DELETED project loses its whole index here.
+        # An active project keeps it and loses the documents of the runs this
+        # purge deletes (holds and the floor already left out of that list);
+        # the whole-project delete used to run for it every night and left its
+        # search empty until a full reindex. D-7 is unchanged: a project hold
+        # keeps no index document of its own, it keeps the runs.
+        project_is_active = (
+            await db.execute(select(Project.is_active).where(Project.id == project_id))
+        ).scalar_one_or_none()
+        if project_is_active is False:
+            search_index_documents = await purge_project_documents(
+                str(project_id), execute=mode == "execute",
+            )
+        else:
+            search_index_documents = await purge_runs_documents(
+                str(project_id), cand.purge_run_strs, execute=mode == "execute",
+            )
 
     if mode == "preview":
         mongo_docs: dict[str, int] = {}

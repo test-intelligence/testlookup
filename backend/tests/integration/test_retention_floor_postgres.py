@@ -94,10 +94,14 @@ def no_stores(monkeypatch):
     async def _search(project_id, *, execute):
         return None
 
+    async def _search_runs(project_id, run_ids, *, execute):
+        return None
+
     monkeypatch.setattr(retention_service, "get_mongo_db", lambda: _NoMongo())
     monkeypatch.setattr(retention_service, "get_storage_provider", lambda: _NoStorage())
     monkeypatch.setattr(analysis_cache_retention, "purge_project_analysis_caches", _caches)
     monkeypatch.setattr(semantic_search, "purge_project_documents", _search)
+    monkeypatch.setattr(semantic_search, "purge_runs_documents", _search_runs)
 
 
 #: index -> (status, suite_names, primary_suite_name); every other index is a FAILED "api" run. Index 0 is the

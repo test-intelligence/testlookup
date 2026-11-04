@@ -148,11 +148,15 @@ def _derived_stores(monkeypatch):
     async def _search(project_id, *, execute):
         return None
 
+    async def _search_runs(project_id, run_ids, *, execute):
+        return None
+
     async def _vectors(project_id, ids):
         return len(ids)
 
     monkeypatch.setattr(analysis_cache_retention, "purge_project_analysis_caches", _caches)
     monkeypatch.setattr(semantic_search, "purge_project_documents", _search)
+    monkeypatch.setattr(semantic_search, "purge_runs_documents", _search_runs)
     monkeypatch.setattr(agent_memory_service, "purge_memory_vectors", _vectors)
 
 
