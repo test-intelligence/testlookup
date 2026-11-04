@@ -172,7 +172,7 @@ async def ingest_batch(
         run_id=run_id,
         project_id=payload.project_id,
         result_count=len(payload.results),
-        user=current_user.username,
+        user_id=str(current_user.id),
     )
 
     # Epic ACT: "did my run land?" is the most common question the feed has to
@@ -573,7 +573,7 @@ async def ingest_file(
         file_name=file.filename,
         format=detected_format,
         size_bytes=len(content),
-        user=current_user.username,
+        user_id=str(current_user.id),
     )
 
     # Epic ACT — see the note on the JSON path above.
