@@ -11,7 +11,7 @@
  */
 import { Navigate, useLocation } from 'react-router-dom'
 import { Fragment, useEffect, useLayoutEffect, useState } from 'react'
-import { Edit3, KeyRound, Plus, Shield, UserCheck, UserPlus, UserX } from 'lucide-react'
+import { Edit3, FileLock2, KeyRound, Plus, Shield, UserCheck, UserPlus, UserX } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useUsersPage, refreshUsers, refreshInvitations } from '@/hooks/useUserManagement'
 import {
@@ -36,6 +36,14 @@ import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { ProjectMembersTab } from './ProjectMembersTab'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { OneTimeLinkBox, PendingInvitationsTab } from './PendingInvitationsTab'
+import PersonalDataSection from '@/components/subjectRights/PersonalDataSection'
+import {
+  ERASED_BADGE,
+  erasedName,
+  isErasedUser,
+  offersPersonalData,
+  personalDataLabel,
+} from '@/components/subjectRights/erasureModel'
 import type { Project } from '@/types/projects'
 
 const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
@@ -127,7 +135,8 @@ export default function UserManagementPage() {
 
 /** The two forms under the Users tab toolbar (one at a time) and a row's Edit user (one per table). */
 type ToolbarForm = 'add' | 'invite'
-type RowForm = `edit:${string}` | `reset:${string}`
+/** W31 STRAT-12: `data:<id>` = the row's Personal data section (export + erase). */
+type RowForm = `edit:${string}` | `reset:${string}` | `data:${string}`
 
 function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmin: boolean }) {
   // W27b: one open form under the toolbar (Add User / Invite User), one under a table row (Edit user).
@@ -291,16 +300,38 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
             {filtered.map((user) => {
               const editKey: RowForm = `edit:${user.id}`
               const resetKey: RowForm = `reset:${user.id}`
-              const isSelf = user.id === useAuthStore.getState().user?.id
+              const dataKey: RowForm = `data:${user.id}`
+              const selfId = useAuthStore.getState().user?.id
+              const isSelf = user.id === selfId
+              // W31 STRAT-12: an erased row reads "Erased user" over the pseudonym (never the @erased.invalid
+              // e-mail), the "Erased" badge, the role as text, and Personal data as its only action.
+              const erased = isErasedUser(user)
+              const name = erased ? erasedName(user) : user.full_name || user.username
+              const secondLine = erased ? user.username : user.email
+              const personalData = offersPersonalData(user, selfId) && (
+                <button
+                  type="button"
+                  onClick={() => rowSlot.open(dataKey)}
+                  className="text-[var(--color-text)] hover:text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-secondary)]/30 p-1 rounded transition-colors"
+                  title={personalDataLabel(user.username)}
+                  aria-label={personalDataLabel(user.username)}
+                >
+                  <FileLock2 className="h-3.5 w-3.5" />
+                </button>
+              )
               return (
               <Fragment key={user.id}>
-              <tr className="hover:bg-[var(--color-bg-hover)]/30 transition-colors">
+              <tr className="hover:bg-[var(--color-bg-hover)]/30 transition-colors" data-user-row={user.id} data-erased={erased ? '' : undefined}>
+                {/* The User cell truncates at 185 px (name and e-mail, each with its title): the table keeps ≥ 40 px of
+                    slack at 1280 under DejaVu with the Personal data action added (contract §4.1). */}
                 <td className="px-4 py-3">
-                  <div className="font-medium text-[var(--color-text)]">{user.full_name || user.username}</div>
-                  <div className="text-xs text-[var(--color-text-muted)]">{user.email}</div>
+                  <div className="max-w-[185px] truncate font-medium text-[var(--color-text)]" title={name}>{name}</div>
+                  <div className="max-w-[185px] truncate text-xs text-[var(--color-text-muted)]" title={secondLine}>{secondLine}</div>
                 </td>
                 <td className="px-4 py-3">
-                  {isAdmin ? (
+                  {erased ? (
+                    <span className="text-xs text-[var(--color-text-muted)]">{user.role}</span>
+                  ) : isAdmin ? (
                     <select
                       aria-label={`Role for ${user.username}`}
                       value={user.role}
@@ -316,14 +347,26 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                   )}
                 </td>
                 <td className="px-4 py-3">
+                  {erased ? (
+                    <span data-erased-badge="" className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]">
+                      <UserX className="h-3 w-3" />
+                      {ERASED_BADGE}
+                    </span>
+                  ) : (
                   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
                     user.is_active ? 'bg-[var(--status-passed-bg)]/50 text-[var(--status-passed)]' : 'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]'
                   }`}>
                     {user.is_active ? <UserCheck className="h-3 w-3" /> : <UserX className="h-3 w-3" />}
                     {user.is_active ? 'Active' : 'Inactive'}
                   </span>
+                  )}
                 </td>
-                {isAdmin && (
+                {isAdmin && erased && (
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">{personalData}</div>
+                  </td>
+                )}
+                {isAdmin && !erased && (
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2">
                       <button
@@ -344,6 +387,8 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                           <KeyRound className="h-3.5 w-3.5" />
                         </button>
                       )}
+                      {/* W31 STRAT-12: not on a service / synthetic account, nor on the admin's own row. */}
+                      {personalData}
                       <button
                         onClick={() => handleToggleStatus(user.id, user.is_active)}
                         className={`text-xs px-2 py-1 rounded transition-colors ${
@@ -367,6 +412,11 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
               {rowSlot.openKey === resetKey && (
                 <InlineRowSection colSpan={4}>
                   <PasswordResetLinkSection user={user} slot={rowSlot} onClose={() => closeRow(resetKey)} />
+                </InlineRowSection>
+              )}
+              {rowSlot.openKey === dataKey && (
+                <InlineRowSection colSpan={4}>
+                  <PersonalDataSection user={user} slot={rowSlot} onClose={() => closeRow(dataKey)} onUsersChanged={refreshUsers} />
                 </InlineRowSection>
               )}
               </Fragment>

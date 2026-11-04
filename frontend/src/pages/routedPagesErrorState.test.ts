@@ -115,7 +115,8 @@ const REVIEWED: Record<string, ErrorState> = {
   ForgotPasswordPage: 'own-error-ui',
   ResetPasswordConfirmPage: 'no-fetch',
   DocsPage: 'no-fetch',
-  'settings/ProfilePage': 'no-fetch',
+  // W31 STRAT-12: the page reads my exports ("Your data"); a failed read is the card's "Could not load your exports."
+  'settings/ProfilePage': 'own-error-ui',
   // W24 ADM-05: the page reads the newest export / import; each card shows "Could not load …" for its read.
   'settings/ProjectDataPage': 'own-error-ui',
 
