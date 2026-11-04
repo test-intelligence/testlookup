@@ -59,12 +59,24 @@ def _record(name: str) -> dict[str, str]:
     return entries
 
 
+def _number_array(name: str) -> tuple[int, ...]:
+    match = re.search(rf"export const {name}\b[^=]*=\s*\[([^\]]*)\]\s*as const", _source())
+    assert match, f"{name} is not declared as an `as const` array literal in {TYPES_TS.name}"
+    return tuple(int(n) for n in re.findall(r"\d+", match.group(1)))
+
+
 @pytest.mark.parametrize(
     ("name", "server"),
-    [("JOB_KINDS", v.JOB_KINDS), ("JOB_STATUSES", v.JOB_STATUSES), ("TERMINAL_STATUSES", v.TERMINAL_STATUSES)],
+    [("JOB_KINDS", v.JOB_KINDS), ("JOB_STATUSES", v.JOB_STATUSES), ("TERMINAL_STATUSES", v.TERMINAL_STATUSES),
+     ("JOB_PHASES", v.JOB_PHASES)],
 )
 def test_the_frontend_arrays_equal_the_server(name, server):
     assert _array(name) == tuple(server)
+
+
+def test_the_history_windows_equal_the_server():
+    assert _number_array("HISTORY_WINDOWS_DAYS") == v.HISTORY_WINDOWS_DAYS
+    assert v.HISTORY_DEFAULT_DAYS in v.HISTORY_WINDOWS_DAYS
 
 
 def test_active_and_terminal_statuses_partition_the_statuses():
@@ -79,6 +91,11 @@ def test_active_and_terminal_statuses_partition_the_statuses():
         ("IMPORT_UPLOAD_MAX_BYTES", v.IMPORT_UPLOAD_MAX_BYTES),
         ("EXPORT_TTL_HOURS", v.EXPORT_TTL_HOURS),
         ("JOBS_LIST_LIMIT", v.JOBS_LIST_LIMIT),
+        ("HISTORY_DEFAULT_DAYS", v.HISTORY_DEFAULT_DAYS),
+        ("HISTORY_MAX_RUNS", v.HISTORY_MAX_RUNS),
+        ("IMPORT_PART_MAX_BYTES", v.IMPORT_PART_MAX_BYTES),
+        ("IMPORT_MAX_PARTS", v.IMPORT_MAX_PARTS),
+        ("IMPORT_ARCHIVE_MAX_BYTES", v.IMPORT_ARCHIVE_MAX_BYTES),
     ],
 )
 def test_the_frontend_numbers_equal_the_server(name, server):
@@ -128,6 +145,72 @@ def test_every_placeholder_is_well_formed(table):
         filled = sentence.format(**{name: "Xq" for name in fields})
         assert "{" not in filled and "}" not in filled, f"{table}[{key!r}] leaves a brace after formatting"
         assert sentence.strip() == sentence and sentence, f"{table}[{key!r}] is empty or padded"
+
+
+# ── W30 ADM-05 phase 2: the history caps agree with every file they promise something about ──
+
+CLI_PACK_VERIFY = REPO / "cli" / "testlookup_cli" / "pack_verify.py"
+_MIB = 1024 * 1024
+
+
+def _cli_manifest_cap() -> int:
+    match = re.search(r"^MAX_MANIFEST_BYTES\s*=\s*([\d_]+)\s*$", CLI_PACK_VERIFY.read_text(encoding="utf-8"), re.MULTILINE)
+    assert match, f"MAX_MANIFEST_BYTES is not a number literal in {CLI_PACK_VERIFY.name}"
+    return int(match.group(1).replace("_", ""))
+
+
+def test_the_history_vocabulary_agrees_with_the_enums_and_the_retention_pause():
+    from app.models.enums import PipelineRunStatus
+
+    assert set(v.HISTORY_RUN_STATUSES) == {s.value for s in pg.LaunchStatus} - {"IN_PROGRESS"}
+    assert set(v.TERMINAL_PIPELINE_STATUSES) < {s.value for s in PipelineRunStatus}
+    assert v.IMPORTED_PURGE_PAUSE_DAYS == retention_vocab.PAUSE_DAYS_MAX
+    assert v.CATALOG_SCHEMA_VERSION in v.SUPPORTED_SCHEMA_VERSIONS and v.SCHEMA_VERSION == max(v.SUPPORTED_SCHEMA_VERSIONS)
+    assert v.JOB_STATUSES == ("uploading", "queued", "running", "succeeded", "failed", "expired")
+    assert {"ingest_machinery", "external_tracker", "run_history"} <= set(v.EXCLUSION_REASONS)
+
+
+def test_every_history_member_fits_both_verifiers_manifest_cap():
+    from app.services import compliance_pack_verify
+
+    assert compliance_pack_verify.MAX_MANIFEST_BYTES == _cli_manifest_cap()
+    assert v.HISTORY_MAX_MEMBERS * 190 + 200_000 < compliance_pack_verify.MAX_MANIFEST_BYTES
+    assert v.IMPORT_HISTORY_MAX_ENTRIES == v.HISTORY_MAX_MEMBERS
+
+
+def test_a_part_fits_under_every_proxy_and_the_parts_make_the_archive_cap():
+    caps = re.findall(r"client_max_body_size\s+(\d+)m\s*;", NGINX.read_text(encoding="utf-8"))
+    assert caps, f"no client_max_body_size in {NGINX.name}"
+    assert v.IMPORT_PART_MAX_BYTES + 5 * _MIB <= min(int(c) for c in caps) * _MIB   # nginx's multipart margin
+    assert v.HISTORY_EXPORT_MAX_BYTES == v.IMPORT_ARCHIVE_MAX_BYTES == v.IMPORT_MAX_PARTS * v.IMPORT_PART_MAX_BYTES
+    assert v.OBJECT_MAX_BYTES == v.IMPORT_HISTORY_MAX_ENTRY_UNCOMPRESSED
+    assert v.MONGO_DOC_MAX_BYTES == v.ROW_BYTES_MAX
+    assert v.IMPORT_HISTORY_MAX_TOTAL_UNCOMPRESSED >= v.IMPORT_ARCHIVE_MAX_BYTES
+    assert v.HISTORY_TIME_LIMIT_SECONDS - 300 > 0 and v.HISTORY_JOB_STALE_MINUTES * 60 > v.HISTORY_TIME_LIMIT_SECONDS
+    assert v.STORAGE_PREFIX_IMPORT_PARTS.startswith(v.STORAGE_PREFIX_IMPORT) and v.STORAGE_PREFIX_IMPORT_PARTS.endswith("/")
+
+
+def test_the_history_sentences_state_the_caps():
+    assert "2 GB" in v.ERROR_SENTENCES["history_too_large"] and v.HISTORY_EXPORT_MAX_BYTES == 2 * 1024 * _MIB
+    assert "2 GB" in v.ERROR_SENTENCES["upload_too_large_history"] and "2 GB" in v.UI_SENTENCES["estimate_over"]
+    assert "32 MB" in v.ERROR_SENTENCES["part_too_large"] and v.IMPORT_PART_MAX_BYTES == 32 * _MIB
+    assert f"1 to {v.IMPORT_MAX_PARTS} parts" in v.ERROR_SENTENCES["upload_parts_invalid"]
+    assert f"between 1 and {v.HISTORY_MAX_RUNS}" in v.ERROR_SENTENCES["max_runs_invalid"]
+    assert "256 MB" in v.SKIP_REASONS["too_large"] and v.OBJECT_MAX_BYTES == 256 * _MIB
+    windows = ", ".join(str(d) for d in v.HISTORY_WINDOWS_DAYS[:-1]) + f" or {v.HISTORY_WINDOWS_DAYS[-1]} days"
+    assert windows in v.ERROR_SENTENCES["history_window_invalid"]
+    assert f"last {v.DIGEST_LOOKBACK_DAYS} days" in v.UI_SENTENCES["recent_runs_note"]
+    for phase in v.JOB_PHASES:
+        assert v.UI_SENTENCES[f"phase_{phase}"], phase
+
+
+def test_the_schemas_use_the_vocabulary():
+    assert schemas.ProjectExportRequest().history_days == v.HISTORY_DEFAULT_DAYS
+    assert schemas.ProjectExportRequest().max_runs == v.HISTORY_MAX_RUNS
+    bounds = {type(m).__name__: m for m in schemas.ProjectImportUploadStart.model_fields["bytes"].metadata}
+    assert bounds["Le"].le == v.IMPORT_ARCHIVE_MAX_BYTES
+    bounds = {type(m).__name__: m for m in schemas.ProjectImportUploadStart.model_fields["parts"].metadata}
+    assert bounds["Le"].le == v.IMPORT_MAX_PARTS
 
 
 def test_the_vocabulary_imports_nothing_from_the_application():

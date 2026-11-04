@@ -23,7 +23,7 @@ from app.services import compliance_signing
 from app.services import project_export_service as svc
 from app.services import project_export_vocab as vocab
 from app.services.compliance_pack_verify import verify_archive_file
-from app.services.project_export_entities import EXPORTED_TABLES, exported_columns, plan, spec_for
+from app.services.project_export_entities import CATALOG_TABLES, exported_columns, plan, spec_for
 from app.services.project_export_scrub import scrub_row
 
 
@@ -236,14 +236,19 @@ def test_the_archive_holds_parts_directory_readme_manifest_and_signature(signing
                for n in names)
     manifest = json.loads(archive.read("manifest.json"))
     assert manifest["scope"] == "project" and manifest["format"] == vocab.ARCHIVE_FORMAT
-    assert manifest["schema_version"] == vocab.SCHEMA_VERSION
+    # W30: an export WITHOUT history is a schema-1 archive of phase 1's 29 entities (a phase-1 importer reads it).
+    assert manifest["schema_version"] == vocab.CATALOG_SCHEMA_VERSION == 1
+    assert "history" not in manifest
     assert manifest["project"] == {"name": "Payment Service", "slug": "payment-service"}
     assert manifest["project_id"] == str(project.id)
-    assert set(manifest["entities"]) == set(EXPORTED_TABLES)
+    assert set(manifest["entities"]) == set(CATALOG_TABLES)
     assert manifest["entities"]["test_suites"]["rows"] == 5 and manifest["entities"]["test_suites"]["parts"] == 1
     assert manifest["entities"]["release_phases"] == {"rows": 0, "parts": 0,
                                                        "columns": manifest["entities"]["release_phases"]["columns"]}
-    assert "test_runs" in manifest["excluded"]["run_history"]
+    # W30 retired run_history: the excluded block names the specific reasons, and no history entity is excluded.
+    assert "run_history" not in manifest["excluded"]
+    assert "run_downstream_outbox" in manifest["excluded"]["ingest_machinery"]
+    assert not any("test_runs" in tables for tables in manifest["excluded"].values())
     assert manifest["directory"] == {"users": 2}
     assert outcome.counts["test_suites"] == 5 and outcome.counts["managed_test_cases"] == 1
     assert outcome.signature == "signed" and outcome.signing_key_id == signing.key_id
@@ -426,4 +431,37 @@ def test_the_row_encoding_follows_the_archive_format() -> None:
         svc.encode_row({"x": float("nan")})
     with pytest.raises(TypeError):
         svc.encode_row({"blob": b"bytes never travel"})
+
+
+# ── W30: schema versions, history jobs ──────────────────────────────────────
+
+def test_the_manifest_keys_of_a_catalog_and_a_history_export() -> None:
+    stats = {"entities": {"projects": {"rows": 1, "parts": 1, "columns": ["id"]}}, "directory": {"users": 0}}
+    catalog = svc.manifest_extra(project_name="P", project_slug="p", stats=stats)
+    history = svc.manifest_extra(project_name="P", project_slug="p", stats=stats,
+                                 schema_version=vocab.SCHEMA_VERSION, history={"runs": 3})
+    assert catalog["schema_version"] == vocab.CATALOG_SCHEMA_VERSION == 1 and "history" not in catalog
+    assert history["schema_version"] == 2 and history["history"] == {"runs": 3}
+    assert set(history) - set(catalog) == {"history"}
+
+
+def test_the_history_readme_says_what_travels_and_that_binaries_are_unscanned() -> None:
+    text = svc.HISTORY_README_TEXT
+    assert text.startswith(svc.README_TEXT.split("\n")[0]) and text != svc.README_TEXT
+    assert "Run history (schema_version 2):" in text and "NOT scanned" in text
+    assert "It does NOT hold: run history" not in text           # the phase-1 sentence no longer applies
+    assert "It does NOT hold: run history" in svc.README_TEXT
+
+
+@pytest.mark.parametrize(("kind", "options", "history", "minutes"), [
+    ("export", {}, False, vocab.JOB_STALE_MINUTES),
+    ("export", {"include_history": True, "history_days": 90}, True, vocab.HISTORY_JOB_STALE_MINUTES),
+    ("import", {}, False, vocab.JOB_STALE_MINUTES),
+    ("import", {"parted": True, "parts": 2}, True, vocab.HISTORY_JOB_STALE_MINUTES),
+    ("import", {"include_history": True}, False, vocab.JOB_STALE_MINUTES),   # an import's history is its archive's
+    ("export", None, False, vocab.JOB_STALE_MINUTES),
+])
+def test_the_janitor_threshold_follows_the_job(kind: str, options: Any, history: bool, minutes: int) -> None:
+    assert svc.is_history_job(kind, options) is history
+    assert svc.stale_minutes(kind, options) == minutes
 

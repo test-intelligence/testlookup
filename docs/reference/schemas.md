@@ -32089,6 +32089,118 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ProjectDataHistoryReport
+
+```json
+{
+  "description": "Inside ``ProjectDataImportReport.history``.",
+  "properties": {
+    "documents": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "default": {},
+      "title": "Documents",
+      "type": "object"
+    },
+    "newest_run_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Newest Run At"
+    },
+    "object_bytes": {
+      "default": 0,
+      "title": "Object Bytes",
+      "type": "integer"
+    },
+    "objects": {
+      "default": 0,
+      "title": "Objects",
+      "type": "integer"
+    },
+    "oldest_run_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Oldest Run At"
+    },
+    "recent_runs": {
+      "default": 0,
+      "title": "Recent Runs",
+      "type": "integer"
+    },
+    "retention_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Retention Days"
+    },
+    "retention_paused_until": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Retention Paused Until"
+    },
+    "runs": {
+      "title": "Runs",
+      "type": "integer"
+    },
+    "runs_past_retention": {
+      "default": 0,
+      "title": "Runs Past Retention",
+      "type": "integer"
+    },
+    "search_reindex": {
+      "title": "Search Reindex",
+      "type": "string"
+    },
+    "skipped": {
+      "default": [],
+      "items": {
+        "$ref": "#/components/schemas/ProjectDataSkip"
+      },
+      "title": "Skipped",
+      "type": "array"
+    },
+    "test_cases": {
+      "title": "Test Cases",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "runs",
+    "test_cases",
+    "search_reindex"
+  ],
+  "title": "ProjectDataHistoryReport",
+  "type": "object"
+}
+```
+
 ## ProjectDataImportReport
 
 ```json
@@ -32106,6 +32218,16 @@ These are the full generated JSON Schema definitions, including required fields,
       "format": "date-time",
       "title": "Exported At",
       "type": "string"
+    },
+    "history": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ProjectDataHistoryReport"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "inserted": {
       "additionalProperties": {
@@ -32314,6 +32436,16 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Manifest Sha256"
     },
+    "options": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ProjectDataOptions"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "progress": {
       "anyOf": [
         {
@@ -32363,6 +32495,17 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Requested By Name"
     },
+    "schema_version": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Schema Version"
+    },
     "signature": {
       "anyOf": [
         {
@@ -32389,6 +32532,16 @@ These are the full generated JSON Schema definitions, including required fields,
     "status": {
       "title": "Status",
       "type": "string"
+    },
+    "upload": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ProjectDataUpload"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
@@ -32402,6 +32555,45 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ProjectDataOptions
+
+```json
+{
+  "description": "Echoed on an export job: what was asked for.",
+  "properties": {
+    "history_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "History Days"
+    },
+    "include_history": {
+      "default": false,
+      "title": "Include History",
+      "type": "boolean"
+    },
+    "max_runs": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Max Runs"
+    }
+  },
+  "title": "ProjectDataOptions",
+  "type": "object"
+}
+```
+
 ## ProjectDataProgress
 
 ```json
@@ -32411,6 +32603,41 @@ These are the full generated JSON Schema definitions, including required fields,
       "minimum": 0.0,
       "title": "Done",
       "type": "integer"
+    },
+    "phase": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Phase"
+    },
+    "phase_done": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Phase Done"
+    },
+    "phase_total": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Phase Total"
     },
     "total": {
       "minimum": 0.0,
@@ -32463,6 +32690,309 @@ These are the full generated JSON Schema definitions, including required fields,
     "count"
   ],
   "title": "ProjectDataSkip",
+  "type": "object"
+}
+```
+
+## ProjectDataUpload
+
+```json
+{
+  "description": "A parted import upload's state (import jobs in \"uploading\").",
+  "properties": {
+    "bytes": {
+      "title": "Bytes",
+      "type": "integer"
+    },
+    "parts": {
+      "title": "Parts",
+      "type": "integer"
+    },
+    "received": {
+      "default": [],
+      "items": {
+        "type": "integer"
+      },
+      "title": "Received",
+      "type": "array"
+    },
+    "received_bytes": {
+      "default": 0,
+      "title": "Received Bytes",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "parts",
+    "bytes"
+  ],
+  "title": "ProjectDataUpload",
+  "type": "object"
+}
+```
+
+## ProjectExportEstimate
+
+```json
+{
+  "description": "``GET /projects/{id}/export-estimate``: counts only. A store that could not be read → its counts None and\n``measured[store] = False`` (absence is not health — never 0).",
+  "properties": {
+    "documents": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Documents"
+    },
+    "estimated_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Estimated Bytes"
+    },
+    "history_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "History Days"
+    },
+    "include_history": {
+      "title": "Include History",
+      "type": "boolean"
+    },
+    "measured": {
+      "additionalProperties": {
+        "type": "boolean"
+      },
+      "title": "Measured",
+      "type": "object"
+    },
+    "object_bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Object Bytes"
+    },
+    "objects": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Objects"
+    },
+    "over_limit": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Over Limit"
+    },
+    "runs": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Runs"
+    },
+    "runs_in_progress": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Runs In Progress"
+    },
+    "runs_over_cap": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Runs Over Cap"
+    },
+    "test_cases": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Cases"
+    }
+  },
+  "required": [
+    "include_history",
+    "measured"
+  ],
+  "title": "ProjectExportEstimate",
+  "type": "object"
+}
+```
+
+## ProjectExportRequest
+
+```json
+{
+  "additionalProperties": false,
+  "description": "The OPTIONAL JSON body of ``POST /projects/{id}/export``. No body (every phase-1 caller) or\n``include_history: false`` == the phase-1 export, schema 1.",
+  "properties": {
+    "history_days": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": 90,
+      "title": "History Days"
+    },
+    "include_history": {
+      "default": false,
+      "title": "Include History",
+      "type": "boolean"
+    },
+    "max_runs": {
+      "default": 2000,
+      "maximum": 2000.0,
+      "minimum": 1.0,
+      "title": "Max Runs",
+      "type": "integer"
+    }
+  },
+  "title": "ProjectExportRequest",
+  "type": "object"
+}
+```
+
+## ProjectImportPartReceipt
+
+```json
+{
+  "description": "The answer of ``PUT /project-imports/uploads/{data_job_id}/parts/{part_number}``.",
+  "properties": {
+    "bytes": {
+      "title": "Bytes",
+      "type": "integer"
+    },
+    "complete": {
+      "title": "Complete",
+      "type": "boolean"
+    },
+    "part": {
+      "title": "Part",
+      "type": "integer"
+    },
+    "received": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Received",
+      "type": "array"
+    }
+  },
+  "required": [
+    "part",
+    "bytes",
+    "received",
+    "complete"
+  ],
+  "title": "ProjectImportPartReceipt",
+  "type": "object"
+}
+```
+
+## ProjectImportUploadStart
+
+```json
+{
+  "additionalProperties": false,
+  "description": "Body of ``POST /project-imports/uploads``: every part but the last is exactly IMPORT_PART_MAX_BYTES.",
+  "properties": {
+    "bytes": {
+      "maximum": 2147483648.0,
+      "minimum": 1.0,
+      "title": "Bytes",
+      "type": "integer"
+    },
+    "client_token": {
+      "format": "uuid",
+      "title": "Client Token",
+      "type": "string"
+    },
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Name"
+    },
+    "parts": {
+      "maximum": 64.0,
+      "minimum": 1.0,
+      "title": "Parts",
+      "type": "integer"
+    },
+    "sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "client_token",
+    "bytes",
+    "parts",
+    "sha256"
+  ],
+  "title": "ProjectImportUploadStart",
   "type": "object"
 }
 ```

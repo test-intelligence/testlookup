@@ -43,10 +43,12 @@ vi.mock('@/hooks/useProjectDataJobs', () => ({
   useProjectExports: (projectId: string | null) => mockUseExports(projectId),
   useMyImports: (enabled: boolean) => mockUseImports(enabled),
   useProjectDataJob: () => ({ data: undefined, error: undefined, mutate: vi.fn() }),
+  // W30: the Export card's estimate read — never enabled on the default page (nothing is ticked).
+  useExportEstimate: () => ({ data: undefined, error: undefined, mutate: vi.fn() }),
 }))
 vi.mock('@/services/projectDataService', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/projectDataService')>()),
-  projectDataService: { startExport: vi.fn(), downloadExport: vi.fn(), startImport: vi.fn() },
+  projectDataService: { startExport: vi.fn(), downloadExport: vi.fn(), startImport: vi.fn(), importArchive: vi.fn() },
 }))
 
 const mockActiveProject = {
@@ -293,7 +295,8 @@ describe('ProjectDataPage — export and import (W24 ADM-05)', () => {
     expect(exp.compareDocumentPosition(imp) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(imp.compareDocumentPosition(danger) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(danger.contains(exp) || danger.contains(imp)).toBe(false)
-    expect(screen.getByText('Export settings and the test catalog, import them as a new project, or reset data.')).toBeInTheDocument()
+    // W30: the subtitle names run history (81 characters — 112 px slack at 1280 under DejaVu).
+    expect(screen.getByText('Export settings, catalog and run history, import as a new project, or reset data.')).toBeInTheDocument()
     expect(mockUseExports).toHaveBeenCalledWith('proj-uuid-1')
     expect(mockUseImports).toHaveBeenCalledWith(true)
   })

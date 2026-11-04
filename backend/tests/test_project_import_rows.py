@@ -57,9 +57,25 @@ def test_every_table_of_the_metadata_has_a_row_mapping():
 def test_every_exported_entity_builds_with_its_drops():
     from app.services.project_export_entities import plan  # G-A (A0)
 
-    for spec in plan():
+    # W30: the 27 history entities too (their lease columns, event_archive, idempotency_key dropped)
+    specs = plan(include_history=True)
+    assert len(specs) == 56
+    for spec in specs:
         model = row_model_for(spec)
         assert not (set(spec.drop) & column_names(model)), spec.table
+
+
+def test_no_history_column_type_is_unmapped():
+    """W30 (contract §6.2): the history tables use UUID, String, Text, Integer, BigInteger, Boolean, Float,
+    aware DateTime, Date and JSON / JSONB only — every one mapped, so project_import_rows needs no new type."""
+    from app.services.project_export_entities import HISTORY_TABLES
+
+    found = {type(c.type).__name__ for t in HISTORY_TABLES for c in Base.metadata.tables[t].columns}
+    assert found <= {"UUID", "Uuid", "String", "Text", "Integer", "BigInteger", "SmallInteger", "Boolean", "Float",
+                     "DateTime", "Date", "JSON", "JSONB"}, found
+    for table in HISTORY_TABLES:
+        for column in Base.metadata.tables[table].columns:
+            python_type_for(column.type)                     # raises UnmappedColumnType for a new kind
 
 
 def test_the_model_is_built_once_per_table():

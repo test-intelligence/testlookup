@@ -320,3 +320,184 @@ def test_each_function_is_idempotent_on_each_sentinel(name: str) -> None:
         assert fn(once) == once, (fn.__name__, name)
     if name not in ("aws_secret", "basic_pass", "query_tok"):   # those three are secret only by their context
         assert _sentinels()[name] not in scrub.scrub_text(value)
+
+
+# ── W30 S-7: run-history free text and JSON ─────────────────────────────────
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [("test_cases", "error_message"), ("test_cases", "stack_trace"), ("test_cases", "triage_notes"),
+     ("test_steps", "assertion_message"), ("test_steps", "assertion_trace"), ("test_steps", "expected_value"),
+     ("test_steps", "actual_value"), ("ai_analysis", "root_cause_summary"),
+     ("ai_analysis_versions", "root_cause_summary"), ("agent_pipeline_runs", "error"),
+     ("agent_stage_results", "error"), ("suite_run_reviews", "note"), ("test_execution_reviews", "note"),
+     ("release_decisions", "reasoning"), ("release_outcomes", "reason"), ("evidence_artifacts", "summary_excerpt"),
+     ("failure_clusters", "representative_error"), ("deep_findings", "root_cause"), ("timeline_notes", "text")],
+)
+def test_every_history_free_text_column_gets_the_text_pass(table: str, column: str) -> None:
+    sentinels = _sentinels()
+    out = scrub.scrub_row(_spec(table), {column: _typed_text(sentinels)})
+    _assert_clean(out[column], sentinels)
+    assert REDACTED in out[column] and out[column].startswith("Use ")
+
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [("agent_stage_results", "result_data"), ("agent_stage_results", "checkpoint_data"),
+     ("agent_stage_results", "decision_log"), ("release_decisions", "input_snapshot"),
+     ("release_decisions", "policy_evaluation"), ("run_intelligence_snapshots", "payload"),
+     ("test_runs", "run_context"), ("test_runs", "ocp_metadata"), ("test_cases", "source_parameters"),
+     ("release_gate_decisions", "policy_snapshot"), ("test_steps", "parameters")],
+)
+def test_every_history_json_column_is_scrubbed(table: str, column: str) -> None:
+    sentinels = _sentinels()
+    out = scrub.scrub_row(_spec(table), {column: {"api_key": sentinels["openrouter"],
+                                                  "log": "auth " + sentinels["jwt"] + " " + sentinels["ghp"]}})
+    assert out[column]["api_key"] == REDACTED
+    _assert_clean(repr(out), sentinels)
+
+
+def test_a_name_value_pair_naming_a_secret_loses_its_value() -> None:
+    """Allure parameters / HAR headers: ``{"name": "password", "value": …}`` — the key is neutral, the pair is not."""
+    sentinels = _sentinels()
+    params = [{"name": "password", "value": sentinels["basic_pass"]},
+              {"name": "Authorization", "value": "Basic " + sentinels["aws_secret"]},
+              {"key": "api_token", "values": [sentinels["query_tok"]]},
+              {"name": "browser", "value": "chrome"}]
+    out = scrub.scrub_row(_spec("test_cases"), {"source_parameters": params})["source_parameters"]
+    assert out[:3] == [{"name": "password", "value": REDACTED}, {"name": "Authorization", "value": REDACTED},
+                       {"key": "api_token", "values": REDACTED}]
+    assert out[3] == {"name": "browser", "value": "chrome"}
+    assert scrub.scrub_json(out) == out
+
+
+def test_history_identifiers_stay_byte_exact() -> None:
+    """TEXT_PASS_EXEMPT's W30 additions: values the text pass WOULD change (a 40+ character run) round-trip."""
+    project, run = "3f1c9e2a-6b7d-4e8f-9a0b-1c2d3e4f5a6b", "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d"
+    long_name = "test_refund_is_rejected_when_the_card_has_expired_and_retry_is_off"
+    import hashlib
+
+    sha = "c0ffee" + "deadbeef" * 7 + "0123456789"[:2]
+    commit = "Plugh" + "9" * 35
+
+    def git_sha(seed: str) -> str:
+        return hashlib.sha1(("commit " + seed).encode()).hexdigest()          # 40 hex, like `git rev-parse`
+
+    real_sha256 = hashlib.sha256(b"evidence excerpt").hexdigest()
+    assert len(git_sha("base")) == 40 and len(real_sha256) == 64
+    cases = [
+        ("test_runs", {"minio_prefix": f"{project}/builds/build-2001/", "commit_hash": commit,
+                       "ingestion_identity": sha, "build_number": "build-" + "7" * 40,
+                       "jenkins_job": "payments/" + "integration-suite-" * 3}),
+        ("test_cases", {"minio_s3_prefix": f"{project}/builds/build-2001/{run}/", "test_fingerprint": sha,
+                        "source_uuid": sha, "source_history_id": sha, "source_test_case_id": sha}),
+        ("test_case_history", {"test_fingerprint": sha}),
+        ("suite_executions", {"suite_key": long_name}),
+        ("suite_run_reviews", {"suite_name": long_name}),          # UNIQUE (test_run_id, suite_name)
+        ("test_attachments", {"source_ref": "attachments/" + sha + "-attachment.png"}),
+        ("failure_clusters", {"cluster_id": "C-" + "1" * 18}),
+        ("agent_stage_results", {"task_key": "analyze:" + sha, "idempotency_key": sha}),   # UNIQUE per pipeline
+        ("ai_analysis_versions", {"test_fingerprint": sha, "content_sha256": sha}),
+        ("failure_attribution", {"test_fingerprint": sha}),
+        ("deep_findings", {"cluster_id": "C-" + "2" * 18}),
+        # a real-looking 40-hex git SHA and a sha256: the bisect range and the evidence digest of an imported run
+        ("run_commit_ranges", {"base_commit": git_sha("base"), "head_commit": git_sha("head")}),
+        ("evidence_artifacts", {"cluster_id": "C-" + "3" * 18, "content_sha256": real_sha256}),
+    ]
+    for table, row in cases:
+        for column, value in row.items():
+            assert scrub.scrub_text(value) != value or len(value) < 40 or "cluster_id" == column, (
+                f"{table}.{column}: the sample would not exercise the exemption")
+        assert scrub.scrub_row(_spec(table), row) == row, table
+
+
+def test_history_names_get_the_text_pass_like_any_free_text() -> None:
+    """Orchestrator decision (W30): only what the round trip NEEDS stays byte-exact. A test / suite / branch name
+    can carry a token — the scrub is the safety net (a redacted name is cosmetic, a leaked token is not)."""
+    sentinels = _sentinels()
+    carrier = "test_login_with_" + sentinels["ghp"]
+    cases = [
+        ("test_runs", ("branch", "primary_suite_name")),
+        ("test_cases", ("test_name", "full_name", "suite_name", "class_name", "package_name")),
+        ("suite_executions", ("suite_name", "branch")),
+        ("test_health_recommendations", ("test_name",)),
+        ("timeline_notes", ("suite_name",)),
+        ("run_baselines", ("baseline_build_number",)),          # a label, like a name
+    ]
+    for table, columns in cases:
+        assert not set(columns) & scrub.TEXT_PASS_EXEMPT.get(table, frozenset()), table
+        out = scrub.scrub_row(_spec(table), {column: carrier for column in columns})
+        for column in columns:
+            assert sentinels["ghp"] not in out[column] and REDACTED in out[column], (table, column)
+    short = {"test_name": "test_login", "class_name": "tests.payments.TestCheckout"}
+    assert scrub.scrub_row(_spec("test_cases"), short) == short          # an ordinary name is unchanged
+
+
+# ── W30 S-8: history URLs ───────────────────────────────────────────────────
+
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [("test_runs", "ci_run_url"), ("test_execution_reviews", "defect_link"), ("evidence_artifacts", "uri_or_ref")],
+)
+def test_every_history_url_column_goes_through_the_url_rule(table: str, column: str) -> None:
+    sentinels = _sentinels()
+    url = "https://ci:" + sentinels["basic_pass"] + "@ci.example.test/job/7?access_token=" + sentinels["query_tok"]
+    out = scrub.scrub_row(_spec(table), {column: url})
+    assert out[column] == "https://ci.example.test/job/7?access_token=" + REDACTED
+
+
+@pytest.mark.parametrize("ref", ["pipeline-artifacts/pipeline/2026/10/01/run/stage/a.json",
+                                 "s3://pipeline-artifacts/pipeline/2026/10/01/run/stage/a.json",
+                                 "pipeline-artifacts"])
+def test_an_evidence_ref_into_pipeline_scratch_is_written_null(ref: str) -> None:
+    assert scrub.is_pipeline_scratch_ref(ref) is True
+    assert scrub.scrub_row(_spec("evidence_artifacts"), {"uri_or_ref": ref}) == {"uri_or_ref": None}
+
+
+@pytest.mark.parametrize("ref", ["https://jira.example.test/browse/PAY-1", "pipeline-artifacts-backup/x.json",
+                                 "other-bucket/pipeline-artifacts/x.json", None, ""])
+def test_any_other_evidence_ref_is_kept(ref: Any) -> None:
+    assert scrub.is_pipeline_scratch_ref(ref) is False
+    assert scrub.scrub_row(_spec("evidence_artifacts"), {"uri_or_ref": ref}) == {"uri_or_ref": ref}
+    # the rule is evidence_artifacts' own: a pipeline-artifacts URL elsewhere is just a URL
+    assert scrub.scrub_row(_spec("test_runs"), {"ci_run_url": "pipeline-artifacts/x"})["ci_run_url"] is not None
+
+
+# ── W30 S-9: stored documents ───────────────────────────────────────────────
+
+def test_a_document_is_redacted_by_key_and_by_pattern_in_full() -> None:
+    from datetime import datetime, timezone
+
+    from bson import ObjectId
+
+    sentinels = _sentinels()
+    stamp = datetime(2026, 10, 2, 8, 0, tzinfo=timezone.utc)
+    ref = ObjectId()
+    doc = {
+        "test_run_id": "7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d",
+        "request": {"headers": {"Authorization": "Bearer " + sentinels["glpat"], "X-Trace": "t-1"},
+                    "url": "https://api.example.test/v1?token=" + sentinels["openrouter"]},
+        "parameters": [{"name": "password", "value": sentinels["basic_pass"]}, {"password": sentinels["aws_secret"]}],
+        "log": ["step " + str(n) for n in range(150)] + ["boom " + sentinels["ghp"]],
+        "at": stamp, "ref": ref,
+    }
+    original = copy.deepcopy(doc)
+    out = scrub.scrub_document(doc)
+    assert doc == original                                  # a NEW dict
+    _assert_clean(repr(out), sentinels)
+    assert out["request"]["headers"]["Authorization"] == REDACTED
+    assert out["parameters"][0] == {"name": "password", "value": REDACTED}     # the Allure parameter shape
+    assert out["parameters"][1]["password"] == REDACTED
+    assert len(out["log"]) == 151 and out["log"][-1] == "boom " + REDACTED     # no truncation (ACT-03)
+    assert out["at"] == stamp and out["ref"] == ref         # stored types survive for Extended JSON
+    assert out["test_run_id"] == doc["test_run_id"] and out["request"]["headers"]["X-Trace"] == "t-1"
+    assert scrub.scrub_document(out) == out                 # idempotent
+
+
+def test_a_document_nested_past_the_cap_is_redacted_not_truncated_silently() -> None:
+    node: dict[str, Any] = {"leaf": "deep"}
+    for _ in range(15):
+        node = {"k": node}
+    out = scrub.scrub_document({"test_run_id": "r", "body": node})
+    flat = repr(out)
+    assert "deep" not in flat and REDACTED in flat

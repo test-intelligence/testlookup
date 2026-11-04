@@ -19,6 +19,8 @@ from pydantic import (
 from pydantic_core import PydanticCustomError
 
 from app.core.config import MAX_RESULTS_PER_INGEST
+# W30 (ADM-05 phase 2): the project-export caps and sentences (a pure constants module, no app import).
+from app.services import project_export_vocab as _pdv
 # W11 (REL-05 / REL-07): the bulk-phase bound lives with the release-planning
 # vocabulary, which the services and the tests import too.
 from app.core.release_planning import MAX_BULK_PHASES
@@ -953,6 +955,10 @@ class ProjectDataError(BaseModel):
 class ProjectDataProgress(BaseModel):
     done: int = Field(ge=0)        # tables finished
     total: int = Field(ge=0)       # tables in the plan
+    # W30 (additive): the history phases — project_export_vocab.JOB_PHASES
+    phase: Optional[str] = None
+    phase_done: Optional[int] = Field(default=None, ge=0)    # e.g. documents written
+    phase_total: Optional[int] = Field(default=None, ge=0)   # e.g. documents in the manifest
 
 
 class ProjectDataSkip(BaseModel):
@@ -974,6 +980,7 @@ class ProjectDataImportReport(BaseModel):
     source_project_name: str
     source_app_version: Optional[str] = None
     exported_at: datetime
+    history: Optional["ProjectDataHistoryReport"] = None   # W30: None for a catalog-only (schema 1) import
 
 
 class ProjectDataJobRead(BaseModel):
@@ -997,11 +1004,134 @@ class ProjectDataJobRead(BaseModel):
     import_report: Optional[ProjectDataImportReport] = None
     error: Optional[ProjectDataError] = None
     download_path: Optional[str] = None            # only for a succeeded, unexpired export
+    # W30 (additive — a phase-1 job row reads exactly as before)
+    options: Optional["ProjectDataOptions"] = None     # export: what was asked for (None on an import)
+    upload: Optional["ProjectDataUpload"] = None       # only while status == "uploading"
+    schema_version: Optional[int] = None               # export: written; import: read from the manifest
 
 
 class ProjectDataJobList(BaseModel):
     items: list[ProjectDataJobRead]
     total: int                                     # all matching rows; items ≤ JOBS_LIST_LIMIT (a top-N length is not a count)
+
+
+# ── W30 ADM-05 phase 2: run history in the export / import; the parted upload ─
+
+def _project_data_error(code: str, **values: Any) -> PydanticCustomError:
+    """A 422 whose error ``type`` is the ``ERROR_SENTENCES`` code and whose ``msg`` is its sentence."""
+    return PydanticCustomError(code, _pdv.ERROR_SENTENCES[code].format(**values))
+
+
+def _is_int(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+class ProjectExportRequest(BaseModel):
+    """The OPTIONAL JSON body of ``POST /projects/{id}/export``. No body (every phase-1 caller) or
+    ``include_history: false`` == the phase-1 export, schema 1."""
+    model_config = ConfigDict(extra="forbid")
+
+    include_history: bool = False
+    history_days: Optional[int] = _pdv.HISTORY_DEFAULT_DAYS   # ∈ HISTORY_WINDOWS_DAYS, or None = all history
+    max_runs: int = Field(_pdv.HISTORY_MAX_RUNS, ge=1, le=_pdv.HISTORY_MAX_RUNS)
+
+    @field_validator("history_days", mode="before")
+    @classmethod
+    def _history_window(cls, value: Any) -> Any:
+        if value is not None and (not _is_int(value) or value not in _pdv.HISTORY_WINDOWS_DAYS):
+            raise _project_data_error("history_window_invalid")
+        return value
+
+    @field_validator("max_runs", mode="before")
+    @classmethod
+    def _max_runs(cls, value: Any) -> Any:
+        if not _is_int(value) or not 1 <= value <= _pdv.HISTORY_MAX_RUNS:
+            raise _project_data_error("max_runs_invalid")
+        return value
+
+
+class ProjectExportEstimate(BaseModel):
+    """``GET /projects/{id}/export-estimate``: counts only. A store that could not be read → its counts None and
+    ``measured[store] = False`` (absence is not health — never 0)."""
+    include_history: bool
+    history_days: Optional[int] = None
+    runs: Optional[int] = None                     # runs that WOULD be exported
+    runs_in_progress: Optional[int] = None         # IN_PROGRESS runs in the window — never exported
+    runs_over_cap: Optional[int] = None            # window runs beyond max_runs
+    test_cases: Optional[int] = None
+    documents: Optional[dict[str, int]] = None     # collection → documents (None = Mongo not measured)
+    objects: Optional[int] = None
+    object_bytes: Optional[int] = None             # None = storage not measured
+    estimated_bytes: Optional[int] = None          # None when any store is unmeasured
+    over_limit: Optional[bool] = None              # estimated_bytes > HISTORY_EXPORT_MAX_BYTES (None when unmeasured)
+    measured: dict[str, bool]                      # {"postgres": True, "documents": bool, "objects": bool}
+
+
+class ProjectDataOptions(BaseModel):
+    """Echoed on an export job: what was asked for."""
+    include_history: bool = False
+    history_days: Optional[int] = None
+    max_runs: Optional[int] = None
+
+
+class ProjectDataUpload(BaseModel):
+    """A parted import upload's state (import jobs in "uploading")."""
+    parts: int
+    bytes: int
+    received: list[int] = []                       # part numbers received, ascending
+    received_bytes: int = 0
+
+
+class ProjectDataHistoryReport(BaseModel):
+    """Inside ``ProjectDataImportReport.history``."""
+    runs: int
+    test_cases: int
+    oldest_run_at: Optional[datetime] = None
+    newest_run_at: Optional[datetime] = None
+    documents: dict[str, int] = {}                 # collection → documents inserted (every MongoSpec collection, 0 allowed)
+    objects: int = 0
+    object_bytes: int = 0
+    skipped: list[ProjectDataSkip] = []            # rows / documents / objects NOT written, by entity + reason
+    retention_paused_until: Optional[datetime] = None
+    runs_past_retention: int = 0                   # imported runs older than the copy's effective runs window
+    retention_days: Optional[int] = None           # the copy's effective runs window; None = retention off
+    recent_runs: int = 0                           # imported runs created within DIGEST_LOOKBACK_DAYS of the import
+    search_reindex: str                            # "queued" | "not_queued"
+
+
+class ProjectImportUploadStart(BaseModel):
+    """Body of ``POST /project-imports/uploads``: every part but the last is exactly IMPORT_PART_MAX_BYTES."""
+    model_config = ConfigDict(extra="forbid")
+
+    client_token: uuid.UUID
+    name: Optional[str] = None                     # the phase-1 rule (2–255 after strip) is the route's
+    bytes: int = Field(ge=1, le=_pdv.IMPORT_ARCHIVE_MAX_BYTES)
+    parts: int = Field(ge=1, le=_pdv.IMPORT_MAX_PARTS)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")   # of the WHOLE file; checked by the worker after assembly
+
+    @model_validator(mode="before")
+    @classmethod
+    def _part_plan(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            size, parts = data.get("bytes"), data.get("parts")
+            if isinstance(size, int) and isinstance(parts, int) and _is_int(size) and _is_int(parts):
+                in_range = 1 <= size <= _pdv.IMPORT_ARCHIVE_MAX_BYTES and 1 <= parts <= _pdv.IMPORT_MAX_PARTS
+                if not in_range or parts != -(-size // _pdv.IMPORT_PART_MAX_BYTES):
+                    raise _project_data_error("upload_parts_invalid")
+        return data
+
+
+class ProjectImportPartReceipt(BaseModel):
+    """The answer of ``PUT /project-imports/uploads/{data_job_id}/parts/{part_number}``."""
+    part: int
+    bytes: int
+    received: list[int]                            # part numbers received, ascending
+    complete: bool                                 # every part present (the client then calls /complete)
+
+
+ProjectDataImportReport.model_rebuild()
+ProjectDataJobRead.model_rebuild()
+ProjectDataJobList.model_rebuild()
 
 
 # ── W25a HYG-04: the suite-membership parity harness (the 7-day cutover clock) ─

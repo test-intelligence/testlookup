@@ -66,6 +66,16 @@ class FakeStorage:
     async def list_objects(self, prefix: str, bucket: str | None = None) -> list[dict]:
         return [entry for entry in self.listing if str(entry["Key"]).startswith(prefix)]
 
+    async def delete_prefix(self, prefix: str, bucket: str | None = None) -> int:
+        if self.fail_delete:
+            raise ConnectionRefusedError("storage down")
+        self.deleted.append(prefix)
+        doomed = [key for key in self.objects if key.startswith(prefix)]
+        for key in doomed:
+            self.objects.pop(key)
+        self.listing = [entry for entry in self.listing if not str(entry["Key"]).startswith(prefix)]
+        return len(doomed)
+
 
 class SessionLog:
     """Wraps the factory: every session opened, in order, with the statements it ran."""
@@ -143,13 +153,27 @@ def _count(kind: str, outcome: str) -> float:
     return project_data_jobs_total.labels(kind=kind, outcome=outcome)._value.get()
 
 
+class _Recorded(list):
+    """``(task name, *args)`` per call; ``options`` keeps each call's ``apply_async`` options (W30)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.options: list[dict[str, Any]] = []
+
+
 @pytest.fixture
-def recorded(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
-    calls: list[tuple[str, str]] = []
-    for task in (tasks.export_project_data, tasks.import_project_data):
-        def apply_async(args: Any = None, kwargs: Any = None, _task: Any = task, **_options: Any) -> Any:
+def recorded(monkeypatch: pytest.MonkeyPatch) -> _Recorded:
+    """REAL payloads bound to each task's signature (never a bare mock), the options to Celery's own
+    ``Task.apply_async`` signature; ``reindex_search`` too (its kwargs bound to ``reindex_search.run``)."""
+    from celery.app.task import Task
+
+    calls = _Recorded()
+    for task in (tasks.export_project_data, tasks.import_project_data, tasks.reindex_search):
+        def apply_async(args: Any = None, kwargs: Any = None, _task: Any = task, **options: Any) -> Any:
             inspect.signature(_task.run).bind(*(args or ()), **(kwargs or {}))
-            calls.append((_task.name, *(args or ())))
+            inspect.signature(Task.apply_async).bind(_task, args, kwargs, **options)
+            calls.append((_task.name, *(args or ()), *(sorted((kwargs or {}).items()))))
+            calls.options.append(dict(options))
             return SimpleNamespace(id="celery-id")
         monkeypatch.setattr(task, "apply_async", apply_async)
     return calls
@@ -432,3 +456,312 @@ def test_the_beat_entry_runs_hourly_at_35_on_default() -> None:
     assert entry["task"] == "app.worker.tasks.sweep_project_data_jobs" == tasks.sweep_project_data_jobs.name
     assert entry["schedule"].minute == {35} and len(entry["schedule"].hour) == 24
     assert entry["options"]["queue"] == "default" and entry["options"]["ignore_result"] is True
+
+
+# ── W30: history export / parted import / reindex / ledger ──────────────────
+
+HISTORY_LIMITS = {"time_limit": vocab.HISTORY_TIME_LIMIT_SECONDS, "soft_time_limit": vocab.HISTORY_TIME_LIMIT_SECONDS - 300}
+HISTORY_OPTIONS = {"include_history": True, "history_days": 90, "max_runs": 2000}
+
+
+async def _cleanup_of(factory: Any, job_id: uuid.UUID) -> Any:
+    from sqlalchemy import select
+
+    async with factory.maker() as db:
+        return (await db.execute(select(ProjectDataJob.cleanup).where(ProjectDataJob.id == job_id))).scalar_one()
+
+
+async def test_a_history_export_passes_its_options_writes_phases_and_counts_its_history(
+    factory: Any, world: Any, monkeypatch: pytest.MonkeyPatch, activity: list,
+) -> None:
+    job = await _job(factory, kind="export", status="queued", project_id=world.project.id,
+                     requested_by_id=world.admin.id, options=dict(HISTORY_OPTIONS))
+    seen: dict[str, Any] = {}
+    sentinel_mongo = object()
+
+    async def fake_export(db: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        await kwargs["on_progress"]({"done": 56, "total": 56, "phase": "documents", "phase_done": 5000,
+                                     "phase_total": 9120})
+        seen["progress"] = (await _read(factory, job.id)).progress
+        return _outcome().__class__(**{**_outcome().__dict__, "counts": {
+            "projects": 1, "test_runs": 3, "test_cases": 40, "documents.raw_allure_json": 12, "objects": 2}})
+
+    monkeypatch.setattr(project_export_service, "run_project_export", fake_export)
+    assert await runner.run_export_job(job.id, storage=FakeStorage(), session_factory=factory,
+                                       mongo=sentinel_mongo) == "succeeded"
+    assert seen["options"].include_history is True and seen["options"].history_days == 90
+    assert seen["mongo"] is sentinel_mongo
+    assert seen["progress"] == {"done": 56, "total": 56, "phase": "documents", "phase_done": 5000,
+                                "phase_total": 9120}
+    assert activity[0]["context"] == {"rows": 44, "runs": 3, "documents": 12, "objects": 2}
+
+
+async def test_a_catalog_export_passes_no_history_arguments(
+    factory: Any, world: Any, monkeypatch: pytest.MonkeyPatch, activity: list,
+) -> None:
+    job = await _job(factory, kind="export", status="queued", project_id=world.project.id,
+                     requested_by_id=world.admin.id)
+    seen: dict[str, Any] = {}
+
+    async def fake_export(db: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return _outcome()
+
+    monkeypatch.setattr(project_export_service, "run_project_export", fake_export)
+    assert await runner.run_export_job(job.id, storage=FakeStorage(), session_factory=factory) == "succeeded"
+    assert seen["options"] is None and seen["mongo"] is None and seen["on_progress"] is None
+    assert activity[0]["context"] == {"rows": 4}
+
+
+def _parted_job_values(world: Any) -> dict[str, Any]:
+    return {"kind": "import", "status": "queued", "requested_by_id": world.admin.id, "client_token": uuid.uuid4(),
+            "options": {"parted": True, "parts": 2, "bytes": 40, "sha256": "e" * 64}}
+
+
+def _history_report(project_id: uuid.UUID) -> Any:
+    return SimpleNamespace(project_id=project_id, inserted={"projects": 1, "test_runs": 2},
+                           history=SimpleNamespace(search_reindex="queued"))
+
+
+async def test_a_parted_history_import_assembles_writes_its_ledger_then_reindexes(
+    factory: Any, world: Any, monkeypatch: pytest.MonkeyPatch, recorded: _Recorded,
+) -> None:
+    from app.services import project_import_history
+
+    store = FakeStorage()
+    job = await _job(factory, **_parted_job_values(world))
+    new_project = uuid.uuid4()
+    ledger = {"project_id": str(new_project), "run_ids": [str(uuid.uuid4())], "pipeline_ids": []}
+    seen: dict[str, Any] = {}
+
+    async def assemble(storage: Any, job_row: Any, *, spool: Any) -> str:
+        spool.write(b"PK\x03\x04assembled")
+        seen["assembled_for"] = job_row.id
+        return "f" * 64
+
+    async def imported(db: Any, *, job: Any, outcome: dict, **kwargs: Any) -> Any:
+        kwargs["spool"].seek(0)
+        seen["spool"] = kwargs["spool"].read()
+        outcome["ledger"] = ledger
+        await kwargs["on_ledger"](ledger)
+        seen["ledger_committed"] = await _cleanup_of(factory, job.id)     # visible on ANOTHER session
+        await kwargs["on_progress"]("objects", 1, 2)
+        seen["progress"] = (await _read(factory, job.id)).progress
+        row = await db.get(ProjectDataJob, job.id)
+        row.status = "succeeded"
+        row.report = {"history": {"search_reindex": "queued"}}
+        return _history_report(new_project)
+
+    bumped: list[Any] = []
+
+    async def bump(project_id: Any) -> None:
+        bumped.append(project_id)
+
+    monkeypatch.setattr(project_import_history, "assemble_parts", assemble)
+    monkeypatch.setattr(project_import_service, "run_import", imported)
+    monkeypatch.setattr("app.core.deps.invalidate_membership_cache", lambda _uid: _noop())
+    monkeypatch.setattr("app.services.cache_service.bump_analytics_epoch", bump)
+    assert await runner.run_import_job(job.id, storage=store, session_factory=factory, mongo=object()) == "succeeded"
+    assert seen["assembled_for"] == job.id and seen["spool"] == b"PK\x03\x04assembled"
+    assert seen["ledger_committed"] == ledger
+    assert seen["progress"]["phase"] == "objects" and seen["progress"]["phase_done"] == 1
+    assert await _cleanup_of(factory, job.id) is None
+    assert store.deleted == [f"project-imports/parts/{job.id}/"]          # the parts, once the job ended
+    assert list(recorded) == [("app.worker.tasks.reindex_search", ("full", True), ("project_id", str(new_project)))]
+    assert recorded.options == [{}]
+    assert bumped == [new_project]
+    assert (await _read(factory, job.id)).report == {"history": {"search_reindex": "queued"}}
+
+
+async def _noop() -> None:
+    return None
+
+
+async def test_a_reindex_that_cannot_be_enqueued_is_said_in_the_report(
+    factory: Any, world: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _job(factory, kind="import", status="queued", requested_by_id=world.admin.id,
+                     client_token=uuid.uuid4(), storage_key="project-imports/one.zip")
+
+    async def imported(db: Any, *, job: Any, outcome: dict, **kwargs: Any) -> Any:
+        row = await db.get(ProjectDataJob, job.id)
+        row.status = "succeeded"
+        row.report = {"history": {"search_reindex": "queued", "runs": 2}}
+        return _history_report(uuid.uuid4())
+
+    def broker_down(*_: Any, **__: Any) -> Any:
+        raise ConnectionRefusedError("broker down")
+
+    async def bump(project_id: Any) -> None:
+        return None
+
+    monkeypatch.setattr(project_import_service, "run_import", imported)
+    monkeypatch.setattr(tasks.reindex_search, "apply_async", broker_down)
+    monkeypatch.setattr("app.core.deps.invalidate_membership_cache", lambda _uid: _noop())
+    monkeypatch.setattr("app.services.cache_service.bump_analytics_epoch", bump)
+    assert await runner.run_import_job(job.id, storage=FakeStorage(), session_factory=factory) == "succeeded"
+    row = await _read(factory, job.id)
+    assert row.status == "succeeded" and row.report == {"history": {"search_reindex": "not_queued", "runs": 2}}
+
+
+async def test_a_failed_history_import_removes_what_it_wrote_by_the_ledger(
+    factory: Any, world: Any, monkeypatch: pytest.MonkeyPatch, recorded: _Recorded,
+) -> None:
+    from app.services import project_import_history
+
+    store = FakeStorage()
+    job = await _job(factory, **_parted_job_values(world))
+    ledger = {"project_id": str(uuid.uuid4()), "run_ids": [str(uuid.uuid4())], "pipeline_ids": []}
+    cleaned: list[Any] = []
+
+    async def assemble(storage: Any, job_row: Any, *, spool: Any) -> str:
+        return "f" * 64
+
+    async def imported(db: Any, *, job: Any, outcome: dict, **kwargs: Any) -> Any:
+        outcome["ledger"] = ledger
+        await kwargs["on_ledger"](ledger)
+        raise project_import_service.ProjectImportFailed("documents_unwritable", error_type="BulkWriteError")
+
+    async def cleanup(mongo: Any, storage: Any, given: Any) -> dict:
+        cleaned.append(given)
+        return {}
+
+    monkeypatch.setattr(project_import_history, "assemble_parts", assemble)
+    monkeypatch.setattr(project_import_history, "cleanup_outside_postgres", cleanup)
+    monkeypatch.setattr(project_import_service, "run_import", imported)
+    assert await runner.run_import_job(job.id, storage=store, session_factory=factory, mongo=object()) == "failed"
+    row = await _read(factory, job.id)
+    assert row.status == "failed" and row.error_code == "documents_unwritable"
+    assert cleaned == [ledger] and await _cleanup_of(factory, job.id) is None
+    assert store.deleted == [f"project-imports/parts/{job.id}/"] and list(recorded) == []   # no reindex
+
+
+async def test_an_assembled_upload_that_does_not_match_fails_before_the_import(
+    factory: Any, world: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import project_import_history
+
+    store = FakeStorage()
+    job = await _job(factory, **_parted_job_values(world))
+
+    async def assemble(storage: Any, job_row: Any, *, spool: Any) -> str:
+        raise project_import_service.ProjectImportFailed("upload_digest_mismatch")
+
+    async def must_not_run(*_: Any, **__: Any) -> Any:
+        raise AssertionError("the import ran on a mismatched upload")
+
+    monkeypatch.setattr(project_import_history, "assemble_parts", assemble)
+    monkeypatch.setattr(project_import_service, "run_import", must_not_run)
+    assert await runner.run_import_job(job.id, storage=store, session_factory=factory) == "failed"
+    row = await _read(factory, job.id)
+    assert row.error_code == "upload_digest_mismatch" and store.deleted == [f"project-imports/parts/{job.id}/"]
+
+
+# ── W30: the janitor ────────────────────────────────────────────────────────
+
+async def test_history_jobs_are_redispatched_with_their_time_limits(
+    factory: Any, world: Any, recorded: _Recorded,
+) -> None:
+    lost_at = datetime.now(timezone.utc) - timedelta(minutes=vocab.QUEUED_REDISPATCH_MINUTES + 1)
+    history = await _job(factory, kind="export", status="queued", project_id=world.project.id, requested_at=lost_at,
+                         options=dict(HISTORY_OPTIONS))
+    parted = await _job(factory, **{**_parted_job_values(world), "requested_at": lost_at})
+    catalog = await _job(factory, kind="import", status="queued", requested_by_id=world.admin.id,
+                         client_token=uuid.uuid4(), requested_at=lost_at)
+    await runner.run_sweep(storage=FakeStorage(), session_factory=factory)
+    sent = dict(zip((call[1] for call in recorded), recorded.options))
+    assert sent == {str(history.id): HISTORY_LIMITS, str(parted.id): HISTORY_LIMITS, str(catalog.id): {}}
+
+
+async def test_a_history_job_is_stale_only_past_its_own_threshold(factory: Any, world: Any) -> None:
+    now = datetime.now(timezone.utc)
+    slow = await _job(factory, kind="export", status="running", project_id=world.project.id,
+                      options=dict(HISTORY_OPTIONS), started_at=now - timedelta(minutes=vocab.JOB_STALE_MINUTES + 30))
+    dead = await _job(factory, **{**_parted_job_values(world), "status": "running",
+                                  "started_at": now - timedelta(minutes=vocab.HISTORY_JOB_STALE_MINUTES + 1)})
+    catalog = await _job(factory, kind="import", status="running", requested_by_id=world.admin.id,
+                         client_token=uuid.uuid4(), started_at=now - timedelta(minutes=vocab.JOB_STALE_MINUTES + 1))
+    summary = await runner.run_sweep(now=now, storage=FakeStorage(), session_factory=factory, mongo=object())
+    assert (await _read(factory, slow.id)).status == "running", "a 3 h history export is not stale at 70 min"
+    assert (await _read(factory, dead.id)).error_code == "interrupted"
+    assert (await _read(factory, catalog.id)).error_code == "interrupted"
+    assert summary["interrupted_import"] == 2 and summary["interrupted_export"] == 0
+
+
+async def test_the_janitor_fails_an_abandoned_upload_and_removes_parts_no_job_keeps(
+    factory: Any, world: Any,
+) -> None:
+    now = datetime.now(timezone.utc)
+    store = FakeStorage()
+    abandoned = await _job(factory, **{**_parted_job_values(world), "status": "uploading",
+                                       "requested_at": now - timedelta(hours=vocab.UPLOAD_STALE_HOURS + 1),
+                                       "upload": {"parts": 2, "bytes": 40, "received": [1]}})
+    open_upload = await _job(factory, **{**_parted_job_values(world), "status": "uploading",
+                                         "requested_at": now - timedelta(hours=2)})
+    finished = await _job(factory, **{**_parted_job_values(world), "status": "succeeded"})
+    old = (now - timedelta(hours=2)).timestamp()
+    for owner in (abandoned.id, open_upload.id, finished.id, uuid.uuid4()):
+        key = f"project-imports/parts/{owner}/part-0001"
+        store.objects[key] = b"part"
+        store.listing.append({"Key": key, "LastModified": old})
+    summary = await runner.run_sweep(now=now, storage=store, session_factory=factory)
+    gone = await _read(factory, abandoned.id)
+    assert gone.status == "failed" and gone.error_code == "interrupted" and gone.upload is None
+    assert (await _read(factory, open_upload.id)).status == "uploading"
+    assert set(store.objects) == {f"project-imports/parts/{open_upload.id}/part-0001"}   # only the open upload keeps
+    assert summary["uploads_interrupted"] == 1 and summary["parts_removed"] == 2
+    assert f"project-imports/parts/{open_upload.id}/" not in store.deleted
+    # the phase-1 stray sweep never takes a part (it would have removed the open upload's after 1 h)
+    assert summary["strays_removed"] == 0
+
+
+async def test_a_crashed_history_import_is_cleaned_by_its_ledger_and_interrupted(
+    factory: Any, world: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import project_import_history
+
+    now = datetime.now(timezone.utc)
+    ledger = {"project_id": str(uuid.uuid4()), "run_ids": [str(uuid.uuid4())], "pipeline_ids": []}
+    crashed = await _job(factory, **{**_parted_job_values(world), "status": "running", "cleanup": ledger,
+                                     "started_at": now - timedelta(minutes=vocab.HISTORY_JOB_STALE_MINUTES + 1)})
+    committed = await _job(factory, **{**_parted_job_values(world), "status": "succeeded",
+                                       "cleanup": {**ledger, "project_id": str(world.project.id)}})
+    cleaned: list[Any] = []
+    mongo = object()
+
+    async def cleanup(given_mongo: Any, storage: Any, given: Any) -> dict:
+        assert given_mongo is mongo
+        cleaned.append(given)
+        return {}
+
+    monkeypatch.setattr(project_import_history, "cleanup_outside_postgres", cleanup)
+    summary = await runner.run_sweep(now=now, storage=FakeStorage(), session_factory=factory, mongo=mongo)
+    row = await _read(factory, crashed.id)
+    assert row.status == "failed" and row.error_code == "interrupted"
+    assert cleaned == [ledger], "a project that EXISTS (the commit happened) must never be cleaned"
+    assert await _cleanup_of(factory, crashed.id) is None and await _cleanup_of(factory, committed.id) is None
+    assert summary["ledgers_cleaned"] == 1 and summary["ledgers_cleared"] == 1
+
+
+async def test_a_cleanup_that_fails_keeps_the_ledger_for_the_next_hour(
+    factory: Any, world: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services import project_import_history
+
+    ledger = {"project_id": str(uuid.uuid4()), "run_ids": [], "pipeline_ids": []}
+    job = await _job(factory, **{**_parted_job_values(world), "status": "failed", "cleanup": ledger})
+    attempts: list[int] = []
+
+    async def cleanup(mongo: Any, storage: Any, given: Any) -> dict:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ConnectionRefusedError("mongo down")
+        return {}
+
+    monkeypatch.setattr(project_import_history, "cleanup_outside_postgres", cleanup)
+    first = await runner.run_sweep(storage=FakeStorage(), session_factory=factory, mongo=object())
+    assert first["ledger_failed"] == 1 and await _cleanup_of(factory, job.id) == ledger
+    second = await runner.run_sweep(storage=FakeStorage(), session_factory=factory, mongo=object())
+    assert second["ledgers_cleaned"] == 1 and await _cleanup_of(factory, job.id) is None
+    assert (await _read(factory, job.id)).status == "failed"

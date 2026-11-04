@@ -11,7 +11,9 @@
 """
 from __future__ import annotations
 
+import hashlib
 import io
+import json
 import re
 import uuid
 import zipfile
@@ -232,15 +234,17 @@ def _import_handler(*, post_status: int = 202, post_job: dict[str, Any] | None =
 @pytest.mark.parametrize(
     ("make", "sentence"),
     [
-        (lambda p: p.write_bytes(b"PK\x03\x04" + b"x" * 64), projects.UPLOAD_TOO_LARGE),
+        (lambda p: p.write_bytes(b"PK\x03\x04" + b"x" * 64), projects.UPLOAD_TOO_LARGE_HISTORY),
         (lambda p: p.write_bytes(b"<xml/>"), projects.NOT_A_ZIP),
         (lambda p: p.write_bytes(b""), projects.UPLOAD_EMPTY),
         (lambda p: p.mkdir(), "Not a file"),
     ],
-    ids=["over-50-mib", "not-zip-magic", "empty", "a-directory"],
+    ids=["over-2-gb", "not-zip-magic", "empty", "a-directory"],
 )
 def test_import_refuses_locally_with_no_request(wire, tmp_path, monkeypatch, make, sentence):
-    monkeypatch.setattr(projects, "IMPORT_UPLOAD_MAX_BYTES", 32)
+    # W30: over 50 MB is no longer a refusal (it goes up in parts); over 2 GB is — scaled down to 32 bytes here.
+    monkeypatch.setattr(projects, "IMPORT_UPLOAD_MAX_BYTES", 16)
+    monkeypatch.setattr(projects, "IMPORT_ARCHIVE_MAX_BYTES", 32)
     target = tmp_path / "export.zip"
     make(target)
     seen = wire(_import_handler())
@@ -345,7 +349,190 @@ def test_a_reset_review_and_a_paused_cadence_are_not_called_switched_off():
     ]
 
 
-def test_the_cli_version_is_0_3_1():
+def test_the_cli_version_is_0_4_0():
     import testlookup_cli
 
-    assert testlookup_cli.__version__ == "0.3.1"
+    assert testlookup_cli.__version__ == "0.4.0"
+
+
+# ── W30 ADM-05 phase 2: --history export, the parted resumable import, the history report ──
+
+UPLOADS_PATH = "/api/v1/project-imports/uploads"
+PARTS_PREFIX = f"{UPLOADS_PATH}/{JOB_ID}/parts/"
+COMPLETE_PATH = f"{UPLOADS_PATH}/{JOB_ID}/complete"
+_HISTORY_COUNTS = {
+    "test_suites": 3, "test_runs": 2, "test_cases": 40, "releases": 0,
+    "documents.raw_allure_json": 4, "documents.run_summaries": 1, "objects": 1,
+}
+
+
+def test_export_with_history_sends_the_body_and_names_the_file(wire, tmp_path, monkeypatch):
+    archive = _zip_bytes()
+    seen = wire(_export_handler(archive, counts=_HISTORY_COUNTS))
+    monkeypatch.chdir(tmp_path)
+    result = _run("projects", "export", "Payment Service", "--history", "--days", "365")
+    assert result.exit_code == 0, result.output
+    post = next(r for r in seen if r.method == "POST")
+    assert json.loads(post.content) == {"include_history": True, "history_days": 365, "max_runs": 2000}
+    assert (tmp_path / "payment-service-project-data-20261030-1205.zip").read_bytes() == archive
+    assert "Exported Payment Service: 2 runs, 45 rows, 5 documents, 1 attachment (" in result.output
+
+
+def test_export_history_all_days_sends_null_and_the_max_runs(wire, tmp_path):
+    seen = wire(_export_handler(_zip_bytes(), counts={"test_runs": 1, "documents.run_summaries": 1, "objects": 0}))
+    result = _run("projects", "export", PROJECT_ID, "--history", "--days", "all", "--max-runs", "50",
+                  "-o", str(tmp_path / "h.zip"))
+    assert result.exit_code == 0, result.output
+    post = next(r for r in seen if r.method == "POST")
+    assert json.loads(post.content) == {"include_history": True, "history_days": None, "max_runs": 50}
+    assert "Exported Payment Service: 1 run, 1 row, 1 document, 0 attachments (" in result.output
+
+
+def test_export_without_history_stays_body_less(wire, tmp_path):
+    seen = wire(_export_handler(_zip_bytes()))
+    assert _run("projects", "export", PROJECT_ID, "-o", str(tmp_path / "c.zip")).exit_code == 0
+    post = next(r for r in seen if r.method == "POST")
+    assert post.content == b""                       # the W24 request, byte for byte: the server reads schema 1
+
+
+@pytest.mark.parametrize("argv", [("--days", "7"), ("--max-runs", "0"), ("--max-runs", "2001")])
+def test_a_bad_history_window_is_refused_with_no_request(wire, argv):
+    seen = wire(_export_handler(_zip_bytes()))
+    result = _run("projects", "export", PROJECT_ID, "--history", *argv)
+    assert result.exit_code == 1
+    assert ("Choose 30, 90 or 365 days" in result.output) or ("max_runs must be between 1 and 2000." in result.output)
+    assert seen == []
+
+
+_PART = 16                                   # IMPORT_PART_MAX_BYTES scaled down: 12 parts of a 187-byte file
+_HISTORY_REPORT = {
+    **_REPORT,
+    "history": {
+        "runs": 12, "test_cases": 480, "oldest_run_at": "2026-08-05T09:00:00+00:00",
+        "newest_run_at": "2026-11-01T18:30:00Z",
+        "documents": {"raw_allure_json": 400, "run_summaries": 12, "decision_reports": 0},
+        "objects": 1, "object_bytes": 2048,
+        "skipped": [{"entity": "objects", "reason": "unsafe_key", "count": 1}],
+        "retention_paused_until": "2027-02-01T10:00:00+00:00", "runs_past_retention": 3,
+        "recent_runs": 2, "search_reindex": "queued",
+    },
+}
+
+
+@pytest.fixture
+def big_archive(tmp_path, monkeypatch):
+    """A 187-byte "ZIP" that must go up in 12 parts (the 50 MB / 32 MB caps scaled to 64 / 16 bytes)."""
+    monkeypatch.setattr(projects, "IMPORT_UPLOAD_MAX_BYTES", 64)
+    monkeypatch.setattr(projects, "IMPORT_PART_MAX_BYTES", _PART)
+    path = tmp_path / "history.zip"
+    path.write_bytes(b"PK\x03\x04" + bytes((i * 7) % 251 for i in range(183)))
+    return path
+
+
+def _parted_handler(*, received: list[int] | None = None, start_status: int = 201, start_job: dict | None = None,
+                    put: Callable[[int], httpx.Response | None] | None = None) -> Callable[[httpx.Request], httpx.Response]:
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == UPLOADS_PATH and request.method == "POST":
+            return httpx.Response(start_status, json=start_job or _job(
+                "uploading", kind="import", upload={"parts": 12, "bytes": 187, "received": received or []}))
+        if path.startswith(PARTS_PREFIX) and request.method == "PUT":
+            part = int(path.rsplit("/", 1)[1])
+            answer = put(part) if put else None
+            return answer or httpx.Response(200, json={"part": part, "bytes": len(request.content),
+                                                       "received": [part], "complete": False})
+        if path == COMPLETE_PATH and request.method == "POST":
+            return httpx.Response(202, json=_job("queued", kind="import"))
+        if path == JOB_PATH:
+            return httpx.Response(200, json=_job("succeeded", kind="import", import_report=_HISTORY_REPORT))
+        return httpx.Response(404, json={"detail": "Not found"})
+
+    return handler
+
+
+def test_a_large_file_goes_up_in_parts_with_their_digests(wire, big_archive):
+    seen = wire(_parted_handler())
+    result = _run("projects", "import", str(big_archive))
+    assert result.exit_code == 0, result.output
+    data = big_archive.read_bytes()
+    start = next(r for r in seen if r.url.path == UPLOADS_PATH)
+    body = json.loads(start.content)
+    assert body == {"client_token": str(projects.import_client_token(big_archive, None)), "bytes": 187,
+                    "parts": 12, "sha256": hashlib.sha256(data).hexdigest()}
+    puts = [r for r in seen if r.method == "PUT"]
+    assert [int(r.url.path.rsplit("/", 1)[1]) for r in puts] == list(range(1, 13))
+    for number, request in enumerate(puts, start=1):
+        chunk = data[(number - 1) * _PART:number * _PART]
+        assert request.content == chunk
+        assert request.headers["x-part-sha256"] == hashlib.sha256(chunk).hexdigest()
+        assert request.headers["content-type"] == "application/octet-stream"
+    assert [r.url.path for r in seen if r.method == "POST"] == [UPLOADS_PATH, COMPLETE_PATH]
+    assert not any(r.url.path == IMPORT_PATH for r in seen)        # never the 50 MB single POST
+    assert f"Created Payment Service (imported) ({NEW_PROJECT})." in result.output
+
+
+def test_a_resumed_upload_sends_only_the_missing_parts(wire, big_archive):
+    seen = wire(_parted_handler(received=[1, 2, 3, 4, 5, 6, 7], start_status=200))
+    result = _run("projects", "import", str(big_archive))
+    assert result.exit_code == 0, result.output
+    assert "Resuming upload: 7 of 12 parts already received." in result.output
+    assert [int(r.url.path.rsplit("/", 1)[1]) for r in seen if r.method == "PUT"] == [8, 9, 10, 11, 12]
+
+
+def test_a_part_conflict_prints_its_sentence_and_exits_1(wire, big_archive):
+    sentence = "Part 3 was already received with different content."
+    conflict = httpx.Response(409, json={"detail": {"code": "part_conflict", "message": sentence}})
+    seen = wire(_parted_handler(put=lambda part: conflict if part == 3 else None))
+    result = _run("projects", "import", str(big_archive))
+    assert result.exit_code == 1
+    assert sentence in result.output and "part_conflict" not in result.output
+    assert [int(r.url.path.rsplit("/", 1)[1]) for r in seen if r.method == "PUT"] == [1, 2, 3]
+    assert not any(r.url.path == COMPLETE_PATH for r in seen)
+
+
+def test_a_finished_upload_of_the_same_file_reads_already_imported(wire, big_archive):
+    done = _job("succeeded", kind="import", import_report=_HISTORY_REPORT)
+    seen = wire(_parted_handler(start_status=200, start_job=done))
+    result = _run("projects", "import", str(big_archive))
+    assert result.exit_code == 0, result.output
+    assert f"Already imported as Payment Service (imported) ({NEW_PROJECT})." in result.output
+    assert [(r.method, r.url.path) for r in seen] == [("POST", UPLOADS_PATH)]
+
+
+def test_a_history_import_prints_the_history_block(wire, big_archive):
+    wire(_parted_handler())
+    result = _run("projects", "import", str(big_archive))
+    assert result.exit_code == 0, result.output
+    assert "Run history: 12 runs from 2026-08-05 to 2026-11-01" in result.output
+    assert "480 test results" in result.output
+    assert "412 stored documents (raw_allure_json 400, run_summaries 12)" in result.output
+    assert "1 attachment (2.0 KB)" in result.output
+    assert "objects: 1 was not imported: its storage key is not a safe path" in result.output
+    assert "Retention purge paused until 2027-02-01." in result.output
+    assert "2 imported runs are from the last 7 days; an all-projects digest can list them." in result.output
+    assert projects.REINDEX_QUEUED in result.output
+
+
+def test_history_lines_read_in_the_singular_for_one():
+    lines = projects.history_lines({
+        "runs": 1, "test_cases": 1, "oldest_run_at": "2026-10-01T00:00:00+00:00",
+        "newest_run_at": "2026-10-01T00:00:00+00:00", "documents": {"run_summaries": 1}, "objects": 0,
+        "object_bytes": 0, "skipped": [], "recent_runs": 1, "search_reindex": "not_queued",
+    })
+    assert lines == [
+        "Run history: 1 run from 2026-10-01 to 2026-10-01", "1 test result",
+        "1 stored document (run_summaries 1)", "0 attachments (0 B)",
+        "1 imported run is from the last 7 days; an all-projects digest can list them.",
+        projects.REINDEX_NOT_QUEUED,
+    ]
+    assert projects.history_lines(None) == []        # a catalog-only import prints no history block
+
+
+def test_what_the_export_left_out_reads_in_the_servers_sentences():
+    lines = projects.history_lines({
+        "runs": 2, "test_cases": 0, "documents": {}, "objects": 0, "object_bytes": 0,
+        "skipped": [{"entity": "evidence_artifacts", "reason": "pipeline_scratch", "count": 1},
+                    {"entity": "agent_pipeline_runs", "reason": "pipeline_not_terminal", "count": 2}],
+    })
+    assert "evidence_artifacts: 1 was not imported: it pointed at a pipeline scratch file, which is not exported" in lines
+    assert "agent_pipeline_runs: 2 were not imported: its AI pipeline was still running at export" in lines

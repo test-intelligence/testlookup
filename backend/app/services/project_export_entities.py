@@ -1,14 +1,20 @@
-"""Which tables a project export carries, and how each one travels (W24 ADM-05 phase 1).
+"""Which tables a project export carries, and how each one travels (W24 ADM-05 phase 1; W30 phase 2).
 
 EVERY table of ``Base.metadata`` is classified here exactly once:
 
-* ``EXPORTED`` — the settings + catalog entities, in DEPENDENCY ORDER (parents
+* ``EXPORTED`` — the settings + catalog entities (``CATALOG``, phase 1's 29 in
+  phase 1's order), THEN the run-history entities (``HISTORY``, W30, written
+  only by an export WITH history — schema 2), in DEPENDENCY ORDER (parents
   first): the export writes and the import inserts in this order. Each
   :class:`EntitySpec` names the columns that never travel (``drop``), the
   authorship columns remapped by USERNAME (``user_refs``), the assignment
   columns always cleared (``cleared``), the FKs remapped through the import's
   id map (``fks`` / ``self_fks``) and the values forced on import so nothing
-  in a copy can mail or call out (``inert``).
+  in a copy can mail or call out (``inert``). A history entity also names the
+  rows it travels with (``window``, ``select_where``), its pointers written
+  NULL by the export when their target is outside the archive
+  (``null_unless``), its stored keys rebuilt under the new root
+  (``object_refs``) and its JSON id lists (``json_id_paths``).
 * ``EXCLUDED`` — project-scoped tables that do not travel, each with ONE
   ``project_export_vocab.EXCLUSION_REASONS`` key.
 * ``NOT_PROJECT_SCOPED`` — identity, instance settings, secrets, signing keys,
@@ -30,7 +36,13 @@ from typing import Any, Mapping
 
 from sqlalchemy import MetaData
 
-from app.services.project_export_vocab import IMPORTED_PAUSE_REASON
+from app.services.project_export_vocab import (
+    CATALOG_SCHEMA_VERSION,
+    HISTORY_RUN_STATUSES,
+    IMPORTED_PAUSE_REASON,
+    SUPPORTED_SCHEMA_VERSIONS,
+    TERMINAL_PIPELINE_STATUSES,
+)
 
 # ── scope values ─────────────────────────────────────────────────────────────
 SCOPE_ROOT = "root"                    # the ``projects`` row itself: WHERE id = :source
@@ -43,6 +55,20 @@ SCRUB_URLS = "urls"                    # SCRUB_DEFAULT + S-4 strip_url_credentia
 # Not a ``*_CHANNEL`` name: test_review_gate_inline_vocab_parity reads those as review-gate distribution channels.
 SCRUB_TEAM_TARGETS = "team_channel"    # SCRUB_DEFAULT + S-3: a slack / teams ``target`` → [REDACTED]
 SCRUBBERS = (SCRUB_DEFAULT, SCRUB_URLS, SCRUB_TEAM_TARGETS)
+
+# ── history windows (W30, contract §1.4 / §2.1): which rows of a history entity travel ──
+WINDOW_RUNS = "runs"                   # the run window itself: test_runs WHERE id = ANY(:window)
+WINDOW_PROJECT = "project"             # every row of the project (project_id = :source)
+#: "<kind>:<column>" kinds — rows whose <column> points at an exported row of that kind:
+#: run (∈ the run window), case (a case of a window run), pipeline (an EXPORTED pipeline),
+#: release (an exported release), canonical (an exported canonical case).
+WINDOW_KINDS = ("runs", "run", "case", "pipeline", "release", "canonical", "project")
+
+#: ``select_where`` names → (column, allowed values): the extra filter a history entity's window applies.
+HISTORY_PREDICATES: Mapping[str, tuple[str, tuple[str, ...]]] = {
+    "exported_run_status": ("status", HISTORY_RUN_STATUSES),          # an IN_PROGRESS run is skipped, never half-copied
+    "terminal_pipeline": ("status", TERMINAL_PIPELINE_STATUSES),     # a non-terminal pipeline (+ its stage results) is skipped
+}
 
 
 @dataclass(frozen=True)
@@ -76,6 +102,14 @@ class EntitySpec:
     inert: Mapping[str, Any] = field(default_factory=dict, hash=False)   # column → value (or ImportValue) forced on import — counted in switched_off
     scrub: str | None = SCRUB_DEFAULT                            # a SCRUBBERS name (None = typed columns only)
     natural_key: tuple[str, ...] = ()                            # UNIQUE key inside the project (source values): a repeat → invalid_row
+    # ── W30 run history (all default empty, so phase-1 specs are unchanged) ──
+    history: bool = False                                        # written only by a history export (schema 2); rows selected by ``window``
+    window: str | None = None                                    # WINDOW_RUNS | WINDOW_PROJECT | "<kind>:<column>" (WINDOW_KINDS)
+    history_fks: Mapping[str, str] = field(default_factory=dict, hash=False)   # CATALOG column dropped in schema 1, remapped in schema 2 (second pass)
+    object_refs: tuple[str, ...] = ()                            # columns holding a stored key / prefix → rebuilt under the new root (§2.3 R-1)
+    json_id_paths: Mapping[str, str] = field(default_factory=dict, hash=False)  # JSON list of ids the product READS → the table whose remap rewrites each id
+    null_unless: Mapping[str, str] = field(default_factory=dict, hash=False)    # column → table: written NULL by the EXPORT when its target is outside the archive
+    select_where: str | None = None                              # a HISTORY_PREDICATES name
 
     @property
     def parent(self) -> tuple[str, str] | None:
@@ -84,6 +118,14 @@ class EntitySpec:
             return None
         table, _, column = self.scope[len(SCOPE_PARENT_PREFIX):].partition(".")
         return table, column
+
+    @property
+    def window_parts(self) -> tuple[str, str | None] | None:
+        """``(kind, column)`` of ``window`` (column None for ``runs`` / ``project``); None when no window."""
+        if self.window is None:
+            return None
+        kind, _, column = self.window.partition(":")
+        return kind, (column or None)
 
 
 _PROJECTS = EntitySpec(
@@ -123,12 +165,15 @@ _DISMISSED_DUPLICATE_PAIRS = EntitySpec(
     fks={"case_a_id": "managed_test_cases", "case_b_id": "managed_test_cases"},
     natural_key=("case_a_id", "case_b_id"),
 )
+_CANONICAL_RUN_POINTERS = {"first_seen_run_id": "test_runs", "last_seen_run_id": "test_runs", "deleted_at_run_id": "test_runs"}
 _CANONICAL_TEST_CASES = EntitySpec(
     "canonical_test_cases",
-    drop=("first_seen_run_id", "last_seen_run_id", "deleted_at_run_id"),   # run pointers
+    # C-1 (W30): the run pointers are dropped in schema 1 (as phase 1) and remapped in schema 2 —
+    # written NULL by the export when that run is outside the window, set in the second pass
     user_refs=("retirement_confirmed_by_id",),
     fks={"test_suite_id": "test_suites", "managed_test_case_id": "managed_test_cases"},
     natural_key=("test_fingerprint",),
+    history_fks=dict(_CANONICAL_RUN_POINTERS), null_unless=dict(_CANONICAL_RUN_POINTERS),
 )
 _TEST_PLANS = EntitySpec(
     "test_plans",
@@ -211,8 +256,152 @@ _VALUE_METRIC_ASSUMPTIONS = EntitySpec("value_metric_assumptions", user_refs=("u
 _CLASSIFICATION_HINTS = EntitySpec("classification_hints", user_refs=("created_by",))
 _PROJECT_LLM_QUOTA = EntitySpec("project_llm_quota", user_refs=("updated_by_user_id",))
 
-#: Dependency order (parents first) — the export writes and the import inserts in this order.
-EXPORTED: tuple[EntitySpec, ...] = (
+# ── W30 run history (contract §2.1 H-1 … H-27): history=True, written only by a schema-2 export ──
+_RUNS = "parent:test_runs."
+_LEASE_COLUMNS = ("lease_owner", "lease_expires_at", "fencing_token", "heartbeat_at", "next_retry_at")
+_H_TEST_RUNS = EntitySpec(
+    # event_archive: the raw live-event archive (its own raw_events_days class) — the documents travel instead
+    "test_runs", window=WINDOW_RUNS, select_where="exported_run_status",
+    drop=("event_archive", "event_archive_at"), fks={"primary_release_id": "releases"},
+    object_refs=("minio_prefix",), scrub=SCRUB_URLS, history=True,
+)
+_H_AGENT_PIPELINE_RUNS = EntitySpec(
+    # §0.10: lease columns dropped and cancel_requested forced false — nothing can claim an imported pipeline
+    "agent_pipeline_runs", scope=_RUNS + "test_run_id", window="run:test_run_id", select_where="terminal_pipeline",
+    drop=_LEASE_COLUMNS, user_refs=("requested_by",), fks={"test_run_id": "test_runs"},
+    self_fks=("parent_pipeline_run_id", "rerun_of"),
+    null_unless={"parent_pipeline_run_id": "agent_pipeline_runs", "rerun_of": "agent_pipeline_runs"},
+    inert={"cancel_requested": False}, history=True,
+)
+_H_TEST_CASES = EntitySpec(
+    "test_cases", scope=_RUNS + "test_run_id", window="run:test_run_id",
+    user_refs=("triage_updated_by_user_id",), cleared=("assigned_to_user_id",),
+    fks={"test_run_id": "test_runs", "canonical_test_case_id": "canonical_test_cases"},
+    object_refs=("minio_s3_prefix",), natural_key=("test_run_id", "test_fingerprint"), history=True,
+)
+_H_TEST_CASE_HISTORY = EntitySpec(
+    "test_case_history", scope=_RUNS + "test_run_id", window="run:test_run_id",
+    fks={"test_case_id": "test_cases", "test_run_id": "test_runs"}, history=True,
+)
+_H_SUITE_EXECUTIONS = EntitySpec(
+    "suite_executions", window="run:test_run_id", fks={"test_run_id": "test_runs"},
+    natural_key=("test_run_id", "suite_key"), history=True,
+)
+_H_SUITE_RUN_REVIEWS = EntitySpec(
+    "suite_run_reviews", window="run:test_run_id", user_refs=("reviewer_user_id",),
+    fks={"test_run_id": "test_runs"}, natural_key=("test_run_id", "suite_name"), history=True,
+)
+_H_TEST_EXECUTION_REVIEWS = EntitySpec(
+    "test_execution_reviews", window="case:test_case_id", user_refs=("reviewed_by_user_id",),
+    fks={"test_case_id": "test_cases"}, scrub=SCRUB_URLS, natural_key=("test_case_id",), history=True,
+)
+_H_TEST_STEPS = EntitySpec(
+    "test_steps", scope="parent:canonical_test_cases.canonical_test_case_id",
+    window="canonical:canonical_test_case_id",
+    fks={"canonical_test_case_id": "canonical_test_cases"}, self_fks=("parent_step_id",),
+    null_unless={"source_test_run_id": "test_runs"}, history=True,
+)
+_H_TEST_STEP_RUNS = EntitySpec(
+    "test_step_runs", scope=_RUNS + "source_test_run_id", window="run:source_test_run_id",
+    fks={"canonical_test_case_id": "canonical_test_cases", "source_test_run_id": "test_runs"},
+    natural_key=("canonical_test_case_id", "source_test_run_id", "ordinal"), history=True,
+)
+_H_TEST_ATTACHMENTS = EntitySpec(
+    # source_ref is a name relative to the run's result files (kept verbatim; the bytes travel as objects)
+    "test_attachments", scope="parent:canonical_test_cases.canonical_test_case_id",
+    window="canonical:canonical_test_case_id",
+    fks={"canonical_test_case_id": "canonical_test_cases", "test_step_id": "test_steps"},
+    null_unless={"source_test_run_id": "test_runs"}, history=True,
+)
+_H_FAILURE_CLUSTERS = EntitySpec(
+    "failure_clusters", scope=_RUNS + "test_run_id", window="run:test_run_id",
+    fks={"test_run_id": "test_runs"}, null_unless={"pipeline_run_id": "agent_pipeline_runs"},
+    json_id_paths={"member_test_ids": "test_cases"}, history=True,
+)
+_H_AGENT_STAGE_RESULTS = EntitySpec(
+    # AI traces are DATA: result / checkpoint / decision JSON through scrub_json; no prompt is read or written
+    "agent_stage_results", scope="parent:agent_pipeline_runs.pipeline_run_id", window="pipeline:pipeline_run_id",
+    drop=("lease_expires_at",), fks={"pipeline_run_id": "agent_pipeline_runs"},
+    null_unless={"failure_cluster_id": "failure_clusters"}, history=True,
+)
+_H_AI_ANALYSIS = EntitySpec(
+    "ai_analysis", scope="parent:test_cases.test_case_id", window="case:test_case_id",
+    fks={"test_case_id": "test_cases"}, natural_key=("test_case_id",), history=True,
+)
+_H_AI_ANALYSIS_VERSIONS = EntitySpec(
+    # content_sha256 kept: the reader never re-verifies it (a scrubbed version's digest may no longer match)
+    "ai_analysis_versions", window="case:test_case_id", user_refs=("actor_user_id",),
+    fks={"test_case_id": "test_cases", "test_run_id": "test_runs"},
+    null_unless={"pipeline_run_id": "agent_pipeline_runs"}, natural_key=("test_case_id", "version"), history=True,
+)
+_H_FAILURE_ATTRIBUTION = EntitySpec(
+    "failure_attribution", window="case:test_case_id",
+    fks={"test_case_id": "test_cases", "test_run_id": "test_runs"}, natural_key=("test_case_id",), history=True,
+)
+_H_DEEP_FINDINGS = EntitySpec(
+    # cluster_id is a string label (no FK) — kept
+    "deep_findings", scope=_RUNS + "test_run_id", window="run:test_run_id", fks={"test_run_id": "test_runs"}, history=True,
+)
+_H_RELEASE_DECISIONS = EntitySpec(
+    # a NULL-project (system) policy is not exported → policy_id written NULL
+    "release_decisions", scope=_RUNS + "test_run_id", window="run:test_run_id", user_refs=("overridden_by",),
+    fks={"test_run_id": "test_runs"},
+    null_unless={"pipeline_run_id": "agent_pipeline_runs", "policy_id": "release_gate_policies"},
+    natural_key=("test_run_id",), history=True,
+)
+_H_RELEASE_TEST_RUN_LINKS = EntitySpec(
+    # project_id exists WITHOUT an FK constraint — written as the NEW project id like every project_id
+    "release_test_run_links", window="run:test_run_id", user_refs=("linked_by_id",),
+    fks={"release_id": "releases", "test_run_id": "test_runs", "phase_id": "release_phases"},
+    natural_key=("release_id", "test_run_id"), history=True,
+)
+_H_RUN_BASELINES = EntitySpec(
+    "run_baselines", scope=_RUNS + "run_id", window="run:run_id", fks={"run_id": "test_runs"},
+    null_unless={"baseline_run_id": "test_runs"}, natural_key=("run_id",), history=True,
+)
+_H_RUN_DIFFS = EntitySpec(
+    "run_diffs", scope=_RUNS + "run_id", window="run:run_id", fks={"run_id": "test_runs"},
+    null_unless={"baseline_run_id": "test_runs"}, natural_key=("run_id",), history=True,
+)
+_H_RUN_COMMIT_RANGES = EntitySpec(
+    # base_run_id is a plain UUID column (no FK) — remapped like one
+    "run_commit_ranges", window="run:run_id", fks={"run_id": "test_runs"},
+    null_unless={"base_run_id": "test_runs"}, natural_key=("run_id",), history=True,
+)
+_H_RUN_INTELLIGENCE_SNAPSHOTS = EntitySpec(
+    # imported as stored, so viewing an imported run never regenerates it
+    "run_intelligence_snapshots", scope=_RUNS + "run_id", window="run:run_id", fks={"run_id": "test_runs"},
+    natural_key=("run_id",), history=True,
+)
+_H_TEST_HEALTH_RECOMMENDATIONS = EntitySpec(
+    "test_health_recommendations", scope=_RUNS + "test_run_id", window="run:test_run_id",
+    fks={"test_run_id": "test_runs", "test_case_id": "test_cases"}, history=True,
+)
+_H_EVIDENCE_ARTIFACTS = EntitySpec(
+    # rows with run_id NULL are project-level evidence of the source (not in the window). idempotency_key has a
+    # GLOBAL unique index → forced NULL (dropped). uri_or_ref into the pipeline-artifacts bucket → NULL (G-B's scrub).
+    "evidence_artifacts", window="run:run_id", drop=("idempotency_key",), fks={"run_id": "test_runs"},
+    null_unless={"test_case_id": "test_cases", "producer_pipeline_run_id": "agent_pipeline_runs"},
+    scrub=SCRUB_URLS, history=True,
+)
+_H_RELEASE_OUTCOMES = EntitySpec(
+    "release_outcomes", window="release:release_id", user_refs=("marked_by_user_id",),
+    fks={"release_id": "releases"}, history=True,
+)
+_H_RELEASE_GATE_DECISIONS = EntitySpec(
+    # imported decisions keep is_current as exported — the gate's history; NO gate is evaluated by the import
+    "release_gate_decisions", scope="parent:releases.release_id", window="release:release_id",
+    user_refs=("created_by_id",),
+    fks={"release_id": "releases", "phase_id": "release_phases", "baseline_release_id": "releases"},
+    null_unless={"policy_id": "release_gate_policies"},
+    json_id_paths={"run_ids": "test_runs", "incomplete_runs": "test_runs"}, history=True,
+)
+_H_TIMELINE_NOTES = EntitySpec(
+    "timeline_notes", window=WINDOW_PROJECT, user_refs=("created_by_id",), history=True,
+)
+
+#: Phase 1's 29 settings + catalog entities, in phase 1's order (a schema-1 export writes exactly these).
+CATALOG: tuple[EntitySpec, ...] = (
     _PROJECTS,
     _TEST_SUITES, _MANAGED_TEST_CASES, _TEST_CASE_VERSIONS, _TEST_CASE_REQUIREMENT_LINKS,
     _DISMISSED_DUPLICATE_PAIRS, _CANONICAL_TEST_CASES, _TEST_PLANS, _TEST_PLAN_ITEMS, _TEST_STRATEGIES,
@@ -222,7 +411,20 @@ EXPORTED: tuple[EntitySpec, ...] = (
     _PROJECT_RETENTION_POLICIES, _WORKFLOW_DEFINITIONS, _PROJECT_WORKFLOW_DEFAULTS, _AGENT_CONFIGS,
     _RUN_CADENCES, _VALUE_METRIC_ASSUMPTIONS, _CLASSIFICATION_HINTS, _PROJECT_LLM_QUOTA,
 )
+#: The 27 run-history entities (W30), parents first, planned AFTER the catalog (a schema-2 export).
+HISTORY: tuple[EntitySpec, ...] = (
+    _H_TEST_RUNS, _H_AGENT_PIPELINE_RUNS, _H_TEST_CASES, _H_TEST_CASE_HISTORY, _H_SUITE_EXECUTIONS,
+    _H_SUITE_RUN_REVIEWS, _H_TEST_EXECUTION_REVIEWS, _H_TEST_STEPS, _H_TEST_STEP_RUNS, _H_TEST_ATTACHMENTS,
+    _H_FAILURE_CLUSTERS, _H_AGENT_STAGE_RESULTS, _H_AI_ANALYSIS, _H_AI_ANALYSIS_VERSIONS, _H_FAILURE_ATTRIBUTION,
+    _H_DEEP_FINDINGS, _H_RELEASE_DECISIONS, _H_RELEASE_TEST_RUN_LINKS, _H_RUN_BASELINES, _H_RUN_DIFFS,
+    _H_RUN_COMMIT_RANGES, _H_RUN_INTELLIGENCE_SNAPSHOTS, _H_TEST_HEALTH_RECOMMENDATIONS, _H_EVIDENCE_ARTIFACTS,
+    _H_RELEASE_OUTCOMES, _H_RELEASE_GATE_DECISIONS, _H_TIMELINE_NOTES,
+)
+#: Dependency order (parents first) — the export writes and the import inserts in this order.
+EXPORTED: tuple[EntitySpec, ...] = CATALOG + HISTORY
 EXPORTED_TABLES: tuple[str, ...] = tuple(spec.table for spec in EXPORTED)
+CATALOG_TABLES: tuple[str, ...] = tuple(spec.table for spec in CATALOG)
+HISTORY_TABLES: tuple[str, ...] = tuple(spec.table for spec in HISTORY)
 
 #: The settings columns copied onto the new project (contract §2.1 row 1). The
 #: two ``cleared`` assignment columns travel too (counted, then NULL).
@@ -232,30 +434,29 @@ PROJECT_ROW_COLUMNS: tuple[str, ...] = (
     "allow_unreviewed_distribution", "require_case_review", "automation_target_pct",
 )
 
-_RUN_HISTORY = "run_history"
-#: Project-scoped tables that do NOT travel → one EXCLUSION_REASONS key each.
+#: Project-scoped tables that do NOT travel → one EXCLUSION_REASONS key each. (W30: the former
+#: ``run_history`` rows are EXPORTED as history or excluded below with a specific reason — X-1 … X-19.)
 EXCLUDED: Mapping[str, str] = {
-    # test_runs + its ON DELETE CASCADE closure (run_history_tables(), 36) — phase 2 (F-1)
-    **{t: _RUN_HISTORY for t in (
-        "agent_child_dispatch_outbox", "agent_investigations", "agent_invocations", "agent_memory_entries",
-        "agent_pipeline_runs", "agent_stage_results", "ai_analysis", "ai_analysis_versions", "ai_feedback",
-        "decision_report_feedback", "decision_report_supersession_requests",
-        "deep_findings", "defect_candidates", "failure_attribution", "failure_clusters", "live_event_receipts",
-        "live_ingestion_attempts", "live_projection_checkpoints", "release_decisions", "release_test_run_links",
-        "report_share_links", "run_baselines", "run_commit_ranges", "run_comparison_reports", "run_diffs",
-        "run_downstream_outbox", "run_intelligence_snapshots", "suite_executions", "suite_run_reviews",
-        "test_case_history", "test_cases", "test_execution_reviews", "test_health_recommendations", "test_runs",
-        "test_step_runs", "workflow_replay_corpus",
-    )},
-    # other run-pointing history
-    "suite_membership_events": _RUN_HISTORY,        # the per-run membership event log
-    "live_sessions": _RUN_HISTORY,                  # live ingest sessions of runs
-    "run_tombstones": _RUN_HISTORY,                 # records of deleted runs
-    "defects": _RUN_HISTORY,                        # point at run test cases, clusters, the source's Jira tickets
-    "timeline_notes": _RUN_HISTORY,                 # annotations of the run timeline
-    "release_outcomes": _RUN_HISTORY,               # shipped / rolled-back evidence, read with its runs
-    "release_gate_decisions": _RUN_HISTORY,         # gate decision history
-    "test_steps": _RUN_HISTORY,                     # steps OBSERVED in runs
+    # queues a sweep would pick up — an import must never hand one a copied row (§0.10)
+    "run_downstream_outbox": "ingest_machinery",            # X-1: relay / recover_waiting_run_finalizations → finalize_run
+    "agent_child_dispatch_outbox": "ingest_machinery",      # X-2: child-investigation dispatch queue
+    "decision_report_supersession_requests": "ingest_machinery",   # X-3: status / next_attempt_at work queue
+    "live_ingestion_attempts": "ingest_machinery",          # X-4: live-ingest batch receipts (the SOURCE's Redis ids)
+    "live_event_receipts": "ingest_machinery",              # X-5: per-event projection receipts; event_id globally unique
+    "live_projection_checkpoints": "ingest_machinery",      # X-6: a consumer-group checkpoint of the source's stream
+    "live_sessions": "ingest_machinery",                    # X-7: an ingest session with session_token_hash (a credential hash)
+    "agent_invocations": "ingest_machinery",                # X-8: an invocation REQUEST; the pipeline it started travels
+    "agent_investigations": "ai_history",                   # X-9: budgeted working state reaped by reap_stale_investigations
+    "agent_memory_entries": "artefact_or_index",            # X-10: backed by ChromaDB vectors that do not travel
+    "ai_feedback": "ai_history",                            # X-11: a training signal — would double-count in training data
+    "decision_report_feedback": "ai_history",               # X-12: the same, for decision reports
+    "workflow_replay_corpus": "ai_history",                 # X-13: eval replay corpus, GLOBAL unique key
+    "report_share_links": "access_grant",                   # X-14: a token_hash granting anonymous read access
+    "run_comparison_reports": "derived",                    # X-15: a cached comparison, rebuilt on demand
+    "defect_candidates": "external_tracker",                # X-16: promotion files a Jira ticket
+    "defects": "external_tracker",                          # X-17: the SOURCE's Jira tickets; sync_jira_defect_statuses would call out
+    "suite_membership_events": "derived",                   # X-18: the membership event log, rebuilt by the next ingest
+    "run_tombstones": "audit_or_activity",                  # X-19: records of THIS deployment's run deletions
     # a person's own state
     "chat_sessions": "per_user_state",
     "chat_messages": "per_user_state",
@@ -315,12 +516,10 @@ EXCLUDED: Mapping[str, str] = {
     "requirement_coverage": "ai_history",
     "review_requests": "ai_history",
     "fix_attempts": "ai_history",
-    # a MinIO object or a vector index (phase 2 with artefacts)
+    # a MinIO object or a vector index (W30: test_attachments / evidence_artifacts travel as history)
     "knowledge_sources": "artefact_or_index",
     "knowledge_chunks": "artefact_or_index",
     "knowledge_sync_events": "artefact_or_index",
-    "evidence_artifacts": "artefact_or_index",
-    "test_attachments": "artefact_or_index",
     "compliance_packs": "artefact_or_index",
     # a legal act on the SOURCE's data
     "retention_holds": "legal_hold",
@@ -413,10 +612,17 @@ def spec_for(table: str) -> EntitySpec:
 _SPECS: dict[str, EntitySpec] = {spec.table: spec for spec in EXPORTED}
 
 
-def exported_columns(spec: EntitySpec, metadata: MetaData | None = None) -> tuple[str, ...]:
-    """The columns written for ``spec``'s rows: every column of the table minus ``drop``, table order."""
+def exported_columns(
+    spec: EntitySpec, metadata: MetaData | None = None, *, schema_version: int = CATALOG_SCHEMA_VERSION,
+) -> tuple[str, ...]:
+    """The columns written for ``spec``'s rows, table order: every column minus ``drop``; schema 1 (the
+    default — phase 1's columns, what every phase-1 caller reads) also drops the ``history_fks`` (C-1's
+    canonical run pointers), schema 2 keeps them. A schema this deployment does not read → ValueError."""
+    if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+        raise ValueError(f"schema_version {schema_version!r} is not one of {SUPPORTED_SCHEMA_VERSIONS}")
     md = metadata if metadata is not None else _metadata()
-    return tuple(c.name for c in md.tables[spec.table].columns if c.name not in spec.drop)
+    hidden = set(spec.drop) | (set(spec.history_fks) if schema_version == CATALOG_SCHEMA_VERSION else set())
+    return tuple(c.name for c in md.tables[spec.table].columns if c.name not in hidden)
 
 
 def required_user_refs(spec: EntitySpec, metadata: MetaData | None = None) -> tuple[str, ...]:
@@ -429,11 +635,13 @@ def required_user_refs(spec: EntitySpec, metadata: MetaData | None = None) -> tu
 
 
 def order_problems(specs: tuple[EntitySpec, ...] = EXPORTED) -> list[str]:
-    """Every ``fks`` / ``parent:`` edge whose parent does not precede its child (empty = sorted)."""
+    """Every ``fks`` / ``parent:`` / non-self ``null_unless`` edge whose parent does not precede its
+    child (empty = sorted). ``self_fks`` and ``history_fks`` are second-pass columns, not edges."""
     position = {spec.table: i for i, spec in enumerate(specs)}
     problems: list[str] = []
     for i, spec in enumerate(specs):
         parents = set(spec.fks.values())
+        parents |= {t for c, t in spec.null_unless.items() if t != spec.table and c not in spec.history_fks}
         if spec.parent is not None:
             parents.add(spec.parent[0])
         if spec.scope != SCOPE_ROOT:
@@ -450,14 +658,17 @@ def _metadata() -> MetaData:
     return Base.metadata
 
 
-@lru_cache(maxsize=1)
-def _checked_plan() -> tuple[EntitySpec, ...]:
-    problems = order_problems(EXPORTED)
+@lru_cache(maxsize=2)
+def _checked_plan(include_history: bool) -> tuple[EntitySpec, ...]:
+    specs = EXPORTED if include_history else CATALOG
+    problems = order_problems(specs)
     if problems:
         raise RuntimeError("project export plan is not topologically sorted: " + "; ".join(problems))
-    return EXPORTED
+    return specs
 
 
-def plan() -> list[EntitySpec]:
-    """``EXPORTED`` in dependency order (asserted: every parent precedes its children)."""
-    return list(_checked_plan())
+def plan(*, include_history: bool = False) -> list[EntitySpec]:
+    """The entities in dependency order (asserted: every parent precedes its children): phase 1's 29
+    ``CATALOG`` entities (the default — what every phase-1 caller reads, a schema-1 export), or those 29
+    + ``HISTORY`` (a schema-2 export / import)."""
+    return list(_checked_plan(include_history))

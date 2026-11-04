@@ -43,7 +43,7 @@ from app.services.evidence_catalogue import (
     ground_layer,
     render_catalogue,
 )
-from app.services.inline_invocation import is_inline_state
+from app.services.inline_invocation import SEEDED_STATUS, is_inline_state
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
 from app.services.model_router import choose_model, decide_escalation, provenance
@@ -199,7 +199,21 @@ def _format_results_line(run_data: dict[str, Any]) -> str:
     Counts are stated only when the run actually carries them and are never
     derived by subtraction — inferring "passed" from the others would invent a
     number nobody measured, which is the failure mode this line already had.
+
+    An inline invocation (W23c F-1, owner-approved 2026-11-03) seeds counts true
+    of the SUPPLIED failures only: n tests, n failed, 0.0 %. Printed here as the
+    build's "Results … Pass rate 0.0%", the live model restated them as the run's
+    result although the anchor run passed — summary_system v2's rule alone did
+    not stop it (homelab, 2026-11-04). So the line names them as supplied
+    failures and carries no pass rate.
     """
+    if run_data.get("status") == SEEDED_STATUS:
+        supplied = int(run_data.get("failed_tests") or 0)
+        noun = "failure" if supplied == 1 else "failures"
+        return (
+            f"Supplied {noun}: {supplied}, sent by the caller with this request. "
+            "They are not this build's results; this data carries no pass rate for the build."
+        )
     total = int(run_data.get("total_tests") or 0)
     failed = int(run_data.get("failed_tests") or 0)
     pass_rate = float(run_data.get("pass_rate") or 0.0)
@@ -1530,9 +1544,15 @@ class SummaryAgent(BaseAgent):
             release_impact = "NO_GO"
             criticality = "CRITICAL"
 
+        # W23c F-1: an inline invocation's counts are the caller's supplied failures, not the build's -- no
+        # release signal is derived from them (the release_impact field keeps its vocabulary for the readers).
+        inline = run_data.get("status") == SEEDED_STATUS
+        release_clause = (
+            "" if inline else f", and the current release signal is {release_impact.replace('_', ' ')}"
+        )
         summary_sentence = (
             f"Build {build} on branch {branch} — {_format_results_line(run_data)} "
-            f"The dominant failure category was {top_category.replace('_', ' ').lower()}, and the current release signal is {release_impact.replace('_', ' ')}. "
+            f"The dominant failure category was {top_category.replace('_', ' ').lower()}{release_clause}. "
             "This summary was generated from stored pipeline evidence because the configured LLM was unavailable."
         )
 
@@ -1612,7 +1632,12 @@ class SummaryAgent(BaseAgent):
                     "qa": "Validate the failing scenarios and capture any repeatable evidence.",
                     "developer": "Investigate the dominant failure category and remediate the highest-impact root cause first.",
                     "sre": "Check environment health, service dependencies, and local model availability for the AI stack.",
-                    "release_manager": f"Treat this run as {release_impact.replace('_', ' ')} until the failures and AI model availability are resolved.",
+                    "release_manager": (
+                        "These are failures supplied with the request, not this run's results: judge the release "
+                        "from the run itself."
+                        if inline
+                        else f"Treat this run as {release_impact.replace('_', ' ')} until the failures and AI model availability are resolved."
+                    ),
                 },
             },
         }

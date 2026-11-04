@@ -263,6 +263,61 @@ async def upload_file(
         raise map_connection_error(exc, base_url) from exc
 
 
+# ── W30 ADM-05 phase 2: the parted import upload (files over 50 MB, up to 2 GB) ──
+# Every path is written IN FULL (tests/regression/test_cli_and_mcp_wire_contract.py reads the literals).
+
+
+async def start_upload(start: dict[str, Any], *, profile_name: Optional[str] = None) -> Any:
+    """``POST /api/v1/project-imports/uploads`` — 201 a new ``uploading`` job, or 200 the token's existing job."""
+    return await request("POST", "/api/v1/project-imports/uploads", json_body=start, profile_name=profile_name)
+
+
+async def upload_part(
+    job_id: str,
+    part: int,
+    data: bytes,
+    sha256: str,
+    *,
+    profile_name: Optional[str] = None,
+    timeout: float = 300.0,
+) -> Any:
+    """``PUT …/parts/{part}``: one raw ``application/octet-stream`` body (≤ 32 MB) with ``X-Part-Sha256``.
+
+    The caller reads ONE part from disk at a time, so the CLI never holds more
+    than one part in memory. An expired JWT earns one retry with the same bytes.
+    """
+    profile = get_profile(profile_name)
+    base_url = profile.get("url", "http://localhost:8000").rstrip("/")
+    path = f"/api/v1/project-imports/uploads/{job_id}/parts/{part}"
+    url = f"{base_url}{path}"
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as http:
+            for attempt in (1, 2):
+                headers = {
+                    **_build_headers(profile),
+                    "Content-Type": "application/octet-stream",
+                    "X-Part-Sha256": sha256,
+                }
+                resp = await http.put(url, headers=headers, content=data)
+                if (
+                    attempt == 1 and resp.status_code == 401 and profile.get("auth_type") == "jwt"
+                    and profile.get("refresh_token") and await _try_refresh(http, base_url, profile, profile_name)
+                ):
+                    continue
+                break
+            _raise_for_status(resp)
+            return resp.json()
+    except httpx.RequestError as exc:
+        raise map_connection_error(exc, base_url) from exc
+
+
+async def complete_upload(job_id: str, *, profile_name: Optional[str] = None) -> Any:
+    """``POST …/complete`` — 202 the job ``queued`` (200 when it already was); 409 names missing parts."""
+    return await request(
+        "POST", f"/api/v1/project-imports/uploads/{job_id}/complete", profile_name=profile_name,
+    )
+
+
 async def _try_refresh(client: httpx.AsyncClient, base_url: str, profile: dict, profile_name: Optional[str]) -> bool:
     """Attempt to refresh the JWT access token."""
     try:

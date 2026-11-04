@@ -354,3 +354,106 @@ def test_the_project_kind_shares_no_key_set_with_the_other_two():
     assert set(_manifest(project)) != set(_manifest(release))
     assert set(_manifest(project)) != set(_manifest(runs))
     assert hash(project) is not None   # a frozen scope stays hashable with its dict
+
+
+# ── W30 ADM-05 phase 2: a streamed member (``StreamedMember``) ───────────────
+
+
+async def _chunks(data: bytes, size: int):
+    for start in range(0, len(data), size):
+        yield data[start:start + size]
+
+
+async def _members(items):
+    for name, value in items:
+        yield name, value
+
+
+async def _build(items) -> tuple[dict, dict]:
+    import io
+    import json
+    import zipfile
+
+    scope = svc.ExportScope.for_project(project_id=uuid.uuid4(), manifest_extra={"format": "x"})
+    sink = io.BytesIO()
+    at = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    await svc.build_archive(scope, members=_members(items), sink=sink, generated_at=at)
+    with zipfile.ZipFile(io.BytesIO(sink.getvalue())) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        contents = {name: zf.read(name) for name in zf.namelist() if name != "manifest.json"}
+        types = {info.filename: info.compress_type for info in zf.infolist()}
+    return contents, {"manifest": manifest, "types": types}
+
+
+async def test_a_streamed_member_writes_the_same_bytes_and_digest_as_a_bytes_member():
+    import hashlib
+    import zipfile
+
+    payload = (b"objects-sentinel-row " * 9000) + bytes(range(256)) * 50
+    as_bytes, a = await _build([("objects/x/000001.bin", payload)])
+    streamed, b = await _build([
+        ("objects/x/000001.bin", svc.StreamedMember(chunks=_chunks(payload, 4096), stored=False)),
+    ])
+    assert as_bytes == streamed == {"objects/x/000001.bin": payload}
+    assert a["manifest"]["files"] == b["manifest"]["files"] == [{
+        "name": "objects/x/000001.bin",
+        "bytes": len(payload),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }]
+    assert b["types"]["objects/x/000001.bin"] == zipfile.ZIP_DEFLATED
+
+
+async def test_a_stored_streamed_member_is_written_zip_stored():
+    import zipfile
+
+    png = b"\x89PNG\r\n\x1a\n" + b"pixel-run" * 3000
+    contents, meta = await _build([
+        ("entities/test_runs/part-0001.jsonl", b'{"id": "run"}\n'),
+        ("objects/x/000001.bin", svc.StreamedMember(chunks=_chunks(png, 1000), stored=True)),
+    ])
+    assert contents["objects/x/000001.bin"] == png
+    assert meta["types"]["objects/x/000001.bin"] == zipfile.ZIP_STORED
+    assert meta["types"]["entities/test_runs/part-0001.jsonl"] == zipfile.ZIP_DEFLATED
+    assert [f["name"] for f in meta["manifest"]["files"]] == [
+        "entities/test_runs/part-0001.jsonl", "objects/x/000001.bin",
+    ]
+
+
+async def test_an_empty_streamed_member_is_listed_with_zero_bytes():
+    import hashlib
+
+    contents, meta = await _build([("objects/x/000001.bin", svc.StreamedMember(chunks=_chunks(b"", 10)))])
+    assert contents == {"objects/x/000001.bin": b""}
+    assert meta["manifest"]["files"][0]["bytes"] == 0
+    assert meta["manifest"]["files"][0]["sha256"] == hashlib.sha256(b"").hexdigest()
+
+
+async def test_a_streamed_member_counts_against_the_byte_limit():
+    import io
+
+    scope = svc.ExportScope.for_project(project_id=uuid.uuid4(), manifest_extra={})
+    noise = b"".join(uuid.uuid4().bytes for _ in range(20_000))
+    member = svc.StreamedMember(chunks=_chunks(noise, 65536), stored=True)
+    with pytest.raises(svc.ArchiveTooLarge):
+        await svc.build_archive(
+            scope, members=_members([("objects/x/000001.bin", member)]), sink=io.BytesIO(),
+            generated_at=datetime(2026, 11, 3, tzinfo=timezone.utc), max_bytes=100_000,
+        )
+
+
+async def test_the_release_mapping_form_is_untouched_by_streamed_members():
+    """The Mapping form (the release pack) is byte-identical: no StreamedMember
+    path runs and the archive of the same members is the same bytes twice."""
+    import io
+
+    scope = svc.ExportScope.for_release(
+        release_id=uuid.uuid4(), project_id=uuid.uuid4(), run_ids=[uuid.uuid4()]
+    )
+    at = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    files = {"b.json": b"bbb", "a.json": b"a"}
+    first, second = io.BytesIO(), io.BytesIO()
+    one = await svc.build_archive(scope, members=files, sink=first, generated_at=at)
+    two = await svc.build_archive(scope, members=dict(files), sink=second, generated_at=at)
+    assert first.getvalue() == second.getvalue()
+    assert one.manifest_sha256 == two.manifest_sha256
+    assert one.manifest_sha256 == svc._sha256(svc._build_manifest(files, at, scope, None, None))
