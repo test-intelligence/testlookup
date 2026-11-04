@@ -156,6 +156,7 @@ export const SKIP_REASONS = {
   unsafe_key: 'its storage key is not a safe path',
   too_large: 'it is larger than 256 MB',
   invalid_document: 'it is not a valid stored document',
+  pipeline_scratch: 'it pointed at a pipeline scratch file, which is not exported',
 } as const
 export type ProjectDataSkipReason = keyof typeof SKIP_REASONS
 

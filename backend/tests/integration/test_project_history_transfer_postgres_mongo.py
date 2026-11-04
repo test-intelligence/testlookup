@@ -461,6 +461,11 @@ async def _scalar(env: Any, sql: str, **params: Any) -> Any:
         return (await db.execute(text(sql), params)).scalar_one()
 
 
+async def _ledger_is_sql_null(env: Any, job_id: Any) -> bool:
+    """SQL NULL, not a JSON ``null`` (which ``WHERE cleanup IS NOT NULL`` — the janitor's sweep — still sees)."""
+    return bool(await _scalar(env, "SELECT cleanup IS NULL FROM project_data_jobs WHERE id = :j", j=uuid.UUID(str(job_id))))
+
+
 def _members(archive: bytes) -> dict[str, bytes]:
     with zipfile.ZipFile(io.BytesIO(archive)) as zf:
         return {info.filename: zf.read(info) for info in zf.infolist()}
@@ -686,7 +691,17 @@ async def test_the_copys_purge_is_paused_and_the_report_says_what_was_written(en
         min(created), max(created))
     assert datetime.fromisoformat(report["retention_paused_until"]) == paused
     assert report["search_reindex"] == "queued"
-    assert imported.job.cleanup is None and imported.job.storage_key is None
+    # what the EXPORT left out is in the report too, every reason with a sentence (pipeline_scratch included)
+    from app.services.project_export_vocab import SKIP_REASONS
+
+    manifest_skips = json.loads(_members(env.archive)["manifest.json"])["history"]["skipped"]
+    reported = {(s["entity"], s["reason"]): s["count"] for s in report["skipped"]}
+    assert all(s["reason"] in SKIP_REASONS for s in report["skipped"])
+    for entry in manifest_skips:
+        assert reported.get((entry["entity"], entry["reason"]), 0) >= entry["count"], entry
+    assert ("evidence_artifacts", "pipeline_scratch") in reported
+    assert ("agent_pipeline_runs", "pipeline_not_terminal") in reported
+    assert await _ledger_is_sql_null(env, imported.job.id) and imported.job.storage_key is None
     assert imported.job.options.get("schema_version") == 2
     from app.services.compliance_pack_service import COMPLIANCE_BUCKET
 
@@ -847,7 +862,7 @@ async def _assert_nothing_left(env: Any, job: Any, *, name: str, leads_before: i
     from app.services.project_export_documents import MONGO_COLLECTIONS
     from app.services.project_import_history import history_id
 
-    assert job.status == "failed" and job.project_id is None and job.cleanup is None
+    assert job.status == "failed" and job.project_id is None and await _ledger_is_sql_null(env, job.id)
     assert await _copies_named(env, name) == 0
     assert await _qa_leads(env) == leads_before
     runs = [str(history_id(job.id, s)) for s in _archive_ids(env.archive, "test_runs")]
@@ -1085,7 +1100,7 @@ async def _refused_run(env: Any, job_id: str) -> Any:
     assert env.rec.mongo_writes == [], f"the refused import wrote documents: {env.rec.mongo_writes}"
     assert env.storage.puts_outside_imports() == [], env.storage.puts_outside_imports()
     assert await _scalar(env, "SELECT count(*) FROM projects") == projects_before
-    assert job.project_id is None and job.cleanup is None
+    assert job.project_id is None and await _ledger_is_sql_null(env, job.id)
     return job
 
 

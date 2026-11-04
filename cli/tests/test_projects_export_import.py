@@ -526,3 +526,13 @@ def test_history_lines_read_in_the_singular_for_one():
         projects.REINDEX_NOT_QUEUED,
     ]
     assert projects.history_lines(None) == []        # a catalog-only import prints no history block
+
+
+def test_what_the_export_left_out_reads_in_the_servers_sentences():
+    lines = projects.history_lines({
+        "runs": 2, "test_cases": 0, "documents": {}, "objects": 0, "object_bytes": 0,
+        "skipped": [{"entity": "evidence_artifacts", "reason": "pipeline_scratch", "count": 1},
+                    {"entity": "agent_pipeline_runs", "reason": "pipeline_not_terminal", "count": 2}],
+    })
+    assert "evidence_artifacts: 1 was not imported: it pointed at a pipeline scratch file, which is not exported" in lines
+    assert "agent_pipeline_runs: 2 were not imported: its AI pipeline was still running at export" in lines

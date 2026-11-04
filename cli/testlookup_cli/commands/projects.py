@@ -39,6 +39,7 @@ SKIP_REASONS = {
     "unsafe_key": "its storage key is not a safe path",
     "too_large": "it is larger than 256 MB",
     "invalid_document": "it is not a valid stored document",
+    "pipeline_scratch": "it pointed at a pipeline scratch file, which is not exported",
 }
 HISTORY_IMPORTED = "{runs} runs from {oldest} to {newest}"
 RETENTION_NOTE = (

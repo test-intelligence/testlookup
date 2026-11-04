@@ -59,7 +59,7 @@ from typing import IO, Annotated, Any, Awaitable, Callable, Iterator, Mapping, O
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
-from sqlalchemy import UniqueConstraint, bindparam, func, insert, select, update
+from sqlalchemy import UniqueConstraint, bindparam, func, insert, null, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Base, Project, ProjectDataJob, User
@@ -956,6 +956,26 @@ def transform_row(ctx: _Context, spec: EntitySpec, values: dict[str, Any]) -> Op
     return values
 
 
+def _rewrite_id_path(ctx: _Context, target: str, value: Any) -> tuple[Any, int]:
+    """A ``json_id_paths`` value → ``(rewritten, ids removed)``. Two shapes the product writes: a LIST of ids
+    (``release_gate_decisions.run_ids``, ``failure_clusters.member_test_ids``) — each item rewritten; a DICT keyed
+    by id (production's ``release_gate_decisions.incomplete_runs`` ``{run_id: rejected}``,
+    ``release_rollup_service``) — each KEY rewritten, its value kept. An id that does not resolve (outside the
+    archive) is removed. Any other shape carries no id the import can vouch for → ``[]`` (counted 1)."""
+    def new_text(item: Any) -> Optional[str]:
+        new = ctx.ref(target, history.as_uuid(item))
+        return str(new) if new is not None else None
+
+    if isinstance(value, list):
+        kept = [text for text in (new_text(item) for item in value) if text is not None]
+        return kept, len(value) - len(kept)
+    if isinstance(value, dict):
+        mapped = {new_text(key): item for key, item in value.items()}
+        kept_map = {key: item for key, item in mapped.items() if key is not None}
+        return kept_map, len(value) - len(kept_map)
+    return [], 1
+
+
 def _history_rules(ctx: _Context, spec: EntitySpec, values: dict[str, Any]) -> None:
     """The W30 column rules of a history row: stored keys rebuilt, id lists rewritten, run times kept."""
     from app.services.project_export_objects import rebuild_prefix
@@ -975,12 +995,10 @@ def _history_rules(ctx: _Context, spec: EntitySpec, values: dict[str, Any]) -> N
         value = values.get(column)
         if value is None:
             continue
-        items = value if isinstance(value, list) else []
-        kept = [str(new) for new in (ctx.ref(target, history.as_uuid(item)) for item in items) if new is not None]
-        dropped = (len(items) - len(kept)) if isinstance(value, list) else 1
+        rewritten, dropped = _rewrite_id_path(ctx, target, value)
         if dropped:
             ctx.cleared[(spec.table, column, "run_not_exported")] += dropped
-        values[column] = kept
+        values[column] = rewritten
     if spec.table == "test_runs" and isinstance(values.get("created_at"), dt.datetime):
         ctx.run_times.append(values["created_at"])
 
@@ -1085,16 +1103,19 @@ async def _prune_unbounded_ids(db: AsyncSession, ctx: _Context, spec: EntitySpec
     for column, target in spec.json_id_paths.items():
         if target in remap.bounded:
             continue                                        # checked against the archive's ids in transform_row
-        wanted = {history.as_uuid(v) for row in rows for v in (row.get(column) or [])} - {None}
+        wanted = {history.as_uuid(v) for row in rows for v in (row.get(column) or [])} - {None}   # list items / dict keys
         if not wanted:
             continue
         table = Base.metadata.tables[target]
         found = set((await db.execute(select(table.c.id).where(table.c.id.in_(sorted(wanted, key=str))))).scalars())
         for row in rows:
             items = row.get(column)
-            if not isinstance(items, list):
+            if isinstance(items, list):
+                kept: Any = [v for v in items if history.as_uuid(v) in found]
+            elif isinstance(items, dict):
+                kept = {k: v for k, v in items.items() if history.as_uuid(k) in found}
+            else:
                 continue
-            kept = [v for v in items if history.as_uuid(v) in found]
             if len(kept) != len(items):
                 ctx.cleared[(spec.table, column, "run_not_exported")] += len(items) - len(kept)
                 row[column] = kept
@@ -1203,6 +1224,12 @@ def _history_report(
     from app.models.schemas import ProjectDataHistoryReport, ProjectDataSkip
 
     reasons = {"objects": "unsafe_key"}
+    merged: Counter[tuple[str, str]] = Counter()                 # what the EXPORT left out + what the IMPORT did not write
+    if pre.history_pre is not None:
+        merged.update(pre.history_pre.export_skips)
+    for entity, count in skipped.items():
+        if count > 0:
+            merged[(entity, reasons.get(entity, "run_not_exported"))] += count
     lookback = ctx.now - dt.timedelta(days=vocab.DIGEST_LOOKBACK_DAYS)
     _slog.info("project_import_retention_paused", project_id=str(ctx.project_id), runs_past_retention=past_retention,
                retention_enabled=retention_on)
@@ -1212,8 +1239,8 @@ def _history_report(
         newest_run_at=max(ctx.run_times) if ctx.run_times else None,
         documents=dict(sorted(documents.items())), objects=objects[0], object_bytes=objects[1],
         skipped=[
-            ProjectDataSkip(entity=entity, column=None, reason=reasons.get(entity, "run_not_exported"), count=count)
-            for entity, count in sorted(skipped.items()) if count > 0
+            ProjectDataSkip(entity=entity, column=None, reason=reason, count=count)
+            for (entity, reason), count in sorted(merged.items())
         ],
         retention_paused_until=ctx.retention_paused_until(),
         runs_past_retention=past_retention,
@@ -1386,7 +1413,9 @@ async def run_import(
         stamp_schema_version(row, pre.schema_version)          # options["schema_version"], read by to_read
         counts.update({f"documents.{name}": n for name, n in sorted(documents.items())})
         counts["objects"] = objects[0]
-        row.cleanup = None                      # success and "no ledger" commit together (I-H8)
+        # success and "no ledger" commit together (I-H8). SQL NULL, never Python None: the JSONB column would store
+        # a JSON ``null`` that ``WHERE cleanup IS NOT NULL`` (the janitor's ledger sweep) still sees.
+        row.cleanup = null()
         activity_context.update(runs=history_report.runs, documents=sum(documents.values()), objects=objects[0])
     row.counts = counts
     await record_activity(

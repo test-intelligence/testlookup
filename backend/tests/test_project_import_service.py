@@ -1063,7 +1063,10 @@ async def test_a_history_import_reports_its_history_and_pauses_retention(history
     assert (docs_before, puts_before) == (0, 0)
     assert ledger["project_id"] == str(report.project_id) and str(source.run) not in ledger["run_ids"]
     row = session.job_row
-    assert row.status == "succeeded" and row.cleanup is None and row.options["schema_version"] == 2
+    from sqlalchemy.sql.elements import Null
+
+    # the ledger is cleared with SQL NULL (``null()``), never Python None (a JSON ``null`` in the JSONB column)
+    assert row.status == "succeeded" and isinstance(row.cleanup, Null) and row.options["schema_version"] == 2
     assert row.counts["objects"] == 1 and row.counts["documents.run_summaries"] == 1 and row.counts["test_runs"] == 1
     assert row.report["history"]["runs"] == 1
     assert all(key.startswith(f"{report.project_id}/") for key in storage.puts)
@@ -1114,3 +1117,32 @@ async def test_a_failure_after_the_ledger_cleans_every_store_by_it(history_world
     named = set(ledger["run_ids"]) | set(ledger["pipeline_ids"])
     assert deletes and all(set(ids) <= named for flt in deletes for cond in flt.values() for ids in [cond["$in"]])
     assert history_world.mongo.docs.get("raw_allure_json") == []          # the batch already written is gone
+
+
+async def test_what_the_export_left_out_is_in_the_import_report(history_world):
+    """The manifest's ``history.skipped`` (G-B) reaches the report beside the import's own skips — every reason a
+    ``SKIP_REASONS`` key with a sentence (``pipeline_scratch`` included); a reason with no sentence here (a newer
+    exporter) is left out rather than rendered as a code."""
+    from tests.test_project_import_history import World, build_history_archive
+
+    skipped = [{"entity": "evidence_artifacts", "reason": "pipeline_scratch", "count": 1},
+               {"entity": "agent_pipeline_runs", "reason": "pipeline_not_terminal", "count": 2},
+               {"entity": "objects", "reason": "too_large", "count": 1},
+               {"entity": "objects", "reason": "a_reason_from_the_future", "count": 3}]
+    report, _session, _storage = await _imported_history(
+        history_world, build_history_archive(World(), history_patch={"skipped": skipped}))
+    assert sorted((s.entity, s.reason, s.count) for s in report.history.skipped) == [
+        ("agent_pipeline_runs", "pipeline_not_terminal", 2), ("ai_analysis_payloads", "run_not_exported", 1),
+        ("evidence_artifacts", "pipeline_scratch", 1), ("objects", "too_large", 1)]
+    assert all(s.reason in vocab.SKIP_REASONS for s in report.history.skipped)
+    assert vocab.SKIP_REASONS["pipeline_scratch"] == "it pointed at a pipeline scratch file, which is not exported"
+
+
+@pytest.mark.parametrize("entry", [{"entity": "objects", "reason": "too_large", "count": "two"},
+                                   {"entity": "../objects", "reason": "too_large", "count": 1}, "not-an-object"])
+async def test_a_malformed_skipped_block_is_refused_before_any_write(entry):
+    from tests.test_project_import_history import World, build_history_archive
+
+    failure, session, calls = await _refused(build_history_archive(World(), history_patch={"skipped": [entry]}))
+    assert failure.code == "tampered" and "history" in failure.message
+    _assert_nothing_written(session, calls)

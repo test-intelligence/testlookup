@@ -196,6 +196,7 @@ SKIP_REASONS = {      # import_report.skipped[*] / cleared[*].reason → the sen
     "unsafe_key": "its storage key is not a safe path",                       # object skipped (export or import)
     "too_large": "it is larger than 256 MB",                                   # object skipped at export
     "invalid_document": "it is not a valid stored document",                   # Mongo document refused at import → the WHOLE import fails
+    "pipeline_scratch": "it pointed at a pipeline scratch file, which is not exported",   # evidence_artifacts.uri_or_ref written NULL at export (manifest)
 }
 #: Tables a schema_version 1 archive may list that this deployment dropped (W25d HYG-02). Every W24 export
 #: lists all its tables, empty ones included: with 0 rows such a table is ignored silently; with N rows its

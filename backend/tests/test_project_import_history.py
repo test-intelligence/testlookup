@@ -616,3 +616,22 @@ def test_id_lists_the_product_reads_are_rewritten_and_outsiders_removed():
     assert row["run_ids"] == [str(hist.history_id(job, run))] and row["incomplete_runs"] == []
     assert ctx.cleared[("release_gate_decisions", "run_ids", "run_not_exported")] == 1
     assert row["release_id"] == ctx.remap["releases"][release]
+
+
+def test_an_id_map_keyed_by_run_has_its_keys_rewritten_and_outsiders_removed():
+    """Production writes ``release_gate_decisions.incomplete_runs`` as a DICT ``{run_id: rejected}``
+    (``release_rollup_service``); the seed writes a list. Both shapes: the KEYS go through the remap, the values
+    are kept, a run outside the archive is removed and counted."""
+    from app.services.project_export_entities import spec_for
+
+    job, run, other, stranger, release = uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    ctx = svc._Context(project_id=uuid.uuid4(), actor_id=uuid.uuid4(), now=dt.datetime.now(dt.timezone.utc),
+                       user_map={}, release_keeper=None, schema_version=2,
+                       history_remap=hist.HistoryRemap(job, {"test_runs": frozenset({run, other})}))
+    ctx.remap["releases"] = {release: uuid.uuid4()}
+    row = svc.transform_row(ctx, spec_for("release_gate_decisions"), {
+        "id": uuid.uuid4(), "release_id": release, "verdict": "no_go", "run_ids": [str(run)],
+        "incomplete_runs": {str(run): 3, str(other).upper(): 0, str(stranger): 7}})
+    assert row["incomplete_runs"] == {str(hist.history_id(job, run)): 3, str(hist.history_id(job, other)): 0}
+    assert str(run) not in row["incomplete_runs"] and str(stranger) not in json.dumps(row["incomplete_runs"])
+    assert ctx.cleared[("release_gate_decisions", "incomplete_runs", "run_not_exported")] == 1

@@ -173,6 +173,9 @@ class HistoryPreflight:
     object_bytes: int = 0
     source_project_id: Optional[uuid.UUID] = None                                   # the manifest's project_id
     run_prefixes: dict[uuid.UUID, Optional[str]] = dataclasses.field(default_factory=dict)   # source run → minio_prefix
+    #: what the EXPORT left out (manifest ``history.skipped``: non-terminal pipelines, unsafe / too-large objects,
+    #: pipeline scratch refs, runs outside the archive) → (entity, reason) → count, so the report says it too
+    export_skips: dict[tuple[str, str], int] = dataclasses.field(default_factory=dict)
 
 
 def _invalid_document(collection: str, line: int, file: str, reason: str) -> Exception:
@@ -250,6 +253,28 @@ def _manifest_history(manifest: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(history, Mapping):
         raise _tampered("the history block is missing")
     return history
+
+
+_SKIP_ENTITY = re.compile(r"^[a-z_]{1,63}$")
+
+
+def _export_skips(history: Mapping[str, Any]) -> dict[tuple[str, str], int]:
+    """The manifest's ``history.skipped`` (``[{"entity", "reason", "count"}]``), validated: a malformed entry →
+    ``tampered``; a reason this deployment has no sentence for (a newer exporter) is left out of the report."""
+    out: dict[tuple[str, str], int] = {}
+    entries = history.get("skipped") or []
+    if not isinstance(entries, list):
+        raise _tampered("the history block is not valid")
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            raise _tampered("the history block is not valid")
+        entity, reason = entry.get("entity"), entry.get("reason")
+        count = _listed_count(entry, "count")
+        if not (isinstance(entity, str) and _SKIP_ENTITY.match(entity) and isinstance(reason, str)):
+            raise _tampered("the history block is not valid")
+        if reason in vocab.SKIP_REASONS and count > 0:
+            out[(entity, reason)] = out.get((entity, reason), 0) + count
+    return out
 
 
 def _listed_count(entry: Any, key: str) -> int:
@@ -391,6 +416,7 @@ def validate_history(zf: zipfile.ZipFile, manifest: Mapping[str, Any], pre: Any)
     out = HistoryPreflight(
         source_project_id=getattr(pre, "source_project_id", None),
         run_prefixes=dict(getattr(pre, "run_prefixes", None) or {}),
+        export_skips=_export_skips(history),
     )
     _validate_documents(zf, names, history, out)
     run_ids = frozenset((getattr(pre, "bounded_ids", None) or {}).get("test_runs", set()))
