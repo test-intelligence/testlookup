@@ -95,6 +95,26 @@ describe('ErasePanel — the preview and the typed confirm', () => {
     expect(eraseButton()).toBeDisabled()
   })
 
+  it("an export that finishes beside the panel clears its own blocker (the preview is re-read on the export's change)", async () => {
+    service.getErasurePreview
+      .mockResolvedValueOnce(erasurePreviewFixture({ blockers: [blockerFixture('export_blocks_erasure')] }))
+      .mockResolvedValue(erasurePreviewFixture())
+    const panel = (exportState: string) => (
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0, shouldRetryOnError: false }}>
+        <ErasePanel user={USER} latestErasure={null} onChanged={onChanged} onUsersChanged={onUsersChanged} exportState={exportState} />
+      </SWRConfig>
+    )
+    const { rerender } = render(panel('export-1:running'))
+    expect(await screen.findByText(ERROR_SENTENCES.export_blocks_erasure)).toBeInTheDocument()
+    type(SUBJECT_USERNAME)
+    expect(eraseButton()).toBeDisabled()
+
+    rerender(panel('export-1:succeeded'))
+    await waitFor(() => expect(screen.queryByText(ERROR_SENTENCES.export_blocks_erasure)).not.toBeInTheDocument())
+    expect(service.getErasurePreview).toHaveBeenCalledTimes(2)
+    expect(eraseButton()).toBeEnabled()
+  })
+
   it('confirm_mismatch (422) sits under the input; any other refusal is an alert with its sentence', async () => {
     service.getErasurePreview.mockResolvedValue(erasurePreviewFixture())
     service.eraseUser

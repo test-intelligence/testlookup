@@ -1043,6 +1043,9 @@ class SubjectJobRead(BaseModel):
     signature: Optional[str] = None                # "signed" | "unsigned"
     expires_at: Optional[datetime] = None
     counts: dict[str, int] = {}                    # export: rows per member file; erasure: rows changed per location key
+    # erasure only: each counted location key's label from the inventory ("API keys") — static text, never a name;
+    # the finished erasure lists these, not the storage keys.
+    count_labels: Optional[dict[str, str]] = None
     error: Optional[SubjectRightsError] = None
     download_path: Optional[str] = None            # "/api/v1/subject-data-jobs/{id}/download" only for a succeeded, unexpired export
 

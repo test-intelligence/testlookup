@@ -152,12 +152,27 @@ export function previewSummary(preview: Pick<ErasurePreview, 'changes' | 'kept' 
   return [countNoun(changes, 'change'), `${formatNumber(kept)} kept`, countNoun(open, 'open item')].join(' · ')
 }
 
-/** A finished erasure's per-location counts (`{key: n}`), largest first, for the erased row's read-only outcome. */
-export function erasureCountLines(job: Pick<SubjectJob, 'counts'> | null | undefined): { key: string; count: string }[] {
-  return Object.entries(job?.counts ?? {})
-    .filter(([, n]) => typeof n === 'number')
+export interface ErasureCountLines {
+  /** The locations the erasure changed, largest first, each by its inventory label (the key when it has none). */
+  lines: { key: string; label: string; count: string }[]
+  /** The sentence for the locations that held nothing of the person (counted 0), or null when there are none. */
+  untouched: string | null
+}
+
+/**
+ * A finished erasure's per-location counts for the erased row's read-only outcome: the changed locations by label,
+ * largest first; the ones that held nothing in one line (local demo, 2026-11-04: thirty "0 rows" lines of storage
+ * keys hid the eight that mattered).
+ */
+export function erasureCountLines(job: Pick<SubjectJob, 'counts' | 'count_labels'> | null | undefined): ErasureCountLines {
+  const entries = Object.entries(job?.counts ?? {}).filter(([, n]) => typeof n === 'number')
+  const labels = job?.count_labels ?? {}
+  const lines = entries
+    .filter(([, n]) => n > 0)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([key, n]) => ({ key, count: countNoun(n, 'row') }))
+    .map(([key, n]) => ({ key, label: labels[key] || key, count: countNoun(n, 'row') }))
+  const zero = entries.length - lines.length
+  return { lines, untouched: zero > 0 ? `${countNoun(zero, 'other location')} held nothing of this person.` : null }
 }
 
 // ── The row ──────────────────────────────────────────────────────────────────

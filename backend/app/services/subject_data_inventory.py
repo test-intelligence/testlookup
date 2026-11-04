@@ -69,7 +69,9 @@ AUDIT_TABLES = (
 ART17_KEEP_TABLES = ("release_decisions", "retention_holds", "compliance_packs", "deletion_jobs")
 ART17_KEEP_PREFIXES = ("exports/", "compliance/")
 
-_AUDIT = "Art. 17(3)(b)(e): an append-only audit record (the backend.audit-write-discipline gate); kept until its own retention clock"
+# A location's ``reason`` is shown to the administrator in the erase preview: plain sentences, no code names
+# (local demo, 2026-11-04). The audit rows are append-only under the protected backend.audit-write-discipline gate.
+_AUDIT = "Art. 17(3)(b)(e): an audit record, which is never changed; it is kept until its own retention period ends"
 _REF = "The project's record keeps pointing at the pseudonymised account, which every surface shows as \"Erased user\""
 
 
@@ -162,7 +164,8 @@ _B: tuple[Location, ...] = (
          where="cancelled_by IN (:username, :email) → the pseudonym (routers/agent_investigations.py)"),
     _row("agent_pipeline_runs", "error", match="value", export_as="none", category=None, erase="pseudonymise",
          label="Pipelines they cancelled before start",
-         where="error = 'by ' || :email → 'by ' || the pseudonym (pipeline_cancellation.request_cancel)"),
+         where="error = 'cancelled: by ' || :email → 'cancelled: by ' || the pseudonym (pipeline_cancellation.request_cancel; "
+               "workflow_run_state's CANCELLED_ERROR_PREFIX)"),
     _row("test_case_comments", "content", match="mention", export_as="none", category=None, erase="pseudonymise",
          label="Comments that mention them",
          where="(?<![\\w.@-])@<old username>(?![\\w.-]), case-insensitive → @<pseudonym>; nothing else changes"),
@@ -211,7 +214,7 @@ _C: tuple[Location, ...] = (
     _audit("project_activity_events", "actor_name", "Their name on activity records", match="value"),
     _audit("project_activity_events", "actor_ref", "Their reference on activity records", match="value"),
     _row("release_decisions", "overridden_by", export_as="reference", category="references", erase="keep_audit",
-         label="Release overrides they made", reason=f"{_LEGAL} (compliance.md names release decisions an audit source)"),
+         label="Release overrides they made", reason=_LEGAL),  # compliance.md names release decisions an audit source
     _row("release_decisions", "override_audit", match="value", export_as="none", category=None, erase="keep_audit",
          label="Their name in release-override trails", where="override_audit[].actor_name (JSON)",
          reason=f"{_LEGAL} (a compliance pack snapshots the trail)"),
@@ -361,7 +364,8 @@ _NOT_ACCOUNT = ("Out of scope: a CI- or admin-supplied handle / contact, not Tes
 _E_POSTGRES: tuple[Location, ...] = (
     _row("auth_token_revocations", "user_id", export_as="none", category=None, erase="keep_record",
          label="The sign-out cutoff", where="non-ORM table (migration 0159; core/token_revocation.py)",
-         reason="It IS the lock-out: the revocation cutoff that refuses every older token (ids and times only)"),
+         reason="The sign-out itself: the time before which every token of this account is refused (an id and a "
+                "time, no name)"),
     _row("test_runs", "ci_actor", match="value", export_as="none", category=None, erase="out_of_scope",
          label="CI actor on runs", reason=_NOT_ACCOUNT),
     _row("test_cases", "owner", match="value", export_as="none", category=None, erase="out_of_scope",
@@ -373,22 +377,26 @@ _E_POSTGRES: tuple[Location, ...] = (
 )
 _E_OBJECTS: tuple[Location, ...] = (
     _store("objects:subject-exports/", "objects", match="id_key", erase="delete", label="Their data exports",
-           reason="Every export job of the subject: object removed, status \"expired\" (remove_exports_of)"),
+           # subject_export_service.remove_exports_of: each export job's object removed, the job "expired"
+           reason="Their export archives are removed and the export jobs read \"expired\""),
     _store("objects:project-exports/", "objects", match="content", erase="delete",
            label="Project exports that list them",
-           reason="A live project export whose directory/users.jsonl lists them: object removed, job \"expired\" "
-                  "with error_code subject_erased (re-creatable)"),
+           # a live export whose directory/users.jsonl lists them: object removed, job "expired", error_code subject_erased
+           reason="Project exports still in storage that list them are removed; export the project again"),
     _store("objects:project-imports/", "objects", match="content", erase="keep_record",
            label="Uploaded project archives",
-           reason="An uploaded archive may list them; kept until its 1-hour TTL (W24's janitor removes it, never re-read)"),
+           # W24's janitor removes it at its 1-hour TTL; never re-read
+           reason="An uploaded project archive may list them; it is removed within the hour, unread"),
     _store("objects:exports/", "objects", match="content", erase="keep_audit", label="Retention archives",
-           reason="Art. 17(3)(e): signed deletion evidence (manifest requested_by.name); gone at the 72-hour collect TTL"),
+           # the manifest's requested_by.name; gone at the 72-hour collect TTL
+           reason="Art. 17(3)(e): signed deletion evidence that names who asked; removed when its 72-hour download "
+                  "window ends"),
     _store("objects:compliance/", "objects", match="content", erase="keep_audit", label="Compliance packs",
            reason="Art. 17(3)(e): signed release evidence with audit actor names; rewriting breaks the signature"),
     _store("objects:report-exports/", "objects", match="none", erase="no_personal_data", label="Summary-report exports",
-           reason="Reports carry run and test figures, no account names (grep of the builders)"),
+           reason="Reports carry run and test figures, no account names"),
     _store("objects:training-exports", "objects", match="none", erase="no_personal_data", label="Training exports",
-           reason="Redacted training rows, no account names (training/exporter.py)"),
+           reason="Redacted training rows, no account names"),  # training/exporter.py
     _store("objects:pipeline/", "objects", match="none", erase="out_of_scope",
            label="Pipeline artefacts, ingest uploads, knowledge documents",
            reason="Out of scope: CI / test output, not account data; retention purges it"),
@@ -408,27 +416,30 @@ _E_REDIS: tuple[Location, ...] = (
     _store("redis:user:{id}", "redis", match="id_key", erase="delete", label="Cached reads",
            reason="Deleted in the redis phase (best effort; expires within 5 minutes anyway)"),
     _store("redis:auth:tokens_valid_from:{id}", "redis", match="id_key", erase="keep_record",
-           label="Legacy sign-out cutoff", reason="An id and a time only; kept until its TTL"),
+           label="Legacy sign-out cutoff", reason="An id and a time only; it expires on its own"),
     _store("redis:testlookup:idempotency:{id}:*", "redis", match="id_key", erase="keep_record",
-           label="Request idempotency keys", reason="Ids only; kept until their TTL"),
+           label="Request idempotency keys", reason="Ids only; they expire on their own"),
     _store("redis:dlq requested_by", "redis", match="id_key", erase="keep_record",
-           label="Dead-letter entries they requested", reason="The pseudonymous id only; trimmed at maxlen 5000"),
+           label="Dead-letter entries they requested", reason="The pseudonymous id only; the oldest are dropped"),
+    # worker/tasks.py notify_test_suite_owner: the recipient's e-mail inside a 300-second dedup key
     _store("redis:testlookup:dedup:notify_owner:*", "redis", match="value", erase="keep_record",
            label="Owner-notification dedup keys",
-           reason="The recipient's e-mail inside a 300-second dedup key (worker/tasks.py notify_test_suite_owner); "
-                  "it expires on its own within 5 minutes"),
+           reason="Their e-mail address inside a key that stops a notification being sent twice; it expires on its "
+                  "own within 5 minutes"),
     # services/ml/training_job.py: "Train now" stores triggered_by = "user:<username>" (lock 1 h, last run 30 days).
     # Matched on the OLD username, so the rewrite runs while the Postgres phase still holds it (best effort).
     _store("redis:ml:retrain:last", "redis", match="value", erase="pseudonymise",
            label="The last model training they started",
-           reason="triggered_by \"user:<old username>\" → \"user:<pseudonym>\" (KEEPTTL)"),
+           # triggered_by "user:<old username>" -> "user:<pseudonym>" (KEEPTTL)
+           reason="It names who started it; that now reads as the new username"),
     _store("redis:ml:retrain:lock", "redis", match="value", erase="pseudonymise",
            label="A model training they queued",
-           reason="triggered_by \"user:<old username>\" → \"user:<pseudonym>\" (KEEPTTL; the lock lives ≤ 1 hour)"),
+           # triggered_by "user:<old username>" -> "user:<pseudonym>" (KEEPTTL; the lock lives <= 1 hour)
+           reason="It names who queued it; that now reads as the new username (it lasts at most an hour)"),
 )
 _E_OTHER: tuple[Location, ...] = (
     _store("chroma:*", "chroma", match="none", erase="no_personal_data", label="Search and memory embeddings",
-           reason="The 7 families hold embeddings + status / project / run / chunk metadata — no person (grep)"),
+           reason="The 7 search-index families hold embeddings and run and test details, no person's name"),
     _store("logs", "logs", match="none", erase="out_of_scope", label="Server log lines",
            reason="Out of scope: the operator's log retention; going forward no line carries a name (E-10)"),
 )

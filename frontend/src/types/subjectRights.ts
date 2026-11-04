@@ -117,6 +117,8 @@ export interface SubjectJob {
   expires_at?: string | null
   /** Export: rows per member file; erasure: rows changed per location key. */
   counts?: Record<string, number>
+  /** Erasure only: each counted location key's label from the inventory ("API keys"). */
+  count_labels?: Record<string, string> | null
   error?: SubjectRightsError | null
   /** The job's download route — only for a succeeded, unexpired export. */
   download_path?: string | null

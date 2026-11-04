@@ -150,23 +150,24 @@ function ExportBlock({ userId, latest, loadError, onChanged }: {
 
 /** An erased row: the finished erasure's line and its per-location counts, read-only. */
 function ErasedOutcome({ job, pseudonym }: { job: SubjectJob | null; pseudonym: string }) {
-  const counts = erasureCountLines(job)
+  const { lines, untouched } = erasureCountLines(job)
   return (
     <div className="flex flex-col gap-2" data-erased-outcome="">
       <p className="m-0 text-sm text-[var(--color-text)]">{job ? erasedLine(pseudonym) : ERASED_NO_JOB}</p>
-      {counts.length > 0 && (
+      {lines.length > 0 && (
         <div className="flex flex-col gap-1">
           <h4 className="m-0 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">{ERASED_COUNTS_TITLE}</h4>
           <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
-            {counts.map((line) => (
-              <li key={line.key} className="flex max-w-md items-baseline justify-between gap-3 text-xs text-[var(--color-text)]">
-                <span className="min-w-0 break-all font-mono">{line.key}</span>
+            {lines.map((line) => (
+              <li key={line.key} className="flex max-w-md items-baseline justify-between gap-3 text-xs text-[var(--color-text)]" data-erased-count={line.key}>
+                <span className="min-w-0">{line.label}</span>
                 <span className="shrink-0 tabular-nums">{line.count}</span>
               </li>
             ))}
           </ul>
         </div>
       )}
+      {untouched && <p className="m-0 text-xs text-[var(--color-text-muted)]">{untouched}</p>}
     </div>
   )
 }
@@ -183,16 +184,27 @@ export default function PersonalDataSection({ user, onClose, onUsersChanged, slo
   const erased = isErasedUser(user)
   const { data: jobs, error: jobsError, mutate: refreshJobs } = useUserJobs(user.id)
   const latestErasure = newestErasure(jobs)
+  const latestExport = newestExport(jobs)
+  const exportState = latestExport ? `${latestExport.id}:${latestExport.status}` : null
   const erasureFinished = Boolean(latestErasure && (latestErasure.phase === 'done' || latestErasure.status === 'succeeded'))
   const display = erased ? erasedName(user) : user.full_name?.trim() || user.username
 
+  const panel = (
+    <ErasePanel
+      user={user}
+      latestErasure={latestErasure}
+      onChanged={refreshJobs}
+      onUsersChanged={onUsersChanged}
+      exportState={exportState}
+    />
+  )
   let erasure
   if (!erased) {
-    erasure = <ErasePanel user={user} latestErasure={latestErasure} onChanged={refreshJobs} onUsersChanged={onUsersChanged} />
+    erasure = panel
   } else if (jobs === undefined && !jobsError) {
     erasure = <LoadingSpinner size="sm" />
   } else if (latestErasure && !erasureFinished) {
-    erasure = <ErasePanel user={user} latestErasure={latestErasure} onChanged={refreshJobs} onUsersChanged={onUsersChanged} />
+    erasure = panel
   } else {
     erasure = <ErasedOutcome job={latestErasure} pseudonym={user.username} />
   }
@@ -207,7 +219,7 @@ export default function PersonalDataSection({ user, onClose, onUsersChanged, slo
     >
       <div className="flex flex-col gap-4">
         {!erased && (
-          <ExportBlock userId={user.id} latest={newestExport(jobs)} loadError={jobsError} onChanged={refreshJobs} />
+          <ExportBlock userId={user.id} latest={latestExport} loadError={jobsError} onChanged={refreshJobs} />
         )}
         {erasure}
       </div>

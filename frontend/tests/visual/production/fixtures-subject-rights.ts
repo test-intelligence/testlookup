@@ -83,6 +83,8 @@ export interface SubjectJobShape {
   signature: string | null
   expires_at: string | null
   counts: Record<string, number>
+  /** Erasure only: each counted location's inventory label (the server sends them with the counts). */
+  count_labels?: Record<string, string> | null
   error: { code: string; message: string } | null
   download_path: string | null
 }
@@ -124,6 +126,12 @@ export function exportJob(status: string, overrides: Partial<SubjectJobShape> = 
 
 /** Rows changed per inventory location by a finished erasure. */
 const ERASURE_COUNTS = { 'users.*': 1, 'api_keys.user_id': 1, 'refresh_token_records.user_id': 4, 'project_members.user_id': 3, 'chat_sessions.user_id': 2, 'test_case_comments.content': 1 }
+/** == the backend inventory's labels for those keys (SubjectJobRead.count_labels). */
+const ERASURE_COUNT_LABELS = {
+  'users.*': 'Name, username and e-mail', 'api_keys.user_id': 'API keys',
+  'refresh_token_records.user_id': 'Sessions and devices', 'project_members.user_id': 'Project memberships',
+  'chat_sessions.user_id': 'Chat conversations', 'test_case_comments.content': 'Comments that mention them',
+}
 
 /** An erasure job at `phase` (the LAST committed step): queued at `lockout`, succeeded at `done`, running between. */
 export function erasureJob(phase: 'lockout' | 'postgres' | 'objects' | 'redis' | 'done', overrides: Partial<SubjectJobShape> = {}): SubjectJobShape {
@@ -139,11 +147,13 @@ export function erasureJob(phase: 'lockout' | 'postgres' | 'objects' | 'redis' |
     finished_at: done ? at(-1) : null,
     phase,
     counts: phase === 'lockout' ? {} : ERASURE_COUNTS,
+    count_labels: phase === 'lockout' ? null : ERASURE_COUNT_LABELS,
     ...overrides,
   }
 }
 
-const AUDIT = 'Art. 17(3)(b)(e): an append-only audit record (the backend.audit-write-discipline gate); kept until its own retention clock'
+// == backend subject_data_inventory._AUDIT (the reasons the erase preview shows are plain sentences)
+const AUDIT = 'Art. 17(3)(b)(e): an audit record, which is never changed; it is kept until its own retention period ends'
 const LEGAL = 'Art. 17(3)(e): a legal / signed record — rewriting it would break the evidence; kept until its own expiry'
 const REF = "The project's record keeps pointing at the pseudonymised account, which every surface shows as \"Erased user\""
 const loc = (key: string, label: string, action: string, count: number | null, reason: string | null = null) => ({

@@ -118,9 +118,14 @@ interface Props {
   onChanged: () => void
   /** Re-read the users list: after the lock-out the row reads Inactive; at `done` it reads Erased. */
   onUsersChanged: () => void
+  /**
+   * The person's newest export as `<id>:<status>` (the section polls its jobs), or null. A change re-reads the
+   * preview: an export started beside the panel blocks the erasure, and one that finishes no longer does.
+   */
+  exportState?: string | null
 }
 
-export default function ErasePanel({ user, latestErasure, onChanged, onUsersChanged }: Props) {
+export default function ErasePanel({ user, latestErasure, onChanged, onUsersChanged, exportState = null }: Props) {
   const [typed, setTyped] = useState('')
   const [erasing, setErasing] = useState(false)
   const [refusal, setRefusal] = useState<string | null>(null)
@@ -128,6 +133,15 @@ export default function ErasePanel({ user, latestErasure, onChanged, onUsersChan
   // The job the POST answered (phase `lockout`), or a resumed one.
   const [started, setStarted] = useState<SubjectJob | null>(null)
   const { data: preview, error: previewError, mutate: refreshPreview } = useErasurePreview(user.id, true)
+
+  // The preview's export blocker follows the person's export: re-read it when that export starts or finishes
+  // (local demo, 2026-11-04: a blocker read while an export ran stayed after the export was ready).
+  const seenExport = useRef(exportState)
+  useEffect(() => {
+    if (seenExport.current === exportState) return
+    seenExport.current = exportState
+    void refreshPreview()
+  }, [exportState, refreshPreview])
 
   // An unfinished erasure the preview or the job list names (a reload mid-erasure resumes watching it).
   const pending = preview?.erasure_job ?? (latestErasure && isActiveJob(latestErasure) ? latestErasure : null)

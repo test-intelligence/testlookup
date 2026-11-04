@@ -434,6 +434,26 @@ async def test_to_read_never_carries_the_storage_key(maker, world):
     assert read.error.code == "erasure_incomplete" and read.error.message == vocab.ERROR_SENTENCES["erasure_incomplete"]
 
 
+def test_a_finished_erasure_carries_the_inventory_labels_of_its_counts():
+    """The erased row's outcome lists "API keys 1", not "api_keys.user_id 1" (local demo, 2026-11-04); an export
+    carries no labels; a key the inventory does not name keeps its key."""
+    from types import SimpleNamespace
+
+    now = datetime.now(timezone.utc)
+    base = dict(id=uuid.uuid4(), status="succeeded", source="admin", subject_user_id=uuid.uuid4(), requested_at=now,
+                started_at=now, finished_at=now, bytes=None, file_count=None, manifest_sha256=None, signature=None,
+                expires_at=None, error_code=None, error=None)
+    erasure = SimpleNamespace(**base, kind="erasure", phase="done",
+                              counts={"api_keys.user_id": 1, "users.*": 1, "objects:subject-exports/": 2, "zqxw.other": 3})
+    read = svc.to_read(erasure, subject_display=vocab.ERASED_DISPLAY, requested_by_display=None, now=now)
+    assert read.count_labels == {
+        "api_keys.user_id": "API keys", "users.*": "Name, username and e-mail",
+        "objects:subject-exports/": "Their data exports", "zqxw.other": "zqxw.other",
+    }
+    export = SimpleNamespace(**base, kind="export", phase=None, counts={"comments": 2})
+    assert svc.to_read(export, subject_display=None, requested_by_display=None, now=now).count_labels is None
+
+
 def test_the_service_never_commits_and_logs_no_person():
     tree = ast.parse(SERVICE_PY.read_text(encoding="utf-8"))
     calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)]

@@ -378,6 +378,14 @@ async def displays(db: AsyncSession, jobs: Iterable[SubjectRightsJob]) -> dict[u
     }
 
 
+def _location_labels() -> dict[str, str]:
+    """Location key → the inventory's label (pure data; imported here, not at module load, to keep this module's
+    import graph as it was)."""
+    from app.services.subject_data_inventory import INVENTORY
+
+    return {location.key: location.label for location in INVENTORY}
+
+
 def to_read(
     job: SubjectRightsJob, *, subject_display: Optional[str], requested_by_display: Optional[str], now: datetime,
 ) -> SubjectJobRead:
@@ -390,12 +398,19 @@ def to_read(
     downloadable = (
         job.kind == KIND_EXPORT and job.status == SUCCEEDED and job.expires_at is not None and job.expires_at > now
     )
+    counts = {str(k): int(v) for k, v in (job.counts or {}).items()}
+    count_labels = None
+    if job.kind == KIND_ERASURE and counts:
+        # The finished erasure lists "API keys 1", not "api_keys.user_id 1" (local demo, 2026-11-04): the
+        # inventory's labels are static text; a key the inventory does not name keeps its key.
+        labels = _location_labels()
+        count_labels = {key: labels.get(key, key) for key in counts}
     return SubjectJobRead(
         id=job.id, kind=job.kind, status=job.status, source=job.source, subject_user_id=job.subject_user_id,
         subject_display=subject_display, requested_by_display=requested_by_display,
         requested_at=job.requested_at, started_at=job.started_at, finished_at=job.finished_at,
         phase=job.phase if job.kind == KIND_ERASURE else None, bytes=job.bytes, file_count=job.file_count,
         manifest_sha256=job.manifest_sha256, signature=job.signature, expires_at=job.expires_at,
-        counts={str(k): int(v) for k, v in (job.counts or {}).items()}, error=error,
+        counts=counts, count_labels=count_labels, error=error,
         download_path=f"/api/v1/subject-data-jobs/{job.id}/download" if downloadable else None,
     )

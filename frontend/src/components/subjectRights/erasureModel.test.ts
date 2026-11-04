@@ -87,11 +87,19 @@ describe('counts and lines', () => {
     expect(erasedLine(SUBJECT_PSEUDONYM)).toBe(`Erased. This account now reads as “Erased user” (${SUBJECT_PSEUDONYM}).`)
   })
 
-  it('a finished erasure\'s counts: largest first, "1 row" in the singular', () => {
-    expect(erasureCountLines({ counts: { 'users.*': 1, 'project_members.user_id': 3 } })).toEqual([
-      { key: 'project_members.user_id', count: '3 rows' },
-      { key: 'users.*', count: '1 row' },
-    ])
+  it('a finished erasure\'s counts: by label, largest first, "1 row" in the singular; the untouched ones in one line', () => {
+    const counts = { 'users.*': 1, 'project_members.user_id': 3, 'chat_sessions.user_id': 0, 'zqxw.unlabelled': 2 }
+    const count_labels = { 'users.*': 'Name, username and e-mail', 'project_members.user_id': 'Project memberships' }
+    expect(erasureCountLines({ counts, count_labels })).toEqual({
+      lines: [
+        { key: 'project_members.user_id', label: 'Project memberships', count: '3 rows' },
+        { key: 'zqxw.unlabelled', label: 'zqxw.unlabelled', count: '2 rows' },
+        { key: 'users.*', label: 'Name, username and e-mail', count: '1 row' },
+      ],
+      untouched: '1 other location held nothing of this person.',
+    })
+    expect(erasureCountLines({ counts: { a: 0, b: 0 } }).untouched).toBe('2 other locations held nothing of this person.')
+    expect(erasureCountLines(null)).toEqual({ lines: [], untouched: null })
   })
 })
 
