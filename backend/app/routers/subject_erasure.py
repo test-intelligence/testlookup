@@ -88,6 +88,7 @@ async def get_erasure_preview(
     return await erasure.preview(db, subject=subject, actor=current_user)
 
 
+# activity: none - an erasure is not a project event; its two access-audit rows are the record (§2.3 E-11)
 @router.post("/{user_id}/erasure", response_model=SubjectJobRead, status_code=202)
 async def erase_user(
     user_id: uuid.UUID,
