@@ -1,12 +1,14 @@
 """Migration 0247 (W24 ADM-05): ``project_data_jobs`` — shape only, no database.
 
 * the chain 0246 -> 0247, with 0247 the only head (at the time of writing);
-* the CHECK literal lists are ``project_export_vocab.JOB_KINDS`` /
-  ``JOB_STATUSES`` (a migration must not import application code, so the copy
-  is pinned here);
-* the downgrade drops exactly what the upgrade created, in reverse order;
-* the ORM ``ProjectDataJob`` is in step with the DDL (columns, nullability,
-  CHECK texts, FKs, server defaults, the partial-index predicates).
+* the CHECK literal lists are ``project_export_vocab.JOB_KINDS`` and 0247's
+  HISTORIC status literals (a migration file never changes; W30's 0252 grew the
+  vocabulary by ``uploading`` — ``tests/test_migration_0252.py`` pins the
+  current ``JOB_STATUSES``);
+* the downgrade drops exactly what the upgrade created, in reverse order.
+
+(W30, deliberate: the ORM-vs-DDL comparison moved to ``tests/test_migration_0252.py``
+— the ORM now matches 0247 + 0252.)
 
 The real DDL runs against Postgres in the two W24 ``*_postgres.py`` modules
 (each migrates its throwaway database to head first).
@@ -90,13 +92,19 @@ def test_the_migration_imports_no_application_code():
     assert not [m for m in modules if m == "app" or m.startswith("app.")], modules
 
 
+#: 0247's status literals as written in 2026-10 (W24). W30 (0252) added "uploading" to the vocabulary; the
+#: 0247 file keeps its historic literals forever.
+STATUSES_0247 = ("queued", "running", "succeeded", "failed", "expired")
+
+
 def test_check_literals_are_the_vocabulary():
     mod, create = _created("m0247_vocab")
-    assert mod._KINDS == vocab.JOB_KINDS and mod._STATUSES == vocab.JOB_STATUSES
+    assert mod._KINDS == vocab.JOB_KINDS and mod._STATUSES == STATUSES_0247
+    assert set(STATUSES_0247) < set(vocab.JOB_STATUSES)   # the vocabulary only grew
     checks = _ddl_checks(create)
     assert set(checks) == {"ck_project_data_jobs_kind", "ck_project_data_jobs_status"}
     assert tuple(re.findall(r"'([^']+)'", checks["ck_project_data_jobs_kind"])) == vocab.JOB_KINDS
-    assert tuple(re.findall(r"'([^']+)'", checks["ck_project_data_jobs_status"])) == vocab.JOB_STATUSES
+    assert tuple(re.findall(r"'([^']+)'", checks["ck_project_data_jobs_status"])) == STATUSES_0247
 
 
 def test_upgrade_shape():
@@ -139,32 +147,3 @@ def test_downgrade_drops_exactly_what_the_upgrade_created_in_reverse():
     assert all(c.kwargs["table_name"] == "project_data_jobs" for c in mod.op.drop_index.call_args_list)
     mod.op.drop_table.assert_called_once_with("project_data_jobs")
     assert [c[0] for c in mod.op.method_calls] == ["drop_index"] * 5 + ["drop_table"]
-
-
-def test_the_orm_matches_the_ddl():
-    from app.models.postgres import ProjectDataJob
-
-    table = ProjectDataJob.__table__
-    _mod, create = _created("m0247_orm")
-    ddl = _ddl_columns(create)
-    assert [c.name for c in table.columns] == list(ddl)
-    assert {c.name: c.nullable for c in table.columns} == {n: c.nullable for n, c in ddl.items()}
-    checks = {c.name: str(c.sqltext) for c in table.constraints if c.__class__.__name__ == "CheckConstraint"}
-    assert checks == _ddl_checks(create)
-    for name in ("project_id", "requested_by_id"):
-        (orm_fk,) = table.c[name].foreign_keys
-        (ddl_fk,) = ddl[name].foreign_keys
-        assert (orm_fk.target_fullname, orm_fk.ondelete) == (ddl_fk.target_fullname, ddl_fk.ondelete)
-    for name in ("status", "counts", "attempts", "requested_at"):
-        assert table.c[name].server_default is not None, name
-    for name in ("kind", "project_name", "signature", "error_code", "manifest_sha256"):
-        assert table.c[name].type.length == ddl[name].type.length, name
-    indexes = {ix.name: ix for ix in table.indexes}
-    assert set(indexes) == set(INDEXES)
-    assert {n for n, ix in indexes.items() if ix.unique} == {"uq_pdj_one_live_export", "uq_pdj_import_token"}
-    assert str(indexes["uq_pdj_one_live_export"].dialect_options["postgresql"]["where"]) == (
-        "kind = 'export' AND status IN ('queued', 'running')"
-    )
-    assert str(indexes["uq_pdj_import_token"].dialect_options["postgresql"]["where"]) == (
-        "kind = 'import' AND status <> 'failed'"
-    )

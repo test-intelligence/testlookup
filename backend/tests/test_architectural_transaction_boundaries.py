@@ -195,6 +195,14 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "project_export_scrub.py",
     "project_import_service.py",
     "project_import_rows.py",
+    # ── W30 ADM-05 phase 2 (run history): new modules, commit-free from birth ──
+    # The Mongo and object specs (pure), the history export streams (read-only, on
+    # the export's snapshot) and the history import (documents / objects / the
+    # ledger cleanup; the runner commits or rolls back).
+    "project_export_documents.py",
+    "project_export_objects.py",
+    "project_export_history.py",
+    "project_import_history.py",
     # ── W25a HYG-04 / HYG-06: new modules, commit-free from birth ──
     # The parity vocabulary (constants only) and the comparison (reads only, on
     # the caller's session; worker/suite_parity_runner.py owns the run row's

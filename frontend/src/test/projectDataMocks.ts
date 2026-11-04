@@ -10,6 +10,11 @@
  * - `jobList(items, total?)`: the `{items, total}` answer.
  * - `errorBody(code, fmt?, extra?)` / `exportRunningBody(jobId)` / `errorBlob(code)` / `refusal(status, body)`:
  *   the `{detail: {code, message}}` refusals, as JSON, as a Blob (a blob download's refusal) and as an AxiosError.
+ * - W30 run history: `estimateFixture()` (measured), `unmeasuredEstimateFixture(store)` (null counts, never 0),
+ *   `overLimitEstimateFixture()`, `historyJobFixture({kind, status, phase})` (a running job per phase / a
+ *   succeeded one), `historyReportFixture()` / `historyImportReportFixture()` (one skip, the retention pause,
+ *   recent runs, search rebuilt), `uploadFixture()` / `partReceiptFixture()`; `jobFixture({status: 'uploading'})`
+ *   is a parted import with its upload state.
  *
  * Names are non-hex words; timestamps are built at CALL time (never a module constant).
  */
@@ -20,9 +25,14 @@ import {
   EXPORT_TTL_HOURS,
   fillSentence,
   type ProjectDataErrorCode,
+  type ProjectDataHistoryReport,
   type ProjectDataImportReport,
   type ProjectDataJob,
   type ProjectDataJobList,
+  type ProjectDataJobPhase,
+  type ProjectDataUpload,
+  type ProjectExportEstimate,
+  type ProjectImportPartReceipt,
 } from '@/types/projectData'
 
 export const PROJECT_DATA_PROJECT_ID = '00000000-0000-4000-8000-00000000da7a'
@@ -134,8 +144,157 @@ export function jobFixture(overrides: JobOverrides = {}): ProjectDataJob {
       ? { code: 'export_build', message: fillSentence(ERROR_SENTENCES.export_build, { error_type: 'OperationalError' }) }
       : { code: 'import_failed', message: fillSentence(ERROR_SENTENCES.import_failed, { error_type: 'IntegrityError' }) }
   }
+  if (status === 'uploading') {
+    // W30: only a parted import uploads — a 60 MB archive in 2 parts, none received yet
+    base.started_at = null
+    base.upload = uploadFixture()
+  }
   return { ...base, ...overrides, kind, status, id }
 }
+
+// ── W30 ADM-05 phase 2: run history ──────────────────────────────────────────
+
+/** The 27 history entities in plan order (`project_export_entities.HISTORY_TABLES`). */
+export const HISTORY_ENTITY_NAMES = [
+  'test_runs', 'agent_pipeline_runs', 'test_cases', 'test_case_history', 'suite_executions', 'suite_run_reviews',
+  'test_execution_reviews', 'test_steps', 'test_step_runs', 'test_attachments', 'failure_clusters',
+  'agent_stage_results', 'ai_analysis', 'ai_analysis_versions', 'failure_attribution', 'deep_findings',
+  'release_decisions', 'release_test_run_links', 'run_baselines', 'run_diffs', 'run_commit_ranges',
+  'run_intelligence_snapshots', 'test_health_recommendations', 'evidence_artifacts', 'release_outcomes',
+  'release_gate_decisions', 'timeline_notes',
+] as const
+
+/** The ten run-scoped collections in export order (`project_export_documents.MONGO_COLLECTIONS`). */
+export const MONGO_COLLECTION_NAMES = [
+  'raw_allure_json', 'rest_api_payloads', 'live_execution_events', 'run_summaries', 'ai_run_versions',
+  'decision_evidence_snapshots', 'ai_analysis_payloads', 'pipeline_event_log', 'decision_reports',
+  'decision_report_attempts',
+] as const
+
+/** 9,120 documents across the ten collections (most of them raw Allure results). */
+export function documentCounts(): Record<string, number> {
+  const counts: Record<string, number> = {}
+  for (const name of MONGO_COLLECTION_NAMES) counts[name] = 12
+  counts.raw_allure_json = 9120 - 12 * (MONGO_COLLECTION_NAMES.length - 1)
+  return counts
+}
+
+/** A measured estimate: "About 412.3 MB · 412 runs · 9,120 documents · 1,830 attachments". */
+export function estimateFixture(overrides: Partial<ProjectExportEstimate> = {}): ProjectExportEstimate {
+  return {
+    include_history: true,
+    history_days: 90,
+    runs: 412,
+    runs_in_progress: 1,
+    runs_over_cap: 0,
+    test_cases: 17_304,
+    documents: documentCounts(),
+    objects: 1830,
+    object_bytes: 380 * MB,
+    estimated_bytes: Math.round(412.3 * MB),
+    over_limit: false,
+    measured: { postgres: true, documents: true, objects: true },
+    ...overrides,
+  }
+}
+
+/** The documents store (or the object store) could not be read: its counts are null, never 0. */
+export function unmeasuredEstimateFixture(store: 'documents' | 'objects' = 'documents'): ProjectExportEstimate {
+  const estimate = estimateFixture({ estimated_bytes: null, over_limit: null })
+  if (store === 'documents') estimate.documents = null
+  else {
+    estimate.objects = null
+    estimate.object_bytes = null
+  }
+  estimate.measured = { postgres: true, documents: store !== 'documents', objects: store !== 'objects' }
+  return estimate
+}
+
+/** Larger than the 2 GB cap — the card disables Export. */
+export function overLimitEstimateFixture(): ProjectExportEstimate {
+  return estimateFixture({ history_days: null, runs: 2000, estimated_bytes: 2300 * MB, over_limit: true })
+}
+
+export function uploadFixture(overrides: Partial<ProjectDataUpload> = {}): ProjectDataUpload {
+  return { parts: 2, bytes: 60 * MB, received: [], received_bytes: 0, ...overrides }
+}
+
+export function partReceiptFixture(overrides: Partial<ProjectImportPartReceipt> = {}): ProjectImportPartReceipt {
+  return { part: 1, bytes: 32 * MB, received: [1], complete: false, ...overrides }
+}
+
+/** Where a running history job stands in each phase (documents written of documents planned, and so on). */
+const PHASE_PROGRESS: Record<ProjectDataJobPhase, { phase_done: number; phase_total: number }> = {
+  catalog: { phase_done: 12, phase_total: 29 },
+  runs: { phase_done: 120, phase_total: 412 },
+  documents: { phase_done: 5000, phase_total: 9120 },
+  objects: { phase_done: 900, phase_total: 1830 },
+  verify: { phase_done: 0, phase_total: 1 },
+  index: { phase_done: 0, phase_total: 1 },
+}
+
+/** The history block of a finished import: one skip, a retention pause, recent runs, search rebuilt. */
+export function historyReportFixture(overrides: Partial<ProjectDataHistoryReport> = {}): ProjectDataHistoryReport {
+  return {
+    runs: 412,
+    test_cases: 17_304,
+    oldest_run_at: minutesFromNow(-90 * 24 * 60),
+    newest_run_at: minutesFromNow(-2 * 24 * 60),
+    documents: documentCounts(),
+    objects: 1830,
+    object_bytes: 380 * MB,
+    skipped: [{ entity: 'objects', reason: 'too_large', count: 2 }],
+    retention_paused_until: minutesFromNow(90 * 24 * 60),
+    runs_past_retention: 0,
+    recent_runs: 3,
+    search_reindex: 'queued',
+    ...overrides,
+  }
+}
+
+/** A finished history import's report: phase 1's report + the history block. */
+export function historyImportReportFixture(
+  overrides: Partial<ProjectDataImportReport> = {},
+  history: Partial<ProjectDataHistoryReport> = {},
+): ProjectDataImportReport {
+  return importReportFixture({ history: historyReportFixture(history), ...overrides })
+}
+
+type HistoryJobOverrides = JobOverrides & { phase?: ProjectDataJobPhase }
+
+/**
+ * A history job as the server returns it: an export with `options.include_history` and `schema_version` 2,
+ * running in `phase` (default `runs`), or succeeded with documents / objects counted; an import running in
+ * `phase` (default `documents`), or succeeded with `historyImportReportFixture()`.
+ */
+export function historyJobFixture(overrides: HistoryJobOverrides = {}): ProjectDataJob {
+  const { phase, ...rest } = overrides
+  const kind = rest.kind ?? 'export'
+  const status = rest.status ?? 'running'
+  const job = jobFixture({ ...rest, kind, status })
+  job.schema_version = 2
+  if (kind === 'export') job.options = { include_history: true, history_days: 90, max_runs: 2000 }
+  if (status === 'running') {
+    const current = phase ?? (kind === 'export' ? 'runs' : 'documents')
+    job.progress = { done: 29, total: 56, phase: current, ...PHASE_PROGRESS[current] }
+  }
+  if (status === 'succeeded' && kind === 'export') {
+    const counts: Record<string, number> = { ...exportCounts() }
+    for (const name of HISTORY_ENTITY_NAMES) counts[name] = name === 'test_runs' ? 412 : 1
+    for (const [name, count] of Object.entries(documentCounts())) counts[`documents.${name}`] = count
+    counts.objects = 1830
+    job.counts = counts
+    job.bytes = Math.round(412.3 * MB)
+    job.progress = { done: 56, total: 56 }
+  }
+  if (status === 'succeeded' && kind === 'import') {
+    const report = historyImportReportFixture()
+    job.import_report = report
+    job.counts = report.inserted
+  }
+  return { ...job, ...rest, kind, status, id: job.id }
+}
+
 
 export function jobList(items: ProjectDataJob[], total = items.length): ProjectDataJobList {
   return { items, total }

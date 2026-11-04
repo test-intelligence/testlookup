@@ -7863,16 +7863,19 @@ class ProjectDataJob(Base):
     survive the project it created being archived (``SET NULL``, never
     CASCADE). ``kind`` / ``status`` are the ``project_export_vocab``
     vocabularies (CHECKed). ``storage_key`` (the export archive, or the
-    import's upload) is NEVER returned and never logged.
+    import's upload) is NEVER returned and never logged. W30 (migration 0252):
+    ``options`` / ``upload`` / ``cleanup``, the ``uploading`` status (a parted
+    import upload) and its CHECK.
     """
 
     __tablename__ = "project_data_jobs"
     __table_args__ = (
         CheckConstraint("kind IN ('export', 'import')", name="ck_project_data_jobs_kind"),
         CheckConstraint(
-            "status IN ('queued', 'running', 'succeeded', 'failed', 'expired')",
+            "status IN ('uploading', 'queued', 'running', 'succeeded', 'failed', 'expired')",
             name="ck_project_data_jobs_status",
         ),
+        CheckConstraint("status <> 'uploading' OR kind = 'import'", name="ck_project_data_jobs_uploading_is_import"),
         Index("ix_pdj_project_requested", "project_id", text("requested_at DESC")),
         # one queued / running export per project (409 export_running)
         Index(
@@ -7929,6 +7932,17 @@ class ProjectDataJob(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     #: export only: finished_at + EXPORT_TTL_HOURS; the janitor removes the object after it
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: W30: export → ProjectDataOptions (include_history, history_days, max_runs); a parted import →
+    #: {"parted": true, "parts", "bytes", "sha256"} (the start's whole-file digest — never logged); never NULL.
+    #: The ORM default is the untyped '{}' (Postgres coerces it to jsonb exactly as 0252's '{}'::jsonb; the SQLite
+    #: route / runner fixtures can create the table without patching it)
+    options: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'"))
+    #: W30: a parted import while status == "uploading": {"parts", "bytes", "received", "received_bytes",
+    #: "part_sha256": {"<n>": hex}, "part_bytes": {"<n>": int}}; NULL otherwise
+    upload: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    #: W30: an import's ledger of what it wrote OUTSIDE Postgres ({"project_id", "run_ids", "pipeline_ids"});
+    #: deferred — never loaded by the list / job reads (undefer it where the runner / janitor needs it)
+    cleanup: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, deferred=True)
 
 
 class RetentionHold(Base):

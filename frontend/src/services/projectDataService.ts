@@ -1,6 +1,18 @@
 import { isAxiosError } from 'axios'
 
-import type { ProjectDataJob, ProjectDataJobList } from '@/types/projectData'
+import { sha256Parts } from '@/lib/sha256Stream'
+import {
+  ERROR_SENTENCES,
+  IMPORT_ARCHIVE_MAX_BYTES,
+  IMPORT_PART_MAX_BYTES,
+  IMPORT_UPLOAD_MAX_BYTES,
+  type ProjectDataJob,
+  type ProjectDataJobList,
+  type ProjectExportEstimate,
+  type ProjectExportRequest,
+  type ProjectImportPartReceipt,
+  type ProjectImportUploadStart,
+} from '@/types/projectData'
 import { downloadBlob } from '@/utils/download'
 import { api } from './api'
 import { extractErrorMessage } from './apiErrors'
@@ -8,12 +20,27 @@ import { getData, postData } from './http'
 
 /**
  * W24 ADM-05 phase 1: export a project's settings + catalog, import an export as a NEW project.
+ * W30 phase 2: the export may carry run history (an optional body), an estimate is read first, and an archive
+ * larger than IMPORT_UPLOAD_MAX_BYTES is imported through the PARTED upload (start → parts → complete).
  *
  * Every request path is written out in full (the SPA wire contract reads the
- * quoted literals). The two POSTs and the download suppress the shared toast:
+ * quoted literals). The POSTs, the PUT and the download suppress the shared toast:
  * the cards render the `{code, message}` refusal inline (a 409 `export_running`
  * resumes the running job instead of failing).
  */
+
+/** What `importArchive` reports while it works: hashing (bytes read) then uploading (parts received). */
+export interface ImportArchiveProgress {
+  phase: 'hashing' | 'uploading'
+  done: number
+  total: number
+}
+
+export interface ImportArchiveOptions {
+  name?: string | null
+  clientToken: string
+  onProgress?: (progress: ImportArchiveProgress) => void
+}
 
 /** `attachment; filename="x.zip"` (plain, quoted or RFC 5987) → `x.zip`; else null. */
 function filenameFromDisposition(header: unknown): string | null {
@@ -66,10 +93,35 @@ export function runningExportJobId(error: unknown): string | null {
   return code === 'export_running' && typeof jobId === 'string' && jobId ? jobId : null
 }
 
+/** The trimmed name when one was typed, else undefined (the server then names the copy itself). */
+function typedName(name?: string | null): string | undefined {
+  const trimmed = name?.trim()
+  return trimmed ? trimmed : undefined
+}
+
 export const projectDataService = {
-  /** Queue an export of the project (QA lead / ADMIN with access). 202 → the queued job. */
-  startExport: (projectId: string) =>
-    postData<ProjectDataJob>(`/api/v1/projects/${projectId}/export`, undefined, { suppressToast: true }),
+  /**
+   * Queue an export of the project (QA lead / ADMIN with access). 202 → the queued job. The body is sent ONLY
+   * when given (W30 run history) — a catalog-only export stays the body-less phase-1 call.
+   */
+  startExport: (projectId: string, request?: ProjectExportRequest) =>
+    postData<ProjectDataJob>(`/api/v1/projects/${projectId}/export`, request, { suppressToast: true }),
+
+  /**
+   * What an export with history would carry (counts only; a store that could not be read answers null with
+   * `measured[store] = false`). `historyDays` null = all history (the parameter is then omitted).
+   */
+  getExportEstimate: (
+    projectId: string,
+    { includeHistory, historyDays, maxRuns }: { includeHistory: boolean; historyDays?: number | null; maxRuns?: number },
+  ) =>
+    getData<ProjectExportEstimate>(`/api/v1/projects/${projectId}/export-estimate`, {
+      params: {
+        include_history: includeHistory,
+        ...(historyDays != null ? { history_days: historyDays } : {}),
+        ...(maxRuns != null ? { max_runs: maxRuns } : {}),
+      },
+    }),
 
   /** The project's exports, newest first (`total` = all of them). */
   listExports: (projectId: string, limit?: number) =>
@@ -112,7 +164,7 @@ export const projectDataService = {
     const form = new FormData()
     form.append('file', file)
     form.append('client_token', clientToken)
-    const trimmed = name?.trim()
+    const trimmed = typedName(name)
     if (trimmed) form.append('name', trimmed)
     return api
       .post<ProjectDataJob>('/api/v1/projects/import', form, {
@@ -122,5 +174,64 @@ export const projectDataService = {
         suppressToast: true,
       })
       .then(({ data }) => data)
+  },
+
+  /**
+   * W30: open a parted upload (ADMIN). 201 → a new job in `uploading`; 200 → the caller's existing job of the
+   * same token (its `upload.received`, or its later status) — the resume.
+   */
+  startPartedImport: (start: ProjectImportUploadStart) =>
+    api
+      .post<ProjectDataJob>('/api/v1/project-imports/uploads', start, { suppressToast: true })
+      .then(({ data }) => data),
+
+  /** W30: send ONE part as raw bytes with its SHA-256 (`X-Part-Sha256`); a repeat of the same part is a no-op. */
+  uploadPart: (jobId: string, part: number, blob: Blob, sha256: string) =>
+    api
+      .put<ProjectImportPartReceipt>(`/api/v1/project-imports/uploads/${jobId}/parts/${part}`, blob, {
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Part-Sha256': sha256 },
+        suppressToast: true,
+      })
+      .then(({ data }) => data),
+
+  /** W30: every part sent → the job is queued (202), or the job as it stands on a repeat (200). */
+  completeUpload: (jobId: string) =>
+    api
+      .post<ProjectDataJob>(`/api/v1/project-imports/uploads/${jobId}/complete`, undefined, { suppressToast: true })
+      .then(({ data }) => data),
+
+  /**
+   * W30: import a chosen archive. ≤ IMPORT_UPLOAD_MAX_BYTES → the phase-1 single multipart POST, unchanged.
+   * Larger (≤ IMPORT_ARCHIVE_MAX_BYTES, else refused here with no request) → ONE streaming read hashes the
+   * whole file and each 32 MiB part (at most one slice in memory), then start → the parts the server lacks,
+   * ONE in flight, each a `Blob.slice` → complete. A start that answers a job no longer `uploading` (the same
+   * file was already imported) resolves that job without sending anything.
+   */
+  importArchive: async (file: File, { name, clientToken, onProgress }: ImportArchiveOptions): Promise<ProjectDataJob> => {
+    if (file.size <= IMPORT_UPLOAD_MAX_BYTES) return projectDataService.startImport(file, { name, clientToken })
+    if (file.size > IMPORT_ARCHIVE_MAX_BYTES) throw new Error(ERROR_SENTENCES.upload_too_large_history)
+    const digests = await sha256Parts(file, {
+      sliceBytes: IMPORT_PART_MAX_BYTES,
+      onProgress: (done, total) => onProgress?.({ phase: 'hashing', done, total }),
+    })
+    const total = digests.parts.length
+    const job = await projectDataService.startPartedImport({
+      client_token: clientToken,
+      name: typedName(name) ?? null,
+      bytes: file.size,
+      parts: total,
+      sha256: digests.sha256,
+    })
+    if (job.status !== 'uploading') return job
+    const received = new Set(job.upload?.received ?? [])
+    onProgress?.({ phase: 'uploading', done: received.size, total })
+    for (let part = 1; part <= total; part += 1) {
+      if (received.has(part)) continue
+      const start = (part - 1) * IMPORT_PART_MAX_BYTES
+      const blob = file.slice(start, Math.min(start + IMPORT_PART_MAX_BYTES, file.size))
+      const receipt = await projectDataService.uploadPart(job.id, part, blob, digests.parts[part - 1])
+      onProgress?.({ phase: 'uploading', done: receipt.received.length, total })
+    }
+    return projectDataService.completeUpload(job.id)
   },
 }
