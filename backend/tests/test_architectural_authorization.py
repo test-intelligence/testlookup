@@ -108,6 +108,13 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     # W23a TRND-03: an expected run cadence, nested under project_id; loaded
     # WHERE id AND project_id (another project's cadence is the unknown-id 404).
     "cadence_id",
+    # W31 STRAT-12: a person's export / erasure job (subject_rights_jobs),
+    # reached by id alone under /subject-data-jobs. A NEW name on purpose:
+    # ``job_id`` sits in UNCLASSIFIED_PATH_PARAMS_BACKLOG. The router-local
+    # require_subject_job_access() refuses every API-key principal (403
+    # session_required) and loads the job for its REQUESTER or an ADMIN; an
+    # unknown id, another person's job and any other caller get the SAME 404.
+    "subject_job_id",
 })
 
 # ── Known backlog of unprotected scoped routes ──────────────────────────────
@@ -228,6 +235,10 @@ def _route_is_protected(route: APIRoute) -> bool:
     # W24 ADM-05: project export / import job → its project (export) or its
     # requester (import), router-local guard in routers/project_data.py.
     if "{data_job_id}" in path and any("require_project_data_job_access" in n for n in dep_names):
+        return True
+    # W31 STRAT-12: a person's export / erasure job → its requester or an ADMIN,
+    # session principals only (router-local guard in routers/subject_rights.py).
+    if "{subject_job_id}" in path and any("require_subject_job_access" in n for n in dep_names):
         return True
     # Knowledge source → project.
     if "{source_id}" in path and any("require_knowledge_source_access" in n for n in dep_names):

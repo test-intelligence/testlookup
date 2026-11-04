@@ -637,6 +637,11 @@ def _build_manifest(
         # iterator FILLED ``manifest_extra`` before it was exhausted (format,
         # schema_version, source, project, entities, directory, excluded).
         manifest.update({"scope": "project", **(scope.manifest_extra or {})})
+    elif scope.kind == "subject":
+        # W31 STRAT-12: one person's data (Art. 15 / 20). No project: ``project_id`` is null in the
+        # manifest; the member iterator FILLED ``manifest_extra`` (format, schema_version, source,
+        # subject, categories, requested) before it was exhausted.
+        manifest.update({"project_id": None, "scope": "subject", **(scope.manifest_extra or {})})
     else:
         manifest.update(
             {
@@ -952,7 +957,7 @@ class ExportScope:
     verification steps the README tells an auditor to follow.
     """
 
-    kind: str                  # "release" | "runs" | "project" (W24)
+    kind: str                  # "release" | "runs" | "project" (W24) | "subject" (W31)
     project_id: uuid.UUID
     run_ids: tuple[uuid.UUID, ...]
     tier: str
@@ -1026,6 +1031,18 @@ class ExportScope:
             manifest_extra=manifest_extra,
         )
 
+    @classmethod
+    def for_subject(cls, *, manifest_extra: dict[str, Any]) -> "ExportScope":
+        """One person's data export (W31 STRAT-12, Art. 15 / 20). It belongs to no project: ``project_id``
+        is the nil UUID internally and ``null`` in the manifest; it covers no runs; ``tier`` is ``full``."""
+        return cls(
+            kind="subject",
+            project_id=uuid.UUID(int=0),
+            run_ids=(),
+            tier="full",
+            manifest_extra=manifest_extra,
+        )
+
 
 def build_export_key(
     scope: ExportScope, generated_at: datetime, pack_id: uuid.UUID
@@ -1037,11 +1054,15 @@ def build_export_key(
     verbatim — every stored pack is addressed by it. Run exports live under
     ``exports/`` so a lifecycle rule written for compliance packs does not
     silently start expiring retention archives. Project exports (W24) live
-    under a THIRD prefix, ``project-exports/``, for the same reason.
+    under a THIRD prefix, ``project-exports/``, for the same reason. A person's
+    data export (W31) lives under ``subject-exports/`` and its key carries the
+    job id only -- never a user id.
     """
     date_prefix = generated_at.strftime("%Y/%m/%d")
     if scope.kind == "release":
         return f"compliance/{date_prefix}/{scope.release_id}/{pack_id}.zip"
+    if scope.kind == "subject":
+        return f"subject-exports/{date_prefix}/{pack_id}.zip"
     if scope.kind == "project":
         return f"project-exports/{date_prefix}/{scope.project_id}/{pack_id}.zip"
     return f"exports/{date_prefix}/{scope.project_id}/{pack_id}.zip"
