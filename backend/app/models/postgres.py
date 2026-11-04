@@ -176,6 +176,10 @@ class NotificationEventType(str, PyEnum):
 
 class User(Base):
     __tablename__ = "users"
+    __table_args__ = (
+        # W31 STRAT-12 (migration 0253): the read-side "Erased user" projection's lookup
+        Index("ix_users_erased_at", "erased_at", postgresql_where=text("erased_at IS NOT NULL")),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
@@ -225,6 +229,10 @@ class User(Base):
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
+    # W31 STRAT-12 (migration 0253): set IN the erasure's Postgres phase, never cleared. "Erased" on any
+    # surface means this is NOT NULL; the row itself is never deleted (it is the pseudonymous key every
+    # kept row points at).
+    erased_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class MfaRecoveryCode(Base):
@@ -7944,6 +7952,81 @@ class ProjectDataJob(Base):
     #: W30: an import's ledger of what it wrote OUTSIDE Postgres ({"project_id", "run_ids", "pipeline_ids"});
     #: deferred — never loaded by the list / job reads (undefer it where the runner / janitor needs it)
     cleanup: Mapped[Optional[dict]] = mapped_column(JSONB(none_as_null=True), nullable=True, deferred=True)
+
+
+class SubjectRightsJob(Base):
+    """One personal-data export or erasure of ONE person (W31 STRAT-12; migration 0253).
+
+    A NEW table rather than a third ``project_data_jobs`` kind: W24's janitor and
+    re-dispatcher read that table without a kind filter, and an erasure carries
+    its own resumable state (``phase`` = the LAST phase committed). ``kind`` /
+    ``status`` / ``source`` / ``phase`` are the ``subject_rights_vocab``
+    vocabularies (CHECKed). ``subject_user_id`` is ``RESTRICT``: the user row is
+    never deleted (an erasure pseudonymises it in place). ``storage_key`` (the
+    export archive) is NEVER returned and never logged.
+    """
+
+    __tablename__ = "subject_rights_jobs"
+    __table_args__ = (
+        CheckConstraint("kind IN ('export', 'erasure')", name="ck_srj_kind"),
+        CheckConstraint(
+            "status IN ('queued', 'running', 'succeeded', 'failed', 'expired')", name="ck_srj_status",
+        ),
+        CheckConstraint("source IN ('self', 'admin')", name="ck_srj_source"),
+        CheckConstraint(
+            "phase IS NULL OR phase IN ('lockout', 'postgres', 'objects', 'redis', 'done')", name="ck_srj_phase",
+        ),
+        CheckConstraint("kind <> 'erasure' OR source = 'admin'", name="ck_srj_erasure_is_admin"),
+        Index("ix_srj_subject_kind", "subject_user_id", "kind", text("requested_at DESC")),   # lists + refusals
+        # one queued / running job per subject and kind (409 export_running / erasure_running)
+        Index(
+            "uq_srj_one_live_export", "subject_user_id", unique=True,
+            postgresql_where=text("kind = 'export' AND status IN ('queued', 'running')"),
+        ),
+        Index(
+            "uq_srj_one_live_erasure", "subject_user_id", unique=True,
+            postgresql_where=text("kind = 'erasure' AND status IN ('queued', 'running')"),
+        ),
+        Index("ix_srj_status_requested", "status", "requested_at"),                           # the janitor
+        Index("ix_srj_requester", "requested_by_id", text("requested_at DESC")),               # "my exports"
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    #: subject_rights_vocab.JOB_KINDS
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)
+    #: subject_rights_vocab.JOB_STATUSES
+    status: Mapped[str] = mapped_column(String(12), nullable=False, default="queued", server_default=text("'queued'"))
+    #: subject_rights_vocab.REQUEST_SOURCES — an erasure is always "admin" (ck_srj_erasure_is_admin)
+    source: Mapped[str] = mapped_column(String(8), nullable=False, default="admin", server_default=text("'admin'"))
+    #: erasure only: the LAST committed subject_rights_vocab.ERASURE_PHASES value
+    phase: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    subject_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    requested_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: export: the archive (NULL once removed). NEVER in a response or a log line.
+    storage_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    bytes: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    file_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    manifest_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    archive_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    signature: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    signing_key_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    #: export: rows per archive member; erasure: rows changed per inventory location key (merged per phase)
+    counts: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    #: subject_rights_vocab.ERROR_SENTENCES key; ``error`` is its sentence
+    error_code: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: export only: finished_at + EXPORT_TTL_HOURS; the janitor removes the object after it
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class RetentionHold(Base):

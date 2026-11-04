@@ -553,6 +553,8 @@ NOT_PROJECT_SCOPED: Mapping[str, str] = {
     "integration_health_checks": "project-KEYED cache (scope_key, no FK), recomputed by the next probe",
     "integration_probe_results": "project-KEYED cache (scope_key, no FK), recomputed by the next probe",
     "suite_membership_parity_runs": "instance cutover evidence (HYG-04), dropped with the legacy membership tables",
+    # W31 STRAT-12 (migration 0253)
+    "subject_rights_jobs": "a person's export / erasure job — instance-wide, never part of a project archive",
 }
 
 

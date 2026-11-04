@@ -10,6 +10,9 @@ export interface UserItem {
   role: UserRole
   is_active: boolean
   created_at: string
+  /** W31 STRAT-12: the account was erased (pseudonymised) — render "Erased user" + the badge, no actions. */
+  is_erased?: boolean
+  erased_at?: string | null
 }
 
 export interface ProjectMember {
