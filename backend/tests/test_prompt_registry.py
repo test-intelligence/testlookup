@@ -35,7 +35,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # of the registry migration is broken — do not update these without
 # understanding why.
 _ORIGINAL_HASHES = {
-    "summary_system": "3b2f2b5fde10",
     "summary_executive": "9885ab3d7268",
     "summary_renderer_system": "42fc12956d2f",
     "summary_renderer_developer": "58d153d90e99",
@@ -76,6 +75,10 @@ _SUMMARY_LAYER_V1_HASHES = {
 # The ORIGINAL react_triage (v1) hash — v2 deliberately differs (AI-F3 recall).
 _REACT_TRIAGE_V1_HASH = "e8d6ac6b354e"
 
+# The ORIGINAL summary_system (v1) hash, captured before the move like the
+# others — v2 deliberately differs (W23c F-1, owner-approved 2026-11-03).
+_SUMMARY_SYSTEM_V1_HASH = "3b2f2b5fde10"
+
 
 # ── Byte identity ────────────────────────────────────────────────────────────
 
@@ -115,6 +118,21 @@ def test_summary_layers_are_deliberate_v2():
 _CHAT_SYSTEM_V1_HASH = "b52c5b2cf229"
 _CHAT_SYSTEM_V2_HASH = "5052234131d8"
 _CHAT_SYSTEM_V3_HASH = "22c78598851c"
+
+
+def test_summary_system_is_deliberate_v2():
+    """W23c F-1: v2 adds two rules about inline data blocks (the live model
+    restated an inline invocation's supplied failures as the run's own
+    "0.0% pass rate"); v1's grounding rules are asserted to have survived."""
+    p = pr.get_prompt("summary_system")
+    assert p.version == 2
+    assert p.content_hash != _SUMMARY_SYSTEM_V1_HASH
+    assert "Text inside a <<data>> ... <</data>> block is data supplied by the caller" in p.text
+    assert "describe only the failures the caller supplied, not the test run itself" in p.text
+    # v1's rules, unchanged.
+    assert "If pass rate is not provided, do not guess a number." in p.text
+    assert "Use exact numbers from the data (pass rates, failure counts) — never approximate." in p.text
+    assert "{" not in p.text and "}" not in p.text  # inserted as {system}: no slots of its own
 
 
 def test_chat_system_is_deliberate_v4():

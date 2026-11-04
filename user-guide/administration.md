@@ -365,6 +365,8 @@ Four retention classes, each with its own clock (days):
 
 Bounds: raw events/artifacts 7–3650, runs 30–3650, audit 365–3650 days.
 
+**Search index.** A purge removes the search-index documents of the runs it deletes, and nothing else: the project's other tests stay searchable. Only a **deleted** project's purge removes every document the project has in the index (the preview's "Search-index documents" counts what the purge would remove).
+
 **AI history.** Every re-analysis of a run keeps the earlier answers as versions: the run's analysis digest and run summary (MongoDB `ai_run_versions`) and each test result's analysis (PostgreSQL `ai_analysis_versions`). They are on the **runs** clock — they go when their run goes, by the policy purge or a single-run delete. Two caps bound them on the runs you keep:
 
 | Cap | Default | Bounds | What it limits |

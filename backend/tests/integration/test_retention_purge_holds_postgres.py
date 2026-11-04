@@ -128,6 +128,10 @@ def stores(monkeypatch):
         calls.append(("search_index", execute))
         return None
 
+    async def _search_runs(project_id, run_ids, *, execute):
+        calls.append(("search_index_runs", execute, len(run_ids)))
+        return None
+
     async def _vectors(project_id, ids):
         calls.append(("memory_vectors", len(ids)))
         return len(ids)
@@ -136,6 +140,7 @@ def stores(monkeypatch):
     monkeypatch.setattr(retention_service, "get_storage_provider", lambda: storage)
     monkeypatch.setattr(analysis_cache_retention, "purge_project_analysis_caches", _caches)
     monkeypatch.setattr(semantic_search, "purge_project_documents", _search)
+    monkeypatch.setattr(semantic_search, "purge_runs_documents", _search_runs)
     monkeypatch.setattr(agent_memory_service, "purge_memory_vectors", _vectors)
     return mongo, storage, calls
 
@@ -578,7 +583,11 @@ async def test_the_five_not_held_classes_are_still_taken_under_a_project_hold(en
         assert await _scalar(sessions, "SELECT count(*) FROM ai_eval_shadow_pairs WHERE id = :i", i=shadow.id) == 0
         assert await _scalar(sessions, "SELECT lifecycle_status FROM agent_memory_entries WHERE id = :i",
                              i=memory.id) == "expired"
-        assert ("caches", True) in calls and ("search_index", True) in calls and ("memory_vectors", 1) in calls
+        assert ("caches", True) in calls and ("memory_vectors", 1) in calls
+        # Owner 2026-11-03: an ACTIVE project's search purge takes only the purged runs' documents -- none
+        # here, the hold keeps the run -- and never the project-wide delete. D-7 holds: the hold keeps no
+        # index document of its own (test_retention_search_index_scope_postgres pins the scope).
+        assert ("search_index_runs", True, 0) in calls and ("search_index", True) not in calls
         assert await _runs_left(sessions, [run.id]) == {run.id}
     finally:
         await _cleanup(sessions, pid)

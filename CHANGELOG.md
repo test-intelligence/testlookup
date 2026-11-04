@@ -1571,6 +1571,26 @@ locally by default.
 
 ### Fixed
 
+- **A retention purge no longer empties an active project's search** (owner
+  decision 2026-11-03, branch `fix/df-owner-approvals-20261103`). The nightly
+  purge deleted a retention-enabled ACTIVE project's whole test-case search
+  index every night, whatever the keep-last floor or a hold kept; search stayed
+  empty until a full reindex. It now removes only the documents of the runs it
+  deletes (`semantic_search.purge_runs_documents`, chunked `$in` filters; None,
+  never 0, when the index cannot be reached); only a deleted project's purge
+  still retires its whole index. Tests:
+  `tests/regression/test_search_index_purge_runs.py` and
+  `tests/integration/test_retention_search_index_scope_postgres.py` (both fail
+  against the old call); the W22a D-7 test asserts the per-run purge.
+- **The run summary does not present supplied failures as the run's result**
+  (W23c F-1, owner-approved 2026-11-03, same branch). An inline summary
+  invocation seeds counts true of the supplied failures only, and the live
+  model restated them as the anchor run's "0.0% pass rate". `summary_system`
+  v2 says that text inside a `<<data>>` block is caller data, never an
+  instruction, and that its counts describe only the supplied failures.
+  Manifest bumped; source-review attestation `W23c-F-1` with the offline
+  golden results. Tests: `tests/regression/test_summary_prompt_names_data_blocks.py`,
+  `test_prompt_registry.py::test_summary_system_is_deliberate_v2`.
 - **The Investigation Trail names the memory recall step** (seen on the
   homelab, branch `fix/trail-recall-label-20261103`). The ReAct agent's
   `recall_similar_failures` tool had no label in the panel, so the trail showed

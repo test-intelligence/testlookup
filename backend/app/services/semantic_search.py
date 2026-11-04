@@ -1422,7 +1422,7 @@ async def purge_run_documents(
 
     **Why this is separate from :func:`purge_project_documents` (RET-D8).**
     That function deletes on ``{"project_id": ...}``, which is right for the
-    nightly sweep — it retires a whole project. Calling it from a single-run
+    nightly sweep of a DELETED project — it retires a whole project. Calling it from a single-run
     delete would destroy every embedding the project owns while reporting a
     plausible-looking number, and search would stay empty until someone ran a
     full reindex. The two scopes are different deletions and are now different
@@ -1474,6 +1474,77 @@ async def purge_run_documents(
         return None
 
 
+#: Run ids per ``$in`` filter in :func:`purge_runs_documents` (the retention
+#: purge's own Postgres delete chunk is 500 too).
+_RUN_PURGE_CHUNK = 500
+
+
+async def purge_runs_documents(
+    project_id: str, run_ids: list[str], *, execute: bool
+) -> int | None:
+    """Count (or delete) the documents of the runs a retention purge deletes.
+
+    Returns the document count, or **None when the store could not be
+    reached** — callers must not render that as 0. No runs = 0, without
+    visiting the store: there is nothing of this purge's in it.
+
+    **Why the nightly purge of an ACTIVE project uses this (owner, 2026-11-03).**
+    It used to call :func:`purge_project_documents`, which deleted the project's
+    WHOLE index every night: search stayed empty until a full reindex (the
+    incremental indexer's cursor had passed the rows), and it ignored the
+    keep-last floor and every hold. The runs the purge deletes are the only
+    documents that stop being true; the caller passes exactly those
+    (``purge_run_ids``: holds and the floor already excluded).
+
+    Same filter as :func:`purge_run_documents`, with ``$in`` over a chunk of
+    run ids instead of one ``test_run_id``.
+    """
+    if not run_ids:
+        return 0
+    chunks = [
+        run_ids[i:i + _RUN_PURGE_CHUNK]
+        for i in range(0, len(run_ids), _RUN_PURGE_CHUNK)
+    ]
+    wheres = [
+        {
+            "$and": [
+                {"project_id": str(project_id)},
+                {"test_run_id": {"$in": [str(run_id) for run_id in chunk]}},
+            ]
+        }
+        for chunk in chunks
+    ]
+    try:
+        collection = await _get_or_create_collection()
+    except Exception as exc:
+        # Unreachable is not empty — same stance as the project-wide purge.
+        logger.warning(
+            "Search-index purge of %d runs failed for project %s: %s",
+            len(run_ids), project_id, exc,
+        )
+        for where in wheres:
+            await _purge_inactive_generations(where, execute=execute)
+        return None
+
+    total = 0
+    try:
+        for where in wheres:
+            payload = await asyncio.to_thread(collection.get, where=where, include=[])
+            ids = list(payload.get("ids") or [])
+            if execute and ids:
+                await asyncio.to_thread(collection.delete, where=where)
+            await _purge_inactive_generations(where, execute=execute)
+            total += len(ids)
+        return total
+    except Exception as exc:
+        # A failure part-way must not return a partial count as the whole.
+        logger.warning(
+            "Search-index purge of %d runs failed for project %s: %s",
+            len(run_ids), project_id, exc,
+        )
+        return None
+
+
 async def purge_project_documents(project_id: str, *, execute: bool) -> int | None:
     """Count (or delete) this project's documents in the test-case index.
 
@@ -1500,6 +1571,11 @@ async def purge_project_documents(project_id: str, *, execute: bool) -> int | No
     Retention's execute path is the deliberate, audited, already-irreversible
     one, and it is the feature that promises a cross-store purge — so it is the
     honest place for this.
+
+    **Only for a deleted project (owner, 2026-11-03).** The purge calls this
+    when ``Project.is_active`` is false. An ACTIVE project's purge calls
+    :func:`purge_runs_documents` with the runs it deletes: this whole-project
+    delete used to run for it too, every night, and emptied its search.
 
     Deleting by metadata filter rather than by id list: the ids are test-case
     UUIDs we would otherwise have to re-derive from Postgres rows that this
