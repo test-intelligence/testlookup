@@ -52,6 +52,26 @@ locally by default.
 
 ### Added
 
+- **Project export with run history** (wave W30, ADM-05 phase 2, owner-approved
+  2026-11-03; branch `feat/df-project-export-history-20261103`; migration
+  `0252_project_data_job_history`). On Settings › Project data an export can
+  include the project's run history (30 / 90 / 365 days or all, at most 2,000
+  runs): runs, test results, AI analyses and their versions, suite executions,
+  the ten run-scoped stored-document collections and the run's attachment
+  files, in the same signed archive (schema 2; a catalog-only export still
+  writes schema 1). An import writes the history as history — new ids,
+  original timestamps — and triggers nothing an ingest would (no AI call, mail,
+  webhook, gate, defect or flaky recompute: a static guard and runtime
+  recorders prove it), pauses the copy's retention purge for 90 days and
+  rebuilds its search index. Archives up to 2 GB upload in resumable 32 MB
+  parts (no proxy change); an estimate is shown before export. CLI 0.4.0:
+  `projects export --history --days`, a resumable `projects import`. Tests:
+  `test_project_history_transfer_postgres_mongo.py` (real Postgres + Mongo:
+  every store's counts, FKs, timestamps, nothing triggered, idempotency and
+  resume, mid-import failures in every store, refusals before any write),
+  `test_project_export_postgres.py`, `test_project_import_postgres.py`, the
+  classification / document / object / side-effect guards, the transfer
+  spec at 1280 and 1440, three new visual regions.
 - **Grafana: the "Tier 0-2 jobs" row, and a link preview card** (wave W25b,
   HYG-09; branch `feat/df-hygiene-b-20261031`).
   - The overview dashboard gains a row charting quarantine proposals,
@@ -1571,6 +1591,14 @@ locally by default.
 
 ### Fixed
 
+- **An inline summary's data no longer states the supplied failures as the
+  build's result** (W23c F-1 part 2, same branch as W30). `summary_system` v2
+  alone did not stop the live model writing "The test run had a 0.0% pass
+  rate" for an inline invocation whose anchor run passed: the context's own
+  `Results: … Pass rate 0.0%` line said so. For an inline seed that line now
+  names the supplied failures and carries no pass rate, and the fallback
+  derives no release signal from them. Test:
+  `tests/regression/test_inline_summary_names_supplied_failures.py`.
 - **A retention purge no longer empties an active project's search** (owner
   decision 2026-11-03, branch `fix/df-owner-approvals-20261103`). The nightly
   purge deleted a retention-enabled ACTIVE project's whole test-case search

@@ -3493,6 +3493,22 @@ requested_at TIMESTAMPTZ NOT NULL now(); started_at / finished_at / expires_at T
 - **Never exported.** The table is classified `EXCLUDED` (`job_or_outbox`) in `services/project_export_entities.py`, the classification every table of the metadata must appear in (`tests/test_project_export_classification.py`: 30 exported / 107 excluded / 23 not project-scoped).
 - **Rollback.** `downgrade()` drops the five indexes and the table. No change to any existing table, no backfill, no seed.
 
+**W30 (migration 0252, ADM-05 phase 2: run history).**
+
+```text
+options JSONB NOT NULL '{}'   -- an export's ProjectDataOptions {include_history, history_days, max_runs} ('{}' = catalog only);
+                              -- a parted import's {parted: true, parts, bytes, sha256, schema_version?}
+upload JSONB NULL             -- a parted import's progress while status = 'uploading' {parts, bytes, received, received_bytes,
+                              -- part_sha256 {n: hex}, part_bytes {n: int}}; SQL NULL otherwise (none_as_null in the ORM)
+cleanup JSONB NULL            -- an import's ledger of what it wrote OUTSIDE Postgres {project_id, run_ids, pipeline_ids}:
+                              -- committed before the first document / object, SQL NULL after a success or a finished cleanup;
+                              -- ORM-deferred, never returned
+```
+
+- **Status.** `status` gains `uploading` (`ck_project_data_jobs_status`); `ck_project_data_jobs_uploading_is_import` (`status <> 'uploading' OR kind = 'import'`). `uq_pdj_import_token` already covers an `uploading` job (a re-sent start with the same token answers it); no index added.
+- **Classification.** The run history this column set serves moved 27 tables from EXCLUDED to EXPORTED (`tests/test_project_export_classification.py`: 56 exported / 77 excluded / 24 not project-scoped = 157); `project_data_jobs` itself stays EXCLUDED (`job_or_outbox`).
+- **Rollback.** `downgrade()` refuses while a job is `uploading` (its parts would be orphaned), then drops the three columns and restores phase 1's status CHECK.
+
 ## Systemic cluster membership key (migration 0193, VIZ-207)
 
 `systemic_flake_cluster` gains `membership_key VARCHAR(32) NULL` and the non-unique index

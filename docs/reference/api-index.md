@@ -267,6 +267,9 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/project-data-jobs/{data_job_id}` | Get Project Data Job | [Project data](api/project-data.md) |
 | GET | `/api/v1/project-data-jobs/{data_job_id}/download` | Download Project Export | [Project data](api/project-data.md) |
 | GET | `/api/v1/project-imports` | List My Project Imports | [Project data](api/project-data.md) |
+| POST | `/api/v1/project-imports/uploads` | Start Import Upload | [Project data](api/project-data.md) |
+| POST | `/api/v1/project-imports/uploads/{data_job_id}/complete` | Complete Import Upload | [Project data](api/project-data.md) |
+| PUT | `/api/v1/project-imports/uploads/{data_job_id}/parts/{part_number}` | Upload Import Part | [Project data](api/project-data.md) |
 | GET | `/api/v1/projects` | List Projects | [Projects](api/projects.md) |
 | POST | `/api/v1/projects` | Create Project | [Projects](api/projects.md) |
 | POST | `/api/v1/projects/import` | Start Project Import | [Project data](api/project-data.md) |
@@ -315,6 +318,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/projects/{project_id}/duplicate-candidates/{candidate_id}/dismiss` | Dismiss Duplicate Candidate | [Duplicate Detection](api/duplicate-detection.md) |
 | POST | `/api/v1/projects/{project_id}/duplicate-candidates/{candidate_id}/merge` | Merge Duplicate Candidate | [Duplicate Detection](api/duplicate-detection.md) |
 | POST | `/api/v1/projects/{project_id}/export` | Start Project Export | [Project data](api/project-data.md) |
+| GET | `/api/v1/projects/{project_id}/export-estimate` | Estimate Project Export | [Project data](api/project-data.md) |
 | POST | `/api/v1/projects/{project_id}/fix-outcomes` | Record Fix Outcome | [Feedback & Training](api/feedback-training.md) |
 | GET | `/api/v1/projects/{project_id}/fixer/attempts` | List Fixer Attempts | [Fixer](api/fixer.md) |
 | GET | `/api/v1/projects/{project_id}/fixer/config` | Get Fixer Config | [Fixer](api/fixer.md) |
@@ -724,4 +728,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **715 HTTP operations**, **604 paths**, **91 domain pages**.
+Total: **719 HTTP operations**, **608 paths**, **91 domain pages**.

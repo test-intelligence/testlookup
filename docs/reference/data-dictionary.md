@@ -86,7 +86,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [perf_baselines](#perf_baselines) | PerfBaseline | 14 |
 | [product_usage_events](#product_usage_events) | ProductUsageEvent | 6 |
 | [project_activity_events](#project_activity_events) | ProjectActivityEvent | 24 |
-| [project_data_jobs](#project_data_jobs) | ProjectDataJob | 24 |
+| [project_data_jobs](#project_data_jobs) | ProjectDataJob | 27 |
 | [project_insights](#project_insights) | ProjectInsight | 16 |
 | [project_llm_quota](#project_llm_quota) | ProjectLlmQuota | 12 |
 | [project_llm_usage](#project_llm_usage) | ProjectLlmUsage | 10 |
@@ -2470,7 +2470,7 @@ Constraints and indexes:
 
 ## instance_retention_policy
 
-[backend/app/models/postgres.py:8172](../../backend/app/models/postgres.py#L8172)
+[backend/app/models/postgres.py:8187](../../backend/app/models/postgres.py#L8187)
 
 The instance-wide retention defaults (W22b ACT-06, migration 0242).
 
@@ -3145,7 +3145,7 @@ Constraints and indexes:
 
 ## project_activity_events
 
-[backend/app/models/postgres.py:8263](../../backend/app/models/postgres.py#L8263)
+[backend/app/models/postgres.py:8278](../../backend/app/models/postgres.py#L8278)
 
 Append-only, project-scoped product feed of everything that happens.
 
@@ -3232,7 +3232,9 @@ until its transaction commits (``project_id`` NULL until then) and must
 survive the project it created being archived (``SET NULL``, never
 CASCADE). ``kind`` / ``status`` are the ``project_export_vocab``
 vocabularies (CHECKed). ``storage_key`` (the export archive, or the
-import's upload) is NEVER returned and never logged.
+import's upload) is NEVER returned and never logged. W30 (migration 0252):
+``options`` / ``upload`` / ``cleanup``, the ``uploading`` status (a parted
+import upload) and its CHECK.
 
 | Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
 |---|---|---|---|---|---|
@@ -3260,11 +3262,15 @@ import's upload) is NEVER returned and never logged.
 | `started_at` | `DATETIME` | True | False | `—` |  |
 | `finished_at` | `DATETIME` | True | False | `—` |  |
 | `expires_at` | `DATETIME` | True | False | `—` |  |
+| `options` | `JSONB` | False | False | `server='{}'; application=dict` |  |
+| `upload` | `JSONB` | True | False | `—` |  |
+| `cleanup` | `JSONB` | True | False | `—` |  |
 
 Constraints and indexes:
 
 - `CheckConstraint` `ck_project_data_jobs_kind`: `kind IN ('export', 'import')`
-- `CheckConstraint` `ck_project_data_jobs_status`: `status IN ('queued', 'running', 'succeeded', 'failed', 'expired')`
+- `CheckConstraint` `ck_project_data_jobs_status`: `status IN ('uploading', 'queued', 'running', 'succeeded', 'failed', 'expired')`
+- `CheckConstraint` `ck_project_data_jobs_uploading_is_import`: `status <> 'uploading' OR kind = 'import'`
 - `ForeignKeyConstraint` `unnamed`: `project_id`
 - `ForeignKeyConstraint` `unnamed`: `requested_by_id`
 - `PrimaryKeyConstraint` `unnamed`: `id`
@@ -3356,7 +3362,7 @@ Constraints and indexes:
 
 ## project_llm_usage
 
-[backend/app/models/postgres.py:8223](../../backend/app/models/postgres.py#L8223)
+[backend/app/models/postgres.py:8238](../../backend/app/models/postgres.py#L8238)
 
 Running per-period LLM cost meter for a project.
 
@@ -3409,7 +3415,7 @@ Constraints and indexes:
 
 ## project_retention_policies
 
-[backend/app/models/postgres.py:8071](../../backend/app/models/postgres.py#L8071)
+[backend/app/models/postgres.py:8086](../../backend/app/models/postgres.py#L8086)
 
 Per-project data retention policy (PMF US-11.4, migration 0113).
 
@@ -3967,7 +3973,7 @@ test_run_links: Mapped[list['ReleaseTestRunLink']] = relationship('ReleaseTestRu
 
 ## report_exports
 
-[backend/app/models/postgres.py:8020](../../backend/app/models/postgres.py#L8020)
+[backend/app/models/postgres.py:8035](../../backend/app/models/postgres.py#L8035)
 
 VIZ-607: one background export of a report (migration 0194).
 
@@ -4070,7 +4076,7 @@ Constraints and indexes:
 
 ## retention_holds
 
-[backend/app/models/postgres.py:7934](../../backend/app/models/postgres.py#L7934)
+[backend/app/models/postgres.py:7949](../../backend/app/models/postgres.py#L7949)
 
 A retention hold on a project, a release, a run or a compliance pack (W22a ACT-05, migration 0239).
 

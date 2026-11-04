@@ -29944,6 +29944,113 @@
         "title": "ProjectDataError",
         "type": "object"
       },
+      "ProjectDataHistoryReport": {
+        "description": "Inside ``ProjectDataImportReport.history``.",
+        "properties": {
+          "documents": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": {},
+            "title": "Documents",
+            "type": "object"
+          },
+          "newest_run_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Newest Run At"
+          },
+          "object_bytes": {
+            "default": 0,
+            "title": "Object Bytes",
+            "type": "integer"
+          },
+          "objects": {
+            "default": 0,
+            "title": "Objects",
+            "type": "integer"
+          },
+          "oldest_run_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Run At"
+          },
+          "recent_runs": {
+            "default": 0,
+            "title": "Recent Runs",
+            "type": "integer"
+          },
+          "retention_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Days"
+          },
+          "retention_paused_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retention Paused Until"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          },
+          "runs_past_retention": {
+            "default": 0,
+            "title": "Runs Past Retention",
+            "type": "integer"
+          },
+          "search_reindex": {
+            "title": "Search Reindex",
+            "type": "string"
+          },
+          "skipped": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProjectDataSkip"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "test_cases": {
+            "title": "Test Cases",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "runs",
+          "test_cases",
+          "search_reindex"
+        ],
+        "title": "ProjectDataHistoryReport",
+        "type": "object"
+      },
       "ProjectDataImportReport": {
         "properties": {
           "cleared": {
@@ -29958,6 +30065,16 @@
             "format": "date-time",
             "title": "Exported At",
             "type": "string"
+          },
+          "history": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectDataHistoryReport"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "inserted": {
             "additionalProperties": {
@@ -30156,6 +30273,16 @@
             ],
             "title": "Manifest Sha256"
           },
+          "options": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectDataOptions"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "progress": {
             "anyOf": [
               {
@@ -30205,6 +30332,17 @@
             ],
             "title": "Requested By Name"
           },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
           "signature": {
             "anyOf": [
               {
@@ -30231,6 +30369,16 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "upload": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectDataUpload"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -30242,12 +30390,81 @@
         "title": "ProjectDataJobRead",
         "type": "object"
       },
+      "ProjectDataOptions": {
+        "description": "Echoed on an export job: what was asked for.",
+        "properties": {
+          "history_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "History Days"
+          },
+          "include_history": {
+            "default": false,
+            "title": "Include History",
+            "type": "boolean"
+          },
+          "max_runs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Runs"
+          }
+        },
+        "title": "ProjectDataOptions",
+        "type": "object"
+      },
       "ProjectDataProgress": {
         "properties": {
           "done": {
             "minimum": 0.0,
             "title": "Done",
             "type": "integer"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "phase_done": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Done"
+          },
+          "phase_total": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase Total"
           },
           "total": {
             "minimum": 0.0,
@@ -30295,6 +30512,284 @@
           "count"
         ],
         "title": "ProjectDataSkip",
+        "type": "object"
+      },
+      "ProjectDataUpload": {
+        "description": "A parted import upload's state (import jobs in \"uploading\").",
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "parts": {
+            "title": "Parts",
+            "type": "integer"
+          },
+          "received": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "title": "Received",
+            "type": "array"
+          },
+          "received_bytes": {
+            "default": 0,
+            "title": "Received Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "parts",
+          "bytes"
+        ],
+        "title": "ProjectDataUpload",
+        "type": "object"
+      },
+      "ProjectExportEstimate": {
+        "description": "``GET /projects/{id}/export-estimate``: counts only. A store that could not be read → its counts None and\n``measured[store] = False`` (absence is not health — never 0).",
+        "properties": {
+          "documents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documents"
+          },
+          "estimated_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimated Bytes"
+          },
+          "history_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "History Days"
+          },
+          "include_history": {
+            "title": "Include History",
+            "type": "boolean"
+          },
+          "measured": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Measured",
+            "type": "object"
+          },
+          "object_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Object Bytes"
+          },
+          "objects": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Objects"
+          },
+          "over_limit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Over Limit"
+          },
+          "runs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs"
+          },
+          "runs_in_progress": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs In Progress"
+          },
+          "runs_over_cap": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runs Over Cap"
+          },
+          "test_cases": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Cases"
+          }
+        },
+        "required": [
+          "include_history",
+          "measured"
+        ],
+        "title": "ProjectExportEstimate",
+        "type": "object"
+      },
+      "ProjectExportRequest": {
+        "additionalProperties": false,
+        "description": "The OPTIONAL JSON body of ``POST /projects/{id}/export``. No body (every phase-1 caller) or\n``include_history: false`` == the phase-1 export, schema 1.",
+        "properties": {
+          "history_days": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 90,
+            "title": "History Days"
+          },
+          "include_history": {
+            "default": false,
+            "title": "Include History",
+            "type": "boolean"
+          },
+          "max_runs": {
+            "default": 2000,
+            "maximum": 2000.0,
+            "minimum": 1.0,
+            "title": "Max Runs",
+            "type": "integer"
+          }
+        },
+        "title": "ProjectExportRequest",
+        "type": "object"
+      },
+      "ProjectImportPartReceipt": {
+        "description": "The answer of ``PUT /project-imports/uploads/{data_job_id}/parts/{part_number}``.",
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "part": {
+            "title": "Part",
+            "type": "integer"
+          },
+          "received": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Received",
+            "type": "array"
+          }
+        },
+        "required": [
+          "part",
+          "bytes",
+          "received",
+          "complete"
+        ],
+        "title": "ProjectImportPartReceipt",
+        "type": "object"
+      },
+      "ProjectImportUploadStart": {
+        "additionalProperties": false,
+        "description": "Body of ``POST /project-imports/uploads``: every part but the last is exactly IMPORT_PART_MAX_BYTES.",
+        "properties": {
+          "bytes": {
+            "maximum": 2147483648.0,
+            "minimum": 1.0,
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "client_token": {
+            "format": "uuid",
+            "title": "Client Token",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "parts": {
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "title": "Parts",
+            "type": "integer"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_token",
+          "bytes",
+          "parts",
+          "sha256"
+        ],
+        "title": "ProjectImportUploadStart",
         "type": "object"
       },
       "ProjectMemberResponse": {
@@ -70751,6 +71246,226 @@
         ]
       }
     },
+    "/api/v1/project-imports/uploads": {
+      "post": {
+        "description": "Open a parted upload (ADMIN): a NEW import job in ``uploading`` (201), or — the token checked FIRST — the\ncaller's existing non-failed job of that ``client_token`` (200, with its received parts or its later\nstatus). Then the name check (W24's order): 422 ``name_invalid`` / 409 ``name_taken``. Nothing is read.",
+        "operationId": "start_import_upload_api_v1_project_imports_uploads_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectImportUploadStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDataJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Start Import Upload",
+        "tags": [
+          "Project data"
+        ]
+      }
+    },
+    "/api/v1/project-imports/uploads/{data_job_id}/complete": {
+      "post": {
+        "description": "Every part present at its planned size → ``queued``, COMMIT, then the worker is enqueued with the history\ntime limits (202). A repeat on a job already queued / running / finished → 200 with it (no second enqueue —\na lost one is the janitor's). 409 ``upload_incomplete`` names the missing parts; 409 ``upload_not_open``\nfor a failed / expired upload.",
+        "operationId": "complete_import_upload_api_v1_project_imports_uploads__data_job_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "data_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Data Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDataJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Complete Import Upload",
+        "tags": [
+          "Project data"
+        ]
+      }
+    },
+    "/api/v1/project-imports/uploads/{data_job_id}/parts/{part_number}": {
+      "put": {
+        "description": "One part (raw ``application/octet-stream``, ≤ 32 MiB) of the caller's own open upload. Checked before the\nbody is read: the job is this admin's import (else the ONE 404), still ``uploading`` (409\n``upload_not_open``), the part number in its plan (422 ``part_number_invalid``), ``X-Part-Sha256`` 64 hex\n(422 ``part_digest_mismatch``); the same part again with the same digest → 200, nothing rewritten; another\ndigest → 409 ``part_conflict``. Then the body is counted + hashed (413 ``part_too_large`` past 32 MiB, 422\n``part_digest_mismatch`` / ``upload_parts_invalid`` — in every case NOTHING is stored), the job row locked\n(``FOR UPDATE``), the part written as ONE object, its receipt recorded, ONE commit.",
+        "operationId": "upload_import_part_api_v1_project_imports_uploads__data_job_id__parts__part_number__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "data_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Data Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "part_number",
+            "required": true,
+            "schema": {
+              "title": "Part Number",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Part-Sha256",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Part-Sha256"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectImportPartReceipt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Upload Import Part",
+        "tags": [
+          "Project data"
+        ]
+      }
+    },
     "/api/v1/projects": {
       "get": {
         "operationId": "list_projects_api_v1_projects_get",
@@ -74874,7 +75589,7 @@
     },
     "/api/v1/projects/{project_id}/export": {
       "post": {
-        "description": "Queue an export of the project's settings + catalog (an archived project too: the access rule is\n``require_project_access``'s, unchanged). 409 ``export_running`` names the live job.",
+        "description": "Queue an export of the project's settings + catalog (an archived project too: the access rule is\n``require_project_access``'s, unchanged). 409 ``export_running`` names the live job. W30: no body /\n``include_history: false`` == phase 1 exactly; ``include_history: true`` stores the options and dispatches\nwith the history time limits (422 ``history_window_invalid`` / ``max_runs_invalid`` for a bad body).",
         "operationId": "start_project_export_api_v1_projects__project_id__export_post",
         "parameters": [
           {
@@ -74904,6 +75619,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ProjectExportRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "content": {
@@ -74932,6 +75664,107 @@
           }
         ],
         "summary": "Start Project Export",
+        "tags": [
+          "Project data"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/export-estimate": {
+      "get": {
+        "description": "What an export with these options would hold — counts only (the export's rule: QA lead or ADMIN with\naccess). Writes NOTHING (no job, no object, no cache). An unreachable Mongo / object store answers\n``measured[store] = false`` with NULL counts (200, never 0). ``history_days`` absent = all history.",
+        "operationId": "estimate_project_export_api_v1_projects__project_id__export_estimate_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_history",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include History",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "history_days",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "History Days"
+            }
+          },
+          {
+            "in": "query",
+            "name": "max_runs",
+            "required": false,
+            "schema": {
+              "default": 2000,
+              "title": "Max Runs",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectExportEstimate"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Estimate Project Export",
         "tags": [
           "Project data"
         ]
