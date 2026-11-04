@@ -13,6 +13,7 @@ All 4 layers are stored in MongoDB[run_summaries] under their own keys.
 import asyncio
 import hashlib
 import json
+import re
 import structlog
 import uuid
 from datetime import datetime, timezone
@@ -206,13 +207,20 @@ def _format_results_line(run_data: dict[str, Any]) -> str:
     result although the anchor run passed — summary_system v2's rule alone did
     not stop it (homelab, 2026-11-04). So the line names them as supplied
     failures and carries no pass rate.
+
+    With that line the re-walk (F-OR07-2, same day) no longer stated a pass
+    rate, but still closed "This indicates a potential release readiness
+    issue": the line said what the failures are not, and nothing about release.
+    It now states that too, as a fact of the data, because the small model
+    follows the data over the system rule.
     """
     if run_data.get("status") == SEEDED_STATUS:
         supplied = int(run_data.get("failed_tests") or 0)
         noun = "failure" if supplied == 1 else "failures"
         return (
             f"Supplied {noun}: {supplied}, sent by the caller with this request. "
-            "They are not this build's results; this data carries no pass rate for the build."
+            "They are not this build's results; this data carries no pass rate for the build "
+            "and says nothing about whether the build is ready to release."
         )
     total = int(run_data.get("total_tests") or 0)
     failed = int(run_data.get("failed_tests") or 0)
@@ -230,6 +238,32 @@ def _format_results_line(run_data: dict[str, Any]) -> str:
         f"Results: {total} tests — {', '.join(breakdown)}. "
         f"Pass rate {pass_rate:.1f}% (passed / executed; skipped excluded)."
     )
+
+
+# F-OR07-2: the live model copies the data-block markers (``<<data>>`` /
+# ``<</data>>``, ``inline_input_vocab.UNTRUSTED_OPEN`` / ``UNTRUSTED_CLOSE``)
+# into its prose -- "the <<data>>or07a walk sample<</data>> test" (homelab,
+# 2026-11-04). They are prompt plumbing, never words for a reader. A caller's
+# value can never contain them (``untrusted_input.neutralise`` turns ``<<`` into
+# ``‹‹`` before wrapping), so removing them from the generated report removes
+# nothing the caller wrote. Spacing variants a model may produce are covered.
+_DATA_MARKER = re.compile(r"<<\s*/?\s*data\s*>>", re.IGNORECASE)
+# A marker standing between two blanks ("the <<data>> x") takes one blank with
+# it, so the prose keeps single spacing.
+_DATA_MARKER_BETWEEN_BLANKS = re.compile(r"(?<=[ \t])<<\s*/?\s*data\s*>>[ \t]+", re.IGNORECASE)
+
+
+def _strip_data_markers(value: Any) -> Any:
+    """``value`` with every data-block marker removed from every string in it (dicts and lists walked)."""
+    if isinstance(value, str):
+        if "<<" not in value:
+            return value
+        return _DATA_MARKER.sub("", _DATA_MARKER_BETWEEN_BLANKS.sub("", value))
+    if isinstance(value, dict):
+        return {key: _strip_data_markers(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_strip_data_markers(item) for item in value]
+    return value
 
 
 class SummaryAgent(BaseAgent):
@@ -343,6 +377,9 @@ class SummaryAgent(BaseAgent):
                     )
             summary_provenance["fallback_used"] = bool(fallback_reason)
             summary_provenance["fallback_reason_sha256"] = _hash_text(fallback_reason)
+            # F-OR07-2: one choke point for both paths (model and fallback),
+            # before anything is stored, rendered, checked or returned.
+            structured = _strip_data_markers(structured)
             structured["_provenance"] = summary_provenance
 
             # Persist all 4 layers to MongoDB
