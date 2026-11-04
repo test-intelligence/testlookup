@@ -84,10 +84,13 @@ class FakeStorage:
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
         self.fail_stream = False
+        self.puts: list[tuple[str, str, str]] = []           # (key, bucket, content type) per write
 
     async def put_object_stream(self, key: str, fileobj: Any, *, size: int, content_type: str, bucket: str) -> None:
         fileobj.seek(0)
         self.objects[key] = fileobj.read()
+        assert len(self.objects[key]) == size
+        self.puts.append((key, bucket, content_type))
 
     async def stream_object(self, key: str, bucket: str | None = None) -> Any:
         if self.fail_stream:
@@ -141,14 +144,27 @@ def storage(monkeypatch: pytest.MonkeyPatch) -> FakeStorage:
     return store
 
 
+class _Dispatched(list):
+    """The recorded ``(task name, *args)`` calls; ``options`` keeps each call's ``apply_async`` options (W30)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.options: list[dict[str, Any]] = []
+
+
 @pytest.fixture
-def dispatched(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
-    """``apply_async`` recorders that bind the REAL payload to each task's signature."""
-    calls: list[tuple[str, str]] = []
+def dispatched(monkeypatch: pytest.MonkeyPatch) -> _Dispatched:
+    """``apply_async`` recorders that bind the REAL payload to each task's signature, and the per-call options to
+    Celery's own ``Task.apply_async`` signature (an unknown option name would fail the bind)."""
+    from celery.app.task import Task
+
+    calls = _Dispatched()
     for task in (tasks.export_project_data, tasks.import_project_data):
-        def apply_async(args: Any = None, kwargs: Any = None, _task: Any = task, **_options: Any) -> Any:
+        def apply_async(args: Any = None, kwargs: Any = None, _task: Any = task, **options: Any) -> Any:
             inspect.signature(_task.run).bind(*(args or ()), **(kwargs or {}))
+            inspect.signature(Task.apply_async).bind(_task, args, kwargs, **options)
             calls.append((_task.name, *(args or ())))
+            calls.options.append(dict(options))
             return SimpleNamespace(id="celery-id")
         monkeypatch.setattr(task, "apply_async", apply_async)
     return calls
@@ -509,3 +525,445 @@ async def test_only_an_admin_imports(factory: Any, world: Any, storage: FakeStor
         answer = await _import(client, body=_zip_bytes())
     assert answer.status_code == 403
     assert await _count_jobs(factory) == 0 and storage.objects == {} and dispatched == []
+
+
+# ── W30: the export body (§3.2) ─────────────────────────────────────────────
+
+HISTORY_LIMITS = {"time_limit": vocab.HISTORY_TIME_LIMIT_SECONDS, "soft_time_limit": vocab.HISTORY_TIME_LIMIT_SECONDS - 300}
+
+
+async def test_a_history_export_stores_its_options_and_carries_the_history_time_limits(
+    factory: Any, world: Any, dispatched: _Dispatched,
+) -> None:
+    async with _client(factory, world.lead) as client:
+        answer = await client.post(f"/api/v1/projects/{world.project.id}/export",
+                                   json={"include_history": True, "history_days": 365, "max_runs": 2000})
+    assert answer.status_code == 202, answer.text
+    assert answer.json()["options"] == {"include_history": True, "history_days": 365, "max_runs": 2000}
+    assert dispatched == [("app.worker.tasks.export_project_data", answer.json()["id"])]
+    assert dispatched.options == [HISTORY_LIMITS]
+    async with factory() as db:
+        row = await db.get(ProjectDataJob, uuid.UUID(answer.json()["id"]))
+    assert row.options == {"include_history": True, "history_days": 365, "max_runs": 2000}
+
+
+@pytest.mark.parametrize("body", [None, {"include_history": False}, {"include_history": False, "history_days": 30}])
+async def test_no_body_or_no_history_is_the_phase_1_export(
+    factory: Any, world: Any, dispatched: _Dispatched, body: Any,
+) -> None:
+    async with _client(factory, world.admin) as client:
+        answer = await client.post(f"/api/v1/projects/{world.project.id}/export", json=body)
+    assert answer.status_code == 202, answer.text
+    assert dispatched.options == [{}]                   # the phase-1 payload: no per-message limits
+    async with factory() as db:
+        row = await db.get(ProjectDataJob, uuid.UUID(answer.json()["id"]))
+    assert row.options == {}
+
+
+@pytest.mark.parametrize(("body", "code"), [
+    ({"include_history": True, "history_days": 7}, "history_window_invalid"),
+    ({"include_history": True, "history_days": "90"}, "history_window_invalid"),
+    ({"include_history": True, "max_runs": 0}, "max_runs_invalid"),
+    ({"include_history": True, "max_runs": 2001}, "max_runs_invalid"),
+])
+async def test_a_bad_export_body_reads_its_sentence_and_creates_nothing(
+    factory: Any, world: Any, dispatched: _Dispatched, body: dict, code: str,
+) -> None:
+    async with _client(factory, world.lead) as client:
+        answer = await client.post(f"/api/v1/projects/{world.project.id}/export", json=body)
+    assert answer.status_code == 422
+    assert answer.json()["detail"] == {"code": code, "message": vocab.ERROR_SENTENCES[code]}
+    assert dispatched == [] and await _count_jobs(factory) == 0
+
+
+async def test_a_history_export_download_is_named_project_data(
+    factory: Any, world: Any, storage: FakeStorage,
+) -> None:
+    now = datetime.now(timezone.utc)
+    storage.objects["project-exports/x/history.zip"] = b"PK\x03\x04" + b"h" * 100
+    job = await _job(factory, kind="export", status="succeeded", project_id=world.project.id, bytes=104,
+                     requested_by_id=world.lead.id, storage_key="project-exports/x/history.zip",
+                     finished_at=now, expires_at=now + timedelta(hours=72),
+                     options={"include_history": True, "history_days": None, "max_runs": 2000})
+    async with _client(factory, world.lead) as client:
+        answer = await client.get(f"/api/v1/project-data-jobs/{job.id}/download")
+    assert answer.status_code == 200 and answer.headers["content-length"] == "104"
+    stamp = now.strftime("%Y%m%d-%H%M")
+    assert answer.headers["content-disposition"] == f'attachment; filename="payment-service-project-data-{stamp}.zip"'
+
+
+# ── W30: the estimate GET (§3.1) ────────────────────────────────────────────
+
+@pytest.fixture
+def estimates(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """The route's ``estimate`` call recorded (the counting itself is ``test_project_export_history.py``'s): it
+    runs one SELECT on the request session, so the listener sees what a real estimate's reads look like."""
+    from app.models.schemas import ProjectExportEstimate
+
+    calls: list[dict[str, Any]] = []
+
+    async def estimate(db: Any, mongo: Any, storage: Any, *, project_id: Any, options: Any) -> Any:
+        await db.execute(select(Project.id).where(Project.id == project_id))
+        try:
+            mongo["raw_allure_json"]
+            mongo_ok = True
+        except Exception:  # noqa: BLE001
+            mongo_ok = False
+        calls.append({"project_id": project_id, "options": dict(options), "mongo_ok": mongo_ok})
+        return ProjectExportEstimate(include_history=True, history_days=options["history_days"], runs=3,
+                                     documents=None if not mongo_ok else {"raw_allure_json": 4}, objects=2,
+                                     object_bytes=10, measured={"postgres": True, "documents": mongo_ok,
+                                                                "objects": True})
+
+    monkeypatch.setattr("app.services.project_export_history.estimate", estimate)
+    monkeypatch.setattr("app.db.mongo.get_mongo_db", lambda: {"raw_allure_json": object()})
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("who", "expected"),
+    [("admin", 200), ("lead", 200), ("outsider", 403), ("engineer", 403), ("viewer", 403), ("bound", 403),
+     ("admin2", 200)],
+)
+async def test_the_estimate_follows_the_export_rule_and_writes_nothing(
+    factory: Any, world: Any, storage: FakeStorage, estimates: list, who: str, expected: int,
+) -> None:
+    before = len(factory.statements)
+    async with _client(factory, getattr(world, who)) as client:
+        answer = await client.get(f"/api/v1/projects/{world.project.id}/export-estimate",
+                                  params={"include_history": "true", "history_days": 90})
+    assert answer.status_code == expected, answer.text
+    assert _writes(factory.statements[before:]) == [], "the estimate GET wrote"
+    assert await _count_jobs(factory) == 0 and storage.objects == {}
+    if expected == 200:
+        assert answer.json()["runs"] == 3 and answer.json()["measured"]["postgres"] is True
+        assert estimates == [{"project_id": world.project.id, "mongo_ok": True,
+                              "options": {"include_history": True, "history_days": 90, "max_runs": 2000}}]
+    else:
+        assert estimates == []
+
+
+async def test_the_estimate_of_a_missing_project_is_404_and_absent_days_mean_all(
+    factory: Any, world: Any, storage: FakeStorage, estimates: list,
+) -> None:
+    async with _client(factory, world.admin) as client:
+        missing = await client.get(f"/api/v1/projects/{uuid.uuid4()}/export-estimate")
+        everything = await client.get(f"/api/v1/projects/{world.project.id}/export-estimate")
+    assert missing.status_code == 404 and missing.json()["detail"] == "Project not found"
+    assert everything.status_code == 200
+    assert estimates[0]["options"] == {"include_history": True, "history_days": None, "max_runs": 2000}
+
+
+@pytest.mark.parametrize(("params", "code"), [
+    ({"history_days": 7}, "history_window_invalid"), ({"history_days": "ninety"}, "history_window_invalid"),
+    ({"max_runs": 0}, "max_runs_invalid"), ({"max_runs": 2001}, "max_runs_invalid"),
+    ({"max_runs": "many"}, "max_runs_invalid"),
+])
+async def test_a_bad_estimate_query_reads_its_sentence(
+    factory: Any, world: Any, estimates: list, params: dict, code: str,
+) -> None:
+    async with _client(factory, world.lead) as client:
+        answer = await client.get(f"/api/v1/projects/{world.project.id}/export-estimate", params=params)
+    assert answer.status_code == 422
+    assert answer.json()["detail"] == {"code": code, "message": vocab.ERROR_SENTENCES[code]}
+    assert estimates == []
+
+
+async def test_an_unconfigurable_mongo_is_unmeasured_not_a_500(
+    factory: Any, world: Any, storage: FakeStorage, estimates: list, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def broken() -> Any:
+        raise RuntimeError("no MONGO_URI")
+
+    monkeypatch.setattr("app.db.mongo.get_mongo_db", broken)
+    async with _client(factory, world.lead) as client:
+        answer = await client.get(f"/api/v1/projects/{world.project.id}/export-estimate")
+    assert answer.status_code == 200
+    assert answer.json()["measured"]["documents"] is False and answer.json()["documents"] is None
+    assert estimates[0]["mongo_ok"] is False
+
+
+# ── W30: the parted import upload (§3.1) ────────────────────────────────────
+
+UPLOADS = "/api/v1/project-imports/uploads"
+PART = 64          # the test-sized IMPORT_PART_MAX_BYTES (the 413 test uses the real 32 MiB)
+
+
+def _sha(data: bytes) -> str:
+    import hashlib
+
+    return hashlib.sha256(data).hexdigest()
+
+
+@pytest.fixture
+def small_parts(monkeypatch: pytest.MonkeyPatch) -> int:
+    from app.services import project_data_job_service
+
+    monkeypatch.setattr(vocab, "IMPORT_PART_MAX_BYTES", PART)
+    monkeypatch.setattr(project_data_job_service, "IMPORT_PART_MAX_BYTES", PART)
+    return PART
+
+
+def _archive(size: int) -> bytes:
+    return bytes((n * 7 + 3) % 251 for n in range(size))
+
+
+async def _start(client: AsyncClient, data: bytes, *, token: Any = None, name: Any = None, part: int = PART) -> Any:
+    return await client.post(UPLOADS, json={
+        "client_token": str(token or uuid.uuid4()), "name": name, "bytes": len(data),
+        "parts": -(-len(data) // part), "sha256": _sha(data),
+    })
+
+
+async def _put(client: AsyncClient, job_id: Any, number: int, chunk: Any, *, digest: Any = "auto") -> Any:
+    headers = {"Content-Type": "application/octet-stream"}
+    if digest == "auto":
+        headers["X-Part-Sha256"] = _sha(chunk)
+    elif digest is not None:
+        headers["X-Part-Sha256"] = digest
+    return await client.put(f"{UPLOADS}/{job_id}/parts/{number}", content=chunk, headers=headers)
+
+
+def _parts_of(data: bytes, part: int = PART) -> list[bytes]:
+    return [data[start:start + part] for start in range(0, len(data), part)]
+
+
+async def test_a_parted_upload_starts_takes_its_parts_and_completes(
+    factory: Any, world: Any, storage: FakeStorage, dispatched: _Dispatched, small_parts: int,
+) -> None:
+    from app.services.compliance_pack_service import COMPLIANCE_BUCKET
+
+    data = _archive(PART * 2 + 10)
+    async with _client(factory, world.admin) as client:
+        started = await _start(client, data, name="Payment copy")
+        assert started.status_code == 201, started.text
+        job = started.json()
+        assert job["status"] == "uploading" and job["kind"] == "import" and job["project_name"] == "Payment copy"
+        assert job["upload"] == {"parts": 3, "bytes": len(data), "received": [], "received_bytes": 0}
+        receipts = [await _put(client, job["id"], n, chunk) for n, chunk in enumerate(_parts_of(data), start=1)]
+        before = len(factory.statements)
+        polled = await client.get(f"/api/v1/project-data-jobs/{job['id']}")
+        assert _writes(factory.statements[before:]) == []
+        completed = await client.post(f"{UPLOADS}/{job['id']}/complete")
+        again = await client.post(f"{UPLOADS}/{job['id']}/complete")
+    assert [r.status_code for r in receipts] == [200, 200, 200]
+    assert receipts[-1].json() == {"part": 3, "bytes": 10, "received": [1, 2, 3], "complete": True}
+    assert polled.json()["upload"]["received"] == [1, 2, 3]
+    assert storage.puts == [(f"project-imports/parts/{job['id']}/part-{n:04d}", COMPLIANCE_BUCKET,
+                             "application/octet-stream") for n in (1, 2, 3)]
+    assert b"".join(storage.objects[f"project-imports/parts/{job['id']}/part-{n:04d}"] for n in (1, 2, 3)) == data
+    assert completed.status_code == 202 and completed.json()["status"] == "queued"
+    assert again.status_code == 200 and again.json()["status"] == "queued"
+    assert dispatched == [("app.worker.tasks.import_project_data", job["id"])]     # ONE enqueue
+    assert dispatched.options == [HISTORY_LIMITS]
+
+
+async def test_a_re_sent_start_answers_the_open_upload_with_its_received_parts(
+    factory: Any, world: Any, storage: FakeStorage, dispatched: _Dispatched, small_parts: int,
+) -> None:
+    data, token = _archive(PART * 2), uuid.uuid4()
+    async with _client(factory, world.admin) as client:
+        first = await _start(client, data, token=token)
+        await _put(client, first.json()["id"], 1, data[:PART])
+        second = await _start(client, data, token=token)
+        other_admin = await _start(_client(factory, world.admin2), data, token=token)
+    assert first.status_code == 201 and second.status_code == 200
+    assert second.json()["id"] == first.json()["id"] and second.json()["upload"]["received"] == [1]
+    assert other_admin.status_code == 201 and other_admin.json()["id"] != first.json()["id"]   # tokens are per requester
+    assert await _count_jobs(factory) == 2
+
+
+async def test_the_name_is_checked_after_the_token(
+    factory: Any, world: Any, storage: FakeStorage, small_parts: int,
+) -> None:
+    data, token = _archive(PART), uuid.uuid4()
+    async with _client(factory, world.admin) as client:
+        taken = await _start(client, data, name="  payment service ")
+        invalid = await _start(client, data, name="x")
+        started = await _start(client, data, token=token, name="Billing copy")
+        async with factory() as db:              # the name now exists (say, the first import created it)
+            db.add(Project(id=uuid.uuid4(), name="Billing copy", slug="billing-copy", is_active=True))
+            await db.commit()
+        resent = await _start(client, data, token=token, name="Billing copy")
+    assert taken.status_code == 409 and taken.json()["detail"]["code"] == "name_taken"
+    assert invalid.status_code == 422 and invalid.json()["detail"] == {
+        "code": "name_invalid", "message": vocab.ERROR_SENTENCES["name_invalid"]}
+    assert started.status_code == 201 and resent.status_code == 200      # the token answers before the name
+    assert await _count_jobs(factory) == 1
+
+
+@pytest.mark.parametrize("body", [
+    {"bytes": PART + 1, "parts": 1}, {"bytes": PART, "parts": 2}, {"bytes": PART * 65, "parts": 65},
+])
+async def test_a_bad_part_plan_reads_its_sentence(
+    factory: Any, world: Any, small_parts: int, body: dict,
+) -> None:
+    async with _client(factory, world.admin) as client:
+        answer = await client.post(UPLOADS, json={"client_token": str(uuid.uuid4()), "sha256": "a" * 64, **body})
+    assert answer.status_code == 422
+    assert answer.json()["detail"] == {"code": "upload_parts_invalid",
+                                       "message": vocab.ERROR_SENTENCES["upload_parts_invalid"]}
+    assert await _count_jobs(factory) == 0
+
+
+@pytest.mark.parametrize("who", ["lead", "engineer", "viewer", "outsider", "bound"])
+async def test_only_an_admin_starts_an_upload(factory: Any, world: Any, small_parts: int, who: str) -> None:
+    async with _client(factory, getattr(world, who)) as client:
+        answer = await _start(client, _archive(PART))
+    assert answer.status_code == 403
+    assert await _count_jobs(factory) == 0
+
+
+async def _open_upload(factory: Any, world: Any, data: bytes) -> str:
+    async with _client(factory, world.admin) as client:
+        started = await _start(client, data)
+    assert started.status_code == 201, started.text
+    return str(started.json()["id"])
+
+
+@pytest.mark.parametrize(
+    ("who", "target", "expected"),
+    [("admin", "mine", 200), ("admin2", "mine", 404), ("admin", "unknown", 404), ("admin", "export", 404),
+     ("lead", "mine", 403), ("engineer", "mine", 403), ("viewer", "mine", 403), ("outsider", "mine", 403),
+     ("bound", "mine", 403), ("lead", "export", 403)],
+)
+async def test_the_part_and_complete_routes_share_one_404(
+    factory: Any, world: Any, storage: FakeStorage, dispatched: _Dispatched, small_parts: int,
+    who: str, target: str, expected: int,
+) -> None:
+    """Another admin's upload, an unknown id and an EXPORT job (visible to its project's leads through
+    ``load_job_for``) read the SAME 404 body; a role below ADMIN (and a project-bound key) is refused by the role
+    guard first, with the guard's own text and the same answer for every id."""
+    data = _archive(PART)
+    mine = await _open_upload(factory, world, data)
+    export = await _job(factory, kind="export", status="succeeded", project_id=world.project.id,
+                        requested_by_id=world.lead.id)
+    job_id = {"mine": mine, "unknown": str(uuid.uuid4()), "export": str(export.id)}[target]
+    async with _client(factory, getattr(world, who)) as client:
+        put = await _put(client, job_id, 1, data)
+        complete = await client.post(f"{UPLOADS}/{job_id}/complete")
+    assert put.status_code == expected, put.text
+    if expected == 404:
+        assert put.json() == NOT_FOUND and complete.status_code == 404 and complete.json() == NOT_FOUND
+        assert storage.objects == {}
+    elif expected == 403:
+        guard = ("This API key is bound to one project; this endpoint spans every project and needs an instance "
+                 "administrator") if who == "bound" else f"Requires at least {UserRole.ADMIN.value} role"
+        assert put.json()["detail"] == complete.json()["detail"] == guard
+        assert storage.objects == {}
+    else:
+        assert complete.status_code == 202
+    assert dispatched == ([] if expected != 200 else [("app.worker.tasks.import_project_data", mine)])
+
+
+async def test_a_part_over_32_mib_is_413_and_nothing_is_stored(
+    factory: Any, world: Any, storage: FakeStorage,
+) -> None:
+    """The REAL cap: 32 MiB + 1 byte, sent with its Content-Length AND streamed without one (counted by the route
+    itself — the urlencoded-form cap of test_request_hardening does not apply to a raw octet-stream body)."""
+    cap = vocab.IMPORT_PART_MAX_BYTES
+    assert cap == 32 * 1024 * 1024
+    data_size = cap + 10
+    async with _client(factory, world.admin) as client:
+        started = await client.post(UPLOADS, json={"client_token": str(uuid.uuid4()), "bytes": data_size, "parts": 2,
+                                                   "sha256": "b" * 64})
+        job_id = started.json()["id"]
+        oversized = bytes(cap + 1)
+        declared = await _put(client, job_id, 1, oversized)
+
+        async def stream() -> Any:
+            for _ in range(32):
+                yield bytes(1024 * 1024)
+            yield b"\x00"
+
+        streamed = await client.put(f"{UPLOADS}/{job_id}/parts/1", content=stream(),
+                                    headers={"Content-Type": "application/octet-stream", "X-Part-Sha256": "c" * 64})
+        polled = await client.get(f"/api/v1/project-data-jobs/{job_id}")
+    expected = {"code": "part_too_large", "message": vocab.ERROR_SENTENCES["part_too_large"]}
+    assert declared.status_code == 413 and declared.json()["detail"] == expected
+    assert streamed.status_code == 413 and streamed.json()["detail"] == expected
+    assert storage.objects == {} and storage.puts == []
+    assert polled.json()["upload"]["received"] == []
+
+
+@pytest.mark.parametrize("digest", ["wrong", None, "not-hex", "A" * 63])
+async def test_a_digest_mismatch_or_a_bad_header_stores_nothing(
+    factory: Any, world: Any, storage: FakeStorage, small_parts: int, digest: Any,
+) -> None:
+    data = _archive(PART * 2)
+    job_id = await _open_upload(factory, world, data)
+    header = _sha(b"some other bytes") if digest == "wrong" else digest
+    async with _client(factory, world.admin) as client:
+        answer = await _put(client, job_id, 1, data[:PART], digest=header)
+        polled = await client.get(f"/api/v1/project-data-jobs/{job_id}")
+    assert answer.status_code == 422
+    assert answer.json()["detail"] == {"code": "part_digest_mismatch",
+                                       "message": "Part 1 does not match its SHA-256; send it again."}
+    assert storage.objects == {} and polled.json()["upload"]["received"] == []
+
+
+@pytest.mark.parametrize("number", [0, 3, 64])
+async def test_a_part_number_outside_the_plan_is_422(
+    factory: Any, world: Any, storage: FakeStorage, small_parts: int, number: int,
+) -> None:
+    data = _archive(PART * 2)
+    job_id = await _open_upload(factory, world, data)
+    async with _client(factory, world.admin) as client:
+        answer = await _put(client, job_id, number, data[:PART])
+    assert answer.status_code == 422
+    assert answer.json()["detail"] == {"code": "part_number_invalid",
+                                       "message": f"Part {number} is not part of this upload (1 to 2)."}
+    assert storage.objects == {}
+
+
+async def test_a_repeated_part_is_a_no_op_and_other_content_conflicts(
+    factory: Any, world: Any, storage: FakeStorage, small_parts: int,
+) -> None:
+    data = _archive(PART * 2)
+    job_id = await _open_upload(factory, world, data)
+    async with _client(factory, world.admin) as client:
+        first = await _put(client, job_id, 1, data[:PART])
+        repeat = await _put(client, job_id, 1, data[:PART])
+        other = await _put(client, job_id, 1, bytes(reversed(data[:PART])))
+    assert first.status_code == repeat.status_code == 200
+    assert repeat.json() == {"part": 1, "bytes": PART, "received": [1], "complete": False}
+    assert len(storage.puts) == 1                                   # the repeat rewrote nothing
+    assert other.status_code == 409
+    assert other.json()["detail"] == {"code": "part_conflict",
+                                      "message": "Part 1 was already received with different content."}
+    assert storage.objects[f"project-imports/parts/{job_id}/part-0001"] == data[:PART]
+
+
+async def test_a_part_of_the_wrong_size_is_refused_and_not_stored(
+    factory: Any, world: Any, storage: FakeStorage, small_parts: int,
+) -> None:
+    data = _archive(PART * 2)
+    job_id = await _open_upload(factory, world, data)
+    async with _client(factory, world.admin) as client:
+        short = await _put(client, job_id, 1, data[:PART - 1])
+    assert short.status_code == 422 and short.json()["detail"]["code"] == "upload_parts_invalid"
+    assert storage.objects == {}
+
+
+async def test_complete_names_the_missing_parts_and_a_closed_upload_refuses(
+    factory: Any, world: Any, storage: FakeStorage, dispatched: _Dispatched, small_parts: int,
+) -> None:
+    data = _archive(PART * 3)
+    job_id = await _open_upload(factory, world, data)
+    closed = await _job(factory, kind="import", status="failed", requested_by_id=world.admin.id,
+                        client_token=uuid.uuid4(), options={"parted": True, "parts": 1, "bytes": PART,
+                                                            "sha256": "d" * 64})
+    async with _client(factory, world.admin) as client:
+        await _put(client, job_id, 2, data[PART:PART * 2])
+        incomplete = await client.post(f"{UPLOADS}/{job_id}/complete")
+        late_part = await _put(client, closed.id, 1, data[:PART])
+        late_complete = await client.post(f"{UPLOADS}/{closed.id}/complete")
+        polled = await client.get(f"/api/v1/project-data-jobs/{job_id}")
+    assert incomplete.status_code == 409
+    assert incomplete.json()["detail"] == {"code": "upload_incomplete",
+                                           "message": "The upload is missing parts 1, 3.", "missing": [1, 3]}
+    assert polled.json()["status"] == "uploading" and dispatched == []
+    not_open = {"code": "upload_not_open", "message": vocab.ERROR_SENTENCES["upload_not_open"]}
+    assert late_part.status_code == 409 and late_part.json()["detail"] == not_open
+    assert late_complete.status_code == 409 and late_complete.json()["detail"] == not_open
+    assert set(storage.objects) == {f"project-imports/parts/{job_id}/part-0002"}

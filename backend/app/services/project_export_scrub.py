@@ -1,4 +1,9 @@
-"""How secrets stay out of a project export (W24 ADM-05, contract §2.2 S-1 … S-6).
+"""How secrets stay out of a project export (W24 ADM-05, contract §2.2 S-1 … S-6; W30 §2.4 S-7 … S-9).
+
+W30 (run history) adds: S-7 every history ``String`` / ``Text`` column not in ``TEXT_PASS_EXEMPT`` gets the
+text pass and every JSON column ``scrub_json`` (the type-driven rule below already covers any table);
+S-8 the three history URL columns (``URL_COLUMNS``) and an ``evidence_artifacts.uri_or_ref`` into the
+pipeline-artifacts bucket written NULL; S-9 :func:`scrub_document` for stored Mongo documents.
 
 The export reads NO secret store (``secret_refs`` / ``app_settings`` / ``api_keys``
 are never selected — they are not EXPORTED tables). What remains are secrets a
@@ -50,13 +55,21 @@ SECRET_PATH_HOSTS: tuple[str, ...] = (
 #: A JSON container nested deeper than this (the top-level value is depth 1) → ``[REDACTED]``.
 JSON_DEPTH_MAX = 20
 
-#: Columns whose values are URLs (S-4).
+#: Columns whose values are URLs (S-4; W30 S-8 adds the three history URL columns).
 URL_COLUMNS: Mapping[str, frozenset[str]] = {
     "webhook_subscriptions": frozenset({"target_url"}),
     "github_integrations": frozenset({"api_base_url"}),
     "gitlab_integrations": frozenset({"base_url"}),
     "releases": frozenset({"external_url"}),
+    # ── W30 S-8 ──
+    "test_runs": frozenset({"ci_run_url"}),
+    "test_execution_reviews": frozenset({"defect_link"}),
+    "evidence_artifacts": frozenset({"uri_or_ref"}),
 }
+
+#: The pipeline-artifacts bucket (``artifact_store._ARTIFACT_BUCKET``): an ``evidence_artifacts.uri_or_ref`` into it
+#: names pipeline scratch that never travels (contract §0.11 O-3) → written NULL, counted ``pipeline_scratch``.
+PIPELINE_SCRATCH_BUCKET = "pipeline-artifacts"
 
 #: Typed secret flags written as ``false`` (S-1): the secret is in ``secret_refs``, never exported.
 FORCED_FALSE: Mapping[str, frozenset[str]] = {
@@ -106,6 +119,35 @@ TEXT_PASS_EXEMPT: Mapping[str, frozenset[str]] = {
     "run_cadences": frozenset({"suite_name", "suite_key", "mode", "cron", "timezone"}),
     "classification_hints": frozenset({"match_field", "pattern", "category"}),
     "project_llm_quota": frozenset({"period_type", "at_cap_action"}),
+    # ── W30 S-7: run-history identifiers that must round-trip byte-exact (every other history text column —
+    # error messages, stack traces, assertion values, AI summaries, review notes — gets the text pass). Beyond the
+    # contract's list: the stored prefixes R-1 rebuilds (minio_prefix / minio_s3_prefix — always a 40+ run the
+    # pass would replace), the columns of a per-run / per-pipeline UNIQUE key (a redacted value would collide on
+    # import: suite_run_reviews.suite_name, agent_stage_results.task_key / idempotency_key), test_attachments'
+    # source_ref (§2.1 H-10 "kept verbatim"), digests / commit hashes / build numbers / labels of the same kind as
+    # the listed ones, and the test / suite / branch names a long pytest name or branch would otherwise lose. ──
+    "test_runs": frozenset({
+        "build_number", "jenkins_job", "commit_hash", "ingestion_identity", "minio_prefix", "branch",
+        "primary_suite_name",
+    }),
+    "test_cases": frozenset({
+        "test_fingerprint", "source_uuid", "source_history_id", "source_test_case_id", "minio_s3_prefix",
+        "test_name", "full_name", "suite_name", "class_name", "package_name",
+    }),
+    "test_case_history": frozenset({"test_fingerprint"}),
+    "suite_executions": frozenset({"suite_key", "suite_name", "branch"}),
+    "suite_run_reviews": frozenset({"suite_name"}),
+    "test_attachments": frozenset({"source_ref"}),
+    "failure_clusters": frozenset({"cluster_id"}),
+    "agent_stage_results": frozenset({"task_key", "idempotency_key"}),
+    "ai_analysis_versions": frozenset({"test_fingerprint", "content_sha256"}),
+    "failure_attribution": frozenset({"test_fingerprint"}),
+    "deep_findings": frozenset({"cluster_id"}),
+    "run_baselines": frozenset({"baseline_build_number"}),
+    "run_commit_ranges": frozenset({"base_commit", "head_commit"}),
+    "test_health_recommendations": frozenset({"test_name"}),
+    "evidence_artifacts": frozenset({"cluster_id", "content_sha256"}),
+    "timeline_notes": frozenset({"suite_name"}),
 }
 
 _SECRET_FIELD_NAMES: frozenset[str] = frozenset(name for names in SECRET_FIELDS.values() for name in names)
@@ -215,12 +257,24 @@ def strip_url_credentials(url: Optional[str]) -> Optional[str]:
 
 # ── json ─────────────────────────────────────────────────────────────────────
 
+#: A ``{"name": <secret name>, "value": …}`` pair (Allure parameters, HAR headers, env lists): the VALUE is the
+#: secret even though its key is the neutral ``value`` (W30 S-7 / S-9 — ``test_cases.source_parameters``).
+_PAIR_NAME_KEYS = ("name", "key")
+_PAIR_VALUE_KEYS = frozenset({"value", "values"})
+
+
+def _names_a_secret(node: Mapping[str, Any]) -> bool:
+    return any(isinstance(node.get(key), str) and is_secret_name(node.get(key)) for key in _PAIR_NAME_KEYS)
+
+
 def _walk(value: Any, depth: int) -> Any:
     if isinstance(value, (dict, list, tuple)) and depth > JSON_DEPTH_MAX:
         return REDACTED
     if isinstance(value, dict):
+        pair = _names_a_secret(value)
         return {
-            key: (REDACTED if value_ is not None and is_secret_name(key) else _walk(value_, depth + 1))
+            key: (REDACTED if value_ is not None and (is_secret_name(key) or (pair and key in _PAIR_VALUE_KEYS))
+                  else _walk(value_, depth + 1))
             for key, value_ in value.items()
         }
     if isinstance(value, (list, tuple)):
@@ -232,8 +286,9 @@ def _walk(value: Any, depth: int) -> Any:
 
 def scrub_json(value: Any) -> Any:
     """A JSON / ARRAY value (S-5): a key named like a secret (:func:`is_secret_name`) → ``[REDACTED]``;
-    every string leaf → :func:`scrub_text`; lists walked IN FULL; a container deeper than
-    ``JSON_DEPTH_MAX`` → ``[REDACTED]``. Keys are kept. Idempotent."""
+    the ``value`` of a ``{"name": <secret name>, "value": …}`` pair → ``[REDACTED]`` (W30); every string leaf →
+    :func:`scrub_text`; lists walked IN FULL; a container deeper than ``JSON_DEPTH_MAX`` → ``[REDACTED]``.
+    Keys are kept. Idempotent."""
     return _walk(value, 1)
 
 
@@ -261,11 +316,33 @@ def _kinds_for(table: str) -> dict[str, str]:
     return kinds
 
 
+def is_pipeline_scratch_ref(value: Any) -> bool:
+    """An ``evidence_artifacts.uri_or_ref`` naming an object of the pipeline-artifacts bucket
+    (``artifact_store.store_artifact`` returns ``pipeline-artifacts/<key>``; an ``s3://`` form is read alike)."""
+    if not isinstance(value, str) or not value:
+        return False
+    path = value.strip().split("://", 1)[-1].lstrip("/")
+    return path == PIPELINE_SCRATCH_BUCKET or path.startswith(PIPELINE_SCRATCH_BUCKET + "/")
+
+
+def scrub_document(doc: Mapping[str, Any]) -> dict[str, Any]:
+    """A stored Mongo document (S-9): ``retention_export_content.redact_tree`` (ACT-03's key + pattern rule over the
+    WHOLE tree, no truncation) then :func:`scrub_json` (the secret-name keys and the text pass on every string
+    leaf). Non-JSON leaves (a ``datetime``, an ``ObjectId``) are kept as they are, so the caller's Extended-JSON
+    encoding still carries the stored type. Returns a NEW dict. Idempotent."""
+    from app.services.retention_export_content import redact_tree
+
+    scrubbed = scrub_json(redact_tree(dict(doc)))
+    return scrubbed if isinstance(scrubbed, dict) else {}
+
+
 def _scrub_value(table: str, column: str, value: Any, kind: str, row: Mapping[str, Any]) -> Any:
     if value is None:
         return None
     if column in FORCED_FALSE.get(table, ()):
         return False
+    if table == "evidence_artifacts" and column == "uri_or_ref" and is_pipeline_scratch_ref(value):
+        return None
     if table == "team_notification_channels" and column == "target":
         return value if row.get("channel_type") in KEPT_CHANNEL_TARGET_TYPES else REDACTED
     if is_secret_name(column):

@@ -732,10 +732,49 @@ def _member_info(name: str) -> zipfile.ZipInfo:
     return info
 
 
+@dataclass(frozen=True)
+class StreamedMember:
+    """A run-archive member whose bytes arrive as chunks (W30 ADM-05 phase 2).
+
+    Accepted by ``build_archive`` in its async-iterator form ONLY: the chunks
+    are written straight into the ZIP member (``zf.open(info, "w",
+    force_zip64=True)`` -- the size is not known up front), and the SHA-256 and
+    size are taken while writing, so peak memory is one chunk (a stored object
+    of up to 256 MiB never sits in memory whole). ``stored=True`` writes the
+    member ZIP_STORED (media and already-compressed files), else DEFLATED.
+    """
+
+    chunks: AsyncIterator[bytes]
+    stored: bool = False
+
+
+async def _write_streamed(
+    zf: zipfile.ZipFile, name: str, member: StreamedMember
+) -> tuple[int, str]:
+    info = _member_info(name)
+    if member.stored:
+        info.compress_type = zipfile.ZIP_STORED
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with zf.open(info, "w", force_zip64=True) as dest:
+            async for chunk in member.chunks:
+                if not chunk:
+                    continue
+                digest.update(chunk)
+                size += len(chunk)
+                dest.write(chunk)
+    finally:
+        aclose = getattr(member.chunks, "aclose", None)
+        if aclose is not None:
+            await aclose()
+    return size, digest.hexdigest()
+
+
 async def build_archive(
     scope: "ExportScope",
     *,
-    members: Mapping[str, bytes] | AsyncIterator[tuple[str, bytes]],
+    members: Mapping[str, bytes] | AsyncIterator[tuple[str, bytes | StreamedMember]],
     sink: IO[bytes],
     generated_at: datetime,
     run: Optional[TestRun] = None,
@@ -756,7 +795,10 @@ async def build_archive(
       each member is written as it arrives, with a fixed timestamp, and its
       SHA-256 is taken while writing; nothing keeps it afterwards, so peak
       memory is one member. ``manifest.json`` is the LAST member (it can only
-      list what was already written).
+      list what was already written). A member whose value is a
+      ``StreamedMember`` (W30) is written chunk by chunk (peak memory = one
+      chunk) and listed with the size / SHA-256 taken while writing; a
+      ``(name, bytes)`` member is written exactly as before.
 
     ``max_bytes``: the sink refuses to grow past it (``ArchiveTooLarge``).
     """
@@ -770,11 +812,14 @@ async def build_archive(
             for name, data in sorted(members.items()):
                 zf.writestr(name, data)
         else:
-            async for name, data in members:
+            async for name, value in members:
                 if name == _MANIFEST_FILENAME or name in entries:
                     raise ValueError(f"duplicate or reserved archive member {name!r}")
-                zf.writestr(_member_info(name), data)
-                entries[name] = (len(data), _sha256(data))
+                if isinstance(value, StreamedMember):
+                    entries[name] = await _write_streamed(zf, name, value)
+                    continue
+                zf.writestr(_member_info(name), value)
+                entries[name] = (len(value), _sha256(value))
             manifest_bytes = _build_manifest(entries, generated_at, scope, run, decision)
             zf.writestr(_member_info(_MANIFEST_FILENAME), manifest_bytes)
     size = counted.high_water

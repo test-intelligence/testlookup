@@ -1,25 +1,35 @@
-"""W24 ADM-05 — the project export against a real PostgreSQL and the REAL local object store (contract §6.3 G-B).
+"""W24 ADM-05 + W30 phase 2 — the project export against a real PostgreSQL, the REAL Mongo and the REAL local
+object store (contract §6.3 G-B).
 
-G-A's transfer seed builds one project carrying every exported entity (and the rows that must not
-travel); the REAL runner (``run_export_job``) exports it on its read-only snapshot. Proven here:
+G-A's transfer seed builds ONE project with history (``history=True``: every catalog AND history entity, every
+``MongoSpec`` collection, objects under a run's ``minio_prefix`` + the classes that must not travel); the REAL
+runner (``run_export_job``) exports it twice on its read-only snapshot — body-less (phase 1) and with history.
 
-1. the job ``succeeded``; for EVERY exported entity ``counts[t] == SELECT count(*)`` of the source and
-   ``> 0`` (declaration is not emission); the manifest's ``entities`` equal the counts; no member is named
-   after an excluded / not-project-scoped table;
-2. no seeded secret sentinel (nor its base64 / URL-encoded form) is in ANY decompressed member, and
-   ``[REDACTED]`` is where each typed one was;
-3. the download through the router as a QA-lead member streams bytes whose SHA-256 is ``archive_sha256``,
-   with ``Content-Length``; a non-member and a viewer get the identical 404 body;
-4. the source is untouched: per exported table the row count and ``max(updated_at)`` are equal before /
-   after, and the engine listener saw no INSERT / UPDATE / DELETE on an exported table during the build;
-5. ``verify_archive_file`` on the downloaded bytes → ``chain: intact``, ``signature: valid``;
-6. the janitor past ``expires_at`` → the object is gone, ``expired``, the download 410; a ``running`` job
-   older than ``JOB_STALE_MINUTES`` → ``failed`` / ``interrupted``.
+W30 items (§6.3 G-B 1-7):
+1. the body-less export is schema 1: its members and manifest keys are exactly W24's (no ``documents/``,
+   ``objects/``, history entity or ``history`` block); every CATALOG entity ``counts[t] == SELECT count(*)``;
+2. the history export (the seed's 30-day window — its out-of-window run is 45 days old) through the REAL runner
+   on a 1 + 1 pool → ``succeeded``, schema 2; EVERY history entity ``counts[t]`` == the seed's in-window rows
+   and ``> 0``; the IN_PROGRESS run, the non-terminal pipeline, the out-of-window run, the outbox row, the share
+   link, the defect, the ingest-input and refused-prefix objects ABSENT (the skips counted in the manifest); per
+   ``MongoSpec`` the documents' line count == the seed's in-window documents and ``> 0``; every object member's
+   bytes == the stored object (SHA-256);
+3. no seeded sentinel (plain / base64 / URL-encoded) in ANY decompressed member except the object binaries;
+   ``[REDACTED]`` where each typed one was;
+4. the source is untouched: per exported table (catalog + history) rows and ``max(updated_at)`` equal before /
+   after, no INSERT / UPDATE / DELETE on a source table (engine listener), ``count_documents`` per collection
+   and the object listing equal before / after;
+5. ``verify_archive_file`` on each download → ``chain: intact``, ``signature: valid``;
+6. the download streams with ``Content-Length`` (the history one named ``…-project-data-…``); a non-member and
+   a viewer get W24's identical 404 body;
+7. the estimate GET's counts equal the export's for the same window (rows, documents, objects ±0).
+Then (LAST) the janitor expires the export and fails a stale job.
 
-Fixture rules (§6.3): ``dispose_engine_for_loop()`` before the engine is built and after it is disposed;
-the runner gets THIS module's session factory; object storage = ``LocalStorageProvider`` in a temp dir;
-Redis is never bound (``get_redis`` is a no-op double for the router's membership read), Mongo is not
-touched. Runs ONLY through ``pg_pytest_w24.sh b …`` on ``df_w24_b`` migrated to 0247.
+Fixture rules (§6.3): ``dispose_engine_for_loop()`` and ``reset_mongo_client()`` before the engines are built
+and after they are disposed; the runner gets a 1 + 1 pool (the homelab worker's); object storage =
+``LocalStorageProvider`` in a temp dir; Redis is never bound (``get_redis`` is a no-op double for the router's
+membership read); everything the seed created is removed by ``cleanup_transfer_seed`` (CI shares ONE Postgres
+AND one Mongo database). Runs ONLY through ``pg_pytest_w30.sh b …`` on ``df_w30_b`` (Mongo ``df_w30_b``) at 0252.
 """
 from __future__ import annotations
 
@@ -74,16 +84,16 @@ def _forms(value: str) -> list[str]:
 
 
 async def _source_state(sessions: Any, project_id: uuid.UUID) -> dict[str, tuple[int, Any]]:
-    """Per exported table: (rows of the project, max(updated_at) where the column exists)."""
+    """Per exported table (catalog AND history): (rows of the project, max(updated_at) where the column exists)."""
     from app.models.postgres import Base
+    from tests.integration.project_transfer_seed import _project_filter
     from app.services.project_export_entities import plan
-    from app.services.project_export_service import scope_clause
 
     state: dict[str, tuple[int, Any]] = {}
     async with sessions() as db:
-        for spec in plan():
+        for spec in plan(include_history=True):
             table = Base.metadata.tables[spec.table]
-            where = scope_clause(spec, project_id)
+            where = _project_filter(spec, project_id)
             rows = (await db.execute(select(func.count()).select_from(table).where(where))).scalar_one()
             latest = None
             if "updated_at" in table.c:
@@ -92,35 +102,62 @@ async def _source_state(sessions: Any, project_id: uuid.UUID) -> dict[str, tuple
     return state
 
 
+async def _mongo_state(mongo: Any, seed: Any) -> dict[str, int]:
+    """Per collection: the seed's documents still there (by every key value the seed wrote)."""
+    out: dict[str, int] = {}
+    for collection, keyed in seed.documents.items():
+        from app.services.project_export_documents import MONGO_SPECS
+
+        keys = sorted({key for key, _run in keyed})
+        out[collection] = int(await mongo[collection].count_documents({MONGO_SPECS[collection].key: {"$in": keys}}))
+    return out
+
+
+async def _object_state(store: Any, seed: Any) -> list[tuple[str, int]]:
+    roots = (f"{seed.project_id}/", f"uploads/{seed.project_id}/")
+    listing = [entry for root in roots for entry in await store.list_objects(root)]
+    return sorted((str(entry["Key"]), int(entry["Size"])) for entry in listing)
+
+
 @pytest_asyncio.fixture(loop_scope="module", scope="module")
 async def env() -> Any:
     from app.db import postgres as app_postgres
+    from app.db.mongo import get_mongo_db, reset_mongo_client
 
     dsn = _dsn()
     await app_postgres.dispose_engine_for_loop()
+    reset_mongo_client()
+    mongo = get_mongo_db()
+    try:
+        await mongo.command("ping")
+    except Exception as exc:  # noqa: BLE001 - locally only; CI's postgres-integration job has the mongo service
+        reset_mongo_client()
+        pytest.skip(f"MongoDB is not reachable: {type(exc).__name__}")
     engine = create_async_engine(dsn, pool_size=5, max_overflow=2)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     sessions.engine = engine  # type: ignore[attr-defined]
+    sessions.mongo = mongo  # type: ignore[attr-defined]
     try:
         yield sessions
     finally:
         await engine.dispose()
+        reset_mongo_client()
         await app_postgres.dispose_engine_for_loop()
 
 
+def _worker_pool() -> Any:
+    """The homelab worker's pool: 1 + overflow 1 (a fixture with a bigger pool hides a third connection)."""
+    engine = create_async_engine(_dsn(), pool_size=1, max_overflow=1, pool_timeout=10)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    sessions.engine = engine  # type: ignore[attr-defined]
+    return sessions
+
+
 @pytest_asyncio.fixture(loop_scope="module", scope="module")
-async def exported(env: Any, tmp_path_factory: pytest.TempPathFactory) -> Any:
-    """Seed once, export once through the REAL runner; every check below reads this one export."""
+async def world(env: Any, tmp_path_factory: pytest.TempPathFactory) -> Any:
+    """Seed ONE project WITH history (rows, documents, objects) once; remove everything at the end."""
     from app.db import storage as storage_module
-    from app.models.postgres import Project, User
-    from app.services import project_data_job_service as jobs
-    from app.worker import project_data_runner as runner
-    from tests.integration.project_transfer_seed import (
-        exported_counts,
-        make_sentinels,
-        remove_transfer_data,
-        seed_transfer_project,
-    )
+    from tests.integration.project_transfer_seed import cleanup_transfer_seed, make_sentinels, seed_transfer_project
 
     seed = None
     root = tmp_path_factory.mktemp("objects")
@@ -132,39 +169,70 @@ async def exported(env: Any, tmp_path_factory: pytest.TempPathFactory) -> Any:
     try:
         sentinels = make_sentinels()
         async with env() as db:
-            seed = await seed_transfer_project(db, sentinels=sentinels)
-        async with env() as db:
-            source_counts = await exported_counts(db, seed.project_id)
-        before = await _source_state(env, seed.project_id)
-        async with env() as db:
-            project = await db.get(Project, seed.project_id)
-            admin = await db.get(User, seed.admin_id)
-            job = await jobs.create_export_job(db, project=project, actor=admin)
-            await db.commit()
-        writes: list[str] = []
-
-        def _record(conn: Any, cursor: Any, statement: str, *_: Any) -> None:
-            match = _WRITE.match(statement)
-            if match:
-                writes.append(match.group(1).lower())
-
-        event.listen(env.engine.sync_engine, "before_cursor_execute", _record)
-        try:
-            status = await runner.run_export_job(job.id, storage=store, session_factory=env)
-        finally:
-            event.remove(env.engine.sync_engine, "before_cursor_execute", _record)
-        after = await _source_state(env, seed.project_id)
-        async with env() as db:
-            row = await db.get(jobs.ProjectDataJob, job.id)
-        chunks = [chunk async for chunk in store.stream_object(row.storage_key, bucket="compliance-packs")] \
-            if row.storage_key else []
-        yield SimpleNamespace(seed=seed, sentinels=sentinels, source_counts=source_counts, before=before,
-                              after=after, job=row, status=status, archive=b"".join(chunks), writes=writes,
-                              store=store, root=root)
+            seed = await seed_transfer_project(db, sentinels=sentinels, history=True, mongo=env.mongo, storage=store)
+        yield SimpleNamespace(seed=seed, sentinels=sentinels, store=store, root=root)
     finally:
         patch.undo()
-        if seed is not None:          # CI shares ONE database across modules: leave nothing behind (#308)
-            await remove_transfer_data(env, seed, user_ids=_CREATED_USERS)
+        if seed is not None:          # CI shares ONE Postgres AND one Mongo database: leave nothing behind (#308)
+            await cleanup_transfer_seed(env, seed, mongo=env.mongo, storage=store, user_ids=_CREATED_USERS)
+
+
+async def _export(env: Any, world: Any, runner_sessions: Any, *, options: Any = None) -> Any:
+    """ONE export of the seed through the REAL runner on ``runner_sessions``, with the source measured before /
+    after and every statement of the runner's engine recorded."""
+    from app.models.postgres import Project, User
+    from app.services import project_data_job_service as jobs
+    from app.worker import project_data_runner as runner
+
+    seed, store = world.seed, world.store
+    before = (await _source_state(env, seed.project_id), await _mongo_state(env.mongo, seed),
+              await _object_state(store, seed))
+    async with env() as db:
+        project = await db.get(Project, seed.project_id)
+        admin = await db.get(User, seed.admin_id)
+        job = await jobs.create_export_job(db, project=project, actor=admin, options=options)
+        await db.commit()
+    writes: list[str] = []
+
+    def _record(conn: Any, cursor: Any, statement: str, *_: Any) -> None:
+        match = _WRITE.match(statement)
+        if match:
+            writes.append(match.group(1).lower())
+
+    event.listen(runner_sessions.engine.sync_engine, "before_cursor_execute", _record)
+    try:
+        status = await runner.run_export_job(job.id, storage=store, session_factory=runner_sessions, mongo=env.mongo)
+    finally:
+        event.remove(runner_sessions.engine.sync_engine, "before_cursor_execute", _record)
+    after = (await _source_state(env, seed.project_id), await _mongo_state(env.mongo, seed),
+             await _object_state(store, seed))
+    async with env() as db:
+        row = await db.get(jobs.ProjectDataJob, job.id)
+    chunks = [chunk async for chunk in store.stream_object(row.storage_key, bucket="compliance-packs")] \
+        if row.storage_key else []
+    return SimpleNamespace(seed=seed, sentinels=world.sentinels, before=before[0], after=after[0],
+                           mongo_before=before[1], mongo_after=after[1], objects_before=before[2],
+                           objects_after=after[2], job=row, status=status, archive=b"".join(chunks), writes=writes,
+                           store=store, root=world.root, source_counts=seed.counts)
+
+
+@pytest_asyncio.fixture(loop_scope="module", scope="module")
+async def exported(env: Any, world: Any) -> Any:
+    """The body-less (phase-1) export of the history seed, through the REAL runner."""
+    return await _export(env, world, env)
+
+
+@pytest_asyncio.fixture(loop_scope="module", scope="module")
+async def history_export(env: Any, world: Any) -> Any:
+    """The export WITH history (30 days) through the REAL runner on the homelab worker's 1 + 1 pool."""
+    from app.models.schemas import ProjectDataOptions
+
+    small = _worker_pool()
+    try:
+        yield await _export(env, world, small, options=ProjectDataOptions(
+            include_history=True, history_days=30, max_runs=2000))
+    finally:
+        await small.engine.dispose()
 
 
 def _members(archive: bytes) -> dict[str, bytes]:
@@ -215,16 +283,24 @@ def _client(env: Any, user: Any) -> Any:
 
 # ── 1. counts ───────────────────────────────────────────────────────────────
 
-async def test_every_exported_entity_is_written_with_the_source_count(exported: Any) -> None:
-    from app.services.project_export_entities import EXCLUDED, EXPORTED_TABLES, NOT_PROJECT_SCOPED
+#: The manifest keys of a W24 (phase 1) project export — a body-less export still writes exactly these.
+_W24_MANIFEST_KEYS = {"format_version", "generated_at", "project_id", "files", "scope", "format", "schema_version",
+                      "source", "project", "entities", "directory", "excluded"}
+
+
+async def test_a_body_less_export_of_a_history_seed_is_phase_1(exported: Any) -> None:
+    """§6.3 G-B 1: schema 1, phase 1's 29 entities with the source counts, W24's members and manifest keys —
+    no ``documents/``, ``objects/``, history entity or ``history`` block."""
+    from app.services.project_export_entities import CATALOG_TABLES, EXCLUDED, HISTORY_TABLES, NOT_PROJECT_SCOPED
 
     assert exported.status == "succeeded" and exported.job.status == "succeeded", exported.job.error
     counts = exported.job.counts
-    assert set(counts) == set(EXPORTED_TABLES)
-    empty = sorted(t for t in EXPORTED_TABLES if counts[t] <= 0)
+    assert set(counts) == set(CATALOG_TABLES)
+    empty = sorted(t for t in CATALOG_TABLES if counts[t] <= 0)
     assert empty == [], f"declared but not emitted: {empty}"
     assert counts == exported.source_counts
     manifest = json.loads(_members(exported.archive)["manifest.json"])
+    assert set(manifest) == _W24_MANIFEST_KEYS and manifest["schema_version"] == 1
     assert {t: entry["rows"] for t, entry in manifest["entities"].items()} == counts
     assert manifest["scope"] == "project" and manifest["project"]["slug"] == exported.seed.project_slug
     names = list(_members(exported.archive))
@@ -232,17 +308,33 @@ async def test_every_exported_entity_is_written_with_the_source_count(exported: 
                          r"manifest\.json|signature\.json)$")
     assert all(allowed.match(n) for n in names), names
     tables = {n.split("/")[1] for n in names if n.startswith("entities/")}
-    assert tables == set(EXPORTED_TABLES)
-    assert not tables & (set(EXCLUDED) | set(NOT_PROJECT_SCOPED))
+    assert tables == set(CATALOG_TABLES)
+    assert not tables & (set(EXCLUDED) | set(NOT_PROJECT_SCOPED) | set(HISTORY_TABLES))
+    assert exported.job.options == {} and exported.store is not None
 
 
 # ── 2. secrets ──────────────────────────────────────────────────────────────
 
 async def test_no_sentinel_in_any_member_in_any_form_and_redacted_where_typed(exported: Any) -> None:
+    _assert_no_sentinel(exported, catalog_only=True)
+
+
+async def test_no_sentinel_in_any_history_member_in_any_form_and_redacted_where_typed(history_export: Any) -> None:
+    _assert_no_sentinel(history_export, catalog_only=False)
+
+
+def _assert_no_sentinel(exported: Any, *, catalog_only: bool) -> None:
+    """§6.3 G-B 3: EVERY decompressed member (documents and the object index included; the object BINARIES are
+    copied unscanned by design — R-3) is free of every seeded sentinel in every form."""
+    from app.services.project_export_entities import CATALOG_TABLES
+
+    assert exported.status == "succeeded", (exported.job.error_code, exported.job.error)
     members = _members(exported.archive)
     secrets = dict(exported.sentinels.values())
     secrets["api_key_plaintext"] = exported.seed.api_key_plaintext
     for name, data in members.items():
+        if re.match(r"^objects/[0-9a-f-]{36}/\d{6}\.bin$", name):
+            continue
         body = data.decode("utf-8")
         for label, value in secrets.items():
             for form in _forms(value):
@@ -250,6 +342,8 @@ async def test_no_sentinel_in_any_member_in_any_form_and_redacted_where_typed(ex
     from app.services.project_export_scrub import URL_COLUMNS
 
     for label, (table, column) in exported.seed.placements.items():
+        if catalog_only and table not in CATALOG_TABLES:
+            continue                  # a history carrier is not in a catalog export at all
         parts = [data.decode() for name, data in members.items() if name.startswith(f"entities/{table}/")]
         assert parts, f"{table} (where {label} was typed) has no part"
         values = [json.loads(line).get(column) for part in parts for line in part.splitlines()]
@@ -261,6 +355,193 @@ async def test_no_sentinel_in_any_member_in_any_form_and_redacted_where_typed(ex
             assert netlocs and all("@" not in netloc for netloc in netlocs), (label, table, column)
         else:
             assert any("[REDACTED]" in json.dumps(value) for value in present), (label, table, column)
+    if not catalog_only:              # the history carriers: a failed case, a stage result, two documents
+        for prefix in ("entities/test_cases/", "entities/agent_stage_results/", "documents/raw_allure_json/",
+                       "documents/rest_api_payloads/"):
+            text = "".join(data.decode() for name, data in members.items() if name.startswith(prefix))
+            assert text and "[REDACTED]" in text, prefix
+        runs = [json.loads(line) for name, data in members.items() if name.startswith("entities/test_runs/")
+                for line in data.decode().splitlines()]
+        urls = [run["ci_run_url"] for run in runs if run.get("ci_run_url")]
+        assert urls and all("@" not in urllib.parse.urlsplit(url).netloc for url in urls)   # S-8 userinfo removed
+
+
+# ── W30 2: the history export ───────────────────────────────────────────────
+
+def _lines_of(members: dict[str, bytes], prefix: str) -> list[str]:
+    return [line for name, data in sorted(members.items()) if name.startswith(prefix)
+            for line in data.decode("utf-8").splitlines()]
+
+
+async def test_a_history_export_carries_every_history_entity_of_its_window(history_export: Any) -> None:
+    from app.services.project_export_entities import CATALOG_TABLES, HISTORY_TABLES
+    from tests.integration.project_transfer_seed import expected_history_counts
+
+    job, seed = history_export.job, history_export.seed
+    assert history_export.status == "succeeded", (job.error_code, job.error)
+    members = _members(history_export.archive)
+    manifest = json.loads(members["manifest.json"])
+    assert manifest["schema_version"] == 2 and set(manifest) == _W24_MANIFEST_KEYS | {"history"}
+    assert job.options == {"include_history": True, "history_days": 30, "max_runs": 2000}
+    expected = expected_history_counts(seed, history_days=30)
+    thin = sorted(t for t in HISTORY_TABLES if job.counts.get(t, 0) <= 0)
+    assert thin == [], f"declared but not emitted: {thin}"
+    assert {t: job.counts[t] for t in HISTORY_TABLES} == expected
+    assert {t: job.counts[t] for t in CATALOG_TABLES} == seed.counts
+    assert {t: entry["rows"] for t, entry in manifest["entities"].items()} == {
+        t: job.counts[t] for t in (*CATALOG_TABLES, *HISTORY_TABLES)}
+    allowed = re.compile(r"^(entities/[a-z_]{1,63}/part-\d{4}\.jsonl|documents/[a-z_]{1,63}/part-\d{4}\.jsonl|"
+                         r"objects/index/part-\d{4}\.jsonl|objects/[0-9a-f-]{36}/\d{6}\.bin|directory/users\.jsonl|"
+                         r"README\.txt|manifest\.json|signature\.json)$")
+    assert all(allowed.match(n) for n in members), [n for n in members if not allowed.match(n)]
+    history = manifest["history"]
+    assert history["window_days"] == 30 and history["runs"] == job.counts["test_runs"]
+    assert history["runs_in_progress_skipped"] >= 1
+    skipped = {(entry["entity"], entry["reason"]) for entry in history["skipped"]}
+    assert ("agent_pipeline_runs", "pipeline_not_terminal") in skipped
+
+
+async def test_what_must_not_travel_is_absent_from_a_history_export(history_export: Any) -> None:
+    """The IN_PROGRESS run, the non-terminal pipeline (+ its stage results), the out-of-window run, the outbox
+    row, the share link, the live session, the defect, the hold — none of their ids is in any member."""
+    members = _members(history_export.archive)
+    text = "\n".join(data.decode("utf-8") for name, data in members.items() if not name.endswith(".bin"))
+    seed = history_export.seed
+    # (an id LIST naming a run outside the window — release_gate_decisions.run_ids — is narrowed by the export too)
+    leaked = sorted(f"{table}:{row_id} in " + ",".join(name for name, data in members.items()
+                                                       if not name.endswith(".bin") and str(row_id) in data.decode())
+                    for table, ids in seed.history_excluded.items() for row_id in ids if str(row_id) in text)
+    assert leaked == [], f"rows that must not travel are in the archive: {leaked}"
+    manifest = json.loads(members["manifest.json"])
+    skipped = {(entry["entity"], entry["reason"]): entry["count"] for entry in manifest["history"]["skipped"]}
+    assert skipped.get(("release_gate_decisions", "run_not_exported"), 0) >= 1
+    assert seed.live_slug and seed.live_slug not in "\n".join(_lines_of(members, "entities/"))
+
+
+async def test_every_collection_travels_with_its_window_documents(history_export: Any) -> None:
+    from app.services.project_export_documents import MONGO_COLLECTIONS
+    from tests.integration.project_transfer_seed import expected_document_counts
+
+    members = _members(history_export.archive)
+    manifest = json.loads(members["manifest.json"])
+    expected = expected_document_counts(history_export.seed, history_days=30)
+    for spec in MONGO_COLLECTIONS:
+        lines = _lines_of(members, f"documents/{spec.collection}/")
+        assert len(lines) == expected[spec.collection] > 0, spec.collection
+        assert manifest["history"]["documents"][spec.collection]["docs"] == len(lines)
+        assert history_export.job.counts[f"documents.{spec.collection}"] == len(lines)
+        assert all('"_id"' not in line for line in lines), spec.collection
+
+
+async def test_every_object_member_is_the_stored_object_and_nothing_else_travels(
+    env: Any, history_export: Any,
+) -> None:
+    from app.models.postgres import TestRun
+
+    members = _members(history_export.archive)
+    seed, store = history_export.seed, history_export.store
+    index = [json.loads(line) for line in _lines_of(members, "objects/index/")]
+    exported_keys = set()
+    async with env() as db:
+        prefixes = dict((await db.execute(select(TestRun.id, TestRun.minio_prefix)
+                                          .where(TestRun.project_id == seed.project_id))).all())
+    for entry in index:
+        key = prefixes[uuid.UUID(entry["run_id"])] + entry["suffix"]
+        stored = b"".join([chunk async for chunk in store.stream_object(key)])
+        assert hashlib.sha256(members[entry["member"]]).hexdigest() == entry["sha256"] \
+            == hashlib.sha256(stored).hexdigest(), key
+        assert entry["bytes"] == len(stored) and entry["root"] == "minio_prefix"
+        exported_keys.add(key)
+    travelled = {key for key, klass in seed.objects.items() if klass == "minio_prefix"
+                 and key in exported_keys}
+    assert len(travelled) >= 2
+    assert not {key for key, klass in seed.objects.items() if klass != "minio_prefix"} & exported_keys
+    assert history_export.job.counts["objects"] == len(index)
+
+
+async def test_a_history_export_leaves_the_source_untouched_in_every_store(history_export: Any) -> None:
+    """§6.3 G-B 4: rows + max(updated_at) per table (catalog AND history), documents per collection, the object
+    listing — equal before / after; the runner's engine wrote no source table."""
+    from app.services.project_export_entities import EXPORTED_TABLES
+
+    assert history_export.after == history_export.before
+    assert history_export.mongo_after == history_export.mongo_before and sum(history_export.mongo_before.values())
+    assert history_export.objects_after == history_export.objects_before and history_export.objects_before
+    touched = sorted(set(history_export.writes) & set(EXPORTED_TABLES))
+    assert touched == [], f"the history export wrote to source tables: {touched}"
+    assert set(history_export.writes) <= {"project_data_jobs", "project_activity_events", "compliance_signing_keys",
+                                          "settings_audit_logs"}, set(history_export.writes)
+
+
+async def test_the_history_download_verifies_and_is_named_project_data(env: Any, history_export: Any) -> None:
+    """§6.3 G-B 5 + 6: the stored history archive verifies offline; the download streams it with its length and
+    the history file name; a viewer and a non-member read W24's ONE 404."""
+    from app.models.postgres import UserRole
+    from app.services import compliance_signing
+    from app.services.compliance_pack_verify import verify_archive_file
+
+    async with env() as db:
+        keys = await compliance_signing.public_keys(db)
+    result = verify_archive_file(io.BytesIO(history_export.archive), public_keys=keys, pack_id=None,
+                                 recorded_manifest_sha256=history_export.job.manifest_sha256)
+    assert result["chain"] == "intact" and result["signature"] == "valid", result
+    pid = history_export.seed.project_id
+    lead = await _member(env, pid, UserRole.QA_LEAD.value, "hlead")
+    viewer = await _member(env, pid, UserRole.VIEWER.value, "hviewer")
+    stranger = await _member(env, None, UserRole.QA_LEAD.value, "hstranger")
+    path = f"/api/v1/project-data-jobs/{history_export.job.id}/download"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("app.db.redis_client.get_redis", lambda: _NoRedis())
+        patch.setattr("app.db.storage.get_storage_provider", lambda: history_export.store)
+        async with _client(env, lead) as client:
+            ok = await client.get(path)
+        async with _client(env, viewer) as client:
+            as_viewer = await client.get(path)
+        async with _client(env, stranger) as client:
+            as_stranger = await client.get(path)
+    assert ok.status_code == 200 and ok.content == history_export.archive
+    assert int(ok.headers["content-length"]) == len(ok.content) == history_export.job.bytes
+    assert "-project-data-" in ok.headers["content-disposition"]
+    assert as_viewer.json() == as_stranger.json() == NOT_FOUND
+
+
+async def test_the_estimate_counts_what_the_export_wrote(env: Any, history_export: Any) -> None:
+    """§6.3 G-B 7: the estimate GET (the router, a QA-lead member) for the export's window equals its counts
+    (runs, test cases, documents per collection, objects); a wider window counts the older run too. A GET:
+    nothing written."""
+    from app.models.postgres import UserRole
+
+    job = history_export.job
+    manifest = json.loads(_members(history_export.archive)["manifest.json"])
+    lead = await _member(env, history_export.seed.project_id, UserRole.QA_LEAD.value, "elead")
+    path = f"/api/v1/projects/{history_export.seed.project_id}/export-estimate"
+    writes: list[str] = []
+
+    def _record(conn: Any, cursor: Any, statement: str, *_: Any) -> None:
+        if _WRITE.match(statement):
+            writes.append(statement)
+
+    event.listen(env.engine.sync_engine, "before_cursor_execute", _record)
+    try:
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr("app.db.redis_client.get_redis", lambda: _NoRedis())
+            patch.setattr("app.db.storage.get_storage_provider", lambda: history_export.store)
+            async with _client(env, lead) as client:
+                same = await client.get(path, params={"include_history": "true", "history_days": 30})
+                wider = await client.get(path, params={"include_history": "true", "history_days": 90})
+    finally:
+        event.remove(env.engine.sync_engine, "before_cursor_execute", _record)
+    assert writes == [], writes
+    assert same.status_code == 200, same.text
+    body = same.json()
+    assert body["measured"] == {"postgres": True, "documents": True, "objects": True}
+    assert body["runs"] == job.counts["test_runs"] == manifest["history"]["runs"]
+    assert body["test_cases"] == job.counts["test_cases"]
+    assert body["documents"] == {name: entry["docs"] for name, entry in manifest["history"]["documents"].items()}
+    assert body["objects"] == job.counts["objects"] == manifest["history"]["objects"]["count"]
+    assert body["object_bytes"] == manifest["history"]["objects"]["bytes"]
+    assert body["over_limit"] is False and body["estimated_bytes"] > 0
+    assert wider.json()["runs"] == body["runs"] + 1        # the 45-day-old run is inside 90 days
 
 
 # ── 3. download ─────────────────────────────────────────────────────────────
