@@ -9,12 +9,14 @@
  * the parsed JSON body), so a spec pins the whole body with `toEqual`.
  * Not a spec file.
  */
-import { ApiResponse, respond, respondRaw, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
+import { createHash } from 'node:crypto'
+import { ApiResponse, respond, respondRaw, type ApiHandlers, type ApiRequest, type RawResponse } from '../../lib/production-pages'
 import {
   ERROR_SENTENCES,
   type ProjectDataImportReport,
   type ProjectDataJob,
   type ProjectDataJobStatus,
+  type ProjectExportEstimate,
 } from '../../../src/types/projectData'
 import { isoAgo, LAYOUT, PROJECT_ID, SECOND_SUITE_ID, SUITE_DETAIL, SUITE_DETAIL_ON, SUITE_ID, USER } from './fixtures'
 import { flagsHandlers } from './fixtures-agents-billing-flags'
@@ -930,6 +932,104 @@ export function projectDataRefusal(status: number, code: keyof typeof ERROR_SENT
   return respond(status, { detail: { code, message: ERROR_SENTENCES[code], ...extra } })
 }
 
+// ── W30 ADM-05 phase 2: run history (W30-contract §1.2 shapes) ─────────────
+
+export const HISTORY_EXPORT_JOB_ID = 'dada0000-0000-4000-8000-0000000000e3'
+export const HISTORY_IMPORT_JOB_ID = 'dada0000-0000-4000-8000-0000000000e4'
+/** 412.3 MB: the history archive the estimate predicts and the Download button reads. */
+export const HISTORY_EXPORT_BYTES = Math.round(412.3 * 1024 * 1024)
+/** 56 tables: phase 1's 29 catalog entities + the 27 history entities. */
+const HISTORY_TABLES = 56
+const HISTORY_DOCUMENTS = { raw_allure_json: 9000, run_summaries: 120, ai_run_versions: 0 }
+/** A proxy below 32 MB refusing a part: an HTML page, not JSON (the W22a "status code 413" lesson). */
+export const PROXY_413_HTML = '<html><head><title>413 Request Entity Too Large</title></head><body><center><h1>413 Request Entity Too Large</h1></center><hr><center>nginx</center></body></html>'
+
+/** The estimate of `historyDays` (null = all history): 412 runs, 9,120 documents, 1,830 attachments, about 412.3 MB. */
+export function historyEstimate(historyDays: number | null = 90, overrides: Partial<ProjectExportEstimate> = {}): ProjectExportEstimate {
+  return {
+    include_history: true, history_days: historyDays,
+    runs: 412, runs_in_progress: 1, runs_over_cap: 0, test_cases: 9000,
+    documents: { ...HISTORY_DOCUMENTS }, objects: 1830, object_bytes: Math.round(380 * 1024 * 1024),
+    estimated_bytes: HISTORY_EXPORT_BYTES, over_limit: false,
+    measured: { postgres: true, documents: true, objects: true },
+    ...overrides,
+  }
+}
+
+/** A history export's / import's phases, in order (W30-contract §1.1 `JOB_PHASES`). */
+export type HistoryStep = 'queued' | 'catalog' | 'runs' | 'documents' | 'objects' | 'verify' | 'index' | 'succeeded'
+
+const HISTORY_PROGRESS: Record<string, ProjectDataJob['progress']> = {
+  catalog: { done: 12, total: HISTORY_TABLES, phase: 'catalog', phase_done: 12, phase_total: HISTORY_TABLES },
+  runs: { done: 29, total: HISTORY_TABLES, phase: 'runs', phase_done: 120, phase_total: 412 },
+  documents: { done: HISTORY_TABLES, total: HISTORY_TABLES, phase: 'documents', phase_done: 5000, phase_total: 9120 },
+  objects: { done: HISTORY_TABLES, total: HISTORY_TABLES, phase: 'objects', phase_done: 100, phase_total: 1830 },
+  verify: { done: HISTORY_TABLES, total: HISTORY_TABLES, phase: 'verify', phase_done: null, phase_total: null },
+  index: { done: HISTORY_TABLES, total: HISTORY_TABLES, phase: 'index', phase_done: null, phase_total: null },
+}
+
+/** The history block of a history import's report: one skip, the retention pause, recent runs, the reindex queued. */
+export function historyImportReport(): NonNullable<ProjectDataImportReport['history']> {
+  return {
+    runs: 412, test_cases: 9000, oldest_run_at: isoAgo(90), newest_run_at: isoAgo(2),
+    documents: { ...HISTORY_DOCUMENTS }, objects: 1830, object_bytes: Math.round(380 * 1024 * 1024),
+    skipped: [{ entity: 'objects', reason: 'too_large', count: 1 }],
+    retention_paused_until: isoAgo(-90), runs_past_retention: 300, recent_runs: 4, search_reindex: 'queued',
+  }
+}
+
+/** The bytes and parts of the 60 MB import the transfer spec generates in the page (2 parts: 32 MB + 28 MB). */
+export const PARTED_IMPORT = { bytes: 60 * 1024 * 1024, parts: 2 }
+
+/**
+ * A history export / import in the server's shape at `step`, fields that go together: a running history job
+ * carries its phase, a finished export its 412.3 MB, the per-entity + `documents.<collection>` + `objects` counts
+ * and `schema_version` 2; a finished import the W24 report + its `history` block; an uploading import its
+ * `upload` (the parts received so far).
+ */
+export function historyDataJob(
+  kind: 'export' | 'import',
+  step: HistoryStep | 'uploading',
+  overrides: Partial<ProjectDataJob> = {},
+): ProjectDataJob {
+  const isExport = kind === 'export'
+  const status: ProjectDataJobStatus =
+    step === 'uploading' || step === 'queued' || step === 'succeeded' ? step : 'running'
+  const base = projectDataJob(kind, status === 'uploading' ? 'queued' : status, {
+    id: isExport ? HISTORY_EXPORT_JOB_ID : HISTORY_IMPORT_JOB_ID,
+  })
+  const job: ProjectDataJob = {
+    ...base,
+    status,
+    options: isExport ? { include_history: true, history_days: 90, max_runs: 2000 } : null,
+    upload: step === 'uploading' ? { parts: PARTED_IMPORT.parts, bytes: PARTED_IMPORT.bytes, received: [], received_bytes: 0 } : null,
+    schema_version: isExport ? 2 : step === 'succeeded' ? 2 : null,
+    progress: HISTORY_PROGRESS[step] ?? (status === 'succeeded' ? { done: HISTORY_TABLES, total: HISTORY_TABLES } : null),
+  }
+  if (step === 'succeeded' && isExport) {
+    Object.assign(job, {
+      bytes: HISTORY_EXPORT_BYTES, file_count: 1950,
+      counts: {
+        projects: 1, test_suites: 3, managed_test_cases: 4180, releases: 26, test_runs: 412, test_cases: 9000,
+        'documents.raw_allure_json': 9000, 'documents.run_summaries': 120, 'documents.ai_run_versions': 0, objects: 1830,
+      },
+    })
+  }
+  if (step === 'succeeded' && !isExport && job.import_report) {
+    const inserted = { ...job.import_report.inserted, test_runs: 412, test_cases: 9000 }
+    job.import_report = { ...job.import_report, inserted, history: historyImportReport() }
+    job.counts = { ...inserted, 'documents.raw_allure_json': 9000, 'documents.run_summaries': 120, objects: 1830 }
+  }
+  return { ...job, ...overrides }
+}
+
+/** queued → every export phase → succeeded (Download (412.3 MB)): the answers of successive job GETs. */
+export const historyExportProgression = () =>
+  (['queued', 'catalog', 'runs', 'documents', 'objects', 'verify', 'succeeded'] as const).map((step) => historyDataJob('export', step))
+/** After `…/complete`: queued → every import phase (+ the search index) → succeeded with the history report. */
+export const historyImportProgression = () =>
+  (['queued', 'catalog', 'runs', 'documents', 'objects', 'index', 'succeeded'] as const).map((step) => historyDataJob('import', step))
+
 export interface ProjectDataWorldOptions {
   /** The project's exports, newest first (default none). */
   exports?: ProjectDataJob[]
@@ -943,6 +1043,33 @@ export interface ProjectDataWorldOptions {
   importPost?: ProjectDataJob | ApiResponse
   /** The download: a small ZIP (default) or a scripted JSON refusal. */
   download?: 'zip' | ApiResponse
+  /**
+   * W30: the answer to `GET …/export-estimate` — default `historyEstimate(<the asked history_days>)`; a fixed
+   * estimate (an unmeasured or over-limit one) or a refusal. The page asks only after "Include run history" is
+   * ticked, so the default page never reads it.
+   */
+  estimate?: ProjectExportEstimate | ApiResponse
+  /**
+   * W30: the parted upload. `start` answers `POST /api/v1/project-imports/uploads` (default a NEW `uploading` job
+   * with the parts and bytes the body asked for — or an existing one with `upload.received`, a resume); `refuse`
+   * answers ONE PUT by part number instead of its receipt (e.g. `respondRaw(PROXY_413_HTML, 'text/html', 413)`);
+   * `holdMs` delays every PUT's answer, so a spec can read "Uploading… 1 of 2 parts" while part 2 is in flight.
+   */
+  parts?: { start?: ProjectDataJob | ApiResponse; refuse?: Record<number, ApiResponse | RawResponse>; holdMs?: number }
+  /**
+   * W30: the successive job GET answers of a history export (a POST whose body has `include_history: true`) and of
+   * a parted import after `…/complete` — default every phase (`historyExportProgression()` /
+   * `historyImportProgression()`); the last one repeats.
+   */
+  historyJob?: { exportAnswers?: ProjectDataJob[]; importAnswers?: ProjectDataJob[] }
+}
+
+/** One recorded parted-upload PUT: the part number, its `X-Part-Sha256`, and the body's real size and SHA-256. */
+export interface RecordedPart {
+  part: number
+  sha256: string | null
+  bytes: number
+  bodySha256: string | null
 }
 
 /** Parse a multipart body into its field names, the token and the name — the file by name + type, never its bytes. */
@@ -968,13 +1095,19 @@ function multipartSummary(request: ApiRequest): Record<string, unknown> {
  */
 export function projectDataWorld(options: ProjectDataWorldOptions = {}) {
   const writes: RecordedWrite[] = []
+  // W30: every parted-upload PUT (part number, header digest, body size + digest) and every estimate GET's window.
+  const parts: RecordedPart[] = []
+  const estimates: Array<number | null> = []
   const exports = [...(options.exports ?? [])]
   const imports = [...(options.imports ?? [])]
   const answers: Record<string, ProjectDataJob[]> = {
     [PROJECT_DATA_EXPORT_JOB_ID]: exportProgression(),
     [PROJECT_DATA_IMPORT_JOB_ID]: importProgression(),
+    [HISTORY_EXPORT_JOB_ID]: [...(options.historyJob?.exportAnswers ?? historyExportProgression())],
     ...Object.fromEntries(Object.entries(options.jobAnswers ?? {}).map(([id, list]) => [id, [...list]])),
   }
+  // A parted import answers its `uploading` state (the PUTs move it) until `…/complete` releases its progression.
+  const uploading = new Set<string>()
   const current: Record<string, ProjectDataJob> = {}
   const latest = (job: ProjectDataJob) => current[job.id] ?? job
   const page = (list: ProjectDataJob[], request: ApiRequest) => {
@@ -993,8 +1126,56 @@ export function projectDataWorld(options: ProjectDataWorldOptions = {}) {
       return { project_id: request.path.split('/')[4], mode: body.mode, deleted: RESET_DELETED }
     }, 'POST'],
     [/^\/api\/v1\/projects\/[^/]+\/export$/, (request) => {
+      // W24's POST has no body (recorded as null); W30's history export sends {include_history, history_days, max_runs}.
+      const body = bodyOf(request) as { include_history?: boolean } | null
+      writes.push({ line: `POST ${request.path}`, body })
+      const fallback = body?.include_history ? historyDataJob('export', 'queued') : projectDataJob('export', 'queued')
+      return accepted(options.exportPost ?? fallback, exports)
+    }, 'POST'],
+    [/^\/api\/v1\/projects\/[^/]+\/export-estimate$/, (request) => {
+      const days = request.url.searchParams.get('history_days')
+      const historyDays = days ? Number(days) : null
+      estimates.push(historyDays)
+      return options.estimate ?? historyEstimate(historyDays)
+    }],
+    ['/api/v1/project-imports/uploads', (request) => {
+      const body = recordIn(writes, request) as { bytes?: number; parts?: number } | null
+      const start = options.parts?.start
+      if (start instanceof ApiResponse) return start
+      const job = start ?? historyDataJob('import', 'uploading', {
+        upload: { parts: body?.parts ?? PARTED_IMPORT.parts, bytes: body?.bytes ?? PARTED_IMPORT.bytes, received: [], received_bytes: 0 },
+      })
+      uploading.add(job.id)
+      if (!imports.some((j) => j.id === job.id)) imports.unshift(job)
+      const known = current[job.id]
+      current[job.id] = known ?? job
+      return respond(known || start ? 200 : 201, current[job.id])
+    }, 'POST'],
+    [/^\/api\/v1\/project-imports\/uploads\/[^/]+\/parts\/\d+$/, async (request) => {
+      const id = request.path.split('/')[5]
+      const part = Number(request.path.split('/')[7])
+      const raw = request.route.request().postDataBuffer()
+      const header = request.route.request().headers()['x-part-sha256'] ?? null
+      parts.push({ part, sha256: header, bytes: raw?.length ?? 0, bodySha256: raw ? createHash('sha256').update(raw).digest('hex') : null })
+      if (options.parts?.holdMs) await new Promise((resolve) => setTimeout(resolve, options.parts?.holdMs))
+      const refused = options.parts?.refuse?.[part]
+      if (refused) return refused
+      const job = current[id]
+      if (!job?.upload) return projectDataRefusal(404, 'job_not_found')
+      const received = [...new Set([...(job.upload.received ?? []), part])].sort((a, b) => a - b)
+      const upload = { ...job.upload, received, received_bytes: (job.upload.received_bytes ?? 0) + (raw?.length ?? 0) }
+      current[id] = { ...job, upload }
+      return { part, bytes: raw?.length ?? 0, received, complete: received.length === upload.parts }
+    }, 'PUT'],
+    [/^\/api\/v1\/project-imports\/uploads\/[^/]+\/complete$/, (request) => {
+      const id = request.path.split('/')[5]
       writes.push({ line: `POST ${request.path}`, body: null })
-      return accepted(options.exportPost ?? projectDataJob('export', 'queued'), exports)
+      const job = current[id]
+      if (!job) return projectDataRefusal(404, 'job_not_found')
+      uploading.delete(id)
+      answers[id] = [...(options.historyJob?.importAnswers ?? historyImportProgression())].map((j) => ({ ...j, id }))
+      current[id] = answers[id][0]
+      return respond(202, current[id])
     }, 'POST'],
     ['/api/v1/projects/import', (request) => {
       writes.push({ line: `POST ${request.path}`, body: multipartSummary(request) })
@@ -1006,6 +1187,7 @@ export function projectDataWorld(options: ProjectDataWorldOptions = {}) {
       options.download instanceof ApiResponse ? options.download : respondRaw(EMPTY_ZIP, 'application/zip')],
     [/^\/api\/v1\/project-data-jobs\/[^/]+$/, (request) => {
       const id = request.path.split('/')[4]
+      if (uploading.has(id)) return current[id]
       const queue = answers[id]
       if (!queue?.length) return current[id] ?? projectDataRefusal(404, 'job_not_found')
       current[id] = queue.length > 1 ? (queue.shift() as ProjectDataJob) : queue[0]
@@ -1013,7 +1195,7 @@ export function projectDataWorld(options: ProjectDataWorldOptions = {}) {
     }],
     ...LAYOUT,
   ]
-  return { handlers, writes }
+  return { handlers, writes, parts, estimates }
 }
 
 // ── Policies, search, chat, the settings pages (PAN-05d, PAN-06b) ──────────

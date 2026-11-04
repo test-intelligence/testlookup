@@ -2,8 +2,13 @@
  * W24 ADM-05 — the Import card: the file pre-check sends nothing, the client_token is minted once per chosen
  * file (two clicks / the same file again → the same token), success renders the Open button and the lists, a
  * failed job re-enables Import with a NEW token, the load error sentence. Hook, service and store are mocked.
+ *
+ * W30 (ADM-05 run history): a 60 MB file goes through `importArchive` (the parted upload) with "Checking the file…"
+ * and "Uploading… n of m parts"; a 2.1 GB file reads the 2 GB sentence and sends nothing; a proxy's HTML 413
+ * reads `A part is larger than 32 MB.`; after a reload an `uploading` import asks for the same file and the same
+ * file resumes with the SAME token; the history block of a finished history import.
  */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -17,10 +22,14 @@ vi.mock('@/hooks/useProjectDataJobs', () => ({
 }))
 
 const mockStartImport = vi.fn()
-// The request is mocked; the refusal reader (`projectDataErrorMessage`) stays real.
+const mockImportArchive = vi.fn()
+// The requests are mocked; the refusal reader (`projectDataErrorMessage`) stays real.
 vi.mock('@/services/projectDataService', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/projectDataService')>()),
-  projectDataService: { startImport: (...args: unknown[]) => mockStartImport(...args) },
+  projectDataService: {
+    startImport: (...args: unknown[]) => mockStartImport(...args),
+    importArchive: (...args: unknown[]) => mockImportArchive(...args),
+  },
 }))
 
 const NEW_PROJECT = { id: 'proj-new', name: 'Payment Service (imported)' }
@@ -71,8 +80,10 @@ const tokenOf = (call: unknown[]) => (call[1] as { clientToken: string }).client
 describe('ProjectImportCard', () => {
   beforeEach(() => {
     for (const key of Object.keys(jobs)) delete jobs[key]
+    window.sessionStorage.clear()
     mockUseJob.mockClear()
     mockStartImport.mockReset()
+    mockImportArchive.mockReset()
     mockRefresh.mockReset()
     mockSetActive.mockReset()
     onChanged.mockReset()
@@ -89,15 +100,16 @@ describe('ProjectImportCard', () => {
     expect(mockUseJob.mock.calls.every(([id]) => id === null)).toBe(true)
   })
 
-  it('a 60 MB file → "The file is larger than 50 MB." and NO request; a .txt → upload_empty', () => {
+  it('a 2.1 GB file → "The file is larger than 2 GB." and NO request; a .txt → upload_empty (W30)', () => {
     renderCard()
-    choose(zip('big.zip', 60 * MB))
-    expect(screen.getByText('The file is larger than 50 MB.')).toBeInTheDocument()
+    choose(zip('huge.zip', Math.round(2.1 * 1024 * MB)))
+    expect(screen.getByText('The file is larger than 2 GB.')).toBeInTheDocument()
     expect(importButton()).toBeDisabled()
     fireEvent.click(importButton())
     choose(new File(['x'], 'notes.txt', { type: 'text/plain' }))
     expect(screen.getByText(ERROR_SENTENCES.upload_empty)).toBeInTheDocument()
     expect(mockStartImport).not.toHaveBeenCalled()
+    expect(mockImportArchive).not.toHaveBeenCalled()
   })
 
   it('one token per chosen file: two clicks and the SAME file again send the same token; another file a new one', async () => {
@@ -211,5 +223,127 @@ describe('ProjectImportCard', () => {
   it('the load error sentence', () => {
     renderCard({ latest: undefined, loadError: new Error('x') })
     expect(screen.getByText('Could not load your imports.')).toBeInTheDocument()
+  })
+})
+
+// ── W30: the parted upload and the history report ───────────────────────────
+
+/** A promise the test resolves / rejects by hand, to look at the card mid-upload. */
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+  return { promise, resolve, reject }
+}
+type ArchiveOptions = { clientToken: string; name?: string; onProgress: (progress: unknown) => void }
+const archiveOptions = (i = 0) => mockImportArchive.mock.calls[i][1] as ArchiveOptions
+
+describe('ProjectImportCard — parted upload and history (W30)', () => {
+  beforeEach(() => {
+    for (const key of Object.keys(jobs)) delete jobs[key]
+    window.sessionStorage.clear()
+    mockUseJob.mockClear()
+    mockStartImport.mockReset()
+    mockImportArchive.mockReset()
+    onChanged.mockReset()
+  })
+
+  it('a 60 MB file → importArchive (not the single POST): "Checking the file…", "Uploading… 1 of 2 parts", then the job polls', async () => {
+    const upload = deferred<unknown>()
+    mockImportArchive.mockReturnValue(upload.promise)
+    renderCard()
+    const file = zip('history.zip', 60 * MB)
+    choose(file)
+    expect(screen.getByText('history.zip · 60.0 MB')).toBeInTheDocument()
+    fireEvent.click(importButton())
+    await waitFor(() => expect(mockImportArchive).toHaveBeenCalledTimes(1))
+    expect(mockStartImport).not.toHaveBeenCalled()
+    expect(mockImportArchive.mock.calls[0][0]).toBe(file)
+    expect(archiveOptions().clientToken).toMatch(UUID)
+    expect(archiveOptions()).not.toHaveProperty('name')
+    expect(screen.getByText('Checking the file…')).toBeInTheDocument()
+    expect(importButton(), 'Import waits while the file is sent').toBeDisabled()
+
+    act(() => archiveOptions().onProgress({ phase: 'uploading', done: 1, total: 2 }))
+    expect(screen.getByText('Uploading… 1 of 2 parts')).toBeInTheDocument()
+
+    jobs['job-parted'] = { id: 'job-parted', kind: 'import', status: 'running', progress: { done: 56, total: 56, phase: 'documents', phase_done: 5000, phase_total: 9120 } }
+    await act(async () => upload.resolve({ id: 'job-parted', kind: 'import', status: 'queued' }))
+    expect(await screen.findByText('Stored documents… 5,000 of 9,120')).toBeInTheDocument()
+    expect(mockUseJob).toHaveBeenLastCalledWith('job-parted')
+    expect(onChanged).toHaveBeenCalled()
+  })
+
+  it("a proxy's HTML 413 on a part reads \"A part is larger than 32 MB.\", never \"Request failed …\"", async () => {
+    mockImportArchive.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 413'), { isAxiosError: true,
+        response: { status: 413, data: '<html><body><h1>413 Request Entity Too Large</h1></body></html>' },
+      }),
+    )
+    renderCard()
+    choose(zip('history.zip', 60 * MB))
+    fireEvent.click(importButton())
+    expect(await screen.findByRole('alert')).toHaveTextContent('A part is larger than 32 MB.')
+    expect(screen.queryByText(/Request failed/)).toBeNull()
+    expect(importButton(), 'the same file can be tried again').toBeEnabled()
+  })
+
+  it("a structured refusal on the parted path still reads as the server's sentence", async () => {
+    mockImportArchive.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 409'), { isAxiosError: true,
+        response: { status: 409, data: { detail: { code: 'part_conflict', message: 'Part 2 was already received with different content.' } } },
+      }),
+    )
+    renderCard()
+    choose(zip('history.zip', 60 * MB))
+    fireEvent.click(importButton())
+    expect(await screen.findByRole('alert')).toHaveTextContent('Part 2 was already received with different content.')
+  })
+
+  it('after a reload an `uploading` import asks for the same file (not polled); the same file resumes with the SAME token', async () => {
+    mockImportArchive.mockReturnValue(new Promise(() => undefined))
+    const first = renderCard()
+    choose(zip('history.zip', 60 * MB))
+    fireEvent.click(importButton())
+    await waitFor(() => expect(mockImportArchive).toHaveBeenCalledTimes(1))
+    const token = archiveOptions(0).clientToken
+    first.unmount()
+
+    mockUseJob.mockClear()
+    const unfinished = { id: 'job-up', kind: 'import', status: 'uploading', upload: { parts: 2, bytes: 60 * MB, received: [1], received_bytes: 32 * MB } }
+    renderCard({ latest: unfinished as never })
+    expect(screen.getByText('Uploading… 1 of 2 parts')).toBeInTheDocument()
+    expect(screen.getByText('Choose the same file to resume the upload.')).toBeInTheDocument()
+    expect(mockUseJob.mock.calls.every(([id]) => id === null), 'an upload only this file can finish is not polled').toBe(true)
+
+    choose(zip('history.zip', 60 * MB))
+    fireEvent.click(importButton())
+    await waitFor(() => expect(mockImportArchive).toHaveBeenCalledTimes(2))
+    expect(archiveOptions(1).clientToken).toBe(token)
+  })
+
+  it('a finished history import: the History block with its counts, one skip and every note', async () => {
+    const history = {
+      runs: 412, test_cases: 9000,
+      oldest_run_at: new Date(2026, 7, 3, 12).toISOString(), newest_run_at: new Date(2026, 10, 1, 12).toISOString(),
+      documents: { raw_allure_json: 9000, run_summaries: 120, decision_reports: 0 }, objects: 1830, object_bytes: 380 * MB,
+      skipped: [{ entity: 'objects', reason: 'too_large', count: 1 }],
+      retention_paused_until: new Date(2027, 1, 1, 12).toISOString(), runs_past_retention: 300, recent_runs: 4, search_reindex: 'queued',
+    }
+    renderCard({ latest: null })
+    jobs['job-h'] = { id: 'job-h', kind: 'import', status: 'succeeded', import_report: { ...REPORT, history } }
+    mockImportArchive.mockResolvedValue({ id: 'job-h', kind: 'import', status: 'queued' })
+    choose(zip('history.zip', 60 * MB))
+    fireEvent.click(importButton())
+    expect(await screen.findByText('412 runs from Aug 3, 2026 to Nov 1, 2026')).toBeInTheDocument()
+    const block = within(document.querySelector('[data-import-history]') as HTMLElement)
+    expect(block.getByRole('heading', { name: 'Stored documents' })).toBeInTheDocument()
+    expect(block.getByText('9,000 documents')).toBeInTheDocument()
+    expect(block.queryByText('decision_reports'), 'a zero count is not listed').toBeNull()
+    expect(block.getByText('1,830 attachments · 380.0 MB')).toBeInTheDocument()
+    expect(block.getByText('1 attachment was skipped: it is larger than 256 MB')).toBeInTheDocument()
+    expect(block.getByText('The retention purge of the new project is paused until Feb 1, 2027.')).toBeInTheDocument()
+    expect(block.getByText('4 imported runs are from the last 7 days; an all-projects digest can list them.')).toBeInTheDocument()
+    expect(block.getByText('Search is being rebuilt for the new project.')).toBeInTheDocument()
   })
 })

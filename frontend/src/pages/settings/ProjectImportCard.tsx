@@ -14,18 +14,35 @@
  *     shown collapsed under "Last import" (its link and counts).
  *   - The newest import comes from the PAGE's list read (`latest`, `loadError`), like the Export card.
  *   - In the page, no modal or side panel; names and sentences are React text.
+ *
+ * W30 (ADM-05 run history): a file up to 2 GB. Up to 50 MB it is W24's single POST, unchanged; above, the service's
+ * `importArchive` checks it (SHA-256, one slice in memory) and sends it in 32 MB parts — start → one PUT per part
+ * with `X-Part-Sha256` → complete — while the card reads "Uploading… 3 of 12 parts". The token per chosen file is
+ * kept for the tab (sessionStorage), so after a reload an import still `uploading` reads "Choose the same file to
+ * resume the upload." and the same file resumes it (the server answers the open job with the parts it has). A
+ * proxy's HTML 413 on a part reads `A part is larger than 32 MB.`, never "Request failed …". A finished history
+ * import adds the History block: the runs and their dates, the stored documents, the attachments, the skips, the
+ * retention pause, the recent-runs (digest) note and the search rebuild.
  */
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
+import { isAxiosError } from 'axios'
 import { ArrowRight, Upload } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useProjectDataJob } from '@/hooks/useProjectDataJobs'
-import { projectDataErrorMessage, projectDataService } from '@/services/projectDataService'
+import { projectDataErrorMessage, projectDataService, type ImportArchiveProgress } from '@/services/projectDataService'
 import { useProjectStore } from '@/store/projectStore'
 import type { ProjectDataJob } from '@/types/projectData'
 import {
+  ATTACHMENTS_HEADING,
+  CHECKING_FILE,
   chosenFileLine,
+  DOCUMENTS_HEADING,
+  ERROR_SENTENCES,
   FILE_LABEL,
+  HISTORY_HEADING,
+  HISTORY_SKIPPED_HEADING,
+  historyReportLines,
   IMPORT_LABEL,
   IMPORT_START_FAILED,
   IMPORTED_HEADING,
@@ -33,14 +50,18 @@ import {
   importReportLines,
   importSummaryLine,
   isActiveJob,
+  isUploadingJob,
   LAST_IMPORT_HEADING,
   NAME_LABEL,
   NAME_PLACEHOLDER,
   NOT_IMPORTED_HEADING,
+  partPlan,
   SWITCHED_OFF_HEADING,
   UI_SENTENCES,
+  uploadLine,
   validateImportFile,
   validateImportName,
+  type HistoryReportLike,
   type ImportReportLike,
   type JobLike,
   type ReportLine,
@@ -57,6 +78,43 @@ interface Props {
 
 /** The same file chosen again (name, size, modification time) keeps its token. */
 const fileKey = (file: File) => `${file.name}\u0000${file.size}\u0000${file.lastModified}`
+
+/**
+ * W30: file → client_token for THIS TAB (sessionStorage, so a reload mid-upload re-sends the same token and the
+ * server answers the open upload with the parts it has). A token is a UUID scoped to its requester — no secret.
+ */
+const TOKENS_KEY = 'testlookup-project-import-tokens'
+const MAX_TOKENS = 20
+
+function loadTokens(): Map<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(window.sessionStorage.getItem(TOKENS_KEY) ?? '[]')
+    return new Map(Array.isArray(parsed) ? parsed.filter((e): e is [string, string] => Array.isArray(e) && e.length === 2) : [])
+  } catch {
+    return new Map()
+  }
+}
+
+function saveTokens(tokens: Map<string, string>): void {
+  try {
+    window.sessionStorage.setItem(TOKENS_KEY, JSON.stringify([...tokens].slice(-MAX_TOKENS)))
+  } catch {
+    // Storage full or blocked: the token still lives for this visit.
+  }
+}
+
+/** A proxy's 413 is an HTML page, not `{detail}`: on a part it means the part was over the proxy's limit. */
+function isProxyRefusal(error: unknown): boolean {
+  if (!isAxiosError(error) || error.response?.status !== 413) return false
+  const data: unknown = error.response?.data
+  return !(data && typeof data === 'object' && 'detail' in data)
+}
+
+/**
+ * What the card shows while it sends a parted file: the service's `ImportArchiveProgress` — `hashing` (bytes read:
+ * "Checking the file…") then `uploading` (parts received of the plan: "Uploading… 3 of 12 parts").
+ */
+type SendProgress = ImportArchiveProgress
 
 /**
  * One report list. `stacked` puts the table (and column) above its sentence: a skipped / cleared sentence beside
@@ -85,6 +143,33 @@ function ReportList({ id, heading, lines, stacked = false }: { id: string; headi
   )
 }
 
+/**
+ * W30: a history import's block — "412 runs from Aug 3, 2026 to Nov 1, 2026", the stored documents and attachments
+ * (W24's mono list rows, non-zero only), the skips, then the notes (the retention pause, the runs past the window,
+ * the recent-runs digest note, the search rebuild). Every line is prose in text-xs or a list row ≤ 52 characters.
+ */
+function HistoryReport({ history }: { history: HistoryReportLike }) {
+  const lines = historyReportLines(history)
+  return (
+    <div className="flex flex-col gap-2" data-import-history="">
+      <div className="flex flex-col gap-1">
+        <h3 className="m-0 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">{HISTORY_HEADING}</h3>
+        <p className="m-0 text-xs text-[var(--color-text)]" data-history-runs="">{lines.imported}</p>
+      </div>
+      <ReportList id="history-documents" heading={DOCUMENTS_HEADING} lines={lines.documents} />
+      <ReportList id="history-attachments" heading={ATTACHMENTS_HEADING} lines={lines.attachments} />
+      <ReportList id="history-skipped" heading={HISTORY_SKIPPED_HEADING} lines={lines.skipped} stacked />
+      {lines.notes.length > 0 && (
+        <div className="flex flex-col gap-1" data-history-notes="">
+          {lines.notes.map((note) => (
+            <p key={note} className="m-0 text-xs text-[var(--color-text-muted)]">{note}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** A finished import's report: the created line + Open, the signature, and the three lists. */
 function ImportReport({ report, onOpen }: { report: ImportReportLike; onOpen: () => void }) {
   const lines = importReportLines(report)
@@ -103,6 +188,7 @@ function ImportReport({ report, onOpen }: { report: ImportReportLike; onOpen: ()
       <ReportList id="inserted" heading={IMPORTED_HEADING} lines={lines.inserted} />
       <ReportList id="switched-off" heading={SWITCHED_OFF_HEADING} lines={lines.switchedOff} />
       <ReportList id="not-imported" heading={NOT_IMPORTED_HEADING} lines={lines.notImported} stacked />
+      {report.history && <HistoryReport history={report.history} />}
     </div>
   )
 }
@@ -115,7 +201,7 @@ function ImportJobBlock({ job, onOpen }: { job: JobLike; onOpen: (report: Import
     return <ImportReport report={report} onOpen={() => onOpen(report)} />
   }
   return (
-    <p
+    <div
       data-import-line=""
       className={
         state.kind === 'failed'
@@ -123,9 +209,19 @@ function ImportJobBlock({ job, onOpen }: { job: JobLike; onOpen: (report: Import
           : 'm-0 flex items-center gap-2 text-sm text-[var(--color-text)]'
       }
     >
-      {state.kind === 'running' && <LoadingSpinner size="sm" />}
+      {(state.kind === 'running' || state.kind === 'uploading') && <LoadingSpinner size="sm" />}
       <span>{state.line}</span>
-    </p>
+    </div>
+  )
+}
+
+/** W30: an upload left `uploading` (a reload, a closed tab): its parts so far and how to resume it. */
+function UnfinishedUpload({ job }: { job: JobLike }) {
+  return (
+    <div className="flex flex-col gap-1" data-import-unfinished="">
+      <p className="m-0 text-sm text-[var(--color-text)]" data-import-line="">{uploadLine(job.upload)}</p>
+      <p className="m-0 text-xs text-[var(--color-text-muted)]">{UI_SENTENCES.resume_upload}</p>
+    </div>
   )
 }
 
@@ -164,18 +260,22 @@ export default function ProjectImportCard({ loadError, latest, onChanged }: Prop
   // The job of this visit: started here, or the newest import resumed while it was still running.
   const [startedId, setStartedId] = useState<string | null>(null)
   const [followedId, setFollowedId] = useState<string | null>(null)
-  // file → its client_token (minted when chosen); the token the last POST sent.
-  const tokensRef = useRef(new Map<string, string>())
+  // W30: a parted file being checked / sent by THIS tab (null otherwise).
+  const [sending, setSending] = useState<SendProgress | null>(null)
+  // file → its client_token (minted when chosen; kept for the tab, W30); the token the last POST sent.
+  const tokensRef = useRef<Map<string, string> | null>(null)
   const sentTokenRef = useRef<string | null>(null)
+  const tokens = () => (tokensRef.current ??= loadTokens())
 
-  const activeLatestId = latest && isActiveJob(latest) ? latest.id : null
+  // A queued / running import is followed; one still `uploading` is not — only this tab's file can finish it.
+  const activeLatestId = latest && isActiveJob(latest) && !isUploadingJob(latest) ? latest.id : null
   if (activeLatestId && !startedId && followedId !== activeLatestId) setFollowedId(activeLatestId)
 
   const watchedId = startedId ?? followedId
   const { data: watched } = useProjectDataJob(watchedId)
   const polled = watched && watched.id === watchedId ? watched : null
   const current: JobLike | null = polled ?? (watchedId ? { id: watchedId, status: 'queued' } : null)
-  const running = isActiveJob(current)
+  const running = isActiveJob(current) || isUploadingJob(current) || sending !== null
 
   // A watched job that reaches a terminal status refreshes the page's list once.
   const ended = polled && !isActiveJob(polled) ? `${polled.id}:${polled.status}` : null
@@ -191,29 +291,46 @@ export default function ProjectImportCard({ loadError, latest, onChanged }: Prop
     const chosen = event.target.files?.[0] ?? null
     setFile(chosen)
     setRefusal(null)
-    if (chosen && !validateImportFile(chosen) && !tokensRef.current.has(fileKey(chosen))) {
-      tokensRef.current.set(fileKey(chosen), crypto.randomUUID())
+    if (chosen && !validateImportFile(chosen) && !tokens().has(fileKey(chosen))) {
+      tokens().set(fileKey(chosen), crypto.randomUUID())
+      saveTokens(tokens())
     }
   }
 
   async function startImport() {
     if (!file || !canImport) return
     const key = fileKey(file)
-    let clientToken = tokensRef.current.get(key) ?? crypto.randomUUID()
+    let clientToken = tokens().get(key) ?? crypto.randomUUID()
     // A failed job's token is spent: the next attempt is a new one.
     if (polled?.status === 'failed' && clientToken === sentTokenRef.current) clientToken = crypto.randomUUID()
-    tokensRef.current.set(key, clientToken)
+    tokens().set(key, clientToken)
+    saveTokens(tokens())
     sentTokenRef.current = clientToken
+    const parted = partPlan(file.size).mode === 'parted'
     setSubmitting(true)
     setRefusal(null)
     try {
       const trimmed = name.trim()
-      const job = await projectDataService.startImport(file, { clientToken, ...(trimmed ? { name: trimmed } : {}) })
+      const options = { clientToken, ...(trimmed ? { name: trimmed } : {}) }
+      let job: ProjectDataJob
+      if (parted) {
+        // W30: over 50 MB — checked, then sent in 32 MB parts; the service reports each step.
+        setSending({ phase: 'hashing', done: 0, total: file.size })
+        job = await projectDataService.importArchive(file, { ...options, onProgress: setSending })
+      } else {
+        job = await projectDataService.startImport(file, options)
+      }
       setStartedId(job.id)
       onChanged()
     } catch (err: unknown) {
-      setRefusal(await projectDataErrorMessage(err, IMPORT_START_FAILED))
+      setRefusal(
+        parted && isProxyRefusal(err)
+          ? ERROR_SENTENCES.part_too_large
+          : await projectDataErrorMessage(err, IMPORT_START_FAILED),
+      )
+      if (parted) onChanged()
     } finally {
+      setSending(null)
       setSubmitting(false)
     }
   }
@@ -233,7 +350,7 @@ export default function ProjectImportCard({ loadError, latest, onChanged }: Prop
     <section
       className="card flex flex-col gap-3"
       data-project-import=""
-      data-import-state={current ? importJobState(current).kind : 'idle'}
+      data-import-state={sending ? 'uploading' : current ? importJobState(current).kind : 'idle'}
       aria-labelledby="project-import-heading"
     >
       <h2
@@ -284,8 +401,20 @@ export default function ProjectImportCard({ loadError, latest, onChanged }: Prop
 
       {refusal && <p role="alert" data-import-refusal="" className="m-0 text-xs text-[var(--ui-danger-ink)]">{refusal}</p>}
       {loadError ? <p className="m-0 text-sm text-[var(--ui-danger-ink)]">{UI_SENTENCES.load_imports_failed}</p> : null}
-      {current ? (
+      {sending ? (
+        // A <div>: the spinner is a <div>, which a <p> may not hold.
+        <div data-import-line="" data-import-sending={sending.phase} className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+          <LoadingSpinner size="sm" />
+          <span>
+            {sending.phase === 'hashing'
+              ? CHECKING_FILE
+              : uploadLine({ parts: sending.total, received: Array.from({ length: sending.done }, (_, i) => i + 1) })}
+          </span>
+        </div>
+      ) : current ? (
         <ImportJobBlock job={current} onOpen={openProject} />
+      ) : latest && isUploadingJob(latest) ? (
+        <UnfinishedUpload job={latest} />
       ) : latest ? (
         <LastImport job={latest} onOpen={openProject} />
       ) : null}

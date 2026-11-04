@@ -2,6 +2,10 @@
  * W24 ADM-05 — the Export card: each state, Export → POST then polling, a 409 `export_running` resumes that
  * job, the download's refusal read OUT OF THE BLOB, the load error sentence. The job hook and the service are
  * mocked (the unit-test network guard).
+ *
+ * W30 (ADM-05 run history): unticked → W24's body-less POST and the estimate never asked for; ticked → the window
+ * select, the estimate line (re-asked per window), over 2 GB disables Export, an unmeasured store reads "not
+ * measured" (never 0); the phase line; a finished history export's counts line and the CLI hint above 512 MB.
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -11,8 +15,14 @@ import { ERROR_SENTENCES, EXPORT_QUEUED, SIGNED_HERE, UI_SENTENCES } from './pro
 
 const jobs: Record<string, unknown> = {}
 const mockUseJob = vi.fn((id: string | null) => ({ data: id ? jobs[id] : undefined }))
+type EstimateOptions = { historyDays: number | null }
+const estimateRead: { data?: unknown; error?: unknown } = {}
+const mockUseEstimate = vi.fn((_projectId: string, _options: EstimateOptions, enabled: boolean) =>
+  enabled ? { data: estimateRead.data, error: estimateRead.error } : { data: undefined, error: undefined },
+)
 vi.mock('@/hooks/useProjectDataJobs', () => ({
   useProjectDataJob: (id: string | null) => mockUseJob(id),
+  useExportEstimate: (projectId: string, options: EstimateOptions, enabled: boolean) => mockUseEstimate(projectId, options, enabled),
 }))
 
 const mockStart = vi.fn()
@@ -52,6 +62,9 @@ describe('ProjectExportCard', () => {
   beforeEach(() => {
     for (const key of Object.keys(jobs)) delete jobs[key]
     mockUseJob.mockClear()
+    mockUseEstimate.mockClear()
+    estimateRead.data = undefined
+    estimateRead.error = undefined
     mockStart.mockReset()
     mockDownload.mockReset()
     onChanged.mockReset()
@@ -171,5 +184,116 @@ describe('ProjectExportCard', () => {
     renderCard({ latest: { id: 'f', kind: 'export', status: 'failed', error: { code: 'x', message: hostile } } as never })
     expect(screen.getByText(hostile)).toBeInTheDocument()
     expect(document.querySelector('img')).toBeNull()
+  })
+})
+
+// ── W30: run history ─────────────────────────────────────────────────────────
+
+const measured = { postgres: true, documents: true, objects: true }
+function estimate(overrides: Record<string, unknown> = {}) {
+  return {
+    include_history: true, history_days: 90, runs: 412, runs_in_progress: 1, runs_over_cap: 0, test_cases: 9000,
+    documents: { raw_allure_json: 9000, run_summaries: 120 }, objects: 1830, object_bytes: 380 * MB,
+    estimated_bytes: Math.round(412.3 * MB), over_limit: false, measured, ...overrides,
+  }
+}
+const historyBox = () => screen.getByRole('checkbox', { name: UI_SENTENCES.include_history })
+const windowSelect = () => screen.getByRole('combobox')
+
+describe('ProjectExportCard — run history (W30)', () => {
+  beforeEach(() => {
+    for (const key of Object.keys(jobs)) delete jobs[key]
+    mockUseJob.mockClear()
+    mockUseEstimate.mockClear()
+    estimateRead.data = estimate()
+    estimateRead.error = undefined
+    mockStart.mockReset()
+    onChanged.mockReset()
+  })
+
+  it('unticked: the box and the intro, no window, the estimate never asked for; Export → W24\'s body-less POST', async () => {
+    mockStart.mockResolvedValue({ id: 'job-new', kind: 'export', status: 'queued' })
+    renderCard()
+    expect(historyBox()).not.toBeChecked()
+    expect(screen.getByText(UI_SENTENCES.history_intro)).toBeInTheDocument()
+    expect(screen.queryByRole('combobox')).toBeNull()
+    fireEvent.click(exportButton())
+    await waitFor(() => expect(mockStart).toHaveBeenCalledTimes(1))
+    expect(mockStart.mock.calls[0], 'ONE argument: no body').toStrictEqual(['proj-1'])
+    expect(mockUseEstimate.mock.calls.every(([, , enabled]) => enabled === false), 'no estimate while unticked').toBe(true)
+  })
+
+  it('ticked: 90 days by default and the estimate line; 365 days re-asks; Export sends the window', async () => {
+    mockStart.mockResolvedValue({ id: 'job-history', kind: 'export', status: 'queued' })
+    renderCard()
+    fireEvent.click(historyBox())
+    expect(windowSelect()).toHaveValue('90')
+    expect([...windowSelect().querySelectorAll('option')].map((o) => o.textContent)).toEqual(['30 days', '90 days', '365 days', 'All history'])
+    expect(mockUseEstimate).toHaveBeenLastCalledWith('proj-1', { historyDays: 90 }, true)
+    expect(screen.getByText('About 412.3 MB · 412 runs · 9,120 documents · 1,830 attachments')).toBeInTheDocument()
+
+    fireEvent.change(windowSelect(), { target: { value: '365' } })
+    expect(mockUseEstimate).toHaveBeenLastCalledWith('proj-1', { historyDays: 365 }, true)
+    fireEvent.click(exportButton())
+    await waitFor(() => expect(mockStart).toHaveBeenCalledTimes(1))
+    expect(mockStart).toHaveBeenCalledWith('proj-1', { include_history: true, history_days: 365, max_runs: 2000 })
+
+    fireEvent.change(windowSelect(), { target: { value: 'all' } })
+    expect(mockUseEstimate).toHaveBeenLastCalledWith('proj-1', { historyDays: null }, true)
+  })
+
+  it('over 2 GB: the over sentence and Export disabled; unticking enables it again', () => {
+    estimateRead.data = estimate({ estimated_bytes: 3 * 1024 * MB, over_limit: true })
+    renderCard()
+    fireEvent.click(historyBox())
+    expect(screen.getByText('Larger than 2 GB — choose a shorter window.')).toBeInTheDocument()
+    expect(exportButton()).toBeDisabled()
+    fireEvent.click(historyBox())
+    expect(exportButton()).toBeEnabled()
+  })
+
+  it('an unmeasured store reads "not measured", never 0, and Export stays enabled', () => {
+    estimateRead.data = estimate({ documents: null, estimated_bytes: null, over_limit: null, measured: { ...measured, documents: false } })
+    renderCard()
+    fireEvent.click(historyBox())
+    expect(screen.getByText('Size unknown: the document store could not be read.')).toBeInTheDocument()
+    expect(screen.getByText('412 runs · documents not measured · 1,830 attachments')).toBeInTheDocument()
+    expect(document.querySelector('[data-export-estimate]')?.textContent).not.toMatch(/\b0 documents/)
+    expect(exportButton()).toBeEnabled()
+  })
+
+  it('while the estimate loads: "Estimating…"; a failed estimate says so and does not block Export', () => {
+    estimateRead.data = undefined
+    const { rerender } = renderCard()
+    fireEvent.click(historyBox())
+    expect(screen.getByText('Estimating…')).toBeInTheDocument()
+    estimateRead.error = new Error('x')
+    rerender(<ProjectExportCard projectId="proj-1" latest={null} onChanged={onChanged} />)
+    expect(screen.getByText('Could not load the size estimate.')).toBeInTheDocument()
+    expect(exportButton()).toBeEnabled()
+  })
+
+  it('a running history export reads its phase: "Runs and results… 120 of 412", then "Stored documents… 5,000 of 9,120"', () => {
+    const running = { id: 'h', kind: 'export', status: 'running', options: { include_history: true },
+      progress: { done: 29, total: 56, phase: 'runs', phase_done: 120, phase_total: 412 } }
+    jobs.h = running
+    const { rerender } = renderCard({ latest: running as never })
+    expect(screen.getByText('Runs and results… 120 of 412')).toBeInTheDocument()
+    jobs.h = { ...running, progress: { done: 56, total: 56, phase: 'documents', phase_done: 5000, phase_total: 9120 } }
+    rerender(<ProjectExportCard projectId="proj-1" latest={running as never} onChanged={onChanged} />)
+    expect(screen.getByText('Stored documents… 5,000 of 9,120')).toBeInTheDocument()
+    expect(exportButton()).toBeDisabled()
+  })
+
+  it('a finished history export: the counts line, Download (412.3 MB), the CLI hint only above 512 MB', () => {
+    const ready = { ...readyJob('h'), options: { include_history: true }, bytes: Math.round(412.3 * MB),
+      counts: { projects: 1, test_runs: 412, test_cases: 9000, 'documents.raw_allure_json': 9000, 'documents.run_summaries': 120, objects: 1830 } }
+    const { rerender } = renderCard({ latest: ready as never })
+    expect(screen.getByText('9,413 rows in 3 tables')).toBeInTheDocument()
+    expect(screen.getByText('412 runs · 9,120 documents · 1,830 attachments')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download (412.3 MB)' })).toBeEnabled()
+    expect(screen.queryByText(/download more reliably with the CLI/)).toBeNull()
+    rerender(<ProjectExportCard projectId="proj-1" latest={{ ...ready, bytes: 600 * MB } as never} onChanged={onChanged} />)
+    expect(screen.getByText('Large archives download more reliably with the CLI: testlookup projects export proj-1 --history')).toBeInTheDocument()
   })
 })
