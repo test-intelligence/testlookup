@@ -13,6 +13,9 @@ export interface UserItem {
   /** W31 STRAT-12: the account was erased (pseudonymised) — render "Erased user" + the badge, no actions. */
   is_erased?: boolean
   erased_at?: string | null
+  /** W31: a service / synthetic account holds no personal data — no "Personal data" action on its row. */
+  is_service_account?: boolean
+  is_synthetic?: boolean
 }
 
 export interface ProjectMember {

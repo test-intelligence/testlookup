@@ -6379,6 +6379,10 @@ class UserListResponse(BaseModel):
     # W31 STRAT-12: an erased account (users.erased_at set) is still listed — as "Erased user" with the badge
     is_erased: bool = False                        # derived: True whenever erased_at is set
     erased_at: Optional[datetime] = None
+    # W31: Settings › Users offers "Personal data" only on a person's row (contract §4.2; refusal not_a_person keys
+    # on these flags, §0.8) — the list must say which rows are service / synthetic accounts.
+    is_service_account: bool = False
+    is_synthetic: bool = False
     model_config = ConfigDict(from_attributes=True)
 
     @model_validator(mode="after")
