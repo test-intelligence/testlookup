@@ -27,11 +27,17 @@ the ASGI route (``POST /api/v1/projects/import`` as an ADMIN) and the REAL runne
    reported skipped (``retired_table``, 1 row) and every exported table arrives with
    exactly the manifest's rows.
 
+7. W30 (ADM-05 phase 2) — a body-less export is still the W24 schema-1 archive and imports UNCHANGED
+   (no ``history`` block, no documents / objects counts, no retention pause); a phase-1 importer
+   (``SUPPORTED_SCHEMA_VERSIONS`` patched to ``(1,)``) meeting a small schema-2 archive reads
+   ``schema_newer`` naming "2" and "1"; a schema-3 archive reads ``schema_newer`` naming "1, 2".
+   The run-history round trip is ``test_project_history_transfer_postgres_mongo.py``.
+
 Fixture rule (§6.3): ``dispose_engine_for_loop()`` before the engine is built and
 after it is disposed; the route's ``get_db`` and the runner run on THIS module's
 engine (so the listener sees every statement); storage = ``LocalStorageProvider``
 on a temporary directory; no Mongo; Redis is closed only if this module bound it.
-Requires ``TESTLOOKUP_POSTGRES_TEST_DSN`` migrated to head (0247).
+Requires ``TESTLOOKUP_POSTGRES_TEST_DSN`` migrated to head (0252).
 """
 from __future__ import annotations
 
@@ -134,6 +140,20 @@ async def _cleanup(sessions: Any, seeded: Any, people: list[Any]) -> None:
     await remove_transfer_data(sessions, seeded, project_ids=imported, user_ids=people_ids)
 
 
+async def _setup_failed(sessions: Any, seeded: Any, people: list[Any]) -> None:
+    """The fixture's setup raised (a seed or an export that failed): remove what it already committed."""
+    from sqlalchemy import delete
+
+    from app.models.postgres import User
+
+    if seeded is not None:
+        await _cleanup(sessions, seeded, people)
+        return
+    async with sessions() as db:
+        await db.execute(delete(User).where(User.id.in_([p.id for p in people])))
+        await db.commit()
+
+
 def _user(tag: str, role: str, label: str) -> Any:
     from app.models.postgres import User
 
@@ -190,17 +210,26 @@ async def env(tmp_path_factory):
         await db.commit()
     for person in people:
         deps._bind_credential_kind(person, deps.CREDENTIAL_KIND_JWT)
-    async with sessions() as db:
-        seeded = await seed_transfer_project(db, sentinels=make_sentinels())
-    async with sessions() as db:
-        source = await db.get(Project, seeded.project_id)
-        export_job = await jobs.create_export_job(db, project=source, actor=admin)
-        await db.commit()
-    await runner.run_export_job(export_job.id, storage=storage, session_factory=sessions)
-    async with sessions() as db:
-        exported = await db.get(ProjectDataJob, export_job.id)
-    assert exported.status == "succeeded", (exported.error_code, exported.error)   # G-B's real export runner
-    archive = await storage.get_object_content(exported.storage_key, bucket=COMPLIANCE_BUCKET)
+    seeded = None
+    try:
+        async with sessions() as db:
+            seeded = await seed_transfer_project(db, sentinels=make_sentinels())
+        async with sessions() as db:
+            source = await db.get(Project, seeded.project_id)
+            export_job = await jobs.create_export_job(db, project=source, actor=admin)
+            await db.commit()
+        await runner.run_export_job(export_job.id, storage=storage, session_factory=sessions)
+        async with sessions() as db:
+            exported = await db.get(ProjectDataJob, export_job.id)
+        assert exported.status == "succeeded", (exported.error_code, exported.error)   # G-B's real export runner
+        archive = await storage.get_object_content(exported.storage_key, bucket=COMPLIANCE_BUCKET)
+    except BaseException:                     # a failed SETUP must not leak its people / seed into the shared DB
+        await _setup_failed(sessions, seeded, people)
+        patcher.undo()
+        event.remove(engine.sync_engine, "before_cursor_execute", counter)
+        await engine.dispose()
+        await app_postgres.dispose_engine_for_loop()
+        raise
 
     state = SimpleNamespace(user=admin)
     app = FastAPI()
@@ -347,6 +376,14 @@ async def test_the_round_trip_copies_every_entity_into_a_new_project_and_nothing
     assert new_counts == source_counts                                    # every entity, equal counts
     assert report["inserted"] == source_counts == job.counts
     assert env.root.exists() and job.storage_key is None                  # the upload was removed
+    # W30: a body-less export is the W24 archive (schema 1) and imports UNCHANGED — no history block, no
+    # documents / objects counts, no retention pause, nothing stamped
+    assert json.loads(_members(env.archive)["manifest.json"])["schema_version"] == 1
+    assert report.get("history") is None and set(job.counts) == {spec.table for spec in plan()}
+    assert "schema_version" not in (job.options or {})
+    assert await _scalar(env, (
+        "SELECT count(*) FROM project_retention_policies WHERE project_id = :p AND purge_paused_until IS NOT NULL"
+    ), p=new_id) == 0
 
     # Every FK of every imported row points inside the NEW project.
     async with env.sessions() as db:
@@ -584,8 +621,9 @@ _REFUSED: list[tuple[str, Callable[[bytes], bytes], str, str]] = [
     ("zip-slip", lambda a: _rewrap(a, replace={"../evil": b"x"}), "unsafe_archive", "unsafe path"),
     ("ratio-bomb", lambda a: _rewrap(a, replace={"bomb.bin": b"\x00" * (4 * 1024 * 1024)}),
      "unsafe_archive", "compression ratio"),
-    ("schema-2", lambda a: _rewrap(a, manifest=lambda m: m.update(schema_version=2)), "schema_newer",
-     "(schema 2); this deployment reads schema 1"),
+    # W30: schema 2 is read now (run history); a NEWER one still reads schema_newer naming both versions
+    ("schema-3", lambda a: _rewrap(a, manifest=lambda m: m.update(schema_version=3)), "schema_newer",
+     "(schema 3); this deployment reads schema 1, 2"),
     ("unknown-entity", _unknown_entity, "unknown_entity", "contains test_runs"),
     ("unknown-column", _unknown_column, "unknown_column", "test_suites.added_later"),
     ("wrong-type", _wrong_type, "invalid_row",
@@ -614,6 +652,46 @@ async def test_a_refused_archive_writes_nothing(env, variant, code, fragment):
     assert env.counter.inserts == [], f"the refused import wrote: {env.counter.inserts}"
     assert await _scalar(env, "SELECT count(*) FROM projects") == projects_before
     assert job.project_id is None and job.storage_key is None
+
+
+def _small_schema2(archive: bytes) -> bytes:
+    """A small schema-2 archive as a W30 exporter writes it: schema_version 2 + a ``history`` block + one
+    stored document (≤ 50 MB, ≤ 10 000 members — it reaches a phase-1 importer's manifest check)."""
+    from app.services.project_export_documents import encode_document
+
+    run = str(uuid.uuid4())
+    doc = (encode_document({"test_run_id": run, "summary": "one failed"}) + "\n").encode("utf-8")
+
+    def bump(m: dict[str, Any]) -> None:
+        m["schema_version"] = 2
+        m["history"] = {"window_days": 90, "max_runs": 2000, "runs": 0,
+                        "documents": {"run_summaries": {"docs": 1, "parts": 1}},
+                        "objects": {"count": 0, "bytes": 0, "parts": 0}, "skipped": []}
+    return _rewrap(archive, replace={"documents/run_summaries/part-0001.jsonl": doc}, manifest=bump, relist=True,
+                   unsign=True)
+
+
+async def test_a_phase1_importer_meets_a_schema2_archive_and_reads_schema_newer(env, monkeypatch):
+    """Contract §0.12 / R-12: a DEPLOYED phase-1 importer (``SUPPORTED_SCHEMA_VERSIONS == (1,)``) meeting a
+    small schema-2 archive answers its own ``schema_newer`` sentence naming "2" and "1" — nothing written."""
+    from app.services import project_export_vocab as vocab
+
+    monkeypatch.setattr(vocab, "SUPPORTED_SCHEMA_VERSIONS", (1,))
+    projects_before = await _scalar(env, "SELECT count(*) FROM projects")
+    response = await _post(env, _small_schema2(env.archive))
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+    env.counter.inserts.clear()
+    env.counter.armed = True
+    try:
+        await env.runner.run_import_job(uuid.UUID(job_id), storage=env.storage, session_factory=env.sessions)
+    finally:
+        env.counter.armed = False
+    job = await _job(env, job_id)
+    assert (job.status, job.error_code) == ("failed", "schema_newer")
+    assert job.error == vocab.ERROR_SENTENCES["schema_newer"].format(found=2, supported="1")
+    assert "(schema 2)" in job.error and "reads schema 1." in job.error
+    assert env.counter.inserts == [] and await _scalar(env, "SELECT count(*) FROM projects") == projects_before
 
 
 # ── 5. authorization ─────────────────────────────────────────────────────────
@@ -661,7 +739,7 @@ async def test_a_pre_w25d_archive_imports_with_quality_gates_skipped_and_nothing
     the database it came from). Every W24 export lists all its tables, so without the RETIRED_ENTITIES tolerance
     it would be refused ``unknown_entity`` for ``quality_gates``."""
     from app.services import project_export_vocab as vocab
-    from app.services.project_export_entities import EXPORTED_TABLES
+    from app.services.project_export_entities import CATALOG_TABLES as EXPORTED_TABLES   # W30: a schema-1 archive
     from tests.integration.project_transfer_seed import exported_counts
 
     archive = FIXTURE.read_bytes()

@@ -79,7 +79,7 @@ def build_archive(
         ],
         "scope": "project",
         "format": vocab.ARCHIVE_FORMAT,
-        "schema_version": vocab.SCHEMA_VERSION,
+        "schema_version": vocab.CATALOG_SCHEMA_VERSION,
         "source": {"app_version": "9.9.9", "host": None},
         "project": {"name": "Payment Service", "slug": "payment-service"},
         "entities": listed,
@@ -251,7 +251,7 @@ _REFUSALS: list[tuple[str, Callable[[], bytes], str, str]] = [
     ("zip-slip-member", lambda: build_archive(extra_members={"../evil": b"x"}), "unsafe_archive", "unsafe path"),
     ("ratio-bomb", lambda: build_archive(extra_members={"bomb.bin": b"\x00" * (2 * 1024 * 1024)}),
      "unsafe_archive", "compression ratio"),
-    ("schema-newer", lambda: build_archive(manifest_patch={"schema_version": 2}), "schema_newer", "(schema 2)"),
+    ("schema-newer", lambda: build_archive(manifest_patch={"schema_version": 3}), "schema_newer", "(schema 3)"),
     ("schema-not-an-int", lambda: build_archive(manifest_patch={"schema_version": "1"}), "schema_unknown", "schema"),
     ("retention-archive", lambda: build_archive(manifest_patch={"scope": "runs", "format": None}),
      "not_a_project_export", "not a TestLookup project export"),
@@ -306,7 +306,7 @@ async def test_a_wrong_type_names_entity_line_file_and_field_never_the_value():
 
 async def test_schema_newer_names_both_versions():
     failure, _session, _calls = await _refused(build_archive(manifest_patch={"schema_version": 7}))
-    assert failure.message == vocab.ERROR_SENTENCES["schema_newer"].format(found=7, supported="1")
+    assert failure.message == vocab.ERROR_SENTENCES["schema_newer"].format(found=7, supported="1, 2")
 
 
 async def test_a_supplied_name_already_taken_is_refused_by_selects_only():
@@ -327,7 +327,7 @@ async def test_a_missing_upload_object_is_interrupted():
 
 def _preflight(blob: bytes, keys: Optional[dict[str, str]] = None) -> Any:
     spool = io.BytesIO(blob)
-    return svc._preflight_sync(spool, keys or {}, svc._scan(spool))
+    return svc._preflight_sync(spool, keys or {})
 
 
 @pytest.mark.parametrize(
@@ -899,3 +899,218 @@ async def test_the_i7b_mirror_runs_only_while_legacy_writes_are_on(import_world,
         assert not any("suite_memberships" in sql for sql in session.statements), (
             "after the cutover the import neither reads nor writes the legacy table")
     assert session.job_row.status == "succeeded" and report.inserted["test_suites"] == 1
+
+
+# ── W30 ADM-05 phase 2: the §0.12 preflight order, schema 1 AND 2, the retention pause, the history block ──
+
+
+def _members_zip(members: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+    return buf.getvalue()
+
+
+async def test_the_entry_count_is_read_from_the_central_directory_before_the_manifest(monkeypatch):
+    monkeypatch.setattr(vocab, "IMPORT_HISTORY_MAX_ENTRIES", 3)
+    read: list[Any] = []
+    real = svc._read_manifest
+    monkeypatch.setattr(svc, "_read_manifest", lambda zf: read.append(1) or real(zf))
+    blob = _members_zip({f"entities/x/part-{n:04d}.jsonl": b"{}\n" for n in range(1, 5)})   # 4 entries, no manifest
+    failure, session, calls = await _refused(blob)
+    assert failure.code == "unsafe_archive" and "4 entries; the limit is 3" in failure.message
+    assert read == [], "the manifest was never opened"
+    _assert_nothing_written(session, calls)
+
+
+async def test_a_central_directory_past_its_cap_is_refused_before_it_is_read(monkeypatch):
+    """The entry count and the directory size come from the end record: zipfile never loads a huge directory."""
+    blob = build_archive({"test_suites": [_suite()]})
+    monkeypatch.setattr(svc, "_CENTRAL_DIRECTORY_MAX_BYTES", 64)
+    loaded: list[Any] = []
+    monkeypatch.setattr(svc.zipfile, "ZipFile", lambda *a, **k: loaded.append(1) or (_ for _ in ()).throw(AssertionError))
+    failure, session, calls = await _refused(blob)
+    assert failure.code == "unsafe_archive" and "the limit is 64." in failure.message
+    assert loaded == []
+    _assert_nothing_written(session, calls)
+
+
+async def test_the_schema_version_is_read_before_the_safe_scan():
+    """A newer archive carrying a member the scan would refuse still reads schema_newer: (b) before (c)."""
+    blob = build_archive(manifest_patch={"schema_version": 3}, extra_members={"bomb.bin": b"\x00" * (2 * 1024 * 1024)})
+    failure, session, calls = await _refused(blob)
+    assert failure.code == "schema_newer"
+    assert failure.message == vocab.ERROR_SENTENCES["schema_newer"].format(found=3, supported="1, 2")
+    _assert_nothing_written(session, calls)
+
+
+def test_each_schema_is_scanned_with_its_own_caps(monkeypatch):
+    assert svc._scan_caps(1) == {"max_total": vocab.IMPORT_MAX_TOTAL_UNCOMPRESSED, "max_entries": vocab.IMPORT_MAX_ENTRIES,
+                                 "max_entry": vocab.IMPORT_MAX_ENTRY_UNCOMPRESSED, "max_ratio": vocab.IMPORT_MAX_RATIO}
+    assert svc._scan_caps(2) == {
+        "max_total": vocab.IMPORT_HISTORY_MAX_TOTAL_UNCOMPRESSED, "max_entries": vocab.IMPORT_HISTORY_MAX_ENTRIES,
+        "max_entry": vocab.IMPORT_HISTORY_MAX_ENTRY_UNCOMPRESSED, "max_ratio": vocab.IMPORT_HISTORY_MAX_RATIO}
+    monkeypatch.setattr(vocab, "IMPORT_MAX_ENTRIES", 2)                 # schema 1's cap only
+    blob = build_archive({"test_suites": [_suite()]})
+    with pytest.raises(ProjectImportFailed) as ei:
+        _preflight(blob)
+    assert ei.value.code == "unsafe_archive" and "the limit is 2" in ei.value.message
+
+
+def _history_blob(**kwargs: Any) -> tuple[Any, bytes]:
+    from tests.test_project_import_history import World, build_history_archive
+
+    world = World()
+    return world, build_history_archive(world, **kwargs)
+
+
+def test_schema_1_and_schema_2_are_both_accepted():
+    assert not _preflight(build_archive({"test_suites": [_suite()]})).has_history
+    world, blob = _history_blob()
+    pre = _preflight(blob)
+    assert pre.has_history and pre.schema_version == 2 and pre.rows["test_runs"] == 1
+
+
+def _drop_history_block(members: dict[str, bytes]) -> None:
+    manifest = json.loads(members["manifest.json"])
+    del manifest["history"]
+    members["manifest.json"] = json.dumps(manifest, sort_keys=True).encode("utf-8")
+
+
+_SCHEMA_REFUSALS: list[tuple[str, Callable[[], bytes], str, str]] = [
+    ("history-entity-in-schema-1", lambda: build_archive({"test_runs": [{"id": str(uuid.uuid4()), "build_number": "b"}]}),
+     "unknown_entity", "contains test_runs"),
+    ("history-block-in-schema-1", lambda: build_archive(manifest_patch={"history": {"runs": 0}}),
+     "tampered", "an unexpected history block"),
+    ("history-member-in-schema-1", lambda: build_archive(extra_members={"documents/run_summaries/part-0001.jsonl": b"{}\n"}),
+     "tampered", "an unexpected member"),
+    ("canonical-run-pointer-in-schema-1", lambda: build_archive({"canonical_test_cases": [{
+        "id": str(uuid.uuid4()), "test_suite_id": str(uuid.uuid4()), "test_fingerprint": "fp-1",
+        "test_name": "pays", "first_seen_run_id": str(uuid.uuid4())}]}),
+     "unknown_column", "canonical_test_cases.first_seen_run_id"),
+    ("schema-2-without-history-block", lambda: build_archive(manifest_patch={"schema_version": 2}),
+     "tampered", "the history block is missing"),
+]
+
+
+@pytest.mark.parametrize(("builder", "code", "fragment"), [r[1:] for r in _SCHEMA_REFUSALS],
+                         ids=[r[0] for r in _SCHEMA_REFUSALS])
+async def test_schema_rules_refuse_before_any_write(builder, code, fragment):
+    failure, session, calls = await _refused(builder())
+    assert failure.code == code and fragment in failure.message, failure.message
+    _assert_nothing_written(session, calls)
+
+
+@pytest.fixture
+def history_world(import_world, monkeypatch):
+    """``import_world`` + a recording Mongo / storage + the effective policy answered (runs window 1 day, on)."""
+    from app.services import retention_service
+    from tests.test_project_import_history import FakeMongo, FakeStorage
+
+    async def effective(db, project_id, *, now=None):
+        import_world.policy_reads.append(project_id)
+        return retention_service.EffectiveRetentionPolicy(enabled=import_world.retention_on, runs_days=1)
+
+    monkeypatch.setattr(retention_service, "get_effective_policy", effective)
+    import_world.policy_reads = []
+    import_world.retention_on = True
+    import_world.mongo, import_world.storage_cls = FakeMongo(), FakeStorage
+    import_world.order = []
+    return import_world
+
+
+async def _imported_history(world: Any, blob: bytes, *, ledger: bool = True) -> tuple[Any, Any, Any]:
+    session = _ImportSession(_answers())
+    session.job_row = SimpleNamespace(options={})
+    storage = world.storage_cls({"project-imports/x.zip": blob})
+    job = SimpleNamespace(id=uuid.uuid4(), project_name=None, storage_key="project-imports/x.zip")
+    real_insert = type(world.mongo["x"]).insert_many
+
+    async def on_table(done: int, total: int) -> None:
+        return None
+
+    async def on_ledger(entry: dict[str, Any]) -> None:
+        world.order.append(("ledger", entry, len(world.mongo.writes), len(storage.puts)))
+
+    report = await svc.run_import(
+        session, job=job, storage=storage, actor=_actor(), now=dt.datetime.now(dt.timezone.utc),
+        on_table=on_table, mongo=world.mongo, on_ledger=on_ledger if ledger else None,
+    )
+    assert real_insert is type(world.mongo["x"]).insert_many
+    return report, session, storage
+
+
+async def test_a_history_import_reports_its_history_and_pauses_retention(history_world):
+    from tests.test_project_import_history import World, build_history_archive
+
+    source = World()
+    report, session, storage = await _imported_history(history_world, build_history_archive(source))
+    history = report.history
+    assert history is not None and (history.runs, history.test_cases) == (1, 1)
+    assert history.oldest_run_at == history.newest_run_at == source.created
+    assert history.objects == 1 and history.object_bytes == len(source.object)
+    assert history.documents["raw_allure_json"] == 1 and history.documents["decision_reports"] == 0
+    assert [(s.entity, s.reason) for s in history.skipped] == [("ai_analysis_payloads", "run_not_exported")]
+    now = dt.datetime.now(dt.timezone.utc)
+    assert abs((history.retention_paused_until - now) - dt.timedelta(days=vocab.IMPORTED_PURGE_PAUSE_DAYS)) < dt.timedelta(minutes=5)
+    assert history.runs_past_retention == 1 and history.recent_runs == 1 and history.search_reindex == "queued"
+    # the archive had no policy row → a NEW all-inherit row carries the pause, in the import's transaction
+    assert any(s.startswith("INSERT INTO project_retention_policies") for s in session.statements)
+    assert history_world.policy_reads == [report.project_id]
+    # the ledger was handed over BEFORE the first document / object, naming only NEW ids
+    [(_, ledger, docs_before, puts_before)] = history_world.order
+    assert (docs_before, puts_before) == (0, 0)
+    assert ledger["project_id"] == str(report.project_id) and str(source.run) not in ledger["run_ids"]
+    row = session.job_row
+    assert row.status == "succeeded" and row.cleanup is None and row.options["schema_version"] == 2
+    assert row.counts["objects"] == 1 and row.counts["documents.run_summaries"] == 1 and row.counts["test_runs"] == 1
+    assert row.report["history"]["runs"] == 1
+    assert all(key.startswith(f"{report.project_id}/") for key in storage.puts)
+
+
+async def test_an_imported_policy_row_carries_the_pause_itself(history_world):
+    from tests.test_project_import_history import World, build_history_archive
+
+    class WithPolicy(World):
+        def rows(self) -> dict[str, list[dict[str, Any]]]:
+            return {**super().rows(), "project_retention_policies": [{"id": str(uuid.uuid4()), "enabled": True}]}
+
+    report, session, _storage = await _imported_history(history_world, build_history_archive(WithPolicy()))
+    inserts = [s for s in session.statements if s.startswith("INSERT INTO project_retention_policies")]
+    assert len(inserts) == 1 and "purge_paused_until" in inserts[0]      # the imported row, not a second one
+    assert report.history.retention_paused_until is not None
+
+
+async def test_a_catalog_import_has_no_history_block_and_no_pause(history_world):
+    report, session = await _imported(build_archive({"test_suites": [_suite()]}))
+    assert report.history is None
+    assert not any("project_retention_policies" in s for s in session.statements)
+    assert history_world.policy_reads == [] and history_world.mongo.writes == []
+
+
+async def test_a_history_import_without_a_ledger_writes_nothing_outside_postgres(history_world):
+    from tests.test_project_import_history import World, build_history_archive
+
+    with pytest.raises(ProjectImportFailed) as ei:
+        await _imported_history(history_world, build_history_archive(World()), ledger=False)
+    assert ei.value.code == "import_failed" and "(LedgerUnavailable)" in ei.value.message
+    assert history_world.mongo.writes == []
+
+
+async def test_a_failure_after_the_ledger_cleans_every_store_by_it(history_world):
+    from tests.test_project_import_history import World, build_history_archive
+
+    def fail(name: str, n: int) -> None:
+        if name == "run_summaries":
+            raise RuntimeError("lost the primary")
+
+    history_world.mongo.fail_insert = fail
+    with pytest.raises(ProjectImportFailed) as ei:
+        await _imported_history(history_world, build_history_archive(World()))
+    assert ei.value.code == "documents_unwritable" and "(RuntimeError)" in ei.value.message
+    [(_, ledger, _d, _p)] = history_world.order
+    deletes = [json.loads(w[2]) for w in history_world.mongo.writes if w[0] == "delete_many"]
+    named = set(ledger["run_ids"]) | set(ledger["pipeline_ids"])
+    assert deletes and all(set(ids) <= named for flt in deletes for cond in flt.values() for ids in [cond["$in"]])
+    assert history_world.mongo.docs.get("raw_allure_json") == []          # the batch already written is gone

@@ -26,6 +26,15 @@ Two entry points (contract §1.4, §2.3):
   while ``legacy_model_active`` (before the HYG-04 cutover); I-8 the
   job outcome + the ``project.imported`` activity.
 
+W30 (ADM-05 phase 2, contract §2.6): schema 1 AND 2 are read; a schema-2 archive
+carries RUN HISTORY — the preflight runs in the §0.12 order (the central
+directory's entry count, the manifest, the schema version, the safe scan with
+THAT schema's caps) and adds ``project_import_history.validate_history``; the 27
+history entities go in the SAME transaction (ids ``uuid5(job, source)``), the
+copy's purge is paused (§2.7), the ledger is handed to the runner BEFORE the
+first document / object, and any failure after it cleans Mongo and storage by
+that ledger (three stores, one outcome).
+
 An archive is attacker-controlled and never grants access: no member name is
 used as a path (members are read with ``zf.open`` only), no archive id
 addresses an existing row (every id is remapped or dropped), authorship maps
@@ -42,6 +51,7 @@ import datetime as dt
 import hashlib
 import json
 import re
+import struct
 import uuid
 import zipfile
 from collections import Counter
@@ -54,7 +64,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Base, Project, ProjectDataJob, User
 from app.services import project_export_vocab as vocab
+from app.services import project_import_history as history
 from app.services.project_export_entities import (
+    HISTORY_TABLES,
     IMPORT_NOW,
     IMPORT_NOW_PLUS_PAUSE,
     IMPORTER,
@@ -79,6 +91,9 @@ _PART_NAME = re.compile(r"^entities/(?P<table>[a-z_]{1,63})/part-(?P<index>\d{4}
 _SAFE_IDENT = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 _SLUG = re.compile(r"^[a-z0-9-]+$")
 _MANIFEST_MAX_BYTES = 10_000_000          # == compliance_pack_verify.MAX_MANIFEST_BYTES
+#: W30: the central directory read into memory by zipfile — 40 000 entries of ≈ 130 bytes ≈ 5 MB; 64 MiB
+#: is generous for long member names and still bounds the RSS of a crafted 2 GB archive.
+_CENTRAL_DIRECTORY_MAX_BYTES = 64 * 1024 * 1024
 _DIRECTORY_LINE_MAX = 4 * 1024
 _UPLOAD_CHUNK = 1024 * 1024
 _NAME_MIN, _NAME_MAX = 2, 255             # == ProjectCreate.name (schemas.py)
@@ -356,23 +371,76 @@ class _Preflight:
     directory: dict[uuid.UUID, str] = dataclasses.field(default_factory=dict)   # source user id → lower(username)
     release_keeper: Optional[uuid.UUID] = None                                  # the imported release that stays active
     retired: dict[str, int] = dataclasses.field(default_factory=dict)           # RETIRED_ENTITIES table → manifest rows (never read)
+    # W30 (schema 2): what the history needs, bounded — ≤ 2 000 runs and their pipelines / clusters / steps
+    schema_version: int = vocab.CATALOG_SCHEMA_VERSION
+    source_project_id: Optional[uuid.UUID] = None                               # the manifest's project_id
+    bounded_ids: dict[str, set[uuid.UUID]] = dataclasses.field(default_factory=dict)   # BOUNDED_PARENTS → source ids
+    run_prefixes: dict[uuid.UUID, Optional[str]] = dataclasses.field(default_factory=dict)   # source run → minio_prefix
+    history_pre: Optional[history.HistoryPreflight] = None                      # validate_history's proof (schema 2)
+
+    @property
+    def has_history(self) -> bool:
+        return self.schema_version >= vocab.SCHEMA_VERSION
 
 
-def _scan(spool: IO[bytes]) -> int:
-    """(a) the safe scan with the import caps; returns the member count."""
+def _scan_caps(schema_version: int) -> dict[str, int]:
+    """The safe-scan caps of a schema: W24's for schema 1, the history caps for schema 2 (§2.6 I-H2 (c))."""
+    if schema_version >= vocab.SCHEMA_VERSION:
+        return {
+            "max_total": vocab.IMPORT_HISTORY_MAX_TOTAL_UNCOMPRESSED,
+            "max_entries": vocab.IMPORT_HISTORY_MAX_ENTRIES,
+            "max_entry": vocab.IMPORT_HISTORY_MAX_ENTRY_UNCOMPRESSED,
+            "max_ratio": vocab.IMPORT_HISTORY_MAX_RATIO,
+        }
+    return {
+        "max_total": vocab.IMPORT_MAX_TOTAL_UNCOMPRESSED,
+        "max_entries": vocab.IMPORT_MAX_ENTRIES,
+        "max_entry": vocab.IMPORT_MAX_ENTRY_UNCOMPRESSED,
+        "max_ratio": vocab.IMPORT_MAX_RATIO,
+    }
+
+
+def _scan(spool: IO[bytes], schema_version: int = vocab.CATALOG_SCHEMA_VERSION) -> int:
+    """(c) the safe scan with THAT schema's caps; returns the member count."""
     try:
-        members = scan_zip(
-            spool,
-            max_total=vocab.IMPORT_MAX_TOTAL_UNCOMPRESSED,
-            max_entries=vocab.IMPORT_MAX_ENTRIES,
-            max_entry=vocab.IMPORT_MAX_ENTRY_UNCOMPRESSED,
-            max_ratio=vocab.IMPORT_MAX_RATIO,
-        )
+        members = scan_zip(spool, **_scan_caps(schema_version))
     except UnsafeZipError as exc:
         if exc.code == "bad_zip":
             raise ProjectImportFailed("not_a_zip") from None
         raise ProjectImportFailed("unsafe_archive", message=exc.message) from None
     return len(members)
+
+
+def _entry_count(spool: IO[bytes]) -> None:
+    """(a) the central directory's entry count ≤ ``IMPORT_HISTORY_MAX_ENTRIES`` — BEFORE the manifest is read
+    (a 40 001-member archive is refused without opening a member)."""
+    # The end-of-central-directory record only (zipfile's own reader, ZIP64 aware): ``ZipFile()`` would read
+    # the WHOLE central directory into memory and build one ZipInfo per entry before anything is counted.
+    end_record = getattr(zipfile, "_EndRecData")
+    spool.seek(0)
+    try:
+        record = end_record(spool)
+    except (OSError, ValueError, EOFError, struct.error):
+        record = None
+    if not record:
+        raise ProjectImportFailed("not_a_zip")
+    count = int(record[getattr(zipfile, "_ECD_ENTRIES_TOTAL")])
+    directory_bytes = int(record[getattr(zipfile, "_ECD_SIZE")])
+    if count > vocab.IMPORT_HISTORY_MAX_ENTRIES:     # safe_archive's own too_many_entries sentence
+        message = f"Archive has {count} entries; the limit is {vocab.IMPORT_HISTORY_MAX_ENTRIES}."
+        raise ProjectImportFailed("unsafe_archive", message=message)
+    if directory_bytes > _CENTRAL_DIRECTORY_MAX_BYTES:
+        message = f"Archive directory is {directory_bytes} bytes; the limit is {_CENTRAL_DIRECTORY_MAX_BYTES}."
+        raise ProjectImportFailed("unsafe_archive", message=message)
+    spool.seek(0)
+    try:
+        with zipfile.ZipFile(spool) as zf:           # bounded now; a lying count is re-checked on the real list
+            listed = len(zf.infolist())
+    except (zipfile.BadZipFile, OSError, ValueError, EOFError):
+        raise ProjectImportFailed("not_a_zip") from None
+    if listed > vocab.IMPORT_HISTORY_MAX_ENTRIES:
+        message = f"Archive has {listed} entries; the limit is {vocab.IMPORT_HISTORY_MAX_ENTRIES}."
+        raise ProjectImportFailed("unsafe_archive", message=message)
 
 
 def _read_manifest(zf: zipfile.ZipFile) -> tuple[dict[str, Any], str]:
@@ -407,12 +475,22 @@ def _read_manifest(zf: zipfile.ZipFile) -> tuple[dict[str, Any], str]:
     return manifest, hashlib.sha256(raw).hexdigest()
 
 
-def _check_member_names(zf: zipfile.ZipFile) -> list[str]:
-    """(c) every entry — directories included — has one of the five shapes."""
+def _check_member_names(zf: zipfile.ZipFile, schema_version: int = vocab.CATALOG_SCHEMA_VERSION) -> list[str]:
+    """(d) every entry — directories included — has one of the five shapes; a schema-2 archive may also
+    carry ``documents/<collection>/part-NNNN.jsonl``, ``objects/index/part-NNNN.jsonl`` and
+    ``objects/<run uuid>/<NNNNNN>.bin`` (never in schema 1)."""
     names = [info.filename for info in zf.infolist()]
-    if any(not _MEMBER_NAME.match(name) for name in names):
-        raise ProjectImportFailed("tampered", reason="an unexpected member")
+    with_history = schema_version >= vocab.SCHEMA_VERSION
+    for name in names:
+        if not (_MEMBER_NAME.match(name) or (with_history and history.HISTORY_MEMBER.match(name))):
+            raise ProjectImportFailed("tampered", reason="an unexpected member")
     return names
+
+
+def _hidden_columns(spec: EntitySpec, schema_version: int) -> frozenset[str]:
+    """Columns a row of ``spec`` may NOT carry in this schema: schema 1 hides the ``history_fks`` (C-1's
+    canonical run pointers, dropped by every phase-1 export) exactly as a phase-1 deployment does."""
+    return frozenset(spec.history_fks) if schema_version < vocab.SCHEMA_VERSION else frozenset()
 
 
 def _tamper_reason(result: Mapping[str, Any]) -> str:
@@ -445,7 +523,7 @@ def _verify(spool: IO[bytes], public_keys: Mapping[str, str]) -> str:
 
 
 def _check_entities(
-    raw: dict[str, Any], names: list[str]
+    raw: dict[str, Any], names: list[str], schema_version: int = vocab.CATALOG_SCHEMA_VERSION,
 ) -> tuple[_Manifest, dict[str, list[str]], dict[str, int]]:
     """(e) every listed entity is EXPORTED (or RETIRED), every listed column known, every listed part present.
 
@@ -455,6 +533,10 @@ def _check_entities(
     and its manifest row count comes back in the third value (table → rows), which
     the import reports as skipped ("retired_table") when it is not 0. Any other
     table outside ``plan()`` is still refused ``unknown_entity``.
+
+    W30: a schema-2 archive's plan is the catalog + the 27 history entities; a history entity in a
+    schema-1 manifest is ``unknown_entity`` (as on a phase-1 deployment); the ``history`` block is present
+    if and only if the archive is schema 2.
     """
     from app.services.project_import_rows import column_names
 
@@ -462,7 +544,12 @@ def _check_entities(
         manifest = _Manifest.model_validate(raw)
     except ValidationError:
         raise ProjectImportFailed("not_a_project_export") from None
-    exported = {spec.table: spec for spec in plan()}
+    with_history = schema_version >= vocab.SCHEMA_VERSION
+    if ("history" in raw) != with_history:
+        raise ProjectImportFailed(
+            "tampered", reason="the history block is missing" if with_history else "an unexpected history block",
+        )
+    exported = {spec.table: spec for spec in plan(include_history=with_history)}
     retired = frozenset(vocab.RETIRED_ENTITIES) - set(exported)
     by_table: dict[str, list[tuple[int, str]]] = {}
     for name in names:
@@ -474,7 +561,8 @@ def _check_entities(
             raise ProjectImportFailed("unknown_entity", entity=_safe_ident(table, "an unknown table"))
     for table, entry in sorted(manifest.entities.items()):
         if entry.columns is not None and table not in retired:
-            known = column_names(row_model_for(exported[table]))
+            spec = exported[table]
+            known = column_names(row_model_for(spec)) - _hidden_columns(spec, schema_version)
             for column in entry.columns:
                 if column not in known:
                     raise ProjectImportFailed(
@@ -525,10 +613,22 @@ def _key_digest(values: tuple[Any, ...]) -> bytes:
 def _validate_rows(zf: zipfile.ZipFile, manifest: _Manifest, pre: _Preflight) -> None:
     """(f) EVERY row through its typed model before the first INSERT: types, unknown
     columns, over-long values, repeated ids / natural keys, one-per-project settings,
-    the row counts the manifest states. Keeps keys and counts, never rows."""
+    the row counts the manifest states. Keeps keys and counts, never rows.
+
+    W30 (schema 2): the history entities too — their typed models, the run / pipeline status predicates
+    (an imported run is terminal, an imported pipeline terminal: nothing a sweep can claim). The in-memory
+    id / natural-key checks run for the catalog and the BOUNDED parents only (a history table's unique
+    indexes are enforced by Postgres inside the transaction, before anything outside Postgres is written);
+    the bounded parents' source ids, the runs' ``minio_prefix`` and the source project id are kept."""
+    from app.services.project_export_entities import HISTORY_PREDICATES
+
     single = _single_row_tables()
-    for spec in plan():
+    for spec in plan(include_history=pre.has_history):
         model = row_model_for(spec)
+        hidden = _hidden_columns(spec, pre.schema_version)
+        predicate = HISTORY_PREDICATES.get(spec.select_where) if spec.select_where else None
+        bounded = spec.table in history.BOUNDED_PARENTS
+        track_ids = not spec.history or bounded
         ids_seen: set[uuid.UUID] = set()
         keys_seen: set[bytes] = set()
         active: list[tuple[str, str, uuid.UUID]] = []
@@ -542,15 +642,23 @@ def _validate_rows(zf: zipfile.ZipFile, manifest: _Manifest, pre: _Preflight) ->
                     if kind == "extra_forbidden" and field != "an unknown field":
                         raise ProjectImportFailed("unknown_column", entity=spec.table, column=field) from None
                     raise _invalid_row(spec.table, line, name, field) from None
+                carried = hidden & set(values)
+                if carried:
+                    raise ProjectImportFailed("unknown_column", entity=spec.table, column=sorted(carried)[0])
+                if predicate is not None and values.get(predicate[0]) not in predicate[1]:
+                    raise _invalid_row(spec.table, line, name, predicate[0])
                 count += 1
                 if (spec.table in single or spec.table == "projects") and count > 1:
                     raise _invalid_row(spec.table, line, name, "a second row of a one-per-project setting")
                 source_id = values.get("id")
-                if isinstance(source_id, uuid.UUID):
+                if track_ids and isinstance(source_id, uuid.UUID):
                     if source_id in ids_seen:
                         raise _invalid_row(spec.table, line, name, "duplicate id")
                     ids_seen.add(source_id)
-                if spec.natural_key:
+                if spec.table == "test_runs" and isinstance(source_id, uuid.UUID):
+                    prefix = values.get("minio_prefix")
+                    pre.run_prefixes[source_id] = prefix if isinstance(prefix, str) else None
+                if spec.natural_key and not spec.history:
                     digest = _key_digest(tuple(values.get(c) for c in spec.natural_key))
                     if digest in keys_seen:
                         raise _invalid_row(spec.table, line, name, "duplicate " + "/".join(spec.natural_key))
@@ -562,6 +670,8 @@ def _validate_rows(zf: zipfile.ZipFile, manifest: _Manifest, pre: _Preflight) ->
         if listed is not None and listed.rows != count:
             raise ProjectImportFailed("tampered", reason="a row count differs from the manifest")
         pre.rows[spec.table] = count
+        if bounded and spec.history:
+            pre.bounded_ids[spec.table] = ids_seen
         if active:
             pre.release_keeper = max(active)[2]   # the latest activated_at stays active (I-7)
     if pre.rows.get("projects") != 1:
@@ -599,16 +709,25 @@ async def _map_users(db: AsyncSession, directory: Mapping[uuid.UUID, str]) -> di
     return {source: target[name] for source, name in directory.items() if name in target}
 
 
-def _preflight_sync(spool: IO[bytes], public_keys: Mapping[str, str], file_count: int) -> _Preflight:
-    """(b)–(f) + the directory, on the spool, in order; raises the first refusal."""
+def _preflight_sync(spool: IO[bytes], public_keys: Mapping[str, str]) -> _Preflight:
+    """I-2 on the spool, in the §0.12 order; raises the first refusal. (a) the central directory's entry
+    count ≤ ``IMPORT_HISTORY_MAX_ENTRIES``; (b) the manifest (bounded read) → format / scope →
+    ``schema_version`` (1 or 2); (c) ``scan_zip`` with THAT schema's caps; (d) the member names; (e) the
+    verifier (every member hashed against the signed manifest); (f) the listed entities / columns / parts /
+    collections; (g) every row; (h) every document and object index line (schema 2) — then the directory."""
+    _entry_count(spool)                                                     # (a)
     spool.seek(0)
     with zipfile.ZipFile(spool) as zf:
-        raw, manifest_sha256 = _read_manifest(zf)
-        names = _check_member_names(zf)
-    signature = _verify(spool, public_keys)
+        raw, manifest_sha256 = _read_manifest(zf)                           # (b)
+    schema_version = int(raw["schema_version"])
+    file_count = _scan(spool, schema_version)                               # (c)
     spool.seek(0)
     with zipfile.ZipFile(spool) as zf:
-        manifest, parts, retired = _check_entities(raw, names)
+        names = _check_member_names(zf, schema_version)                     # (d)
+    signature = _verify(spool, public_keys)                                 # (e)
+    spool.seek(0)
+    with zipfile.ZipFile(spool) as zf:
+        manifest, parts, retired = _check_entities(raw, names, schema_version)   # (f)
         pre = _Preflight(
             manifest_sha256=manifest_sha256,
             signature=signature,
@@ -619,8 +738,14 @@ def _preflight_sync(spool: IO[bytes], public_keys: Mapping[str, str], file_count
             file_count=file_count,
             parts=parts,
             retired=retired,
+            schema_version=schema_version,
+            # the projects row never carries its id (dropped): the manifest's project_id names the source tree
+            # whose stored prefixes rebuild_prefix accepts — a wrong value only makes every prefix refused (NULL)
+            source_project_id=history.as_uuid(raw.get("project_id")),
         )
-        _validate_rows(zf, manifest, pre)
+        _validate_rows(zf, manifest, pre)                                   # (g)
+        if pre.has_history:
+            pre.history_pre = history.validate_history(zf, raw, pre)        # (h)
         pre.directory = _read_directory(zf, names)
     return pre
 
@@ -687,6 +812,24 @@ class _Context:
     cleared: Counter[tuple[str, Optional[str], str]] = dataclasses.field(default_factory=Counter)
     switched_off: Counter[str] = dataclasses.field(default_factory=Counter)
     active_release_kept: bool = False
+    # W30 (schema 2): history ids are uuid5(job_id, source) — no remap dict of a million case ids
+    schema_version: int = vocab.CATALOG_SCHEMA_VERSION
+    history_remap: Optional[history.HistoryRemap] = None
+    source_project_id: Optional[uuid.UUID] = None
+    history_pending: dict[tuple[str, str], list[tuple[uuid.UUID, uuid.UUID]]] = dataclasses.field(default_factory=dict)
+    run_times: list[dt.datetime] = dataclasses.field(default_factory=list)      # created_at of every imported run (≤ 2 000)
+    history_skipped: Counter[tuple[str, Optional[str], str]] = dataclasses.field(default_factory=Counter)
+
+    def retention_paused_until(self) -> dt.datetime:
+        """§2.7: the import's clock + ``IMPORTED_PURGE_PAUSE_DAYS`` (== retention_vocab.PAUSE_DAYS_MAX)."""
+        return self.now + dt.timedelta(days=vocab.IMPORTED_PURGE_PAUSE_DAYS)
+
+    def ref(self, table: str, source: Any) -> Optional[uuid.UUID]:
+        """A reference to ``table``'s row ``source`` → its NEW id: uuid5 for a history table (None for a
+        bounded parent that is not in the archive), W24's remap for a catalog table; None when unresolved."""
+        if self.history_remap is not None and table in HISTORY_TABLES:
+            return self.history_remap.new_id(table, source)
+        return self.remap.get(table, {}).get(source)
 
     def resolve(self, value: Any) -> Any:
         """An ``inert`` value; ``ImportValue`` sentinels become this import's clock / importer."""
@@ -721,6 +864,10 @@ def _entity_rules(ctx: _Context, spec: EntitySpec, values: dict[str, Any], sourc
         a, b = values.get("case_a_id"), values.get("case_b_id")
         if isinstance(a, uuid.UUID) and isinstance(b, uuid.UUID) and a > b:
             values["case_a_id"], values["case_b_id"] = b, a  # ck_dismissed_dup_canonical_order on the NEW ids
+    elif spec.table == "project_retention_policies" and ctx.schema_version >= vocab.SCHEMA_VERSION:
+        # §2.7: a history import pauses the copy's purge — the ONE inert rule that overrides the phase-1
+        # drop of purge_paused_until, only in schema 2 (else the hourly purge would delete the history tonight)
+        values["purge_paused_until"] = ctx.retention_paused_until()
 
 
 def transform_row(ctx: _Context, spec: EntitySpec, values: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -731,13 +878,20 @@ def transform_row(ctx: _Context, spec: EntitySpec, values: dict[str, Any]) -> Op
     cleared; self references NULL until the second pass; ``project_id`` = the
     NEW project; the inert values forced; a fresh id remembered in the remap.
     No archive id ever reaches the database.
+
+    W30 (schema 2): a history row's id is ``uuid5(job_id, source id)`` and every reference to a history
+    table goes through the same function (a bounded parent only when it is in the archive); ``null_unless``
+    columns are remapped like optional fks; ``history_fks`` (C-1) wait for the second pass; ``object_refs``
+    are rebuilt under the new project's root (``rebuild_prefix``, refused → NULL, counted);
+    ``json_id_paths`` lists are rewritten id by id (an id outside the archive is removed, counted).
     """
     table = Base.metadata.tables[spec.table]
+    history_refs = {column: values.pop(column, None) for column in spec.history_fks}
     for column, parent in spec.fks.items():
         ref = values.get(column)
         if ref is None:
             continue
-        target = ctx.remap.get(parent, {}).get(ref)
+        target = ctx.ref(parent, ref)
         if target is not None:
             values[column] = target
         elif not table.c[column].nullable:
@@ -746,6 +900,15 @@ def transform_row(ctx: _Context, spec: EntitySpec, values: dict[str, Any]) -> Op
         else:
             values[column] = None
             ctx.cleared[(spec.table, column, "row_unresolved")] += 1
+    for column, parent in spec.null_unless.items():
+        if column in spec.self_fks or column in spec.history_fks or values.get(column) is None:
+            continue                                        # second-pass columns / NULL stays NULL
+        target = ctx.ref(parent, values[column])
+        if target is None:
+            ctx.cleared[(spec.table, column, "row_unresolved")] += 1
+        values[column] = target
+    if spec.history:
+        _history_rules(ctx, spec, values)
     for column in spec.user_refs:
         ref = values.get(column)
         if ref is None:
@@ -777,14 +940,49 @@ def transform_row(ctx: _Context, spec: EntitySpec, values: dict[str, Any]) -> Op
     source_id = values.get("id")
     _entity_rules(ctx, spec, values, source_id)
     if "id" in table.c and table.c["id"].primary_key:
-        new_id = uuid.uuid4()
+        if spec.history and ctx.history_remap is not None and isinstance(source_id, uuid.UUID):
+            new_id = history.history_id(ctx.history_remap.job_id, source_id)   # no remap dict for history
+        else:
+            new_id = uuid.uuid4()
+            if isinstance(source_id, uuid.UUID):
+                ctx.remap.setdefault(spec.table, {})[source_id] = new_id
         values["id"] = new_id
-        if isinstance(source_id, uuid.UUID):
-            ctx.remap.setdefault(spec.table, {})[source_id] = new_id
         for column, ref in self_refs.items():
             if isinstance(ref, uuid.UUID):
                 ctx.self_pending.setdefault((spec.table, column), []).append((new_id, ref))
+        for column, ref in history_refs.items():
+            if isinstance(ref, uuid.UUID) and ctx.schema_version >= vocab.SCHEMA_VERSION:
+                ctx.history_pending.setdefault((spec.table, column), []).append((new_id, ref))
     return values
+
+
+def _history_rules(ctx: _Context, spec: EntitySpec, values: dict[str, Any]) -> None:
+    """The W30 column rules of a history row: stored keys rebuilt, id lists rewritten, run times kept."""
+    from app.services.project_export_objects import rebuild_prefix
+
+    for column in spec.object_refs:
+        value = values.get(column)
+        if value is None:
+            continue
+        rebuilt = (
+            rebuild_prefix(value, source_project_id=ctx.source_project_id, new_project_id=ctx.project_id)
+            if ctx.source_project_id is not None else None
+        )
+        if rebuilt is None:
+            ctx.cleared[(spec.table, column, "unsafe_key")] += 1
+        values[column] = rebuilt
+    for column, target in spec.json_id_paths.items():
+        value = values.get(column)
+        if value is None:
+            continue
+        items = value if isinstance(value, list) else []
+        kept = [str(new) for new in (ctx.ref(target, history.as_uuid(item)) for item in items) if new is not None]
+        dropped = (len(items) - len(kept)) if isinstance(value, list) else 1
+        if dropped:
+            ctx.cleared[(spec.table, column, "run_not_exported")] += dropped
+        values[column] = kept
+    if spec.table == "test_runs" and isinstance(values.get("created_at"), dt.datetime):
+        ctx.run_times.append(values["created_at"])
 
 
 def _bind_type(column: Any) -> Any:
@@ -807,12 +1005,17 @@ async def _insert_batch(db: AsyncSession, table: Any, rows: list[dict[str, Any]]
 
 
 async def _second_pass(db: AsyncSession, ctx: _Context) -> None:
-    """I-6: set every self reference through the remap, in batches."""
-    for (table_name, column), pairs in sorted(ctx.self_pending.items()):
+    """I-6: set every self reference through the remap, in batches — and (W30, schema 2) every
+    ``history_fks`` column (C-1: a canonical case's run pointers → the copy's runs) once the runs exist."""
+    from app.services.project_export_entities import spec_for
+
+    pending = [((t, c), t, pairs) for (t, c), pairs in sorted(ctx.self_pending.items())]
+    pending += [((t, c), spec_for(t).history_fks[c], pairs) for (t, c), pairs in sorted(ctx.history_pending.items())]
+    for (table_name, column), target_table, pairs in pending:
         table = Base.metadata.tables[table_name]
         resolved: list[dict[str, Any]] = []
         for new_id, ref in pairs:
-            target = ctx.remap.get(table_name, {}).get(ref)
+            target = ctx.ref(target_table, ref)
             if target is None:
                 ctx.cleared[(table_name, column, "row_unresolved")] += 1
             else:
@@ -860,12 +1063,163 @@ async def _insert_entity(db: AsyncSession, zf: zipfile.ZipFile, ctx: _Context, s
                 continue
             batch.append(row)
             if len(batch) >= vocab.INSERT_BATCH_ROWS:
+                await _prune_unbounded_ids(db, ctx, spec, batch)
                 await _insert_batch(db, table, batch)
                 ctx.inserted[spec.table] += len(batch)
                 batch = []
     if batch:
+        await _prune_unbounded_ids(db, ctx, spec, batch)
         await _insert_batch(db, table, batch)
         ctx.inserted[spec.table] += len(batch)
+
+
+async def _prune_unbounded_ids(db: AsyncSession, ctx: _Context, spec: EntitySpec, rows: list[dict[str, Any]]) -> None:
+    """A ``json_id_paths`` list whose target is NOT a bounded parent (``failure_clusters.member_test_ids`` →
+    ``test_cases``): its ids were rewritten by uuid5 without a membership set, so ONE SELECT per batch keeps only
+    the ids this import inserted (a uuid5 of THIS job that exists is one of the copy's rows — scoped by
+    construction; uncommitted rows are visible on the import's own session); the rest are removed, counted
+    ``run_not_exported`` — no id list of the copy names a row outside it."""
+    remap = ctx.history_remap
+    if remap is None:
+        return
+    for column, target in spec.json_id_paths.items():
+        if target in remap.bounded:
+            continue                                        # checked against the archive's ids in transform_row
+        wanted = {history.as_uuid(v) for row in rows for v in (row.get(column) or [])} - {None}
+        if not wanted:
+            continue
+        table = Base.metadata.tables[target]
+        found = set((await db.execute(select(table.c.id).where(table.c.id.in_(sorted(wanted, key=str))))).scalars())
+        for row in rows:
+            items = row.get(column)
+            if not isinstance(items, list):
+                continue
+            kept = [v for v in items if history.as_uuid(v) in found]
+            if len(kept) != len(items):
+                ctx.cleared[(spec.table, column, "run_not_exported")] += len(items) - len(kept)
+                row[column] = kept
+
+
+def _is_parted(job: Any) -> bool:
+    options = getattr(job, "options", None) or {}
+    return bool(isinstance(options, Mapping) and options.get("parted"))
+
+
+async def _fill_spool(storage: Any, job: Any, spool: IO[bytes]) -> int:
+    """I-1 / I-H1: the single upload streamed into the spool, or a parted upload's parts assembled (in
+    order, hashed, compared with the start's SHA-256). Returns the size; refuses past the route's cap."""
+    from app.services.compliance_pack_service import COMPLIANCE_BUCKET
+
+    if _is_parted(job) and not job.storage_key:
+        await history.assemble_parts(storage, job, spool=spool)
+        return spool.tell()
+    if not job.storage_key:
+        raise ProjectImportFailed("interrupted")
+    try:
+        async for chunk in storage.stream_object(job.storage_key, bucket=COMPLIANCE_BUCKET):
+            spool.write(chunk)
+    except Exception:  # noqa: BLE001 - a missing / unreadable upload: nothing was kept
+        raise ProjectImportFailed("interrupted") from None
+    if spool.tell() > vocab.IMPORT_UPLOAD_MAX_BYTES:
+        raise ProjectImportFailed("upload_too_large")
+    return spool.tell()
+
+
+async def _retention_pause(db: AsyncSession, ctx: _Context, project: Project, *, imported_row: bool) -> tuple[int, bool]:
+    """I-H4 / §2.7 (same transaction): the copy's purge is paused until import + 90 days — set on the
+    imported policy row by ``_entity_rules``, or a NEW all-inherit row (every inheritable field NULL,
+    ``updated_by_user_id`` = the importer) when the archive had none. Returns ``(runs older than the copy's
+    EFFECTIVE runs window, effective enabled)`` — read with ``get_effective_policy`` (SELECTs)."""
+    from app.services.retention_service import get_effective_policy
+
+    if not imported_row:
+        table = Base.metadata.tables["project_retention_policies"]
+        await db.execute(insert(table).values(
+            project_id=project.id, purge_paused_until=ctx.retention_paused_until(), updated_by_user_id=ctx.actor_id,
+        ))
+    policy = await get_effective_policy(db, project.id, now=ctx.now)
+    cutoff = ctx.now - dt.timedelta(days=int(policy.runs_days))
+    return sum(1 for created in ctx.run_times if created < cutoff), bool(policy.enabled)
+
+
+def _case_runs(db: AsyncSession, new_run_ids: frozenset[uuid.UUID]) -> history.CaseRuns:
+    """NEW case ids → their NEW run (read on the import's own, uncommitted session); a case whose run is not
+    one of THIS import's runs never resolves (scoped by construction)."""
+    table = Base.metadata.tables["test_cases"]
+
+    async def lookup(case_ids: list[uuid.UUID]) -> dict[uuid.UUID, uuid.UUID]:
+        rows = await db.execute(select(table.c.id, table.c.test_run_id).where(table.c.id.in_(case_ids)))
+        return {case: run for case, run in rows.all() if run in new_run_ids}
+
+    return lookup
+
+
+async def _outside_postgres(
+    db: AsyncSession, work: IO[bytes], hpre: history.HistoryPreflight, *, remap: history.HistoryRemap,
+    project_id: uuid.UUID, storage: Any, mongo: Any, on_ledger: Optional[Callable[[dict[str, Any]], Awaitable[None]]],
+    on_progress: Optional[Callable[[str, int, int], Awaitable[None]]], outcome: Optional[dict[str, Any]],
+    skipped: dict[str, int],
+) -> tuple[dict[str, int], tuple[int, int]]:
+    """I-H5 the ledger (committed by the runner BEFORE anything exists outside Postgres) → I-H6 documents →
+    I-H7 objects. Any exception after the ledger → ``cleanup_outside_postgres`` by that ledger, then re-raised
+    (a cleanup that itself fails leaves the ledger for the janitor and re-raises the ORIGINAL error)."""
+    if on_ledger is None:
+        raise ProjectImportFailed("import_failed", error_type="LedgerUnavailable")   # never write without a ledger
+    if mongo is None:
+        from app.db.mongo import get_mongo_db
+
+        mongo = get_mongo_db()                     # synchronous: it returns the database handle
+    ledger = remap.ledger(project_id)
+    if outcome is not None:
+        outcome["ledger"] = ledger
+    await on_ledger(ledger)
+    new_runs = frozenset(history.history_id(remap.job_id, s) for s in remap.bounded.get("test_runs", ()))
+    try:
+        work.seek(0)
+        with zipfile.ZipFile(work) as zf:
+            documents = await history.import_documents(
+                mongo, zf, pre=hpre, remaps=remap, new_project_id=project_id, on_progress=on_progress,
+                case_runs=_case_runs(db, new_runs), skipped=skipped,
+            )
+            objects = await history.import_objects(
+                storage, zf, pre=hpre, remaps=remap, new_project_id=project_id, on_progress=on_progress,
+                skipped=skipped,
+            )
+    except Exception as exc:
+        try:
+            await history.cleanup_outside_postgres(mongo, storage, ledger)
+        except Exception as cleanup_exc:  # noqa: BLE001 - the janitor retries by the ledger; the first error wins
+            _slog.warning("project_import_cleanup_failed", project_id=str(project_id),
+                          error_type=type(cleanup_exc).__name__, cause=type(exc).__name__)
+        raise
+    return documents, objects
+
+
+def _history_report(
+    ctx: _Context, pre: _Preflight, *, documents: dict[str, int], objects: tuple[int, int],
+    skipped: dict[str, int], past_retention: int, retention_on: bool,
+) -> Any:
+    """The report's ``history`` block (§1.2): counts the import WROTE, the retention pause, the digest note."""
+    from app.models.schemas import ProjectDataHistoryReport, ProjectDataSkip
+
+    reasons = {"objects": "unsafe_key"}
+    lookback = ctx.now - dt.timedelta(days=vocab.DIGEST_LOOKBACK_DAYS)
+    _slog.info("project_import_retention_paused", project_id=str(ctx.project_id), runs_past_retention=past_retention,
+               retention_enabled=retention_on)
+    return ProjectDataHistoryReport(
+        runs=ctx.inserted.get("test_runs", 0), test_cases=ctx.inserted.get("test_cases", 0),
+        oldest_run_at=min(ctx.run_times) if ctx.run_times else None,
+        newest_run_at=max(ctx.run_times) if ctx.run_times else None,
+        documents=dict(sorted(documents.items())), objects=objects[0], object_bytes=objects[1],
+        skipped=[
+            ProjectDataSkip(entity=entity, column=None, reason=reasons.get(entity, "run_not_exported"), count=count)
+            for entity, count in sorted(skipped.items()) if count > 0
+        ],
+        retention_paused_until=ctx.retention_paused_until(),
+        runs_past_retention=past_retention,
+        recent_runs=sum(1 for created in ctx.run_times if created >= lookback),
+        search_reindex="queued",
+    )
 
 
 def _skips(counter: Counter[tuple[str, Optional[str], str]]) -> list[Any]:
@@ -887,6 +1241,10 @@ async def run_import(
     on_table: Callable[[int, int], Awaitable[None]],
     on_manifest: Optional[Callable[[str, int], Awaitable[None]]] = None,
     outcome: Optional[dict[str, Any]] = None,
+    mongo: Any = None,
+    spool: Optional[IO[bytes]] = None,
+    on_ledger: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
+    on_progress: Optional[Callable[[str, int, int], Awaitable[None]]] = None,
 ) -> Any:
     """Import ``job``'s upload as a NEW project on ``db`` — ONE transaction the CALLER commits.
 
@@ -897,55 +1255,75 @@ async def run_import(
     (optional) runs once the archive is proven, for the runner's fresh-session
     ``project_name`` / progress write; ``outcome`` (optional) receives
     ``enrolled_service_account_ids`` for the post-commit cache invalidation.
+
+    W30 (schema 2, §2.6): ``spool`` — an already assembled parted upload (the caller keeps it; else a
+    parted job's parts are assembled here, a single upload streamed); the catalog AND the 27 history
+    entities in ONE transaction; I-H4 the retention pause; I-H5 ``on_ledger(ledger)`` — REQUIRED for a
+    history archive: the runner COMMITS the ledger on a fresh session before the first document / object
+    (``outcome["ledger"]`` carries it too, for a cleanup after a failed COMMIT); I-H6 documents into
+    ``mongo`` (default ``get_mongo_db()``); I-H7 objects into ``storage``; any failure after the ledger →
+    ``cleanup_outside_postgres`` here, then the exception propagates (the runner rolls back).
+    ``on_progress(phase, done, total)`` (optional) — ``JOB_PHASES`` progress on the runner's fresh session.
     """
     from app.models.schemas import ProjectDataImportReport
     from app.services import compliance_signing
     from app.services.activity.service import ActorRef
     from app.services.activity.service import record as record_activity
-    from app.services.compliance_pack_service import COMPLIANCE_BUCKET, sha256_of_file
+    from app.services.compliance_pack_service import sha256_of_file
     from app.services.release_lifecycle_service import ensure_active_release_for_new_project
     from app.services.retention_export_service import new_spool
     from app.services.suite_membership_cutover import legacy_model_active
     from app.services.suite_membership_reconcile import reconcile_project
 
     requested = clean_name(job.project_name)
-    specs = plan()
-    total = len(specs)
-    if not job.storage_key:
+    own_spool = spool is None
+    if own_spool and not job.storage_key and not _is_parted(job):
         raise ProjectImportFailed("interrupted")
-    spool = new_spool()
+    work = new_spool() if spool is None else spool
+    documents: dict[str, int] = {}
+    objects = (0, 0)
+    history_skipped: dict[str, int] = {}
+    past_retention, retention_on = 0, False
     try:
-        try:                                                        # I-1
-            async for chunk in storage.stream_object(job.storage_key, bucket=COMPLIANCE_BUCKET):
-                spool.write(chunk)
-        except Exception:  # noqa: BLE001 - a missing / unreadable upload: nothing was kept
-            raise ProjectImportFailed("interrupted") from None
-        size = spool.tell()
-        if size > vocab.IMPORT_UPLOAD_MAX_BYTES:
-            raise ProjectImportFailed("upload_too_large")
-        archive_sha256 = await asyncio.to_thread(sha256_of_file, spool)
-        file_count = await asyncio.to_thread(_scan, spool)          # I-2 (a)
+        if own_spool:                                               # I-1 / I-H1
+            size = await _fill_spool(storage, job, work)
+        else:
+            size = work.seek(0, 2)
+            if size > vocab.IMPORT_ARCHIVE_MAX_BYTES:
+                raise ProjectImportFailed("upload_too_large_history")
+        archive_sha256 = await asyncio.to_thread(sha256_of_file, work)
         public_keys = await compliance_signing.public_keys(db)
-        pre = await asyncio.to_thread(_preflight_sync, spool, public_keys, file_count)
+        pre = await asyncio.to_thread(_preflight_sync, work, public_keys)   # I-2 (a)…(h)
+        specs = plan(include_history=pre.has_history)
+        total = len(specs)
         user_map = await _map_users(db, pre.directory)              # I-3
         name = await choose_name(db, requested=requested, source_name=pre.source_name)
         slug = await choose_slug(db, source_slug=pre.source_slug)
         if on_manifest is not None:
             await on_manifest(pre.source_name, total)
+        remap = (
+            history.HistoryRemap(job.id, {t: frozenset(ids) for t, ids in pre.bounded_ids.items()})
+            if pre.has_history else None
+        )
         ctx = _Context(
             project_id=uuid.uuid4(), actor_id=actor.id, now=now, user_map=user_map,
-            release_keeper=pre.release_keeper,
+            release_keeper=pre.release_keeper, schema_version=pre.schema_version, history_remap=remap,
+            source_project_id=pre.source_project_id,
         )
-        spool.seek(0)
-        with zipfile.ZipFile(spool) as zf:                         # the first write is below this line
+        catalog_total = sum(1 for spec in specs if not spec.history)
+        work.seek(0)
+        with zipfile.ZipFile(work) as zf:                           # the first write is below this line
             project, enrolled = await _create_project(
                 db, zf, ctx, spec=specs[0], pre=pre, name=name, slug=slug, actor=actor,
             )
             ctx.inserted["projects"] = 1
             await on_table(1, total)
-            for done, spec in enumerate(specs[1:], start=2):        # I-5
+            for done, spec in enumerate(specs[1:], start=2):        # I-5 / I-H3
                 await _insert_entity(db, zf, ctx, spec, pre)
                 await on_table(done, total)
+                if on_progress is not None and pre.has_history:          # a catalog import reads as phase 1 did
+                    phase, phase_done = ("runs", done - catalog_total) if spec.history else ("catalog", done)
+                    await on_progress(phase, phase_done, (total - catalog_total) if spec.history else catalog_total)
         await _second_pass(db, ctx)                                 # I-6
         if not ctx.active_release_kept:                             # I-7
             await ensure_active_release_for_new_project(db, project)
@@ -960,25 +1338,41 @@ async def run_import(
         for table, rows in pre.retired.items():                     # W25d HYG-02: a dropped table's rows
             if rows > 0:
                 ctx.skipped[(table, None, "retired_table")] += rows
+        if remap is not None and pre.history_pre is not None:
+            past_retention, retention_on = await _retention_pause(   # I-H4, same transaction
+                db, ctx, project, imported_row=ctx.inserted.get("project_retention_policies", 0) > 0,
+            )
+            documents, objects = await _outside_postgres(           # I-H5 … I-H7
+                db, work, pre.history_pre, remap=remap, project_id=project.id, storage=storage,
+                mongo=mongo, on_ledger=on_ledger, on_progress=on_progress, outcome=outcome,
+                skipped=history_skipped,
+            )
     finally:
-        spool.close()
+        if own_spool:
+            work.close()
 
     inserted = {spec.table: ctx.inserted.get(spec.table, 0) for spec in specs}
+    history_report = (
+        _history_report(ctx, pre, documents=documents, objects=objects, skipped=history_skipped,
+                        past_retention=past_retention, retention_on=retention_on)
+        if remap is not None else None
+    )
     report = ProjectDataImportReport(
         project_id=project.id, project_name=project.name, project_slug=project.slug,
         inserted=inserted, skipped=_skips(ctx.skipped), cleared=_skips(ctx.cleared),
         switched_off=dict(sorted(ctx.switched_off.items())), signature=pre.signature,
         source_project_name=pre.source_name, source_app_version=pre.source_app_version,
-        exported_at=pre.exported_at,
+        exported_at=pre.exported_at, **({"history": history_report} if history_report is not None else {}),
     )
     row = await db.get(ProjectDataJob, job.id)                      # I-8, same transaction
     if row is None:
         raise ProjectImportFailed("interrupted")
+    counts: dict[str, int] = dict(inserted)
+    activity_context: dict[str, Any] = {"source": pre.source_name, "rows": sum(inserted.values())}
     row.project_id = project.id
     row.project_name = pre.source_name
     row.status = "succeeded"
     row.report = report.model_dump(mode="json")
-    row.counts = inserted
     row.finished_at = now
     row.bytes = size
     row.file_count = pre.file_count
@@ -986,6 +1380,15 @@ async def run_import(
     row.archive_sha256 = archive_sha256
     row.signature = pre.signature
     row.progress = {"done": total, "total": total}
+    if history_report is not None:
+        from app.services.project_data_job_service import stamp_schema_version
+
+        stamp_schema_version(row, pre.schema_version)          # options["schema_version"], read by to_read
+        counts.update({f"documents.{name}": n for name, n in sorted(documents.items())})
+        counts["objects"] = objects[0]
+        row.cleanup = None                      # success and "no ledger" commit together (I-H8)
+        activity_context.update(runs=history_report.runs, documents=sum(documents.values()), objects=objects[0])
+    row.counts = counts
     await record_activity(
         db,
         project_id=project.id,
@@ -993,7 +1396,7 @@ async def run_import(
         actor=ActorRef.from_user(actor),
         entity_id=project.id,
         entity_label=project.name,
-        context={"source": pre.source_name, "rows": sum(inserted.values())},
+        context=activity_context,
     )
     await db.flush()
     if outcome is not None:

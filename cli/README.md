@@ -344,12 +344,27 @@ the export (QA lead or admin; a running export of the same project is followed, 
 2 seconds, then streams the archive to `FILE` (default `./<slug>-settings-catalog-<YYYYMMDD-HHMM>.zip`); an
 existing file is never overwritten without `--force`. `--no-wait` prints the job id instead.
 
-Run history, logs, attachments, members, API keys and secrets are never in the archive: integration secrets
-stay on the server and typed secrets are redacted.
+Members, API keys and secrets are never in the archive: integration secrets stay on the server and typed
+secrets are redacted.
 
-`testlookup projects import FILE [--name NAME] [--new-copy] [--no-wait]` creates a **new** project from an export
-(admin; nothing is ever merged into an existing project). The file is checked locally first — a missing file, an
-empty file, a file over 50 MB or one that is not a ZIP is refused without a request. The default name is
+**Run history (0.4.0).** `--history [--days 30|90|365|all] [--max-runs N]` adds the run history of the window
+(default 90 days, at most 2000 runs, newest first): runs, test results, AI analyses and their versions, failure
+clusters, release decisions and gate history, stored documents (raw Allure results, HTTP exchanges, live events,
+run summaries, AI versions, decision reports) and the attachments under each run's result-file prefix, copied byte
+for byte and **unscanned** (text rows and documents are scrubbed of secrets). Runs still in progress and AI
+pipelines still running are skipped; raw report uploads and pipeline scratch files never travel. The archive is
+then schema 2 and may be up to 2 GB; the default file name becomes `./<slug>-project-data-<YYYYMMDD-HHMM>.zip`,
+the default `--timeout` 10800 seconds, and the success line reads `Exported <name>: <runs> runs, <rows> rows,
+<documents> documents, <attachments> attachments (<size>)`. Without `--history` the request carries no body and
+the archive is exactly the catalog export above (schema 1), which an older TestLookup still imports.
+
+`testlookup projects import FILE [--name NAME] [--new-copy] [--no-wait] [--timeout 10800]` creates a **new**
+project from an export (admin; nothing is ever merged into an existing project). The file is checked locally
+first — a missing file, an empty file, a file over 2 GB or one that is not a ZIP is refused without a request.
+A file up to 50 MB is sent in one request; a larger one is sent in **parts of 32 MB** (one part read from disk at
+a time, each with its SHA-256 in `X-Part-Sha256`) and then completed. An interrupted upload resumes: re-running
+the same command finds the open upload and sends only the parts it lacks (`Resuming upload: 7 of 12 parts already
+received`). The default name is
 `<source> (imported)`, then `(imported 2)` …; `--name` picks one (refused when an active project already has it).
 Re-running the same command with the same file and name creates **one** project — the second run prints
 `Already imported as <name>` — because the request carries a deterministic `client_token` (a UUID derived from
@@ -357,10 +372,17 @@ the file's SHA-256 and the name); `--new-copy` makes a deliberate second copy. W
 prints the new project's name and id, the rows inserted per table, and every skipped / cleared / switched-off
 line. An imported project sends nothing: webhooks, team channels, code-host integrations and notification rules
 arrive switched off, run cadences arrive paused for 90 days, and authorship maps to people with the same username
-here (otherwise it is cleared). A refusal (a tampered or newer archive, an invalid row) prints the server's
+here (otherwise it is cleared). A history import keeps every original timestamp, triggers nothing (no AI
+analysis, notification, webhook or gate), pauses the new project's retention purge for 90 days and queues one
+search rebuild; the CLI adds the history block — runs and their date range, test results, stored documents per
+collection, attachments, anything not imported and why, the retention pause, how many imported runs are from the
+last 7 days (an all-projects digest can list them) and whether search is being rebuilt. A refusal (a tampered or
+newer archive, an invalid row or document, a part sent twice with different content) prints the server's
 sentence and exits `1`.
 
 ```bash
+testlookup projects export "Payment Service" --history --days all -o payment-history.zip
+testlookup projects import payment-history.zip                # parts of 32 MB when over 50 MB; re-run to resume
 testlookup projects export "Payment Service" -o payment-service.zip
 testlookup projects import payment-service.zip                # -> Payment Service (imported)
 testlookup projects import payment-service.zip                # -> Already imported as Payment Service (imported)
