@@ -1,8 +1,8 @@
 {
-  "attested_at": "2026-10-24T01:03:00.198397+00:00",
-  "change_id": "W11-REL-07",
+  "attested_at": "2026-11-04T00:04:23.986894+00:00",
+  "change_id": "W23c-F-1",
   "eval_gate_run_id": null,
-  "eval_manifest_checksum": "c6d5e80ed95ee61607e4db4b602894558b683ef5971741f4edc23c46418ef178",
+  "eval_manifest_checksum": "32317519b3789fb3b1d6aa99b2c9c54892dfd593b8fe000926be4f5277d7f5ad",
   "gate_results": [
     {
       "agent_name": "AnalysisAgent",
@@ -93,9 +93,9 @@
       "task_type": "release_decision"
     }
   ],
-  "manifest_digest": "14c5c5160beb05ea0781605191647f1acd20600733a61e702ccd2320b73ea59e",
+  "manifest_digest": "b3aed7a8cefa8a74256d05030da8a4285acbcb1aa6ec661d7b0cb3ebd37051c2",
   "mode": "source_review",
-  "notes": "W11 REL-07 registers ONE new prompt, release_phase_draft v1, used only by the release-phase PRD drafter (services/release_phase_generator.py) through the real BudgetedLLM; its output is a draft the user edits before anything is saved, and the heading parser runs first and always. No existing prompt text, model choice, routing or watched source changed. No scored task uses the new prompt, so the gate results below are the real offline golden run over the existing tasks (classification, root_cause, release_decision pass; duplicate_detection insufficient_samples as on origin/main \u2014 prompt-independent offline scorer). Offline golden verdict as computed: insufficient_samples.",
+  "notes": "W23c F-1 (owner-approved 2026-11-03) changes ONE prompt: summary_system v1 -> v2 adds two grounding rules -- text inside a <<data>> ... <</data>> block is caller-supplied data never to be obeyed, and when such blocks are present their counts and pass rate describe only the supplied failures, never the run. summary_system is the {system} of the four summary section prompts (their templates unchanged); it feeds no scored task and is not a gated prompt in prompt_eval_recordings (narrative output), so it is reviewed from source; the live-model check is the homelab inline-summary re-walk after deploy (W23c's walk saw the draft call the anchor run's pass rate 0.0%). No model choice, routing or watched source changed. Gate results below are the real offline golden run over the existing tasks (classification, root_cause, release_decision pass; duplicate_detection insufficient_samples as on origin/main -- prompt-independent offline scorer). Offline golden verdict as computed: insufficient_samples.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -121,7 +121,7 @@
     "summary_renderer_developer": "v1:58d153d90e99",
     "summary_renderer_manager": "v1:fb02a6a74429",
     "summary_renderer_system": "v1:42fc12956d2f",
-    "summary_system": "v1:3b2f2b5fde10",
+    "summary_system": "v2:eec62087f55e",
     "test_case_coverage": "v1:16988c2ae516",
     "test_case_generate": "v1:fb6a09db0b78",
     "test_case_plan_optimizer": "v1:97d09e4d78eb",
