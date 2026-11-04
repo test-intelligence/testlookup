@@ -16217,6 +16217,190 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ErasureBlocker
+
+```json
+{
+  "properties": {
+    "code": {
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "title": "ErasureBlocker",
+  "type": "object"
+}
+```
+
+## ErasureLocationCount
+
+```json
+{
+  "properties": {
+    "action": {
+      "title": "Action",
+      "type": "string"
+    },
+    "count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Count"
+    },
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "measured": {
+      "default": true,
+      "title": "Measured",
+      "type": "boolean"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    }
+  },
+  "required": [
+    "key",
+    "label",
+    "action"
+  ],
+  "title": "ErasureLocationCount",
+  "type": "object"
+}
+```
+
+## ErasurePreview
+
+```json
+{
+  "properties": {
+    "blockers": {
+      "default": [],
+      "items": {
+        "$ref": "#/components/schemas/ErasureBlocker"
+      },
+      "title": "Blockers",
+      "type": "array"
+    },
+    "changes": {
+      "items": {
+        "$ref": "#/components/schemas/ErasureLocationCount"
+      },
+      "title": "Changes",
+      "type": "array"
+    },
+    "display": {
+      "title": "Display",
+      "type": "string"
+    },
+    "erasure_job": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/SubjectJobRead"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "is_active": {
+      "title": "Is Active",
+      "type": "boolean"
+    },
+    "kept": {
+      "items": {
+        "$ref": "#/components/schemas/ErasureLocationCount"
+      },
+      "title": "Kept",
+      "type": "array"
+    },
+    "open_items": {
+      "default": [],
+      "items": {
+        "$ref": "#/components/schemas/ErasureLocationCount"
+      },
+      "title": "Open Items",
+      "type": "array"
+    },
+    "pseudonym": {
+      "title": "Pseudonym",
+      "type": "string"
+    },
+    "role": {
+      "title": "Role",
+      "type": "string"
+    },
+    "user_id": {
+      "format": "uuid",
+      "title": "User Id",
+      "type": "string"
+    },
+    "username": {
+      "title": "Username",
+      "type": "string"
+    }
+  },
+  "required": [
+    "user_id",
+    "username",
+    "display",
+    "role",
+    "is_active",
+    "pseudonym",
+    "changes",
+    "kept"
+  ],
+  "title": "ErasurePreview",
+  "type": "object"
+}
+```
+
+## ErasureRequest
+
+```json
+{
+  "properties": {
+    "confirm_username": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "Confirm Username",
+      "type": "string"
+    }
+  },
+  "required": [
+    "confirm_username"
+  ],
+  "title": "ErasureRequest",
+  "type": "object"
+}
+```
+
 ## EscalationConfig
 
 ```json
@@ -45124,6 +45308,265 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## SubjectJobList
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/SubjectJobRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total"
+  ],
+  "title": "SubjectJobList",
+  "type": "object"
+}
+```
+
+## SubjectJobRead
+
+```json
+{
+  "description": "One personal-data export / erasure job. ``storage_key`` is NEVER part of it.",
+  "properties": {
+    "bytes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Bytes"
+    },
+    "count_labels": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Count Labels"
+    },
+    "counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "default": {},
+      "title": "Counts",
+      "type": "object"
+    },
+    "download_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Download Path"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/SubjectRightsError"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expires At"
+    },
+    "file_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "File Count"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Finished At"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "kind": {
+      "title": "Kind",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Manifest Sha256"
+    },
+    "phase": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Phase"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "requested_by_display": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Requested By Display"
+    },
+    "signature": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Signature"
+    },
+    "source": {
+      "title": "Source",
+      "type": "string"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Started At"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "subject_display": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Subject Display"
+    },
+    "subject_user_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Subject User Id"
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "status",
+    "source",
+    "requested_at"
+  ],
+  "title": "SubjectJobRead",
+  "type": "object"
+}
+```
+
+## SubjectRightsError
+
+```json
+{
+  "description": "Also the 4xx ``detail`` shape ``{code, message}`` (``subject_rights_vocab.ERROR_SENTENCES``).",
+  "properties": {
+    "code": {
+      "title": "Code",
+      "type": "string"
+    },
+    "message": {
+      "title": "Message",
+      "type": "string"
+    }
+  },
+  "required": [
+    "code",
+    "message"
+  ],
+  "title": "SubjectRightsError",
+  "type": "object"
+}
+```
+
 ## SuiteDurationRegressionResponse
 
 ```json
@@ -53152,6 +53595,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Email",
       "type": "string"
     },
+    "erased_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Erased At"
+    },
     "full_name": {
       "anyOf": [
         {
@@ -53170,6 +53625,21 @@ These are the full generated JSON Schema definitions, including required fields,
     },
     "is_active": {
       "title": "Is Active",
+      "type": "boolean"
+    },
+    "is_erased": {
+      "default": false,
+      "title": "Is Erased",
+      "type": "boolean"
+    },
+    "is_service_account": {
+      "default": false,
+      "title": "Is Service Account",
+      "type": "boolean"
+    },
+    "is_synthetic": {
+      "default": false,
+      "title": "Is Synthetic",
       "type": "boolean"
     },
     "role": {

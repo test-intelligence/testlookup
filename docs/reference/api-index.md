@@ -233,6 +233,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | PUT | `/api/v1/me/assigned-failures/{test_case_id}/reassign` | Reassign Assigned Failure | [My Failures](api/my-failures.md) |
 | GET | `/api/v1/me/assigned-failures/{test_case_id}/reassign-options` | Get Reassign Options | [My Failures](api/my-failures.md) |
 | PUT | `/api/v1/me/assigned-failures/{test_case_id}/triage` | Update Failure Triage Status | [My Failures](api/my-failures.md) |
+| POST | `/api/v1/me/data-export` | Start My Data Export | [Subject rights](api/subject-rights.md) |
+| GET | `/api/v1/me/data-exports` | List My Data Exports | [Subject rights](api/subject-rights.md) |
 | GET | `/api/v1/memory/projects/{project_id}` | List Project Memories | [Agent Memory](api/agent-memory.md) |
 | POST | `/api/v1/memory/projects/{project_id}/recall` | Recall Similar Memories | [Agent Memory](api/agent-memory.md) |
 | GET | `/api/v1/memory/runs/{run_id}/timeline` | Get Run Memory Timeline | [Agent Memory](api/agent-memory.md) |
@@ -607,6 +609,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | DELETE | `/api/v1/stream/sessions/{session_id}` | Close Session | [Live Stream](api/live-stream.md) |
 | GET | `/api/v1/stream/sessions/{session_id}` | Get Session | [Live Stream](api/live-stream.md) |
 | GET | `/api/v1/stream/sse/{project_id}` | Sse Stream | [Live Stream](api/live-stream.md) |
+| GET | `/api/v1/subject-data-jobs/{subject_job_id}` | Get Subject Data Job | [Subject rights](api/subject-rights.md) |
+| GET | `/api/v1/subject-data-jobs/{subject_job_id}/download` | Download Subject Export | [Subject rights](api/subject-rights.md) |
 | GET | `/api/v1/suites` | List Suites | [Test Suites](api/test-suites.md) |
 | POST | `/api/v1/suites` | Create Suite | [Test Suites](api/test-suites.md) |
 | DELETE | `/api/v1/suites/{suite_id}` | Delete Suite | [Test Suites](api/test-suites.md) |
@@ -703,6 +707,10 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/users/{user_id}` | Get User | [User Management](api/user-management.md) |
 | PATCH | `/api/v1/users/{user_id}` | Update User Profile | [User Management](api/user-management.md) |
 | GET | `/api/v1/users/{user_id}/access-audit` | Get User Access Audit | [User Management](api/user-management.md) |
+| POST | `/api/v1/users/{user_id}/data-export` | Start User Data Export | [Subject rights](api/subject-rights.md) |
+| GET | `/api/v1/users/{user_id}/data-jobs` | List User Data Jobs | [Subject rights](api/subject-rights.md) |
+| POST | `/api/v1/users/{user_id}/erasure` | Erase User | [User Management](api/user-management.md) |
+| GET | `/api/v1/users/{user_id}/erasure-preview` | Get Erasure Preview | [User Management](api/user-management.md) |
 | GET | `/api/v1/users/{user_id}/memberships` | Get User Memberships | [User Management](api/user-management.md) |
 | POST | `/api/v1/users/{user_id}/password-reset-link` | Issue Password Reset Link | [User Management](api/user-management.md) |
 | PATCH | `/api/v1/users/{user_id}/role` | Update User Role | [User Management](api/user-management.md) |
@@ -728,4 +736,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **719 HTTP operations**, **608 paths**, **91 domain pages**.
+Total: **727 HTTP operations**, **616 paths**, **92 domain pages**.
