@@ -258,14 +258,19 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 900
       await expect(importCard(page).getByText('history-export.zip · 60.0 MB', { exact: true })).toBeVisible()
       await importButton(page).click()
       await expect(importCard(page).getByText('Uploading… 1 of 2 parts', { exact: true })).toBeVisible(PROGRESS)
-      await expect(importCard(page).getByText('Stored documents… 5,000 of 9,120')).toBeVisible(PROGRESS)
+      // The world's import counts ITS archive: 2 runs, 8 documents, 1 attachment.
+      await expect(importCard(page).getByText('Stored documents… 6 of 8', { exact: true })).toBeVisible(PROGRESS)
       await expect(importCard(page).getByText('Search index…')).toBeVisible(PROGRESS)
       await expect(importCard(page).getByText(`Created ${IMPORTED_PROJECT_NAME}.`, { exact: true })).toBeVisible(PROGRESS)
       const history = importCard(page).locator('[data-import-history]')
-      await expect(history.getByText(/^412 runs from [A-Z][a-z]{2} \d{1,2}, \d{4} to [A-Z][a-z]{2} \d{1,2}, \d{4}$/)).toBeVisible()
+      await expect(history.getByText('2 runs from Sep 14, 2026 to Sep 16, 2026', { exact: true })).toBeVisible()
+      await expect(history.getByText('6 documents', { exact: true })).toBeVisible()
+      await expect(history.getByText('1 attachment · 2 KB', { exact: true })).toBeVisible()
       await expect(history.getByText('1 attachment was skipped: it is larger than 256 MB', { exact: true })).toBeVisible()
       await expect(history.getByText(/^The retention purge of the new project is paused until .+\.$/)).toBeVisible()
-      await expect(history.getByText('4 imported runs are from the last 7 days; an all-projects digest can list them.', { exact: true })).toBeVisible()
+      // retention_days 365 with 0 runs past it: no retention note.
+      await expect(history.getByText(/retention window|Retention is off/)).toHaveCount(0)
+      await expect(history.getByText('2 imported runs are from the last 7 days; an all-projects digest can list them.', { exact: true })).toBeVisible()
       await expect(history.getByText('Search is being rebuilt for the new project.', { exact: true })).toBeVisible()
       await networkQuiet(page, api)
 

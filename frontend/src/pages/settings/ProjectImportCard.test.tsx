@@ -322,28 +322,54 @@ describe('ProjectImportCard — parted upload and history (W30)', () => {
     expect(archiveOptions(1).clientToken).toBe(token)
   })
 
-  it('a finished history import: the History block with its counts, one skip and every note', async () => {
+  it('a finished history import (a small 12 KB archive, the single POST): the History block, one skip, the notes', async () => {
+    // Numbers a 12 KB archive can carry (the W30 baseline reading); the big-number formatting is the model test's.
     const history = {
-      runs: 412, test_cases: 9000,
-      oldest_run_at: new Date(2026, 7, 3, 12).toISOString(), newest_run_at: new Date(2026, 10, 1, 12).toISOString(),
-      documents: { raw_allure_json: 9000, run_summaries: 120, decision_reports: 0 }, objects: 1830, object_bytes: 380 * MB,
+      runs: 2, test_cases: 6,
+      oldest_run_at: new Date(2026, 8, 14, 12).toISOString(), newest_run_at: new Date(2026, 8, 16, 12).toISOString(),
+      documents: { raw_allure_json: 6, run_summaries: 2, decision_reports: 0 }, objects: 1, object_bytes: 2 * 1024,
       skipped: [{ entity: 'objects', reason: 'too_large', count: 1 }],
-      retention_paused_until: new Date(2027, 1, 1, 12).toISOString(), runs_past_retention: 300, recent_runs: 4, search_reindex: 'queued',
+      retention_paused_until: new Date(2026, 11, 17, 12).toISOString(), runs_past_retention: 0, retention_days: 365,
+      recent_runs: 2, search_reindex: 'queued',
     }
     renderCard({ latest: null })
     jobs['job-h'] = { id: 'job-h', kind: 'import', status: 'succeeded', import_report: { ...REPORT, history } }
-    mockImportArchive.mockResolvedValue({ id: 'job-h', kind: 'import', status: 'queued' })
-    choose(zip('history.zip', 60 * MB))
+    mockStartImport.mockResolvedValue({ id: 'job-h', kind: 'import', status: 'queued' })
+    choose(zip('history.zip', 12 * 1024))
     fireEvent.click(importButton())
-    expect(await screen.findByText('412 runs from Aug 3, 2026 to Nov 1, 2026')).toBeInTheDocument()
+    expect(await screen.findByText('2 runs from Sep 14, 2026 to Sep 16, 2026')).toBeInTheDocument()
+    expect(mockImportArchive, 'a small archive takes the single POST').not.toHaveBeenCalled()
     const block = within(document.querySelector('[data-import-history]') as HTMLElement)
     expect(block.getByRole('heading', { name: 'Stored documents' })).toBeInTheDocument()
-    expect(block.getByText('9,000 documents')).toBeInTheDocument()
+    expect(block.getByText('6 documents')).toBeInTheDocument()
+    expect(block.getByText('2 documents')).toBeInTheDocument()
     expect(block.queryByText('decision_reports'), 'a zero count is not listed').toBeNull()
-    expect(block.getByText('1,830 attachments · 380.0 MB')).toBeInTheDocument()
+    expect(block.getByText('1 attachment · 2 KB')).toBeInTheDocument()
     expect(block.getByText('1 attachment was skipped: it is larger than 256 MB')).toBeInTheDocument()
-    expect(block.getByText('The retention purge of the new project is paused until Feb 1, 2027.')).toBeInTheDocument()
-    expect(block.getByText('4 imported runs are from the last 7 days; an all-projects digest can list them.')).toBeInTheDocument()
+    expect(block.getByText('The retention purge of the new project is paused until Dec 17, 2026.')).toBeInTheDocument()
+    expect(block.queryByText(/retention window|Retention is off/), '0 runs past a 365-day window: no retention note').toBeNull()
+    expect(block.getByText('2 imported runs are from the last 7 days; an all-projects digest can list them.')).toBeInTheDocument()
     expect(block.getByText('Search is being rebuilt for the new project.')).toBeInTheDocument()
+  })
+
+  it('the retention notes follow `retention_days`: runs past the window name it; null reads "retention is off"', async () => {
+    const base = {
+      runs: 2, test_cases: 6, oldest_run_at: new Date(2025, 0, 10, 12).toISOString(), newest_run_at: new Date(2026, 8, 16, 12).toISOString(),
+      documents: { run_summaries: 2 }, objects: 0, object_bytes: 0, skipped: [], recent_runs: 1, search_reindex: 'queued',
+    }
+    jobs['job-r'] = { id: 'job-r', kind: 'import', status: 'succeeded', import_report: { ...REPORT, history: { ...base, runs_past_retention: 1, retention_days: 365 } } }
+    mockStartImport.mockResolvedValue({ id: 'job-r', kind: 'import', status: 'queued' })
+    const first = renderCard({ latest: null })
+    choose(zip('old-history.zip', 12 * 1024))
+    fireEvent.click(importButton())
+    expect(await screen.findByText("Runs older than this project's retention window (365 days) will be purged on the next nightly purge.")).toBeInTheDocument()
+    expect(screen.getByText('1 imported run is from the last 7 days; an all-projects digest can list it.')).toBeInTheDocument()
+    first.unmount()
+
+    jobs['job-r'] = { id: 'job-r', kind: 'import', status: 'succeeded', import_report: { ...REPORT, history: { ...base, runs_past_retention: 0, retention_days: null } } }
+    renderCard({ latest: null })
+    choose(zip('old-history.zip', 12 * 1024))
+    fireEvent.click(importButton())
+    expect(await screen.findByText('Retention is off for this project: imported runs are kept.')).toBeInTheDocument()
   })
 })

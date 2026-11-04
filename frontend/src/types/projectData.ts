@@ -253,6 +253,8 @@ export interface ProjectDataHistoryReport {
   skipped?: ProjectDataSkip[]
   retention_paused_until?: string | null
   runs_past_retention?: number
+  /** The copy's effective runs window in days; null = retention off. */
+  retention_days?: number | null
   recent_runs?: number
   /** 'queued' | 'not_queued'. */
   search_reindex: string

@@ -941,6 +941,15 @@ export const HISTORY_EXPORT_BYTES = Math.round(412.3 * 1024 * 1024)
 /** 56 tables: phase 1's 29 catalog entities + the 27 history entities. */
 const HISTORY_TABLES = 56
 const HISTORY_DOCUMENTS = { raw_allure_json: 9000, run_summaries: 120, ai_run_versions: 0 }
+/** The small history IMPORT (a few-KB archive): 6 raw Allure documents, 2 run summaries, one 2 KB attachment. */
+const HISTORY_IMPORT_DOCUMENTS = { raw_allure_json: 6, run_summaries: 2, ai_run_versions: 0 }
+const HISTORY_IMPORT_OBJECT_BYTES = 2 * 1024
+/** The import's phases count ITS archive (2 runs, 8 documents, 1 attachment), not the export estimate's numbers. */
+const HISTORY_IMPORT_PROGRESS: Record<string, ProjectDataJob['progress']> = {
+  runs: { done: 29, total: HISTORY_TABLES, phase: 'runs', phase_done: 1, phase_total: 2 },
+  documents: { done: HISTORY_TABLES, total: HISTORY_TABLES, phase: 'documents', phase_done: 6, phase_total: 8 },
+  objects: { done: HISTORY_TABLES, total: HISTORY_TABLES, phase: 'objects', phase_done: 0, phase_total: 1 },
+}
 /** A proxy below 32 MB refusing a part: an HTML page, not JSON (the W22a "status code 413" lesson). */
 export const PROXY_413_HTML = '<html><head><title>413 Request Entity Too Large</title></head><body><center><h1>413 Request Entity Too Large</h1></center><hr><center>nginx</center></body></html>'
 
@@ -968,13 +977,20 @@ const HISTORY_PROGRESS: Record<string, ProjectDataJob['progress']> = {
   index: { done: HISTORY_TABLES, total: HISTORY_TABLES, phase: 'index', phase_done: null, phase_total: null },
 }
 
-/** The history block of a history import's report: one skip, the retention pause, recent runs, the reindex queued. */
-export function historyImportReport(): NonNullable<ProjectDataImportReport['history']> {
+/**
+ * The history block of a history import's report — a SMALL import a few-KB archive can carry (the Import card shows
+ * the chosen file beside it; the big-number formatting is the export estimate's region): 2 runs (Sep 14 and Sep 16,
+ * noon UTC — the same day in every viewer zone), 6 test results, 6 raw Allure documents + 2 run summaries, ONE 2 KB
+ * attachment; the export-side skip of a > 256 MB attachment (that object was never in the archive); the 90-day purge
+ * pause; `retention_days` 365 (the backend always sends it since 56790250) with 0 runs past it, so no retention note;
+ * both runs within 7 days of NOW (Sep 18), so "2 imported runs are from the last 7 days"; the reindex queued.
+ */
+export function historyImportReport(): NonNullable<ProjectDataImportReport['history']> & { retention_days: number | null } {
   return {
-    runs: 412, test_cases: 9000, oldest_run_at: isoAgo(90), newest_run_at: isoAgo(2),
-    documents: { ...HISTORY_DOCUMENTS }, objects: 1830, object_bytes: Math.round(380 * 1024 * 1024),
+    runs: 2, test_cases: 6, oldest_run_at: '2026-09-14T12:00:00Z', newest_run_at: '2026-09-16T12:00:00Z',
+    documents: { ...HISTORY_IMPORT_DOCUMENTS }, objects: 1, object_bytes: HISTORY_IMPORT_OBJECT_BYTES,
     skipped: [{ entity: 'objects', reason: 'too_large', count: 1 }],
-    retention_paused_until: isoAgo(-90), runs_past_retention: 300, recent_runs: 4, search_reindex: 'queued',
+    retention_paused_until: isoAgo(-90), runs_past_retention: 0, retention_days: 365, recent_runs: 2, search_reindex: 'queued',
   }
 }
 
@@ -1004,7 +1020,10 @@ export function historyDataJob(
     options: isExport ? { include_history: true, history_days: 90, max_runs: 2000 } : null,
     upload: step === 'uploading' ? { parts: PARTED_IMPORT.parts, bytes: PARTED_IMPORT.bytes, received: [], received_bytes: 0 } : null,
     schema_version: isExport ? 2 : step === 'succeeded' ? 2 : null,
-    progress: HISTORY_PROGRESS[step] ?? (status === 'succeeded' ? { done: HISTORY_TABLES, total: HISTORY_TABLES } : null),
+    progress:
+      (isExport ? undefined : HISTORY_IMPORT_PROGRESS[step]) ??
+      HISTORY_PROGRESS[step] ??
+      (status === 'succeeded' ? { done: HISTORY_TABLES, total: HISTORY_TABLES } : null),
   }
   if (step === 'succeeded' && isExport) {
     Object.assign(job, {
@@ -1016,9 +1035,10 @@ export function historyDataJob(
     })
   }
   if (step === 'succeeded' && !isExport && job.import_report) {
-    const inserted = { ...job.import_report.inserted, test_runs: 412, test_cases: 9000 }
+    // The small import (2 runs, 6 results, 6 + 2 documents, 1 attachment), consistent with its history block.
+    const inserted = { ...job.import_report.inserted, test_runs: 2, test_cases: 6 }
     job.import_report = { ...job.import_report, inserted, history: historyImportReport() }
-    job.counts = { ...inserted, 'documents.raw_allure_json': 9000, 'documents.run_summaries': 120, objects: 1830 }
+    job.counts = { ...inserted, 'documents.raw_allure_json': 6, 'documents.run_summaries': 2, objects: 1 }
   }
   return { ...job, ...overrides }
 }

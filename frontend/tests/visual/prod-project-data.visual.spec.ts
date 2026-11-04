@@ -21,8 +21,10 @@
  *  - `project-data-export-history-running` — the same form after Export (box and select disabled), the export in its
  *    documents phase: the spinner, "Stored documents… 5,000 of 9,120", Export disabled;
  *  - `project-data-import-history-report` — the Import card after a history import finished in this visit (a small
- *    schema-2 archive goes through the single POST): W24's report + the History block — the runs and their dates,
- *    the stored documents, the attachments, ONE skip, the retention pause, the recent-runs note and the reindex line.
+ *    12 KB schema-2 archive goes through the single POST): W24's report + the History block — "2 runs from Sep 14,
+ *    2026 to Sep 16, 2026", 6 + 2 stored documents, one 2 KB attachment, ONE export-side skip, the retention pause
+ *    (no retention note: 0 runs past the 365-day window), "2 imported runs are from the last 7 days…" and the
+ *    reindex line — numbers a 12 KB archive can carry (the big numbers are the estimate region's).
  * The existing regions change deliberately: the heading "Export project data", the new intro and the unticked
  * history row (`project-data-export-ready`, `project-data-export-running`).
  */
@@ -120,14 +122,23 @@ for (const theme of THEMES_WITH_PAPER) {
       jobAnswers: { [HISTORY_IMPORT_JOB_ID]: [historyDataJob('import', 'succeeded')] },
     })
     const { api, errors } = await openRollout(page, '/settings/project-data', { theme, handlers: world.handlers, ready: importCard, user: ADMIN })
-    await page.getByLabel('Export file (.zip)').setInputFiles({ name: 'payment-history.zip', mimeType: 'application/zip', buffer: Buffer.alloc(3 * 1024) })
+    // A 12 KB archive and what it can carry (the W30 baseline reading: a 3 KB file beside "412 runs … 380.0 MB" was
+    // a state the product cannot produce): 2 runs, 6 results, 6 + 2 documents, one 2 KB attachment.
+    await page.getByLabel('Export file (.zip)').setInputFiles({ name: 'payment-history.zip', mimeType: 'application/zip', buffer: Buffer.alloc(12 * 1024) })
+    await expect(importCard(page).getByText('payment-history.zip · 12 KB', { exact: true })).toBeVisible()
     await importCard(page).getByRole('button', { name: 'Import', exact: true }).click()
     await expect(importCard(page).getByText(`Created ${IMPORTED_PROJECT_NAME}.`, { exact: true })).toBeVisible({ timeout: 15_000 })
     const history = importCard(page).locator('[data-import-history]')
-    await expect(history.getByText(/^412 runs from .+ to .+$/)).toBeVisible()
+    await expect(history.getByText('2 runs from Sep 14, 2026 to Sep 16, 2026', { exact: true })).toBeVisible()
+    await expect(history.locator('[data-report-list="history-documents"] li')).toHaveCount(2)
+    await expect(history.getByText('1 attachment · 2 KB', { exact: true })).toBeVisible()
     await expect(history.locator('[data-report-list="history-skipped"] li')).toHaveCount(1)
+    await expect(history.getByText('1 attachment was skipped: it is larger than 256 MB', { exact: true })).toBeVisible()
     await expect(history.getByText(/^The retention purge of the new project is paused until .+\.$/)).toBeVisible()
+    await expect(history.getByText(/retention window|Retention is off/), '0 runs past a 365-day window: no retention note').toHaveCount(0)
+    await expect(history.getByText('2 imported runs are from the last 7 days; an all-projects digest can list them.', { exact: true })).toBeVisible()
     await expect(history.getByText('Search is being rebuilt for the new project.', { exact: true })).toBeVisible()
+    await expect(importCard(page).locator('[data-report-list="inserted"] li', { hasText: 'test_runs' })).toHaveText('test_runs: 2 rows')
     await blur(page)
     await networkQuiet(page, api)
     await visualRegion(page, 'project-data-import-history-report', theme, importCard(page))
