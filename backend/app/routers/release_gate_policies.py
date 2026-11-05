@@ -346,7 +346,7 @@ async def create_policy(
             raise
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=CREATE_RACE_DETAIL)
     await db.refresh(policy)
-    logger.info("Policy created: %s v%d by %s", policy.name, policy.version, current_user.username)
+    logger.info("Policy created: %s v%d by user_id=%s", policy.id, policy.version, current_user.id)
     return policy
 
 
@@ -389,7 +389,7 @@ async def update_policy(
 
     await db.commit()
     await db.refresh(policy)
-    logger.info("Policy updated: %s v%d by %s", policy.name, policy.version, current_user.username)
+    logger.info("Policy updated: %s v%d by user_id=%s", policy.id, policy.version, current_user.id)
     return policy
 
 
@@ -461,7 +461,7 @@ async def publish_policy(
     from app.services.cache_service import bump_analytics_epochs
 
     await bump_analytics_epochs(await _policy_scope_projects(db, policy.project_id))
-    logger.info("Policy published: %s v%d by %s", policy.name, policy.version, current_user.username)
+    logger.info("Policy published: %s v%d by user_id=%s", policy.id, policy.version, current_user.id)
     return policy
 
 
@@ -497,7 +497,7 @@ async def deactivate_policy(
     from app.services.cache_service import bump_analytics_epochs
 
     await bump_analytics_epochs(await _policy_scope_projects(db, policy.project_id))
-    logger.info("Policy deactivated: %s v%d by %s", policy.name, policy.version, current_user.username)
+    logger.info("Policy deactivated: %s v%d by user_id=%s", policy.id, policy.version, current_user.id)
     return policy
 
 

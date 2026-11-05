@@ -252,7 +252,14 @@ async def list_my_activity(
 
     ordered = sorted(found.values(), key=lambda pair: (pair[0].occurred_at, pair[0].id), reverse=True)
     page = ordered[:limit]
-    answer["items"] = [serialize(row) | {"involvement": inv} for row, inv in page]
+    # W31 E-9 (OR-08 "keep the gate"): the ledger keeps an erased actor's stored name; this product feed shows
+    # "Erased user". ONE lookup per non-empty page (none for an empty one); the four part statements are unchanged.
+    from app.services.subject_erasure_service import erased_ids
+
+    erased = await erased_ids(db, (row.actor_id for row, _inv in page))
+    answer["items"] = [
+        serialize(row, actor_erased=row.actor_id in erased) | {"involvement": inv} for row, inv in page
+    ]
     if len(ordered) > limit and page:
         last = page[-1][0]
         answer["next_cursor"] = encode_user_cursor(last.occurred_at, last.id, user_id)

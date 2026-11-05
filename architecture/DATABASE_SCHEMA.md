@@ -3353,6 +3353,7 @@ The older per-domain sections omitted these tables. Their full field definitions
 | `run_cadence_windows` | `RunCadenceWindow` | [Fields and constraints](../docs/reference/data-dictionary.md#run_cadence_windows) |
 | `classification_hints` | `ClassificationHint` | [Fields and constraints](../docs/reference/data-dictionary.md#classification_hints) |
 | `project_data_jobs` | `ProjectDataJob` | [Fields and constraints](../docs/reference/data-dictionary.md#project_data_jobs) |
+| `subject_rights_jobs` | `SubjectRightsJob` | [Fields and constraints](../docs/reference/data-dictionary.md#subject_rights_jobs) |
 
 ## Cross-run insights and expected run cadences (migrations 0243 / 0244, W23a)
 
@@ -3565,3 +3566,54 @@ id, a keyed hash, a fixed 30-day window. Its two indexes are plain builds on the
   action on Settings › Storage after 7 clean parity days) = they stop being written and the reads come from
   `canonical_test_cases`. The legacy tables are dropped one release after the cutover (F-W25-2).
 - **Rollback:** `downgrade()` of 0251 deletes the flag row only while untouched; of 0250 recreates the four tables empty.
+
+## Subject-rights jobs and the erased marker (migration 0253, W31)
+
+**`subject_rights_jobs`** (0253, STRAT-12: a person's data export, Art. 15 / 20, and an ADMIN's pseudonymising erasure,
+Art. 17): one row per export or erasure of ONE person. A NEW table rather than a third `project_data_jobs` kind: W24's
+janitor and re-dispatcher read that table without a kind filter, and an erasure carries its own resumable state.
+
+```text
+id UUID PK
+kind VARCHAR(10) NOT NULL              -- ck_srj_kind: export | erasure
+status VARCHAR(12) NOT NULL 'queued'   -- ck_srj_status: queued | running | succeeded | failed | expired
+source VARCHAR(8) NOT NULL 'admin'     -- ck_srj_source: self | admin; ck_srj_erasure_is_admin: an erasure is always admin
+phase VARCHAR(10) NULL                 -- ck_srj_phase: erasure only, the LAST phase committed: lockout | postgres | objects | redis | done
+subject_user_id UUID NOT NULL → users.id ON DELETE RESTRICT   -- the user row is never deleted (an erasure pseudonymises it)
+requested_by_id UUID NULL → users.id ON DELETE SET NULL
+storage_key TEXT NULL                  -- export: the archive (NULL once removed); never returned, never logged
+bytes BIGINT NULL; file_count INTEGER NULL
+manifest_sha256 VARCHAR(64) NULL; archive_sha256 VARCHAR(64) NULL
+signature VARCHAR(16) NULL; signing_key_id VARCHAR(64) NULL
+counts JSONB NOT NULL '{}'             -- export: rows per archive member; erasure: rows changed per inventory location key
+error_code VARCHAR(40) NULL; error TEXT NULL   -- subject_rights_vocab.ERROR_SENTENCES key + sentence
+attempts INTEGER NOT NULL 0
+requested_at TIMESTAMPTZ NOT NULL now(); started_at / finished_at / expires_at TIMESTAMPTZ NULL
+```
+
+- **Vocabularies.** `kind` / `status` / `source` / `phase` are plain strings CHECKed with the literals of
+  `services/subject_rights_vocab.py` (`JOB_KINDS` / `JOB_STATUSES` / `REQUEST_SOURCES` / `ERASURE_PHASES`, pinned by
+  `tests/test_migration_0253.py`). `expired` = an export's object was removed (the janitor after 72 h, or an erasure).
+  An erasure that stops mid-way stays `running` with `error_code = erasure_incomplete` (never `failed`) and resumes.
+- **Indexes.** `ix_srj_subject_kind (subject_user_id, kind, requested_at DESC)` — a person's jobs and the refusals;
+  `uq_srj_one_live_export UNIQUE (subject_user_id) WHERE kind = 'export' AND status IN ('queued', 'running')` and
+  `uq_srj_one_live_erasure` (the same for `erasure`) — one live job per person and kind (409 `export_running` /
+  `erasure_running`); `ix_srj_status_requested (status, requested_at)` — the janitor; `ix_srj_requester
+  (requested_by_id, requested_at DESC)` — "my exports". Plain builds: the migration creates the table.
+- **Classification.** `NOT_PROJECT_SCOPED` in `services/project_export_entities.py` ("a person's export / erasure job —
+  instance-wide, never part of a project archive"; `tests/test_project_export_classification.py`: 56 exported / 77
+  excluded / 25 not project-scoped = 158). Its two user FKs are classified in the personal-data inventory
+  (`services/subject_data_inventory.py`: `subject_user_id` keep_record, `requested_by_id` reference).
+
+**`users.erased_at`** (0253) `TIMESTAMPTZ NULL` — set by the erasure's Postgres phase, never cleared; "Erased" on any
+surface means it is set. The row itself stays (it is the pseudonymous key every kept row points at): `username` /
+`email` / `full_name` are rewritten to `erased-<hex8>` / `<pseudonym>@erased.invalid` / "Erased user". Index
+`ix_users_erased_at (erased_at) WHERE erased_at IS NOT NULL` serves the read-side "Erased user" projection; `users`
+already exists, so it is built `CONCURRENTLY` inside `autocommit_block()` (the 0166+ rule).
+
+- **Personal-data inventory.** Every column that names a user (123 FK columns to `users.id` in 92 tables, the name-like
+  columns, the non-ORM `auth_token_revocations`) and every other store is classified for the export and the erasure in
+  `services/subject_data_inventory.py`; `tests/test_subject_data_inventory.py` fails on a NEW user FK or name-like
+  column until it is classified there.
+- **Rollback.** `downgrade()` drops `ix_users_erased_at` (CONCURRENTLY), `users.erased_at`, the five indexes and the table.
+  An erasure is irreversible: a downgrade leaves pseudonymised `users` rows pseudonymised.

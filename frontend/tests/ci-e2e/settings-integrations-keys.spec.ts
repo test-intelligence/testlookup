@@ -87,12 +87,16 @@ const MFA: ApiHandlers = [
   ],
 ]
 
+/** W31 STRAT-12: Profile's "Your data" card reads my exports (none yet). */
+const MY_DATA: ApiHandlers = [['/api/v1/me/data-exports', () => ({ items: [], total: 0 })]]
+
 const HANDLERS: ApiHandlers = [
   ...LAYOUT,
   ['/api/v1/settings/integrations', () => INTEGRATIONS_CONFIG],
   ...KEYS,
   ...USERS,
   ...MFA,
+  ...MY_DATA,
 ]
 
 test.use({ viewport: { width: 1280, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
@@ -183,5 +187,16 @@ test('Profile: the profile and password cards share a row at 1280 px', async ({ 
 
   await expectSideBySide(section('Profile Information'), section('Change Password'))
   await expectNoHorizontalOverflow(page)
+
+  // W31 STRAT-12: "Your data" sits alone on its row (full width, below two-factor) and nothing in it overflows.
+  const myData = page.locator('section.card[data-my-data]')
+  await expect(myData.getByText('No export yet.', { exact: true })).toBeVisible()
+  const card = await myData.boundingBox()
+  const forms = await page.locator('[data-profile-forms]').boundingBox()
+  if (!card || !forms) throw new Error('the card and the form grid must render')
+  expect(card.y).toBeGreaterThanOrEqual(forms.y + forms.height)
+  expect(Math.abs(card.width - forms.width)).toBeLessThan(1)
+  const cardOverflow = await myData.evaluate((el) => el.scrollWidth - el.clientWidth)
+  expect(cardOverflow).toBeLessThanOrEqual(0)
   assertHermetic(api, errors)
 })

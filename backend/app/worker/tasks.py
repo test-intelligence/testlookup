@@ -5607,14 +5607,16 @@ def dispatch_scheduled_digests(self):
                         except Exception as e:
                             status = "failed"
                             error_detail = str(e)
-                            # The address is PII — redact before it reaches
-                            # a log sink. Stays stdlib-positional because
-                            # ``logger`` here is logging.getLogger, not structlog.
-                            from app.services.privacy_service import sanitize_for_logging
-
+                            # The address is personal data: the line names the
+                            # user by id and the error by type only (an SMTP
+                            # error can quote the recipient; the full text is
+                            # kept in error_detail on the notification_logs row
+                            # written below). W31 E-10.
+                            # Stays stdlib-positional because ``logger`` here is
+                            # logging.getLogger, not structlog.
                             logger.warning(
-                                "Digest email failed for %s: %s",
-                                sanitize_for_logging(user.email or ""), e,
+                                "Digest email failed for user %s: %s",
+                                user.id, type(e).__name__,
                             )
                     elif channel in ("slack", "teams"):
                         # Resolve the user's webhook for this channel
@@ -9266,5 +9268,44 @@ def run_suite_membership_parity(self, trigger: str = "beat", requested_by_id: st
             out = await suite_parity_runner.run_parity(trigger, requester)
             span.set_attribute("result.status", str(out.get("status") or out.get("skipped") or ""))
             return out
+
+    return cast(dict, _run_async(_run()))
+
+
+# ── W31 STRAT-12: subject rights — the per-person export and the erasure ─────
+
+
+@celery_app.task(name="app.worker.tasks.export_subject_data", queue="default", max_retries=0)
+def export_subject_data(job_id: str) -> str:
+    """Build, sign, store and verify one person's data export (``subject_rights_jobs`` row ``job_id``).
+
+    One argument: everything else is read from the row; the runner's claim makes a redelivery a no-op. No
+    Celery retry: a failure is recorded on the row and the person starts a new export. The global hard limit
+    applies; a worker killed by it leaves the row ``running`` for the janitor (``interrupted``)."""
+    from app.worker import subject_rights_runner
+
+    return cast(str, _run_async(subject_rights_runner.run_export_job(uuid.UUID(job_id))))
+
+
+@celery_app.task(name="app.worker.tasks.erase_subject_data", queue="default", max_retries=0)
+def erase_subject_data(job_id: str) -> str:
+    """Run the erasure phases after the lock-out (``subject_rights_jobs`` row ``job_id``): Postgres, objects,
+    Redis, done — each committed on the job row, each idempotent. Claim-guarded; a phase that raises leaves the
+    job ``running`` + ``erasure_incomplete`` and the janitor re-sends it (no retry cap, never failed)."""
+    from app.worker import subject_erasure_runner
+
+    return cast(str, _run_async(subject_erasure_runner.run_erasure_job(uuid.UUID(job_id))))
+
+
+@celery_app.task(name="app.worker.tasks.sweep_subject_rights_jobs", queue="default", max_retries=0)
+def sweep_subject_rights_jobs() -> dict:
+    """The subject-rights janitor (hourly at :50): expire exports past 72 hours (the ONLY expiry path), remove
+    the objects of failed / expired exports, fail an export a dead worker left ``running``, re-send a queued
+    export (at most 3 times) and an unfinished erasure (no cap). Never raises out."""
+    async def _run() -> dict:
+        from app.worker import subject_rights_runner
+
+        with _beat_span("sweep_subject_rights_jobs"):
+            return await subject_rights_runner.run_sweep()
 
     return cast(dict, _run_async(_run()))

@@ -59,8 +59,23 @@ from app.services.sso_service import (
 from app.services import oidc_service, saml_slo
 from app.services.refresh_token_service import _revoke_family as _revoke_refresh_family
 from app.services.secret_service import expire_secret, has_secret, read_secret, store_secret
+from app.services.user_account_guards import USERNAME_RESERVED_DETAIL, is_erased, is_reserved_identity
 
 logger = logging.getLogger(__name__)
+
+#: The refusal of a sign-in that reached an erased / deactivated account (no new message: no oracle, §3.2).
+_DEACTIVATED = "account is deactivated"
+
+
+def _jit_refusal(user: User, is_new: bool) -> Optional[str]:
+    """W31: an IdP never signs in to, or re-links, an ERASED account (the link the JIT just staged is rolled
+    back by the caller), and never JIT-provisions a username / e-mail local part in the reserved
+    ``erased-…`` pseudonym space (E-4)."""
+    if is_erased(user):
+        return _DEACTIVATED
+    if is_new and is_reserved_identity(username=user.username, email=user.email):
+        return USERNAME_RESERVED_DETAIL
+    return None
 
 router = APIRouter(prefix="/api/v1/sso", tags=["SSO / SAML"])
 
@@ -335,8 +350,12 @@ async def oidc_callback(
         )
     except ValueError as exc:
         return await refuse(str(exc), sub=claims["sub"])
+    refused = _jit_refusal(user, is_new)
+    if refused is not None:
+        await db.rollback()  # drop the staged link / account BEFORE refuse() commits its audit event
+        return await refuse(refused, sub=claims["sub"])
     if not user.is_active:
-        return await refuse("account is deactivated", sub=claims["sub"])
+        return await refuse(_DEACTIVATED, sub=claims["sub"])
 
     await db.execute(select(User.id).where(User.id == user.id).with_for_update())
     await db.refresh(user)
@@ -351,7 +370,7 @@ async def oidc_callback(
         ip_address=client_ip,
     )
     await db.commit()
-    logger.info("OIDC login successful for user: %s (new=%s)", user.username, is_new)
+    logger.info("OIDC login successful for user_id=%s (new=%s)", user.id, is_new)
 
     signed_in = SSOLoginResponse(
         access_token=access_token,
@@ -486,6 +505,13 @@ async def saml_acs(
         await db.commit()
         raise _acs_failure(browser, status.HTTP_400_BAD_REQUEST, str(exc))
 
+    refused = _jit_refusal(user, is_new)
+    if refused is not None:
+        await db.rollback()  # never keep a link to an erased row, nor an account in the reserved space
+        if refused == USERNAME_RESERVED_DETAIL:
+            raise _acs_failure(browser, status.HTTP_422_UNPROCESSABLE_ENTITY, refused)
+        raise _acs_failure(browser, status.HTTP_403_FORBIDDEN, "Account is deactivated")
+
     if not user.is_active:
         raise _acs_failure(browser, status.HTTP_403_FORBIDDEN, "Account is deactivated")
 
@@ -506,7 +532,7 @@ async def saml_acs(
     )
     await db.commit()
 
-    logger.info("SSO login successful for user: %s (new=%s)", user.username, is_new)
+    logger.info("SSO login successful for user_id=%s (new=%s)", user.id, is_new)
 
     signed_in = SSOLoginResponse(
         access_token=access_token,
@@ -667,7 +693,7 @@ async def create_sso_config(
 
     await db.commit()
     await db.refresh(config)
-    logger.info("SSO config created: %s by %s", config.display_name, current_user.username)
+    logger.info("SSO config created: %s by user_id=%s", config.id, current_user.id)
     return await _config_response(db, config)
 
 
@@ -774,7 +800,7 @@ async def update_sso_config(
 
     await db.commit()
     await db.refresh(config)
-    logger.info("SSO config updated: %s by %s", config.display_name, current_user.username)
+    logger.info("SSO config updated: %s by user_id=%s", config.id, current_user.id)
     return await _config_response(db, config)
 
 
@@ -808,7 +834,7 @@ async def delete_sso_config(
         await expire_secret(db, OIDC_SECRET_SCOPE, str(config.id))
     await db.delete(config)
     await db.commit()
-    logger.info("SSO config deleted: %s by %s", config.display_name, current_user.username)
+    logger.info("SSO config deleted: %s by user_id=%s", config.id, current_user.id)
     return None
 
 

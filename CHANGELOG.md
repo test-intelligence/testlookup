@@ -52,6 +52,38 @@ locally by default.
 
 ### Added
 
+- **Personal data: a per-person export and an erasure that keeps the audit
+  trail** (wave W31, STRAT-12; legal sign-off given by the owner 2026-11-03,
+  "keep the gate" 2026-11-04; branch `feat/df-subject-rights-20261104`;
+  migration `0253_subject_rights`). Art. 15 / 20: a person downloads a signed
+  archive of everything TestLookup holds about them from Settings › Profile ›
+  Your data, and an administrator can export any person from Settings › Users ›
+  Personal data. It covers 122 locations, never a secret or a hash, and never
+  another person's personal data. It is available for 72 hours, and every
+  request and download is recorded in `access_audit_logs`. Art. 17 with the
+  17(3) exception: an administrator, in a signed-in session and never on
+  themselves, previews then erases a person (typed username confirm). One
+  request commit signs them out and disables the account. Worker steps then
+  rename them to `erased-<hex>` / `@erased.invalid` / "Erased user", delete
+  their sessions, keys, preferences, inbox and chat, and rewrite `@username`
+  mentions, including in other people's notifications. They also remove their
+  personal exports and any project export that lists them, and the Redis keys
+  that name them. Every step is idempotent and an interrupted erasure resumes.
+  The five append-only audit tables are never updated: the product feed and
+  timelines show "Erased user" at read time, and audit / compliance surfaces
+  keep the stored name. An erased account cannot sign in, be re-provisioned by
+  SCIM / SSO or receive mail. The `erased-` username prefix is reserved.
+  Twenty log lines that rendered a username or e-mail (one a masked address)
+  log the user id instead, and a regression guard keeps it so. The personal-data inventory
+  (`services/subject_data_inventory.py`, 176 locations) is guarded: a new
+  column that names a user fails `test_subject_data_inventory.py` until it is
+  classified. Proofs: `integration/test_subject_export_postgres.py` (every
+  exported location emits, no secret / bystander data in the archive) and
+  `integration/test_subject_erasure_postgres.py`. The latter scans every text /
+  JSON column of every table, every Mongo collection, every object and archive,
+  and Redis, and finds nothing of the person outside the kept audit rows. It
+  also proves the re-runs. The user guide's compliance page documents both and
+  their limits.
 - **Project export with run history** (wave W30, ADM-05 phase 2, owner-approved
   2026-11-03; branch `feat/df-project-export-history-20261103`; migration
   `0252_project_data_job_history`). On Settings › Project data an export can
@@ -1591,6 +1623,16 @@ locally by default.
 
 ### Fixed
 
+- **An inline summary no longer shows the `<<data>>` markers or draws a
+  release conclusion from supplied failures** (F-OR07-2, owner 2026-11-04,
+  in W31's branch). On the homelab's live model the draft read "the
+  <<data>>or07a walk sample<</data>> test" and closed "This indicates a
+  potential release readiness issue". The markers are now stripped from the
+  structured report before it is stored or returned, on both the model and
+  the fallback path. A caller's value cannot contain them. The inline results
+  line also states that the supplied failures say nothing about whether the
+  build is ready to release. Test:
+  `tests/regression/test_summary_strips_data_markers.py`.
 - **An inline summary's data no longer states the supplied failures as the
   build's result** (W23c F-1 part 2, same branch as W30). `summary_system` v2
   alone did not stop the live model writing "The test run had a 0.0% pass

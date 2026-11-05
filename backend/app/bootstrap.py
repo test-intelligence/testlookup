@@ -91,6 +91,8 @@ from app.routers import (
     shared_reports,
     sso,
     stream,
+    subject_erasure,
+    subject_rights,
     suites,
     summary_report,
     test_execution_reviews,
@@ -225,6 +227,10 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     # tests/test_architectural_route_shadowing.py.
     rag_generation.router,             # RAG grounded generation (RAG-7 through RAG-14)
     test_management.router,
+    # W31 STRAT-12: a person's data export + its job reads, and the erasure. Every route also refuses an
+    # API-key principal itself (require_signed_in_session) — the protected dependency only authenticates.
+    subject_rights.router,
+    subject_erasure.router,
     users.router,
     users.projects_router,
     api_keys.router,

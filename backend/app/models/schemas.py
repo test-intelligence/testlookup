@@ -1015,6 +1015,78 @@ class ProjectDataJobList(BaseModel):
     total: int                                     # all matching rows; items ≤ JOBS_LIST_LIMIT (a top-N length is not a count)
 
 
+# ── W31 STRAT-12: subject rights (per-person export, Art. 15 / 20; pseudonymising erasure, Art. 17) ──
+# Every kind / status / phase / action is a plain str checked against services/subject_rights_vocab.py.
+
+class SubjectRightsError(BaseModel):
+    """Also the 4xx ``detail`` shape ``{code, message}`` (``subject_rights_vocab.ERROR_SENTENCES``)."""
+    code: str
+    message: str
+
+
+class SubjectJobRead(BaseModel):
+    """One personal-data export / erasure job. ``storage_key`` is NEVER part of it."""
+    id: uuid.UUID
+    kind: str                                      # subject_rights_vocab.JOB_KINDS
+    status: str                                    # subject_rights_vocab.JOB_STATUSES
+    source: str                                    # "self" | "admin"
+    subject_user_id: Optional[uuid.UUID] = None
+    subject_display: Optional[str] = None          # full name or username; "Erased user" once erased — never an e-mail
+    requested_by_display: Optional[str] = None     # same rule
+    requested_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    phase: Optional[str] = None                    # erasure only: the last committed ERASURE_PHASES value
+    bytes: Optional[int] = None
+    file_count: Optional[int] = None
+    manifest_sha256: Optional[str] = None
+    signature: Optional[str] = None                # "signed" | "unsigned"
+    expires_at: Optional[datetime] = None
+    counts: dict[str, int] = {}                    # export: rows per member file; erasure: rows changed per location key
+    # erasure only: each counted location key's label from the inventory ("API keys") — static text, never a name;
+    # the finished erasure lists these, not the storage keys.
+    count_labels: Optional[dict[str, str]] = None
+    error: Optional[SubjectRightsError] = None
+    download_path: Optional[str] = None            # "/api/v1/subject-data-jobs/{id}/download" only for a succeeded, unexpired export
+
+
+class SubjectJobList(BaseModel):
+    items: list[SubjectJobRead]
+    total: int                                     # all matching rows; items ≤ JOBS_LIST_LIMIT
+
+
+class ErasureLocationCount(BaseModel):
+    key: str                                       # inventory key "table.column" / "mongo:<coll>" / "objects:<prefix>" / "redis:<pattern>"
+    label: str                                     # human sentence, e.g. "Chat conversations"
+    action: str                                    # subject_rights_vocab.ERASE_ACTIONS
+    count: Optional[int] = None
+    measured: bool = True                          # a timed-out count → count None, measured False ("not counted")
+    reason: Optional[str] = None                   # keep_audit / keep_record / out_of_scope: why
+
+
+class ErasureBlocker(BaseModel):
+    code: str                                      # ERROR_SENTENCES key
+    message: str                                   # its sentence
+
+
+class ErasurePreview(BaseModel):
+    user_id: uuid.UUID
+    username: str
+    display: str
+    role: str
+    is_active: bool
+    pseudonym: str                                 # what the username WILL become (deterministic, §2.3 E-3)
+    blockers: list[ErasureBlocker] = []            # non-empty → the erase button is disabled and POST answers the first one
+    changes: list[ErasureLocationCount]            # delete / pseudonymise rows, in the inventory's order
+    kept: list[ErasureLocationCount]               # keep_audit / keep_record with their reasons
+    open_items: list[ErasureLocationCount] = []    # references a lead may want to reassign first — never blockers
+    erasure_job: Optional[SubjectJobRead] = None   # an unfinished erasure of this user (resume)
+
+
+class ErasureRequest(BaseModel):
+    confirm_username: str = Field(min_length=1, max_length=100)   # == the user's CURRENT username, exactly
+
+
 # ── W30 ADM-05 phase 2: run history in the export / import; the parted upload ─
 
 def _project_data_error(code: str, **values: Any) -> PydanticCustomError:
@@ -6307,7 +6379,20 @@ class UserListResponse(BaseModel):
     role: UserRole
     is_active: bool
     created_at: datetime
+    # W31 STRAT-12: an erased account (users.erased_at set) is still listed — as "Erased user" with the badge
+    is_erased: bool = False                        # derived: True whenever erased_at is set
+    erased_at: Optional[datetime] = None
+    # W31: Settings › Users offers "Personal data" only on a person's row (contract §4.2; refusal not_a_person keys
+    # on these flags, §0.8) — the list must say which rows are service / synthetic accounts.
+    is_service_account: bool = False
+    is_synthetic: bool = False
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def _erased_from_erased_at(self) -> "UserListResponse":
+        if self.erased_at is not None:
+            self.is_erased = True
+        return self
 
 
 class UpdateUserRoleRequest(BaseModel):

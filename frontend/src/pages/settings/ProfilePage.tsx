@@ -4,6 +4,9 @@ import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import MfaSecuritySection from '@/components/mfa/MfaSecuritySection'
+import MyDataCard from '@/components/subjectRights/MyDataCard'
+import { newestExport } from '@/components/subjectRights/myDataModel'
+import { useMyExports } from '@/hooks/useSubjectRights'
 import { useAuthStore } from '@/store/authStore'
 import { api } from '@/services/api'
 import { AVATAR_COLOR_KEYS, AVATAR_COLORS, avatarColor as avatarColorOf } from '@/components/ui/avatarColors'
@@ -53,6 +56,8 @@ export default function ProfilePage() {
   const setAuth = useAuthStore(s => s.setAuth)
   const token = useAuthStore(s => s.token)
   const refreshToken = useAuthStore(s => s.refreshToken)
+  // W31 STRAT-12: my own exports ("Your data"); a failed read is the card's "Could not load your exports."
+  const { data: myExports, error: myExportsError, mutate: refreshMyExports } = useMyExports()
 
   // ── Profile form state ────────────────────────────────────────────────────
   const [fullName,     setFullName]     = useState(user?.full_name ?? '')
@@ -396,6 +401,9 @@ export default function ProfilePage() {
 
       {/* ── Two-Factor Authentication ─────────────────────────────────────── */}
       <MfaSecuritySection />
+
+      {/* ── Your data (W31 STRAT-12): my own export; erasure is an administrator's step ── */}
+      <MyDataCard loadError={myExportsError} latest={newestExport(myExports)} onChanged={refreshMyExports} />
     </div>
   )
 }

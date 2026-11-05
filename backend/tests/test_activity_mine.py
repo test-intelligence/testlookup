@@ -69,6 +69,8 @@ class _Session:
             return "count"
         if "FROM project_members" in sql:
             return "members"
+        if "FROM users" in sql:  # W31 E-9: the page's erased-actor lookup (subject_erasure_service.erased_ids)
+            return "erased"
         if "JOIN managed_test_cases" in sql:
             return "C"
         if "JOIN defects" in sql:
@@ -322,6 +324,29 @@ async def test_more_rows_than_the_limit_give_a_cursor_bound_to_the_caller(access
     session.sql.clear()
     await _call(session, user, _filters(view="mine", limit=2, cursor=answer["next_cursor"]))
     assert "(project_activity_events.occurred_at, project_activity_events.id) <" in session.of("A")[0]
+
+
+async def test_an_erased_actor_reads_erased_user_with_one_lookup_per_page(accessible):
+    """W31 E-9 (OR-08): the ledger keeps the stored name; this feed masks it at read time, one lookup per page."""
+    from app.services.subject_rights_vocab import ERASED_DISPLAY
+
+    project = uuid.uuid4()
+    accessible["value"] = {project}
+    erased, other = uuid.uuid4(), uuid.uuid4()
+    now = datetime.now(timezone.utc)
+    rows = [
+        _row(at=now, project_id=project, actor_id=erased, actor_name="Zqxw Stored"),
+        _row(at=now - timedelta(minutes=1), project_id=project, actor_id=other, actor_name="Ana"),
+    ]
+    session = _Session(parts={"A": [(r,) for r in rows], "erased": [(erased,)]}, total=2, members=[project])
+    answer = await _call(session, _user(), _filters(view="mine"))
+
+    assert [i["actor"]["name"] for i in answer["items"]] == [ERASED_DISPLAY, "Ana"]
+    assert [i["actor"]["id"] for i in answer["items"]] == [str(erased), str(other)]
+    (lookup,) = session.of("erased")
+    assert "users.erased_at IS NOT NULL" in lookup
+    (part_a,) = session.of("A")
+    assert "JOIN" not in part_a, "the part statement itself is unchanged"
 
 
 async def test_another_users_cursor_is_400(accessible):

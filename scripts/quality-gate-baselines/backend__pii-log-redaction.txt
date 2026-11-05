@@ -12,4 +12,3 @@
 #
 # Reviewed in PR; remove entries as the code is cleaned up.
 # ---- notes below this line are preserved across --update-baseline ----
-533339e4f0ad3784  # backend/app/routers/users.py:286  in admin_create_user  logger.info("admin_creating_user", email=payload.email, role=str(payload.role),…

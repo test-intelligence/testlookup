@@ -217,6 +217,19 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     # W25d HYG-04 phase 2: the cutover switch's reads, gates and canonical reads, on the caller's session
     # (the cutover POST in routers/admin_maintenance.py commits once; the parity runner keeps its two commits).
     "suite_membership_cutover.py",
+    # ── W31 STRAT-12 subject rights (per-person export, Art. 15 / 20; erasure, Art. 17): new modules,
+    # commit-free from birth ──
+    # The wire vocabulary (constants only), the personal-data inventory (pure data), the job rows, the
+    # subject export builder, the erasure (preview reads; lock-out staged in the route's ONE transaction;
+    # the Postgres phase ONE transaction the runner commits) and the account guards moved out of
+    # routers/users.py. routers/subject_rights.py / subject_erasure.py and worker/subject_rights_runner.py /
+    # subject_erasure_runner.py own the commits.
+    "subject_rights_vocab.py",
+    "subject_data_inventory.py",
+    "subject_rights_job_service.py",
+    "subject_export_service.py",
+    "subject_erasure_service.py",
+    "user_account_guards.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

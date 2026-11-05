@@ -29,6 +29,13 @@ def _b64(n: int) -> str:
     return base64.urlsafe_b64encode(n.to_bytes((n.bit_length() + 7) // 8, "big")).rstrip(b"=").decode()
 
 
+def _coord(n: int) -> str:
+    """A P-256 coordinate at its full 32 bytes (RFC 7518 §6.2.1.2). ``_b64``'s minimal length dropped a leading
+    zero byte for about 1 key in 128, and PyJWT refused the JWK ("Coords should be 32 bytes"): the ES256 test
+    failed at random (W31 push gate, 2026-11-04)."""
+    return base64.urlsafe_b64encode(n.to_bytes(32, "big")).rstrip(b"=").decode()
+
+
 @pytest.fixture(scope="module")
 def rsa_key():
     return rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -128,7 +135,7 @@ def test_an_unknown_kid_is_rejected(rsa_key, jwks):
 def test_es256_is_accepted_with_an_ec_key():
     key = ec.generate_private_key(ec.SECP256R1())
     pub = key.public_key().public_numbers()
-    ec_jwks = {"keys": [{"kty": "EC", "crv": "P-256", "kid": "e1", "x": _b64(pub.x), "y": _b64(pub.y)}]}
+    ec_jwks = {"keys": [{"kty": "EC", "crv": "P-256", "kid": "e1", "x": _coord(pub.x), "y": _coord(pub.y)}]}
     token = jwt.encode(_claims(), _pem(key), algorithm="ES256", headers={"kid": "e1"})
     assert _validate(token, ec_jwks)["sub"] == "u-123"
 
@@ -136,7 +143,7 @@ def test_es256_is_accepted_with_an_ec_key():
 def test_an_rs256_header_never_selects_an_ec_key(rsa_key):
     key = ec.generate_private_key(ec.SECP256R1())
     pub = key.public_key().public_numbers()
-    ec_jwks = {"keys": [{"kty": "EC", "crv": "P-256", "kid": "k1", "x": _b64(pub.x), "y": _b64(pub.y)}]}
+    ec_jwks = {"keys": [{"kty": "EC", "crv": "P-256", "kid": "k1", "x": _coord(pub.x), "y": _coord(pub.y)}]}
     with pytest.raises(OIDCError, match="no usable"):
         _validate(_sign(rsa_key, _claims()), ec_jwks)
 

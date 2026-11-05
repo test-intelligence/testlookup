@@ -209,6 +209,15 @@ Beyond the gate script, **architectural tests** ratchet structure:
 (+ `..._agent_eval_harness.py`), and
 `test_architectural_audit_write_discipline.py`.
 
+Personal data has two guards of its own (W31, subject rights):
+- `test_subject_data_inventory.py` fails when `services/subject_data_inventory.py` misses one of these: a column
+  that references `users.id`; a column whose name marks a person's name or e-mail; a writer that copies a
+  `.username`, `.email` or `.full_name` into a stored row; or a Mongo collection. Each location there says what
+  a person's export carries and what an erasure does with it. The failure names the column: classify it before
+  merging. Redis keys are not walked: a new key that holds a person's name is added to the inventory by hand.
+- `tests/regression/test_no_person_in_log_lines.py` fails when a logger call in `backend/app` passes a
+  `.username`, `.email` or `.full_name`. Log the user id instead.
+
 ---
 
 ## 2. Backend conventions

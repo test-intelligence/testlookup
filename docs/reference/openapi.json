@@ -15192,6 +15192,170 @@
         "title": "EnrichedTestCaseDetailResponse",
         "type": "object"
       },
+      "ErasureBlocker": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErasureBlocker",
+        "type": "object"
+      },
+      "ErasureLocationCount": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "measured": {
+            "default": true,
+            "title": "Measured",
+            "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "action"
+        ],
+        "title": "ErasureLocationCount",
+        "type": "object"
+      },
+      "ErasurePreview": {
+        "properties": {
+          "blockers": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ErasureBlocker"
+            },
+            "title": "Blockers",
+            "type": "array"
+          },
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/ErasureLocationCount"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "display": {
+            "title": "Display",
+            "type": "string"
+          },
+          "erasure_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubjectJobRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "kept": {
+            "items": {
+              "$ref": "#/components/schemas/ErasureLocationCount"
+            },
+            "title": "Kept",
+            "type": "array"
+          },
+          "open_items": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ErasureLocationCount"
+            },
+            "title": "Open Items",
+            "type": "array"
+          },
+          "pseudonym": {
+            "title": "Pseudonym",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "username",
+          "display",
+          "role",
+          "is_active",
+          "pseudonym",
+          "changes",
+          "kept"
+        ],
+        "title": "ErasurePreview",
+        "type": "object"
+      },
+      "ErasureRequest": {
+        "properties": {
+          "confirm_username": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Confirm Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirm_username"
+        ],
+        "title": "ErasureRequest",
+        "type": "object"
+      },
       "EscalationConfig": {
         "additionalProperties": false,
         "properties": {
@@ -42044,6 +42208,250 @@
         "title": "StreamTicketResponse",
         "type": "object"
       },
+      "SubjectJobList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SubjectJobRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "SubjectJobList",
+        "type": "object"
+      },
+      "SubjectJobRead": {
+        "description": "One personal-data export / erasure job. ``storage_key`` is NEVER part of it.",
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes"
+          },
+          "count_labels": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count Labels"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "default": {},
+            "title": "Counts",
+            "type": "object"
+          },
+          "download_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Download Path"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SubjectRightsError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "file_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Count"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "manifest_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manifest Sha256"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phase"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requested_by_display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By Display"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Signature"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Display"
+          },
+          "subject_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject User Id"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "source",
+          "requested_at"
+        ],
+        "title": "SubjectJobRead",
+        "type": "object"
+      },
+      "SubjectRightsError": {
+        "description": "Also the 4xx ``detail`` shape ``{code, message}`` (``subject_rights_vocab.ERROR_SENTENCES``).",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "SubjectRightsError",
+        "type": "object"
+      },
       "SuiteDurationRegressionResponse": {
         "description": "A suite whose median over its last 5 runs is >= 1.5x the 20 before.",
         "properties": {
@@ -49544,6 +49952,18 @@
             "title": "Email",
             "type": "string"
           },
+          "erased_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erased At"
+          },
           "full_name": {
             "anyOf": [
               {
@@ -49562,6 +49982,21 @@
           },
           "is_active": {
             "title": "Is Active",
+            "type": "boolean"
+          },
+          "is_erased": {
+            "default": false,
+            "title": "Is Erased",
+            "type": "boolean"
+          },
+          "is_service_account": {
+            "default": false,
+            "title": "Is Service Account",
+            "type": "boolean"
+          },
+          "is_synthetic": {
+            "default": false,
+            "title": "Is Synthetic",
             "type": "boolean"
           },
           "role": {
@@ -68859,6 +69294,116 @@
         "summary": "Update Failure Triage Status",
         "tags": [
           "My Failures"
+        ]
+      }
+    },
+    "/api/v1/me/data-export": {
+      "post": {
+        "description": "Queue an export of everything TestLookup holds about the caller (Art. 15 / 20). 409 ``export_running``\nnames the live job in ``detail.job_id``.",
+        "operationId": "start_my_data_export_api_v1_me_data_export_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Start My Data Export",
+        "tags": [
+          "Subject rights"
+        ]
+      }
+    },
+    "/api/v1/me/data-exports": {
+      "get": {
+        "description": "The caller's own exports of themselves, newest first (≤ 10; ``total`` counts all). Writes nothing.",
+        "operationId": "list_my_data_exports_api_v1_me_data_exports_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectJobList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List My Data Exports",
+        "tags": [
+          "Subject rights"
         ]
       }
     },
@@ -96457,6 +97002,134 @@
         ]
       }
     },
+    "/api/v1/subject-data-jobs/{subject_job_id}": {
+      "get": {
+        "description": "One export or erasure job (the cards poll it). Writes nothing.",
+        "operationId": "get_subject_data_job_api_v1_subject_data_jobs__subject_job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subject_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Subject Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Subject Data Job",
+        "tags": [
+          "Subject rights"
+        ]
+      }
+    },
+    "/api/v1/subject-data-jobs/{subject_job_id}/download": {
+      "get": {
+        "description": "Stream a succeeded, unexpired export. 409 not an export / not ready / failed, 410 expired (no audit row on\na refusal); then ONE ``access_audit_logs`` row is COMMITTED — the attempt is recorded even when storage\ncannot give the first byte (502 ``archive_unreadable``). The job row is never touched.",
+        "operationId": "download_subject_export_api_v1_subject_data_jobs__subject_job_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subject_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Subject Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Download Subject Export",
+        "tags": [
+          "Subject rights"
+        ]
+      }
+    },
     "/api/v1/suites": {
       "get": {
         "description": "List test suites. ``project_id`` scopes to one project; otherwise the\nresponse covers every project the caller can see (ADMIN: all).",
@@ -103905,6 +104578,293 @@
           }
         ],
         "summary": "Get User Access Audit",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/data-export": {
+      "post": {
+        "description": "Queue an export of one person's data (any user, the admin included). 404 ``user_not_found``.",
+        "operationId": "start_user_data_export_api_v1_users__user_id__data_export_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Start User Data Export",
+        "tags": [
+          "Subject rights"
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/data-jobs": {
+      "get": {
+        "description": "One person's export / erasure jobs, newest first (≤ 10; ``total`` counts all); ``?kind=export|erasure``\n(FastAPI's 422 otherwise — the pattern is built from ``JOB_KINDS``). Writes nothing.",
+        "operationId": "list_user_data_jobs_api_v1_users__user_id__data_jobs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^(export|erasure)$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectJobList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List User Data Jobs",
+        "tags": [
+          "Subject rights"
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/erasure": {
+      "post": {
+        "description": "Erase (pseudonymise) this person: refusals in E-1's order, the exact typed username, then the\nlock-out committed in ONE transaction and the worker enqueued. An unfinished erasure is resumed.",
+        "operationId": "erase_user_api_v1_users__user_id__erasure_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ErasureRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubjectJobRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Erase User",
+        "tags": [
+          "User Management"
+        ]
+      }
+    },
+    "/api/v1/users/{user_id}/erasure-preview": {
+      "get": {
+        "description": "Counts of what erasing this person would delete / rewrite, keep and leave open, the blockers (listed,\nnot raised), the pseudonym, and an unfinished erasure job to resume. Writes nothing.",
+        "operationId": "get_erasure_preview_api_v1_users__user_id__erasure_preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErasurePreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Erasure Preview",
         "tags": [
           "User Management"
         ]

@@ -339,6 +339,16 @@ celery_app.conf.update(
             "schedule": crontab(minute=35),
             "options": {"queue": "default"},
         },
+        # W31 STRAT-12: the subject-rights janitor -- the ONLY expiry path of a
+        # person's data export (72 h), fails exports a dead worker left running
+        # (``interrupted``), re-sends a lost export enqueue (at most 3 times) and
+        # every unfinished erasure (no cap: a half-erased account must finish).
+        # Separate from the W24 janitor above (its queries are untouched).
+        "sweep-subject-rights-jobs": {
+            "task": "app.worker.tasks.sweep_subject_rights_jobs",
+            "schedule": crontab(minute=50),
+            "options": {"queue": "default"},
+        },
         "recover-waiting-run-finalizations": {
             "task": "app.worker.tasks.recover_waiting_run_finalizations",
             "schedule": crontab(minute="*"),
