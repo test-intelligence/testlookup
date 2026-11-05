@@ -425,7 +425,7 @@ Setup steps for each integration are in [Integrations](integrations.md). Values 
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | str (optional) | unset | OTLP/HTTP collector, for example `http://otel-collector:4318`. Unset: spans go to stdout in development only; elsewhere nothing is exported and one warning is logged. |
 | `METRICS_ENABLED` | bool | `true` | Exposes Prometheus metrics at `/metrics` on the API. Worker metrics are separate (see `PROMETHEUS_MULTIPROC_DIR` below). |
 | `LOG_LEVEL` | str | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. |
-| `LOG_FORMAT` | `json` \| `text` | `json` | Structured JSON for log shippers; `text` for reading in a terminal. |
+| `LOG_FORMAT` | `json` \| `text` | `json` | Structured JSON for log shippers; `text` for reading in a terminal. Logs can name people (proxy query strings; application lines written before the release that added personal-data erasure): see [Scrubbing a person from your log store](../../user-guide/compliance.md#scrubbing-a-person-from-your-log-store). |
 
 ## Retention
 

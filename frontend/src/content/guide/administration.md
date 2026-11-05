@@ -191,7 +191,7 @@ Where each kind of message is configured:
 |---|---|
 | Your own alerts, by email, Slack or Teams | **Account → My notifications** |
 | A team's alerts in the team's own channel | **Project → Team channels** |
-| The mail server and the shared Slack and Teams channels | **Integrations → Email (SMTP) & channels** and **Integrations → Jira, Splunk, OCP, Slack, Teams** |
+| The mail server and the shared Slack and Teams channels | **Integrations → Email (SMTP) & channels** and **Integrations → Integrations** |
 | Scheduled summaries | **Integrations → Digests & views** |
 | Events sent to your own systems | **Integrations → Outbound webhooks** |
 
