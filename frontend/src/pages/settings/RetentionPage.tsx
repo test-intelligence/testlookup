@@ -101,7 +101,8 @@ const DAY_FIELDS: Array<{ field: RetentionDayField; label: string; help: string 
   {
     field: 'raw_events_days',
     label: 'Raw events',
-    help: 'Raw ingestion payloads and live-stream event documents — Mongo pipeline event logs and event_archive rows. Cheapest class to keep short.',
+    // W32 (D-5): the pipeline event log rides the AUDIT clock (retention_service._MONGO_PLANS), never raw events.
+    help: 'Raw ingestion payloads and live-stream event documents in MongoDB, and event_archive rows. Cheapest class to keep short.',
   },
   {
     field: 'runs_days',
@@ -116,7 +117,8 @@ const DAY_FIELDS: Array<{ field: RetentionDayField; label: string; help: string 
   {
     field: 'audit_days',
     label: 'Audit trail',
-    help: 'Audit-log and provenance rows. Compliance floor of 365 days, and it can never be shorter than Runs & analysis.',
+    // W32 (F-W25d-4): the provenance table was dropped in W25d HYG-02; this is what the audit clock deletes.
+    help: 'Audit and activity logs, decision reports, deletion jobs and the pipeline event log. At least 365 days, and never shorter than Runs & analysis.',
   },
 ]
 

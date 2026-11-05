@@ -1005,10 +1005,10 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
                 <tr>
                   <th className="th text-left">Build</th>
                   <th className="th text-left">Suite</th>
-                  <th className="th text-right">Date</th>
-                  <th className="th text-right text-[var(--status-passed)]">Passed</th>
-                  <th className="th text-right text-[var(--status-failed)]">Failed</th>
-                  <th className="th text-right">Pass Rate</th>
+                  <th className="th whitespace-nowrap text-right">Date</th>
+                  <th className="th whitespace-nowrap text-right text-[var(--status-passed)]">Passed</th>
+                  <th className="th whitespace-nowrap text-right text-[var(--status-failed)]">Failed</th>
+                  <th className="th whitespace-nowrap text-right">Pass Rate</th>
                   <th className="th"></th>
                 </tr>
               </thead>
@@ -1026,7 +1026,7 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
                     <td className="td">
                       <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
                     </td>
-                    <td className="td text-right text-xs text-[var(--color-text-muted)]">{fmtDate(run.created_at)}</td>
+                    <td className="td whitespace-nowrap text-right text-xs text-[var(--color-text-muted)]">{fmtDate(run.created_at)}</td>
                     <td className="td text-right tabular-nums text-[var(--status-passed)]">{run.passed_tests}</td>
                     <td className="td text-right tabular-nums text-[var(--status-failed)]">{run.failed_tests}</td>
                     <td className="td text-right tabular-nums text-[var(--color-text-secondary)]">

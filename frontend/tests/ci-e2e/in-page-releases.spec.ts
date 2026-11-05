@@ -12,6 +12,7 @@
  *    sends R3's PUT and re-reads both;
  *  - S5 Delete (admin): the inline strip in the pane footer, nothing sent until its own Delete;
  *  - S6 `/release-gate/:runId` Share report: a section under the header, no overlay.
+ *  - W32 at 1280: the pane's "Linked Test Runs" Date cells stay on one line (the table scrolls inside its box).
  *
  * The pane's URL key is `?open=` (the contract's `?release=` was amended: `?release=` is the top bar's global release
  * filter, `ReleasePicker`'s `RELEASE_PARAM`, read on every page).
@@ -22,7 +23,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { expectNoOverlay, watchNativeDialogs } from '../lib/inPage'
 import { boxOf, expectMainFits, inPageLine, minContentSlack, ownOverflow, precedes } from '../lib/inPageGeometry'
 import { respond } from '../lib/production-pages'
-import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
+import { assertHermetic, expectNoHorizontalOverflow, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { GATE_CLUSTERS, releaseGateOn, RUN_ID } from '../visual/production/fixtures'
 import { releasesInPageWorld } from '../visual/production/fixtures-in-page'
 import { ADMIN, RELEASE } from '../visual/production/fixtures-releases'
@@ -101,6 +102,48 @@ for (const width of [1280, 1440]) {
     })
   })
 }
+
+test.describe('1280 x 900', () => {
+  test.use({ viewport: { width: 1280, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
+
+  // W32 (W29d follow-up): the seven columns cannot fit the ≈ 382 px pane, so the table scrolls sideways inside its
+  // box — and the Date column must not fold ("Sep / 16, / 2026") to make room. A td's box is the ROW's height, so the
+  // lines are counted on the cell's text (a Range), and its height compared with the Build cell's of the same row.
+  test('W32 @1280: the pane\'s "Linked Test Runs" dates stay on one line; the page does not scroll sideways', async ({ page }) => {
+    const { api, errors } = await openList(page)
+    await card(page, '2026.11').click()
+    const heading = release(page, '2026.11').getByRole('heading', { name: 'Linked Test Runs (2)' })
+    await expect(heading).toBeVisible()
+    const table = heading.locator('xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " card ")][1]//table')
+    const rows = await table.evaluate((node) =>
+      Array.from((node as HTMLTableElement).tBodies[0].rows, (row) => {
+        const text = (cell: Element) => {
+          const range = document.createRange()
+          range.selectNodeContents(cell)
+          const tops = Array.from(range.getClientRects()).filter((r) => r.width > 0).map((r) => Math.round(r.top))
+          return { lines: new Set(tops).size, height: range.getBoundingClientRect().height }
+        }
+        const date = row.cells[2]
+        return {
+          date: date.textContent ?? '',
+          dateText: text(date),
+          buildText: text(row.cells[0]),
+          scrollWidth: date.scrollWidth,
+          clientWidth: date.clientWidth,
+        }
+      }),
+    )
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row.date, 'a date is rendered').toMatch(/\d{4}$/)
+      expect(row.dateText.lines, `"${row.date}" is one line`).toBe(1)
+      expect(row.dateText.height, `"${row.date}" is no taller than the Build cell's one line`).toBeLessThanOrEqual(row.buildText.height * 1.5)
+      expect(row.scrollWidth, `"${row.date}" is not cut`).toBeLessThanOrEqual(row.clientWidth)
+    }
+    await expectNoHorizontalOverflow(page, `/releases?open=${RELEASE.active} @1280`)
+    assertHermetic(api, errors)
+  })
+})
 
 test.describe('1440 x 900', () => {
   test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })

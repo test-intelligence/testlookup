@@ -9,6 +9,9 @@
  * card does. Names are React text, truncated in their bar with the full name
  * in its title. Dates are UTC days. Every position is a static class from
  * the model's lookup tables (the production CSP: no inline style from data).
+ * The three lanes follow the bar's text size (W32 / W29e F-8): `--text-xs` ×
+ * 1.5 (`leading-normal`), so 18 px at the desk and 24 px in presentation mode;
+ * the week row is 34 px (day row + gaps + free) plus the three lanes.
  */
 import { clsx } from 'clsx'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
@@ -65,7 +68,7 @@ export default function ReleaseCalendar({ releases, month, onMonth, onOpen }: Re
             <div
               key={week[0].date}
               data-calendar-week={week[0].date}
-              className="grid h-[88px] grid-cols-7 grid-rows-[22px_18px_18px_18px] gap-y-0.5 border-b border-[var(--color-border)] last:border-b-0"
+              className="grid h-[calc(34px_+_var(--text-xs)*4.5)] grid-cols-7 grid-rows-[22px_repeat(3,calc(var(--text-xs)*1.5))] gap-y-0.5 border-b border-[var(--color-border)] last:border-b-0"
             >
               {week.map((day, i) => {
                 const more = moreLabel(layout.hidden[i])
@@ -100,7 +103,7 @@ export default function ReleaseCalendar({ releases, month, onMonth, onOpen }: Re
                   title={item.title}
                   onClick={() => onOpen(item.releaseId)}
                   className={clsx(
-                    'z-[1] mx-0.5 min-w-0 truncate rounded-sm px-1 text-left text-xs leading-[18px] hover:brightness-95',
+                    'z-[1] mx-0.5 min-w-0 truncate rounded-sm px-1 text-left text-xs leading-normal hover:brightness-95',
                     COL_START[item.colStart - 1],
                     COL_SPAN[item.span - 1],
                     LANE_ROW[item.lane],

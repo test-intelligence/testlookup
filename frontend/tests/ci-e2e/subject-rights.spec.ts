@@ -3,7 +3,8 @@
  * `subjectRightsWorld({...})` (`visual/production/fixtures-subject-rights.ts`), at 1280 × 900 and 1440 × 900:
  *
  *  - Profile: "Download my data" → ONE `POST /api/v1/me/data-export` → "Preparing your archive…" while the job
- *    polls → "Ready — 1.4 MB, signed. Available until …" → Download asks the job's OWN download path and saves a file.
+ *    polls → "Ready — 1.4 MB, signed. Available until …" (the start button now reads "Prepare a new copy", W32) →
+ *    Download asks the job's OWN download path and saves a file.
  *  - Users: no "Personal data" action on a service account row, a synthetic row or the admin's own row; the table's
  *    load asks nothing of the subject-rights API; an erased row reads "Erased user" + the badge with no other action.
  *  - Personal data → a preview with a blocker lists it and keeps "Erase permanently" disabled on the exact username;
@@ -54,6 +55,9 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 900
       await expect(myData(page).getByText('Preparing your archive…', { exact: true })).toBeVisible(PROGRESS)
       await expect(myData(page).getByRole('button', { name: 'Download my data' })).toBeDisabled()
       await expect(myData(page).getByText('Ready — 1.4 MB, signed. Available until Sep 21, 11:59.', { exact: true })).toBeVisible(PROGRESS)
+      // W32 (OR-10 (5)): with the export ready, the start button offers a NEW copy; Download fetches the ready one.
+      await expect(myData(page).getByRole('button', { name: 'Prepare a new copy' })).toBeEnabled()
+      await expect(myData(page).getByRole('button', { name: 'Download my data' })).toHaveCount(0)
       await expect(myData(page).getByText('To have your account erased, ask an administrator.', { exact: false })).toBeVisible()
       await networkQuiet(page, api)
       expect(world.writes).toEqual([{ line: 'POST /api/v1/me/data-export', body: null }])

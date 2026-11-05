@@ -46,6 +46,7 @@ function withSwr(children: ReactNode) {
 
 const startButton = () => screen.getByRole('button', { name: UI_SENTENCES.my_data_start })
 const downloadButton = () => screen.queryByRole('button', { name: DOWNLOAD_LABEL })
+const restartButton = () => screen.getByRole('button', { name: UI_SENTENCES.my_data_restart })
 
 beforeEach(() => {
   for (const fn of Object.values(service)) fn.mockReset()
@@ -81,7 +82,8 @@ describe('MyDataCard', () => {
     expect(service.getJob.mock.calls.every(([id]) => id === queued.id)).toBe(true)
     expect(service.getJob.mock.calls.length).toBeGreaterThanOrEqual(3)
     expect(downloadButton()).toBeEnabled()
-    expect(startButton()).toBeEnabled()
+    // W32: with the export ready, the start button offers a NEW copy (Download fetches the ready one).
+    expect(restartButton()).toBeEnabled()
   })
 
   it('a ready export: Download streams that job (its id); a refused download reads its sentence, never the Axios words', async () => {
@@ -96,6 +98,25 @@ describe('MyDataCard', () => {
     fireEvent.click(downloadButton() as HTMLElement)
     expect(await screen.findByRole('alert')).toHaveTextContent(ERROR_SENTENCES.export_expired)
     expect(screen.queryByText(/Request failed with status code/)).toBeNull()
+  })
+
+  it('a ready export (W32, OR-10 (5)): the buttons read "Prepare a new copy" and "Download", never "Download my data"', async () => {
+    const ready = subjectJobFixture({ status: 'succeeded' })
+    service.listMyExports.mockResolvedValue(subjectJobList([ready]))
+    render(withSwr(<Harness />))
+    await waitFor(() => expect(downloadButton()).toBeEnabled())
+    expect(restartButton()).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Prepare a new copy' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: UI_SENTENCES.my_data_start })).toBeNull()
+  })
+
+  it('a failed list read beside a ready export: Download is hidden, so the start button reads "Download my data"', async () => {
+    const ready = subjectJobFixture({ status: 'succeeded' })
+    render(withSwr(<MyDataCard latest={ready} loadError={new Error('boom')} onChanged={() => undefined} />))
+    expect(await screen.findByText(LOAD_EXPORTS_FAILED)).toBeInTheDocument()
+    expect(startButton()).toBeEnabled()
+    expect(screen.queryByRole('button', { name: UI_SENTENCES.my_data_restart })).toBeNull()
+    expect(downloadButton()).toBeNull()
   })
 
   it('the list read fails: "Could not load your exports." (the error the page hands in)', async () => {

@@ -7,8 +7,11 @@ import { describe, expect, it } from 'vitest'
 import { subjectJobFixture, subjectJobList } from '@/test/subjectRightsMocks'
 import { ERROR_SENTENCES, UI_SENTENCES } from '@/types/subjectRights'
 import {
+  EXPORT_PERSON,
   EXPORT_QUEUED_PERSON,
   exportView,
+  MY_DATA_RESTART,
+  MY_DATA_START,
   newestErasure,
   newestExport,
   readyLine,
@@ -19,13 +22,17 @@ const MB = 1024 * 1024
 
 describe('exportView', () => {
   it('no export yet: the sentence, the start button enabled, no Download', () => {
-    expect(exportView(null)).toEqual({ kind: 'none', line: UI_SENTENCES.export_none, download: false, startDisabled: false })
+    expect(exportView(null)).toEqual({
+      kind: 'none', line: UI_SENTENCES.export_none, download: false, startDisabled: false, startLabel: MY_DATA_START,
+    })
   })
 
   it('a queued or running export: "Preparing your archive…" for the person, the start button disabled', () => {
     for (const status of ['queued', 'running'] as const) {
       const view = exportView(subjectJobFixture({ status }))
-      expect(view).toEqual({ kind: 'running', line: UI_SENTENCES.export_queued, download: false, startDisabled: true })
+      expect(view).toEqual({
+        kind: 'running', line: UI_SENTENCES.export_queued, download: false, startDisabled: true, startLabel: MY_DATA_START,
+      })
     }
     expect(exportView(subjectJobFixture({ status: 'running' }), { audience: 'person' }).line).toBe(EXPORT_QUEUED_PERSON)
   })
@@ -60,7 +67,37 @@ describe('exportView', () => {
     const past = subjectJobFixture({ status: 'succeeded', expires_at: new Date(now - 1000).toISOString() })
     const pathless = subjectJobFixture({ status: 'succeeded', download_path: null })
     for (const job of [expired, past, pathless]) {
-      expect(exportView(job, { now })).toEqual({ kind: 'expired', line: ERROR_SENTENCES.export_expired, download: false, startDisabled: false })
+      expect(exportView(job, { now })).toEqual({
+        kind: 'expired', line: ERROR_SENTENCES.export_expired, download: false, startDisabled: false, startLabel: MY_DATA_START,
+      })
+    }
+  })
+})
+
+describe('exportView: the start button label (W32, OR-10 (5))', () => {
+  it('the person\'s own card: "Prepare a new copy" with an export ready, "Download my data" in every other state', () => {
+    const now = Date.now()
+    const ready = subjectJobFixture({ status: 'succeeded', expires_at: new Date(now + 3_600_000).toISOString() })
+    expect(MY_DATA_RESTART).toBe('Prepare a new copy')
+    expect(exportView(ready, { now }).startLabel).toBe('Prepare a new copy')
+    const others = [
+      null,
+      subjectJobFixture({ status: 'running' }),
+      subjectJobFixture({ status: 'failed' }),
+      subjectJobFixture({ status: 'expired' }),
+    ]
+    for (const job of others) {
+      expect(exportView(job, { now }).startLabel, job?.status ?? 'none').toBe('Download my data')
+    }
+  })
+
+  it('the admin\'s Export block always reads "Export this person\'s data", a ready export included', () => {
+    const now = Date.now()
+    const ready = subjectJobFixture({ status: 'succeeded', expires_at: new Date(now + 3_600_000).toISOString() })
+    expect(exportView(ready, { audience: 'person', now }).startLabel).toBe(EXPORT_PERSON)
+    expect(EXPORT_PERSON).toBe("Export this person's data")
+    for (const job of [null, subjectJobFixture({ status: 'running' }), subjectJobFixture({ status: 'failed' })]) {
+      expect(exportView(job, { audience: 'person', now }).startLabel).toBe(EXPORT_PERSON)
     }
   })
 })

@@ -48,7 +48,7 @@ export default function SettingsPage() {
                     data-settings-index-item={item.id}
                     className="flex items-center gap-3 px-4 py-2 hover:bg-[var(--color-bg-hover)]"
                   >
-                    {/* 224 px: the longest name, "Jira, Splunk, OCP, Slack, Teams", is 201 px in CI's DejaVu Sans (cut at 192). */}
+                    {/* 224 px: sized in P5 for the then-longest name (201 px in CI's DejaVu Sans); kept — `settings-index.spec.ts` proves no name or description is cut. */}
                     <span className="w-56 shrink-0 truncate text-sm font-medium text-[var(--color-text)]">{item.label}</span>
                     <span className="min-w-0 flex-1 truncate text-sm text-[var(--color-text-muted)]">{item.description}</span>
                     <ChevronRight className="h-4 w-4 shrink-0 text-[var(--color-text-faint)]" aria-hidden="true" />

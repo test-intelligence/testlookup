@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
 import { useState } from 'react'
-import { AlertTriangle, DollarSign, RefreshCw, Save, ShieldAlert } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Save } from 'lucide-react'
 import toast from 'react-hot-toast'
 import ExperimentalBadge from '@/components/ui/ExperimentalBadge'
+import MetricCard from '@/components/ui/MetricCard'
 import PageHeader from '@/components/ui/PageHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import DataUnavailable from '@/components/ui/DataUnavailable'
@@ -80,35 +81,39 @@ export default function BillingPage() {
         subtitle={`Current period: ${formatDate(overview.period_start)} — ${formatPeriodEnd(overview.period_end)}`}
       />
 
-      {/* Workspace tiles */}
-      <div className="grid grid-cols-4 gap-3">
-        <SummaryTile
-          icon={<DollarSign className="h-4 w-4" />}
-          label="Total spend (period)"
-          value={formatSpend(overview.total_cost_usd)}
+      {/* Workspace tiles — W32 (W29e F-9): the house KPI tile in a 2 × 2 grid. MetricCard keeps its label to ONE
+          truncated line; at 4-up (≈ 141 px inside a tile at 1280) three of these labels were cut under DejaVu, at
+          2-up (≈ 328 px) the longest, "PROJECTED OVERAGE CHARGE" (≈ 195 px), keeps ≈ 133 px. Labels verbatim. */}
+      <div data-billing-summary="" className="grid grid-cols-2 gap-3">
+        <MetricCard
+          title="Total spend (period)"
+          hint="LLM spend in the current billing period"
+          metric={{ value: formatSpend(overview.total_cost_usd) }}
         />
-        <SummaryTile
-          label="LLM calls"
-          value={formatNumber(overview.total_llm_calls)}
+        <MetricCard
+          title="LLM calls"
+          hint="LLM calls in the current billing period"
+          metric={{ value: formatNumber(overview.total_llm_calls) }}
         />
-        <SummaryTile
-          icon={<ShieldAlert className="h-4 w-4 text-[var(--status-broken)]" />}
-          label="Projects over soft-warn"
-          value={overview.projects
-            .filter((p) => p.status === 'SOFT_WARN' || p.status === 'CAPPED')
-            .length.toString()}
+        <MetricCard
+          title="Projects over soft-warn"
+          hint="Projects past their soft-warn threshold, capped projects included"
+          metric={{
+            value: overview.projects.filter((p) => p.status === 'SOFT_WARN' || p.status === 'CAPPED').length.toString(),
+          }}
           tone={
             overview.projects.some((p) => p.status === 'CAPPED')
-              ? 'error'
+              ? 'bad'
               : overview.projects.some((p) => p.status === 'SOFT_WARN')
               ? 'warn'
               : 'neutral'
           }
         />
-        <SummaryTile
-          label="Projected overage charge"
-          value={formatUsd(projectedCharge)}
-          testId="billing-projected-charge"
+        <MetricCard
+          title="Projected overage charge"
+          hint="The month-end overage charge projected from the spend so far, summed over the projects with a projection"
+          metric={{ value: formatUsd(projectedCharge) }}
+          data-testid="billing-projected-charge"
         />
       </div>
 
@@ -165,36 +170,6 @@ export default function BillingPage() {
           </tbody>
         </table>
       </div>
-    </div>
-  )
-}
-
-function SummaryTile({
-  icon,
-  label,
-  value,
-  tone = 'neutral',
-  testId,
-}: {
-  icon?: React.ReactNode
-  label: string
-  value: string
-  tone?: 'neutral' | 'warn' | 'error'
-  testId?: string
-}) {
-  const borderClass =
-    tone === 'error'
-      ? 'border-[var(--status-failed-bd)]/40'
-      : tone === 'warn'
-      ? 'border-[var(--status-broken-bd)]/40'
-      : 'border-[var(--color-border)]'
-  return (
-    <div data-testid={testId} className={`rounded-md border ${borderClass} bg-[var(--color-bg-card)] p-3`}>
-      <div className="flex items-center gap-1.5 eyebrow uppercase text-[var(--color-text-muted)]">
-        {icon}
-        {label}
-      </div>
-      <div className="text-lg font-semibold text-[var(--color-text)] mt-1">{value}</div>
     </div>
   )
 }

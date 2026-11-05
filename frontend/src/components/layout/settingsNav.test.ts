@@ -75,6 +75,14 @@ describe('settings sub-nav: the routes it links to', () => {
     expect(missing, 'routed settings/admin pages with no item in settingsNav.ts').toEqual([])
   })
 
+  it('the Integrations page\'s item reads "Integrations"; its description lists the services, Prometheus included (W32 / W23d F-8)', () => {
+    expect(ITEMS.find((i) => i.id === 'integrations')).toMatchObject({
+      label: 'Integrations',
+      description: 'Jira, Splunk, OCP, Prometheus, Slack and Teams',
+      to: '/settings/integrations',
+    })
+  })
+
   it('ids are unique, and each item names what its page is for', () => {
     const ids = ITEMS.map((i) => i.id)
     expect(new Set(ids).size).toBe(ids.length)

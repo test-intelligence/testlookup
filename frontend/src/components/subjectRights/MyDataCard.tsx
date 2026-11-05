@@ -3,6 +3,8 @@
  *
  * "Download my data" → `POST /api/v1/me/data-export` → the job polls ("Preparing your archive…") → "Ready — 1.4 MB,
  * signed. Available until …" + Download. Below: erasure is asked of an administrator (never self-service, §2.3).
+ * With a ready export the start button reads "Prepare a new copy" (W32, OR-10 (5)): it starts a NEW export, and
+ * Download beside it fetches the ready one.
  *
  *   - The newest export comes from the PAGE's list read (`latest`; the page binds `useMyExports().error`, which the
  *     routed-pages error guard reads there, and hands it in as `loadError`). The card polls ONE job: the one it
@@ -124,7 +126,8 @@ export default function MyDataCard({ latest, loadError, onChanged }: Props) {
           disabled={view.startDisabled || starting || loading}
         >
           {starting ? <LoadingSpinner size="sm" /> : <FileLock2 className="h-4 w-4" aria-hidden="true" />}
-          {MY_DATA_START}
+          {/* A failed list read hides Download, so the button must not promise a "new" copy of one it does not show. */}
+          {listFailed ? MY_DATA_START : view.startLabel}
         </button>
         {view.download && !listFailed && (
           <button
