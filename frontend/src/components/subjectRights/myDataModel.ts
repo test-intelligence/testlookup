@@ -21,6 +21,8 @@ import { formatCompactDateTime } from '@/utils/formatters'
 export const MY_DATA_TITLE = UI_SENTENCES.my_data_title
 export const MY_DATA_BODY = UI_SENTENCES.my_data_body
 export const MY_DATA_START = UI_SENTENCES.my_data_start
+/** W32 (OR-10 (5)): with an export ready, the start button starts a NEW copy — it says so beside "Download". */
+export const MY_DATA_RESTART = UI_SENTENCES.my_data_restart
 /** The muted line under the Profile card: erasure is an administrator's step (§2.3), never self-service. */
 export const ERASURE_BY_ADMIN =
   'To have your account erased, ask an administrator. Erasure cannot be undone and keeps audit records, as the law allows.'
@@ -50,8 +52,13 @@ export interface ExportView {
   line: string
   /** ready: the Download button is offered. */
   download: boolean
-  /** The start button ("Download my data" / "Export this person's data") is disabled — a job is running. */
+  /** The start button is disabled — a job is running. */
   startDisabled: boolean
+  /**
+   * The start button's label. The person's own card: "Prepare a new copy" when an export is ready (the Download
+   * button beside it fetches that one), else "Download my data". The admin's block: "Export this person's data".
+   */
+  startLabel: string
 }
 
 export type ExportAudience = 'self' | 'person'
@@ -82,11 +89,12 @@ export function exportView(
   job: SubjectJob | null | undefined,
   { audience = 'self', now = Date.now() }: { audience?: ExportAudience; now?: number } = {},
 ): ExportView {
-  const idle = { download: false, startDisabled: false }
+  const startLabel = audience === 'self' ? MY_DATA_START : EXPORT_PERSON
+  const idle = { download: false, startDisabled: false, startLabel }
   if (!job) return { kind: 'none', line: UI_SENTENCES.export_none, ...idle }
   if (isActiveJob(job)) {
     const line = audience === 'self' ? UI_SENTENCES.export_queued : EXPORT_QUEUED_PERSON
-    return { kind: 'running', line, download: false, startDisabled: true }
+    return { kind: 'running', line, download: false, startDisabled: true, startLabel }
   }
   if (job.status === 'failed') {
     return { kind: 'failed', line: job.error?.message?.trim() || ERROR_SENTENCES.export_failed, ...idle }
@@ -94,7 +102,13 @@ export function exportView(
   const expiresAt = timeOf(job.expires_at)
   const ready = job.status === 'succeeded' && Boolean(job.download_path) && (expiresAt === null || now < expiresAt)
   if (!ready) return { kind: 'expired', line: ERROR_SENTENCES.export_expired, ...idle }
-  return { kind: 'ready', line: readyLine(job), download: true, startDisabled: false }
+  return {
+    kind: 'ready',
+    line: readyLine(job),
+    download: true,
+    startDisabled: false,
+    startLabel: audience === 'self' ? MY_DATA_RESTART : EXPORT_PERSON,
+  }
 }
 
 /** The newest export of a newest-first list: `undefined` while the read is in flight, `null` when there is none. */

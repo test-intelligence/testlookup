@@ -233,7 +233,9 @@ describe('BulkActionBar', () => {
     renderBar({ selected: [A] })
     expect(useProjectMembers.mock.calls.every(([projectId]) => projectId === null)).toBe(true)
     fireEvent.change(action(), { target: { value: 'set_owner' } })
-    expect(useProjectMembers).toHaveBeenLastCalledWith('p-1')
+    // It reuses the list the page already holds: no re-read of a cached key on a late subscribe (W32, the
+    // test-case-bulk.spec second-GET flake on CI).
+    expect(useProjectMembers).toHaveBeenLastCalledWith('p-1', { revalidateIfStale: false })
     const owner = screen.getByRole('combobox', { name: 'Owner' })
     expect(optionLabels(owner)).toEqual(['Choose an owner…', 'Unassigned', 'ana', 'Priya Shah'])
     expect(apply()).toBeDisabled()
@@ -249,7 +251,7 @@ describe('BulkActionBar', () => {
     await screen.findByRole('status')
     expect(bulkUpdate.mock.calls[1][0]).toMatchObject({ action: 'set_owner', assignee_id: null })
     fireEvent.change(action(), { target: { value: 'set_priority' } })
-    expect(useProjectMembers).toHaveBeenLastCalledWith(null)
+    expect(useProjectMembers).toHaveBeenLastCalledWith(null, { revalidateIfStale: false })
   })
 
   it('actionRef reaches the Action select (⌘E / Ctrl+E focuses it)', () => {

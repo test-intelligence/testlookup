@@ -4,7 +4,7 @@ How TestLookup files and tracks issues in Jira (or your own tracker through a we
 
 ## Connecting Jira
 
-1. Under **Settings → Integrations → Jira, Splunk, OCP, Slack, Teams**, an administrator fills in the Jira **Domain**, **Email**, **Default Project Key** and **API Token**, and ticks **Enabled** (or sets the equivalent `JIRA_*` environment variables; see the [integrations reference](../docs/operations/integrations.md)).
+1. Under **Settings → Integrations → Integrations** (the Jira card), an administrator fills in the Jira **Domain**, **Email**, **Default Project Key** and **API Token**, and ticks **Enabled** (or sets the equivalent `JIRA_*` environment variables; see the [integrations reference](../docs/operations/integrations.md)).
 2. Set each project's **Jira Project Key** on **Projects** if it differs from the default.
 3. Turn off `AI_OFFLINE_MODE`, or the Jira target stays disabled: offline mode is a hard switch above every integration setting.
 4. Check **Integration health** shows Jira as healthy.

@@ -71,6 +71,7 @@ export const UI_SENTENCES = {
   my_data_title: 'Your data',
   my_data_body: 'Download a copy of everything TestLookup holds about you: profile, memberships, preferences, sessions and key details (never a secret), sign-in links, your comments and reviews, chat history, assignments, and the activity and audit records where you are the actor.',
   my_data_start: 'Download my data',
+  my_data_restart: 'Prepare a new copy',
   export_queued: 'Preparing your archive…',
   export_ready: 'Ready — {size}, signed. Available until {expires}.',
   export_none: 'No export yet.',

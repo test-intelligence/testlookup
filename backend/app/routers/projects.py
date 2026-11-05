@@ -14,6 +14,7 @@ from app.core.deps import (
     require_project_access,
     require_role,
 )
+from app.db.mongo import get_mongo_db
 from app.db.postgres import get_db
 from app.services.activity.service import ActorRef, record as record_activity
 from app.models.postgres import (
@@ -384,6 +385,9 @@ async def reset_project_data(
     test_plans, test_strategies, and knowledge_sources. The Project
     row, its members, API keys, and AI/SSO config survive.
 
+    Both modes first delete the runs' stored MongoDB documents; the
+    per-collection counts are returned as ``documents``.
+
     Two-step confirmation: ``payload.confirmation_name`` must equal
     the project's ``name`` exactly (case-sensitive). A mismatch
     returns 422 and nothing is deleted.
@@ -428,6 +432,8 @@ async def reset_project_data(
             confirmation_name=payload.confirmation_name,
             actor_id=current_user.id,
             actor_name=current_user.full_name or current_user.email,
+            # W32 F-7: the runs' Mongo documents go first (synchronous getter).
+            mongo=get_mongo_db(),
         )
     except ProjectNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -188,7 +188,8 @@ async def test_a_manually_moved_case_stays_moved(engine, world):
         counts = await svc.sync_canonical_test_cases(db, world.project, world.run)
         await db.commit()
 
-    assert counts == {"added": 0, "updated": 1, "linked": 1, "skipped": 0}
+    # W32 (deliberate): the count map always carries first_seen_backfilled.
+    assert counts == {"added": 0, "updated": 1, "linked": 1, "skipped": 0, "first_seen_backfilled": 0}
     assert (await _canonical(engine, world.project, fp)).test_suite_id == world.suite_b
 
 
@@ -217,3 +218,95 @@ async def test_every_case_is_linked_across_chunk_boundaries(engine, world, monke
         f"{len(selects)} canonical SELECTs for 23 fingerprints in chunks of 5"
     )
     assert await _unlinked(engine, world.run) == 0
+
+
+# ── W24 F-6 (W32): first RETAINED sighting ───────────────────────────────────
+
+
+async def _orphan_canonical(engine, project_id, suite_id, fp) -> uuid.UUID:
+    """A catalog row with NULL run pointers (an imported catalog's shape)."""
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        row = CanonicalTestCase(project_id=project_id, test_suite_id=suite_id, test_fingerprint=fp,
+                                test_name=f"t_{fp[:8]}", first_seen_run_id=None, last_seen_run_id=None)
+        db.add(row)
+        await db.commit()
+        return row.id
+
+
+async def _link(engine, run_id, fp, canonical_id) -> None:
+    async with AsyncSession(engine) as db:
+        await db.execute(
+            text("UPDATE test_cases SET canonical_test_case_id = :c WHERE test_run_id = :r AND test_fingerprint = :f"),
+            {"c": canonical_id, "r": run_id, "f": fp},
+        )
+        await db.commit()
+
+
+async def _added_on(engine, project_id, run_id) -> set[str]:
+    from app.services.suite_membership_cutover import canonical_changes
+
+    async with AsyncSession(engine) as db:
+        events = await canonical_changes(db, suite_name="Suite A", project_id=project_id, run_id=run_id, limit=50)
+    return {e["test_fingerprint"] for e in events if e["event_type"] == "added"}
+
+
+async def test_an_imported_catalog_row_takes_its_first_ingest_as_first_sighting(engine, world):
+    fp = _fp()
+    canonical_id = await _orphan_canonical(engine, world.project, world.suite_a, fp)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        await _add_cases(db, world.run, [fp])
+        await db.commit()
+    # the ingest-time step anchor links the run's own case before the sync pass
+    await _link(engine, world.run, fp, canonical_id)
+
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        counts = await svc.sync_canonical_test_cases(db, world.project, world.run)
+        await db.commit()
+
+    assert counts["first_seen_backfilled"] == 1
+    row = await _canonical(engine, world.project, fp)
+    assert (row.first_seen_run_id, row.last_seen_run_id) == (world.run, world.run)
+    assert fp in await _added_on(engine, world.project, world.run)
+
+
+async def test_a_purged_first_run_with_a_kept_sighting_stays_null_and_adds_nothing(engine, world):
+    fp = _fp()
+    canonical_id = await _orphan_canonical(engine, world.project, world.suite_a, fp)
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        await _add_cases(db, world.other_run, [fp])          # a KEPT run already saw it
+        await _add_cases(db, world.run, [fp])
+        await db.commit()
+    await _link(engine, world.other_run, fp, canonical_id)
+
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        counts = await svc.sync_canonical_test_cases(db, world.project, world.run)
+        await db.commit()
+
+    assert counts["first_seen_backfilled"] == 0
+    row = await _canonical(engine, world.project, fp)
+    assert row.first_seen_run_id is None and row.last_seen_run_id == world.run
+    assert fp not in await _added_on(engine, world.project, world.run), "no false 'added' after a purge"
+
+
+async def test_a_runs_reset_survivor_is_backfilled(engine, world):
+    fp = _fp()
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        db.add(CanonicalTestCase(project_id=world.project, test_suite_id=world.suite_a, test_fingerprint=fp,
+                                 test_name="t", first_seen_run_id=world.other_run, last_seen_run_id=world.other_run))
+        await _add_cases(db, world.other_run, [fp])
+        await db.commit()
+    canonical_id = (await _canonical(engine, world.project, fp)).id
+    await _link(engine, world.other_run, fp, canonical_id)
+    async with AsyncSession(engine) as db:                   # the reset: the run goes, pointers SET NULL
+        await db.execute(text("DELETE FROM test_runs WHERE id = :r"), {"r": world.other_run})
+        await db.commit()
+    assert (await _canonical(engine, world.project, fp)).first_seen_run_id is None
+
+    async with AsyncSession(engine, expire_on_commit=False) as db:
+        await _add_cases(db, world.run, [fp])
+        counts = await svc.sync_canonical_test_cases(db, world.project, world.run)
+        await db.commit()
+
+    assert counts["first_seen_backfilled"] == 1
+    assert (await _canonical(engine, world.project, fp)).first_seen_run_id == world.run
+    assert fp in await _added_on(engine, world.project, world.run)

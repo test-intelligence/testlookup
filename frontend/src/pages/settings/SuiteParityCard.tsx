@@ -172,7 +172,9 @@ export default function SuiteParityCard() {
           compareButton
         ) : null}
       </div>
-      <p className="m-0 break-words text-xs text-[var(--color-text-muted)]">{PARITY_TEXT.explainer}</p>
+      {/* W32 (F-W25d-3): past tense once the comparison is retired; while loading / on a load error the state is
+          unknown, so the present-tense default. */}
+      <p className="m-0 break-words text-xs text-[var(--color-text-muted)]">{view ? view.explainer : PARITY_TEXT.explainer}</p>
 
       {error ? (
         <p className="m-0 text-sm text-[var(--ui-danger-ink)]">{PARITY_TEXT.loadError}</p>

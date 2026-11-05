@@ -3,7 +3,7 @@
  * theme (`THEMES_WITH_PAPER`), each a state the product produces together:
  *
  *  - `profile-my-data` — Settings › Profile's "Your data" card with a finished export of my own data: the body,
- *    "Download my data" + Download, "Ready — 1.4 MB, signed. Available until Sep 21, 11:59." and the line saying an
+ *    "Prepare a new copy" + Download (W32), "Ready — 1.4 MB, signed. Available until Sep 21, 11:59." and the line saying an
  *    erasure is asked of an administrator;
  *  - `users-personal-data` — a Users row's Personal data section as an ADMIN opens it for a person with no export yet:
  *    the Export block ("No export yet."), and the Erase panel's preview — 6 changes, 4 kept (one "not counted (took

@@ -75,6 +75,21 @@ describe('ReleaseCalendar', () => {
     expect(onMonth).toHaveBeenLastCalledWith(new Date().toISOString().slice(0, 7))
   })
 
+  it('W32 / W29e F-8: a bar\'s line is the leading-normal RATIO, and the week row\'s lanes and height follow --text-xs', () => {
+    const { calendar } = renderCalendar()
+    for (const item of Array.from(calendar.querySelectorAll('[data-calendar-item]'))) {
+      expect(item).toHaveClass('leading-normal')
+      expect(item.className).not.toContain('leading-[')
+    }
+    const week = calendar.querySelector('[data-calendar-week]') as HTMLElement
+    const classes = week.className.split(/\s+/)
+    const rows = classes.find((c) => c.startsWith('grid-rows-')) ?? ''
+    const height = classes.find((c) => c.startsWith('h-')) ?? ''
+    // 18 px lanes at the desk (12 px × 1.5), 24 px in presentation mode; 34 + 4.5 × 12 = 88 px at the desk.
+    expect(rows).toBe('grid-rows-[22px_repeat(3,calc(var(--text-xs)*1.5))]')
+    expect(height).toBe('h-[calc(34px_+_var(--text-xs)*4.5)]')
+  })
+
   it('is six week rows, and no element carries an inline style built from the data', () => {
     const { calendar } = renderCalendar()
     expect(calendar.querySelectorAll('[data-calendar-week]')).toHaveLength(6)

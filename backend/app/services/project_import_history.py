@@ -472,7 +472,10 @@ def _rewrite(spec: Any, doc: dict[str, Any], *, remap: HistoryRemap, new_project
     """G-A's ``rewrite_document`` with this import's remaps (key + id fields + project field; ``_id`` dropped)."""
     from app.services.project_export_documents import rewrite_document
 
-    remaps = {table: remap.mapper(table) for table in ("test_runs", "test_cases", "agent_pipeline_runs")}
+    # W32 F-W30-8: ``evidence_artifacts`` for the evidence refs nested in decision reports / attempts (an
+    # unbounded table: uuid5(job_id, src) == the imported row's id; a skipped artifact maps to an id no row has).
+    remaps = {table: remap.mapper(table)
+              for table in ("test_runs", "test_cases", "agent_pipeline_runs", "evidence_artifacts")}
     return rewrite_document(spec, doc, remaps=remaps, new_project_id=str(new_project_id), new_run_id=new_run_id)
 
 

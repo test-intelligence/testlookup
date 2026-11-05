@@ -1289,6 +1289,10 @@ class SuiteParityCutoverResult(BaseModel):
 class ProjectResetResponse(BaseModel):
     mode: Literal["runs", "full"]
     deleted: dict[str, int]
+    #: W32 F-7: Mongo documents deleted per run-scoped collection (a key per
+    #: collection, 0 included; ``{}`` when the project had no runs). ``None`` =
+    #: not measured (no store was given), never zeros.
+    documents: Optional[dict[str, int]] = None
 
 
 # ── Test Run Schemas ──────────────────────────────────────────

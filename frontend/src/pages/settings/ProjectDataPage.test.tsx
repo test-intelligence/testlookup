@@ -167,6 +167,52 @@ describe('ProjectDataPage', () => {
     expect(screen.getByText(/test_runs/)).toBeInTheDocument()
   })
 
+  describe('W32 (W23d F-7): the run-scoped MongoDB documents', () => {
+    const MONGO_LINE = 'MongoDB run documents (raw results; summaries; AI payloads; decision reports)'
+
+    /** Open "Delete test runs", type the name, confirm; resolve with the card. */
+    async function resetWith(documents: Record<string, number> | null | undefined) {
+      mockReset.mockResolvedValue({ mode: 'runs', deleted: { test_runs: 5 }, documents })
+      renderPage()
+      fireEvent.click(screen.getByRole('button', { name: /delete test runs/i }))
+      fireEvent.change(screen.getByLabelText(/type .* to confirm/i), { target: { value: 'GoogleSearch' } })
+      fireEvent.click(
+        screen.getAllByRole('button', { name: /delete test runs/i }).filter((b) => b.getAttribute('aria-disabled') !== null)[0],
+      )
+      const heading = await screen.findByRole('heading', { name: /reset complete \(runs\)/i })
+      return heading.closest('section') as HTMLElement
+    }
+
+    it('the "will delete" list names the documents, verbatim', () => {
+      renderPage()
+      fireEvent.click(screen.getByRole('button', { name: /delete test runs/i }))
+      const items = screen.getAllByRole('listitem').map((li) => li.textContent)
+      expect(items).toContain(MONGO_LINE)
+    })
+
+    it('the result card lists each collection with documents deleted, a count of 1 in the singular, zeros skipped', async () => {
+      const card = await resetWith({ raw_allure_json: 12, run_summaries: 1, pipeline_event_log: 0 })
+      const lines = within(card).getAllByRole('listitem').map((li) => li.textContent)
+      expect(lines).toEqual([
+        'test_runs: 5 rows deleted',
+        'raw_allure_json: 12 documents deleted',
+        'run_summaries: 1 document deleted',
+      ])
+      expect(within(card).queryByText(/not measured/)).toBeNull()
+    })
+
+    it('documents null (not measured) reads "Stored run documents: not measured", never zeros', async () => {
+      const card = await resetWith(null)
+      expect(within(card).getByText('Stored run documents: not measured')).toBeInTheDocument()
+      expect(within(card).queryByText(/documents? deleted/)).toBeNull()
+    })
+
+    it('documents {} (the project had no runs): no document line', async () => {
+      const card = await resetWith({})
+      expect(within(card).getAllByRole('listitem').map((li) => li.textContent)).toEqual(['test_runs: 5 rows deleted'])
+    })
+  })
+
   // W29a UIX-01 (L2): the typed confirmation's Delete is the shared .btn-danger
   // (white on the 15 % failed tint was 1.26:1 on Lab), for both modes.
   it.each([/delete test runs/i, /wipe project data/i])(

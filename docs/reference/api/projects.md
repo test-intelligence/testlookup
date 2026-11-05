@@ -10,7 +10,7 @@ List Projects
 
 
 
-Source: [backend/app/routers/projects.py:62](../../../backend/app/routers/projects.py#L62).
+Source: [backend/app/routers/projects.py:63](../../../backend/app/routers/projects.py#L63).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -103,7 +103,7 @@ Create Project
 
 
 
-Source: [backend/app/routers/projects.py:126](../../../backend/app/routers/projects.py#L126).
+Source: [backend/app/routers/projects.py:127](../../../backend/app/routers/projects.py#L127).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -195,7 +195,7 @@ revoked nothing: the auto-provisioned QA-lead account stayed live, and
 any API key bound to the project kept authenticating and kept accepting
 ingestion. See ``project_access_revocation_service`` for the measurements.
 
-Source: [backend/app/routers/projects.py:254](../../../backend/app/routers/projects.py#L254).
+Source: [backend/app/routers/projects.py:255](../../../backend/app/routers/projects.py#L255).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -275,7 +275,7 @@ Get Project
 
 
 
-Source: [backend/app/routers/projects.py:170](../../../backend/app/routers/projects.py#L170).
+Source: [backend/app/routers/projects.py:171](../../../backend/app/routers/projects.py#L171).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -362,7 +362,7 @@ Update Project
 
 Update a project's attributes. Only non-None fields are applied. Requires QA_LEAD or higher.
 
-Source: [backend/app/routers/projects.py:183](../../../backend/app/routers/projects.py#L183).
+Source: [backend/app/routers/projects.py:184](../../../backend/app/routers/projects.py#L184).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -469,7 +469,7 @@ yet (covers projects created before this feature shipped). Returns
 the new password so the operator can hand it off; the response is
 not persisted anywhere else.
 
-Source: [backend/app/routers/projects.py:443](../../../backend/app/routers/projects.py#L443).
+Source: [backend/app/routers/projects.py:449](../../../backend/app/routers/projects.py#L449).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -573,11 +573,14 @@ perf_baselines, flaky_quarantine_requests, managed_test_cases,
 test_plans, test_strategies, and knowledge_sources. The Project
 row, its members, API keys, and AI/SSO config survive.
 
+Both modes first delete the runs' stored MongoDB documents; the
+per-collection counts are returned as ``documents``.
+
 Two-step confirmation: ``payload.confirmation_name`` must equal
 the project's ``name`` exactly (case-sensitive). A mismatch
 returns 422 and nothing is deleted.
 
-Source: [backend/app/routers/projects.py:352](../../../backend/app/routers/projects.py#L352).
+Source: [backend/app/routers/projects.py:353](../../../backend/app/routers/projects.py#L353).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -683,7 +686,7 @@ QA lead is re-enabled by resetting its password from Members). Members
 keep their memberships; runs and history are untouched. 409 when the
 project is not archived.
 
-Source: [backend/app/routers/projects.py:307](../../../backend/app/routers/projects.py#L307).
+Source: [backend/app/routers/projects.py:308](../../../backend/app/routers/projects.py#L308).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

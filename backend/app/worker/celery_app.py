@@ -5,6 +5,7 @@ from pathlib import Path
 from celery import Celery
 from celery.signals import (
     celeryd_init,
+    setup_logging,
     task_postrun,
     task_prerun,
     worker_process_init,
@@ -686,6 +687,20 @@ del _entry, _options
 # parent and sibling children are still using. Clearing means the next
 # ``get_engine()`` inside this child constructs a fresh engine, and the inherited
 # one is simply never used again here.
+@setup_logging.connect
+def _configure_structured_logging(**_kwargs: object) -> None:
+    """The worker and beat log through the API's pipeline (``configure_logging``): ``LOG_FORMAT``, the service fields
+    and the privacy redaction processor on every record, messages included.
+
+    Only ``app.main`` called ``configure_logging()``, and no worker or beat process imports it, so their lines went
+    through structlog's unconfigured defaults and Celery's own handlers: no ``_privacy_redaction`` (e-mail and secret
+    masking) and no JSON (found writing W32's log-store guidance, 2026-11-05). A receiver on this signal also tells
+    Celery not to replace the root logger's handlers with its own."""
+    from app.core.logging_config import configure_logging
+
+    configure_logging()
+
+
 @worker_process_init.connect
 def _reset_db_pool_after_fork(**_kwargs: object) -> None:
     """Give every prefork child its own DB engine and connection pool."""

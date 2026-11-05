@@ -11,6 +11,11 @@ export interface ProjectResetRequest {
 export interface ProjectResetResponse {
   mode: ProjectResetMode
   deleted: Record<string, number>
+  /**
+   * W32 (W23d F-7): the run-scoped MongoDB documents the reset deleted, by collection (`{}` when the project had
+   * no runs). `null` = not measured (no document store was given) — never read as zeros.
+   */
+  documents?: Record<string, number> | null
 }
 
 export interface DefaultQaLeadResetResponse {
