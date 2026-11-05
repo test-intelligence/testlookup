@@ -33,13 +33,17 @@ from app.models.postgres import SearchQueryEvent
 from app.models.schemas import SearchUsageRead
 from app.services import search_usage_service as svc
 
+#: The expected SQL below is psycopg2's rendering. SQLAlchemy 2.1 made psycopg (3) the
+#: default ``postgresql.dialect()``, which adds a cast to every bind (``%(x)s::INTEGER``).
+_PIN_DIALECT = postgresql.psycopg2.dialect
+
 NOW = datetime(2026, 10, 24, 14, 5, 30, tzinfo=timezone.utc)
 TERM = "zq-sentinel-7 checkout"
 PROJECT = uuid.uuid4()
 
 
 def _sql(stmt) -> str:
-    return str(stmt.compile(dialect=postgresql.dialect()))
+    return str(stmt.compile(dialect=_PIN_DIALECT()))
 
 
 class _Result:
@@ -173,7 +177,7 @@ async def test_one_statement_pinned_to_the_project():
     assert "count(*) FILTER (WHERE search_query_events.fallback_reason IS NOT NULL)" in sql
     assert "search_query_events.created_at >= %(created_at_1)s" in sql
     assert "search_query_events.project_id = %(project_id_1)s" in sql
-    params = stmt.compile(dialect=postgresql.dialect()).params
+    params = stmt.compile(dialect=_PIN_DIALECT()).params
     assert params["created_at_1"] == datetime(2026, 10, 24, tzinfo=timezone.utc)
     assert params["project_id_1"] == PROJECT
     assert db.commits == 0
@@ -192,7 +196,7 @@ async def test_a_members_projects_ride_any_and_admin_reads_everything():
     await svc.usage_summary(db, project_id=None, allowed_project_ids={a, b}, days=7, now=NOW)
     sql = _sql(db.statements[0])
     assert "search_query_events.project_id = ANY (%(allowed_project_ids)s::UUID[])" in sql
-    assert set(db.statements[0].compile(dialect=postgresql.dialect()).params["allowed_project_ids"]) == {a, b}
+    assert set(db.statements[0].compile(dialect=_PIN_DIALECT()).params["allowed_project_ids"]) == {a, b}
 
     admin = _Session(_row(searches=1, p50=5, p95=5))
     body = await svc.usage_summary(admin, project_id=None, allowed_project_ids=None, days=30, now=NOW)
@@ -234,7 +238,7 @@ async def test_purge_expired_batch_stages_one_bounded_delete():
     sql = " ".join(_sql(stmt).split())
     assert sql.startswith("DELETE FROM search_query_events WHERE search_query_events.id IN (SELECT search_query_events.id")
     assert "WHERE search_query_events.created_at < %(created_at_1)s ORDER BY search_query_events.created_at LIMIT %(param_1)s" in sql
-    params = stmt.compile(dialect=postgresql.dialect()).params
+    params = stmt.compile(dialect=_PIN_DIALECT()).params
     assert params["created_at_1"] == NOW - timedelta(days=30)
     assert params["param_1"] == USAGE_PURGE_BATCH
     assert "project_id" not in sql, "every project and the All-Projects rows alike"
@@ -242,7 +246,7 @@ async def test_purge_expired_batch_stages_one_bounded_delete():
 
     small = _Session(rowcount=0)
     assert await svc.purge_expired_batch(small, now=NOW, batch=10) == 0
-    assert small.statements[0].compile(dialect=postgresql.dialect()).params["param_1"] == 10
+    assert small.statements[0].compile(dialect=_PIN_DIALECT()).params["param_1"] == 10
 
 
 def test_the_service_is_commit_free_and_logs_nothing():

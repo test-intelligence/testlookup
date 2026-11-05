@@ -846,11 +846,12 @@ class Settings(BaseSettings):
     #: deployment that has not declared a proxy.
     #:
     #: NOT named FORWARDED_ALLOW_IPS on purpose. gunicorn reads that name
-    #: itself, validates it with ipaddress.ip_address() -- which rejects every
-    #: network -- and does so while building its Config, before the config file
-    #: is read. A CIDR under that name therefore kills the process at startup
-    #: with "does not appear to be an IPv4 or IPv6 address" and no way for
-    #: gunicorn_conf.py to intervene. Applying the boundary in the app instead
+    #: itself and validates it while building its Config, before the config
+    #: file is read: gunicorn <=23 with ipaddress.ip_address(), which rejects
+    #: every network ("does not appear to be an IPv4 or IPv6 address"), 24.1+
+    #: strictly, which rejects a CIDR with host bits set. A bad entry under that
+    #: name kills the process at startup with no way for gunicorn_conf.py to
+    #: intervene. Applying the boundary in the app instead
     #: works identically under gunicorn and under a bare uvicorn.
     TRUSTED_PROXY_IPS: str = ""
 

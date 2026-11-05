@@ -369,10 +369,11 @@ def install_proxy_boundary(app: FastAPI) -> None:
     is registered in main.py after ``configure_middlewares``, so the single
     loudest consequence in H2 was still unfixed while the setting looked live.
 
-    It lives in the app rather than in ``gunicorn_conf.py`` because gunicorn's
-    ``forwarded_allow_ips`` rejects CIDRs, and rejects them while building its
-    Config from the environment, before any config file runs. This is the same
-    uvicorn middleware that setting would have configured, minus the validator.
+    It lives in the app rather than in ``gunicorn_conf.py`` because gunicorn
+    validates ``forwarded_allow_ips`` while building its Config from the
+    environment, before any config file runs: gunicorn <=23 rejected every CIDR,
+    and 24.1+ still rejects one with host bits set. This is the same uvicorn
+    middleware that setting would have configured, minus the validator.
 
     Empty means trust nothing, so an undeclared topology never starts believing
     a header any client can set.

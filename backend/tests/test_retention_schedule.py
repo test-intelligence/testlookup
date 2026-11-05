@@ -21,8 +21,9 @@ from app.services import retention_service as svc  # noqa: E402
 from app.services.retention_service import EffectiveRetentionPolicy  # noqa: E402
 
 
+# psycopg2's rendering: SQLAlchemy 2.1's default postgresql.dialect() (psycopg 3) casts every bind.
 def _compiled(now: datetime):
-    return svc.due_project_ids_statement(now=now).compile(dialect=postgresql.dialect())
+    return svc.due_project_ids_statement(now=now).compile(dialect=postgresql.psycopg2.dialect())
 
 
 def test_the_selector_resolves_enabled_and_the_window_three_ways():

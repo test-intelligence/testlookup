@@ -24,7 +24,8 @@ from app.services import project_export_service as svc
 from app.services import project_export_vocab as vocab
 from app.services.project_export_entities import HISTORY, spec_for
 
-PG = postgresql.dialect()
+# psycopg2's rendering: SQLAlchemy 2.1's default postgresql.dialect() (psycopg 3) casts every bind.
+PG = postgresql.psycopg2.dialect()
 
 
 def _sql(statement: Any) -> str:

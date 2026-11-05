@@ -9,8 +9,9 @@
   query with words only;
 * through the ASGI app on a ONE-connection pool (the
   ``test_no_second_session_while_the_request_holds_one.py`` harness), both
-  search routes with ``record=true`` never hold two connections: on FastAPI
-  0.115 ``get_db`` has exited before the background job opens its session.
+  search routes with ``record=true`` never hold two connections. FastAPI 0.118+
+  exits ``get_db`` only after the background job has run, so scheduling the
+  job hands the request's read connection back first (W33).
 """
 from __future__ import annotations
 
@@ -222,6 +223,10 @@ class _PoolSession:
     """Takes the pool's connection on its first statement or commit; gives it back on close."""
 
     commits: list["_PoolSession"] = []
+    # AsyncSession's pending-change sets (release_read_connection reads them).
+    new: tuple = ()
+    dirty: tuple = ()
+    deleted: tuple = ()
 
     def __init__(self, pool: _Pool) -> None:
         self._pool = pool

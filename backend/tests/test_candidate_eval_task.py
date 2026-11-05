@@ -25,6 +25,10 @@ from app.services.step_llm_budget import StepLLMBudget
 from app.worker import tasks
 from app.worker.celery_app import celery_app
 
+#: The expected SQL below is psycopg2's rendering. SQLAlchemy 2.1 made psycopg (3) the
+#: default ``postgresql.dialect()``, which adds a cast to every bind (``%(x)s::INTEGER``).
+_PIN_DIALECT = postgresql.psycopg2.dialect
+
 RUN = uuid.UUID("0000aaaa-0000-0000-0000-00000000c0de")
 PROJECT = uuid.UUID("00000000-0000-0000-0000-0000000000a1")
 
@@ -214,7 +218,7 @@ class _Scripted:
         self.results, self.sql = list(results), []
 
     async def execute(self, statement):
-        compiled = statement.compile(dialect=postgresql.dialect())
+        compiled = statement.compile(dialect=_PIN_DIALECT())
         self.sql.append((str(compiled), compiled.params))
         return self.results.pop(0)
 

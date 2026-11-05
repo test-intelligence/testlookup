@@ -35,6 +35,11 @@ from tests.test_digest_scope import (
     _dispatch,
 )
 
+#: The pins below were captured with psycopg2's rendering. SQLAlchemy 2.1 made psycopg (3)
+#: the default ``postgresql.dialect()``, which adds a cast to every bind (``%(x)s::INTEGER``);
+#: compiling with psycopg2 explicitly keeps each pin about the query, not the default driver.
+_PIN_DIALECT = postgresql.psycopg2.dialect
+
 P = uuid.UUID(int=1)  # the project _compile_digest's pin uses
 Q = uuid.UUID(int=2)
 DECIDED = datetime(2026, 10, 21, 14, 5, tzinfo=timezone.utc)
@@ -98,7 +103,7 @@ class _VerdictSession:
         self.sql: list[str] = []
 
     async def execute(self, stmt):
-        compiled = stmt.compile(dialect=postgresql.dialect())
+        compiled = stmt.compile(dialect=_PIN_DIALECT())
         sql = " ".join(str(compiled).split())
         self.sql.append(sql)
         assert sql.startswith(VERDICT_FROM), f"unexpected statement: {sql}"
@@ -113,7 +118,7 @@ class _DigestSession(_CompilingSession):
         self.releases = list(releases)
 
     async def execute(self, stmt):
-        compiled = stmt.compile(dialect=postgresql.dialect())
+        compiled = stmt.compile(dialect=_PIN_DIALECT())
         if " ".join(str(compiled).split()).startswith(VERDICT_FROM):
             self.sql.append(str(compiled))
             self.params.append(dict(compiled.params))
@@ -376,7 +381,7 @@ class _TaskSession:
         self.world = world
 
     async def execute(self, stmt):
-        compiled = stmt.compile(dialect=postgresql.dialect())
+        compiled = stmt.compile(dialect=_PIN_DIALECT())
         sql = " ".join(str(compiled).split())
         self.world.statements.append(sql)
         if sql.startswith(VERDICT_FROM):

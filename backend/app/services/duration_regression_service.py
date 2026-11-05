@@ -246,9 +246,9 @@ async def _suite_findings(
         )
     ).all()
     by_key: dict[str, list[dict[str, Any]]] = {}
-    for row in earlier:
-        by_key.setdefault(row.suite_key, []).append(
-            {"wall_ms": row.wall_ms, "summed_ms": row.summed_ms}
+    for prior in earlier:
+        by_key.setdefault(prior.suite_key, []).append(
+            {"wall_ms": prior.wall_ms, "summed_ms": prior.summed_ms}
         )
 
     regressions: list[dict[str, Any]] = []

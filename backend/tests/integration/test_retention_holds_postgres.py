@@ -459,7 +459,9 @@ async def test_place_hold_waits_on_the_purge_lock_then_succeeds(world):
                     placer, project_id=w.P, entity_type="project", entity_id=None, reason="Race sentinel",
                     expires_at=None, actor=_admin(w), now=datetime.now(timezone.utc),
                 )
-            assert "LockNotAvailable" in str(caught.value)
+            # LockNotAvailable = SQLSTATE 55P03. SQLAlchemy 2.1 no longer prefixes the
+            # message with asyncpg's class name, so the code is what is asserted.
+            assert getattr(caught.value.orig, "sqlstate", None) == "55P03", caught.value
             await placer.rollback()
         await purge.commit()
 

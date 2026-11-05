@@ -51,7 +51,7 @@ from app.core.search_vocab import (
     USAGE_DAYS,
     semantic_availability,
 )
-from app.db.postgres import get_db
+from app.db.postgres import get_db, release_read_connection
 from app.models.postgres import (
     Defect,
     FlakyQuarantineRequest,
@@ -121,9 +121,14 @@ RELEASE_SCOPE_DECLARATION: dict[str, str] = {
 #
 # The ONE exception to "a GET never writes": a /search page search with words
 # that the page asked to record (``record=true``, page 1). The writes run as a
-# ``BackgroundTasks`` job AFTER the response: on FastAPI 0.115 the request's
-# ``get_db`` session has already exited by then, so the usage row's own short
-# session never sits on top of the request's connection. Best effort: a
+# ``BackgroundTasks`` job AFTER the response. FastAPI 0.118+ exits a
+# request-scoped yield dependency (``get_db``) only after the response AND its
+# background tasks have run (0.115 exited it first), so the request's session
+# would still hold its pooled connection while the usage row's own short
+# session asks for a second one -- two per search, a stall on a pool of 1 + 1.
+# Scheduling the writes therefore hands the request's read connection back
+# first (``release_read_connection``; the response is plain dicts by then), so
+# the usage row's session never sits on top of the request's. Best effort: a
 # failure is counted (``search_after_response_writes_total``) and logged by
 # its exception type, never raised, never read back by the same request. The
 # typeahead, the MCP tools, the CLI and pagination never pass ``record``.
@@ -152,8 +157,9 @@ async def _after_search(*, user_id: str, recent: Optional[dict], event: Optional
             logger.warning("search_usage_write_failed error_type=%s", type(exc).__name__)
 
 
-def _schedule_after_search(
+async def _schedule_after_search(
     background_tasks: Optional[BackgroundTasks],
+    db: AsyncSession,
     *,
     record: bool,
     page: int,
@@ -197,6 +203,9 @@ def _schedule_after_search(
         now=now,
     )
     background_tasks.add_task(_after_search, user_id=str(current_user.id), recent=recent, event=event)
+    # The task runs before get_db exits (FastAPI 0.118+): give the read
+    # connection back now, or the usage row's session waits on top of it.
+    await release_read_connection(db)
 
 
 class _PrimaryFailed(RuntimeError):
@@ -603,8 +612,8 @@ async def search_test_cases(
                 release_unresolved=None, semantic_mode=semantic_mode,
             ),
         }
-        _schedule_after_search(
-            background_tasks, **record_kwargs, mode_used=search_type, fallback_reason=None,
+        await _schedule_after_search(
+            background_tasks, db, **record_kwargs, mode_used=search_type, fallback_reason=None,
             result_count=0, counts_exact=True,
         )
         return response
@@ -735,8 +744,8 @@ async def search_test_cases(
             semantic_mode=semantic_mode,
         ),
     }
-    _schedule_after_search(
-        background_tasks, **record_kwargs, mode_used=actual_type, fallback_reason=fallback_reason,
+    await _schedule_after_search(
+        background_tasks, db, **record_kwargs, mode_used=actual_type, fallback_reason=fallback_reason,
         result_count=total, counts_exact=response["counts_are_exact"],
     )
     return response
@@ -840,8 +849,8 @@ async def global_search_endpoint(
         global_search_zero_results_total.labels(scope=scope_label).inc()
 
     entity_scope = _ENTITY_SCOPE.get(next(iter(types)), "all") if (types and one_type) else "all"
-    _schedule_after_search(
-        background_tasks, record=record, page=page, current_user=current_user, stripped=stripped,
+    await _schedule_after_search(
+        background_tasks, db, record=record, page=page, current_user=current_user, stripped=stripped,
         parsed=parsed, project_id=scoped_project_id, entity_scope=entity_scope,
         mode_requested="keyword", mode_used="keyword", fallback_reason=None,
         result_count=int(result.get("total", 0)), counts_exact=exact, started=started, now=now,

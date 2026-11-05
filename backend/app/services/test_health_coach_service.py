@@ -838,8 +838,8 @@ async def refresh_flaky_coach(
             .order_by(TestCase.test_fingerprint, TestCase.created_at.desc())
             .distinct(TestCase.test_fingerprint)
         )
-        for r in (await db.execute(tc_stmt)).all():
-            tc_by_fp[r.fp] = r
+        for latest_tc in (await db.execute(tc_stmt)).all():
+            tc_by_fp[latest_tc.fp] = latest_tc
 
     count = 0
     for row in all_fingerprints:

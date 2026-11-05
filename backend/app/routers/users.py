@@ -754,7 +754,9 @@ async def update_project_member_role(
     # `member.role` after the assignment would record the new value as the old
     # one and the audit row would show a change from X to X.
     previous_role = member.role
-    member.role = _normalize_user_role(payload.role).value
+    # The UserRole member (a str enum: its value is the stored text), as the
+    # column is typed and as update_user_role assigns User.role above.
+    member.role = _normalize_user_role(payload.role)
     logger.info("updating_project_member_role", project_id=str(project_id), user_id=str(user_id),
                 before=previous_role, after=member.role, by=str(current_user.id))
     # A privilege change inside a project was not audited at all, while the

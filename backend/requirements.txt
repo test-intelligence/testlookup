@@ -3,7 +3,11 @@
 # ============================================================
 
 # ── Web Framework ────────────────────────────────────────────
-fastapi==0.162.0
+# Held at 0.136.3, the last release before FastAPI 0.137.0 stopped copying an
+# included router's routes into app.routes (fastapi#15745): the metrics
+# middleware below (prometheus-fastapi-instrumentator 7.0.0) then raises
+# AttributeError on every request, and its fix (8.0.1) needs Starlette 1.x.
+fastapi==0.136.3
 uvicorn[standard]==0.54.0
 gunicorn==26.2.0
 python-multipart==0.0.33
@@ -11,7 +15,11 @@ httpx==0.28.1
 httpcore==1.0.9
 
 # ── Database ─────────────────────────────────────────────────
-sqlalchemy[asyncio]==2.1.6
+# Held on 2.0.x: opentelemetry-instrumentation-sqlalchemy 0.66b2 (the newest)
+# instruments only "sqlalchemy < 2.1", so on 2.1 no database span is recorded
+# and every start with OTEL_ENABLED (the default) logs an error. 2.1 moves in
+# its own wave once contrib ships a release that accepts it.
+sqlalchemy[asyncio]==2.0.57
 asyncpg==0.32.0
 alembic==1.20.1
 motor==3.7.1            # Async MongoDB driver (requires pymongo>=4.9,<5.0)
@@ -107,11 +115,11 @@ aiohttp==3.14.5          # CVE-2026-69244; CVE-2026-111064, CVE-2026-111066 (3.1
 opentelemetry-api==1.45.2
 opentelemetry-sdk==1.45.2
 opentelemetry-exporter-otlp-proto-http==1.45.2
-# Auto-instrumentors — must match sdk 1.44.0 → instrumentor 0.65b0.
-# The coupling is hard, not stylistic: sdk 1.44.0 pins
-# opentelemetry-semantic-conventions==0.65b0 and every instrumentor 0.65b0
+# Auto-instrumentors — must match sdk 1.45.2 → instrumentor 0.66b2.
+# The coupling is hard, not stylistic: sdk 1.45.2 pins
+# opentelemetry-semantic-conventions==0.66b2 and every instrumentor 0.66b2
 # pins the same, so bumping ONE instrumentor on its own is unsatisfiable
-# (pip: ResolutionImpossible). Move api/sdk/exporter and all five
+# (pip: ResolutionImpossible). Move api/sdk/exporter and all four
 # instrumentors together or not at all.
 opentelemetry-instrumentation-fastapi==0.66b2
 opentelemetry-instrumentation-sqlalchemy==0.66b2

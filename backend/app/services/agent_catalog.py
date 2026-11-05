@@ -174,10 +174,14 @@ def input_wrapper(agent_id: str) -> type[BaseModel]:
     payload_type: Any = SubjectRef
     if model is not None:
         payload_type = Union[list[model], SubjectRef] if is_list else Union[model, SubjectRef]  # type: ignore[valid-type]
+    # A Literal of a runtime value is a type built at run time, like
+    # payload_type: held as Any (pydantic 2.14 types create_model's fields as
+    # PEP 747 TypeForm, which a runtime-built Literal is not to a checker).
+    agent_id_type: Any = Literal[agent_id]
     return create_model(
         _wrapper_name(spec.stage_name),
         __config__=ConfigDict(extra="forbid"),
-        agent_id=(Literal[agent_id], ...),
+        agent_id=(agent_id_type, ...),
         payload=(payload_type, ...),
     )
 
