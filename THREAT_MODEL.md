@@ -1,6 +1,6 @@
 # TestLookup Threat Model
 
-This document describes where data flows, what guarantees the offline mode provides, and what boundaries the system enforces.
+This document describes where data flows, what guarantees the offline mode provides, and what boundaries the system enforces. It was last reviewed against the code on 2026-11-05 (commit 1ff1e78b); report a gap through the process in [SECURITY.md](SECURITY.md).
 
 ## Data flow summary
 
@@ -9,7 +9,7 @@ Test Runner --> Ingest API (REST) --> Backend
                                        |
                         +--------------+--------------+
                         |              |              |
-                   PostgreSQL       MongoDB        Redis
+                   PostgreSQL       MongoDB        Valkey
                   (relational)     (event log)    (cache/broker)
                         |
                    Celery Worker
@@ -19,7 +19,7 @@ Test Runner --> Ingest API (REST) --> Backend
          Ollama (local)     External LLMs (cloud)
          [offline-safe]     [requires AI_OFFLINE_MODE=false]
             |
-         MinIO (local object store)
+         versitygw (S3-compatible object store)
 ```
 
 ## Trust boundaries
@@ -29,8 +29,8 @@ Test Runner --> Ingest API (REST) --> Backend
 | **User to Backend** | HTTP requests (JWT / API key) | TLS in production, JWT validation, role-based access control, project-scope tenant isolation |
 | **Backend to PostgreSQL** | SQL queries | Async connection pool with timeout, parameterised queries (no string interpolation), row-level tenant isolation via `project_id` WHERE clauses |
 | **Backend to MongoDB** | Pipeline event writes | Authenticated connection, write-only from backend (no user-facing reads bypass the backend) |
-| **Backend to Redis** | Cache reads/writes, Celery task dispatch | Password-authenticated, private network only |
-| **Backend to MinIO** | Object store reads/writes (compliance packs, RAG documents) | Authenticated via access key, bucket-level ACL, private network |
+| **Backend to Valkey** | Cache reads/writes, Celery task dispatch, token denylist | Password-authenticated, private network only |
+| **Backend to object storage** (versitygw, or any S3-compatible store) | Reports, attachments, exports, compliance packs, RAG documents | Authenticated via access key, bucket policy, private network |
 | **Backend to Ollama** | LLM inference prompts | Private network only, no auth (Ollama doesn't support it), PII-redacted input |
 | **Backend to External LLMs** | LLM inference prompts | API key auth, HTTPS, PII-redacted input, gated by `AI_OFFLINE_MODE` |
 | **Backend to GitHub** | Check run posts | PAT auth, HTTPS, gated by `AI_OFFLINE_MODE` + `github_checks` flag |
@@ -39,6 +39,12 @@ Test Runner --> Ingest API (REST) --> Backend
 | **Backend to SMTP relay** | Notification, digest and report emails; the SMTP test email; the health probe's login | SMTP credentials, TLS/STARTTLS, gated by `AI_OFFLINE_MODE` (relay residency; `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` names exceptions; recipients judged by `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS`) |
 | **MCP Server to Backend** | REST API calls | Stdio uses its configured JWT; network MCP validates and forwards each caller's JWT without a shared service identity |
 | **CLI to Backend** | REST API calls | Same JWT/API key auth |
+| **SAML identity provider to Backend** (SSO) | Sign-in responses and logout requests | Signatures verified against the configured IdP certificate (signxml over lxml with entity resolution and network access off; defusedxml for the other SAML parsing); a response must answer a request TestLookup issued (`InResponseTo`), and replayed or unsolicited messages are refused; the relay state is burned before use |
+| **SCIM client to Backend** (provisioning) | User and group create/update/deactivate | Bearer tokens issued by an ADMIN at `/api/v1/scim-tokens`, stored as hashes, checked on every `/scim` call |
+| **Anyone holding a share link** | One shared run report (HTML), no JWT | 64-character random token, only its hash stored; default expiry 7 days; every view audited with an 8-character token hint. Treat the link as a bearer credential |
+| **Backend to knowledge sources** (RAG connectors) | Fetches of external documents | Only while the `knowledge_rag` flag is on; external URLs must pass a scheme check and the deployment-wide domain allow-list an ADMIN maintains, so the allow-list is the server-side request forgery (SSRF) control |
+| **Backend to Jira, GitLab, Splunk, OpenShift** | Issue creation, comments, log searches, pod lookups | Admin-configured credentials over HTTPS; Splunk and OpenShift lookups are no-ops under `AI_OFFLINE_MODE`, and integration-health probes never dial these services while it is on |
+| **Test runners and users to the upload endpoints** | Result files and ZIP archives | 50 MB per file, read in bounded 1 MB chunks; archives capped at 200 MB uncompressed, 5,000 entries, 50 MB per entry and a 100:1 compression ratio (`MAX_ARCHIVE_*` settings); XML formats (TestNG, NUnit, TRX, xUnit, Robot) parsed with defusedxml; ingest rate limits of 200 batches and 20,000 events per project per minute |
 
 ## Offline mode guarantees
 
@@ -51,7 +57,7 @@ When `AI_OFFLINE_MODE=true`:
 | **Outbound webhooks** | Silent no-op. `webhook_service.emit_event` returns 0 without touching the DB. |
 | **RAG faithfulness (Ragas)** | Falls back to Ollama evaluator regardless of `rag_faithfulness_evaluator` config. |
 | **Weekly retro digest narrative** | Falls back to the deterministic template path without calling the LLM. |
-| **Feature flags** | Still functional (flags resolve via Redis/Postgres, both local). The offline gate is checked BEFORE the feature flag in every outbound service. |
+| **Feature flags** | Still functional (flags resolve via Valkey/Postgres, both local). The offline gate is checked BEFORE the feature flag in every outbound service. |
 | **Slack / Teams notifications** | Delivered only to a destination that resolves to a loopback or private address — a self-hosted webhook on the LAN still works, a public one is refused. The deployment's own webhooks may also go to a host the operator names in `OFFLINE_NOTIFICATION_ALLOWED_HOSTS`; a webhook set per user or per team never uses that list. |
 | **Email (SMTP)** | Same rule: an internal relay is allowed, a public relay is refused unless the operator names it. Applies to every SMTP connection the application makes: notifications, digests, report emails, the settings page's test email and the health probe. The **recipients** are judged too: with `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` set, every recipient must be in it; without it, an on-box relay may deliver and a named off-box relay is refused, because it would deliver to any mailbox. |
 | **Integration-health probes** | A probe never dials where its integration may not: Slack's API and the SMTP relay only when on-box; Jira, GitHub, Splunk and OpenShift not at all. It reports `skipped`, with the reason. |
@@ -103,6 +109,8 @@ absent from the table above, which is how it went unnoticed.
 | **Role hierarchy** | VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN | Stored as `String(20)` on `users` and `project_members` |
 | **Project scope** | Every data query is filtered by project membership | `require_project_access()` dependency, `get_accessible_project_ids()` returns None for ADMIN (no filter) |
 | **Dual auth** | Endpoints accept either JWT or API key | `get_current_user_or_api_key()` tries JWT first, then API key |
+| **MFA** | Optional per user, enforceable by policy | TOTP (RFC 6238) seed per user with one-time recovery codes; enrolling, disabling and reissuing codes are audited |
+| **SSO / SCIM** | Sign-in through a SAML IdP; provisioning from the IdP | See the SAML and SCIM rows under trust boundaries |
 
 ## PII redaction
 
@@ -122,7 +130,7 @@ Placeholder is always `[REDACTED]`. Max depth: 10 levels. 37 key patterns + 13 r
 
 ## Secret storage
 
-Secrets (PATs, SMTP credentials, LLM API keys) are stored via `secret_service` using Fernet symmetric encryption. The encryption key is derived from `JWT_SECRET_KEY`. Secrets are:
+Secrets (PATs, SMTP credentials, LLM API keys) are stored via `secret_service` using Fernet symmetric encryption. The key is derived from `APP_SECRET_KEY` with PBKDF2-HMAC-SHA256, so the raw value is never used as a key, and a key below the minimum length fails closed. During a rotation, `APP_SECRET_KEY_PREVIOUS` keeps existing ciphertext readable (MultiFernet) until it is re-encrypted. Rotating `JWT_SECRET_KEY` signs users out but does not re-key stored secrets. Secrets are:
 - Never logged (structlog filters by key name)
 - Never returned in API responses (only a `has_*` boolean hint)
 - Never included in compliance pack exports
@@ -131,7 +139,8 @@ Secrets (PATs, SMTP credentials, LLM API keys) are stored via `secret_service` u
 ## Known limitations
 
 1. **Ollama has no auth.** Anyone with network access to the Ollama port (default 11434) can send inference requests. Deploy behind a firewall or use Docker network isolation.
-2. **Redis has password auth but no TLS by default.** Production deployments should enable Redis TLS or use a private network.
+2. **Valkey has password auth but no TLS by default.** Production deployments should enable Valkey TLS or keep it on a private network.
 3. **The MCP SSE transport exposes privileged tools over the network.** It requires a caller bearer token and binds the session to that credential. The stdio transport is implicitly local. SSE still belongs behind a TLS-terminating reverse proxy in production.
-4. **PII redaction is heuristic-based.** It catches common patterns but cannot guarantee 100% coverage of arbitrary user data embedded in test output. Customers with strict PII requirements should pre-sanitise test results before ingestion.
-5. **`AI_OFFLINE_MODE` is a runtime flag, not a build-time flag.** A misconfigured deployment could toggle it off. For air-gapped environments, consider network-level egress controls as a defence-in-depth layer.
+4. **A share link is a bearer credential.** Anyone who has the URL can read that report until the link expires or is revoked. Share only with people who may see the run.
+5. **PII redaction is heuristic-based.** It catches common patterns but cannot guarantee 100% coverage of arbitrary user data embedded in test output. Customers with strict PII requirements should pre-sanitise test results before ingestion.
+6. **`AI_OFFLINE_MODE` is a runtime flag, not a build-time flag.** A misconfigured deployment could toggle it off. For air-gapped environments, consider network-level egress controls as a defence-in-depth layer.

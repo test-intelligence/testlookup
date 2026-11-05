@@ -13,9 +13,14 @@ Inputs (all tracked):
   * deploy/images.manifest.txt — the container images the deployments run,
     with the licenses listed in IMAGE_LICENSES below.
 
+Besides THIRD_PARTY_NOTICES.md it stages LICENSE, NOTICE and the rendered
+notices into backend/licenses, frontend/licenses and mcp/licenses, which the
+Dockerfiles copy to /licenses in each image.
+
 Run it when dependencies or images change, and before every release (see
-RELEASING.md). The quality gate's licenses.shipped-allowlist guard keeps the
-inputs honest; this script only renders them.
+RELEASING.md). CI runs ``--check``. The quality gate's
+licenses.shipped-allowlist guard keeps the inputs honest; this script only
+renders them.
 """
 from __future__ import annotations
 
@@ -30,6 +35,10 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "THIRD_PARTY_NOTICES.md"
 ALLOWLIST = ROOT / "scripts" / "license-allowlist.json"
 IMAGES = ROOT / "deploy" / "images.manifest.txt"
+# Each image's build context gets its own copy of LICENSE, NOTICE and the
+# rendered notices (a context cannot reach the repository root); the
+# Dockerfiles copy the directory to /licenses in the image.
+STAGE_DIRS = [ROOT / "backend" / "licenses", ROOT / "frontend" / "licenses", ROOT / "mcp" / "licenses"]
 
 # License and source of every third-party image name in deploy/images.manifest.txt.
 # Matched on the image name without its tag; an image missing here is listed
@@ -62,6 +71,13 @@ The full text of each license named below is available from the
 [SPDX license list](https://spdx.org/licenses/) and in each package's own
 distribution (the backend, worker and MCP images keep every package's
 license files under `site-packages/*.dist-info`).
+
+Every TestLookup container image carries this file, [LICENSE](LICENSE) and
+[NOTICE](NOTICE) under `/licenses` and is labelled
+`org.opencontainers.image.licenses=Apache-2.0`. The web UI also serves them at
+`/LICENSE`, `/NOTICE` and `/THIRD_PARTY_LICENSES.txt`; the last holds the
+copyright notice and license text of every JavaScript package in the bundle
+(written by `frontend/scripts/generate-third-party-licenses.mjs`).
 """
 
 STATIC_TAIL = """
@@ -72,10 +88,25 @@ workers, MCP server) and `nginx:alpine` (Alpine Linux; web UI), with a
 `node:20-alpine` stage used only to build the web UI. These base layers contain
 operating-system packages under their own licenses, including GPL and LGPL
 packages (for example bash, coreutils, glibc and BusyBox) that are distributed
-as separate programs. Their corresponding source is available from
-<https://sources.debian.org> and <https://gitlab.alpinelinux.org/alpine/aports>
-for the exact package versions listed in the SBOM attached to each release
-(see RELEASING.md).
+as separate programs alongside TestLookup, unmodified.
+
+**Corresponding source.** The release workflow produces a CycloneDX SBOM for
+each image naming every operating-system package and version it contains, and
+the release process publishes it with the release (see RELEASING.md); the
+offline bundle's `MANIFEST.json` records whether a bundle includes one. The
+source of each package is available from <https://sources.debian.org> (Debian)
+and <https://gitlab.alpinelinux.org/alpine/aports> (Alpine) for the versions
+the SBOM lists. Where no SBOM accompanies what you received, use the offer
+below.
+
+**Written offer.** For three years from the date you receive a TestLookup
+image or offline bundle, the TestLookup maintainers will provide the complete
+corresponding source code of the GPL- and LGPL-licensed packages it contains,
+for no more than the cost of performing the distribution. Request it by opening
+an issue titled "Source request: <image or bundle digest>" at
+<https://github.com/test-intelligence/testlookup/issues>, or by contacting a
+maintainer listed in [MAINTAINERS.md](MAINTAINERS.md). You may pass this offer
+on to anyone you give the image or bundle to.
 
 ## Services you run alongside TestLookup
 
@@ -139,7 +170,7 @@ def _npm_section(lockfile: Path, title: str, overrides: dict[str, str]) -> str:
         by_license[str(license_expr)].append(f"{name}@{meta.get('version', '?')}")
     if not by_license:
         return f"## {title}\n\nNo runtime dependencies.\n"
-    total = sum(len(v) for v in by_license.values())
+    total = sum(len(set(v)) for v in by_license.values())
     lines = [f"## {title}", "", f"{total} packages, grouped by license.", ""]
     for license_expr in sorted(by_license, key=lambda k: (-len(by_license[k]), k)):
         names = sorted(set(by_license[license_expr]))
@@ -181,6 +212,13 @@ def _python_section(config: dict) -> str:
         "Direct dependencies as declared; their transitive dependencies are under the",
         "same family of permissive licenses (MIT, BSD, Apache-2.0, PSF, ISC, MPL-2.0).",
         "",
+        "Transitive MPL-2.0 components in the backend and MCP images, each used",
+        "unmodified as a separate file (MPL-2.0 section 3.2 is met by naming where",
+        "their source is): `certifi` (<https://github.com/certifi/python-certifi>),",
+        "`pathspec` (<https://github.com/cpburnz/python-pathspec>) and `tqdm`",
+        "(<https://github.com/tqdm/tqdm>, MPL-2.0 and MIT). `orjson` offers",
+        "Apache-2.0, MIT or MPL-2.0 and is used under Apache-2.0.",
+        "",
         "| Package | License | Used by |",
         "|---|---|---|",
     ]
@@ -216,10 +254,15 @@ def render() -> str:
                      "Web UI (bundled into the frontend image)", overrides),
         _npm_section(ROOT / "client" / "js" / "package-lock.json",
                      "JavaScript reporter", overrides),
-        "## Java reporter\n\nThe `-all` jar bundles and relocates Jackson core, databind and\n"
-        "dataformat-yaml (Apache-2.0) and SnakeYAML (Apache-2.0); their NOTICE is in\n"
-        "[NOTICE](NOTICE). JUnit 5 (EPL-2.0) and TestNG (Apache-2.0) are `provided`\n"
-        "dependencies supplied by your test project, not bundled.\n\n"
+        "## Java reporter\n\nThe `-all` jar bundles and relocates Jackson core, annotations, databind\n"
+        "and dataformat-yaml (Apache-2.0) and SnakeYAML (Apache-2.0); their NOTICE is\n"
+        "merged into the jar's `META-INF/NOTICE` and reproduced in [NOTICE](NOTICE),\n"
+        "and the jar carries the project's `META-INF/LICENSE`. Jackson core embeds\n"
+        "FastDoubleParser and Schubfach (both MIT); their license files ship in the\n"
+        "jar as `META-INF/FastDoubleParser-LICENSE`,\n"
+        "`META-INF/FastDoubleParser-ThirdParty-LICENSE` and `META-INF/Schubfach-LICENSE`.\n"
+        "JUnit 5 (EPL-2.0) and TestNG (Apache-2.0) are `provided` dependencies\n"
+        "supplied by your test project, not bundled.\n\n"
         "## Go reporter\n\nStandard library only.\n",
         _python_section(config),
         STATIC_TAIL.format(images=_images_table()),
@@ -227,19 +270,36 @@ def render() -> str:
     return "\n".join(p.rstrip("\n") + "\n" for p in parts if p)
 
 
+def staged_files(text: str) -> dict[Path, bytes]:
+    """Every file this script owns: the root notices plus the copies each image
+    build context needs, since a Docker build context cannot reach the root.
+    The Dockerfiles copy ``licenses/`` to ``/licenses`` in the image."""
+    files = {OUT: text.encode("utf-8")}
+    license_bytes = (ROOT / "LICENSE").read_bytes()
+    notice_bytes = (ROOT / "NOTICE").read_bytes()
+    for stage in STAGE_DIRS:
+        files[stage / "LICENSE"] = license_bytes
+        files[stage / "NOTICE"] = notice_bytes
+        files[stage / "THIRD_PARTY_NOTICES.md"] = files[OUT]
+    return files
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--check", action="store_true", help="exit 1 if the file is stale")
+    parser.add_argument("--check", action="store_true", help="exit 1 if any generated file is stale")
     args = parser.parse_args()
-    text = render()
+    files = staged_files(render())
     if args.check:
-        current = OUT.read_text(encoding="utf-8") if OUT.exists() else ""
-        if current != text:
-            print("THIRD_PARTY_NOTICES.md is stale: run scripts/generate_third_party_notices.py")
+        stale = [p for p, body in files.items() if not p.exists() or p.read_bytes() != body]
+        if stale:
+            names = ", ".join(str(p.relative_to(ROOT)).replace("\\", "/") for p in stale)
+            print(f"stale: {names}: run scripts/generate_third_party_notices.py")
             return 1
         return 0
-    OUT.write_bytes(text.encode("utf-8"))
-    print(f"wrote {OUT.relative_to(ROOT)}")
+    for path, body in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+        print(f"wrote {str(path.relative_to(ROOT)).replace(chr(92), '/')}")
     return 0
 
 

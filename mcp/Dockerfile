@@ -59,6 +59,12 @@ RUN rm -rf /usr/local/lib/python3.11/site-packages/pip \
 # Copy server source
 COPY . .
 
+# LICENSE, NOTICE and THIRD_PARTY_NOTICES.md ship with the image (Apache-2.0
+# s.4(a)/(d)). mcp/licenses/ is staged from the repository root by
+# scripts/generate_third_party_notices.py; CI fails when it is stale.
+COPY licenses/ /licenses/
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
 # Run as non-root user (UID 1000 matches the k8s securityContext)
 RUN adduser --disabled-password --gecos '' --uid 1000 mcp
 USER mcp

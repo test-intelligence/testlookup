@@ -56,3 +56,7 @@ README.md
 # even stat them). One pattern for the whole class ends the sequence.
 .pytest*/
 **/.pytest*/
+
+# The LICENSE / NOTICE / THIRD_PARTY_NOTICES.md copies that
+# scripts/generate_third_party_notices.py stages here ship in the image at /licenses.
+!licenses/

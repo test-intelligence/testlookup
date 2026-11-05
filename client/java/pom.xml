@@ -178,12 +178,21 @@
                                     <shadedPattern>ai.testlookup.shaded.jackson</shadedPattern>
                                 </relocation>
                             </relocations>
-                            <!-- Jackson and SnakeYAML are Apache-2.0: keep one
-                                 LICENSE and merge every bundled META-INF/NOTICE
-                                 (Jackson ships one) into the -all jar's NOTICE,
-                                 as Apache-2.0 section 4(d) requires. -->
+                            <!-- Jackson and SnakeYAML are Apache-2.0. The
+                                 ApacheLicenseResourceTransformer drops EVERY
+                                 META-INF/LICENSE* resource it meets, this
+                                 project's own included (the -all jar shipped
+                                 with no LICENSE until 2026-11), so the project
+                                 LICENSE is put back explicitly, and every
+                                 bundled META-INF/NOTICE (Jackson ships one) is
+                                 merged into the -all jar's NOTICE, as Apache-2.0
+                                 section 4(d) requires. -->
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.IncludeResourceTransformer">
+                                    <resource>META-INF/LICENSE</resource>
+                                    <file>LICENSE</file>
+                                </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer">
                                     <addHeader>false</addHeader>
                                 </transformer>

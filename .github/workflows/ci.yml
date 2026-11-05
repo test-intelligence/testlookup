@@ -176,6 +176,14 @@ jobs:
       - name: Run cross-cutting quality gates
         run: python scripts/quality_gate.py
 
+      - name: Third-party notices and the staged license copies are current
+        # scripts/generate_third_party_notices.py renders THIRD_PARTY_NOTICES.md
+        # from the lockfiles and stages LICENSE / NOTICE / THIRD_PARTY_NOTICES.md
+        # into backend/, frontend/ and mcp/ for each image's /licenses directory.
+        # A dependency change without a regenerated file fails here, so the
+        # notices the images carry cannot drift from what they ship.
+        run: python scripts/generate_third_party_notices.py --check
+
       - name: Install pytest for the self-test
         # The gate itself is pure stdlib file IO, but scripts/test_quality_gate.py
         # is a pytest module. This job installs nothing else, so pytest must be
@@ -1202,6 +1210,13 @@ jobs:
         run: npm run build
         env:
           VITE_API_BASE_URL: http://localhost:8000
+
+      # The build's last step writes dist/THIRD_PARTY_LICENSES.txt, LICENSE and
+      # NOTICE (the bundler strips every @license banner, so without this the
+      # image redistributes ~340 npm packages with none of their notices). This
+      # proves every production package in the lockfile is listed.
+      - name: Third-party licenses ship with the bundle
+        run: npm run check:licenses
 
       # Guards what index.html makes the browser fetch before first render on
       # every route. A chunk being split out is not the same as a chunk being
