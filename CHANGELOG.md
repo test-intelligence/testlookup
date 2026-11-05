@@ -1650,6 +1650,9 @@ locally by default.
   - The parity card and the retention help use the right wording.
   - The compliance guide explains how to scrub a person from your own log
     store.
+  - Choosing Owner in the Cases bulk bar reuses the member list the page
+    already holds. Before, a list older than two seconds was read again (a
+    flaky CI journey). Test: `BulkActionBar.test.tsx`.
 - **An inline summary no longer gives a pass rate or a release readiness
   signal for failures a caller supplied** (F-OR07-2, prompt edit owner-approved
   2026-11-05). After the markers were stripped, the live model still wrote
