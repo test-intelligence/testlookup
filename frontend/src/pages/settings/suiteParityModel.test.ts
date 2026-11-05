@@ -232,6 +232,7 @@ describe('W25d HYG-04: the cut-over states (cutoverState / cardView)', () => {
           canCutOver: false,
           days: dayRows(w25a, now),
           daysHeading: null,
+          explainer: PARITY_TEXT.explainer,
         })
       }
     }
@@ -324,6 +325,29 @@ describe('W25d HYG-04: the cut-over states (cutoverState / cardView)', () => {
       expect(view.days).toEqual(dayRows(h, now))
       expect(view.line.text).not.toMatch(/Cut over on|clean days/)
     }
+  })
+})
+
+describe('W32 (F-W25d-3): the explainer’s tense follows the comparison', () => {
+  const now = new Date('2026-09-18T12:00:00Z')
+  const PRESENT =
+    'Compares the old suite-membership tables with the test catalog every day at 06:15 UTC. Seven clean days in a row allow the old tables to stop being written.'
+  const PAST =
+    'Compared the old suite-membership tables with the test catalog every day at 06:15 UTC. Seven clean days in a row allowed the old tables to stop being written.'
+
+  it('the two sentences, verbatim', () => {
+    expect(PARITY_TEXT.explainer).toBe(PRESENT)
+    expect(PARITY_TEXT.explainerRetired).toBe(PAST)
+  })
+
+  it('before and ready: present tense (the comparison runs)', () => {
+    expect(cardView(parityHistory({ streak: 4, now }), now).explainer).toBe(PRESENT)
+    expect(cardView(parityReadyHistory({ now }), now).explainer).toBe(PRESENT)
+  })
+
+  it('cut over and not written: past tense (the comparison is retired)', () => {
+    expect(cardView(parityCutOverHistory({ now }), now).explainer).toBe(PAST)
+    expect(cardView(parityNotWrittenHistory({ now }), now).explainer).toBe(PAST)
   })
 })
 

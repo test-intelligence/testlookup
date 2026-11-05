@@ -265,6 +265,20 @@ describe('RetentionPage', () => {
     expect(dayInput('audit_days').value).toBe('2555')
   })
 
+  it('W32 (F-W25d-4, D-5): the Raw events and Audit trail help say what each clock deletes — no provenance rows, no pipeline event log on the raw clock', async () => {
+    const view = renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+    const text = view.container.textContent ?? ''
+    expect(text).not.toMatch(/provenance/i)
+    expect(text).not.toContain('Mongo pipeline event logs')
+    expect(
+      screen.getByText('Raw ingestion payloads and live-stream event documents in MongoDB, and event_archive rows. Cheapest class to keep short.'),
+    ).toBeTruthy()
+    expect(
+      screen.getByText('Audit and activity logs, decision reports, deletion jobs and the pipeline event log. At least 365 days, and never shorter than Runs & analysis.'),
+    ).toBeTruthy()
+  })
+
   it('shows the "Customized" badge when the policy source is custom', async () => {
     mockGet.mockResolvedValue(basePolicy({ source: 'custom', runs_days: 400 }))
     await renderPage()

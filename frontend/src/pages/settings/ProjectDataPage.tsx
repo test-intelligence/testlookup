@@ -73,6 +73,8 @@ const MODE_SPECS: ModeSpec[] = [
       'failure_clusters (CASCADE)',
       'agent_pipeline_runs (CASCADE)',
       'release_decisions (CASCADE)',
+      // W32: no comma and no lone lowercase word — the reset guard reads those as promised TABLE names.
+      'MongoDB run documents (raw results; summaries; AI payloads; decision reports)',
     ],
     keeps: [
       'test_suites and the canonical test catalog',
@@ -289,6 +291,18 @@ export default function ProjectDataPage() {
                 {count === 1 ? '' : 's'} deleted
               </li>
             ))}
+            {/* W32 (W23d F-7): the run-scoped MongoDB documents; absent / null = not measured, never zeros. */}
+            {lastResult.documents === null || lastResult.documents === undefined ? (
+              <li data-reset-documents="unmeasured">Stored run documents: not measured</li>
+            ) : (
+              Object.entries(lastResult.documents)
+                .filter(([, n]) => n > 0)
+                .map(([collection, n]) => (
+                  <li key={`documents-${collection}`} data-reset-documents={collection}>
+                    <span className="font-mono">{collection}</span>: {formatNumber(n)} document{n === 1 ? '' : 's'} deleted
+                  </li>
+                ))
+            )}
           </ul>
         </section>
       )}

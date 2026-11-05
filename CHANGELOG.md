@@ -1636,6 +1636,36 @@ locally by default.
 
 ### Fixed
 
+- **The Celery worker and beat log through the redacting pipeline** (found
+  by W32). Only the API configured logging, so worker and beat lines skipped
+  the e-mail, secret and connection-string masking and ignored
+  `LOG_FORMAT=json`. They now configure it from Celery's `setup_logging`
+  signal. Test: `tests/regression/test_worker_logs_are_redacted.py`.
+- **Small fixes and copy** (wave W32, owner approvals OR-09 / OR-10,
+  2026-11-05):
+  - A project reset now also deletes the project's run documents in the ten
+    MongoDB collections, and the result card lists them. Object-store files
+    and search-index entries are untouched.
+  - All-projects digests leave out archived projects.
+  - An imported project's published decision reports point at the copy's
+    evidence, so the copy's retention purge keeps those artifacts once the
+    pause ends.
+  - A test's first sighting is backfilled only when no other retained run
+    has reported it, so a purge never produces a false "added" event.
+  - The 90-day execution-metrics view reads slowest tests and the histogram
+    in one statement, with the same results.
+  - The settings sub-nav item reads "Integrations".
+  - With an export ready, the Profile card's start button reads "Prepare a
+    new copy".
+  - The release pane's linked-runs dates stay on one line.
+  - The release calendar no longer clips in presentation mode.
+  - The billing summary uses the standard metric cards.
+  - The parity card and the retention help use the right wording.
+  - The compliance guide explains how to scrub a person from your own log
+    store.
+  - Choosing Owner in the Cases bulk bar reuses the member list the page
+    already holds. Before, a list older than two seconds was read again (a
+    flaky CI journey). Test: `BulkActionBar.test.tsx`.
 - **THREAT_MODEL.md describes the system that ships**: Valkey and versitygw
   rather than Redis and MinIO, the stored-secret key derived from
   `APP_SECRET_KEY` (not `JWT_SECRET_KEY`) with `APP_SECRET_KEY_PREVIOUS`
@@ -1644,7 +1674,6 @@ locally by default.
 - **`user-guide/compliance.md` no longer claims a legal sign-off** for the
   erasure retention default; it tells deployers to confirm Article 17(3) with
   their own counsel.
-
 - **An inline summary no longer gives a pass rate or a release readiness
   signal for failures a caller supplied** (F-OR07-2, prompt edit owner-approved
   2026-11-05). After the markers were stripped, the live model still wrote

@@ -31073,6 +31073,20 @@
             "title": "Deleted",
             "type": "object"
           },
+          "documents": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Documents"
+          },
           "mode": {
             "enum": [
               "runs",
@@ -79555,7 +79569,7 @@
     },
     "/api/v1/projects/{project_id}/reset": {
       "post": {
-        "description": "Wipe project-scoped data. ADMIN-only.\n\n``mode=\"runs\"`` deletes every TestRun in the project (cascades to\ntest_cases, ai_analyses, failure_clusters, agent_pipeline_runs,\nrelease_decisions, etc.) but keeps the test_suites and canonical\ncatalog so the project's authored structure survives.\n\n``mode=\"full\"`` runs the ``runs`` deletes and then also wipes\ntest_suites, canonical_test_cases, releases, release_gate_policies,\nperf_baselines, flaky_quarantine_requests, managed_test_cases,\ntest_plans, test_strategies, and knowledge_sources. The Project\nrow, its members, API keys, and AI/SSO config survive.\n\nTwo-step confirmation: ``payload.confirmation_name`` must equal\nthe project's ``name`` exactly (case-sensitive). A mismatch\nreturns 422 and nothing is deleted.",
+        "description": "Wipe project-scoped data. ADMIN-only.\n\n``mode=\"runs\"`` deletes every TestRun in the project (cascades to\ntest_cases, ai_analyses, failure_clusters, agent_pipeline_runs,\nrelease_decisions, etc.) but keeps the test_suites and canonical\ncatalog so the project's authored structure survives.\n\n``mode=\"full\"`` runs the ``runs`` deletes and then also wipes\ntest_suites, canonical_test_cases, releases, release_gate_policies,\nperf_baselines, flaky_quarantine_requests, managed_test_cases,\ntest_plans, test_strategies, and knowledge_sources. The Project\nrow, its members, API keys, and AI/SSO config survive.\n\nBoth modes first delete the runs' stored MongoDB documents; the\nper-collection counts are returned as ``documents``.\n\nTwo-step confirmation: ``payload.confirmation_name`` must equal\nthe project's ``name`` exactly (case-sensitive). A mismatch\nreturns 422 and nothing is deleted.",
         "operationId": "reset_project_data_api_v1_projects__project_id__reset_post",
         "parameters": [
           {

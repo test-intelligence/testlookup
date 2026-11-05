@@ -640,6 +640,30 @@ async def test_every_document_is_copied_with_every_id_rewritten(env, imported):
     assert imported.job.report["history"]["documents"] == {c: len(d) for c, d in copies.items()}
 
 
+async def test_the_copys_report_cites_the_copys_artifact_so_its_retention_keeps_it(env, imported):
+    """W32 F-W30-8: the evidence refs nested in the imported report are the COPY's ids, so the retention
+    purge's real reader protects the copy's cited artifact once the copy's purge pause ends."""
+    from app.db.mongo import Collections
+    from app.services import retention_service
+    from app.services.project_import_history import history_id
+
+    source_artifact = env.seeded.ids["evidence"]
+    copy_artifact = history_id(imported.job.id, source_artifact)
+    assert copy_artifact in await _ids(env, "evidence_artifacts", imported.copy)
+    (report,) = (await _documents(env, imported.copy))[Collections.DECISION_REPORTS]
+    body = report["decision_intelligence"]
+    assert body["evidence"][0]["artifact_id"] == str(copy_artifact)
+    assert body["claims"][0]["evidence"][0]["id"] == str(copy_artifact)
+    assert body["evidence"][0]["scope"]["project_id"] == str(imported.copy)
+    assert str(source_artifact) not in json.dumps(report, default=str), "no source artifact id in the copy"
+
+    # A second, uncited candidate: the reader's fail-closed path would return BOTH, a real scan one.
+    protected = await retention_service._published_report_artifact_ids(
+        env.mongo, imported.copy, [copy_artifact, uuid.uuid4(), source_artifact]
+    )
+    assert protected == {copy_artifact}
+
+
 async def test_every_object_is_under_the_copys_root_with_the_sources_bytes(env, imported):
     from app.services.project_export_objects import rebuild_prefix
 

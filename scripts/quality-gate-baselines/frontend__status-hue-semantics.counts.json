@@ -126,7 +126,7 @@
     "frontend/src/pages/settings/AIEvalDashboardPage.tsx": 13,
     "frontend/src/pages/settings/ApiKeysPage.tsx": 4,
     "frontend/src/pages/settings/AuditDashboardPage.tsx": 3,
-    "frontend/src/pages/settings/BillingPage.tsx": 4,
+    "frontend/src/pages/settings/BillingPage.tsx": 3,
     "frontend/src/pages/settings/DigestsPage.tsx": 7,
     "frontend/src/pages/settings/FeatureFlagsPage.tsx": 2,
     "frontend/src/pages/settings/GitHubIntegrationPage.tsx": 3,

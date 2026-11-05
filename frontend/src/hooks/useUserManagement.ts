@@ -1,4 +1,4 @@
-import useSWR from 'swr'
+import useSWR, { type SWRConfiguration } from 'swr'
 import { appMutate as mutate } from '@/utils/swrCacheMutate'
 import { userManagementService, type UserRole, type UsersPageParams } from '@/services/userManagementService'
 
@@ -20,10 +20,13 @@ export function useUsersPage(params: UsersPageParams | null) {
   )
 }
 
-export function useProjectMembers(projectId: string | null) {
+/** ``config`` is passed to SWR as is (e.g. ``revalidateIfStale: false`` for a reader that subscribes late and
+ *  should reuse the list the page already holds). */
+export function useProjectMembers(projectId: string | null, config?: SWRConfiguration) {
   return useSWR(
     projectId ? `/api/v1/projects/${projectId}/members` : null,
     () => userManagementService.listProjectMembers(projectId as string),
+    config,
   )
 }
 

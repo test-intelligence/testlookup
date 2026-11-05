@@ -1172,31 +1172,60 @@ def judge_test_regressions(
     }
 
 
-def _slowest_tests_sql(params: dict, scope: AnalyticsScope, branch: Optional[str]) -> str:
-    """Per test over the window: p95 of its durations, the slowest first. Ranked by the percentile itself -- the
-    chart-data ``duration_p95`` x ``test`` + ``top_n`` read ranks a percentile by its SAMPLE size (the most executed
-    tests), which is not "the slowest"."""
+def _slowest_and_histogram_sql(params: dict, scope: AnalyticsScope, branch: Optional[str]) -> str:
+    """EXEC-03 (W32): the slowest tests AND the duration histogram in ONE pass over the window.
+
+    ``win`` is the window's test results (one scan of ``test_cases``, one join to ``test_runs``; referenced once,
+    so Postgres inlines it). ``agg`` groups it by ``GROUPING SETS ((test_fingerprint), ())``: one row per test and
+    ONE total row (``is_total = 1``) -- the total row exists even over zero input rows, exactly like the former
+    aggregate-without-GROUP-BY histogram row. ``agg`` is referenced twice, so it is materialised once. Rows are
+    split by ``GROUPING()``, never by ``test_fingerprint IS NULL``: a NULL-fingerprint test forms its own per-test
+    group (``is_total = 0``), dropped later by ``slowest_tests_block`` as before. The outer ``ORDER BY`` (≤ top + 1
+    rows) makes the output order part of the statement rather than of the plan: the total row, then the rank order.
+
+    Per test: p95 of its durations, the slowest first. Ranked by the percentile itself -- the chart-data
+    ``duration_p95`` x ``test`` + ``top_n`` read ranks a percentile by its SAMPLE size (the most executed tests),
+    which is not "the slowest". The same four filter helpers, in the same order, fill the same params dict as the
+    two statements this replaces (proved equal in ``tests/services/test_execution_metrics_service.py`` and on
+    Postgres in ``tests/integration/test_execution_metrics_postgres.py``). Not under 300 ms at 90 days by itself:
+    that needs pre-aggregation (F-W32-4)."""
     tenant = tenant_filter_sql(params, project_id=scope.project, allowed_project_ids=scope.allowed_project_ids)
     return f"""
-        SELECT tc.test_fingerprint,
-               MIN(tc.test_name) AS test_name,
-               MIN({_EFFECTIVE_SUITE}) AS suite_name,
-               COUNT(*) AS n,
-               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tc.duration_ms) AS p50,
-               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY tc.duration_ms) AS p95,
-               MAX(tc.duration_ms) AS max_ms
-        FROM test_cases tc
-        JOIN test_runs tr ON tr.id = tc.test_run_id
-        WHERE tr.created_at >= :period_start
-          AND tc.duration_ms IS NOT NULL
-          {tenant}
-          {release_filter_sql(params, scope.release_arg)}
-          {suite_filter_sql(params, scope.suite_arg)}
-          {_branch_sql(params, branch, "tr.branch")}
-        GROUP BY tc.test_fingerprint
-        ORDER BY p95 DESC NULLS LAST, tc.test_fingerprint
-        LIMIT :top
+        WITH win AS (
+            SELECT tc.test_fingerprint, tc.test_name, {_EFFECTIVE_SUITE} AS suite_name, tc.duration_ms
+            FROM test_cases tc
+            JOIN test_runs tr ON tr.id = tc.test_run_id
+            WHERE tr.created_at >= :period_start
+              AND tc.duration_ms IS NOT NULL
+              {tenant}
+              {release_filter_sql(params, scope.release_arg)}
+              {suite_filter_sql(params, scope.suite_arg)}
+              {_branch_sql(params, branch, "tr.branch")}
+        ), agg AS (
+            SELECT GROUPING(test_fingerprint) AS is_total,
+                   test_fingerprint,
+                   MIN(test_name) AS test_name,
+                   MIN(suite_name) AS suite_name,
+                   COUNT(*) AS n,
+                   PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY duration_ms) AS p50,
+                   PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY duration_ms) AS p95,
+                   MAX(duration_ms) AS max_ms,
+                   {_histogram_bucket_columns("")}
+            FROM win
+            GROUP BY GROUPING SETS ((test_fingerprint), ())
+        )
+        (SELECT * FROM agg WHERE is_total = 1)
+        UNION ALL
+        (SELECT * FROM agg WHERE is_total = 0 ORDER BY p95 DESC NULLS LAST, test_fingerprint LIMIT :top)
+        ORDER BY is_total DESC, p95 DESC NULLS LAST, test_fingerprint
     """
+
+
+def split_slowest_and_histogram(rows: Sequence[Any]) -> tuple[list[Any], Any]:
+    """The one-pass statement's rows → (the per-test rows in rank order, the total row or None)."""
+    per_test = [row for row in rows if int(_get(row, "is_total") or 0) == 0]
+    totals = [row for row in rows if int(_get(row, "is_total") or 0) == 1]
+    return per_test, (totals[0] if totals else None)
 
 
 def slowest_tests_block(rows: Sequence[Any], *, limit: int) -> dict[str, Any]:
@@ -1221,38 +1250,22 @@ def slowest_tests_block(rows: Sequence[Any], *, limit: int) -> dict[str, Any]:
     }
 
 
-def _histogram_bucket_columns() -> str:
+def _histogram_bucket_columns(alias: str = "tc") -> str:
     """One ``COUNT(*) FILTER`` per bucket, generated from the hard-coded edges (never from input). The first bucket
-    has no lower bound and the last no upper one, so the buckets always add up to ``n``."""
+    has no lower bound and the last no upper one, so the buckets always add up to ``n``. ``alias`` qualifies the
+    ``duration_ms`` column (``""`` = unqualified: the one-pass statement reads it from its ``win`` CTE)."""
     edges = HISTOGRAM_EDGES_MS
+    column = f"{alias}.duration_ms" if alias else "duration_ms"
     columns = []
     for index, lower in enumerate(edges):
         upper = edges[index + 1] if index + 1 < len(edges) else None
         conditions = []
         if index > 0:
-            conditions.append(f"tc.duration_ms >= {int(lower)}")
+            conditions.append(f"{column} >= {int(lower)}")
         if upper is not None:
-            conditions.append(f"tc.duration_ms < {int(upper)}")
+            conditions.append(f"{column} < {int(upper)}")
         columns.append(f"COUNT(*) FILTER (WHERE {' AND '.join(conditions)}) AS b{index}")
     return ",\n               ".join(columns)
-
-
-def _histogram_sql(params: dict, scope: AnalyticsScope, branch: Optional[str]) -> str:
-    tenant = tenant_filter_sql(params, project_id=scope.project, allowed_project_ids=scope.allowed_project_ids)
-    return f"""
-        SELECT COUNT(*) AS n,
-               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tc.duration_ms) AS p50,
-               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY tc.duration_ms) AS p95,
-               {_histogram_bucket_columns()}
-        FROM test_cases tc
-        JOIN test_runs tr ON tr.id = tc.test_run_id
-        WHERE tr.created_at >= :period_start
-          AND tc.duration_ms IS NOT NULL
-          {tenant}
-          {release_filter_sql(params, scope.release_arg)}
-          {suite_filter_sql(params, scope.suite_arg)}
-          {_branch_sql(params, branch, "tr.branch")}
-    """
 
 
 def histogram_block(row: Any) -> dict[str, Any]:
@@ -1390,13 +1403,12 @@ async def project_execution_metrics(
     flag_on = await perf._feature_enabled(db, project_id=scope.project_id) if not candidates else True
     test_regressions = judge_test_regressions(candidates, windows, top=top, flag_on=flag_on)
 
-    # Slowest tests and the duration histogram.
+    # Slowest tests and the duration histogram: ONE pass over the window (EXEC-03).
     slow_params: dict[str, Any] = {"period_start": start, "top": top}
-    slow_sql = _slowest_tests_sql(slow_params, scope, branch)
-    slow_rows = (await db.execute(scoped_text(slow_sql, slow_params), slow_params)).all()
-    hist_params: dict[str, Any] = {"period_start": start}
-    hist_sql = _histogram_sql(hist_params, scope, branch)
-    hist_row = (await db.execute(scoped_text(hist_sql, hist_params), hist_params)).one_or_none()
+    slow_sql = _slowest_and_histogram_sql(slow_params, scope, branch)
+    slow_rows, hist_row = split_slowest_and_histogram(
+        (await db.execute(scoped_text(slow_sql, slow_params), slow_params)).all()
+    )
 
     return {
         "project_id": scope.project_id,

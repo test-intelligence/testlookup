@@ -12,6 +12,7 @@
  *    sends R3's PUT and re-reads both;
  *  - S5 Delete (admin): the inline strip in the pane footer, nothing sent until its own Delete;
  *  - S6 `/release-gate/:runId` Share report: a section under the header, no overlay.
+ *  - W32 at 1280: the pane's "Linked Test Runs" dates read "Sep 16" over the year (never folded word by word).
  *
  * The pane's URL key is `?open=` (the contract's `?release=` was amended: `?release=` is the top bar's global release
  * filter, `ReleasePicker`'s `RELEASE_PARAM`, read on every page).
@@ -22,7 +23,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { expectNoOverlay, watchNativeDialogs } from '../lib/inPage'
 import { boxOf, expectMainFits, inPageLine, minContentSlack, ownOverflow, precedes } from '../lib/inPageGeometry'
 import { respond } from '../lib/production-pages'
-import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
+import { assertHermetic, expectNoHorizontalOverflow, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { GATE_CLUSTERS, releaseGateOn, RUN_ID } from '../visual/production/fixtures'
 import { releasesInPageWorld } from '../visual/production/fixtures-in-page'
 import { ADMIN, RELEASE } from '../visual/production/fixtures-releases'
@@ -101,6 +102,61 @@ for (const width of [1280, 1440]) {
     })
   })
 }
+
+test.describe('1280 x 900', () => {
+  test.use({ viewport: { width: 1280, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
+
+  // W32 (W29d follow-up): the Date column must not fold word by word ("Sep / 16, / 2026"). It reads as two lines,
+  // "Sep 16" over "2026", which keeps the column as narrow as before — one unbroken line pushed Pass Rate and the
+  // unlink button out of the release page's 584 px card (read in the W32 baselines). A td's box is the ROW's height,
+  // so lines are counted on the text (a Range).
+  test('W32 @1280: the pane\'s "Linked Test Runs" dates read "Sep 16" over the year, never three lines; no sideways page scroll', async ({ page }) => {
+    const { api, errors } = await openList(page)
+    await card(page, '2026.11').click()
+    const heading = release(page, '2026.11').getByRole('heading', { name: 'Linked Test Runs (2)' })
+    await expect(heading).toBeVisible()
+    const table = heading.locator('xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " card ")][1]//table')
+    const rows = await table.evaluate((node) =>
+      Array.from((node as HTMLTableElement).tBodies[0].rows, (row) => {
+        // Lines of ONE span's own text: a range over a text-only span yields one rect per line box. (A range over the
+        // whole cell also returns the spans' block boxes, whose tops differ from their text's on Linux fonts: CI
+        // counted 4 where Windows counted 2.)
+        const text = (el: Element) => {
+          const range = document.createRange()
+          range.selectNodeContents(el)
+          const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0)
+          return { lines: new Set(rects.map((r) => Math.round(r.top))).size, top: rects[0]?.top ?? 0, bottom: rects[0]?.bottom ?? 0 }
+        }
+        const date = row.cells[2]
+        const day = date.querySelector('[data-date-day]')
+        const year = date.querySelector('[data-date-year]')
+        const dayText = day ? text(day) : { lines: 0, top: 0, bottom: 0 }
+        const yearText = year ? text(year) : { lines: 0, top: 0, bottom: 0 }
+        return {
+          date: date.textContent ?? '',
+          day: day?.textContent ?? '',
+          dayLines: dayText.lines,
+          year: year?.textContent ?? '',
+          yearLines: yearText.lines,
+          yearBelowDay: yearText.top >= dayText.bottom - 1,
+          scrollWidth: date.scrollWidth,
+          clientWidth: date.clientWidth,
+        }
+      }),
+    )
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row.day, 'the month and day').toMatch(/^[A-Z][a-z]{2} \d{1,2}$/)
+      expect(row.dayLines, `"${row.day}" stays on one line`).toBe(1)
+      expect(row.year, 'the year').toMatch(/^\d{4}$/)
+      expect(row.yearLines, `"${row.year}" is one line`).toBe(1)
+      expect(row.yearBelowDay, `"${row.date}" reads as two lines: the year under the day, never folded further`).toBe(true)
+      expect(row.scrollWidth, `"${row.date}" is not cut`).toBeLessThanOrEqual(row.clientWidth)
+    }
+    await expectNoHorizontalOverflow(page, `/releases?open=${RELEASE.active} @1280`)
+    assertHermetic(api, errors)
+  })
+})
 
 test.describe('1440 x 900', () => {
   test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })

@@ -258,7 +258,8 @@ def test_d5_every_id_field_is_rewritten_and_nothing_else():
         if spec.project_field and spec.project_field in doc:
             assert out[spec.project_field] == new["project"], collection
         for name, value in doc.items():
-            if name not in rewritten:
+            # W32 (deliberate): nested_ref_roots bodies are rewritten by N-1 … N-5 — pinned by D6 below.
+            if name not in rewritten and name not in spec.nested_ref_roots:
                 assert out[name] == value, f"{collection}.{name} must stay verbatim"
     live = d.rewrite_document(d.MONGO_SPECS[Collections.LIVE_EXECUTION_EVENTS],
                               _real_documents(ids)[Collections.LIVE_EXECUTION_EVENTS],
@@ -287,6 +288,102 @@ def test_d5_an_unresolved_key_returns_none_and_an_unresolved_id_field_is_nulled(
         d.rewrite_document(d.MONGO_SPECS[Collections.AI_ANALYSIS_PAYLOADS],
                            _real_documents(ids)[Collections.AI_ANALYSIS_PAYLOADS], remaps=_remaps(ids, new),
                            new_project_id=new["project"])
+
+
+# ── (D6) W32 F-W30-8: evidence refs nested in decision reports / attempts ────
+
+def _sha(label: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(label.encode()).hexdigest()
+
+
+def _projection(src: dict[str, str]) -> dict:
+    """An evidence projection as ``evidence_artifact_service`` stores it inside a report body."""
+    return {"artifact_id": src["artifact"], "kind": "metric_snapshot", "checksum_sha256": _sha("blob"),
+            "scope": {"project_id": src["project"], "test_run_id": src["run"], "test_case_id": src["case"]},
+            "producer_pipeline_run_id": src["pipeline"]}
+
+
+def _nested_bodies(src: dict[str, str]) -> tuple[dict, dict]:
+    decision = {
+        "evidence": [_projection(src)],
+        "claims": [{"text": "two blockers", "evidence": [
+            {"type": "artifact", "id": src["artifact"], "evidence_id": _sha("claim")},
+            {"type": "release_decision", "id": src["run"]},
+            {"type": "release_blocker", "id": "release_blocker.0"},
+            {"type": "metric_snapshot", "id": "metric_snapshot"},
+        ]}],
+        "evidence_ids": [src["artifact"], _sha("claim")],
+        "evidence_bundle_sha256": _sha("bundle"),
+        "orphan": {"artifact_id": src["unmapped"], "test_run_id": src["unmapped"]},
+    }
+    verification = {"checks": [{"artifact_id": src["artifact2"], "status": "ok"}]}
+    return decision, verification
+
+
+def _uuid_texts(value) -> set[str]:
+    if isinstance(value, dict):
+        return set().union(*(_uuid_texts(v) for v in value.values())) if value else set()
+    if isinstance(value, list):
+        return set().union(*(_uuid_texts(v) for v in value)) if value else set()
+    return {value} if d._is_uuid_text(value) else set()
+
+
+def test_d6_nested_evidence_refs_in_reports_and_attempts_are_rewritten():
+    src = {k: str(uuid.uuid4()) for k in ("artifact", "artifact2", "run", "case", "pipeline", "project", "unmapped")}
+    new = {k: str(uuid.uuid4()) for k in src}
+    remaps = {
+        "evidence_artifacts": {src["artifact"]: new["artifact"], src["artifact2"]: new["artifact2"]},
+        "test_runs": {src["run"]: new["run"]},
+        "test_cases": {src["case"]: new["case"]},
+        "agent_pipeline_runs": {src["pipeline"]: new["pipeline"]},
+    }
+    decision, verification = _nested_bodies(src)
+    report = dict(_real_documents({"run": src["run"], "case": src["case"], "pipeline": src["pipeline"],
+                                   "project": src["project"]})[Collections.DECISION_REPORTS],
+                  decision_intelligence=decision, verification=verification)
+    before = repr(report)
+    out = d.rewrite_document(d.MONGO_SPECS[Collections.DECISION_REPORTS], report, remaps=remaps,
+                             new_project_id=new["project"])
+
+    assert out is not None and repr(report) == before, "the source document is never mutated"
+    sources = {v for k, v in src.items() if k != "unmapped"}
+    bodies = [out["decision_intelligence"], out["verification"]]
+    assert len(_uuid_texts(bodies)) == 7, "the walk sees every distinct UUID (6 new ids + the unmapped one)"
+    assert not _uuid_texts(bodies) & sources, "no source UUID left anywhere in the two bodies"
+    di = out["decision_intelligence"]
+    assert di["evidence"][0]["artifact_id"] == new["artifact"]
+    assert di["evidence"][0]["scope"] == {"project_id": new["project"], "test_run_id": new["run"],
+                                          "test_case_id": new["case"]}
+    assert di["evidence"][0]["producer_pipeline_run_id"] == new["pipeline"]
+    claim = di["claims"][0]["evidence"]
+    assert (claim[0]["id"], claim[1]["id"]) == (new["artifact"], new["run"])
+    assert (claim[2]["id"], claim[3]["id"]) == ("release_blocker.0", "metric_snapshot"), "non-UUID ids stay"
+    assert di["evidence_ids"] == [new["artifact"], _sha("claim")]
+    assert di["orphan"] == {"artifact_id": src["unmapped"], "test_run_id": src["unmapped"]}, "kept verbatim"
+    assert out["verification"] == {"checks": [{"artifact_id": new["artifact2"], "status": "ok"}]}
+    # hashes, checksums and the markdown are byte-equal
+    assert claim[0]["evidence_id"] == _sha("claim") and di["evidence_bundle_sha256"] == _sha("bundle")
+    assert di["evidence"][0]["checksum_sha256"] == _sha("blob") and out["markdown_report"] == "# r"
+    _body, changed = d.rewrite_nested_refs(decision, remaps=remaps, new_project_id=new["project"])
+    assert changed == 8, "artifact, 3 scope ids, producer pipeline, 2 claim ids, 1 evidence_ids element"
+
+    attempt = dict(_real_documents({"run": src["run"], "case": src["case"], "pipeline": src["pipeline"],
+                                    "project": src["project"]})[Collections.DECISION_REPORT_ATTEMPTS],
+                   verification={"evidence": [_projection(src)]})
+    out_attempt = d.rewrite_document(d.MONGO_SPECS[Collections.DECISION_REPORT_ATTEMPTS], attempt,
+                                     remaps=remaps, new_project_id=new["project"])
+    assert out_attempt is not None and not _uuid_texts(out_attempt["verification"]) & sources
+
+    snapshot = dict(_real_documents({"run": src["run"], "case": src["case"], "pipeline": src["pipeline"],
+                                     "project": src["project"]})[Collections.DECISION_EVIDENCE_SNAPSHOTS],
+                    evidence=[_projection(src)])
+    out_snapshot = d.rewrite_document(d.MONGO_SPECS[Collections.DECISION_EVIDENCE_SNAPSHOTS], snapshot,
+                                      remaps=remaps, new_project_id=new["project"])
+    assert out_snapshot is not None and out_snapshot["evidence"] == [_projection(src)], "no roots: verbatim"
+    assert d.MONGO_SPECS[Collections.DECISION_EVIDENCE_SNAPSHOTS].nested_ref_roots == ()
+    assert d.MONGO_SPECS[Collections.AI_RUN_VERSIONS].nested_ref_roots == ()
 
 
 # ── writer shapes (open point 4): every top-level *_id a writer sets is named ─

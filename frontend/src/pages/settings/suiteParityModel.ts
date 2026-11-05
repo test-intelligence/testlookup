@@ -35,6 +35,10 @@ export const PARITY_TEXT = {
   explainer:
     'Compares the old suite-membership tables with the test catalog every day at 06:15 UTC. Seven clean days in a ' +
     'row allow the old tables to stop being written.',
+  // W32 (F-W25d-3): the same explainer in the past tense, once the comparison is retired (cut over / not written).
+  explainerRetired:
+    'Compared the old suite-membership tables with the test catalog every day at 06:15 UTC. Seven clean days in a ' +
+    'row allowed the old tables to stop being written.',
   compareNow: 'Compare now',
   comparing: 'Comparing…',
   queued: 'Comparison queued.',
@@ -313,6 +317,8 @@ export interface CardView {
   days: DayRow[]
   /** A visible heading above the days (the cut-over state); otherwise the list keeps its `daysHeading` label. */
   daysHeading: string | null
+  /** The explainer under the heading: present tense while the comparison runs, past tense once it is retired. */
+  explainer: string
 }
 
 /**
@@ -335,6 +341,7 @@ export function cardView(history: SuiteParityHistory, now: Date): CardView {
       canCutOver: false,
       days: dayRows(history, ranThatDay ? at : new Date(at.getTime() - DAY_MS)),
       daysHeading: PARITY_TEXT.cutOverDaysHeading,
+      explainer: PARITY_TEXT.explainerRetired,
     }
   }
   if (state === 'not_written') {
@@ -346,6 +353,7 @@ export function cardView(history: SuiteParityHistory, now: Date): CardView {
       canCutOver: false,
       days: dayRows(history, now),
       daysHeading: null,
+      explainer: PARITY_TEXT.explainerRetired,
     }
   }
   return {
@@ -356,6 +364,7 @@ export function cardView(history: SuiteParityHistory, now: Date): CardView {
     canCutOver: state === 'ready',
     days: dayRows(history, now),
     daysHeading: null,
+    explainer: PARITY_TEXT.explainer,
   }
 }
 

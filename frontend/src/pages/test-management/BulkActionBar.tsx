@@ -88,8 +88,13 @@ export default function BulkActionBar({
     return choice
   }, [choice, lifecycleV2, transitionOptions])
 
-  // Read only when Owner is chosen (no request on page load).
-  const { data: members, isLoading: membersLoading } = useProjectMembers(effective.action === 'set_owner' ? projectId : null)
+  // Read only when Owner is chosen (no request on page load), and REUSE the list the page already holds (W13): the
+  // bar subscribes late, and SWR's default would re-read a cached key older than its 2 s dedup window — a second
+  // members request on a slow CI runner (test-case-bulk.spec.ts, W32). With nothing cached it still fetches.
+  const { data: members, isLoading: membersLoading } = useProjectMembers(
+    effective.action === 'set_owner' ? projectId : null,
+    { revalidateIfStale: false },
+  )
   const owners = useMemo(
     () => (members ?? [])
       .map((member) => ({ id: member.user_id, name: member.full_name || member.username }))

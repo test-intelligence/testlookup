@@ -128,6 +128,23 @@ function fmtDate(iso: string | null | undefined) {
   return formatDay(iso)
 }
 
+/**
+ * A linked run's date as two lines — "Sep 16" over "2026" — so the Linked Test Runs column stays narrow without
+ * folding word by word ("Sep / 16, / 2026", W29d). One unbroken line was tried in W32 and pushed Pass Rate and the
+ * unlink button out of the release page's 584 px card (read in the visual baselines).
+ */
+function LinkedRunDate({ iso }: { iso: string | null | undefined }) {
+  const text = fmtDate(iso)
+  const cut = text.lastIndexOf(', ')
+  if (cut < 0) return <>{text}</>
+  return (
+    <>
+      <span className="block whitespace-nowrap" data-date-day="">{text.slice(0, cut)}</span>
+      <span className="block" data-date-year="">{text.slice(cut + 2)}</span>
+    </>
+  )
+}
+
 type RequestError = { message?: string; response?: { status?: number; data?: { detail?: unknown } } }
 
 /** The server's own sentence for a failed request (the interceptor's wording when it toasts). */
@@ -1000,7 +1017,8 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
           const pageRows = allLinked.slice(start, start + LINKED_PAGE_SIZE)
           return (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            {/* dense: the seven columns fit a release page's 584 px card, unlink button included (W32 baselines) */}
+            <table className="w-full text-sm" data-density="dense">
               <thead>
                 <tr>
                   <th className="th text-left">Build</th>
@@ -1026,7 +1044,7 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
                     <td className="td">
                       <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
                     </td>
-                    <td className="td text-right text-xs text-[var(--color-text-muted)]">{fmtDate(run.created_at)}</td>
+                    <td className="td text-right text-xs text-[var(--color-text-muted)]"><LinkedRunDate iso={run.created_at} /></td>
                     <td className="td text-right tabular-nums text-[var(--status-passed)]">{run.passed_tests}</td>
                     <td className="td text-right tabular-nums text-[var(--status-failed)]">{run.failed_tests}</td>
                     <td className="td text-right tabular-nums text-[var(--color-text-secondary)]">

@@ -115,6 +115,20 @@ describe('SuiteParityCard', () => {
     expect(http.getData).toHaveBeenCalledWith(HISTORY_PATH)
   })
 
+  it('W32 (F-W25d-3): cut over or not written, the explainer is in the past tense — never the present one', async () => {
+    histories = [parityCutOverHistory({ now: NOW(), daysAgo: 3 })]
+    const { unmount } = renderCard()
+    expect(await screen.findByText('Cut over on Tue 15 Sep after 7 clean days.')).toBeInTheDocument()
+    expect(screen.getByText(PARITY_TEXT.explainerRetired)).toBeInTheDocument()
+    expect(screen.queryByText(PARITY_TEXT.explainer)).toBeNull()
+    unmount()
+    histories = [parityNotWrittenHistory({ now: NOW() })]
+    renderCard()
+    expect(await screen.findByText('The old suite-membership tables are not written.')).toBeInTheDocument()
+    expect(screen.getByText(PARITY_TEXT.explainerRetired)).toBeInTheDocument()
+    expect(screen.queryByText(PARITY_TEXT.explainer)).toBeNull()
+  })
+
   it('no comparison yet: the sentence, never "0 differences"', async () => {
     histories = [parityHistory({ newest: 'none', now: NOW() })]
     renderCard()

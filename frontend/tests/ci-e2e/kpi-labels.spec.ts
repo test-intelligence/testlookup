@@ -14,6 +14,9 @@
  *
  * Runs has no strip: its banner states the facts (P3).
  *
+ * W32 (W29e F-9): `/settings/billing`'s four workspace tiles are compact `MetricCard`s too (a 2 × 2 grid: at 4-up
+ * three of their labels were cut at 1280 under DejaVu), so the page is in `PAGES` — this is their width proof.
+ *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock).
  */
 import { expect, test, type Page } from '@playwright/test'
@@ -31,6 +34,7 @@ import {
   USER,
   VALUE_METRICS,
 } from '../visual/production/fixtures'
+import { ADMIN, billingHandlers } from '../visual/production/fixtures-agents-billing-flags'
 
 test.use({ timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
@@ -57,6 +61,12 @@ const PAGES: Record<string, Open> = {
       projectId: PROJECT_ID,
       handlers: VALUE_METRICS,
       ready: (p) => p.getByRole('heading', { name: 'Hours saved per month' }),
+    }),
+  '/settings/billing': (page) =>
+    openRollout(page, '/settings/billing', {
+      handlers: billingHandlers().handlers,
+      user: ADMIN,
+      ready: (p) => p.locator('[data-billing-summary]'),
     }),
 }
 

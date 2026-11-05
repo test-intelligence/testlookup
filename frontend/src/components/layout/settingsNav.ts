@@ -81,7 +81,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     id: 'integrations',
     label: 'Integrations',
     items: [
-      { id: 'integrations', label: 'Jira, Splunk, OCP, Slack, Teams', description: 'Connections to trackers, logs and chat', to: '/settings/integrations', requires: 'management' },
+      { id: 'integrations', label: 'Integrations', description: 'Jira, Splunk, OCP, Prometheus, Slack and Teams', to: '/settings/integrations', requires: 'management' },
       { id: 'github', label: 'GitHub', description: 'Repository, checks and pull-request comments', to: '/settings/github', requires: 'management' },
       { id: 'gitlab', label: 'GitLab', description: 'Repository and merge-request comments', to: '/settings/gitlab', requires: 'management' },
       { id: 'webhooks', label: 'Outbound webhooks', description: 'Events sent to your own endpoints', to: '/settings/webhooks', requires: 'management' },

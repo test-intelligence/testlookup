@@ -13,9 +13,15 @@ every ``Collections.*`` member and every ``_MONGO_PLANS`` entry is classified
 here, and every top-level ``*_id`` field a writer sets is named.
 
 Pure: imports ``app.db.mongo.Collections``, ``bson`` and the vocabulary only —
-no session, no client, no I/O (``STAGE_ONLY_SERVICES``). Ids nested INSIDE a
-document body stay source ids (history text; every read is scoped by the copy's
-own run / case / project id first — contract R-6).
+no session, no client, no I/O (``STAGE_ONLY_SERVICES``). Ids nested inside a
+decision report's ``decision_intelligence`` / ``verification`` and an attempt's
+``verification`` (``MongoSpec.nested_ref_roots``) are rewritten by
+:func:`rewrite_nested_refs` (rules N-1 … N-5, W32 F-W30-8: the retention purge
+protects the artifacts a published report cites by walking exactly those
+bodies, so a copy's reports must cite the COPY's artifact rows). Every other
+document body keeps source ids (history text; every read is scoped by the
+copy's own run / case / project id first — contract R-6); snapshots and AI
+versions stay verbatim, since their ``content_sha256`` covers the body.
 """
 from __future__ import annotations
 
@@ -60,6 +66,7 @@ class MongoSpec:
     run_fields: tuple[str, ...] = ()                             # fields OVERWRITTEN with the NEW run id string (whatever their value)
     slug_key: bool = False                                       # the key may be a live-session SLUG (canonical_run_uuid resolves it)
     kept_ids: tuple[str, ...] = ()                               # top-level *_id fields of the document ITSELF, kept verbatim
+    nested_ref_roots: tuple[str, ...] = ()                       # top-level fields whose BODY rewrite_nested_refs walks (N-1 … N-5)
 
 
 _RUNS, _CASES, _PIPELINES = "test_runs", "test_cases", "agent_pipeline_runs"
@@ -89,10 +96,11 @@ MONGO_COLLECTIONS: tuple[MongoSpec, ...] = (
     MongoSpec(PIPELINE_EVENT_LOG, key="pipeline_run_id", key_map=_PIPELINES, id_fields={"test_case_id": _CASES}),
     MongoSpec(Collections.DECISION_REPORTS, key="test_run_id", key_map=_RUNS, id_fields={"pipeline_run_id": _PIPELINES},
               project_field="project_id", unique_key=("test_run_id", "report_version"),
-              kept_ids=("report_id", "supersedes_report_id", "evidence_snapshot_id")),
+              kept_ids=("report_id", "supersedes_report_id", "evidence_snapshot_id"),
+              nested_ref_roots=("decision_intelligence", "verification")),
     MongoSpec(Collections.DECISION_REPORT_ATTEMPTS, key="test_run_id", key_map=_RUNS,
               id_fields={"pipeline_run_id": _PIPELINES}, project_field="project_id",
-              kept_ids=("attempt_id", "supersedes_report_id")),
+              kept_ids=("attempt_id", "supersedes_report_id"), nested_ref_roots=("verification",)),
 )
 MONGO_SPECS: Mapping[str, MongoSpec] = {spec.collection: spec for spec in MONGO_COLLECTIONS}
 
@@ -216,6 +224,76 @@ def _resolve(remaps: Mapping[str, Remap], table: str, source_id: str) -> str | N
     return remap.get(source_id)
 
 
+_ARTIFACTS = "evidence_artifacts"
+_PROJECT = "<project>"
+#: N-1 / N-5: a nested KEY whose UUID-text value goes through a remap (``_PROJECT`` = the new project id).
+_NESTED_KEY_MAPS: Mapping[str, str] = {
+    "artifact_id": _ARTIFACTS,
+    "test_run_id": _RUNS,
+    "test_case_id": _CASES,
+    "pipeline_run_id": _PIPELINES,
+    "producer_pipeline_run_id": _PIPELINES,
+    "project_id": _PROJECT,
+}
+#: N-3 / N-4: a dict ``{"type": <type>, "id": <uuid text>}`` → the remap of its ``id``.
+_NESTED_TYPED_IDS: Mapping[str, str] = {"artifact": _ARTIFACTS, "release_decision": _RUNS}
+
+
+def _is_uuid_text(value: Any) -> bool:
+    if not isinstance(value, str) or len(value) != 36:
+        return False
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def rewrite_nested_refs(value: Any, *, remaps: Mapping[str, Remap], new_project_id: str) -> tuple[Any, int]:
+    """A rewritten deep copy of a document BODY and the number of values changed (W32 F-W30-8).
+
+    At any depth: **N-1** key ``artifact_id`` → ``evidence_artifacts``; **N-2** key ``evidence_ids`` holding a
+    list → each UUID-text element → ``evidence_artifacts`` (a sha256 ``evidence_id`` is not a UUID and stays);
+    **N-3** a dict ``{"type": "artifact", "id": …}`` → ``evidence_artifacts``; **N-4** a dict
+    ``{"type": "release_decision", "id": …}`` → ``test_runs``; **N-5** keys ``test_run_id`` → ``test_runs``,
+    ``test_case_id`` → ``test_cases``, ``pipeline_run_id`` / ``producer_pipeline_run_id`` →
+    ``agent_pipeline_runs``, ``project_id`` → ``new_project_id``. A value that is not UUID text, or that a remap
+    answers None for, stays VERBATIM (nested history text is never nulled). Nothing else is touched
+    (``evidence_id`` hashes, ``evidence_bundle_sha256``, ``checksum_sha256``, ``markdown_report`` …). The body
+    was validated (depth ≤ ``MONGO_MAX_DEPTH``) before the rewrite, so the recursion is bounded."""
+    changed = 0
+
+    def _map(table: str, source: Any) -> Any:
+        nonlocal changed
+        if not _is_uuid_text(source):
+            return source
+        new = new_project_id if table == _PROJECT else _resolve(remaps, table, source)
+        if new is None or new == source:
+            return source
+        changed += 1
+        return new
+
+    def _walk(node: Any) -> Any:
+        if isinstance(node, list):
+            return [_walk(item) for item in node]
+        if not isinstance(node, dict):
+            return node
+        typed = _NESTED_TYPED_IDS.get(node["type"]) if isinstance(node.get("type"), str) else None
+        out: dict[str, Any] = {}
+        for key, item in node.items():
+            if typed is not None and key == "id":
+                out[key] = _map(typed, item)
+            elif key in _NESTED_KEY_MAPS and isinstance(item, str):
+                out[key] = _map(_NESTED_KEY_MAPS[key], item)
+            elif key == "evidence_ids" and isinstance(item, list):
+                out[key] = [_map(_ARTIFACTS, el) if isinstance(el, str) else _walk(el) for el in item]
+            else:
+                out[key] = _walk(item)
+        return out
+
+    return _walk(value), changed
+
+
 def rewrite_document(
     spec: MongoSpec, doc: Mapping[str, Any], *, remaps: Mapping[str, Remap], new_project_id: str,
     new_run_id: str | None = None,
@@ -226,7 +304,8 @@ def rewrite_document(
     through ``key_map`` (a slug key through :func:`canonical_run_uuid` first); every present ``id_fields``
     value through its remap (unresolved → None); ``project_field`` → ``new_project_id``; ``run_fields`` and
     ``added_fields`` → the new run id (the resolved key, or ``new_run_id`` for a case-keyed collection).
-    ``_id`` is never set: the database assigns a fresh one. A top-level copy; nested values are shared."""
+    ``_id`` is never set: the database assigns a fresh one. A top-level copy; nested values are shared,
+    except each present ``nested_ref_roots`` field, which is replaced by :func:`rewrite_nested_refs`'s copy."""
     raw = doc.get(spec.key)
     if not isinstance(raw, str) or not raw:
         return None
@@ -250,4 +329,7 @@ def rewrite_document(
             out[name] = run_id
     for name in spec.added_fields:
         out[name] = run_id
+    for name in spec.nested_ref_roots:
+        if name in out:
+            out[name], _changed = rewrite_nested_refs(out[name], remaps=remaps, new_project_id=new_project_id)
     return out

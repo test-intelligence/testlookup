@@ -126,7 +126,7 @@ table is the exception, below). The line-heights ARE the utilities' ratios, not
 px tokens: presentation mode raises `--text-2xs` / `-xs` / `-sm` / `-base` to
 16 px and a ratio grows with its size, where a px line-height would keep its
 desk value (16 px text in an 18 px line). A heading that needs a tighter line takes `leading-tight`
-(`--leading-tight: 1.2`); `leading-[Npx]` is not used.
+(`--leading-tight: 1.2`); `leading-[Npx]` is not used (enforced by `frontend/src/test/noPxLineHeight.test.ts`).
 
 | Utility | Size | Line-height (ratio) | Typical use |
 |---|---|---|---|

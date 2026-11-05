@@ -477,3 +477,100 @@ async def test_test_history_points_carry_their_timing_and_the_baseline(world):
     assert slow["baseline"]["mean_ms"] == 4000.0 and slow["baseline"]["sample_count"] == 14
     outsider = await _get(world, f"{base}/{world.t_slow.id}/history", world.outsider)
     assert outsider.status_code == 404
+
+
+# ── 7. EXEC-03 one pass (W32): equal to the two statements it replaced ───────
+
+
+async def _blocks(db, sql_builder, scope, branch, start, top):
+    """One statement's rows, built and bound exactly as ``project_execution_metrics`` does."""
+    from app.services.analytics_scope import scoped_text
+
+    params = {"period_start": start, "top": top}
+    return (await db.execute(scoped_text(sql_builder(params, scope, branch), params), params)).all()
+
+
+async def test_the_one_pass_read_equals_the_legacy_pair_on_real_rows(world):
+    """E-2: ties (the fingerprint tie-break at the LIMIT boundary), a NULL duration (excluded), a zero duration
+    (first bucket), a one-sample test, more tests than ``top``, two suites / releases / branches, an EMPTY
+    fingerprint (the column is NOT NULL, so this is the falsy-fingerprint group ``slowest_tests_block`` drops), and
+    the world's two other projects' runs inside the window (tenant) — for every filter set × top, EXACT equality."""
+    from app.models.postgres import LaunchStatus, Project, Release, TestCase, TestRun
+    from app.services import execution_metrics_service as svc
+    from app.services.analytics_scope import AnalyticsScope
+    from tests.services.test_execution_metrics_service import _legacy_histogram_sql, _legacy_slowest_sql
+
+    now = datetime.now(timezone.utc)
+    tag = "eq" + uuid.uuid4().hex[:8]
+    p3, ra, rb = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    # run key → (branch, release, created hours ago); one fingerprint per run (uq_test_cases_run_fingerprint)
+    runs = {f"r{i}": (("main", "dev")[i % 2], (ra, rb)[(i // 2) % 2], 2 + i) for i in range(8)}
+    cases = [  # (run key, fingerprint, suite, duration)
+        *[(f"r{i}", f"fpspread{tag}", "Checkout", d) for i, d in enumerate((100, 200, 300, 400, 5000, None))],
+        # six tests tied on p95 = 9000, inserted in DESCENDING fingerprint order: the tie-break decides
+        *[(rk, f"fptie{tag}{i}", "payments", 9000) for i in (6, 5, 4, 3, 2, 1) for rk in ("r6", "r7")],
+        ("r3", f"fpone{tag}", "payments", 50), ("r2", f"fpzero{tag}", "Checkout", 0),
+        ("r0", "", "Checkout", 999), ("r1", "", "payments", 1),
+        *[("r2", f"fpmany{tag}{i}", "Checkout", 10 * i) for i in range(1, 9)],
+    ]
+    try:
+        async with world.sessions() as db:
+            db.add(Project(id=p3, name=f"exec03-eq-{tag}", slug=f"exec03-eq-{tag}", is_active=True))
+            await db.flush()
+            db.add_all([Release(id=r, project_id=p3, name=f"exec03-{n}-{tag}", version=f"{n}.0", status="active")
+                        for r, n in ((ra, "a"), (rb, "b"))])
+            await db.flush()
+            ids = {}
+            for key, (branch, release, hours) in runs.items():
+                row = TestRun(id=uuid.uuid4(), project_id=p3, build_number=f"{key}-{tag}", jenkins_job="exec03",
+                              status=LaunchStatus.PASSED, ingestion_source="upload", branch=branch,
+                              primary_release_id=release)
+                row.created_at = now - timedelta(hours=hours)
+                db.add(row)
+                ids[key] = row.id
+            await db.flush()
+            db.add_all([TestCase(id=uuid.uuid4(), test_run_id=ids[rk], test_name=f"t_{fp or 'blank'}", class_name=s,
+                                 suite_name=s, test_fingerprint=fp, status="PASSED", duration_ms=d)
+                        for rk, fp, s, d in cases])
+            await db.commit()
+
+        filters = {
+            "none": ((), (), None), "release": ((str(ra),), (), None), "suite": ((), ("payments",), None),
+            "branch": ((), (), "main"), "all": ((str(rb),), ("Checkout",), "main"),
+        }
+        start = now - timedelta(days=30)
+        compared = 0
+        async with world.sessions() as db:
+            for name, (releases, suites, branch) in filters.items():
+                scope = AnalyticsScope(project_id=p3, allowed_project_ids=None, release_ids=releases,
+                                       suite_names=suites, days=30)
+                for top in (1, 3, 50):
+                    old_slow = await _blocks(db, _legacy_slowest_sql, scope, branch, start, top)
+                    old_hist = await _blocks(db, _legacy_histogram_sql, scope, branch, start, top)
+                    per_test, total = svc.split_slowest_and_histogram(
+                        await _blocks(db, svc._slowest_and_histogram_sql, scope, branch, start, top))
+                    label = (name, top)
+                    assert svc.slowest_tests_block(per_test, limit=top) == svc.slowest_tests_block(
+                        old_slow, limit=top), label
+                    assert svc.histogram_block(total) == svc.histogram_block(old_hist[0]), label
+                    assert svc.histogram_block(total)["measured"] is True, label
+                    compared += 1
+            # the tie-break is exercised: top 3 under "suite" are three of the six tied tests, smallest first
+            ranked = svc.slowest_tests_block(svc.split_slowest_and_histogram(await _blocks(
+                db, svc._slowest_and_histogram_sql, AnalyticsScope(
+                    project_id=p3, allowed_project_ids=None, release_ids=(), suite_names=("payments",), days=30),
+                None, start, 3))[0], limit=3)
+            assert [i["test_fingerprint"] for i in ranked["items"]] == [f"fptie{tag}{i}" for i in (1, 2, 3)]
+            # an empty window: both blocks equal and not measured
+            empty = AnalyticsScope(project_id=p3, allowed_project_ids=None, release_ids=(str(uuid.uuid4()),),
+                                   suite_names=(), days=30)
+            per_test, total = svc.split_slowest_and_histogram(
+                await _blocks(db, svc._slowest_and_histogram_sql, empty, None, start, 25))
+            old_hist = await _blocks(db, _legacy_histogram_sql, empty, None, start, 25)
+            assert total is not None and svc.histogram_block(total) == svc.histogram_block(old_hist[0])
+            assert svc.histogram_block(total)["measured"] is False
+            assert svc.slowest_tests_block(per_test, limit=25)["measured"] is False
+        assert compared == 15
+    finally:
+        async with world.sessions.begin() as db:
+            await db.execute(text("DELETE FROM projects WHERE id = :p"), {"p": p3})

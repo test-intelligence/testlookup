@@ -33311,6 +33311,20 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Deleted",
       "type": "object"
     },
+    "documents": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Documents"
+    },
     "mode": {
       "enum": [
         "runs",

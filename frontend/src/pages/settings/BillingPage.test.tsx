@@ -438,3 +438,44 @@ describe('W27b F-6: a failed quota read never puts the defaults in front of Save
     await waitFor(() => expect(screen.queryByRole('region', { name: 'Edit LLM cost budget' })).toBeNull())
   })
 })
+
+describe('W32 (W29e F-9): the workspace tiles are the house MetricCard, two by two', () => {
+  const tiles = () => {
+    const summary = document.querySelector('[data-billing-summary]') as HTMLElement
+    expect(summary).not.toBeNull()
+    return Array.from(summary.querySelectorAll<HTMLElement>(':scope > [data-metric-card="compact"]'))
+  }
+  /** The value line of a tile (MetricCard's second paragraph; the first is the label). */
+  const valueOf = (tile: HTMLElement) => tile.querySelectorAll('p')[1] as HTMLElement
+
+  it('four compact tiles in a 2-column grid, the labels verbatim and in order, each label one line with its hint', () => {
+    renderWith([project()])
+    expect((document.querySelector('[data-billing-summary]') as HTMLElement).className).toContain('grid-cols-2')
+    const found = tiles()
+    expect(found).toHaveLength(4)
+    expect(found.map((t) => t.querySelector('p')?.textContent)).toEqual([
+      'Total spend (period)', 'LLM calls', 'Projects over soft-warn', 'Projected overage charge',
+    ])
+    for (const tile of found) {
+      const label = tile.querySelector('p') as HTMLElement
+      expect(label).toHaveClass('truncate')
+      expect(label.getAttribute('title')).not.toBe(label.textContent)
+    }
+    expect(valueOf(found[1])).toHaveTextContent(/^42$/)
+    expect(screen.getByTestId('billing-projected-charge')).toBe(found[3])
+  })
+
+  it('the soft-warn count is inked: danger with a CAPPED project, warning with SOFT_WARN only, plain otherwise', () => {
+    const first = renderWith([project({ project_id: 'a', status: 'SOFT_WARN' }), project({ project_id: 'b', status: 'CAPPED' })])
+    expect(valueOf(tiles()[2])).toHaveTextContent(/^2$/)
+    expect(valueOf(tiles()[2])).toHaveClass('text-[var(--ui-danger-ink)]')
+    first.unmount()
+    const second = renderWith([project({ project_id: 'a', status: 'SOFT_WARN' }), project({ project_id: 'b' })])
+    expect(valueOf(tiles()[2])).toHaveTextContent(/^1$/)
+    expect(valueOf(tiles()[2])).toHaveClass('text-[var(--ui-warning-ink)]')
+    second.unmount()
+    renderWith([project()])
+    expect(valueOf(tiles()[2])).toHaveTextContent(/^0$/)
+    expect(valueOf(tiles()[2])).toHaveClass('text-[var(--color-text)]')
+  })
+})
