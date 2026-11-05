@@ -1623,6 +1623,15 @@ locally by default.
 
 ### Fixed
 
+- **An inline summary no longer gives a pass rate or a release readiness
+  signal for failures a caller supplied** (F-OR07-2, prompt edit owner-approved
+  2026-11-05). After the markers were stripped, the live model still wrote
+  "The pass rate … is insufficient data" and "This failure indicates a risk to
+  release readiness". The `summary_executive` prompt (v1) asked every summary
+  for both. In v2, when the data names supplied failures instead of the run's
+  results, the three sentences give the supplied count, the most critical
+  category and the next action. Attested from source like `summary_system` v2.
+  Test: `tests/test_prompt_registry.py`.
 - **An erasure rewrites a mention that ends a sentence** (W31 follow-up, found
   on the homelab walk 2026-11-05). "Please confirm @alice." stayed unrewritten.
   The product's mention parser reads a trailing dot as the end of the

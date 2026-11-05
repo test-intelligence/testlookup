@@ -312,14 +312,19 @@ Evidence snapshot:
 )
 
 # agents/summary_agent.py _EXEC_SUMMARY_PROMPT
+# v2 (F-OR07-2, owner-approved 2026-11-05): v1 asked every summary for a pass rate and a release readiness signal,
+# so on an inline invocation — whose data carries only failures the caller supplied, no pass rate for the build —
+# the live model still wrote "The pass rate ... is insufficient data" and "This failure indicates a risk to release
+# readiness" (homelab re-walk, build-20261105-000236). The exception names what to write instead.
 _register(
     "summary_executive",
-    1,
+    2,
     """\
 {system}
 
 Write EXACTLY 3 sentences summarising this test run for an engineering manager.
 Include: pass rate, most critical failure category, and release readiness signal.
+Exception: when the data names supplied failures sent by the caller instead of the run's results, it has no pass rate and no release readiness signal, so give neither. Then state how many failures were supplied, the most critical failure category, and the next action.
 
 Data:
 {context}

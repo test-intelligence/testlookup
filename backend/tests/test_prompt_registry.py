@@ -35,7 +35,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # of the registry migration is broken — do not update these without
 # understanding why.
 _ORIGINAL_HASHES = {
-    "summary_executive": "9885ab3d7268",
     "summary_renderer_system": "42fc12956d2f",
     "summary_renderer_developer": "58d153d90e99",
     "summary_renderer_manager": "fb02a6a74429",
@@ -78,6 +77,10 @@ _REACT_TRIAGE_V1_HASH = "e8d6ac6b354e"
 # The ORIGINAL summary_system (v1) hash, captured before the move like the
 # others — v2 deliberately differs (W23c F-1, owner-approved 2026-11-03).
 _SUMMARY_SYSTEM_V1_HASH = "3b2f2b5fde10"
+
+# The ORIGINAL summary_executive (v1) hash, from the byte-identity pins above —
+# v2 deliberately differs (F-OR07-2, owner-approved 2026-11-05).
+_SUMMARY_EXECUTIVE_V1_HASH = "9885ab3d7268"
 
 
 # ── Byte identity ────────────────────────────────────────────────────────────
@@ -133,6 +136,20 @@ def test_summary_system_is_deliberate_v2():
     assert "If pass rate is not provided, do not guess a number." in p.text
     assert "Use exact numbers from the data (pass rates, failure counts) — never approximate." in p.text
     assert "{" not in p.text and "}" not in p.text  # inserted as {system}: no slots of its own
+
+
+def test_summary_executive_is_deliberate_v2():
+    """F-OR07-2: v2 adds one exception for supplied failures (the live model wrote a pass rate and a release
+    readiness conclusion about failures a caller supplied); v1's instruction is asserted to have survived."""
+    p = pr.get_prompt("summary_executive")
+    assert p.version == 2
+    assert p.content_hash != _SUMMARY_EXECUTIVE_V1_HASH
+    assert "it has no pass rate and no release readiness signal, so give neither" in p.text
+    assert "state how many failures were supplied, the most critical failure category, and the next action" in p.text
+    # v1's instruction and slots, unchanged.
+    assert "Write EXACTLY 3 sentences summarising this test run for an engineering manager." in p.text
+    assert "Include: pass rate, most critical failure category, and release readiness signal." in p.text
+    assert "{system}" in p.text and "{context}" in p.text
 
 
 def test_chat_system_is_deliberate_v4():
