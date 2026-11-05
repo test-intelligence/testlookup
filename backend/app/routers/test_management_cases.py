@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -120,7 +121,7 @@ async def _attach_latest_executions(
     2026-10-10). One query for the page: the latest row per (project,
     fingerprint).
     """
-    from app.models.postgres import TestCase, TestRun  # noqa: PLC0415
+    from app.models.postgres import TestCase, TestRun, TestStatus  # noqa: PLC0415
 
     linked = [(case, resp) for case, resp in pairs if case.test_fingerprint]
     if not linked:
@@ -140,7 +141,16 @@ async def _attach_latest_executions(
             TestRun.created_at.desc(), TestCase.id.asc(),
         )
     )
-    latest = {(pid, fp): rest for pid, fp, *rest in rows.all()}
+    # Keyed as the lookup below reads it: ManagedTestCase.test_fingerprint is
+    # Optional. Each column unpacked by name keeps its own type (SQLAlchemy
+    # 2.1 types Row per column; a `*rest` unpack widens to their union).
+    latest: dict[
+        tuple[uuid.UUID, Optional[str]],
+        tuple[uuid.UUID, uuid.UUID, Optional[uuid.UUID], datetime, TestStatus],
+    ] = {
+        (pid, fp): (tc_id, run_id, canonical_id, ran_at, run_status)
+        for pid, fp, tc_id, run_id, canonical_id, ran_at, run_status in rows.all()
+    }
     for case, resp in linked:
         hit = latest.get((case.project_id, case.test_fingerprint))
         if hit is None:

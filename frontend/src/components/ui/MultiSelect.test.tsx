@@ -63,6 +63,9 @@ describe('MultiSelect — closed control', () => {
     expect(trigger()).toHaveAttribute('data-active', 'true')
     expect(screen.getByTestId('ms-count')).toHaveTextContent('2')
     expect(trigger()).toHaveAccessibleName('Release, 2 selected')
+    // Its text is "Release 2", not "Release2": each visible word is a word of
+    // the name (axe 4.14 label-content-name-mismatch compares by word).
+    expect(trigger().textContent).toBe('Release 2')
   })
 
   it('does not open when disabled, and says why', () => {
@@ -263,13 +266,57 @@ describe('MultiSelect — bulk actions, counts, disabled options', () => {
     expect(within(options()[1]).getByText('0')).toBeInTheDocument()
   })
 
+  it('a pick that lands before the parent re-renders builds on the last one; the parent value then wins', () => {
+    // A URL-backed parent (TestManagementPage, CompareSection) commits in a
+    // transition, which can commit after the next click's handler has run
+    // (seen with React 19.3 on test-management-filters.spec.ts).
+    const onChange = vi.fn()
+    const lagging = (value: string[]) => (
+      <MultiSelect label="Release" options={releases(5)} value={value} onChange={onChange} data-testid="ms" />
+    )
+    const { rerender } = render(lagging([]))
+    openWithKeyboard()
+    fireEvent.click(options()[0])
+    expect(onChange).toHaveBeenLastCalledWith(['r1'])
+    // No re-render from the parent yet: the second pick must keep the first.
+    fireEvent.click(options()[1])
+    expect(onChange).toHaveBeenLastCalledWith(['r1', 'r2'])
+    expect(options()[0]).toHaveAttribute('aria-selected', 'true')
+    expect(trigger()).toHaveAccessibleName('Release, 2 selected')
+    // The parent's next value replaces what was sent, whatever it is.
+    rerender(lagging(['r3']))
+    expect(options()[0]).toHaveAttribute('aria-selected', 'false')
+    expect(options()[1]).toHaveAttribute('aria-selected', 'false')
+    expect(within(listbox()).getByRole('option', { name: 'Release 3, 30' })).toHaveAttribute('aria-selected', 'true')
+    expect(trigger()).toHaveAccessibleName('Release, 1 selected')
+  })
+
+  it('the row text keeps label, reason and count apart, so each visible word is in the name (WCAG 2.5.3)', () => {
+    // axe 4.14 enables label-content-name-mismatch and compares by word: run
+    // together, "Release 2" + "74" reads "Release 274", a word the name lacks.
+    render(
+      <Harness
+        options={[
+          { value: 'r2', label: 'Release 2', count: 74 },
+          { value: 'x', label: 'Release archived', count: 0, disabled: true, disabledReason: 'Archived' },
+        ]}
+      />,
+    )
+    openWithKeyboard()
+    const [counted, archived] = options()
+    expect(counted.textContent).toBe('Release 2 74')
+    expect(counted).toHaveAccessibleName('Release 2, 74')
+    expect(archived.textContent).toBe('Release archived (Archived) 0')
+    expect(archived).toHaveAccessibleName('Release archived, 0, Archived')
+  })
+
   it('a disabled option says why and cannot be toggled', () => {
     const onChange = vi.fn()
     render(<Harness options={opts} onChange={onChange} />)
     openWithKeyboard()
     const gamma = options()[2]
     expect(gamma).toHaveAttribute('aria-disabled', 'true')
-    expect(gamma).toHaveTextContent('Gamma(No runs in window)')
+    expect(gamma).toHaveTextContent('Gamma (No runs in window)')
     press('ArrowDown')
     press('ArrowDown')
     press('ArrowDown')

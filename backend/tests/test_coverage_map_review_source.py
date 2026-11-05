@@ -82,7 +82,8 @@ def test_the_canonical_predicate_is_the_deleted_routes_predicate():
     """One predicate, two readers: the tile's "{n} need review" and the expander's "Deleted from Suite"."""
     from sqlalchemy.dialects import postgresql
 
-    route = str(cutover._wire_predicate(cutover.WIRE_NEEDS_REVIEW).compile(dialect=postgresql.dialect()))
+    # psycopg2's rendering: SQLAlchemy 2.1's default postgresql.dialect() (psycopg 3) casts every bind.
+    route = str(cutover._wire_predicate(cutover.WIRE_NEEDS_REVIEW).compile(dialect=postgresql.psycopg2.dialect()))
     assert route == (
         "canonical_test_cases.status != %(status_1)s AND canonical_test_cases.retirement_confirmed_at IS NULL"
     )

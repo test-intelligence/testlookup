@@ -24,6 +24,10 @@ from app.services import global_search_service as gs
 from app.services.global_search_service import AdapterFilters
 from app.services.search_query_parser import parse_query
 
+#: The expected SQL below is psycopg2's rendering. SQLAlchemy 2.1 makes psycopg (3) the
+#: default ``postgresql.dialect()``, which adds a cast to every bind (``%(x)s::INTEGER``).
+_PIN_DIALECT = postgresql.psycopg2.dialect
+
 PROJECT = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 OTHER = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 RELEASE = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
@@ -210,7 +214,7 @@ class _RecordingDB:
 
 def _sql(stmt, *, literal: bool = False) -> str:
     kwargs = {"compile_kwargs": {"literal_binds": True}} if literal else {}
-    return str(stmt.compile(dialect=postgresql.dialect(), **kwargs))
+    return str(stmt.compile(dialect=_PIN_DIALECT(), **kwargs))
 
 
 def _tail(sql: str) -> str:
@@ -557,7 +561,7 @@ async def test_release_resolution_is_one_statement_scoped_to_the_pinned_project(
     assert "lower(releases.name) = any (%(release_names)s::varchar[])" in where
     assert "lower(releases.version) = any (%(release_names)s::varchar[])" in where
     assert "limit" in sql
-    params = stmt.compile(dialect=postgresql.dialect()).params
+    params = stmt.compile(dialect=_PIN_DIALECT()).params
     assert params["project_id_1"] == PROJECT
     assert params["release_names"] == ["2026.11", "v11", str(RELEASE), "nope"]
 
@@ -574,7 +578,7 @@ async def test_release_resolution_for_a_member_is_scoped_to_their_projects():
     [stmt] = db.statements
     where = _sql(stmt).lower().split("\nwhere ", 1)[1]
     assert "releases.project_id = any (%(release_scope_ids)s::uuid[])" in where
-    assert stmt.compile(dialect=postgresql.dialect()).params["release_scope_ids"] == [PROJECT]
+    assert stmt.compile(dialect=_PIN_DIALECT()).params["release_scope_ids"] == [PROJECT]
 
 
 @pytest.mark.asyncio

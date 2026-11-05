@@ -73,11 +73,15 @@ async def test_server_side_app_limit_preserves_operations_and_migration() -> Non
 
         excess = create_async_engine(app_url, poolclass=NullPool)
         engines.append(excess)
-        with pytest.raises(
-            asyncpg.TooManyConnectionsError,
-            match="too many connections|connection limit",
-        ):
+        # SQLAlchemy 2.1 translates a connect-time asyncpg error into its DBAPI
+        # error (raised ``from`` the asyncpg one); 2.0 let it through raw. The
+        # refusal is asserted on the root cause either way.
+        with pytest.raises(Exception, match="too many connections|connection limit") as refused:
             await excess.connect()
+        root = refused.value
+        while root.__cause__ is not None:
+            root = root.__cause__
+        assert isinstance(root, asyncpg.TooManyConnectionsError), repr(refused.value)
 
         for role, application_name in (
             (ops_role, "m12-operation"),

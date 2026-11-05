@@ -21,7 +21,7 @@ This installs `io.testlookup:testlookup-reporter:1.0.0` into your local Maven re
 | `testlookup-reporter-1.0.0.jar` | The reporter only; Jackson comes in as normal dependencies | You build with Maven or Gradle |
 | `testlookup-reporter-1.0.0-all.jar` | The reporter with Jackson and SnakeYAML bundled and relocated to `ai.testlookup.shaded.jackson` | You add a jar to a classpath by hand, or must avoid Jackson version clashes |
 
-Neither jar contains TestNG, JUnit or RestAssured; your project provides them (TestNG 7.x, JUnit Jupiter 5.x, RestAssured 5.x for [HTTP capture](#capturing-http-exchanges-restassured)).
+Neither jar contains TestNG, JUnit or RestAssured; your project provides them (TestNG 7.x, JUnit Jupiter 5.x or 6.x, RestAssured 5.x for [HTTP capture](#capturing-http-exchanges-restassured)).
 
 **Maven:**
 
@@ -73,6 +73,8 @@ The listener first looks for these names as `<parameter>` values in `testng.xml`
 | `testlookup.suite` | `TESTLOOKUP_SUITE` | Run-level suite (else `testlookup.launch`, else the TestNG `<suite name>`) |
 
 ## JUnit 5
+
+The extension works with JUnit 5 (Java 11 or newer) and JUnit 6 (Java 17 or newer, as JUnit 6 itself requires); the SDK's own tests run against both.
 
 Annotate a test class:
 

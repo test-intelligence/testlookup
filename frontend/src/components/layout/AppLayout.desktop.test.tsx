@@ -20,8 +20,15 @@
  * weight + `tracking-wider` → `eyebrow`, `uppercase` and the colour kept); the
  * Inbox count, the search shortcut and the unread count `text-[10px]` /
  * `[11px]` → `text-2xs`; the settings links and the section tabs
- * `text-[13px]` → `text-sm`; the logo `text-[20px]` → `text-xl`. Any other change at desktop width
- * fails here. The drawer's own
+ * `text-[13px]` → `text-sm`; the logo `text-[20px]` → `text-xl`, and once
+ * more, by hand, for W33's lucide-react 1.66: since 1.42 (`@lucide/shared`,
+ * lucide#4409) an icon's svg also carries a `lucide-<alias>` class per alias,
+ * so the rail toggle gains `lucide-sidebar-close` and the Help icon
+ * `lucide-help-circle lucide-circle-help` (same paths, same elements); and
+ * for axe 4.14's label-content-name-mismatch (WCAG 2.5.3), the account
+ * trigger drops `aria-label="Account menu"` for its own words: the initials
+ * `aria-hidden`, then an `sr-only` "Account menu" (out of flow, no layout
+ * change). Any other change at desktop width fails here. The drawer's own
  * styling lives ONLY in `max-lg:` utilities, which apply below 1024 px, so
  * they are removed before the comparison. `AppLayout.drawer.test.tsx` covers
  * the narrow shell itself.

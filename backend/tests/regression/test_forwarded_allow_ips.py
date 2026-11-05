@@ -32,11 +32,14 @@ CONFIGMAP = ROOT / "k8s" / "base" / "configmap.yaml"
 RELEASE_COMPOSE = ROOT / "docker-compose.release.yml"
 
 
-#: gunicorn's ForwardedAllowIPS validator, restated. It runs
-#: ``ipaddress.ip_address(addr)`` on every entry, which raises on ANY network,
-#: and it runs while gunicorn builds its Config -- from $FORWARDED_ALLOW_IPS,
-#: before the config file is read. gunicorn cannot be imported on Windows
-#: (`import grp`), so the rule is restated here rather than called.
+#: gunicorn <=23's ForwardedAllowIPS validator (the one behind the outage),
+#: restated. It runs ``ipaddress.ip_address(addr)`` on every entry, which raises
+#: on ANY network, and it runs while gunicorn builds its Config -- from
+#: $FORWARDED_ALLOW_IPS, before the config file is read. gunicorn 24.1+ accepts
+#: a CIDR but validates it strictly at the same point (``10.42.0.5/16``, host
+#: bits set, still kills startup), so the boundary stays in the app either way.
+#: gunicorn cannot be imported on Windows (`import grp`), so the rule is
+#: restated here rather than called.
 def _gunicorn_would_accept(value: str) -> bool:
     for entry in [e.strip() for e in str(value).split(",") if e.strip()]:
         if entry == "*":
@@ -60,7 +63,8 @@ def test_the_restated_gunicorn_rule_matches_what_broke():
 
 
 def test_gunicorn_is_not_handed_the_trust_boundary():
-    """The boundary is a CIDR, and gunicorn cannot hold one.
+    """The boundary is a CIDR, which gunicorn <=23 could not hold and 24.1+
+    holds only strictly, validated before gunicorn_conf.py runs.
 
     gunicorn_conf.py must not assign forwarded_allow_ips at all: assigning it
     would either re-introduce the crash or silently narrow the boundary to
@@ -74,8 +78,9 @@ def test_gunicorn_is_not_handed_the_trust_boundary():
     ]
     assert not assignments, (
         "gunicorn_conf.py assigns forwarded_allow_ips: " + str(assignments) + ". "
-        "gunicorn validates that name with ipaddress.ip_address(), which "
-        "rejects every CIDR — see app/bootstrap.py for where the boundary lives"
+        "gunicorn validates that name before any config file runs (<=23 rejects "
+        "every CIDR, 24.1+ one with host bits set) — see app/bootstrap.py for "
+        "where the boundary lives"
     )
 
 

@@ -1,8 +1,10 @@
 """Request hardening at the ASGI layer (Trivy findings on PR #26).
 
-Two starlette advisories are reachable in this app and cannot be fixed by a
-version bump yet (``fastapi==0.115.5`` pins starlette below 0.42; the fixed
-starlette releases need a FastAPI major upgrade, tracked as a follow-up):
+Two starlette advisories were reachable while ``fastapi==0.115.5`` pinned
+starlette below 0.42 (W33 moved to fastapi 0.136.3 / starlette 0.52.1). Both
+guards stay: starlette 0.52.1's ``Request.form()`` still builds the urlencoded
+``FormParser`` with no field or size limit (only the multipart parser gets
+``max_fields`` / ``max_part_size``), and refusing byte ranges costs nothing:
 
 * CVE-2026-54283: ``request.form()`` ignores its limits for
   ``application/x-www-form-urlencoded`` bodies, so a client can make the

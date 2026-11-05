@@ -17,7 +17,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { useWebVitals } from '@/hooks/useWebVitals'
 import { usePermissions } from '@/hooks/usePermissions'
 import { DocumentTitleRouteKeyContext, useRouteDocumentTitle } from '@/hooks/useDocumentTitle'
-import LoginPage from '@/pages/LoginPage'
+import { useAuthStore } from '@/store/authStore'
 import { CHUNK_RELOAD_FLAG, lazyWithRetry } from '@/utils/lazyWithRetry'
 
 // ``lazyWithRetry`` (a stale-chunk failure reloads the page once) lives in
@@ -26,9 +26,19 @@ import { CHUNK_RELOAD_FLAG, lazyWithRetry } from '@/utils/lazyWithRetry'
 // call sites below pick up the retry behaviour without per-site edits.
 const lazy = lazyWithRetry as typeof reactLazy
 
-// /login stays eager: it is the first paint for a signed-out user. These two
-// are visited once (a forced password change, the SSO return), so they load
-// on demand rather than with every route (scripts/check-bundle-budget.mjs).
+// /login loads on demand too (W33: React 19.3 took the eager bundle past its
+// budget in scripts/check-bundle-budget.mjs, and most loads are signed in and
+// never show it). A load with no stored session starts fetching it here, while
+// the app boots, so a signed-out first paint waits on no extra round trip.
+const loadLoginPage = () => import('@/pages/LoginPage')
+const LoginPage = lazy(loadLoginPage)
+if (!useAuthStore.getState().token) {
+  void loadLoginPage().catch(() => {
+    /* the route's lazyWithRetry reports or retries a failed chunk */
+  })
+}
+// These two are visited once (a forced password change, the SSO return), so
+// they load on demand rather than with every route.
 const ResetPasswordPage = lazy(() => import('@/pages/ResetPasswordPage'))
 const SSOCallbackPage = lazy(() => import('@/pages/SSOCallbackPage'))
 // W17b ADM-01 / ADM-02: public one-time-link pages, visited once each.
@@ -343,7 +353,7 @@ export default function App() {
   return (
     <DocumentTitleRouteKeyContext.Provider value={documentTitleRouteKey}>
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/login" element={renderLazyRoute(LoginPage)} />
       {/* Public: the browser arrives from the identity provider before it has a session. */}
       <Route path="/sso/callback" element={renderLazyRoute(SSOCallbackPage)} />
       {/* Public (W17b): the invitee has no account; a reset link is used signed out. Tokens ride in the fragment. */}

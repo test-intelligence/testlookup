@@ -200,9 +200,8 @@ class TestLookupRestAssuredFilterTest {
 
     /** A captured header's value by name, any case (the JDK server sends "Set-cookie"). */
     private static String header(JsonNode message, String name) {
-        java.util.Iterator<Map.Entry<String, JsonNode>> fields = message.path("headers").fields();
-        while (fields.hasNext()) {
-            Map.Entry<String, JsonNode> field = fields.next();
+        // properties() (Jackson 2.15+), not fields(): fields() is deprecated in the 2.22 line.
+        for (Map.Entry<String, JsonNode> field : message.path("headers").properties()) {
             if (field.getKey().equalsIgnoreCase(name)) return field.getValue().asText();
         }
         return null;

@@ -164,6 +164,8 @@ async def _managed_by_fingerprint(db: AsyncSession, project_id: uuid.UUID, finge
             .order_by(ManagedTestCase.id)
         )
         for managed_id, fingerprint in result.all():
+            if fingerprint is None:  # the IN (...) above never matches NULL; narrows the Optional column
+                continue
             linked.setdefault(fingerprint, managed_id)
     return linked
 

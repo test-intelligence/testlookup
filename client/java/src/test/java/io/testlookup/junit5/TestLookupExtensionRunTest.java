@@ -112,6 +112,35 @@ class TestLookupExtensionRunTest {
     }
 
     @Test
+    @DisplayName("JUnit closes the run session once, without its CloseableResource warning")
+    void runSessionClosesWithoutTheDeprecationWarning() throws Exception {
+        // JUnit 5.13+ and 6.x close a stored AutoCloseable and, for a value that
+        // is only the deprecated Store.CloseableResource, log "Type implements
+        // CloseableResource but not AutoCloseable" -- once per run, in every
+        // user's build. JUnit before 5.13 sees nothing here either way.
+        java.util.logging.Logger junitLog = java.util.logging.Logger.getLogger("org.junit");
+        List<String> warnings = new java.util.concurrent.CopyOnWriteArrayList<>();
+        java.util.logging.Handler capture = new java.util.logging.Handler() {
+            @Override public void publish(java.util.logging.LogRecord r) {
+                if (r.getLevel().intValue() >= java.util.logging.Level.WARNING.intValue()) {
+                    warnings.add(String.valueOf(r.getMessage()));
+                }
+            }
+            @Override public void flush() { }
+            @Override public void close() { }
+        };
+        junitLog.addHandler(capture);
+        try (TestConfigScope ignored = new TestConfigScope().sysProps(connection())) {
+            runSamples();
+        } finally {
+            junitLog.removeHandler(capture);
+        }
+
+        assertEquals(1, server.closes.size(), "sessions closed");
+        assertTrue(warnings.stream().noneMatch(w -> w.contains("CloseableResource")), warnings.toString());
+    }
+
+    @Test
     @DisplayName("each result carries the test's measured duration")
     void durationIsMeasured() throws Exception {
         try (TestConfigScope ignored = new TestConfigScope().sysProps(connection())) {

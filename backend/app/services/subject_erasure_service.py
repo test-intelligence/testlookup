@@ -771,6 +771,8 @@ async def remove_project_exports_listing(db: AsyncSession, storage: Any, *, user
     )).all()
     removed = 0
     for job_id, key in live:
+        if key is None:  # excluded by the WHERE above; narrows the Optional column
+            continue
         listed = await _archive_lists(storage, key=key, user_id=user_id, bucket=COMPLIANCE_BUCKET)
         if not listed:
             continue

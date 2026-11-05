@@ -33,6 +33,11 @@ from app.services import digest_scope_service as dss
 from app.services.digest_scope_service import PROJECT_SCOPE, DigestScope
 from tests.digest_scope_fakes import WhereSession, release, view
 
+#: The pins below were captured with psycopg2's rendering. SQLAlchemy 2.1 made psycopg (3)
+#: the default ``postgresql.dialect()``, which adds a cast to every bind (``%(x)s::INTEGER``);
+#: compiling with psycopg2 explicitly keeps each pin about the query, not the default driver.
+_PIN_DIALECT = postgresql.psycopg2.dialect
+
 P, Q = uuid.uuid4(), uuid.uuid4()
 OWNER, TEAMMATE = uuid.uuid4(), uuid.uuid4()
 R1 = release(project_id=P, name="2026.10")
@@ -238,7 +243,7 @@ class _CompilingSession:
         self.params: list[dict] = []
 
     async def execute(self, stmt):
-        compiled = stmt.compile(dialect=postgresql.dialect())
+        compiled = stmt.compile(dialect=_PIN_DIALECT())
         text = str(compiled)
         self.sql.append(text)
         self.params.append(dict(compiled.params))

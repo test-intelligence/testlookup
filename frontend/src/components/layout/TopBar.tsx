@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Search, Bell, BellRing, CheckCircle, Menu, UserCircle2, XCircle } from 'lucide-react'
 import { useNavigate, Link } from 'react-router-dom'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -15,7 +15,13 @@ import { HeaderPopover } from '@/components/ui/HeaderPopover'
 import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
 import { notificationChannelLabel, notificationHref } from './notificationHref'
 import { avatarColor } from '@/components/ui/avatarColors'
-import SearchTypeahead from '@/components/search/SearchTypeahead'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
+
+// The typeahead is its own chunk, off the eager bundle (W33,
+// scripts/check-bundle-budget.mjs). It stays mounted, so the chunk loads right
+// after the first render from the same build as the page; a failed load drops
+// only the dropdown (Enter still runs the full search), never the bar.
+const SearchTypeahead = lazy(() => import('@/components/search/SearchTypeahead'))
 
 /** The typeahead closes this long after the input loses focus, so a click on a match lands first. */
 const TYPEAHEAD_BLUR_CLOSE_MS = 150
@@ -73,16 +79,22 @@ function UserProfileDropdown() {
 
   return (
     <div className="relative border-l pl-4 h-full flex items-center max-lg:h-auto" style={{ borderColor: 'var(--color-border)' }}>
+      {/* Named by its own text (WCAG 2.5.3 Label in Name; axe 4.14 enables
+          label-content-name-mismatch): the name and role it shows, then
+          "Account menu" — never an aria-label that hides the visible words.
+          The initials are the avatar picture (aria-hidden); below 1024 px the
+          name and role are hidden and the name is "Account menu". The {' '}
+          and the sr-only span take no space (flex white space, absolute). */}
       <button
         ref={triggerRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Account menu"
         onClick={() => setOpen(v => !v)}
         className="flex items-center gap-3 h-full rounded-lg max-lg:h-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]"
       >
         <div
+          aria-hidden="true"
           className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0"
           style={{ background: avatar.bg, color: avatar.fg }}
         >
@@ -91,9 +103,10 @@ function UserProfileDropdown() {
         <div className="flex flex-col justify-center items-start max-lg:hidden">
           <span className="text-sm font-medium text-[var(--color-text)] leading-none">
             {userName}
-          </span>
+          </span>{' '}
           <span className="text-xs text-[var(--color-text-muted)] mt-1 leading-none">{userRole}</span>
-        </div>
+        </div>{' '}
+        <span className="sr-only">Account menu</span>
       </button>
 
       <HeaderPopover
@@ -296,7 +309,11 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
         )}
         {/* Anchored under the input, inside this `relative` wrapper; renders
             nothing while closed (the bar's markup is unchanged). */}
-        <SearchTypeahead query={searchVal} open={typeaheadOpen} onClose={closeTypeahead} onDone={finishTypeahead} />
+        <ErrorBoundary fallback={() => null}>
+          <Suspense fallback={null}>
+            <SearchTypeahead query={searchVal} open={typeaheadOpen} onClose={closeTypeahead} onDone={finishTypeahead} />
+          </Suspense>
+        </ErrorBoundary>
       </div>
 
       {/* Project selector */}

@@ -29,17 +29,26 @@
 # pip agree), and holding them back is worse:
 #   fsspec 2026.9.0 -> 2026.7.0  ragas needs datasets>=4.0; every release caps
 #                                fsspec, 5.1.0 at <=2026.7.0.
-#   jiter  0.17.0   -> 0.10.0    instructor 1.12 caps it (<0.11); holding 0.17
+#   jiter  0.18.0   -> 0.10.0    instructor 1.12 caps it (<0.11); holding 0.18
 #   rich   15.0.0   -> 14.3.4    or rich 15 drags instructor back to 0.4.x,
 #                                older than the API ragas 0.4 calls.
 # Held at the base versions, the resolver instead falls back to ragas 0.3.2
-# with datasets 2.14 and moves huggingface-hub (2.2 -> 0.36) and typer
-# (0.27 -> 0.9). Pinned here so the variant is reproducible; the backend suite
-# was run against it when this file was written.
+# with datasets 2.14 and moves huggingface-hub (2.4 -> 0.36) and typer
+# (0.27 -> 0.9).
+#
+# Two pins stay below their newest release because of the langchain 0.3 line
+# requirements.txt holds (its 1.x is a wave of its own):
+#   instructor 1.12.0  every release from 1.13 needs openai>=2, and
+#                      langchain-openai 0.2.12 caps openai <2. 1.12 is also
+#                      what keeps jiter <0.11 and brings pre-commit along.
+#   langchain-community 0.3.31  the newest 0.3.x; 0.4 needs langchain-core>=1.4.
+# Pinned here so the variant is reproducible; the backend suite was run
+# against it when this file was written (langchain-community then 0.3.27; the
+# 0.3.31 patch was taken in W33 on a resolver dry run).
 -r requirements.txt
 ragas==0.4.3
 datasets==5.1.0
-langchain-community==0.3.27
+langchain-community==0.3.31
 instructor==1.12.0
 fsspec==2026.7.0
 jiter==0.10.0

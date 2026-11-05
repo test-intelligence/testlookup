@@ -74,8 +74,14 @@ public class TestLookupExtension
      * store once, after the last test of the run. A per-class store (as
      * before) opened and closed one session per test class, so a suite of 40
      * classes became 40 runs in TestLookup.
+     *
+     * <p>Both close contracts, so JUnit calls {@link #close()} exactly once on
+     * every version: JUnit before 5.13 closes only a {@code CloseableResource};
+     * 5.13+ and 6.x close an {@code AutoCloseable} and log a warning for a
+     * value that is only a {@code CloseableResource} (deprecated since 5.13,
+     * still present in 6.x, so the SDK can keep supporting JUnit 5 on Java 11).
      */
-    static final class RunSession implements ExtensionContext.Store.CloseableResource {
+    static final class RunSession implements ExtensionContext.Store.CloseableResource, AutoCloseable {
         /** null when the session could not be opened — the run continues unreported. */
         final LiveSession session;
         /**

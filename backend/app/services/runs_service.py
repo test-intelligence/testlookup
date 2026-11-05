@@ -107,6 +107,8 @@ async def fetch_run_suites_map(
 
     grouped: dict[str, list[str]] = {}
     for run_id, suite in rows:
+        if suite is None:  # excluded by the WHERE above; narrows the Optional column
+            continue
         grouped.setdefault(str(run_id), []).append(suite)
     # Sorted so the "primary" pick is deterministic rather than
     # whatever order the database happened to return.

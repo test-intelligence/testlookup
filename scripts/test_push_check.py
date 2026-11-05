@@ -130,6 +130,10 @@ class TestReferenceDriftAcceptsARealApiChange:
     def test_an_upload_field_rendered_by_a_newer_fastapi_is_not_skew(self, monkeypatch, tmp_path):
         # W11: the change adds an UploadFile field. This hook's FastAPI renders it with contentMediaType, CI's
         # pinned one (what was committed) with format: binary. That spelling alone must not fail the check...
+        # (W33 moved CI's pin past that rendering change and emptied the list; the pair is restored here so the
+        # mechanism stays tested for the next skew.)
+        monkeypatch.setattr(push_check, "_KNOWN_RENDER_SKEW",
+                            (('"contentMediaType": "application/octet-stream"', '"format": "binary"'),))
         local_head = 'a\nb-local-skew\nc\n"contentMediaType": "application/octet-stream",\nd\n'
         committed = 'a\nb-ci-form\nc\n"format": "binary",\nd\n'
         refs = {"origin/main": self.LOCAL_BASE, "HEAD": local_head}

@@ -23,6 +23,10 @@ from sqlalchemy.dialects import postgresql
 from app.services import pipeline_admission
 from app.services.workflow_run_state import IN_PROGRESS_STATUSES
 
+#: The expected SQL below is psycopg2's rendering. SQLAlchemy 2.1 made psycopg (3) the
+#: default ``postgresql.dialect()``, which adds a cast to every bind (``%(x)s::INTEGER``).
+_PIN_DIALECT = postgresql.psycopg2.dialect
+
 
 class _Session:
     """Records every statement; answers each with ``result``."""
@@ -43,7 +47,7 @@ def _scalars_result(values):
 
 
 def _compiled(statement) -> str:
-    return " ".join(str(statement.compile(dialect=postgresql.dialect())).split())
+    return " ".join(str(statement.compile(dialect=_PIN_DIALECT())).split())
 
 
 @pytest.mark.asyncio
@@ -67,7 +71,7 @@ async def test_one_statement_one_column_scoped_to_the_ids_type_and_in_progress_s
     assert "agent_pipeline_runs.test_run_id IN" in sql
     assert "agent_pipeline_runs.workflow_type =" in sql
     assert "agent_pipeline_runs.status IN" in sql
-    params = statement.compile(dialect=postgresql.dialect()).params
+    params = statement.compile(dialect=_PIN_DIALECT()).params
     flat = [v for value in params.values() for v in (value if isinstance(value, (list, tuple)) else [value])]
     assert "deep" in flat and "offline" not in flat
     assert [v for v in flat if isinstance(v, uuid.UUID)] == [a, b, c], "each id once, in the request's order"
@@ -98,7 +102,7 @@ async def test_latest_in_progress_pipeline_is_the_routers_old_body():
     assert sql.endswith("ORDER BY agent_pipeline_runs.created_at DESC LIMIT %(param_1)s")
     flat = [
         v
-        for value in statement.compile(dialect=postgresql.dialect()).params.values()
+        for value in statement.compile(dialect=_PIN_DIALECT()).params.values()
         for v in (value if isinstance(value, (list, tuple)) else [value])
     ]
     assert run_id in flat and "offline" in flat and set(IN_PROGRESS_STATUSES) <= set(flat)

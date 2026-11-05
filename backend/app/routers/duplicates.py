@@ -67,7 +67,7 @@ def _pair_has_retired_case():
     Read-time and reversible: the pair stays stored and comes back to the
     queue when its case is reinstated. One correlated EXISTS on the primary
     key (no OR across tables). The IN list takes the columns'
-    ``.expression``: the pinned SQLAlchemy 2.0.51 also accepts the ORM
+    ``.expression``: the pinned SQLAlchemy 2.0.57 also accepts the ORM
     attributes themselves, but 2.0.36 (still in some local environments)
     raises ArgumentError on them; the SQL is the same either way.
     """

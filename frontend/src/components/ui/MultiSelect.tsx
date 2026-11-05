@@ -25,8 +25,11 @@
  *
  * Each option's accessible name is its FULL label, then its exact count, then
  * why it is disabled — "Release 2, 74", "Release archived, 0, Archived" — set
- * with `aria-label`, because the row's visual text runs them together
- * ("Release 274") and a truncated label would be read in its "…" form.
+ * with `aria-label`, because the row's own text has no separators
+ * ("Release 2 74") and a truncated label would be read in its "…" form. That
+ * text keeps a space between the label, the reason and the count (an
+ * unrendered space between flex items), so every visible word is a word of
+ * the name (WCAG 2.5.3; axe 4.14's label-content-name-mismatch).
  *
  * A CAP (`max`): once reached, unselected options are `aria-disabled`, and the
  * status says "Limit reached (N)" — a limit that silently ignores a click
@@ -217,7 +220,20 @@ export default function MultiSelect({
     }
   }, [known, label])
 
-  const selectedValues = useMemo(() => Array.from(new Set(value)), [value])
+  // What this control last sent, against the `value` it was sent from, shown
+  // until the parent's next `value` replaces it. A parent that keeps the
+  // selection in the URL writes it in a transition (React Router), which can
+  // commit after the next click's handler has run (seen with React 19.3):
+  // without this, that second pick was computed from the stale `value` and
+  // dropped the first ("Status, 1 selected").
+  const [emitted, setEmitted] = useState<{ from: string[]; next: string[] } | null>(null)
+  if (emitted !== null && emitted.from !== value) setEmitted(null)
+  const shown = emitted !== null && emitted.from === value ? emitted.next : value
+  const emit = (next: string[]) => {
+    setEmitted({ from: value, next })
+    onChange(next)
+  }
+  const selectedValues = useMemo(() => Array.from(new Set(shown)), [shown])
   const selected = useMemo(() => new Set(selectedValues), [selectedValues])
 
   /** Counts as the user sees them: real options against the cap, the rest "not available". */
@@ -269,7 +285,7 @@ export default function MultiSelect({
   // ── open / close ──────────────────────────────────────────────────────────
   const openPopover = () => {
     if (disabled) return
-    setPinned(new Set(value))
+    setPinned(new Set(selectedValues))
     setQuery('')
     setActiveIndex(-1)
     setShowAll(false)
@@ -399,13 +415,13 @@ export default function MultiSelect({
     if (row.disabled) return
     if (selected.has(row.value)) {
       const next = selectedValues.filter((v) => v !== row.value)
-      onChange(next)
+      emit(next)
       say(next, `${row.label} deselected`)
       return
     }
     if (atCap || row.unavailable) return
     const next = [...selectedValues, row.value]
-    onChange(next)
+    emit(next)
     say(next, `${row.label} selected`)
   }
 
@@ -418,13 +434,13 @@ export default function MultiSelect({
     if (room === 0 || addable.length === 0) return
     const added = addable.slice(0, room).map((o) => o.value)
     const next = [...selectedValues, ...added]
-    onChange(next)
+    emit(next)
     say(next, `${added.length} selected`)
   }
   const lockedSelected = selectedValues.filter((v) => known.byValue.get(v)?.disabled)
   const selectNone = () => {
     inputRef.current?.focus()
-    onChange(lockedSelected)
+    emit(lockedSelected)
     say(lockedSelected, 'Selection cleared')
   }
 
@@ -544,7 +560,7 @@ export default function MultiSelect({
       {...triggerData}
       type="button"
       aria-haspopup="dialog"
-      // Spelled out: a badge's bare "2" concatenates into "Release2".
+      // Spelled out: the badge's bare "2" would be read "Release 2".
       aria-label={active ? `${label}, ${count} selected` : undefined}
       aria-expanded={open}
       aria-controls={open ? popoverId : undefined}
@@ -571,13 +587,18 @@ export default function MultiSelect({
       }`}
     >
       <span className="truncate">{label}</span>
+      {/* An unrendered space (between flex items): the button's text reads
+          "Release 2", each word in the name (axe 4.14 compares by word). */}
       {active && (
-        <span
-          data-testid={testId ? `${testId}-count` : undefined}
-          className="inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-btn-primary-bg)] px-1.5 text-xs font-semibold text-[var(--color-btn-primary-text)]"
-        >
-          {count}
-        </span>
+        <>
+          {' '}
+          <span
+            data-testid={testId ? `${testId}-count` : undefined}
+            className="inline-flex min-w-5 items-center justify-center rounded-full bg-[var(--color-btn-primary-bg)] px-1.5 text-xs font-semibold text-[var(--color-btn-primary-text)]"
+          >
+            {count}
+          </span>
+        </>
       )}
       <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0" />
     </button>
@@ -746,19 +767,29 @@ export default function MultiSelect({
                     >
                       {shownLabel}
                     </span>
+                    {/* The {' '} before each extra span is not rendered (white
+                        space between flex items) but keeps the row's text
+                        "Release 2 74", not "Release 274": axe 4.14's
+                        label-content-name-mismatch reads that text by word. */}
                     {reason && (
-                      <span aria-hidden="true" className="shrink-0 truncate text-xs text-[var(--color-text-secondary)]">
-                        ({reason})
-                      </span>
+                      <>
+                        {' '}
+                        <span aria-hidden="true" className="shrink-0 truncate text-xs text-[var(--color-text-secondary)]">
+                          ({reason})
+                        </span>
+                      </>
                     )}
                     {countText && (
-                      <span
-                        aria-hidden="true"
-                        title={countText.title}
-                        className="shrink-0 text-xs tabular-nums text-[var(--color-text-secondary)]"
-                      >
-                        {countText.text}
-                      </span>
+                      <>
+                        {' '}
+                        <span
+                          aria-hidden="true"
+                          title={countText.title}
+                          className="shrink-0 text-xs tabular-nums text-[var(--color-text-secondary)]"
+                        >
+                          {countText.text}
+                        </span>
+                      </>
                     )}
                   </li>
                 )

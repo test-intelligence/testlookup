@@ -17,7 +17,7 @@ locally by default.
 - **Ingestion**: batch and file upload of JUnit, TestNG, Robot Framework,
   NUnit 3, Visual Studio TRX, xUnit v2, Playwright JSON, pytest-json-report,
   Cypress/Mochawesome, Cucumber JSON and Allure results, or a zip of them;
-  live streaming from the Python, Java (TestNG, JUnit 5), JavaScript (Jest,
+  live streaming from the Python, Java (TestNG, JUnit 5 or 6), JavaScript (Jest,
   Mocha) and Go reporters; CI context (GitHub Actions, GitLab, Jenkins, Azure
   Pipelines, CircleCI) and commit ranges.
 - **Runs and failures**: run history, run detail with analysis and evidence
@@ -1219,6 +1219,35 @@ locally by default.
   naming the actor and the key's owner.
 
 ### Changed
+
+- **Dependencies brought up to date** (wave W33; branch `feat/df-deps-20261105`).
+  It carries Dependabot #328, #47, #327, #45, #44, #326, #316, #315, #300,
+  #299, #251, #162, #43, #40, #39, #38, #32, #30 and #34. Backend: gunicorn
+  26.2, uvicorn 0.54, FastAPI 0.136.3, pydantic 2.14, OpenTelemetry 1.45 and
+  the rest of #328. Web UI: React 19.3, lucide-react 1.66, the Radix packages,
+  axios 1.21, three 0.187, globals 17 and jest-dom 7. Java SDK: JUnit 6
+  support (JUnit 5 keeps working on Java 11, and CI tests both), Jackson
+  2.22. Also: the MCP server's version floors, five CI actions, and Node 22
+  for the diagram check (jsdom 30, mermaid 12). Kept below the newest
+  release, each with its reason beside the pin:
+  - FastAPI stays on 0.136.3, because 0.137 breaks the metrics middleware on
+    every request.
+  - SQLAlchemy stays on 2.0.57, because the OpenTelemetry instrumentation does
+    not support 2.1 yet.
+  - scipy stays on 1.17 and numpy on 2.4, because their next releases need
+    Python 3.12 and the images run 3.11.
+  - In the optional ragas set, instructor, fsspec and jiter stay on older
+    releases because of the langchain 0.3 line.
+  Fixes that came with it:
+  - A recorded search no longer holds two database connections. FastAPI now
+    closes the request's session after background work.
+  - The account menu button is named by the name and role it shows (WCAG
+    2.5.3).
+  - Multi-select filters no longer drop a quick second pick, and their rows
+    keep label, reason and count apart for screen readers (axe-core 4.14).
+  - The login page and the search dropdown load on demand. This keeps the
+    eager bundle inside its budget after React 19.3 grew it. A visit with no
+    stored session starts fetching the login page at startup.
 
 - **The type scale on the rest of the app** (wave W29e, UIX-04c part 2).
   Overview, activity, value metrics, quarantine, suites, the policy and

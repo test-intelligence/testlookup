@@ -30,17 +30,36 @@
 
         <!-- 2.18.8: GHSA-r7wm-3cxj-wff9, CVE-2026-54512/54513 (core + databind).
              2.18.10: CVE-2026-68497 (databind; Trivy fs HIGH, 2026-09-29).
-             2.18.11: CVE-2026-89407/89425 (core), CVE-2026-91776/91777 (databind; Trivy fs HIGH, 2026-10-01). -->
-        <jackson.version>2.18.11</jackson.version>
-        <junit5.version>5.11.0</junit5.version>
-        <!-- The platform release that ships with Jupiter 5.11.0. -->
-        <junit-platform.version>1.11.0</junit-platform.version>
-        <testng.version>7.10.2</testng.version>
+             2.18.11: CVE-2026-89407/89425 (core), CVE-2026-91776/91777 (databind; Trivy fs HIGH, 2026-10-01).
+             2.22.4: Dependabot #30 (minor / patch group, W33). -->
+        <jackson.version>2.22.4</jackson.version>
+        <!-- One property drives Jupiter AND the platform through junit-bom
+             (dependencyManagement below): 5.x pairs Jupiter 5.N with platform
+             1.N, 6.x versions both alike, and the BOM knows either pairing.
+             JUnit 6 needs Java 17 to RUN; the SDK still compiles to Java 11
+             bytecode and uses no JUnit-6-only API, so a Java 11 user keeps
+             JUnit 5. CI runs the tests on both: the default here, and
+             -Djunit5.version=<newest 5.x>. A JDK below 17 builds with JUnit 5
+             (profile junit5-below-java-17 at the end). -->
+        <junit5.version>6.1.3</junit5.version>
+        <testng.version>7.12.0</testng.version>
         <!-- 5.5.7: the newest 5.x. 6.x needs Java 17; this SDK targets Java 11.
              Provided + optional: users bring their own RestAssured, nothing
              reaches their classpath from this pom, and the -all jar has none. -->
         <rest-assured.version>5.5.7</rest-assured.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit5.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <!-- JSON serialization (required). jackson-core is pinned explicitly so
@@ -63,11 +82,11 @@
             <version>${jackson.version}</version>
         </dependency>
 
-        <!-- JUnit 5 (optional — only needed if using TestLookupExtension) -->
+        <!-- JUnit 5 / 6 (optional — only needed if using TestLookupExtension).
+             Versions of the three JUnit artifacts come from junit-bom. -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-api</artifactId>
-            <version>${junit5.version}</version>
             <scope>provided</scope>
             <optional>true</optional>
         </dependency>
@@ -95,7 +114,6 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-engine</artifactId>
-            <version>${junit5.version}</version>
             <scope>test</scope>
         </dependency>
         <!-- Runs sample classes through a real Jupiter engine, so the JUnit 5
@@ -105,7 +123,6 @@
         <dependency>
             <groupId>org.junit.platform</groupId>
             <artifactId>junit-platform-launcher</artifactId>
-            <version>${junit-platform.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
@@ -129,7 +146,7 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
+                <version>3.16.0</version>
                 <configuration>
                     <source>${java.version}</source>
                     <target>${java.version}</target>
@@ -139,14 +156,14 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.3.1</version>
+                <version>3.6.1</version>
             </plugin>
 
             <!-- Build a fat JAR with all dependencies for easy drop-in usage -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>3.6.0</version>
+                <version>3.6.2</version>
                 <executions>
                     <execution>
                         <phase>package</phase>
@@ -203,4 +220,21 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- JUnit 6 jars are Java 17 class files, which javac 11-16 cannot
+             read, so on those JDKs the build compiles and tests against the
+             newest JUnit 5 instead. Keeps "build from a clone with Java 11"
+             (README) and `make build-java-sdk-docker` (temurin-11) working.
+             -Djunit5.version=... still overrides both. -->
+        <profile>
+            <id>junit5-below-java-17</id>
+            <activation>
+                <jdk>[11,17)</jdk>
+            </activation>
+            <properties>
+                <junit5.version>5.14.4</junit5.version>
+            </properties>
+        </profile>
+    </profiles>
 </project>

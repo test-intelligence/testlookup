@@ -38,10 +38,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 22
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          # jsdom 30 needs Node ^22.22.2 || ^24.15 || >=26; mermaid 12 needs >=22.12.
+          node-version: "22"
           cache: npm
           cache-dependency-path: scripts/mermaid-check/package-lock.json
 

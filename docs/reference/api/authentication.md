@@ -560,9 +560,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   "security": [
     {
       "JWT": []
-    },
-    {
-      "JWT": []
     }
   ]
 }

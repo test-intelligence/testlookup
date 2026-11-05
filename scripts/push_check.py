@@ -107,11 +107,6 @@ _LLM_TIMEOUT = (
     "the hypothesis LLM call times out on this machine (TimeoutError); "
     "flagged as local-only before any change in the session that found it"
 )
-_FASTAPI_YIELD_EXIT = (
-    "local FastAPI 0.136 exits a yield dependency (get_db) AFTER the response's "
-    "background tasks; CI's pin (0.115.5) exits it first, which the W12 after-response "
-    "search write relies on -- the test is the guard for a future FastAPI upgrade"
-)
 _NO_LOCAL_CHROMADB = (
     "the hook's Python has no chromadb (CI installs requirements.txt's 1.5.9); the "
     "worker task under test imports app.db.chroma at run time"
@@ -131,10 +126,6 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     ),
     # W12 (2026-10-24): individual tests, green under the py3.11 venv (CI's pins); local-only for the
     # reasons given (each file's other tests run locally).
-    **{
-        f"tests/test_search_after_response_writes.py::{name}": _FASTAPI_YIELD_EXIT
-        for name in ("test_a_recorded_search_never_holds_two_connections",)
-    },
     **{
         f"tests/test_embedding_generation_task.py::{name}": _NO_LOCAL_CHROMADB
         for name in (
@@ -689,13 +680,11 @@ def _normalise(text: str) -> str:
 
 
 # Spellings this hook's FastAPI renders differently from CI's pinned one INSIDE a change's own delta, where
-# the base/head cancellation cannot remove them. An ``UploadFile`` body field: CI's FastAPI (0.115.x, the
-# requirements pin) writes ``"format": "binary"``; newer FastAPI on a developer's PATH Python writes
-# ``"contentMediaType": "application/octet-stream"`` (W11 REL-07's PRD upload). Compared as equal only;
-# the committed file is still checked against CI's own generator by CI's ``--check``.
-_KNOWN_RENDER_SKEW = (
-    ('"contentMediaType": "application/octet-stream"', '"format": "binary"'),
-)
+# the base/head cancellation cannot remove them, as (local, CI) pairs compared as equal only; the committed
+# file is still checked against CI's own generator by CI's ``--check``. Empty since W33: the requirements pin
+# (FastAPI 0.136.3) renders an ``UploadFile`` field as ``"contentMediaType"`` like a developer's newer
+# FastAPI does (0.115.x wrote ``"format": "binary"``, the one pair this list used to hold).
+_KNOWN_RENDER_SKEW: tuple[tuple[str, str], ...] = ()
 
 
 def _canonical(text: str) -> str:
