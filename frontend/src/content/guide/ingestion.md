@@ -47,6 +47,8 @@ An uploaded report arrives after the suite finishes. A **reporter SDK** instead 
 
 The Python pytest plugin (reporter 1.3.0 or later) can record the HTTP calls each test makes through `requests` or `httpx`: method, URL, status, duration, headers and bodies. It is **off by default**: turn it on per run with `pytest --testlookup-capture-http`, `TESTLOOKUP_CAPTURE_HTTP=1`, or `testlookup.capture_http=true` in `testlookup.properties`. The reporter's own calls to TestLookup are never recorded.
 
+The Java SDK records RestAssured calls once you register its filter, `io.testlookup.restassured.TestLookupRestAssuredFilter`, with `RestAssured.filters(...)` or on one request. Registering it turns capture on; `TESTLOOKUP_CAPTURE_HTTP=0` turns it off again. Your project brings RestAssured 5.x; the SDK does not.
+
 **Redacted before it is stored.** The reporter redacts first and the server redacts again before anything is written:
 
 - header values such as `Authorization`, `Cookie`, `Set-Cookie`, `X-API-Key` and any header whose name ends in `token`, `secret`, `password`, `api-key`, `signature` or `credential`;

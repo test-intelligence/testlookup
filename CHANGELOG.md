@@ -52,6 +52,23 @@ locally by default.
 
 ### Added
 
+- **The Java SDK captures RestAssured calls** (wave W32b, W23d F-2; branch
+  `feat/df-java-restassured-20261105`). Register
+  `io.testlookup.restassured.TestLookupRestAssuredFilter` and each test's
+  RestAssured calls reach its HTTP exchanges tab, like the Python SDK's
+  `requests` / `httpx` capture. Registering the filter is the opt-in.
+  `TESTLOOKUP_CAPTURE_HTTP`, `testlookup.capture_http` (a `-D` property or in
+  `testlookup.properties`) or `reporting.capture_http` in YAML can turn it off.
+  The exchange is redacted before it leaves the machine by
+  `io.testlookup.http.HttpRedaction`, a Java port of the shared rule. It passes
+  all 30 cases of `sdk-vectors/http_exchange.json`, like the server and the
+  Python SDK. At most 20 exchanges per test go in one
+  `POST /api/v1/stream/http-exchanges` from the reporter's background thread,
+  and a refusal never fails a test. RestAssured 5.5.7 is `provided` and
+  optional, so nothing reaches a user's classpath, and the SDK loads without
+  it. Tests: `HttpRedactionVectorsTest`, `TestLookupRestAssuredFilterTest`
+  (through the real JUnit 5 extension and TestNG listener),
+  `SdkLoadsWithoutRestAssuredTest`, `CaptureConfigKeyTest`.
 - **Personal data: a per-person export and an erasure that keeps the audit
   trail** (wave W31, STRAT-12; legal sign-off given by the owner 2026-11-03,
   "keep the gate" 2026-11-04; branch `feat/df-subject-rights-20261104`;
