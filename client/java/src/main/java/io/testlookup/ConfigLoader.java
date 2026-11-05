@@ -102,6 +102,8 @@ public final class ConfigLoader {
         {"testlookup.ca_cert_path", "auth.ca_cert_path"},
         {"testlookup.caCertPath", "auth.ca_cert_path"},
         {"testlookup.insecure",   "auth.insecure"},
+        // W32b: the RestAssured filter's capture switch (TESTLOOKUP_CAPTURE_HTTP still decides first).
+        {"testlookup.capture_http", "reporting.capture_http"},
     };
 
     /**
@@ -125,6 +127,7 @@ public final class ConfigLoader {
         {"testlookup.framework",  "reporting.framework"},
         {"testlookup.ca_cert_path", "auth.ca_cert_path"},
         {"testlookup.insecure",   "auth.insecure"},
+        {"testlookup.capture_http", "reporting.capture_http"},
     };
 
     private ConfigLoader() { }
