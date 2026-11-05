@@ -52,6 +52,19 @@ locally by default.
 
 ### Added
 
+- **License notices travel with every artefact.** The web UI build writes
+  `THIRD_PARTY_LICENSES.txt` (the copyright notice and license text of every
+  bundled npm package) plus `LICENSE` and `NOTICE` into `dist/`, served at
+  `/THIRD_PARTY_LICENSES.txt`, `/LICENSE` and `/NOTICE`; the backend, frontend and MCP images carry `LICENSE`, `NOTICE`
+  and `THIRD_PARTY_NOTICES.md` under `/licenses` with the
+  `org.opencontainers.image.licenses` label; the Java `-all` jar carries
+  `META-INF/LICENSE` again; `THIRD_PARTY_NOTICES.md` names the transitive
+  MPL-2.0 components and carries a written source offer for the GPL/LGPL
+  packages in the base images; CI fails when any of it is stale.
+- **A `DCO` workflow** fails a pull request whose commits lack a
+  `Signed-off-by` line, which CONTRIBUTING.md had described as already
+  enforced.
+
 - **Personal data: a per-person export and an erasure that keeps the audit
   trail** (wave W31, STRAT-12; legal sign-off given by the owner 2026-11-03,
   "keep the gate" 2026-11-04; branch `feat/df-subject-rights-20261104`;
@@ -1622,6 +1635,15 @@ locally by default.
   changed nothing.
 
 ### Fixed
+
+- **THREAT_MODEL.md describes the system that ships**: Valkey and versitygw
+  rather than Redis and MinIO, the stored-secret key derived from
+  `APP_SECRET_KEY` (not `JWT_SECRET_KEY`) with `APP_SECRET_KEY_PREVIOUS`
+  rotation, and boundary rows for SAML, SCIM, MFA, share links, knowledge
+  sources, Jira/GitLab/Splunk/OpenShift egress and the upload parsing limits.
+- **`user-guide/compliance.md` no longer claims a legal sign-off** for the
+  erasure retention default; it tells deployers to confirm Article 17(3) with
+  their own counsel.
 
 - **An inline summary no longer gives a pass rate or a release readiness
   signal for failures a caller supplied** (F-OR07-2, prompt edit owner-approved

@@ -61,6 +61,13 @@ RUN if [ "$INSTALL_EXTRA_CA" = "1" ] && ls /opt/extra-ca/*.crt >/dev/null 2>&1; 
     fi; \
     apk upgrade --no-cache
 COPY --from=builder /app/dist /usr/share/nginx/html
+# LICENSE, NOTICE and the third-party notices travel with the image (Apache-2.0
+# s.4(a)/(d) and the notice conditions of the bundled JavaScript). dist/ also
+# serves them at /LICENSE, /NOTICE and /THIRD_PARTY_LICENSES.txt, written by
+# scripts/generate-third-party-licenses.mjs at the end of `npm run build`;
+# licenses/ is staged by scripts/generate_third_party_notices.py (repo root).
+COPY --from=builder /app/licenses /licenses
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 # nginx:alpine runs envsubst on /etc/nginx/templates/*.template at container
 # start, writing the result to /etc/nginx/conf.d/. This lets the same image
 # work in any deploy target by setting BACKEND_UPSTREAM (default backend:8000

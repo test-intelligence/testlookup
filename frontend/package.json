@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 3000 --host",
-    "build": "tsc -p tsconfig.build.json && vite build",
+    "build": "tsc -p tsconfig.build.json && vite build && node scripts/generate-third-party-licenses.mjs",
     "preview": "vite preview",
     "lint": "eslint src",
     "format": "prettier --write src",
@@ -18,7 +18,8 @@
     "test:visual": "playwright test --config playwright.visual.config.ts",
     "test:visual:update": "playwright test --config playwright.visual.config.ts --update-snapshots",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
-    "check:theme": "node scripts/check-theme-tokens.mjs"
+    "check:theme": "node scripts/check-theme-tokens.mjs",
+    "check:licenses": "node scripts/generate-third-party-licenses.mjs --check"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.17",

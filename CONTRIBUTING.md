@@ -230,8 +230,9 @@ git commit --amend -s --no-edit          # sign off the last commit
 git rebase --signoff main                # sign off every commit on your branch
 ```
 
-A pull request whose commits are not all signed off cannot be merged. The
-public repository checks this automatically on every pull request.
+The `DCO` workflow (`.github/workflows/dco.yml`) runs on every pull request and
+fails when any commit lacks the line. Fix it with `git rebase --signoff` and
+push again; the check is meant to be required before a pull request merges.
 
 Full DCO text: https://developercertificate.org/
 
