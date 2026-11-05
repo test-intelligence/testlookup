@@ -121,9 +121,11 @@ Installation and configuration for each SDK (URL, API key, project, build, relea
 
 ### Capturing HTTP exchanges
 
-The Python pytest plugin can record the HTTP calls each test makes (method, URL, status, duration, both header sets and both bodies), so a failing API test shows what it sent and what came back, and the deep AI investigation can compare a response with earlier runs.
+The Python pytest plugin and the Java SDK (with RestAssured) can record the HTTP calls each test makes (method, URL, status, duration, both header sets and both bodies), so a failing API test shows what it sent and what came back, and the deep AI investigation can compare a response with earlier runs.
 
-**Opt-in.** Capture is off by default. Turn it on per run with `pytest --testlookup-capture-http`, the environment variable `TESTLOOKUP_CAPTURE_HTTP=1` (also `true`, `yes`, `on`), or `testlookup.capture_http=true` in `testlookup.properties`. It needs Python reporter 1.3.0 or later and records calls made through `requests` and `httpx` (sync and async) while a test runs. The reporter's own traffic to TestLookup is never recorded, and a streamed response body is not read. The Java, JavaScript and Go SDKs do not capture yet.
+**Opt-in.** Capture is off by default. Turn it on per run with `pytest --testlookup-capture-http`, the environment variable `TESTLOOKUP_CAPTURE_HTTP=1` (also `true`, `yes`, `on`), or `testlookup.capture_http=true` in `testlookup.properties`. It needs Python reporter 1.3.0 or later and records calls made through `requests` and `httpx` (sync and async) while a test runs. The reporter's own traffic to TestLookup is never recorded, and a streamed response body is not read.
+
+**Java.** The Java SDK records RestAssured calls once you register its filter, `io.testlookup.restassured.TestLookupRestAssuredFilter`, for every request (`RestAssured.filters(...)`) or for one (`given().filter(...)`). Registering it is the opt-in; `TESTLOOKUP_CAPTURE_HTTP=0` (also `false`, `no`, `off`) or `testlookup.capture_http=false` in `testlookup.properties` turns it off again without a code change. You add RestAssured 5.x to your own project; the SDK does not bring it. It records the calls of the test method while the JUnit 5 extension or the TestNG listener reports the run. Setup in [client/java/README.md](../client/java/README.md#capturing-http-exchanges-restassured). The JavaScript and Go SDKs do not capture yet.
 
 **What is redacted, before it is stored.** The reporter applies these rules before anything leaves the CI machine, and the server applies them again before anything is written anywhere (the task queue, object storage, the exchange store):
 
@@ -139,7 +141,7 @@ Review one captured run before you turn capture on in CI: a secret in a shape th
 
 **Retention.** Exchanges follow the project's raw-events retention clock and are deleted with their run; a run under a retention hold keeps them. The `full` data export includes them, redacted, under each run.
 
-**Over the API.** `http_exchanges` on each result of `POST /api/v1/ingest`: a list of `{"method", "url", "endpoint", "status", "duration_ms", "started_at", "error", "request": {"headers", "body"}, "response": {"headers", "body"}}` (only `method` and `url` are required). A live session posts one test's exchanges to `POST /api/v1/stream/http-exchanges` with `session_id`, `run_id`, `test_name`, `class_name` and `exchanges`; that is the route the pytest plugin uses. `endpoint` is the path template runs are compared by (`/api/products/{id}`); without it the server derives one from the URL, replacing numeric, UUID and long id-like path segments with `{id}`.
+**Over the API.** `http_exchanges` on each result of `POST /api/v1/ingest`: a list of `{"method", "url", "endpoint", "status", "duration_ms", "started_at", "error", "request": {"headers", "body"}, "response": {"headers", "body"}}` (only `method` and `url` are required). A live session posts one test's exchanges to `POST /api/v1/stream/http-exchanges` with `session_id`, `run_id`, `test_name`, `class_name` and `exchanges`; that is the route the pytest plugin and the Java SDK use. `endpoint` is the path template runs are compared by (`/api/products/{id}`); without it the server derives one from the URL, replacing numeric, UUID and long id-like path segments with `{id}`.
 
 ## Attaching runs to a release
 

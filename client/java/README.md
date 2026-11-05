@@ -21,7 +21,7 @@ This installs `io.testlookup:testlookup-reporter:1.0.0` into your local Maven re
 | `testlookup-reporter-1.0.0.jar` | The reporter only; Jackson comes in as normal dependencies | You build with Maven or Gradle |
 | `testlookup-reporter-1.0.0-all.jar` | The reporter with Jackson and SnakeYAML bundled and relocated to `ai.testlookup.shaded.jackson` | You add a jar to a classpath by hand, or must avoid Jackson version clashes |
 
-Neither jar contains TestNG or JUnit; your project provides them (TestNG 7.x, JUnit Jupiter 5.x).
+Neither jar contains TestNG, JUnit or RestAssured; your project provides them (TestNG 7.x, JUnit Jupiter 5.x, RestAssured 5.x for [HTTP capture](#capturing-http-exchanges-restassured)).
 
 **Maven:**
 
@@ -90,6 +90,30 @@ junit.jupiter.extensions.autodetection.enabled=true
 ```
 
 The extension opens **one session for the whole test run**, however many classes use it, and closes it when JUnit finishes the run. It records each test under its display name with its measured duration and the class as the suite, and maps successful to `PASSED`, failed to `FAILED` (with the exception), aborted to `BROKEN` and disabled to `SKIPPED`. Server, credentials, project, build (default `junit5-<epoch ms>`), branch, commit, launch, suite and release all come from the [configuration chain](#configuration-chain). It does nothing when no configuration is found.
+
+## Capturing HTTP exchanges (RestAssured)
+
+The reporter can send the RestAssured calls each test makes beside its result. The test's page then shows an **HTTP exchanges** tab, and the deep investigation can compare response fields with earlier runs.
+
+1. Add RestAssured 5.x to your own test dependencies (the SDK is built against 5.5.7). The SDK declares it `provided` and optional, so nothing reaches your classpath from the SDK, and the `-all` jar does not contain it. Without RestAssured the reporter works as before.
+2. Register the filter, for every request or for one:
+
+```java
+import io.restassured.RestAssured;
+import io.testlookup.restassured.TestLookupRestAssuredFilter;
+
+RestAssured.filters(new TestLookupRestAssuredFilter());                // every request, e.g. in a @BeforeAll
+
+given().filter(new TestLookupRestAssuredFilter()).get("/api/orders");  // one request
+```
+
+Registering the filter turns capture on. `TESTLOOKUP_CAPTURE_HTTP` set to `0`, `false`, `no` or `off` turns it off without a code change (`1`, `true`, `yes` or `on` keeps it on). When that variable is not set, `-Dtestlookup.capture_http=false` turns it off too, as does `testlookup.capture_http=false` in `testlookup.properties` or `reporting.capture_http: false` in a YAML configuration file.
+
+- **What is captured:** the calls a test method makes while the JUnit 5 extension or the TestNG listener reports the run: method, full URL, status, duration, start time, both header sets (a repeated header is one value, joined with `, `) and text bodies (no content type, JSON, `text/*`, XML, form, JavaScript, GraphQL, YAML, CSV, HTML). A binary body keeps its headers but not its body; a file, stream or multipart request body is not read. With JUnit 5 the calls of the test's `@AfterEach` methods are included. Calls in `@BeforeEach`, `@BeforeAll`, `@AfterAll`, TestNG's `@BeforeMethod` / `@AfterMethod`, or another thread are not captured. A call that fails (for example, connection refused) is captured with its exception's class name, and the exception reaches your test unchanged.
+- **Caps:** at most 20 exchanges per test; the rest are counted, not sent. A body is read up to 64 KiB; the server stores at most 16 KiB of it.
+- **Redacted before it leaves your machine**, and again on the server, with the same rules as the Python SDK (`sdk-vectors/http_exchange.json` is the shared specification): the values of `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-API-Key`, `X-Auth-Token`, `X-Amz-Security-Token` and other credential headers (and of any header whose name ends in `token`, `secret`, `password`, `api-key`, `signature` or `credential`); query values of `token`, `access_token`, `api_key`, `key`, `code`, `password`, `secret`, `sig`, `signature` and similar; the password in `user:password@`; JSON values under keys like `password`, `client_secret`, `apiKey`, `*_token`; and, anywhere, bearer tokens, JWTs, provider tokens (`ghp_…`, `glpat-…`, `xoxb-…`, `sk-…`, `AKIA…`, any unbroken 40+ character run), e-mail addresses and phone / card / IPv4 shapes become `[REDACTED]`. Review a captured run of your suite before turning capture on in CI.
+- **Never a test failure:** the filter never changes a call or its response. Each test that captured anything sends one `POST /api/v1/stream/http-exchanges` after its result, from the reporter's background thread. A refusal or a network error is logged once per session with the status code only, and counted (`LiveSession.getHttpExchangesFailedCount()`); your results are unaffected.
+- **Dependency scanning:** this repository's dependency scan (Trivy, in the `security-deps` CI job) reads `client/java/pom.xml`, RestAssured's tree included. A new CVE in RestAssured or one of its dependencies (Groovy, Apache HttpClient, commons-codec and others) can fail that job until `rest-assured.version` moves. Your own project scans the RestAssured version you chose.
 
 ## Programmatic use
 
