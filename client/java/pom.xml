@@ -36,6 +36,10 @@
         <!-- The platform release that ships with Jupiter 5.11.0. -->
         <junit-platform.version>1.11.0</junit-platform.version>
         <testng.version>7.10.2</testng.version>
+        <!-- 5.5.7: the newest 5.x. 6.x needs Java 17; this SDK targets Java 11.
+             Provided + optional: users bring their own RestAssured, nothing
+             reaches their classpath from this pom, and the -all jar has none. -->
+        <rest-assured.version>5.5.7</rest-assured.version>
     </properties>
 
     <dependencies>
@@ -73,6 +77,16 @@
             <groupId>org.testng</groupId>
             <artifactId>testng</artifactId>
             <version>${testng.version}</version>
+            <scope>provided</scope>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- RestAssured (optional — only needed if using TestLookupRestAssuredFilter).
+             Not in the shade artifactSet below: the -all jar never carries it. -->
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <version>${rest-assured.version}</version>
             <scope>provided</scope>
             <optional>true</optional>
         </dependency>

@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
 
@@ -401,6 +402,20 @@ public class TestLookupReporter {
         return resp.body();
     }
 
+    /**
+     * POST one test's captured HTTP exchanges with the reporter's own credential (the endpoint takes a JWT
+     * or an API key, not the session token). Returns the HTTP status; the response body is not read.
+     */
+    int postHttpExchanges(String jsonBody) throws Exception {
+        HttpRequest.Builder rb = HttpRequest.newBuilder()
+            .uri(URI.create(baseUrl + "/api/v1/stream/http-exchanges"))
+            .header("Content-Type", "application/json")
+            .timeout(Duration.ofSeconds(REQUEST_TIMEOUT_SEC))
+            .POST(HttpRequest.BodyPublishers.ofString(jsonBody));
+        applyAuth(rb);
+        return http.send(rb.build(), HttpResponse.BodyHandlers.discarding()).statusCode();
+    }
+
     private String postJson(String url, String body) throws TestLookupException {
         HttpRequest.Builder rb = HttpRequest.newBuilder()
             .uri(URI.create(url))
@@ -635,6 +650,11 @@ public class TestLookupReporter {
          *  enqueued — used to suppress heartbeats while the session is busy. */
         private final AtomicLong                  lastRealEnqueueMs = new AtomicLong(Instant.now().toEpochMilli());
         private volatile boolean                  closed      = false;
+        /** Captured HTTP exchanges the server accepted / test POSTs it did not (refused or unreachable). */
+        private final AtomicLong                  httpExchangesSent   = new AtomicLong();
+        private final AtomicLong                  httpExchangesFailed = new AtomicLong();
+        /** The first failed exchanges POST is logged as a warning; later ones are counted, not logged. */
+        private final AtomicBoolean               httpWarned  = new AtomicBoolean();
 
         LiveSession(String sessionId, String sessionToken, String runId,
                     String suiteName, TestLookupReporter reporter) {
@@ -675,6 +695,10 @@ public class TestLookupReporter {
         public String getRunId()     { return runId; }
         public long   getSentCount() { return statSent.get(); }
         public long getFailedCount() { return statFailed.get(); }
+        /** Captured HTTP exchanges the server accepted. */
+        public long getHttpExchangesSentCount()   { return httpExchangesSent.get(); }
+        /** Tests whose captured HTTP exchanges were refused or could not be sent. */
+        public long getHttpExchangesFailedCount() { return httpExchangesFailed.get(); }
 
         // ── Public API ────────────────────────────────────────────────────────
 
@@ -751,6 +775,62 @@ public class TestLookupReporter {
             meta.put("value", value);
             meta.put("unit",  unit != null ? unit : "");
             enqueue(event);
+        }
+
+        /**
+         * Send one test's captured HTTP exchanges (already redacted) — ONE
+         * {@code POST /api/v1/stream/http-exchanges}, queued for the flusher thread, so the caller never waits
+         * and never sees an error. {@code testName} / {@code className} must be exactly what the test's
+         * {@link #record} sent: the server derives the test case from them. At most
+         * {@code HttpRedaction.EXCHANGES_PER_TEST_MAX} exchanges go; any beyond are added to {@code dropped}.
+         * A refusal or a network error is logged once per session with the status code (or the exception
+         * class) only — never the URL, a header or the body.
+         */
+        public void postHttpExchanges(String testName, String className, List<ObjectNode> exchanges, int dropped) {
+            if (closed || testName == null || testName.isEmpty() || exchanges == null || exchanges.isEmpty()) {
+                return;
+            }
+            int kept = Math.min(exchanges.size(), io.testlookup.http.HttpRedaction.EXCHANGES_PER_TEST_MAX);
+            ObjectNode payload = MAPPER.createObjectNode();
+            payload.put("session_id", sessionId);
+            payload.put("run_id",     runId);
+            payload.put("test_name",  testName);
+            if (className != null && !className.isEmpty()) payload.put("class_name", className);
+            ArrayNode arr = payload.putArray("exchanges");
+            for (int i = 0; i < kept; i++) arr.add(exchanges.get(i));
+            payload.put("exchanges_dropped", Math.max(0, dropped) + (exchanges.size() - kept));
+            try {
+                scheduler.execute(() -> sendHttpExchanges(payload, kept));
+            } catch (RejectedExecutionException e) {
+                // The session is closing: the flusher takes no new work.
+                httpExchangesFailed.incrementAndGet();
+                LOG.fine("TestLookup: captured HTTP exchanges not sent (session closing)");
+            }
+        }
+
+        /** On the flusher thread: one attempt, never retried, never thrown. */
+        private void sendHttpExchanges(ObjectNode payload, int count) {
+            String reason;
+            try {
+                int status = reporter.postHttpExchanges(MAPPER.writeValueAsString(payload));
+                if (status >= 200 && status < 300) {
+                    httpExchangesSent.addAndGet(count);
+                    return;
+                }
+                reason = "HTTP " + status;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                reason = e.getClass().getSimpleName();
+            } catch (Exception e) {
+                reason = e.getClass().getSimpleName();
+            }
+            httpExchangesFailed.incrementAndGet();
+            if (httpWarned.compareAndSet(false, true)) {
+                LOG.warning("TestLookup: the server did not store a test's captured HTTP exchanges (" + reason
+                    + "); results are unaffected. Further failures this session are counted, not logged.");
+            } else {
+                LOG.fine("TestLookup: captured HTTP exchanges not stored (" + reason + ")");
+            }
         }
 
         /**
