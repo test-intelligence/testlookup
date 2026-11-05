@@ -118,21 +118,27 @@ test.describe('1280 x 900', () => {
     const table = heading.locator('xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " card ")][1]//table')
     const rows = await table.evaluate((node) =>
       Array.from((node as HTMLTableElement).tBodies[0].rows, (row) => {
-        const text = (cell: Element) => {
+        // Lines of ONE span's own text: a range over a text-only span yields one rect per line box. (A range over the
+        // whole cell also returns the spans' block boxes, whose tops differ from their text's on Linux fonts: CI
+        // counted 4 where Windows counted 2.)
+        const text = (el: Element) => {
           const range = document.createRange()
-          range.selectNodeContents(cell)
-          const tops = Array.from(range.getClientRects()).filter((r) => r.width > 0).map((r) => Math.round(r.top))
-          return { lines: new Set(tops).size, height: range.getBoundingClientRect().height }
+          range.selectNodeContents(el)
+          const rects = Array.from(range.getClientRects()).filter((r) => r.width > 0)
+          return { lines: new Set(rects.map((r) => Math.round(r.top))).size, top: rects[0]?.top ?? 0, bottom: rects[0]?.bottom ?? 0 }
         }
         const date = row.cells[2]
         const day = date.querySelector('[data-date-day]')
         const year = date.querySelector('[data-date-year]')
+        const dayText = day ? text(day) : { lines: 0, top: 0, bottom: 0 }
+        const yearText = year ? text(year) : { lines: 0, top: 0, bottom: 0 }
         return {
           date: date.textContent ?? '',
-          dateText: text(date),
           day: day?.textContent ?? '',
-          dayLines: day ? text(day).lines : 0,
+          dayLines: dayText.lines,
           year: year?.textContent ?? '',
+          yearLines: yearText.lines,
+          yearBelowDay: yearText.top >= dayText.bottom - 1,
           scrollWidth: date.scrollWidth,
           clientWidth: date.clientWidth,
         }
@@ -142,8 +148,9 @@ test.describe('1280 x 900', () => {
     for (const row of rows) {
       expect(row.day, 'the month and day').toMatch(/^[A-Z][a-z]{2} \d{1,2}$/)
       expect(row.dayLines, `"${row.day}" stays on one line`).toBe(1)
-      expect(row.year, 'the year under it').toMatch(/^\d{4}$/)
-      expect(row.dateText.lines, `"${row.date}" is two lines, never three`).toBe(2)
+      expect(row.year, 'the year').toMatch(/^\d{4}$/)
+      expect(row.yearLines, `"${row.year}" is one line`).toBe(1)
+      expect(row.yearBelowDay, `"${row.date}" reads as two lines: the year under the day, never folded further`).toBe(true)
       expect(row.scrollWidth, `"${row.date}" is not cut`).toBeLessThanOrEqual(row.clientWidth)
     }
     await expectNoHorizontalOverflow(page, `/releases?open=${RELEASE.active} @1280`)
