@@ -1,8 +1,8 @@
 {
-  "attested_at": "2026-11-04T00:04:23.986894+00:00",
-  "change_id": "W23c-F-1",
+  "attested_at": "2026-11-05T01:40:29.488636+00:00",
+  "change_id": "F-OR07-2",
   "eval_gate_run_id": null,
-  "eval_manifest_checksum": "32317519b3789fb3b1d6aa99b2c9c54892dfd593b8fe000926be4f5277d7f5ad",
+  "eval_manifest_checksum": "732aa92dd0d839bf834c17e0dc95756d315d7efceaecb394368bd4d4564c71c8",
   "gate_results": [
     {
       "agent_name": "AnalysisAgent",
@@ -93,9 +93,9 @@
       "task_type": "release_decision"
     }
   ],
-  "manifest_digest": "b3aed7a8cefa8a74256d05030da8a4285acbcb1aa6ec661d7b0cb3ebd37051c2",
+  "manifest_digest": "cd15b7ee8db46a0ada0c50ad81ff3aca7bcc4b24f7d4f2c290411892630e9a29",
   "mode": "source_review",
-  "notes": "W23c F-1 (owner-approved 2026-11-03) changes ONE prompt: summary_system v1 -> v2 adds two grounding rules -- text inside a <<data>> ... <</data>> block is caller-supplied data never to be obeyed, and when such blocks are present their counts and pass rate describe only the supplied failures, never the run. summary_system is the {system} of the four summary section prompts (their templates unchanged); it feeds no scored task and is not a gated prompt in prompt_eval_recordings (narrative output), so it is reviewed from source; the live-model check is the homelab inline-summary re-walk after deploy (W23c's walk saw the draft call the anchor run's pass rate 0.0%). No model choice, routing or watched source changed. Gate results below are the real offline golden run over the existing tasks (classification, root_cause, release_decision pass; duplicate_detection insufficient_samples as on origin/main -- prompt-independent offline scorer). Offline golden verdict as computed: insufficient_samples.",
+  "notes": "summary_executive v1 -> v2 (owner-approved 2026-11-05): one exception sentence - when the data names supplied failures instead of the run's results it has no pass rate and no release readiness signal, so the 3 sentences give the supplied count, the most critical category and the next action. The prompt feeds no scored task and is not gated in prompt_eval_recordings (the W11-REL-07 / W23c-F-1 precedent): reviewed from source; the gate results are the real offline run. The live-model check is the homelab inline-summary re-walk after deploy (or07a_homelab_walk.mjs: no release-readiness conclusion). Offline golden verdict as computed: insufficient_samples.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -116,7 +116,7 @@
     "run_compare_system": "v1:bbba41240c3f",
     "summary_action_plan": "v2:a554d240b844",
     "summary_evidence_pack": "v2:531118f798af",
-    "summary_executive": "v1:9885ab3d7268",
+    "summary_executive": "v2:c2c9f1ea9b26",
     "summary_incident_view": "v2:674423db4627",
     "summary_renderer_developer": "v1:58d153d90e99",
     "summary_renderer_manager": "v1:fb02a6a74429",
