@@ -12,7 +12,7 @@
  *    sends R3's PUT and re-reads both;
  *  - S5 Delete (admin): the inline strip in the pane footer, nothing sent until its own Delete;
  *  - S6 `/release-gate/:runId` Share report: a section under the header, no overlay.
- *  - W32 at 1280: the pane's "Linked Test Runs" Date cells stay on one line (the table scrolls inside its box).
+ *  - W32 at 1280: the pane's "Linked Test Runs" dates read "Sep 16" over the year (never folded word by word).
  *
  * The pane's URL key is `?open=` (the contract's `?release=` was amended: `?release=` is the top bar's global release
  * filter, `ReleasePicker`'s `RELEASE_PARAM`, read on every page).
@@ -106,10 +106,11 @@ for (const width of [1280, 1440]) {
 test.describe('1280 x 900', () => {
   test.use({ viewport: { width: 1280, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-  // W32 (W29d follow-up): the seven columns cannot fit the ≈ 382 px pane, so the table scrolls sideways inside its
-  // box — and the Date column must not fold ("Sep / 16, / 2026") to make room. A td's box is the ROW's height, so the
-  // lines are counted on the cell's text (a Range), and its height compared with the Build cell's of the same row.
-  test('W32 @1280: the pane\'s "Linked Test Runs" dates stay on one line; the page does not scroll sideways', async ({ page }) => {
+  // W32 (W29d follow-up): the Date column must not fold word by word ("Sep / 16, / 2026"). It reads as two lines,
+  // "Sep 16" over "2026", which keeps the column as narrow as before — one unbroken line pushed Pass Rate and the
+  // unlink button out of the release page's 584 px card (read in the W32 baselines). A td's box is the ROW's height,
+  // so lines are counted on the text (a Range).
+  test('W32 @1280: the pane\'s "Linked Test Runs" dates read "Sep 16" over the year, never three lines; no sideways page scroll', async ({ page }) => {
     const { api, errors } = await openList(page)
     await card(page, '2026.11').click()
     const heading = release(page, '2026.11').getByRole('heading', { name: 'Linked Test Runs (2)' })
@@ -124,10 +125,14 @@ test.describe('1280 x 900', () => {
           return { lines: new Set(tops).size, height: range.getBoundingClientRect().height }
         }
         const date = row.cells[2]
+        const day = date.querySelector('[data-date-day]')
+        const year = date.querySelector('[data-date-year]')
         return {
           date: date.textContent ?? '',
           dateText: text(date),
-          buildText: text(row.cells[0]),
+          day: day?.textContent ?? '',
+          dayLines: day ? text(day).lines : 0,
+          year: year?.textContent ?? '',
           scrollWidth: date.scrollWidth,
           clientWidth: date.clientWidth,
         }
@@ -135,9 +140,10 @@ test.describe('1280 x 900', () => {
     )
     expect(rows).toHaveLength(2)
     for (const row of rows) {
-      expect(row.date, 'a date is rendered').toMatch(/\d{4}$/)
-      expect(row.dateText.lines, `"${row.date}" is one line`).toBe(1)
-      expect(row.dateText.height, `"${row.date}" is no taller than the Build cell's one line`).toBeLessThanOrEqual(row.buildText.height * 1.5)
+      expect(row.day, 'the month and day').toMatch(/^[A-Z][a-z]{2} \d{1,2}$/)
+      expect(row.dayLines, `"${row.day}" stays on one line`).toBe(1)
+      expect(row.year, 'the year under it').toMatch(/^\d{4}$/)
+      expect(row.dateText.lines, `"${row.date}" is two lines, never three`).toBe(2)
       expect(row.scrollWidth, `"${row.date}" is not cut`).toBeLessThanOrEqual(row.clientWidth)
     }
     await expectNoHorizontalOverflow(page, `/releases?open=${RELEASE.active} @1280`)
