@@ -3,6 +3,7 @@ package io.testlookup.testng;
 import io.testlookup.ConfigLoader;
 import io.testlookup.TestLookupReporter;
 import io.testlookup.TestLookupReporter.*;
+import io.testlookup.http.ExchangeBuffer;
 
 import org.testng.*;
 
@@ -213,15 +214,28 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
     // These are required by the interface but we have nothing to do here
     @Override public void onStart(ITestContext context) {}
     @Override public void onFinish(ITestContext context) {}
-    @Override public void onTestStart(ITestResult result) {}
+
+    /**
+     * HTTP capture: open this thread's buffer for the test (a ThreadLocal; TestNG runs the method and its
+     * result hooks on one thread). Closed once the result is recorded. TestNG calls this after the
+     * {@code @BeforeMethod} methods and records the result before the {@code @AfterMethod} ones, so the
+     * buffer holds the test method's own calls.
+     */
+    @Override
+    public void onTestStart(ITestResult result) {
+        if (session != null) ExchangeBuffer.open(testName(result), className(result));
+    }
 
     // ── Helper ────────────────────────────────────────────────────────────────
 
     private void record(ITestResult result, TestStatus status) {
-        if (session == null) return;
+        if (session == null) {
+            ExchangeBuffer.close();
+            return;
+        }
 
         long durationMs = result.getEndMillis() - result.getStartMillis();
-        String testName  = result.getMethod().getMethodName();
+        String testName  = testName(result);
 
         String error = null;
         String stack = null;
@@ -248,7 +262,7 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
         // ``class_name`` is still captured separately, so the per-class
         // grouping is recoverable without overloading suite_name.
         RecordOptions.Builder optsBuilder = RecordOptions.builder()
-            .className(result.getTestClass().getRealClass().getName())
+            .className(className(result))
             .error(error)
             .stackTrace(stack);
         if (configuredSuite != null) {
@@ -261,6 +275,30 @@ public class TestLookupListener implements ISuiteListener, ITestListener {
         }
 
         session.record(testName, status, durationMs, optsBuilder.build());
+        sendCapturedExchanges(session);
+    }
+
+    /** Close this thread's HTTP capture buffer and queue what it holds; never fails the test. */
+    private static void sendCapturedExchanges(LiveSession session) {
+        try {
+            ExchangeBuffer.Snapshot captured = ExchangeBuffer.close();
+            if (captured != null) {
+                session.postHttpExchanges(captured.testName, captured.className, captured.exchanges,
+                    captured.dropped);
+            }
+        } catch (RuntimeException e) {
+            LOG.fine("TestLookupListener: captured HTTP exchanges not sent (" + e.getClass().getSimpleName() + ")");
+        }
+    }
+
+    /** The test_result event's test name; the HTTP capture buffer is opened with the same value. */
+    private static String testName(ITestResult result) {
+        return result.getMethod().getMethodName();
+    }
+
+    /** The test_result event's class name; the HTTP capture buffer is opened with the same value. */
+    private static String className(ITestResult result) {
+        return result.getTestClass().getRealClass().getName();
     }
 
     /**

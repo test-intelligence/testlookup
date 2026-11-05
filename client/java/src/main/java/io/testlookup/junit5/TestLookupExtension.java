@@ -3,6 +3,7 @@ package io.testlookup.junit5;
 import io.testlookup.ConfigLoader;
 import io.testlookup.TestLookupReporter;
 import io.testlookup.TestLookupReporter.*;
+import io.testlookup.http.ExchangeBuffer;
 
 import org.junit.jupiter.api.extension.*;
 
@@ -49,6 +50,11 @@ import java.util.logging.Logger;
  *   -Dtestlookup.ca_cert_path TESTLOOKUP_CA_CERT         testlookup.ca_cert_path
  *   -Dtestlookup.insecure   TESTLOOKUP_INSECURE          testlookup.insecure
  * </pre>
+ *
+ * <h3>HTTP capture</h3>
+ * With {@code io.testlookup.restassured.TestLookupRestAssuredFilter} registered, the RestAssured calls made by
+ * the test method (and its {@code @AfterEach} methods) are sent, redacted, after its result. This class never
+ * loads RestAssured.
  */
 public class TestLookupExtension
         implements BeforeAllCallback, BeforeEachCallback, BeforeTestExecutionCallback,
@@ -164,6 +170,11 @@ public class TestLookupExtension
             p.bodyStartNanos = now;
             p.setupMs = (now - p.eachNanos) / 1_000_000L;
         }
+        // HTTP capture: the test's buffer opens right before the test method and closes once the result is
+        // recorded. A ThreadLocal, never the test's store: JUnit closes that store before the TestWatcher
+        // callbacks run.
+        RunSession run = run(ctx);
+        if (run != null && run.session != null) ExchangeBuffer.open(testName(ctx), className(ctx));
     }
 
     @Override
@@ -223,9 +234,12 @@ public class TestLookupExtension
 
     private void record(ExtensionContext ctx, TestStatus status, String error, String stack) {
         RunSession run = run(ctx);
-        if (run == null || run.session == null) return;
+        if (run == null || run.session == null) {
+            ExchangeBuffer.close();
+            return;
+        }
 
-        String testName  = ctx.getDisplayName();
+        String testName  = testName(ctx);
         String suiteName = ctx.getParent().map(ExtensionContext::getDisplayName).orElse(null);
         // A disabled test never executes, so it has no duration.
         Long durationMs = run.durationsMs.remove(ctx.getUniqueId());
@@ -234,7 +248,7 @@ public class TestLookupExtension
 
         RecordOptions.Builder opts = RecordOptions.builder()
             .suiteName(suiteName)
-            .className(ctx.getTestClass().map(Class::getName).orElse(null))
+            .className(className(ctx))
             .error(error)
             .stackTrace(stack);
         if (phases != null) {
@@ -245,6 +259,30 @@ public class TestLookupExtension
         }
 
         run.session.record(testName, status, durationMs != null ? durationMs : 0L, opts.build());
+        sendCapturedExchanges(run.session);
+    }
+
+    /** Close this thread's HTTP capture buffer and queue what it holds; never fails the test. */
+    private static void sendCapturedExchanges(LiveSession session) {
+        try {
+            ExchangeBuffer.Snapshot captured = ExchangeBuffer.close();
+            if (captured != null) {
+                session.postHttpExchanges(captured.testName, captured.className, captured.exchanges,
+                    captured.dropped);
+            }
+        } catch (RuntimeException e) {
+            LOG.fine("TestLookupExtension: captured HTTP exchanges not sent (" + e.getClass().getSimpleName() + ")");
+        }
+    }
+
+    /** The test_result event's test name; the HTTP capture buffer is opened with the same value. */
+    private static String testName(ExtensionContext ctx) {
+        return ctx.getDisplayName();
+    }
+
+    /** The test_result event's class name; the HTTP capture buffer is opened with the same value. */
+    private static String className(ExtensionContext ctx) {
+        return ctx.getTestClass().map(Class::getName).orElse(null);
     }
 
     private static RunSession run(ExtensionContext ctx) {
