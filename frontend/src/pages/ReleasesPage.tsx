@@ -1017,7 +1017,8 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
           const pageRows = allLinked.slice(start, start + LINKED_PAGE_SIZE)
           return (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            {/* dense: the seven columns fit a release page's 584 px card, unlink button included (W32 baselines) */}
+            <table className="w-full text-sm" data-density="dense">
               <thead>
                 <tr>
                   <th className="th text-left">Build</th>
