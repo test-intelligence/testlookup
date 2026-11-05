@@ -25,12 +25,24 @@ the actor, and the per-table deletion counts in ``changed_fields``.
 Retention holds (W22a ACT-05): a reset is refused (:class:`ResetBlockedByHold`)
 while ANY live hold of the project exists — read under the project row lock,
 after the confirmation check and before any count or delete.
+
+Stored run documents (W32 F-7): when the caller passes a Mongo handle, both
+modes first delete the runs' run-scoped Mongo documents (every
+``retention_service._MONGO_PLANS`` collection, decision reports included),
+BEFORE the Postgres delete — the ``test_runs`` CASCADE destroys the only run →
+document mapping. The per-collection counts are returned as ``documents`` and
+recorded in the audit row; ``documents`` is ``None`` when no store was given
+(not measured, never zeros). A Mongo error propagates: the request fails, the
+Postgres transaction rolls back (nothing in Postgres is deleted), the documents
+already deleted stay deleted, and the admin's retry completes the reset — the
+same position as the nightly purge's execute order. The runs' object-store
+files and search-index entries are not visited (F-W32-1).
 """
 from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 from sqlalchemy import delete, func, select
@@ -135,6 +147,7 @@ async def reset_project(
     confirmation_name: str,
     actor_id: Optional[uuid.UUID] = None,
     actor_name: Optional[str] = None,
+    mongo: Any | None = None,
 ) -> dict:
     """Delete project-scoped data. Returns per-table counts.
 
@@ -147,6 +160,10 @@ async def reset_project(
 
     The whole reset (deletes + audit log) commits in a single transaction
     so a failure mid-way leaves no orphans.
+
+    ``mongo`` (W32 F-7): when given, the runs' Mongo documents are deleted
+    first and returned as ``documents`` (see the module docstring); when
+    ``None``, ``documents`` is ``None`` (not measured).
     """
     if mode not in ("runs", "full"):
         raise ValueError(f"Unknown reset mode: {mode!r}")
@@ -197,6 +214,18 @@ async def reset_project(
     ).scalar_one()
     counts["test_runs"] = int(runs_count or 0)
 
+    # W32 F-7: the Mongo phase BEFORE the Postgres delete (the CASCADE below
+    # destroys the run → document mapping). ``None`` = no store given.
+    documents: Optional[dict[str, int]] = None
+    if mongo is not None:
+        documents = {}
+        if counts["test_runs"]:
+            from app.services import retention_service
+
+            documents = await retention_service.delete_project_run_documents(
+                db, mongo, project_id=project_id
+            )
+
     if counts["test_runs"]:
         await db.execute(delete(TestRun).where(TestRun.project_id == project_id))
 
@@ -226,6 +255,8 @@ async def reset_project(
             "project_name": project.name,
             "mode": mode,
             "counts": counts,
+            # W32 F-7: per-collection Mongo deletes; None = no store given.
+            "documents": documents,
         },
     )
     db.add(audit_row)
@@ -261,6 +292,7 @@ async def reset_project(
         project_name=project.name,
         mode=mode,
         counts=counts,
+        documents_total=sum(documents.values()) if documents is not None else None,
         actor_id=str(actor_id) if actor_id else None,
     )
-    return {"mode": mode, "deleted": counts}
+    return {"mode": mode, "deleted": counts, "documents": documents}

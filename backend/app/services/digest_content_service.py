@@ -43,6 +43,10 @@ release -- read in ONE statement after every other (``digest_release_verdict``).
 The default (False) emits exactly the statements and the dict it always did.
 A release never evaluated reads "not evaluated yet", never GO; the run-level
 ``ReleaseDecision`` lines keep their own label and vocabulary.
+
+Archived projects (W32 F-W30-7): an all-projects digest (``project_id=None``)
+reads active projects only; whether a project-scoped digest of an archived
+project is sent at all is not this function's decision (F-W32-2).
 """
 from __future__ import annotations
 
@@ -53,6 +57,7 @@ from typing import Any, Mapping
 
 from sqlalchemy import Float, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.postgres import (
     AgentInvestigation,
@@ -150,6 +155,21 @@ def _quarantine_predicates(scope: DigestScope | None) -> list[Any]:
         return []
     suite = suite_label_clause(FlakyQuarantineRequest.suite_name, scope.suites)
     return [suite] if suite is not None else []
+
+
+def _active_projects_clause() -> ColumnElement[bool]:
+    """F-W30-7 (W32): an all-projects digest reads ACTIVE projects only.
+
+    An archived project (``projects.is_active = false``, W17 ADM-04) keeps its
+    runs, but its runs, pass rate, clusters and blockers must not count in an
+    all-projects digest. An uncorrelated IN-subquery, so ONE form serves both
+    statements that skip the project filter (the runs read and the previous
+    period's aggregate, which has no FROM entity to join onto); every later
+    statement is keyed on the runs' ids and narrows with them. Applied ONLY on
+    the ``project_id is None`` branch: the project path's statements stay
+    byte-identical (the compiled-SQL pins in ``tests/test_digest_scope.py``).
+    """
+    return TestRun.project_id.in_(select(Project.id).where(Project.is_active.is_(True)))
 
 
 async def compute_digest_deltas(
@@ -411,6 +431,8 @@ async def generate_digest(
     runs_query = select(TestRun).where(TestRun.created_at >= cutoff)
     if project_id:
         runs_query = runs_query.where(TestRun.project_id == project_id)
+    else:
+        runs_query = runs_query.where(_active_projects_clause())
     for clause in run_scope:
         runs_query = runs_query.where(clause)
     runs_result = await db.execute(runs_query.order_by(TestRun.created_at.desc()))
@@ -432,6 +454,8 @@ async def generate_digest(
         )
         if project_id:
             prev_query = prev_query.where(TestRun.project_id == project_id)
+        else:
+            prev_query = prev_query.where(_active_projects_clause())
         for clause in run_scope:
             prev_query = prev_query.where(clause)
         prev_avg = (await db.execute(prev_query)).scalar()

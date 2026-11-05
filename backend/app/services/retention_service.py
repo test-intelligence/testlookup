@@ -2049,3 +2049,127 @@ async def execute_candidates(
     }
 
     return counts
+
+
+#: The ``_Candidates`` attribute of the one case-keyed ``_MONGO_PLANS`` entry.
+_CASE_KEYED_ATTR = "purge_tc_strs"
+
+
+async def delete_project_run_documents(
+    db: AsyncSession,
+    mongo: Any,
+    *,
+    project_id: uuid.UUID,
+    case_chunk: int = _MONGO_CHUNK,
+) -> dict[str, int]:
+    """Delete every run-scoped Mongo document of ONE project (W32 F-7).
+
+    The project reset's Mongo phase. It must run BEFORE the reset's Postgres
+    delete, for the same reason ``execute_candidates`` visits Mongo first: the
+    ``test_runs`` CASCADE destroys the only mapping from runs to documents, and
+    a document whose run row is gone is never reached again (the nightly purge
+    resolves its candidates FROM Postgres runs).
+
+    Reads only in Postgres (stages nothing, never commits). Returns
+    ``{collection: deleted}`` with a key for EVERY ``_MONGO_PLANS`` collection
+    (0 included). Driven from ``_MONGO_PLANS`` on purpose, so a collection
+    added to that table later is reset too, by construction.
+
+    * The run-keyed collections take the project's run ids (read ONCE), the
+      live events also the project's live-session slugs that map to one of
+      those runs (``live_session_slugs_for_run`` generalised to the project),
+      the pipeline event log the project's pipeline run ids. ``_mongo_delete``
+      chunks every ``$in`` by ``_MONGO_CHUNK``.
+    * Decision reports go too: an explicit reset, like the explicit single-run
+      delete, takes them (the audit clock is for the POLICY purge).
+    * The case-keyed collection (``ai_analysis_payloads``) is deleted by
+      STREAMING the project's case ids page by page, so the whole case-id list
+      is never held in memory.
+    * The object store and the search index are NOT visited (F-W32-1).
+
+    A Mongo error propagates; documents already deleted stay deleted, and the
+    caller's Postgres transaction is expected to roll back (the retry completes
+    the job).
+    """
+    from app.services.stream_service import canonical_test_run_uuid
+
+    counts: dict[str, int] = {collection: 0 for collection, _f, _a in _MONGO_PLANS}
+
+    run_ids = list(
+        (
+            await db.execute(
+                select(TestRun.id).where(TestRun.project_id == project_id)
+            )
+        ).scalars().all()
+    )
+    if not run_ids:
+        return counts
+    run_strs = [str(rid) for rid in run_ids]
+    run_set = set(run_ids)
+
+    pipeline_strs = [
+        str(pid)
+        for pid in (
+            await db.execute(
+                select(AgentPipelineRun.id)
+                .join(TestRun, TestRun.id == AgentPipelineRun.test_run_id)
+                .where(TestRun.project_id == project_id)
+            )
+        ).scalars().all()
+    ]
+
+    # live_execution_events is keyed by the CLIENT's run id — a LiveSession
+    # slug on the webhook path. Only a slug that maps to one of the project's
+    # runs qualifies (an in-progress session with no run yet is not the reset's).
+    run_str_set = set(run_strs)
+    slugs: set[str] = set()
+    for slug in (
+        await db.execute(
+            select(LiveSession.run_id).where(LiveSession.project_id == project_id)
+        )
+    ).scalars().all():
+        if not slug or str(slug) in run_str_set:
+            continue
+        try:
+            if canonical_test_run_uuid(str(slug)) in run_set:
+                slugs.add(str(slug))
+        except Exception:  # noqa: BLE001 — a slug that will not map is not ours
+            continue
+
+    cand = _Candidates(
+        purge_run_ids=run_ids,
+        purge_run_strs=run_strs,
+        purge_tc_strs=[],
+        raw_run_strs=run_strs,
+        raw_live_run_keys=run_strs + sorted(slugs),
+        artifact_prefixes=[],
+        artifact_pipeline_strs=set(),
+        evidence_artifact_ids=[],
+        audit_pipeline_strs=pipeline_strs,
+        audit_run_strs=run_strs,
+    )
+
+    case_plans: list[tuple[str, str]] = []
+    for collection, field, attr in _MONGO_PLANS:
+        if attr == _CASE_KEYED_ATTR:
+            case_plans.append((collection, field))
+            continue
+        counts[collection] = await _mongo_delete(
+            mongo, collection, field, list(getattr(cand, attr))
+        )
+
+    if case_plans:
+        stream = await db.stream_scalars(
+            select(TestCase.id)
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .where(TestRun.project_id == project_id)
+            .execution_options(yield_per=case_chunk)
+        )
+        async for page in stream.partitions(case_chunk):
+            page_strs = [str(tc_id) for tc_id in page]
+            for collection, field in case_plans:
+                counts[collection] += await _mongo_delete(
+                    mongo, collection, field, page_strs
+                )
+
+    return counts

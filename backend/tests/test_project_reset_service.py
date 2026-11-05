@@ -120,7 +120,9 @@ async def test_reset_project_runs_mode_deletes_runs_only():
         confirmation_name=project.name,
     )
 
-    assert result == {"mode": "runs", "deleted": {"test_runs": 42}}
+    # W32 F-7 (deliberate): the result always carries ``documents``; with no
+    # Mongo store given it is ``None`` (not measured), never zeros.
+    assert result == {"mode": "runs", "deleted": {"test_runs": 42}, "documents": None}
     db.commit.assert_awaited_once()
     # An audit log row is added on success.
     assert db.add.called
@@ -258,3 +260,117 @@ async def test_reset_project_acquires_for_update_lock_on_project_row():
         f"Project lookup must use SELECT ... FOR UPDATE so concurrent "
         f"resets serialise. Got: {compiled_sql}"
     )
+
+
+# ── W32 F-7: the runs' Mongo documents go first ──────────────────────────────
+
+
+class _MongoStub:
+    """``delete_many`` journals the collection and answers ``len($in)``."""
+
+    def __init__(self, journal: list, *, fail: bool = False):
+        self._journal, self._fail = journal, fail
+
+    def __getitem__(self, name):
+        async def delete_many(flt):
+            if self._fail:
+                raise RuntimeError("mongo unavailable")
+            self._journal.append(("mongo", name))
+            ((_field, cond),) = flt.items()
+            return SimpleNamespace(deleted_count=len(cond["$in"]))
+
+        return SimpleNamespace(delete_many=delete_many)
+
+
+def _mongo_phase_db(*, project, run_ids, journal):
+    """The ``_fake_db`` sequence with the Mongo phase's three reads (run ids,
+    pipeline ids, live-session slugs) between the count and the delete, and a
+    one-page case stream. Every execute / commit is journaled."""
+    results = iter([
+        _Result(scalar=project),
+        _Result(),
+        _Result(scalar=len(run_ids)),
+        _Result(scalars=run_ids),
+        _Result(scalars=[]),
+        _Result(scalars=[]),
+        MagicMock(),
+    ])
+
+    async def execute(stmt):
+        journal.append(("delete", "") if getattr(stmt, "is_delete", False) else ("select", ""))
+        return next(results)
+
+    class _Stream:
+        async def partitions(self, _size):
+            yield [uuid.uuid4()]
+
+    async def stream_scalars(_stmt):
+        return _Stream()
+
+    return SimpleNamespace(
+        execute=execute,
+        stream_scalars=stream_scalars,
+        add=MagicMock(),
+        commit=AsyncMock(side_effect=lambda: journal.append(("commit", ""))),
+        flush=AsyncMock(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_store_deletes_the_documents_first_and_records_them():
+    from app.services.project_reset_service import reset_project
+    from app.services.retention_service import _MONGO_PLANS
+
+    project, journal = _project(), []
+    db = _mongo_phase_db(project=project, run_ids=[uuid.uuid4() for _ in range(3)], journal=journal)
+
+    result = await reset_project(
+        db, project_id=project.id, mode="runs", confirmation_name=project.name,
+        mongo=_MongoStub(journal),
+    )
+
+    documents = result["documents"]
+    assert set(documents) == {c for c, _f, _a in _MONGO_PLANS}
+    assert documents["ai_analysis_payloads"] == 1 and documents["pipeline_event_log"] == 0
+    assert documents["run_summaries"] == 3 and documents["decision_reports"] == 3
+    assert db.add.call_args.args[0].changed_fields["documents"] == documents
+    kinds = [k for k, _ in journal]
+    assert kinds.index("mongo") < kinds.index("delete") < kinds.index("commit"), (
+        "the Mongo phase must run while the run → document mapping still exists"
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_store_means_documents_not_measured_and_no_runs_means_empty():
+    from app.services.project_reset_service import reset_project
+
+    project = _project()
+    db = _fake_db(project=project, run_count=3)
+    result = await reset_project(db, project_id=project.id, mode="runs", confirmation_name=project.name)
+    assert result["documents"] is None
+    assert db.add.call_args.args[0].changed_fields["documents"] is None
+
+    journal: list = []
+    empty = _fake_db(project=project, run_count=0)
+    result = await reset_project(
+        empty, project_id=project.id, mode="runs", confirmation_name=project.name,
+        mongo=_MongoStub(journal),
+    )
+    assert result["documents"] == {} and journal == []
+
+
+@pytest.mark.asyncio
+async def test_a_mongo_error_fails_the_reset_before_any_delete_or_commit():
+    from app.services.project_reset_service import reset_project
+
+    project, journal = _project(), []
+    db = _mongo_phase_db(project=project, run_ids=[uuid.uuid4()], journal=journal)
+
+    with pytest.raises(RuntimeError, match="mongo unavailable"):
+        await reset_project(
+            db, project_id=project.id, mode="runs", confirmation_name=project.name,
+            mongo=_MongoStub(journal, fail=True),
+        )
+
+    db.commit.assert_not_awaited()
+    assert ("delete", "") not in journal and not db.add.called

@@ -139,7 +139,8 @@ async def test_sync_canonical_no_cases_returns_zero_counts():
     db.execute = AsyncMock(side_effect=[empty_result, no_run_result])
 
     result = await svc.sync_canonical_test_cases(db, uuid.uuid4(), uuid.uuid4())
-    assert result == {"added": 0, "updated": 0, "linked": 0, "skipped": 0}
+    # W32 (deliberate): the count map always carries first_seen_backfilled.
+    assert result == {"added": 0, "updated": 0, "linked": 0, "skipped": 0, "first_seen_backfilled": 0}
 
 
 @pytest.mark.asyncio
@@ -242,7 +243,8 @@ async def test_sync_canonical_adds_new_fingerprints(monkeypatch):
 
     result = await svc.sync_canonical_test_cases(db, project_id, run_id)
 
-    assert result == {"added": 2, "updated": 0, "linked": 2, "skipped": 0}
+    # W32 (deliberate): the count map always carries first_seen_backfilled.
+    assert result == {"added": 2, "updated": 0, "linked": 2, "skipped": 0, "first_seen_backfilled": 0}
     # No per-row ORM insert, and so no per-row SAVEPOINT. The race semantics
     # this used to rely on are pinned against real Postgres in
     # tests/integration/test_canonical_sync_postgres.py.
@@ -269,6 +271,9 @@ async def test_sync_canonical_updates_existing_and_restores_deleted():
         retirement_confirmed_by_id=uuid.uuid4(),
         retirement_reason="Old disappearance was confirmed",
         last_seen_run_id=uuid.uuid4(),
+        # W32 (deliberate): a non-NULL pointer issues no first-sighting probe,
+        # so the execute side-effect list below stays three results.
+        first_seen_run_id=uuid.uuid4(),
     )
     case = _make_test_case("fp1", "Regression", test_name="new_name")
     case.class_name = "NewClass"
@@ -324,6 +329,75 @@ async def test_sync_canonical_skips_cases_with_no_fingerprint():
     result = await svc.sync_canonical_test_cases(db, project_id, run_id)
     assert result["skipped"] == 1
     assert result["added"] == 0
+
+
+# ── W24 F-6 (W32): first RETAINED sighting ───────────────────────────────
+
+
+def _existing(first_seen):
+    return SimpleNamespace(
+        id=uuid.uuid4(), test_fingerprint="fp1", test_name="t", class_name="com.example.MyTest",
+        status="active", first_seen_run_id=first_seen, last_seen_run_id=None,
+    )
+
+
+def _rows(values):
+    result = FakeExecuteResult()
+    result.scalars = lambda: SimpleNamespace(all=lambda: list(values))
+    return result
+
+
+async def _sync(canonical, *, probe=None):
+    """Cases → suites → the canonical prefetch [→ the seen-elsewhere probe]."""
+    run_id = uuid.uuid4()
+    suite = SimpleNamespace(id=uuid.uuid4(), name="Regression")
+    results = [_rows([_make_test_case("fp1", "Regression")]), _rows([suite]), _rows([canonical])]
+    if probe is not None:
+        results.append(_rows(probe))
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=results)
+    counts = await svc.sync_canonical_test_cases(db, uuid.uuid4(), run_id)
+    return run_id, counts, db
+
+
+@pytest.mark.asyncio
+async def test_a_null_pointer_not_seen_elsewhere_takes_this_run():
+    canonical = _existing(None)
+    run_id, counts, db = await _sync(canonical, probe=[])
+
+    assert canonical.first_seen_run_id == run_id and canonical.last_seen_run_id == run_id
+    assert counts["first_seen_backfilled"] == 1 and counts["updated"] == 1
+    assert db.execute.await_count == 4
+
+
+@pytest.mark.asyncio
+async def test_a_null_pointer_seen_by_another_run_stays_null():
+    canonical = _existing(None)
+    run_id, counts, _db = await _sync(canonical, probe=[canonical.id])
+
+    assert canonical.first_seen_run_id is None, "its first run was purged; later runs are kept"
+    assert canonical.last_seen_run_id == run_id
+    assert counts["first_seen_backfilled"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_set_pointer_is_never_overwritten_and_issues_no_probe():
+    first = uuid.uuid4()
+    canonical = _existing(first)
+    _run_id, counts, db = await _sync(canonical)
+
+    assert canonical.first_seen_run_id == first
+    assert counts["first_seen_backfilled"] == 0
+    assert db.execute.await_count == 3, "no probe for a non-NULL pointer"
+
+
+def test_the_probe_is_an_exists_semi_join_excluding_this_run():
+    from sqlalchemy.dialects import postgresql
+
+    sql = str(svc._seen_elsewhere_statement([uuid.uuid4()], uuid.uuid4()).compile(dialect=postgresql.dialect()))
+    assert "EXISTS" in sql
+    assert "test_cases.test_run_id !=" in sql
+    assert "test_cases.canonical_test_case_id = canonical_test_cases.id" in sql
 
 
 # ── list_test_suites backfill probe (regression for /suites?project_id 500) ───

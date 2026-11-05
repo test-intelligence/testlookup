@@ -525,8 +525,9 @@ def test_suite_change_is_against_the_previous_window():
 # ── Every analytics statement carries the tenant rule ────────────────────────
 
 
+# W32 (deliberate): "slowest" + "histogram" are ONE statement now (EXEC-03 one pass).
 @pytest.mark.parametrize("builder", ["suite_history", "per_day_run", "per_day_suite", "suites", "pairs", "window",
-                                     "slowest", "histogram"])
+                                     "slowest_and_histogram"])
 def test_every_statement_is_tenant_scoped(builder):
     params: dict = {}
     scope = _scope(suites=("checkout",), releases=(str(uuid.uuid4()),))
@@ -537,8 +538,7 @@ def test_every_statement_is_tenant_scoped(builder):
         "suites": lambda: svc._suites_sql(params, scope, "main", ("checkout",)),
         "pairs": lambda: svc._regression_pairs_sql(params, scope, "main", ("checkout",)),
         "window": lambda: svc._window_p50_sql(params, scope, "main"),
-        "slowest": lambda: svc._slowest_tests_sql(params, scope, "main"),
-        "histogram": lambda: svc._histogram_sql(params, scope, "main"),
+        "slowest_and_histogram": lambda: svc._slowest_and_histogram_sql(params, scope, "main"),
     }[builder]()
     assert "tr.project_id = :project_id" in sql
     assert "IN (SELECT id FROM projects WHERE is_active)" in sql
@@ -549,3 +549,115 @@ def test_every_statement_is_tenant_scoped(builder):
         assert "se.project_id = :se_project_id" in sql and params["se_project_id"] == PROJECT
     # No null-tolerant bind anywhere.
     assert "IS NULL OR" not in sql
+
+
+# ── EXEC-03 one pass (W32): the equality oracle ──────────────────────────────
+# EXEC-03 equality oracle (W32) — delete when F-W32-4 lands. The two statements
+# the one-pass ``_slowest_and_histogram_sql`` replaced, copied verbatim from
+# 1ff1e78b (``execution_metrics_service.py:1175-1199`` / ``:1224-1256``). The
+# integration test runs both on real rows and compares the blocks exactly.
+
+def _legacy_slowest_sql(params: dict, scope: AnalyticsScope, branch) -> str:
+    # the service module's own bindings: exactly the names the legacy code referenced
+    tenant_filter_sql, release_filter_sql, suite_filter_sql = (
+        svc.tenant_filter_sql, svc.release_filter_sql, svc.suite_filter_sql,
+    )
+    tenant = tenant_filter_sql(params, project_id=scope.project, allowed_project_ids=scope.allowed_project_ids)
+    return f"""
+        SELECT tc.test_fingerprint,
+               MIN(tc.test_name) AS test_name,
+               MIN({svc._EFFECTIVE_SUITE}) AS suite_name,
+               COUNT(*) AS n,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tc.duration_ms) AS p50,
+               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY tc.duration_ms) AS p95,
+               MAX(tc.duration_ms) AS max_ms
+        FROM test_cases tc
+        JOIN test_runs tr ON tr.id = tc.test_run_id
+        WHERE tr.created_at >= :period_start
+          AND tc.duration_ms IS NOT NULL
+          {tenant}
+          {release_filter_sql(params, scope.release_arg)}
+          {suite_filter_sql(params, scope.suite_arg)}
+          {svc._branch_sql(params, branch, "tr.branch")}
+        GROUP BY tc.test_fingerprint
+        ORDER BY p95 DESC NULLS LAST, tc.test_fingerprint
+        LIMIT :top
+    """
+
+
+def _legacy_histogram_sql(params: dict, scope: AnalyticsScope, branch) -> str:
+    tenant_filter_sql, release_filter_sql, suite_filter_sql = (
+        svc.tenant_filter_sql, svc.release_filter_sql, svc.suite_filter_sql,
+    )
+    tenant = tenant_filter_sql(params, project_id=scope.project, allowed_project_ids=scope.allowed_project_ids)
+    return f"""
+        SELECT COUNT(*) AS n,
+               PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tc.duration_ms) AS p50,
+               PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY tc.duration_ms) AS p95,
+               {svc._histogram_bucket_columns()}
+        FROM test_cases tc
+        JOIN test_runs tr ON tr.id = tc.test_run_id
+        WHERE tr.created_at >= :period_start
+          AND tc.duration_ms IS NOT NULL
+          {tenant}
+          {release_filter_sql(params, scope.release_arg)}
+          {suite_filter_sql(params, scope.suite_arg)}
+          {svc._branch_sql(params, branch, "tr.branch")}
+    """
+
+
+_R1, _R2 = str(uuid.UUID(int=0xA1)), str(uuid.UUID(int=0xB2))
+_ALLOWED = frozenset({PROJECT, uuid.UUID(int=0xC3)})
+
+#: (id, AnalyticsScope kwargs, branch): every filter combination the route can send.
+_EQUALITY_SCOPES = [
+    ("project", {}, None),
+    ("release", {"release_ids": (_R1,)}, None),
+    ("two_releases", {"release_ids": (_R1, _R2)}, None),
+    ("suite", {"suite_names": ("Checkout",)}, None),
+    ("two_suites", {"suite_names": ("Checkout", "payments")}, None),
+    ("branch", {}, "main"),
+    ("all_three", {"release_ids": (_R1,), "suite_names": ("Checkout",)}, "main"),
+    ("allowed_projects", {"project_id": None, "allowed_project_ids": _ALLOWED}, None),
+    ("admin_all_projects", {"project_id": None}, "dev"),
+]
+
+
+def _equality_scope(over: dict) -> AnalyticsScope:
+    base = dict(project_id=PROJECT, allowed_project_ids=None, release_ids=(), suite_names=(), days=90)
+    base.update(over)
+    return AnalyticsScope(**base)
+
+
+@pytest.mark.parametrize("over,branch", [(o, b) for _i, o, b in _EQUALITY_SCOPES],
+                         ids=[i for i, _o, _b in _EQUALITY_SCOPES])
+def test_the_one_pass_statement_binds_exactly_what_the_two_legacy_statements_bound(over, branch):
+    scope = _equality_scope(over)
+    start = T0 - timedelta(days=90)
+    new_params: dict = {"period_start": start, "top": 25}
+    sql = svc._slowest_and_histogram_sql(new_params, scope, branch)
+    legacy: dict = {"period_start": start, "top": 25}
+    _legacy_slowest_sql(legacy, scope, branch)
+    hist: dict = {"period_start": start}
+    _legacy_histogram_sql(hist, scope, branch)
+    for key, value in hist.items():
+        assert legacy.get(key, value) == value, f"the two legacy statements disagree on {key}"
+    legacy.update(hist)
+
+    assert new_params == legacy
+    assert sql.count("FROM test_cases") == 1, "ONE scan of the window"
+    assert "GROUPING SETS ((test_fingerprint), ())" in sql
+    assert "GROUPING(test_fingerprint) AS is_total" in sql
+    assert "ORDER BY p95 DESC NULLS LAST, test_fingerprint LIMIT :top" in sql
+    assert "COUNT(*) FILTER (WHERE duration_ms >= 300000) AS b13" in sql
+    assert "tc.duration_ms >=" not in sql.split("), agg AS (")[1], "buckets read the CTE's column"
+
+
+def test_the_rows_split_into_the_total_and_the_ranked_tests():
+    total = SimpleNamespace(is_total=1, test_fingerprint=None, n=3)
+    first = SimpleNamespace(is_total=0, test_fingerprint="fpslow", n=2)
+    second = SimpleNamespace(is_total=0, test_fingerprint="", n=1)   # an empty fingerprint is still a test row
+    per_test, row = svc.split_slowest_and_histogram([total, first, second])
+    assert per_test == [first, second] and row is total
+    assert svc.split_slowest_and_histogram([]) == ([], None)
+    assert svc.histogram_block(None)["measured"] is False

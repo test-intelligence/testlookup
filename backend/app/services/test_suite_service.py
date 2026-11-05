@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 import structlog
 from fastapi import HTTPException, status
-from sqlalchemy import bindparam, func, select
+from sqlalchemy import bindparam, exists, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -313,15 +313,39 @@ def _chunks(values: list, size: int):
         yield values[offset:offset + size]
 
 
+def _seen_elsewhere_statement(canonical_ids: list[uuid.UUID], run_id: uuid.UUID) -> Any:
+    """W24 F-6 (W32): which of these canonical rows has a test result of ANOTHER run linked to it.
+
+    One semi-join: Postgres stops at the first matching ``test_cases`` row per
+    canonical (``ix_test_cases_canonical``). ``!= run_id`` matters — the
+    current run's own links (a re-sync) are not "another sighting".
+    """
+    return select(CanonicalTestCase.id).where(
+        CanonicalTestCase.id.in_(canonical_ids),
+        exists().where(
+            TestCase.canonical_test_case_id == CanonicalTestCase.id,
+            TestCase.test_run_id != run_id,
+        ),
+    )
+
+
 def _refresh_seen_canonical(
-    canonical: CanonicalTestCase, tc: TestCase, run_id: uuid.UUID
-) -> None:
+    canonical: CanonicalTestCase, tc: TestCase, run_id: uuid.UUID, *, first_sighting: bool = False
+) -> bool:
     """A run saw this canonical case: bump it, restore it, refresh its names.
 
     ``test_suite_id`` is deliberately never touched. Moving a case between
     suites is a person's decision (see routers/suites.py), and a run that
     reports the case under its old suite must not undo it.
+
+    ``first_sighting`` (W24 F-6, W32): this run is the case's first RETAINED
+    sighting, so a NULL ``first_seen_run_id`` takes it. Returns True when the
+    pointer was backfilled; a non-NULL pointer is never overwritten.
     """
+    backfilled = False
+    if first_sighting and canonical.first_seen_run_id is None:
+        canonical.first_seen_run_id = run_id
+        backfilled = True
     canonical.last_seen_run_id = run_id
     if canonical.status in ("deleted", "needs_review"):
         canonical.status = "active"
@@ -334,6 +358,7 @@ def _refresh_seen_canonical(
         canonical.test_name = tc.test_name
     if canonical.class_name != tc.class_name:
         canonical.class_name = tc.class_name
+    return backfilled
 
 
 async def _insert_new_canonicals(db: AsyncSession, rows: list[dict]) -> set[str]:
@@ -376,11 +401,17 @@ async def sync_canonical_test_cases(
         - Existing fingerprint -> bump ``last_seen_run_id``, restore from
           ``deleted``/``needs_review`` to ``active``, refresh test_name /
           class_name if the payload changed them.
+        - Existing fingerprint with a NULL ``first_seen_run_id`` (W24 F-6,
+          W32 "first RETAINED sighting") -> takes ``run_id`` iff no test
+          result of ANOTHER run is linked to it (an imported catalog, a
+          reset survivor, a test whose every sighting was purged); a test
+          whose first run was purged but later runs are kept stays NULL.
       * Link ``TestCase.canonical_test_case_id``.
 
-    Returns counts for observability.
+    Returns counts for observability (``first_seen_backfilled``: pointers set
+    by the rule above).
     """
-    counts = {"added": 0, "updated": 0, "linked": 0, "skipped": 0}
+    counts = {"added": 0, "updated": 0, "linked": 0, "skipped": 0, "first_seen_backfilled": 0}
 
     cases_result = await db.execute(
         select(TestCase).where(TestCase.test_run_id == run_id)
@@ -462,6 +493,21 @@ async def sync_canonical_test_cases(
             {c.test_fingerprint: c for c in existing_result.scalars().all()}
         )
 
+    # ── W24 F-6 (W32): first RETAINED sighting ──────────────────
+    # A NULL first_seen_run_id (an imported catalog, a reset survivor, every
+    # sighting purged) takes THIS run iff no other run's result is linked to
+    # the row. A plain coalesce would re-point every row whose first run the
+    # purge nulled (ON DELETE SET NULL) and flood the catalog change log with
+    # false "added" events. A project with no NULL pointer pays nothing.
+    unseen = [c.id for c in canonical_by_fp.values() if c.first_seen_run_id is None]
+    backfill: set[uuid.UUID] = set()
+    if unseen:
+        seen_elsewhere: set[uuid.UUID] = set()
+        for chunk in _chunks(unseen, _FINGERPRINT_CHUNK):
+            probe = await db.execute(_seen_elsewhere_statement(chunk, run_id))
+            seen_elsewhere.update(probe.scalars().all())
+        backfill = set(unseen) - seen_elsewhere
+
     # ── Refresh what exists; collect what is new ────────────────
     # Re-audit M8: each new fingerprint used to be inserted on its own, in a
     # SAVEPOINT + INSERT + RELEASE, so a run's first ingest paid three round
@@ -499,7 +545,8 @@ async def sync_canonical_test_cases(
             awaiting_insert.append(tc)
             continue
 
-        _refresh_seen_canonical(canonical, tc, run_id)
+        if _refresh_seen_canonical(canonical, tc, run_id, first_sighting=canonical.id in backfill):
+            counts["first_seen_backfilled"] += 1
         counts["updated"] += 1
         if tc.canonical_test_case_id != canonical.id:
             tc.canonical_test_case_id = canonical.id
@@ -526,9 +573,13 @@ async def sync_canonical_test_cases(
                 if canonical.test_fingerprint not in inserted:
                     # Another run's row: this run saw it, so refresh it --
                     # but never re-suite it.
-                    _refresh_seen_canonical(
-                        canonical, first_case[canonical.test_fingerprint], run_id
-                    )
+                    # (A concurrent winner's pointer is its run, never NULL:
+                    # the flag is harmless here and keeps one rule.)
+                    if _refresh_seen_canonical(
+                        canonical, first_case[canonical.test_fingerprint], run_id,
+                        first_sighting=canonical.id in backfill,
+                    ):
+                        counts["first_seen_backfilled"] += 1
                     counts["updated"] += 1
         for tc in awaiting_insert:
             canonical = canonical_by_fp.get(tc.test_fingerprint)

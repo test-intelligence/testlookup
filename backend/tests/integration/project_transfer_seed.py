@@ -618,6 +618,12 @@ async def _seed_history_results(db: AsyncSession, seed: SeededProject, s: Sentin
         member_test_ids=[str(case.id)], size=1), RUN_FAILED)        # its pipeline is not exported → NULL
     db.add_all([cluster, cluster_live])
     await db.flush()
+    # W32 F-W30-8: the run-scoped artifact the seeded decision report cites (by artifact_id and by a claim).
+    evidence = _row(seed, m.EvidenceArtifact(
+        id=uuid.uuid4(), run_id=failed.id, project_id=pid, producer_pipeline_run_id=done.id, test_case_id=case.id,
+        artifact_type="log", source_system="allure", summary_excerpt="timeout after 30s",
+        uri_or_ref=f"s3://pipeline-artifacts/pipeline/2026/11/01/{done.id}/triage/q.json",
+        idempotency_key=f"xfer-evidence-{tag}"), RUN_FAILED)
     db.add_all([
         _row(seed, m.AgentStageResult(
             id=uuid.uuid4(), pipeline_run_id=done.id, stage_name="triage", status="completed", task_key="triage",
@@ -626,16 +632,12 @@ async def _seed_history_results(db: AsyncSession, seed: SeededProject, s: Sentin
              RUN_FAILED),
         _row(seed, m.AgentStageResult(id=uuid.uuid4(), pipeline_run_id=running.id, stage_name="triage",
                                       status="running"), PIPELINE_RUNNING),
-        _row(seed, m.EvidenceArtifact(
-            id=uuid.uuid4(), run_id=failed.id, project_id=pid, producer_pipeline_run_id=done.id, test_case_id=case.id,
-            artifact_type="log", source_system="allure", summary_excerpt="timeout after 30s",
-            uri_or_ref=f"s3://pipeline-artifacts/pipeline/2026/11/01/{done.id}/triage/q.json",
-            idempotency_key=f"xfer-evidence-{tag}"), RUN_FAILED),
+        evidence,
         _row(seed, m.EvidenceArtifact(id=uuid.uuid4(), run_id=None, project_id=pid, artifact_type="note",
                                       source_system="manual", idempotency_key=f"xfer-project-{tag}"), NEVER),
     ])
     await db.flush()
-    seed.ids.update(cluster=cluster.id)
+    seed.ids.update(cluster=cluster.id, evidence=evidence.id)
 
 
 async def _seed_history_scoped(db: AsyncSession, seed: SeededProject, s: Sentinels, r: dict[str, Any],
@@ -692,6 +694,7 @@ def _history_documents(seed: SeededProject, r: dict[str, Any], s: Sentinels, now
     pid = str(seed.project_id)
     run, live_run = str(r["failed"].id), str(r["live"].id)
     case, done = str(r["case_failed"].id), str(r["done"].id)
+    evidence = str(seed.ids["evidence"])
     return {
         "raw_allure_json": [
             {"test_case_id": f"allure-{seed.tag}-qz", "test_run_id": run, "test_name": "test_checkout_charges",
@@ -723,10 +726,21 @@ def _history_documents(seed: SeededProject, r: dict[str, Any], s: Sentinels, now
                                   "intermediate_steps": [], "updated_at": now}],
         "pipeline_event_log": [{"pipeline_run_id": done, "event_type": "stage_completed", "timestamp": now,
                                 "stage_name": "triage", "test_case_id": case, "detail": {"ms": 120}}],
+        # W32 F-W30-8: the published report cites the run-scoped artifact by artifact_id (an evidence
+        # projection) and by a claim {"type": "artifact"} — the bodies the retention purge walks.
         "decision_reports": [{"report_id": str(uuid.uuid4()), "project_id": pid, "test_run_id": run,
                               "pipeline_run_id": done, "report_version": 1, "status": "published",
-                              "generated_at": now, "decision_intelligence": {}, "verification": {},
-                              "markdown_report": "# NO-GO"}],
+                              "generated_at": now,
+                              "decision_intelligence": {
+                                  "evidence": [{"artifact_id": evidence, "kind": "log",
+                                                "scope": {"project_id": pid, "test_run_id": run,
+                                                          "test_case_id": case},
+                                                "producer_pipeline_run_id": done}],
+                                  "claims": [{"text": "Gateway timeout", "evidence": [
+                                      {"type": "artifact", "id": evidence,
+                                       "evidence_id": hashlib.sha256(evidence.encode()).hexdigest()}]}],
+                              },
+                              "verification": {}, "markdown_report": "# NO-GO"}],
         "decision_report_attempts": [{"attempt_id": str(uuid.uuid4()), "project_id": pid, "test_run_id": run,
                                       "pipeline_run_id": done, "status": "failed", "attempted_at": now,
                                       "reason": "critic rejected", "verification": {}}],
