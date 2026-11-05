@@ -143,6 +143,12 @@ COPY --from=builder /app/alembic.ini .
 COPY --from=builder /app/gunicorn_conf.py ./gunicorn_conf.py
 COPY --from=builder /app/scripts ./scripts
 
+# LICENSE, NOTICE and THIRD_PARTY_NOTICES.md ship with the image (Apache-2.0
+# s.4(a)/(d)). backend/licenses/ is staged from the repository root by
+# scripts/generate_third_party_notices.py; CI fails when it is stale.
+COPY --from=builder /app/licenses /licenses
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
 # Client SDK files served at /api/v1/sdk/{lang}. Staged into the build
 # context as backend/__client_sdks_staged/ by the deploy script (see
 # homelabsetup/deploy-homelab.sh). docker-compose dev path is unaffected —

@@ -1,0 +1,192 @@
+#!/usr/bin/env node
+/**
+ * Ship the third-party notices with the web UI.
+ *
+ * The production build (vite 8 / rolldown) strips every `@license` banner, so
+ * the frontend image used to redistribute the minified code of ~340 npm
+ * packages with none of the copyright notices their MIT / ISC / BSD /
+ * Apache-2.0 licenses require. This script runs at the end of `npm run build`
+ * and writes:
+ *
+ *   dist/THIRD_PARTY_LICENSES.txt  name@version, license, copyright line and
+ *                                  the full license text of every production
+ *                                  package in package-lock.json;
+ *   dist/LICENSE, dist/NOTICE      TestLookup's own, copied from licenses/
+ *                                  (staged there by
+ *                                  scripts/generate_third_party_notices.py at
+ *                                  the repository root).
+ *
+ * nginx serves them at /THIRD_PARTY_LICENSES.txt, /LICENSE and /NOTICE
+ * (`try_files $uri`), README.md and THIRD_PARTY_NOTICES.md point at them, and
+ * the frontend image also keeps licenses/ at /licenses. The set of packages is the lockfile's
+ * non-dev closure: the same set THIRD_PARTY_NOTICES.md lists, deliberately a
+ * superset of what the bundler kept. Platform-specific optional packages that
+ * are not installed on the build host are listed from the lockfile with a
+ * note instead of their license text.
+ *
+ *   node scripts/generate-third-party-licenses.mjs          # write (after vite build)
+ *   node scripts/generate-third-party-licenses.mjs --check  # exit 1 if dist/ lacks them
+ *
+ * Node built-ins only: this runs inside the image build, where nothing else is
+ * installed.
+ */
+import { copyFileSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const DIST = join(ROOT, 'dist')
+const OUT = join(DIST, 'THIRD_PARTY_LICENSES.txt')
+const STAGED = join(ROOT, 'licenses')
+const OWN_FILES = ['LICENSE', 'NOTICE']
+const LICENSE_FILE = /^(licen[cs]e|copying|unlicense)(\.|-|_|$)/i
+
+function licenseExpression(value) {
+  if (!value) return 'UNKNOWN'
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map(licenseExpression).join(' OR ')
+  return value.type || 'UNKNOWN'
+}
+
+function personLine(value) {
+  if (!value) return ''
+  if (typeof value === 'string') return value
+  return [value.name, value.email && `<${value.email}>`, value.url && `(${value.url})`].filter(Boolean).join(' ')
+}
+
+/** Every non-dev package in package-lock.json, once per name@version. */
+export function productionPackages(lockText) {
+  const lock = JSON.parse(lockText)
+  const seen = new Map()
+  for (const [key, meta] of Object.entries(lock.packages || {})) {
+    if (!key || meta.dev || meta.link) continue
+    const name = key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length)
+    const version = meta.version || '?'
+    const id = `${name}@${version}`
+    if (!seen.has(id)) seen.set(id, { id, name, version, key, license: licenseExpression(meta.license) })
+  }
+  return [...seen.values()].sort((a, b) => a.id.localeCompare(b.id))
+}
+
+function readLicenseTexts(dir) {
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) return null
+  const names = readdirSync(dir)
+    .filter((n) => LICENSE_FILE.test(n) && statSync(join(dir, n)).isFile())
+    .sort()
+  if (names.length === 0) return ''
+  return names.map((n) => readFileSync(join(dir, n), 'utf8').replace(/\r\n/g, '\n').trim()).join('\n\n')
+}
+
+function describe(pkg) {
+  const dir = join(ROOT, pkg.key)
+  let license = pkg.license
+  let copyright = ''
+  let homepage = ''
+  let installed = existsSync(join(dir, 'package.json'))
+  if (installed) {
+    try {
+      const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
+      if (license === 'UNKNOWN') license = licenseExpression(manifest.license || manifest.licenses)
+      copyright = personLine(manifest.author)
+      homepage =
+        manifest.homepage ||
+        (typeof manifest.repository === 'string' ? manifest.repository : manifest.repository?.url) ||
+        ''
+    } catch {
+      installed = false
+    }
+  }
+  const text = installed ? readLicenseTexts(dir) : null
+  return { ...pkg, license, copyright, homepage, installed, text }
+}
+
+export function render(entries) {
+  const lines = [
+    'TestLookup web UI: third-party licenses',
+    '',
+    'TestLookup itself is licensed under the Apache License 2.0; see /LICENSE',
+    'and /NOTICE next to this file. The JavaScript delivered to your browser',
+    'bundles the packages below. Each entry gives the package, its version, its',
+    'license and, where the package ships one, the copyright notice and license',
+    'text it requires to accompany redistribution.',
+    '',
+    `Generated by frontend/scripts/generate-third-party-licenses.mjs from`,
+    `package-lock.json (production dependencies): ${entries.length} packages.`,
+    '',
+  ]
+  for (const e of entries) {
+    lines.push('='.repeat(78))
+    lines.push(`${e.id}  (${e.license})`)
+    if (e.copyright) lines.push(`Author: ${e.copyright}`)
+    if (e.homepage) lines.push(`Source: ${e.homepage}`)
+    lines.push('-'.repeat(78))
+    if (!e.installed) {
+      lines.push(
+        'Not installed on the build platform (platform-specific optional package);',
+        `license as declared in package-lock.json. Text: https://spdx.org/licenses/${e.license}.html`,
+      )
+    } else if (!e.text) {
+      lines.push(
+        'This package ships no license file; the license named above applies.',
+        `Text: https://spdx.org/licenses/${e.license}.html`,
+      )
+    } else {
+      lines.push(e.text)
+    }
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
+function fail(message) {
+  console.error(`[third-party-licenses] ${message}`)
+  process.exit(1)
+}
+
+function write() {
+  if (!existsSync(DIST)) fail('dist/ does not exist: run `vite build` first')
+  for (const name of OWN_FILES) {
+    if (!existsSync(join(STAGED, name))) {
+      fail(`licenses/${name} is missing: run \`python scripts/generate_third_party_notices.py\` at the repository root`)
+    }
+  }
+  const entries = productionPackages(readFileSync(join(ROOT, 'package-lock.json'), 'utf8')).map(describe)
+  if (entries.length === 0) fail('package-lock.json lists no production packages')
+  if (!entries.some((e) => e.name === 'react-dom')) fail('react-dom is not in the production closure; wrong lockfile?')
+  writeFileSync(OUT, render(entries), 'utf8')
+  for (const name of OWN_FILES) copyFileSync(join(STAGED, name), join(DIST, name))
+  const missingText = entries.filter((e) => e.installed && !e.text).length
+  const notInstalled = entries.filter((e) => !e.installed).length
+  console.log(
+    `[third-party-licenses] wrote dist/THIRD_PARTY_LICENSES.txt: ${entries.length} packages ` +
+      `(${missingText} without a license file, ${notInstalled} not installed here), plus dist/LICENSE and dist/NOTICE`,
+  )
+}
+
+function check() {
+  const problems = []
+  if (!existsSync(OUT)) problems.push('dist/THIRD_PARTY_LICENSES.txt is missing')
+  for (const name of OWN_FILES) {
+    if (!existsSync(join(DIST, name))) problems.push(`dist/${name} is missing`)
+    else if (existsSync(join(STAGED, name)) && readFileSync(join(DIST, name)).compare(readFileSync(join(STAGED, name))) !== 0) {
+      problems.push(`dist/${name} differs from licenses/${name}`)
+    }
+  }
+  if (existsSync(OUT)) {
+    const text = readFileSync(OUT, 'utf8')
+    const entries = productionPackages(readFileSync(join(ROOT, 'package-lock.json'), 'utf8'))
+    const absent = entries.filter((e) => !text.includes(`\n${e.id}  (`))
+    if (absent.length) problems.push(`${absent.length} production packages are not listed: ${absent.slice(0, 5).map((e) => e.id).join(', ')}${absent.length > 5 ? ', ...' : ''}`)
+    if (!text.includes('Permission is hereby granted, free of charge')) problems.push('no MIT license text found in the file')
+  }
+  if (problems.length) {
+    for (const p of problems) console.error(`[third-party-licenses] ${p}`)
+    process.exit(1)
+  }
+  console.log('[third-party-licenses] dist/ carries THIRD_PARTY_LICENSES.txt, LICENSE and NOTICE covering every production package')
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  if (process.argv.includes('--check')) check()
+  else write()
+}

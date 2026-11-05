@@ -1,0 +1,44 @@
+name: DCO
+
+# Every commit in a pull request must carry a "Signed-off-by:" trailer
+# (CONTRIBUTING.md, "Licensing (DCO)"). Self-contained on purpose: the check is
+# a few lines of git, so no third-party action runs with the token. Make the
+# "Developer Certificate of Origin" check required in the main ruleset and an
+# unsigned commit cannot merge.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    name: Developer Certificate of Origin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The range check below needs the base commit too.
+          fetch-depth: 0
+
+      - name: Every commit is signed off
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          failed=0
+          for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            if ! git log -1 --format=%B "$sha" | grep -Eq '^Signed-off-by: .+ <.+@.+>$'; then
+              echo "::error::commit $sha has no Signed-off-by trailer"
+              git log -1 --format='  %h %s (%an)' "$sha"
+              failed=1
+            fi
+          done
+          if [ "$failed" = 1 ]; then
+            echo "Sign off every commit on the branch and push again:"
+            echo "  git rebase --signoff $BASE"
+            echo "See CONTRIBUTING.md, section 'Licensing (DCO)'."
+            exit 1
+          fi
+          echo "all $(git rev-list --no-merges --count "$BASE..$HEAD") commits are signed off"
