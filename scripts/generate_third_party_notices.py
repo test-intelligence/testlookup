@@ -261,8 +261,8 @@ def render() -> str:
         "FastDoubleParser and Schubfach (both MIT); their license files ship in the\n"
         "jar as `META-INF/FastDoubleParser-LICENSE`,\n"
         "`META-INF/FastDoubleParser-ThirdParty-LICENSE` and `META-INF/Schubfach-LICENSE`.\n"
-        "JUnit 5 (EPL-2.0) and TestNG (Apache-2.0) are `provided` dependencies\n"
-        "supplied by your test project, not bundled.\n\n"
+        "JUnit 5 or 6 (EPL-2.0), TestNG (Apache-2.0) and REST Assured (Apache-2.0)\n"
+        "are `provided` dependencies supplied by your test project, not bundled.\n\n"
         "## Go reporter\n\nStandard library only.\n",
         _python_section(config),
         STATIC_TAIL.format(images=_images_table()),
