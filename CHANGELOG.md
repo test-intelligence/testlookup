@@ -1623,6 +1623,13 @@ locally by default.
 
 ### Fixed
 
+- **An erasure rewrites a mention that ends a sentence** (W31 follow-up, found
+  on the homelab walk 2026-11-05). "Please confirm @alice." stayed unrewritten.
+  The product's mention parser reads a trailing dot as the end of the
+  mention, but the erasure's token pattern refused any following dot. A dot
+  now ends the token unless a name character follows it, so `@alice.smith`
+  and `@alice.com` stay untouched. A parity test pins the erasure to the
+  mention parser. Test: `tests/test_subject_erasure_service.py`.
 - **An inline summary no longer shows the `<<data>>` markers or draws a
   release conclusion from supplied failures** (F-OR07-2, owner 2026-11-04,
   in W31's branch). On the homelab's live model the draft read "the

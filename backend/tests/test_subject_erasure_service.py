@@ -77,10 +77,31 @@ def test_pseudonym_is_derived_from_the_id_only() -> None:
         ("@@alice is not a token", "@@alice is not a token"),
         ("no mention of alice at all", "no mention of alice at all"),
         ("line one\n@alice\nline three", "line one\n@erased-1\nline three"),
+        # A sentence-ending dot ends the token, as the product's mention parser reads it (homelab walk, 2026-11-05).
+        ("please confirm @alice.", "please confirm @erased-1."),
+        ("ask @alice. Then merge.", "ask @erased-1. Then merge."),
+        ("done, @alice...", "done, @erased-1..."),
+        ("@alice.smith is someone else", "@alice.smith is someone else"),
+        ("@alice.com is not the token", "@alice.com is not the token"),
     ],
 )
 def test_the_mention_token_is_word_bounded_and_case_insensitive(before: str, after: str) -> None:
     assert svc.rewrite_mentions(before, username="alice", pseudonym="erased-1") == after
+
+
+@pytest.mark.parametrize("text", [
+    "thanks @alice!", "please confirm @alice.", "ask @alice. Then merge.", "done, @alice...", "(@alice)",
+    "@alice.smith please", "mail x@alice.com", "@alice2 here", "@alice_b here", "@alice-b here", "@@alice",
+    "@ALICE, now", "line\n@alice\nend", "no mention", "email alice@corp.com",
+])
+def test_the_rewrite_finds_exactly_the_mentions_the_product_resolves(text: str) -> None:
+    """The erasure rewrites the ``@<username>`` tokens the product's own mention parser resolved to the person —
+    no fewer (a mention left behind is personal data left behind) and no more (another person's name is never
+    touched). Both members exist, so the parser's longest match keeps ``@alice.smith`` for alice.smith."""
+    from app.services.activity.mentions import find_mentions
+
+    resolved = "alice" in find_mentions(text, ["alice", "alice.smith"])
+    assert bool(svc.mention_pattern("alice").search(text)) == resolved, text
 
 
 def test_a_username_with_regex_characters_is_matched_literally() -> None:
