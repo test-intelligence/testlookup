@@ -191,7 +191,7 @@ describe('TopBar', () => {
         <TopBar />
       </MemoryRouter>,
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    fireEvent.click(screen.getByRole('button', { name: /Account menu$/ }))
     const signOut = screen.getByRole('menuitem', { name: /Sign out/ })
     expect(signOut.className).toContain('text-[var(--ui-danger)]')
     expect(signOut.className).not.toContain('--status-failed')
@@ -340,7 +340,7 @@ describe('TopBar', () => {
     )
 
     // Closed by default: no menu, trigger reports collapsed.
-    const trigger = screen.getByRole('button', { name: 'Account menu' })
+    const trigger = screen.getByRole('button', { name: /Account menu$/ })
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
 
@@ -352,6 +352,22 @@ describe('TopBar', () => {
     expect(mocked.logout).toHaveBeenCalledTimes(1)
   })
 
+  // WCAG 2.5.3 Label in Name (axe 4.14 enables label-content-name-mismatch):
+  // an aria-label of "Account menu" hid the name and role the button shows.
+  it('the account trigger is named by the words it shows, then "Account menu"', () => {
+    render(
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>,
+    )
+    const trigger = screen.getByRole('button', { name: /Account menu$/ })
+    expect(trigger).toHaveAccessibleName('Test User Admin Account menu')
+    expect(trigger).not.toHaveAttribute('aria-label')
+    expect(trigger).not.toHaveAttribute('aria-labelledby')
+    // The initials are the avatar's picture, not part of the name.
+    expect(within(trigger).getByText('TU')).toHaveAttribute('aria-hidden', 'true')
+  })
+
   // UX redesign P1: the account menu holds everything personal.
   it('the account menu has My profile, My notifications, the theme and presentation mode', () => {
     render(
@@ -359,7 +375,7 @@ describe('TopBar', () => {
         <TopBar />
       </MemoryRouter>,
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    fireEvent.click(screen.getByRole('button', { name: /Account menu$/ }))
     // The role as people say it, not its code.
     expect(screen.getByText(/^Admin · test@example\.com$/)).toBeInTheDocument()
     expect(screen.queryByText(/ADMIN/)).not.toBeInTheDocument()
@@ -463,24 +479,28 @@ describe('TopBar', () => {
       return screen.getByPlaceholderText('Search tests, runs, defects… (Enter)') as HTMLInputElement
     }
 
-    it('closed: no list, no request, and the input carries no new attribute', () => {
+    // W33: the typeahead is a lazy chunk (off the eager bundle). It mounts just
+    // after the bar and makes its first, disabled read; wait for that read so a
+    // keystroke never lands before the typeahead exists.
+    async function renderWithTypeahead(): Promise<void> {
       render(
         <MemoryRouter>
           <TopBar />
         </MemoryRouter>,
       )
+      await waitFor(() => expect(mocked.typeahead.calls.length).toBeGreaterThan(0))
+    }
+
+    it('closed: no list, no request, and the input carries no new attribute', async () => {
+      await renderWithTypeahead()
       expect(screen.queryByRole('listbox', { name: 'Matches' })).toBeNull()
       expect(input().getAttributeNames().sort()).toEqual(['class', 'placeholder', 'type', 'value'])
       expect(mocked.typeahead.calls.every((call) => call.enabled === false)).toBe(true)
     })
 
-    it('typing opens the matches under the input; a click selects the project and opens the match; Escape closes', () => {
+    it('typing opens the matches under the input; a click selects the project and opens the match; Escape closes', async () => {
       mocked.typeahead.answer = { items: [MATCH] }
-      render(
-        <MemoryRouter>
-          <TopBar />
-        </MemoryRouter>,
-      )
+      await renderWithTypeahead()
       fireEvent.change(input(), { target: { value: 'build' } })
       // No project pinned here: the read is the caller's whole scope.
       expect(mocked.typeahead.calls[mocked.typeahead.calls.length - 1]).toEqual({ query: 'build', projectId: null, enabled: true })
@@ -522,7 +542,7 @@ describe('TopBar', () => {
       </MemoryRouter>,
     )
 
-    const trigger = screen.getByRole('button', { name: 'Account menu' })
+    const trigger = screen.getByRole('button', { name: /Account menu$/ })
     fireEvent.click(trigger)
     expect(screen.getByRole('menu')).toBeInTheDocument()
 

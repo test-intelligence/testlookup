@@ -132,7 +132,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
         <span class="truncate">
           "Admin"
       <button aria-expanded="true" aria-label="Collapse sidebar" class="sidebar-link w-full" data-sidebar-toggle="" title="Collapse sidebar" type="button">
-        <svg aria-hidden="true" class="lucide lucide-panel-left-close h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+        <svg aria-hidden="true" class="lucide lucide-panel-left-close lucide-sidebar-close h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
           <rect height="18" rx="2" width="18" x="3" y="3">
           <path d="M9 3v18">
           <path d="m16 15-3-3 3-3">
@@ -158,7 +158,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
       <div class="ml-auto">
         <div class="relative">
           <button aria-expanded="false" aria-haspopup="menu" aria-label="Help" class="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors" data-help-menu="" title="Help" type="button">
-            <svg aria-hidden="true" class="lucide lucide-circle-question-mark w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <svg aria-hidden="true" class="lucide lucide-circle-question-mark lucide-help-circle lucide-circle-help w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
               <circle cx="12" cy="12" r="10">
               <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3">
               <path d="M12 17h.01">
@@ -170,14 +170,16 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
           <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-2xs font-bold rounded-full flex items-center justify-center px-1">
             "2"
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
-        <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
-          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0" style="background: var(--color-accent-muted); color: var(--ui-info-ink);">
+        <button aria-expanded="false" aria-haspopup="menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
+          <div aria-hidden="true" class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0" style="background: var(--color-accent-muted); color: var(--ui-info-ink);">
             "TU"
           <div class="flex flex-col justify-center items-start">
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">
               "Test User"
             <span class="text-xs text-[var(--color-text-muted)] mt-1 leading-none">
               "Admin"
+          <span class="sr-only">
+            "Account menu"
     <main class="relative flex-1 overflow-auto" id="main-content" tabindex="-1">
       <div class="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
         <div>
@@ -318,7 +320,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
         <span class="truncate">
           "Admin"
       <button aria-expanded="true" aria-label="Collapse sidebar" class="sidebar-link w-full" data-sidebar-toggle="" title="Collapse sidebar" type="button">
-        <svg aria-hidden="true" class="lucide lucide-panel-left-close h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+        <svg aria-hidden="true" class="lucide lucide-panel-left-close lucide-sidebar-close h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
           <rect height="18" rx="2" width="18" x="3" y="3">
           <path d="M9 3v18">
           <path d="m16 15-3-3 3-3">
@@ -344,7 +346,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
       <div class="ml-auto">
         <div class="relative">
           <button aria-expanded="false" aria-haspopup="menu" aria-label="Help" class="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors" data-help-menu="" title="Help" type="button">
-            <svg aria-hidden="true" class="lucide lucide-circle-question-mark w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <svg aria-hidden="true" class="lucide lucide-circle-question-mark lucide-help-circle lucide-circle-help w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
               <circle cx="12" cy="12" r="10">
               <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3">
               <path d="M12 17h.01">
@@ -356,14 +358,16 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
           <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-2xs font-bold rounded-full flex items-center justify-center px-1">
             "2"
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
-        <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
-          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0" style="background: var(--color-accent-muted); color: var(--ui-info-ink);">
+        <button aria-expanded="false" aria-haspopup="menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
+          <div aria-hidden="true" class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0" style="background: var(--color-accent-muted); color: var(--ui-info-ink);">
             "TU"
           <div class="flex flex-col justify-center items-start">
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">
               "Test User"
             <span class="text-xs text-[var(--color-text-muted)] mt-1 leading-none">
               "Admin"
+          <span class="sr-only">
+            "Account menu"
     <main class="relative flex-1 overflow-auto" id="main-content" tabindex="-1">
       <div class="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
         <div class="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]" data-settings-layout="">
@@ -646,7 +650,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
         <span class="truncate">
           "Admin"
       <button aria-expanded="true" aria-label="Collapse sidebar" class="sidebar-link w-full" data-sidebar-toggle="" title="Collapse sidebar" type="button">
-        <svg aria-hidden="true" class="lucide lucide-panel-left-close h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+        <svg aria-hidden="true" class="lucide lucide-panel-left-close lucide-sidebar-close h-4 w-4 flex-shrink-0" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
           <rect height="18" rx="2" width="18" x="3" y="3">
           <path d="M9 3v18">
           <path d="m16 15-3-3 3-3">
@@ -672,7 +676,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
       <div class="ml-auto">
         <div class="relative">
           <button aria-expanded="false" aria-haspopup="menu" aria-label="Help" class="p-2 rounded-lg text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-secondary)] transition-colors" data-help-menu="" title="Help" type="button">
-            <svg aria-hidden="true" class="lucide lucide-circle-question-mark w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
+            <svg aria-hidden="true" class="lucide lucide-circle-question-mark lucide-help-circle lucide-circle-help w-5 h-5" fill="none" height="24" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" stroke="currentColor" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg">
               <circle cx="12" cy="12" r="10">
               <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3">
               <path d="M12 17h.01">
@@ -684,14 +688,16 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
           <span class="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] bg-[var(--status-failed)] text-[var(--color-text-on-status)] text-2xs font-bold rounded-full flex items-center justify-center px-1">
             "2"
       <div class="relative border-l pl-4 h-full flex items-center" style="border-color: var(--color-border);">
-        <button aria-expanded="false" aria-haspopup="menu" aria-label="Account menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
-          <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0" style="background: var(--color-accent-muted); color: var(--ui-info-ink);">
+        <button aria-expanded="false" aria-haspopup="menu" class="flex items-center gap-3 h-full rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-ring)]" type="button">
+          <div aria-hidden="true" class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs flex-shrink-0" style="background: var(--color-accent-muted); color: var(--ui-info-ink);">
             "TU"
           <div class="flex flex-col justify-center items-start">
             <span class="text-sm font-medium text-[var(--color-text)] leading-none">
               "Test User"
             <span class="text-xs text-[var(--color-text-muted)] mt-1 leading-none">
               "Admin"
+          <span class="sr-only">
+            "Account menu"
     <main class="relative flex-1 overflow-auto" id="main-content" tabindex="-1">
       <div class="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
         <div class="mb-4" data-section-tabs="trends">

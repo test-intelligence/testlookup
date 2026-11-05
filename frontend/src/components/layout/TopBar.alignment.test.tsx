@@ -60,7 +60,7 @@ describe('TopBar trailing controls', () => {
     const pushIndex = children.findIndex((el) => el.classList.contains('ml-auto'))
     const help = indexOf(screen.getByRole('button', { name: 'Help' }))
     const bell = indexOf(screen.getByRole('button', { name: /^Notifications/ }))
-    const account = indexOf(screen.getByRole('button', { name: 'Account menu' }))
+    const account = indexOf(screen.getByRole('button', { name: /Account menu$/ }))
 
     // Only siblings that come *after* the auto-margin get pushed right with it.
     expect(help).toBe(pushIndex)
