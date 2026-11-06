@@ -9,6 +9,7 @@ mapped refusals keep their exit codes; export writes the bytes.
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 import yaml
@@ -202,7 +203,10 @@ def test_export_writes_the_bytes_and_sends_only_the_excel_routes_filters(api, tm
 def test_export_offers_no_suite():
     """The Excel route reads no suite_name: an offered --suite would be dropped silently."""
     result = _run("cases", "export", "-p", P1, "-o", "x.xlsx", "--suite", "checkout")
-    assert result.exit_code == 2 and "--suite" in result.output
+    # Typer forces Rich's terminal output when GITHUB_ACTIONS is set (read at import), so on CI the usage
+    # error arrives styled: compare its plain text.
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert result.exit_code == 2 and "No such option" in plain and "--suite" in plain
 
 
 @pytest.mark.parametrize(("status", "code"), [(403, 4), (404, 5), (422, 2)])
