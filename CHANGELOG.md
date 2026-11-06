@@ -52,6 +52,33 @@ locally by default.
 
 ### Added
 
+- **Drop-folder ingest works with the bundled S3 store** (wave W34, STRAT-13 / D40; branch
+  `feat/df-strat-tools-20261106`; migration `0254_drop_folder_watcher`). Write a run's
+  results under `<project>/runs/<build>/` and `upload_complete.json` last. A beat task
+  (`watch_drop_folders`, every minute, worker queue `default`) picks it up within about a
+  minute, with no webhook: the bundled store sends no bucket notifications. It goes through
+  the same ingestion as the webhook, with the same checks, de-duplication and dead-letter
+  queue. Each scan is small: one folder listing per project and a check of folders still
+  waiting for their sentinel. A folder with no sentinel after 24 h is no longer checked.
+  Switching the watcher on never re-ingests what the bucket already holds, and a deleted
+  run is never brought back (table `drop_folder_builds`). The flag `drop_folder_watcher`
+  is on by default. The authenticated `POST /webhooks/minio` stays for an external MinIO.
+  The watcher needs the beat process, which `docker-compose.dev-lite.yml` does not run.
+  Tests: `test_drop_folder_watcher.py`, `test_drop_folder_watcher_sweep.py`,
+  `test_storage_drop_folder_listing.py`, `test_migration_0254.py`,
+  `integration/test_drop_folder_watcher_postgres.py`,
+  `integration/test_s3_drop_folder_versitygw.py`,
+  `regression/test_drop_folder_watcher_contract.py`.
+- **Read-only test management in the CLI and the MCP server** (wave W34, STRAT-11 / D38).
+  `testlookup cases list | get | history | export` takes the project by id or name, with
+  the list's filters. `--all` stops at 50 pages and says how many were left out. A `TC-`
+  short id resolves only when exactly one case matches. The Excel export sends only the
+  filters its route accepts. The MCP server adds `list_managed_test_cases` and
+  `get_managed_test_case` (steps, optional history) and now ships 80 tools. A wire pin
+  (`regression/test_test_management_clients_wire.py`) keeps every client parameter inside
+  its route's query parameters. Tests: `cli/tests/test_cases_commands.py`,
+  `mcp/tests/test_mcp_test_management.py`.
+
 - **License notices travel with every artefact.** The web UI build writes
   `THIRD_PARTY_LICENSES.txt` (the copyright notice and license text of every
   bundled npm package) plus `LICENSE` and `NOTICE` into `dist/`, served at
@@ -1220,6 +1247,13 @@ locally by default.
 
 ### Changed
 
+- **Fine-tuning is an operator path; Settings › AI no longer shows its toggle** (wave W34,
+  STRAT-10 / D37). The ML classifier card ("Train now") is the learning loop the app
+  shows. Fine-tuning stays off by default. An administrator sets it with
+  `PUT /api/v1/settings/ai {"finetune_enabled": ...}` and checks it with
+  `GET /api/v1/training/status`. A save on the page keeps whatever value is stored. The
+  operator guide is `docs/operations/fine-tuning.md`. Tests: `AIConfigPage.test.tsx`,
+  `ci-e2e/settings-ai-toggles.spec.ts`.
 - **Dependencies brought up to date** (wave W33; branch `feat/df-deps-20261105`).
   It carries Dependabot #328, #47, #327, #45, #44, #326, #316, #315, #300,
   #299, #251, #162, #43, #40, #39, #38, #32, #30 and #34. Backend: gunicorn
