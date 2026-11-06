@@ -9309,3 +9309,177 @@ def sweep_subject_rights_jobs() -> dict:
             return await subject_rights_runner.run_sweep()
 
     return cast(dict, _run_async(_run()))
+
+
+# ── W34 STRAT-13: the drop-folder polling watcher ───────────────────────────
+
+
+async def _drop_folder_scan_prefix(
+    project_prefix: str,
+    *,
+    storage: Any,
+    baseline: datetime,
+    now: datetime,
+    budget: dict[str, int],
+    summary: dict[str, Any],
+    deadline: float,
+) -> None:
+    """One project prefix of the drop-folder sweep: the delimiter listing with NO
+    session open, a short read session for the listed folders' rows, a HEAD per
+    folder that is new or pending < 24 h (new ones first; a refused key is never
+    HEADed), the queueing, then a short write session for the decisions --
+    written in a ``finally`` so a folder already queued is recorded even when a
+    later HEAD raises. Bounded by ``budget`` (new checks, pending re-checks,
+    queued; ``stop`` ends the sweep) and ``deadline``; the rest waits a minute."""
+    from app.db.postgres import AsyncSessionLocal
+    from app.services import drop_folder_watcher as dfw
+
+    listed = await storage.list_common_prefixes(project_prefix)
+    summary["listed"] += len(listed)
+    if not listed:
+        return
+    async with AsyncSessionLocal() as db:
+        known = await dfw.known_builds(db, listed)
+    decisions: list[dfw.BuildDecision] = []
+    try:
+        for build_prefix in dfw.candidates(listed, known, now):
+            if time.monotonic() >= deadline:
+                summary["capped"], budget["stop"] = summary["capped"] or "deadline", 1
+                return
+            kind = "pending" if build_prefix in known else "new"
+            if budget[kind] <= 0:
+                summary["capped"] = summary["capped"] or f"{kind}_checks"
+                if kind == "new":
+                    continue                 # the pending re-checks after the new folders have their own budget
+                return
+            budget[kind] -= 1
+            problem = dfw.key_problem(build_prefix)
+            if problem is not None:
+                _slog.warning("drop_folder_refused", build_prefix=build_prefix[:300], problem=problem)
+                summary["refused"] += 1
+                decisions.append(dfw.BuildDecision(build_prefix, dfw.STATUS_REFUSED))
+                continue
+            key = dfw.sentinel_key_for(build_prefix)
+            head = await storage.head_object(key)
+            summary["heads"] += 1
+            status = dfw.classify(head, baseline)
+            decision = dfw.BuildDecision(
+                build_prefix, status,
+                sentinel_etag=head.etag if head is not None else None,
+                sentinel_last_modified=head.last_modified if head is not None else None,
+            )
+            if status == dfw.STATUS_QUEUED:
+                if budget["queued"] <= 0:
+                    # not recorded: the next sweep HEADs it again
+                    summary["capped"], budget["stop"] = summary["capped"] or "queued", 1
+                    return
+                try:
+                    task = ingest_test_run.delay(sentinel_key=key, minio_prefix=build_prefix)
+                except Exception as exc:  # noqa: BLE001 - broker down: stop queueing, retry next minute
+                    summary["capped"], budget["stop"] = summary["capped"] or "enqueue_failed", 1
+                    _slog.warning("drop_folder_enqueue_failed", build_prefix=build_prefix,
+                                  error_type=type(exc).__name__)
+                    return
+                budget["queued"] -= 1
+                decision.task_id, decision.queued_at = str(task.id), now
+                _slog.info("drop_folder_queued", sentinel_key=key, task_id=str(task.id))
+            summary[status] += 1
+            decisions.append(decision)
+    finally:
+        if decisions:
+            async with AsyncSessionLocal() as db:
+                await dfw.record_decisions(db, decisions, now)
+                await db.commit()
+
+
+async def _drop_folder_watcher_sweep(*, owner: str, now: datetime | None = None) -> dict[str, Any]:
+    """The every-minute drop-folder sweep (W34 STRAT-13), module-level so its glue
+    is unit-testable without Celery: the global lock (fail closed), the any-scope
+    flag, ONE short session (the active projects whose flag is on for THEM, the
+    baseline, the 24 h abandonment) committed and closed before any storage call,
+    then each project prefix in a shuffled order (a cap that stops the sweep early
+    does not starve the same projects every minute); a failing prefix is logged,
+    counted and skipped. Storage calls never run with a session open."""
+    import random
+
+    from app.db.postgres import AsyncSessionLocal
+    from app.db.storage import get_storage_provider
+    from app.services import drop_folder_watcher as dfw
+    from app.services import feature_flags
+
+    started = time.monotonic()
+    now = now or datetime.now(timezone.utc)
+    lock = await _claim_sweep_lock(dfw.LOCK_KEY, ttl=dfw.LOCK_TTL_SECONDS, owner=owner)
+    if lock != "acquired":
+        return {"skipped": "already_running" if lock == "held" else "lock_unavailable"}
+    try:
+        if not await feature_flags.is_enabled(dfw.FEATURE_FLAG, any_scope=True):
+            return {"skipped": "flag_off"}
+        async with AsyncSessionLocal() as db:
+            projects = [
+                (project_id, slug) for project_id, slug in await dfw.load_projects(db)
+                if await feature_flags.is_enabled(dfw.FEATURE_FLAG, db=db, project_id=project_id)
+            ]
+            baseline = await dfw.ensure_baseline(db, now)
+            abandoned = await dfw.abandon_stale_pending(db, now)
+            await db.commit()
+        prefixes = dfw.project_prefixes(projects)
+        random.shuffle(prefixes)
+        summary: dict[str, Any] = dict.fromkeys(
+            ("listed", "heads", "pending", "queued", "baseline", "refused", "failed"), 0,
+        )
+        summary.update(projects=len(projects), prefixes=len(prefixes), abandoned=abandoned, capped=None)
+        storage = get_storage_provider()
+        budget = {"new": dfw.MAX_NEW_CHECKS_PER_SWEEP, "pending": dfw.MAX_PENDING_CHECKS_PER_SWEEP,
+                  "queued": dfw.MAX_QUEUED_PER_SWEEP, "stop": 0}
+        deadline = started + dfw.SWEEP_DEADLINE_SECONDS
+        for project_prefix in prefixes:
+            if budget["stop"] or (budget["new"] <= 0 and budget["pending"] <= 0):
+                break
+            try:
+                await _drop_folder_scan_prefix(
+                    project_prefix, storage=storage, baseline=baseline, now=now,
+                    budget=budget, summary=summary, deadline=deadline,
+                )
+            except Exception as exc:  # noqa: BLE001 - one prefix must not stop the sweep
+                summary["failed"] += 1
+                _slog.warning("drop_folder_prefix_failed", prefix=project_prefix, error_type=type(exc).__name__)
+        if summary["capped"]:
+            _slog.warning("drop_folder_sweep_capped", reason=summary["capped"], heads=summary["heads"],
+                          queued=summary["queued"])
+        summary["duration_ms"] = int((time.monotonic() - started) * 1000)
+        _slog.info("drop_folder_sweep_done", **summary)
+        return summary
+    finally:
+        await _release_sweep_lock(dfw.LOCK_KEY, owner)
+
+
+@celery_app.task(
+    name="app.worker.tasks.watch_drop_folders",
+    bind=True,
+    queue="default",
+    soft_time_limit=240,
+    time_limit=300,
+)
+def watch_drop_folders(self) -> dict:
+    """Scheduled task (beat, every minute): the drop-folder polling watcher (W34 STRAT-13).
+
+    Lists ``<project id>/runs/`` and ``<slug>/runs/`` of each active project in
+    the object store (folders only), HEADs ``<build>/upload_complete.json`` of a
+    new or still-pending folder and queues a new sentinel through
+    ``ingest_test_run`` -- the webhook's own path -- so the bundled S3 store,
+    which sends no notifications, still ingests drop folders. History present at
+    the first sweep is never queued. See :func:`_drop_folder_watcher_sweep` and
+    ``services/drop_folder_watcher.py``.
+    """
+    owner = str(self.request.id or uuid.uuid4())
+
+    async def _run() -> dict:
+        with _beat_span("watch_drop_folders") as span:
+            out = await _drop_folder_watcher_sweep(owner=owner)
+            span.set_attribute("result.queued", int(out.get("queued", 0)))
+            span.set_attribute("result.failed", int(out.get("failed", 0)))
+            return out
+
+    outcome: dict = _run_async(_run())
+    return outcome

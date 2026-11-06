@@ -468,7 +468,8 @@ def test_8_pinned_counts():
     # that travel + test_attachments / evidence_artifacts (artefact_or_index); EXCLUDED 104 → 77 (the 19 former
     # run_history tables that stay out now carry specific reasons)
     # W31 STRAT-12 (deliberate): + subject_rights_jobs under NOT_PROJECT_SCOPED (24 → 25)
-    assert counts == (56, 77, 25), (
+    # W34 STRAT-13 (deliberate): + drop_folder_builds under NOT_PROJECT_SCOPED (25 → 26)
+    assert counts == (56, 77, 26), (
         f"EXPORTED / EXCLUDED / NOT_PROJECT_SCOPED = {counts}: a table was added or moved — "
         "classify it in project_export_entities.py and update this pin deliberately"
     )

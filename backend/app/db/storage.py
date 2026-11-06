@@ -3,7 +3,10 @@ import asyncio
 import logging
 import os
 import shutil
+import stat
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, AsyncGenerator, BinaryIO, cast
@@ -16,6 +19,38 @@ logger = logging.getLogger("db.storage")
 _STREAM_CHUNK_SIZE = 65536
 # Copy granularity for ``LocalStorageProvider.put_object_stream`` (1 MiB).
 _COPY_CHUNK_SIZE = 1 << 20
+
+
+@dataclass(frozen=True)
+class ObjectHead:
+    """What ``head_object`` reports about one stored object (W34 STRAT-13).
+
+    ``last_modified`` is timezone-aware (UTC) on every backend. ``etag`` is the
+    server's ETag without its quotes on S3 (an MD5 for a single-part upload);
+    on the local backend it is a change token built from the file's mtime and
+    size, never a digest of the content.
+    """
+
+    key: str
+    etag: str
+    size: int
+    last_modified: datetime
+
+
+def _aware_utc(value: datetime) -> datetime:
+    """``value`` as an aware UTC datetime (a naive value is taken as UTC)."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _require_folder_prefix(prefix: str) -> None:
+    """A "folder" listing needs ``""`` (the bucket's top level) or a prefix
+    ending in ``/``: S3 would otherwise group a partial name (``proj/ru`` ->
+    ``proj/runs/``), which the local backend cannot mirror."""
+    if prefix and not prefix.endswith("/"):
+        raise ValueError("list_common_prefixes requires a prefix ending in '/'")
+
 
 class StorageProvider(ABC):
     """Abstract base class for storage operations."""
@@ -77,6 +112,42 @@ class StorageProvider(ABC):
         whole bucket — callers must never get that for free).
         """
         raise NotImplementedError()
+
+    async def list_common_prefixes(self, prefix: str, bucket: str | None = None) -> list[str]:
+        """The immediate "sub-folders" of ``prefix`` (W34 STRAT-13), each as a
+        full prefix ending in ``/`` (``proj/runs/`` -> ``["proj/runs/12/", ...]``).
+
+        Bounded: S3 pages a ``Delimiter="/"`` listing and keeps only its
+        ``CommonPrefixes``; the local backend scans that ONE directory. Neither
+        walks or loads the objects below the sub-folders. A missing bucket or
+        directory lists as ``[]``. ``prefix`` is ``""`` or ends in ``/``.
+
+        NOT abstract, like ``put_object_stream``: a provider double that never
+        lists folders keeps working; the real providers override it.
+        """
+        raise NotImplementedError(f"{type(self).__name__} cannot list sub-folders")
+
+    async def head_object(self, key: str, bucket: str | None = None) -> ObjectHead | None:
+        """The object's ETag, size and last-modified time, or ``None`` when it
+        does not exist (W34 STRAT-13). Reads no content. Any other failure
+        (access denied, a timeout) raises: "absent" and "could not look" must
+        not answer alike. Not abstract, for the reason above."""
+        raise NotImplementedError(f"{type(self).__name__} cannot head an object")
+
+
+def _is_missing_object(exc: Exception) -> bool:
+    """True for S3's "no such key" answer to a HEAD or a GET.
+
+    A HEAD response has no body, so botocore reports the bare status (``404``);
+    a GET names it (``NoSuchKey``). A missing bucket also answers a HEAD with
+    ``404``: for a single-object probe both mean "not there".
+    """
+    from botocore.exceptions import ClientError  # noqa: PLC0415
+
+    if not isinstance(exc, ClientError):
+        return False
+    code = str((exc.response or {}).get("Error", {}).get("Code", ""))
+    return code in ("404", "NoSuchKey", "NotFound", "NoSuchBucket")
 
 
 def _is_missing_bucket(exc: Exception) -> bool:
@@ -254,6 +325,43 @@ class S3StorageProvider(StorageProvider):
             return 0
         return deleted
 
+    async def list_common_prefixes(self, prefix: str, bucket: str | None = None) -> list[str]:
+        """A paged ``Delimiter="/"`` listing: only each page's ``CommonPrefixes``
+        are kept, never its ``Contents`` (the objects directly at ``prefix``,
+        normally none), and nothing below the sub-folders is listed at all."""
+        _require_folder_prefix(prefix)
+        bucket = bucket or self._default_bucket
+        found: list[str] = []
+        try:
+            async with self.get_client_context() as s3:
+                paginator = s3.get_paginator("list_objects_v2")
+                async for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
+                    found.extend(
+                        str(entry["Prefix"]) for entry in page.get("CommonPrefixes", []) if entry.get("Prefix")
+                    )
+        except Exception as exc:  # noqa: BLE001 — re-raised unless missing bucket
+            if not _is_missing_bucket(exc):
+                raise
+            logger.debug("list_common_prefixes: bucket %s does not exist", bucket)
+            return []
+        return found
+
+    async def head_object(self, key: str, bucket: str | None = None) -> ObjectHead | None:
+        bucket = bucket or self._default_bucket
+        try:
+            async with self.get_client_context() as s3:
+                response = await s3.head_object(Bucket=bucket, Key=key)
+        except Exception as exc:  # noqa: BLE001 — re-raised unless the object is absent
+            if not _is_missing_object(exc):
+                raise
+            return None
+        return ObjectHead(
+            key=key,
+            etag=str(response.get("ETag") or "").strip('"'),
+            size=int(response.get("ContentLength") or 0),
+            last_modified=_aware_utc(response["LastModified"]),
+        )
+
 
 class LocalStorageProvider(StorageProvider):
     """Local file system storage provider."""
@@ -397,6 +505,43 @@ class LocalStorageProvider(StorageProvider):
                 deleted += 1
         return deleted
 
+    async def list_common_prefixes(self, prefix: str, bucket: str | None = None) -> list[str]:
+        """``os.scandir`` of the ONE directory ``prefix`` names (sorted, like an
+        S3 listing); nothing below it is visited. A symlinked directory is not
+        listed (it could lead out of the bucket). Unlike S3, an EMPTY
+        sub-directory is listed too: S3 has no folder without an object."""
+        _require_folder_prefix(prefix)
+        directory = self._get_full_path(prefix, bucket) if prefix else self._get_bucket_path(bucket)
+
+        def _scan() -> list[str]:
+            if not directory.is_dir():
+                return []
+            with os.scandir(directory) as entries:
+                names = sorted(entry.name for entry in entries if entry.is_dir(follow_symlinks=False))
+            return [f"{prefix}{name}/" for name in names]
+
+        return await asyncio.to_thread(_scan)
+
+    async def head_object(self, key: str, bucket: str | None = None) -> ObjectHead | None:
+        # The traversal guard of _get_full_path applies, as for every read.
+        full_path = self._get_full_path(key, bucket)
+
+        def _stat() -> ObjectHead | None:
+            try:
+                info = full_path.stat()
+            except (FileNotFoundError, NotADirectoryError):
+                return None
+            if not stat.S_ISREG(info.st_mode):
+                return None
+            return ObjectHead(
+                key=key,
+                etag=f"{info.st_mtime_ns:x}-{info.st_size:x}",
+                size=info.st_size,
+                last_modified=datetime.fromtimestamp(info.st_mtime, tz=timezone.utc),
+            )
+
+        return await asyncio.to_thread(_stat)
+
 
 @lru_cache(maxsize=16)
 def _get_concrete_storage_provider(
@@ -475,6 +620,12 @@ class DynamicStorageProvider(StorageProvider):
 
     async def delete_prefix(self, prefix: str, bucket: str | None = None) -> int:
         return await (await self._provider()).delete_prefix(prefix, bucket)
+
+    async def list_common_prefixes(self, prefix: str, bucket: str | None = None) -> list[str]:
+        return await (await self._provider()).list_common_prefixes(prefix, bucket)
+
+    async def head_object(self, key: str, bucket: str | None = None) -> ObjectHead | None:
+        return await (await self._provider()).head_object(key, bucket)
 
 
 @lru_cache(maxsize=1)

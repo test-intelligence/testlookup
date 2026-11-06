@@ -53,7 +53,7 @@ The curated domain map groups the documented core tables into nine functional do
 | Domain | Tables | What it covers |
 |--------|-------:|----------------|
 | Identity, Tenancy & Access | 12 | Users, projects, membership, API keys, SSO/SCIM, refresh tokens, access audit |
-| Test Execution & Ingestion | 15 | Runs, per-run cases, suites, steps, attachments, canonical inventory, live sessions, reviews |
+| Test Execution & Ingestion | 16 | Runs, per-run cases, suites, steps, attachments, canonical inventory, live sessions, reviews, drop-folder builds |
 | AI Analysis Pipeline | 15 | Agent pipeline runs + per-stage results, classifications, clusters, deep findings, provenance, agent memory |
 | AI Evaluation & Models | 7 | Model versions, eval datasets/runs/baselines, candidate replay item outputs, pre-release and tier gates, shadow pairs |
 | Defects, Releases & Gates | 11 | Defects + candidates, release decisions and outcomes, releases/phases, gate policies, compliance packs, coverage |
@@ -1539,6 +1539,23 @@ _Constraints:_ Index(`ix_sme_project_suite`, `project_id`, `suite_name`, `create
 | `commits` | `JSONB` |  | NN def |  |
 | `resolved_at` | `DateTime` |  | NN def |  |
 | `created_at` | `DateTime` |  | NN def |  |
+
+#### `drop_folder_builds`  <sub>(model `DropFolderBuild`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `id` | `UUID` | PK | NN def |  |
+| `build_prefix` | `String(1024)` |  | NN |  |
+| `project_segment` | `String(100)` |  | NN |  |
+| `status` | `String(10)` |  | NN def |  |
+| `sentinel_etag` | `String(255)` |  |  |  |
+| `sentinel_last_modified` | `DateTime` |  |  |  |
+| `first_seen_at` | `DateTime` |  | NN def |  |
+| `last_checked_at` | `DateTime` |  | NN def |  |
+| `queued_at` | `DateTime` |  |  |  |
+| `task_id` | `String(64)` |  |  |  |
+
+_Constraints:_ the build prefix is unique (`uq_dfb_build_prefix`); `status` is one of pending, queued, baseline, abandoned, refused; a queued row carries its task id and time; a partial index covers the pending rows. One row per `<project>/runs/<build>/` folder the drop-folder watcher (W34 STRAT-13) has examined; rows outlive runs, so a deleted run whose objects stay in the bucket is not ingested again.
 
 ### AI Analysis Pipeline
 

@@ -417,7 +417,7 @@ its `mc` client.
 | Health | `GET /health` → 200, unauthenticated. TestLookup's own storage health check accepts this route and the legacy `/minio/health/live`. |
 | Filesystem | The data volume must support **user extended attributes** (ext4, xfs, btrfs and most CSI block volumes do). On a filesystem without them (some NFS setups), set `VGW_META_SIDECAR` to an existing directory on the volume. |
 | Buckets | Created by `scripts/s3_setup.py` in the backend image (Compose: the `minio-setup` service; Kubernetes: `kubectl exec … python /app/scripts/s3_setup.py`). |
-| Bucket notifications | Not wired. TestLookup's API dispatches ingestion itself; the legacy direct-to-bucket path (`/webhooks/minio`) needs a notification sender that can present `Authorization: Bearer <WEBHOOK_SECRET>`, which versitygw's webhook cannot. Keep an S3 store that can (e.g. your existing MinIO) if you depend on it. |
+| Bucket notifications | Not wired, and not needed. TestLookup's API dispatches ingestion itself, and drop folders written straight to the bucket (`<project>/runs/<build>/` with `upload_complete.json` last) are found by the drop-folder watcher, a beat task that polls every minute (feature flag `drop_folder_watcher`, on by default; it needs the beat process). The `/webhooks/minio` endpoint needs a notification sender that can present `Authorization: Bearer <WEBHOOK_SECRET>`, which versitygw's webhook cannot; it remains for an external MinIO that can, for an immediate pick-up. See [Drop folder (polling watcher)](../docs/operations/integrations.md#drop-folder-polling-watcher). |
 
 **Upgrading an install that ran MinIO/Silo:** versitygw does not read MinIO's
 on-disk format. Copy the objects over the S3 API with the setup script, from a

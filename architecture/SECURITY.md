@@ -340,6 +340,17 @@ files from that prefix (N10, R15). That makes the key prefix the tenant
 boundary. The application enforces nothing past that point, and MinIO decides
 who may write under which prefix.
 
+**The drop-folder watcher (W34 STRAT-13) trusts bucket writers exactly as the
+webhook does.** A beat task polls `<project id>/runs/` and `<slug>/runs/` of
+every active project and queues each new `upload_complete.json` through the
+same `ingest_test_run` path: the first key segment is the project, and the
+sentinel's own `project_id` is ignored. It adds no credential and no endpoint,
+but it does make the direct-to-bucket path live on the bundled store, where a
+sentinel used to do nothing (no notification was wired): whoever holds the S3
+credential can now file a run in any project within a minute, without the API.
+Keep that credential out of CI (below), or switch the path off with the
+`drop_folder_watcher` feature flag.
+
 **The exposure as shipped.** Every Compose file sets MinIO's
 `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` from `MINIO_ACCESS_KEY`/
 `MINIO_SECRET_KEY`. `scripts/simulate_upload.py` uploads with those same
