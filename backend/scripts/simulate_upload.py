@@ -1,14 +1,29 @@
 #!/usr/bin/env python3
 """
-Simulate a Jenkins test run upload to MinIO, then trigger ingestion via webhook.
+Simulate a Jenkins test run upload to the object store (a drop folder).
 Run inside the backend container:
-    docker compose exec backend python scripts/simulate_upload.py [project_id] [build_number]
+    docker compose exec backend python scripts/simulate_upload.py [project_id_or_slug] [build_number]
+
+The files go to <project>/runs/<build>/ and upload_complete.json is written
+last. Ingestion is then triggered one of two ways:
+
+* WEBHOOK_SECRET unset (the default; the bundled S3 store sends no bucket
+  notifications): nothing is called. The drop-folder watcher -- the beat task
+  watch_drop_folders, every minute, feature flag drop_folder_watcher -- finds
+  the new sentinel and queues the ingestion itself within about a minute. It
+  needs the beat and worker processes (docker-compose.dev-lite.yml has no beat).
+* WEBHOOK_SECRET set (an external MinIO that sends notifications): the script
+  also POSTs a real MinIO ObjectCreated event (Records[].s3.bucket.name +
+  the URL-encoded Records[].s3.object.key) to /webhooks/minio, so the run is
+  queued at once. The watcher and the webhook may both queue it; the
+  ingestion's Redis dedup on the prefix keeps it to one run.
 """
 import json
 import os
 import sys
 import time
 import uuid
+from urllib.parse import quote_plus
 
 import boto3
 from botocore.client import Config
@@ -24,7 +39,7 @@ MINIO_ENDPOINT   = os.getenv("MINIO_ENDPOINT", "minio:9000")
 MINIO_ACCESS_KEY = os.getenv("MINIO_ACCESS_KEY", "")
 MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "")
 WEBHOOK_SECRET   = os.getenv("WEBHOOK_SECRET", "")
-BACKEND_URL      = "http://localhost:8000"
+BACKEND_URL      = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 print(f"🚀  Simulating upload  project={PROJECT_ID}  build={BUILD_NUMBER}")
 
@@ -153,28 +168,42 @@ sentinel_key = f"{PREFIX}/upload_complete.json"
 s3.put_object(Bucket=BUCKET, Key=sentinel_key, Body=json.dumps(sentinel).encode())
 print(f"📤  Wrote sentinel:  {sentinel_key}")
 
-# ── Fire webhook to trigger ingestion ─────────────────────────────────────
-webhook_payload = {
-    "EventName": "s3:ObjectCreated:Put",
-    "Key":       sentinel_key,
-    "Records":   [],
-}
-print("🔔  Calling webhook endpoint…")
-resp = httpx.post(
-    f"{BACKEND_URL}/webhooks/minio",
-    json=webhook_payload,
-    headers={"X-Webhook-Secret": WEBHOOK_SECRET},
-    timeout=10,
-)
-resp.raise_for_status()
-result = resp.json()
-print(f"   Response: {result}")
+# ── Trigger ingestion ─────────────────────────────────────────────────────
+result: dict = {}
+if WEBHOOK_SECRET:
+    # The shape MinIO really sends (the handler reads Records[].s3, decodes the
+    # URL-encoded key and checks the bucket against MINIO_BUCKET_NAME).
+    webhook_payload = {
+        "EventName": "s3:ObjectCreated:Put",
+        "Key":       f"{BUCKET}/{sentinel_key}",
+        "Records":   [{
+            "eventName": "s3:ObjectCreated:Put",
+            "s3": {
+                "bucket": {"name": BUCKET},
+                "object": {"key": quote_plus(sentinel_key, safe=""), "size": len(json.dumps(sentinel))},
+            },
+        }],
+    }
+    print("🔔  WEBHOOK_SECRET is set: calling the MinIO webhook endpoint…")
+    resp = httpx.post(
+        f"{BACKEND_URL}/webhooks/minio",
+        json=webhook_payload,
+        headers={"Authorization": f"Bearer {WEBHOOK_SECRET}"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    print(f"   Response: {result}")
+else:
+    print("⏳  No webhook call (WEBHOOK_SECRET unset): the drop-folder watcher (beat task")
+    print("    watch_drop_folders, every minute, flag drop_folder_watcher) queues this build")
+    print("    within about a minute. It needs the beat and worker processes running.")
 
 print()
 print("✅  Simulation complete!")
 print(f"   Project:  {PROJECT_ID}")
 print(f"   Build:    {BUILD_NUMBER}")
-print(f"   Task ID:  {result.get('task_id', 'n/a')}")
+print(f"   Task ID:  {result.get('task_id', 'n/a (queued by the drop-folder watcher)')}")
 print()
-print("   Watch logs:    docker compose logs -f backend worker")
+print("   Watch logs:    docker compose logs -f backend worker beat")
 print("   Dashboard:     http://localhost:3000")

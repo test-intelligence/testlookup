@@ -8,8 +8,8 @@ import type { ConfigSource } from '@/services/appSettingsService'
  * environment default applies ("Server default"). The note says when the change
  * takes effect.
  *
- * Self-contained on purpose: STRAT-10 / D37 (W26) hides the Fine-Tuning toggle,
- * and dropping its hint must be one deleted usage, not a page refactor.
+ * Self-contained on purpose: when STRAT-10 / D37 (W34) hid the Fine-Tuning toggle,
+ * dropping its hint was one deleted usage, not a page refactor.
  */
 export interface ConfigSourceHintProps {
   /** The `ai_config` key the hint describes, e.g. `deep_investigation_enabled`. */

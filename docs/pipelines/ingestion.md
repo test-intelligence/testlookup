@@ -8,7 +8,8 @@
 |---|---|---|
 | `POST /api/v1/ingest` | JSON `IngestPayload`: project, build and result list, optional CI/environment/commit context | Store queued JSON payload, dispatch `ingest_uploaded_results`, return 202 |
 | `POST /api/v1/ingest/file` | Multipart file/project/build plus optional format/context and `run_ai` | Bounded upload → object storage → file worker → parser → normalized ingestion |
-| Storage webhook | Sentinel/object notification for stored reports | Validate/authenticate → fetch sentinel/results → existing shared persistence/finalization |
+| Drop folder (polling watcher) | `<project>/runs/<build>/` in the results bucket, `upload_complete.json` written last; found by the every-minute beat `watch_drop_folders` (flag `drop_folder_watcher`), no notification needed | Delimiter listing of build folders → `HEAD` of a new folder's sentinel → older than the first sweep: recorded `baseline`, never queued; else `ingest_test_run(sentinel_key, minio_prefix)` → the same path as the storage webhook. Ledger `drop_folder_builds`; [drop folder](../operations/integrations.md#drop-folder-polling-watcher) |
+| Storage webhook | Sentinel/object notification for stored reports (an external S3 server that sends authenticated notifications) | Validate/authenticate → `ingest_test_run(sentinel_key, minio_prefix)` → fetch sentinel/results → existing shared persistence/finalization |
 | `/api/v1/stream/*`, `/ws/events/{run_id}` | Session/batched/single live events | Redis buffering/source streams → materialization and completion handling |
 
 Exact fields, auth dependencies and declared errors: [ingest reference](../reference/api/ingest.md), [stream reference](../reference/api/live-stream.md), [live reporting](../reference/api/live-reporting.md), [webhooks](../reference/api/webhooks.md).

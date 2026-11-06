@@ -98,7 +98,7 @@ The MCP server holds **no privileges of its own** — every tool call becomes a 
 3. `trigger_ai_analysis` — fresh root-cause pass if the evidence is stale.
 4. `correct_classification(project_id, fingerprint, corrected_category="PRODUCT_BUG", comment=...)` — overrides the verdict.
 
-**Outcome:** the analysis row now says PRODUCT_BUG, the stale verdict is evicted from the analysis cache so similar failures aren't mislabelled, and the correction is stored as a training signal for the next fine-tune cycle ([how the ML classifier learns](ai-features.md#how-the-ml-classifier-learns)).
+**Outcome:** the analysis row now says PRODUCT_BUG, the stale verdict is evicted from the analysis cache so similar failures aren't mislabelled, and the correction is stored as a human label for the ML classifier's next training run, nightly or **Train now** ([how the ML classifier learns](ai-features.md#how-the-ml-classifier-learns)).
 
 ## Recipe 3 — Quarantine a flaky test and file the Jira ticket
 

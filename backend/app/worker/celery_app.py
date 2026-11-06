@@ -100,6 +100,8 @@ celery_app.conf.update(
         "app.worker.tasks.run_retention_purges":            {"queue": "default"},
         # W07 FAIL-04: may wait minutes for a defect-candidate build; kept off ai_analysis.
         "app.worker.tasks.rebuild_run_snapshot":            {"queue": "default"},
+        # W34 STRAT-13: the every-minute drop-folder sweep (it queues ingest_test_run on "ingestion").
+        "app.worker.tasks.watch_drop_folders":              {"queue": "default"},
         "app.worker.tasks.*":                               {"queue": "default"},
     },
     # Redis keeps late-acked deliveries in ``unacked`` until this timeout.
@@ -595,6 +597,18 @@ celery_app.conf.update(
         "quarter-hourly-run-cadence-check": {
             "task": "app.worker.tasks.check_run_cadences",
             "schedule": crontab(minute="7-59/15"),
+            "options": {"queue": "default"},
+        },
+        # W34 STRAT-13: the drop-folder polling watcher, every minute. The
+        # bundled S3 store sends no bucket notifications, so each active
+        # project's <id>/runs/ and <slug>/runs/ are listed (folders only) and a
+        # new <build>/upload_complete.json is queued through ingest_test_run,
+        # the webhook's own path. A global Redis lock, fail CLOSED (one sweep at
+        # a time; Redis down -> the minute is skipped); the drop_folder_watcher
+        # flag off -> no storage call. History at the first sweep is never queued.
+        "watch-drop-folders": {
+            "task": "app.worker.tasks.watch_drop_folders",
+            "schedule": crontab(minute="*"),
             "options": {"queue": "default"},
         },
     },

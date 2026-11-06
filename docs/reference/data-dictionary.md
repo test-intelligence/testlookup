@@ -47,6 +47,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [deletion_jobs](#deletion_jobs) | DeletionJob | 28 |
 | [digest_subscriptions](#digest_subscriptions) | DigestSubscription | 20 |
 | [dismissed_duplicate_pairs](#dismissed_duplicate_pairs) | DismissedDuplicatePair | 6 |
+| [drop_folder_builds](#drop_folder_builds) | DropFolderBuild | 10 |
 | [duplicate_test_case_candidates](#duplicate_test_case_candidates) | DuplicateTestCaseCandidate | 11 |
 | [evidence_artifacts](#evidence_artifacts) | EvidenceArtifact | 23 |
 | [failure_attribution](#failure_attribution) | FailureAttribution | 10 |
@@ -1824,6 +1825,43 @@ Constraints and indexes:
 - `PrimaryKeyConstraint` `unnamed`: `id`
 - `UniqueConstraint` `uq_dismissed_dup_pair`: `project_id, case_a_id, case_b_id`
 - Index `ix_dismissed_dup_project` (unique=False): `dismissed_duplicate_pairs.project_id`; options `{}`
+
+## drop_folder_builds
+
+[backend/app/models/postgres.py:8510](../../backend/app/models/postgres.py#L8510)
+
+One build folder ``<project>/runs/<build>/`` seen by the drop-folder watcher (W34 STRAT-13; migration 0254).
+
+``status`` is ``services/drop_folder_watcher.BUILD_STATUSES`` (CHECKed):
+``pending`` (no sentinel yet; HEADed each sweep for 24 h) -> ``queued`` (the
+sentinel went to ``ingest_test_run``; ``task_id`` + ``queued_at`` set,
+``ck_dfb_queued_has_task``) | ``baseline`` (the sentinel predates the
+watcher's first sweep: history, never queued) | ``abandoned`` (24 h without a
+sentinel) | ``refused`` (the key fails ``sentinel_key_problem``). Every status
+but ``pending`` is terminal. Rows are NOT deleted with runs: a deleted
+slug-prefixed run, whose objects stay in the bucket, must not come back.
+``project_segment`` is the key's first segment (a project id or slug).
+
+| Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
+|---|---|---|---|---|---|
+| `id` | `UUID` | False | True | `application=uuid4` |  |
+| `build_prefix` | `VARCHAR(1024)` | False | False | `—` |  |
+| `project_segment` | `VARCHAR(100)` | False | False | `—` |  |
+| `status` | `VARCHAR(10)` | False | False | `server='pending'; application=pending` |  |
+| `sentinel_etag` | `VARCHAR(255)` | True | False | `—` |  |
+| `sentinel_last_modified` | `DATETIME` | True | False | `—` |  |
+| `first_seen_at` | `DATETIME` | False | False | `server=now()` |  |
+| `last_checked_at` | `DATETIME` | False | False | `server=now()` |  |
+| `queued_at` | `DATETIME` | True | False | `—` |  |
+| `task_id` | `VARCHAR(64)` | True | False | `—` |  |
+
+Constraints and indexes:
+
+- `CheckConstraint` `ck_dfb_queued_has_task`: `status <> 'queued' OR (queued_at IS NOT NULL AND task_id IS NOT NULL)`
+- `CheckConstraint` `ck_dfb_status`: `status IN ('pending', 'queued', 'baseline', 'abandoned', 'refused')`
+- `PrimaryKeyConstraint` `unnamed`: `id`
+- Index `ix_dfb_pending_first_seen` (unique=False): `drop_folder_builds.first_seen_at`; options `{"postgresql_where": "status = 'pending'"}`
+- Index `uq_dfb_build_prefix` (unique=True): `drop_folder_builds.build_prefix`; options `{}`
 
 ## duplicate_test_case_candidates
 

@@ -555,6 +555,9 @@ NOT_PROJECT_SCOPED: Mapping[str, str] = {
     "suite_membership_parity_runs": "instance cutover evidence (HYG-04), dropped with the legacy membership tables",
     # W31 STRAT-12 (migration 0253)
     "subject_rights_jobs": "a person's export / erasure job — instance-wide, never part of a project archive",
+    # W34 STRAT-13 (migration 0254)
+    "drop_folder_builds": "this deployment's bucket-keyed drop-folder watcher ledger (key prefix, no FK), "
+                          "never part of a project archive",
 }
 
 

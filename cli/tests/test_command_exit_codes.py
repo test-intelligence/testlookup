@@ -29,6 +29,11 @@ from typer.testing import CliRunner
         (("health",), EXIT_TIMEOUT),
         (("ai-history", "run-id"), EXIT_PERMISSION),
         (("compare-ai", "run-id"), EXIT_NOT_FOUND),
+        # W34 STRAT-11: authored test cases (a project name resolves through the client first).
+        (("cases", "list", "--project", "project-name"), EXIT_PERMISSION),
+        (("cases", "get", "11111111-1111-4111-8111-111111111111"), EXIT_NOT_FOUND),
+        (("cases", "history", "11111111-1111-4111-8111-111111111111"), EXIT_AUTH),
+        (("cases", "export", "--project", "project-name", "-o", "cases.xlsx"), EXIT_TIMEOUT),
     ],
 )
 def test_commands_preserve_mapped_client_exit_codes(monkeypatch, argv, code):

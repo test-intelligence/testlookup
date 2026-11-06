@@ -92,8 +92,11 @@ export default function CaseEditForm({ caseItem, suiteOptions, slot, onCancel, o
   const [conflict, setConflict] = useState<Conflict | null>(null)
   const [conflictUnreadable, setConflictUnreadable] = useState(false)
 
-  // The owner list: the project's active members, read when the form opens (not on page load).
-  const { data: members } = useProjectMembers(caseItem.project_id || null)
+  // The owner list: the project's active members. The page has usually read them already for
+  // the Owner filter (the same SWR key); the form opens later, often past SWR's 2 s dedup
+  // window, so it reuses that list instead of re-reading it (with nothing cached it still
+  // fetches) — the W32 bulk-bar fix (useProjectMembers' config), for the edit form.
+  const { data: members } = useProjectMembers(caseItem.project_id || null, { revalidateIfStale: false })
   const owners = useMemo(
     () => (members ?? [])
       .map((member) => ({ id: member.user_id, name: member.full_name || member.username }))

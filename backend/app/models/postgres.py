@@ -8505,3 +8505,50 @@ class ProjectActivityEvent(Base):
     #: Producer-set key for bulk bursts and for the 60-second duplicate
     #: suppression that makes retried Celery tasks idempotent.
     group_key: Mapped[Optional[str]] = mapped_column(String(120))
+
+
+class DropFolderBuild(Base):
+    """One build folder ``<project>/runs/<build>/`` seen by the drop-folder watcher (W34 STRAT-13; migration 0254).
+
+    ``status`` is ``services/drop_folder_watcher.BUILD_STATUSES`` (CHECKed):
+    ``pending`` (no sentinel yet; HEADed each sweep for 24 h) -> ``queued`` (the
+    sentinel went to ``ingest_test_run``; ``task_id`` + ``queued_at`` set,
+    ``ck_dfb_queued_has_task``) | ``baseline`` (the sentinel predates the
+    watcher's first sweep: history, never queued) | ``abandoned`` (24 h without a
+    sentinel) | ``refused`` (the key fails ``sentinel_key_problem``). Every status
+    but ``pending`` is terminal. Rows are NOT deleted with runs: a deleted
+    slug-prefixed run, whose objects stay in the bucket, must not come back.
+    ``project_segment`` is the key's first segment (a project id or slug).
+    """
+
+    __tablename__ = "drop_folder_builds"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'queued', 'baseline', 'abandoned', 'refused')", name="ck_dfb_status",
+        ),
+        CheckConstraint(
+            "status <> 'queued' OR (queued_at IS NOT NULL AND task_id IS NOT NULL)", name="ck_dfb_queued_has_task",
+        ),
+        Index("uq_dfb_build_prefix", "build_prefix", unique=True),                     # lookups + the upsert target
+        Index(
+            "ix_dfb_pending_first_seen", "first_seen_at", postgresql_where=text("status = 'pending'"),
+        ),                                                                              # the 24 h abandonment
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    build_prefix: Mapped[str] = mapped_column(String(1024), nullable=False)
+    project_segment: Mapped[str] = mapped_column(String(100), nullable=False)
+    #: drop_folder_watcher.BUILD_STATUSES
+    status: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="pending", server_default=text("'pending'")
+    )
+    sentinel_etag: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    sentinel_last_modified: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    queued_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    task_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

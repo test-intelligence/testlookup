@@ -707,16 +707,15 @@ describe('AIConfigPage — config sources, the timeout floor and the ML card (W0
     await screen.findByText('Deep Investigation')
 
     expect(hint('deep_investigation_enabled')).toHaveTextContent('Server default · Applies within a minute.')
-    expect(hint('finetune_enabled')).toHaveTextContent(
-      'Server default · Applies within a minute. Switches the export-triggered tasks only; training itself needs a GPU or a hosted provider.',
-    )
+    // STRAT-10 / D37: fine-tuning is an operator path (the admin API), so it has no hint here.
+    expect(document.querySelector('[data-config-source-key="finetune_enabled"]')).toBeNull()
     expect(hint('ai_confidence_threshold')).toHaveTextContent('Server default · Applies to new pipelines.')
     expect(hint('analysis_mode')).toHaveTextContent(/^Server default$/)
     expect(screen.getByTestId('timeout-hint')).toHaveTextContent(
       'Server default · Applies to every LLM call; an agent may set a lower limit. Applies to new pipelines; a running pipeline keeps its value.',
     )
     expect(screen.getByTestId('timeout-hint')).toHaveAttribute('data-config-source-key', 'ai_timeout_seconds')
-    for (const key of ['deep_investigation_enabled', 'finetune_enabled', 'ai_confidence_threshold', 'ai_timeout_seconds', 'analysis_mode']) {
+    for (const key of ['deep_investigation_enabled', 'ai_confidence_threshold', 'ai_timeout_seconds', 'analysis_mode']) {
       expect(hint(key)).toHaveAttribute('data-source', 'env_default')
     }
   })
@@ -732,10 +731,12 @@ describe('AIConfigPage — config sources, the timeout floor and the ML card (W0
     await renderPage()
     await screen.findByText('Deep Investigation')
 
-    for (const key of ['deep_investigation_enabled', 'finetune_enabled', 'ai_confidence_threshold', 'ai_timeout_seconds', 'analysis_mode']) {
+    for (const key of ['deep_investigation_enabled', 'ai_confidence_threshold', 'ai_timeout_seconds', 'analysis_mode']) {
       expect(hint(key)).toHaveTextContent(/^Set here/)
       expect(hint(key)).toHaveAttribute('data-source', 'ai_config')
     }
+    // A STORED fine-tuning value (the operator's PUT) is not shown either: STRAT-10 / D37.
+    expect(document.querySelector('[data-config-source-key="finetune_enabled"]')).toBeNull()
   })
 
   it('accepts a 5 s timeout (the floor was 30)', async () => {
@@ -802,5 +803,76 @@ describe('AIConfigPage — config sources, the timeout floor and the ML card (W0
 
     await waitFor(() => expect(screen.getByText('Ready (84% accuracy)')).toBeInTheDocument())
     expect(screen.queryByText('Not Trained')).not.toBeInTheDocument()
+  })
+})
+
+/**
+ * STRAT-10 / D37 (W34): Settings › AI shows no fine-tuning control — fine-tuning is an operator path (the admin
+ * `PUT /api/v1/settings/ai {"finetune_enabled": …}`, docs/operations/fine-tuning.md). The value stays in the form
+ * so a Save of any other field sends back exactly what GET returned: a UI save never flips an operator's choice.
+ * The ML classifier card ("Train now", AIC-05) is the visible learning loop.
+ */
+describe('AIConfigPage — fine-tuning is operator-only (STRAT-10)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockGetAIConfig.mockResolvedValue(baseConfig())
+    mockUpdateAIConfig.mockResolvedValue(baseConfig())
+    mockGetModelStatus.mockResolvedValue(healthyStatus())
+    mockGetMLStatus.mockResolvedValue(mlStatus())
+  })
+
+  it('shows no fine-tuning control in Pipeline Settings, even for an admin with a stored value', async () => {
+    mockGetAIConfig.mockResolvedValue(baseConfig({ finetune_enabled: true, finetune_enabled_source: 'ai_config' }))
+    const { container } = await renderPage()
+    await screen.findByText('Deep Investigation')
+
+    const pipeline = screen.getByText('Pipeline Settings').closest('.card') as HTMLElement
+    // The row keeps exactly the two toggles that remain.
+    const toggles = Array.from(pipeline.querySelectorAll('input[type="checkbox"]'))
+      .map(c => c.closest('label')?.textContent?.trim())
+    expect(toggles).toEqual(['Offline Mode (air-gapped, Ollama only)', 'Deep Investigation'])
+    expect(screen.queryByRole('checkbox', { name: /fine[- ]?tun/i })).not.toBeInTheDocument()
+    expect(container.textContent).not.toMatch(/fine[- ]?tun/i)
+  })
+
+  it.each([true, false])(
+    'a Save after changing another field sends finetune_enabled=%s exactly as GET returned it',
+    async (stored) => {
+      mockGetAIConfig.mockResolvedValue(baseConfig({ finetune_enabled: stored, finetune_enabled_source: 'ai_config' }))
+      mockUpdateAIConfig.mockResolvedValue(
+        baseConfig({ finetune_enabled: stored, finetune_enabled_source: 'ai_config', ai_timeout_seconds: 60 }),
+      )
+      await renderPage()
+      const timeout = await screen.findByLabelText('Timeout (seconds)')
+
+      fireEvent.change(timeout, { target: { value: '60' } })
+      fireEvent.click(screen.getByText('Save Configuration'))
+      await waitFor(() => expect(mockUpdateAIConfig).toHaveBeenCalledTimes(1))
+      const sent = mockUpdateAIConfig.mock.calls[0][0] as Record<string, unknown>
+      expect(sent.ai_timeout_seconds).toBe(60)
+      expect(sent).toHaveProperty('finetune_enabled', stored)
+
+      // A second save (the form is not re-seeded) still sends the same value.
+      await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1))
+      fireEvent.click(screen.getByText('Save Configuration'))
+      await waitFor(() => expect(mockUpdateAIConfig).toHaveBeenCalledTimes(2))
+      expect(mockUpdateAIConfig.mock.calls[1][0]).toHaveProperty('finetune_enabled', stored)
+    },
+  )
+
+  it('the ML classifier card still offers "Train now" to an admin, and it still trains', async () => {
+    mockGetMLStatus.mockResolvedValue(mlStatus({
+      available_samples: 642, human_labels: 57, can_train: true, cannot_train_reason: null, cannot_train_message: null,
+    }))
+    mockRetrainML.mockResolvedValue({ task_id: 't-1', state: 'queued', already_running: false })
+    await renderPage()
+
+    const train = await screen.findByRole('button', { name: 'Train now' })
+    expect(train).toBeEnabled()
+    const engine = screen.getByText('Analysis Engine').closest('.card') as HTMLElement
+    expect(engine.contains(train)).toBe(true)
+
+    fireEvent.click(train)
+    await waitFor(() => expect(mockRetrainML).toHaveBeenCalledTimes(1))
   })
 })

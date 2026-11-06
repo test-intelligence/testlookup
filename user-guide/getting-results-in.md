@@ -7,6 +7,7 @@ Everything in TestLookup starts with test results arriving. This page is for who
 | A report file (JUnit XML, TestNG, Allure, Cypress, Playwright, pytest, Robot Framework, Cucumber, NUnit, TRX, xUnit) | [Dashboard upload](#1-upload-from-the-dashboard) for a one-off, the [REST file ingest](#2-rest-api) or the [CLI](#3-cli) in a pipeline |
 | Tests you want streamed **live**, test by test, while they run | A [live-streaming SDK](#4-live-streaming-sdks) |
 | Structured results you already parse yourself | [REST JSON batch ingest](#2-rest-api) |
+| A CI job that can write to the object store (Allure results, TestNG XML) but should not call the API | The [drop folder](#5-drop-folder-object-store) |
 
 Every path lands in the same place: a **run** in your project, with per-test rows, failure clustering and analysis queued in the background. Ingestion is asynchronous: the API answers `202 Accepted` and the workers do the rest, so a run appears on **Runs** a few seconds later.
 
@@ -142,6 +143,23 @@ Review one captured run before you turn capture on in CI: a secret in a shape th
 **Retention.** Exchanges follow the project's raw-events retention clock and are deleted with their run; a run under a retention hold keeps them. The `full` data export includes them, redacted, under each run.
 
 **Over the API.** `http_exchanges` on each result of `POST /api/v1/ingest`: a list of `{"method", "url", "endpoint", "status", "duration_ms", "started_at", "error", "request": {"headers", "body"}, "response": {"headers", "body"}}` (only `method` and `url` are required). A live session posts one test's exchanges to `POST /api/v1/stream/http-exchanges` with `session_id`, `run_id`, `test_name`, `class_name` and `exchanges`; that is the route the pytest plugin and the Java SDK use. `endpoint` is the path template runs are compared by (`/api/products/{id}`); without it the server derives one from the URL, replacing numeric, UUID and long id-like path segments with `{id}`.
+
+## 5. Drop folder (object store)
+
+A job that can write to TestLookup's object store (the bundled S3 store, or your own S3 / MinIO) can hand results over without calling the API:
+
+1. Write the results under `<project>/runs/<build>/` in the results bucket (`MINIO_BUCKET_NAME`, `test-telemetry` by default): Allure results as `allure/*-result.json`, TestNG reports as `testng/*.xml`. `<project>` is the project's id or its slug.
+2. Write `<project>/runs/<build>/upload_complete.json` **last**. It is a small JSON object: `build_number` (defaults to `<build>`), and optionally `jenkins_job`, `branch`, `commit_hash`, `trigger_source`, `release_name`, `ocp_pod_name`, `ocp_namespace`. The project always comes from the folder, never from the file.
+
+The run appears on **Runs** within about two minutes. A background sweep (the *drop-folder watcher*) lists each active project's `runs/` folder every minute and queues each new `upload_complete.json` for ingestion; no bucket notification or webhook is needed. Things to know:
+
+- **Use a new build folder for every run.** A folder is picked up once; writing the sentinel again in the same folder does not re-ingest it.
+- **History is not re-ingested.** Sentinels already in the bucket when the watcher first ran are recorded and skipped.
+- **A folder without a sentinel stops being checked after 24 hours.** Write the sentinel within a day of the first file.
+- The watcher runs in the beat and worker processes and is switched by the `drop_folder_watcher` feature flag (on by default). The minimal `docker-compose.dev-lite.yml` stack has no beat process, so the drop folder does nothing there.
+- An external MinIO can still notify `POST /webhooks/minio` for an immediate pick-up; see [Integrations](../docs/operations/integrations.md#drop-folder-polling-watcher).
+
+Anyone who can write to the bucket can file a run in any project, because the folder names the project: give CI credentials that can write only under their own project's prefix ([Security, section 7a](../architecture/SECURITY.md)). `scripts/simulate_upload.py` writes a sample build this way.
 
 ## Attaching runs to a release
 

@@ -69,8 +69,6 @@ const OFFLINE_PINNED_REASON =
 // When each Settings › AI value takes effect (W04 AIC-01/02/03). The runtime now
 // obeys the stored value; these say how soon, beside "Set here" / "Server default".
 export const DEEP_TOGGLE_NOTE = 'Applies within a minute.'
-export const FINETUNE_TOGGLE_NOTE =
-  'Applies within a minute. Switches the export-triggered tasks only; training itself needs a GPU or a hosted provider.'
 export const THRESHOLD_NOTE = 'Applies to new pipelines.'
 export const TIMEOUT_NOTE =
   'Applies to every LLM call; an agent may set a lower limit. Applies to new pipelines; a running pipeline keeps its value.'
@@ -359,6 +357,9 @@ export default function AIConfigPage() {
           ai_confidence_threshold: cfg.ai_confidence_threshold,
           ai_timeout_seconds: cfg.ai_timeout_seconds,
           deep_investigation_enabled: cfg.deep_investigation_enabled,
+          // STRAT-10 / D37: no control shows this any more (fine-tuning is an operator
+          // path, docs/operations/fine-tuning.md), but it stays in the form so a Save
+          // sends the value GET returned: a save never flips what an operator set.
           finetune_enabled: cfg.finetune_enabled,
           analysis_mode: cfg.analysis_mode,
           knowledge_rag_enabled: cfg.knowledge_rag_enabled,
@@ -713,19 +714,6 @@ export default function AIConfigPage() {
                   configKey="deep_investigation_enabled"
                   source={config.deep_investigation_enabled_source}
                   note={DEEP_TOGGLE_NOTE}
-                />
-              </div>
-              <div className="max-w-xs">
-                <label className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)] cursor-pointer">
-                  <input type="checkbox" checked={form.finetune_enabled ?? false} disabled={!isAdmin}
-                    onChange={e => upd('finetune_enabled', e.target.checked)}
-                    className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
-                  Fine-Tuning Pipeline
-                </label>
-                <ConfigSourceHint
-                  configKey="finetune_enabled"
-                  source={config.finetune_enabled_source}
-                  note={FINETUNE_TOGGLE_NOTE}
                 />
               </div>
             </div>

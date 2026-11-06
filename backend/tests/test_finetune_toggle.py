@@ -1,5 +1,6 @@
-"""AIC-01: the "Fine-Tuning Pipeline" toggle is obeyed, and the settings API
-reports where every obeyed value comes from.
+"""AIC-01: the stored ``finetune_enabled`` setting (an operator path since W34
+STRAT-10 — no page shows it) is obeyed, and the settings API reports where every
+obeyed value comes from.
 
 ``run_finetune_pipeline``, ``_maybe_trigger_finetune`` and
 ``_check_incremental_trigger`` read ``settings.FINETUNE_ENABLED`` (env only),

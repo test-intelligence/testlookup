@@ -110,6 +110,7 @@ Every group has `--help`, for example `testlookup upload file --help`.
 | `defects` | `jira preview`, `jira create` | Preview or file a failure signature (`--fingerprint` or `--cluster`) as a Jira issue (`--target webhook` emits the outbound event instead) |
 | `investigations` | `start <run-id>`, `list`, `show <id>` | Deep investigations: start one for a run, a project's list, one investigation's cause and confidence |
 | `activity` | `list`, `show <event-id>`, `types`, `export -o <file>` | A project's activity ledger, newest first, as on its Activity tab (`--since 7d`, `--category`, `--event`, `--release`, `--all` follows the cursor; a page with more says so); one event's before/after diff; the event vocabulary; CSV / NDJSON export (QA lead) |
+| `cases` | `list`, `get <id>`, `history <id>`, `export -o <file.xlsx>` | A project's authored test cases from Test Management, read-only: the list (`--status`, `--type`, `--priority`, `--suite`, `--search`, `--owner`, `--automation`, `--requirement`, `--include-archived`; `--all` reads every page, and a page with more says so); one case with its steps (a `TC-` short id resolves with `--project`); its saved versions; the Excel export (see [Test cases](#test-cases)) |
 
 ## Common tasks
 
@@ -125,6 +126,7 @@ testlookup projects list
 testlookup runs list --project "$PROJECT_ID" --status FAILED
 testlookup tests list "$RUN_ID" --status FAILED
 testlookup tests get "$RUN_ID" "$TEST_ID" --show-steps
+testlookup cases list --project "$PROJECT_ID" --status draft --status review_requested
 testlookup search "connection reset"
 testlookup intelligence show "$RUN_ID"
 
@@ -389,6 +391,39 @@ testlookup projects import payment-service.zip                # -> Already impor
 testlookup projects import payment-service.zip --new-copy     # -> Payment Service (imported 2)
 ```
 
+## Test cases
+
+`testlookup cases` reads the authored test cases on the Test Management page, read-only (the `tests` group is
+a run's results). It calls the routes the page calls, so it lists the same cases in the same order, newest
+first. `--project` (an id or the exact name) is required on `list` and `export`, because a non-admin who names
+no project gets an empty list.
+
+```bash
+# Drafts and review requests in one suite; -o json or -o yaml for every field and the full ids
+testlookup cases list --project "Checkout Service" --status draft --status review_requested --suite checkout
+# Every case, in pages of 200 (stops after 50 pages, and says so)
+testlookup cases list --project "Checkout Service" --all -o json > cases.json
+# One case with its steps, by the short id the UI prints; then its saved versions
+testlookup cases get TC-1A2B3C --project "Checkout Service"
+testlookup cases history TC-1A2B3C --project "Checkout Service"
+# The Excel workbook the page's Export button downloads
+testlookup cases export --project "Checkout Service" --priority P0 -o checkout-cases.xlsx
+```
+
+- `list` takes the list's filters: `--status`, `--type` and `--priority` (repeat them for several; `P0`-`P3`
+  are accepted), `--suite`, `--search` (title, description, tags, a `TC-` id prefix or a requirement key),
+  `--owner me|<user-id>`, `--automation automated|not_automated`, `--requirement` and `--include-archived`.
+  Without `--status`, deprecated and archived cases are left out. `--page` and `--size` (1-200, default 25)
+  read one page; a page with more prints `N shown of M, more cases — pass --all, or --page K`.
+- `get` and `history` take the case id, or the `TC-` short id with `--project`. A short id is looked up in the
+  project's cases (archived ones included) and must match exactly one case id; none or several exits `2` and
+  lists the candidates. A deprecated case needs its full id.
+- `export` takes only the export's own filters (`--status`, `--type`, `--priority`, `--search`, `--owner`,
+  `--automation`, `--requirement`). It has no `--suite`, and without `--status` the workbook holds every status,
+  deprecated and archived included.
+- A refusal exits with the codes below: `4` for a project or case you cannot read (or a project name that
+  matches none or several), `5` for no such case, `2` for an unknown status or priority.
+
 ## Release names
 
 Every `--release` and `<release>` takes a release id, `unattributed` (analytics), or the release's exact
@@ -430,7 +465,8 @@ release-gate:
 ## Output and exit codes
 
 Commands that print data take `-o`/`--output`: `table` (default) or `json`, and
-most also accept `yaml`. Exceptions: `reports pdf` uses `-o` for the output
+most also accept `yaml`. Exceptions: `reports pdf`, `projects export`,
+`activity export`, `compliance-pack download` and `cases export` use `-o` for the output
 file path, `analytics trends` and `analytics chart` take `table|csv|json`,
 `runs timing`, `analytics execution`, `ai-history` and `compare-ai` take `table|json` (or `--json`), and `intelligence refresh`,
 `deep start` and `keys revoke` print only a confirmation. Errors and warnings

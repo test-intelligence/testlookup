@@ -171,6 +171,16 @@ New installs start with manual upload **on**. An existing install keeps its
 stored value; turn it on in **Settings → Feature flags** if you want the Upload
 button.
 
+### Fine-tuning switch moved to the admin API
+
+**Settings → AI** no longer shows the **Fine-Tuning Pipeline** toggle.
+Fine-tuning itself is unchanged and stays off by default: an administrator
+turns it on or off with `PUT /api/v1/settings/ai` and
+`{"finetune_enabled": true}` (or `false`), and `GET /api/v1/training/status`
+shows the effective value and where it comes from. A value stored with the old
+toggle is kept, and saving the page never changes it. See
+[docs/operations/fine-tuning.md](docs/operations/fine-tuning.md).
+
 ### Admin accounts and deploy scripts
 
 No script creates an admin with a built-in default password any more. On a

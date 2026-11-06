@@ -1,6 +1,6 @@
 # TestLookup MCP Server
 
-The MCP (Model Context Protocol) server exposes TestLookup to AI assistants, IDEs and CI agents. It ships **74 tools**, **11 resources** and **7 prompts**, over two transports: stdio for a local client and SSE for networked clients. Every tool call becomes a REST call to the TestLookup API, authenticated as a TestLookup user, so the backend's role and project checks apply unchanged.
+The MCP (Model Context Protocol) server exposes TestLookup to AI assistants, IDEs and CI agents. It ships **80 tools**, **11 resources** and **7 prompts**, over two transports: stdio for a local client and SSE for networked clients. Every tool call becomes a REST call to the TestLookup API, authenticated as a TestLookup user, so the backend's role and project checks apply unchanged.
 
 Beyond reads, the server carries **write-path tools** so an agent can close the triage loop: propose and release quarantines, bulk-promote recovered tests, file deduplicated Jira defects (with an optional dry-run preview), correct AI classifications, reassign failures, and manage notification policy. Stdio writes run under the configured login; SSE writes run under each caller's own bearer token. Both are audit-logged with that identity. See the [agent cookbook](../user-guide/agent-cookbook.md) for worked recipes.
 
@@ -141,7 +141,7 @@ Show the LLM cost budget overview: which projects are closest to their cap?
 List open quarantine proposals and approve the one with the highest flip rate
 ```
 
-## Tool reference (77 tools)
+## Tool reference (80 tools)
 
 A `?` marks an optional parameter.
 
@@ -248,6 +248,7 @@ touched a suite whole, so under a suite filter it differs from
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `list_pending_reviews` | `project_id`, `limit?` | **Read-only.** AI reports in a project still awaiting human review. There is deliberately no accept or reject tool: the server forwards the caller's token, so an agent could otherwise approve its own output. |
+| `list_agent_actions` | `project_id`, `view?`, `limit?` | **Read-only.** The typed proposals AI agents filed for a QA lead: `view="pending"` (default) what waits for a decision, `view="decided"` the recent decisions and outcomes. Approving, rejecting or undoing one is done in TestLookup, never through MCP. |
 
 `get_run_intelligence`, `get_run_summary` and `check_run_release_readiness` end with `review_state` and the AI disclaimer. `review_state: unknown` means the backend sent no review status; treat the content as an unreviewed draft.
 
@@ -272,6 +273,17 @@ touched a suite whole, so under a suite filter it differs from
 |------|-----------|-------------|
 | `list_project_activity` | `project_id`, `category?`, `since?`, `limit?`, `cursor?` | A project's activity, newest first, as on its Activity tab (`project_id` may be the project name; `since` like `7d`); `more` + `next_cursor` when there are older events |
 | `get_activity_event` | `project_id`, `event_id` | One event with its before / after diff |
+
+### Test management (read-only)
+
+The authored test cases on the Test Management page, read through the routes the page reads. These are not
+`list_test_cases` / `get_test_case`, which read one run's executed results. There is no export tool: the Excel
+workbook is a file, so `testlookup cases export` writes it (see the [CLI](../cli/README.md#test-cases)).
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `list_managed_test_cases` | `project_id`, `status?`, `test_type?`, `priority?`, `suite_name?`, `search?`, `owner?`, `automation?`, `requirement?`, `include_archived?`, `page?`, `size?` | A project's authored cases, newest first (`project_id` may be the project name; `status`, `test_type` and `priority` are lists; without `status`, deprecated and archived cases are left out). Returns `summary` (a markdown table with the `TC-` short id and the full id), `items`, `total`, `pages` and `more` (call again with the next `page`) |
+| `get_managed_test_case` | `case_id`, `include_history?` | One authored case with its steps, preconditions and expected result; `include_history=true` adds its saved versions, newest first (at most 100). `case_id` is the full id; a `TC-` short id is refused with a pointer to `list_managed_test_cases(search=...)` |
 
 ### Decision trail
 

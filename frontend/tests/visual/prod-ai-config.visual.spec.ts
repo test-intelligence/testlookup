@@ -3,8 +3,9 @@
  *
  *   ai-config-pipeline-settings  the Pipeline Settings card: Confidence Threshold and Timeout (min 5 s) with
  *                                their source hints ("Server default · Applies to new pipelines." / "... Applies
- *                                to every LLM call ..."), and the Deep Investigation ("Set here") and Fine-Tuning
- *                                ("Server default") toggles with theirs (AIC-01, AIC-02);
+ *                                to every LLM call ..."), the Offline Mode toggle, and the Deep Investigation
+ *                                toggle with its hint ("Set here") (AIC-01, AIC-02); no Fine-Tuning toggle since
+ *                                W34 STRAT-10 (an operator path, docs/operations/fine-tuning.md);
  *   ai-config-ml-card            the ML classifier card under the mode radios: "Samples 642 / 200 · human labels
  *                                57 · model <version>", the model line ("accuracy 0.84 · trained just now"),
  *                                Train now, and the nightly schedule copy (AIC-05).
