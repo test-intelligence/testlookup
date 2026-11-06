@@ -156,7 +156,8 @@ test('All Projects (an admin): Per Release asks for a project, and cannot be sub
   const { api, errors } = await openProductionPage(page, '/settings/digests', {
     theme: 'signal',
     now: NOW,
-    // All projects is an ADMIN's view (every other role is moved onto its first project).
+    // All Projects is offered to an admin and to a member of two or more projects (TopBar.tsx, W35); this
+    // world lists one project, which any other role is moved onto, so the case signs in as the admin.
     me: ADMIN,
     user: ADMIN,
     projectId: 'all',

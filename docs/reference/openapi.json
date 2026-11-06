@@ -105170,7 +105170,7 @@
     },
     "/api/v1/value-metrics": {
       "get": {
-        "description": "Return operational value metrics for a project (or all) over a time\nwindow, including the US-12.1 engineer-hours-saved model (``months``\nbounds the monthly trend).\n\n``release_id`` / ``suite_name`` are accepted, authorised and declared in\n``meta.ignored_filters`` with the reason: these are time-based counts\nover the project, and most of them have no release or suite to filter.",
+        "description": "Return operational value metrics for a project (or all the caller's\nprojects) over a time window, including the US-12.1 engineer-hours-saved\nmodel (``months`` bounds the monthly trend; unpinned, the model is the\n\"select a project\" one, for an admin and a member alike).\n\n``release_id`` / ``suite_name`` are accepted, authorised and declared in\n``meta.ignored_filters`` with the reason: these are time-based counts\nover the project, and most of them have no release or suite to filter.",
         "operationId": "get_metrics_api_v1_value_metrics_get",
         "parameters": [
           {
@@ -105425,7 +105425,7 @@
     },
     "/api/v1/value-metrics/export": {
       "get": {
-        "description": "Export value metrics as a downloadable JSON report.\n\nHON-04: the scope is ``resolve_project_scope``'s, as on ``/by-team``. A\nproject the caller cannot read is a 403. It used to be a 200 carrying a\none-key ``{\"report_type\": \"value_metrics\"}`` stub, which the browser saved\nas if it were the report. A non-admin who names no project is refused\ntoo: the unpinned export is the every-project aggregate, which spans\ntenants, so only an admin may take it.",
+        "description": "Export value metrics as a downloadable JSON report.\n\nHON-04: the scope is ``resolve_project_scope``'s, as on ``/by-team``. A\nproject the caller cannot read is a 403. It used to be a 200 carrying a\none-key ``{\"report_type\": \"value_metrics\"}`` stub, which the browser saved\nas if it were the report.\n\nSTRAT-01: a non-admin who names no project exports the aggregate over\nTHEIR projects -- the same numbers ``GET /value-metrics`` shows them --\nbecause the service applies their set to every count (an earlier\nrevision refused them, when the unpinned export spanned every tenant). A\ncaller with no project at all is still refused: there is nothing to\naggregate. An admin who names none exports every project.",
         "operationId": "export_metrics_api_v1_value_metrics_export_get",
         "parameters": [
           {

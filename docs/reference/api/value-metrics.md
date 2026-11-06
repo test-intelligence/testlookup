@@ -182,15 +182,16 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 Get Metrics
 
-Return operational value metrics for a project (or all) over a time
-window, including the US-12.1 engineer-hours-saved model (``months``
-bounds the monthly trend).
+Return operational value metrics for a project (or all the caller's
+projects) over a time window, including the US-12.1 engineer-hours-saved
+model (``months`` bounds the monthly trend; unpinned, the model is the
+"select a project" one, for an admin and a member alike).
 
 ``release_id`` / ``suite_name`` are accepted, authorised and declared in
 ``meta.ignored_filters`` with the reason: these are time-based counts
 over the project, and most of them have no release or suite to filter.
 
-Source: [backend/app/routers/value_metrics.py:40](../../../backend/app/routers/value_metrics.py#L40).
+Source: [backend/app/routers/value_metrics.py:46](../../../backend/app/routers/value_metrics.py#L46).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -361,7 +362,7 @@ no component map. ``release_id`` / ``suite_name`` are accepted, authorised
 and declared in ``meta.ignored_filters``: these are project-level counts
 over time, as on the Overview.
 
-Source: [backend/app/routers/value_metrics.py:119](../../../backend/app/routers/value_metrics.py#L119).
+Source: [backend/app/routers/value_metrics.py:131](../../../backend/app/routers/value_metrics.py#L131).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -506,11 +507,16 @@ Export value metrics as a downloadable JSON report.
 HON-04: the scope is ``resolve_project_scope``'s, as on ``/by-team``. A
 project the caller cannot read is a 403. It used to be a 200 carrying a
 one-key ``{"report_type": "value_metrics"}`` stub, which the browser saved
-as if it were the report. A non-admin who names no project is refused
-too: the unpinned export is the every-project aggregate, which spans
-tenants, so only an admin may take it.
+as if it were the report.
 
-Source: [backend/app/routers/value_metrics.py:155](../../../backend/app/routers/value_metrics.py#L155).
+STRAT-01: a non-admin who names no project exports the aggregate over
+THEIR projects -- the same numbers ``GET /value-metrics`` shows them --
+because the service applies their set to every count (an earlier
+revision refused them, when the unpinned export spanned every tenant). A
+caller with no project at all is still refused: there is nothing to
+aggregate. An admin who names none exports every project.
+
+Source: [backend/app/routers/value_metrics.py:167](../../../backend/app/routers/value_metrics.py#L167).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -623,7 +629,7 @@ US-12.1: the hours-saved model documented — legs, formulas, caveats,
 defaults, research anchors. Static content; login-only, not
 project-scoped.
 
-Source: [backend/app/routers/value_metrics.py:76](../../../backend/app/routers/value_metrics.py#L76).
+Source: [backend/app/routers/value_metrics.py:88](../../../backend/app/routers/value_metrics.py#L88).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

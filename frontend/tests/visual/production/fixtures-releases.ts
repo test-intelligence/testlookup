@@ -39,7 +39,10 @@ export { RELEASE_ACTIVE_ID, RELEASE_PACK, RELEASE_PEOPLE, RELEASE_PLANNING_ID, R
 
 export const QA_ENGINEER = { ...USER, id: '00000000-0000-4000-8000-0000000000e1', username: 'qa_engineer', full_name: 'QA Engineer', role: 'QA_ENGINEER' }
 export const VIEWER = { ...USER, id: '00000000-0000-4000-8000-0000000000e2', username: 'viewer', full_name: 'Viewer', role: 'VIEWER' }
-/** All projects is an ADMIN's view (`TopBar` moves any other role onto its first project). */
+/**
+ * The admin, who has All Projects in any world. A non-admin has it only with two or more projects (`TopBar`, W35);
+ * the worlds built on `LAYOUT` list one, which `TopBar` moves any other role onto.
+ */
 export const ADMIN = { ...USER, id: '00000000-0000-4000-8000-0000000000ad', username: 'admin', email: 'admin@example.test', full_name: 'Admin', role: 'ADMIN' }
 
 /** One answered write: `METHOD path` and its JSON body. */

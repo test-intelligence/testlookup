@@ -136,5 +136,15 @@ def test_the_dashboard_declares_its_release_unscoped_fields():
         assert "Not scoped by release_id" in (DashboardSummary.model_fields[field].description or "")
     # The behaviour the declaration describes: the flaky count is called
     # with the suite and no release (``_count_flaky_tests(db, project, suite)``).
-    source = inspect.getsource(metrics_service.get_dashboard_summary)
-    assert "_count_flaky_tests(db, project_id, suite_filter)" in source
+    # Parsed, not a substring: since STRAT-01 (W35) the call also carries the
+    # member set as a keyword, and that is the only keyword it may carry.
+    import ast
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(metrics_service.get_dashboard_summary)))
+    [call] = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_count_flaky_tests"
+    ]
+    assert [ast.unparse(arg) for arg in call.args] == ["db", "project_id", "suite_filter"]
+    assert [kw.arg for kw in call.keywords] == ["allowed_project_ids"], "no release may reach it"

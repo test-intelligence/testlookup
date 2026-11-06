@@ -404,6 +404,18 @@ INTENDED_ERROR_BODY_CHANGES = frozenset({
     "summary_pdf/member_all_projects",
 })
 
+#: STRAT-01 / D28 (W35): the metrics routes answered a member who names no
+#: project with the empty payload; they now aggregate over the member's OWN
+#: projects. Here that is P1 alone, so the answer must be exactly the pinned P1
+#: answer with no filter -- and the golden must still hold the old empty body
+#: (it is not re-captured). P2's only run is at ``FROZEN``, outside these
+#: windows, so a foreign project counting is NOT visible here; that is proven
+#: over in-window foreign rows by ``test_all_projects_member_scope_postgres.py``.
+INTENDED_STRAT01_CHANGES = {
+    "metrics_summary/member_all_projects": {},
+    "metrics_trends/member_all_projects": {"data": [], "period_days": 30},
+}
+
 
 async def test_single_value_responses_match_the_pre_viz201_golden(world):
     actual = _without_meta(await _characterise(world))
@@ -422,9 +434,15 @@ async def test_single_value_responses_match_the_pre_viz201_golden(world):
         assert actual[key]["body"]["code"] == "missing_parameter", actual[key]
         assert actual[key]["body"]["param"] == "project_id", actual[key]
         assert actual[key]["body"]["detail"], actual[key]
+    for key, old_body in INTENDED_STRAT01_CHANGES.items():
+        assert expected[key] == {"status": 200, "body": old_body}, key
+        pinned = actual[key.replace("/member_all_projects", "/none")]
+        assert actual[key] == pinned, f"{key}: not the member's own project (P2 counted?)"
     mismatched = [
         key for key in sorted(expected)
-        if key not in INTENDED_ERROR_BODY_CHANGES and actual[key] != expected[key]
+        if key not in INTENDED_ERROR_BODY_CHANGES
+        and key not in INTENDED_STRAT01_CHANGES
+        and actual[key] != expected[key]
     ]
     assert not mismatched, (
         f"{len(mismatched)} single-value responses changed: {mismatched[:10]}; "

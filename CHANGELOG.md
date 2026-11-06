@@ -1247,6 +1247,36 @@ locally by default.
 
 ### Changed
 
+- **All Projects for members of more than one project** (wave W35, STRAT-01 / D28; branch
+  `feat/df-all-projects-20261106`). The top bar offers **All Projects** to an administrator
+  and to anyone who belongs to two or more projects; a member of one project stays on it.
+  A non-administrator's All Projects counts **only their own projects**:
+  - the Overview KPIs (`GET /api/v1/metrics/summary`), the trend chart
+    (`/metrics/trends`), the trend summary (`/analytics/trend-summary`), Value metrics
+    (`GET /api/v1/value-metrics`) and its export now aggregate over the caller's
+    memberships when no project is named;
+  - before W35 those routes answered such a caller with the empty payload, and the export
+    with a 403.
+
+  A project the caller does not belong to still gets the empty payload, never a 403 that
+  would confirm it exists. A caller with no projects is unchanged.
+  - **Service rule:** every query on these paths applies the caller's project set with
+    `_tenant_filter` semantics: a pinned project, else `IN` the set, an empty set reads
+    nothing, and `None` is the unrestricted admin read. It is switched on per route by
+    `ScopePolicy(aggregate_unpinned=True)`.
+  - **Cache:** the dashboard cache key carries a hash of the member set, so a member never
+    reads an administrator's warmed all-projects entry.
+  - **Hours-saved model:** stays "select a project" for any unpinned read, as before.
+
+  Tests:
+  - `test_analytics_scope.py::test_aggregate_unpinned_reads_only_the_members_projects`;
+  - `regression/test_metrics_all_projects_member_scope.py`;
+  - `test_value_metrics_member_scope.py`;
+  - integration `test_all_projects_member_scope_postgres.py` and
+    `test_value_metrics_member_scope_postgres.py`. Each seeds a foreign project and proves it
+    never counts, including right after an administrator warmed the cache.
+  - `TopBar.test.tsx`;
+  - `ci-e2e/all-projects-member.spec.ts`.
 - **Fine-tuning is an operator path; Settings › AI no longer shows its toggle** (wave W34,
   STRAT-10 / D37). The ML classifier card ("Train now") is the learning loop the app
   shows. Fine-tuning stays off by default. An administrator sets it with

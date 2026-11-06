@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import func as sa_func, select, text
+from sqlalchemy import false, func as sa_func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
@@ -47,6 +47,7 @@ from app.models.postgres import (
     TestRun,
     ValueMetricAssumptions,
 )
+from app.services.analytics_service import _tenant_filter as tenant_filter_sql
 from app.services.cluster_snapshot import current_snapshot_sql, is_current_snapshot
 
 logger = logging.getLogger("services.value_metrics")
@@ -215,6 +216,11 @@ async def upsert_assumptions(
 # ai_analysis have no project_id column). The quarantine join goes through
 # indexed columns only (ix_fqr_fingerprint, ix_test_cases_fingerprint) —
 # never through the unindexed JSON ``test_cases.tags``.
+#
+# STRAT-01: the tenancy clause is ``analytics_service._tenant_filter``'s on
+# ``tr.project_id`` -- a pinned project, else the caller's
+# ``allowed_project_ids`` (an empty set reads nothing), else every project
+# (``None``: the admin read only) -- always restricted to live projects.
 
 _TOTAL_KEY = "_total"
 
@@ -241,12 +247,17 @@ def _rows_to_buckets(rows, value_names: list[str], monthly: bool) -> dict[str, d
 
 
 async def _cluster_counts(
-    db: AsyncSession, project_id: uuid.UUID, since: datetime, monthly: bool,
+    db: AsyncSession, project_id: Optional[uuid.UUID], since: datetime, monthly: bool,
+    *, allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> dict[str, dict]:
     """clustered_failures = SUM(size) and duplicates_absorbed = SUM(size-1)
     over clusters with size >= 2. Clusters are per-run → these are
     cluster-instances, NOT distinct defects."""
     bucket_sel, bucket_grp = _bucket_parts(monthly, "fc.created_at")
+    params: dict = {"since": since}
+    tenant = tenant_filter_sql(
+        params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
     query = text(f"""
         SELECT
             {bucket_sel}
@@ -254,25 +265,30 @@ async def _cluster_counts(
             COALESCE(SUM(fc.size - 1), 0) AS duplicates_absorbed
         FROM failure_clusters fc
         JOIN test_runs tr ON tr.id = fc.test_run_id
-        WHERE tr.project_id = :project_id
-          AND fc.created_at >= :since
+        WHERE fc.created_at >= :since
           AND fc.size >= 2
           AND {current_snapshot_sql('fc')}
+          {tenant}
         {bucket_grp}
     """)
-    result = await db.execute(query, {"project_id": str(project_id), "since": since})
+    result = await db.execute(query, params)
     return _rows_to_buckets(
         result.fetchall(), ["clustered_failures", "duplicates_absorbed"], monthly
     )
 
 
 async def _triage_counts(
-    db: AsyncSession, project_id: uuid.UUID, since: datetime, monthly: bool,
+    db: AsyncSession, project_id: Optional[uuid.UUID], since: datetime, monthly: bool,
+    *, allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> dict[str, dict]:
     """auto_triaged = AI analyses persisted in the window (context column;
     the triage leg itself multiplies clustered failures per the documented
     model)."""
     bucket_sel, bucket_grp = _bucket_parts(monthly, "aa.created_at")
+    params: dict = {"since": since}
+    tenant = tenant_filter_sql(
+        params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
     query = text(f"""
         SELECT
             {bucket_sel}
@@ -280,28 +296,33 @@ async def _triage_counts(
         FROM ai_analysis aa
         JOIN test_cases tc ON tc.id = aa.test_case_id
         JOIN test_runs tr ON tr.id = tc.test_run_id
-        WHERE tr.project_id = :project_id
-          AND aa.created_at >= :since
+        WHERE aa.created_at >= :since
+          {tenant}
         {bucket_grp}
     """)
-    result = await db.execute(query, {"project_id": str(project_id), "since": since})
+    result = await db.execute(query, params)
     return _rows_to_buckets(result.fetchall(), ["auto_triaged"], monthly)
 
 
 async def _quarantine_suppressed_counts(
-    db: AsyncSession, project_id: uuid.UUID, since: datetime, monthly: bool,
+    db: AsyncSession, project_id: Optional[uuid.UUID], since: datetime, monthly: bool,
+    *, allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> dict[str, dict]:
     """Failing executions whose fingerprint was inside an active quarantine
     window at run time (both join sides indexed)."""
     bucket_sel, bucket_grp = _bucket_parts(monthly, "tr.created_at")
+    params: dict = {"since": since}
+    tenant = tenant_filter_sql(
+        params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
     query = text(f"""
         SELECT
             {bucket_sel}
             COUNT(tc.id) AS quarantine_suppressed_failures
         FROM test_cases tc
         JOIN test_runs tr ON tr.id = tc.test_run_id
-        WHERE tr.project_id = :project_id
-          AND tr.created_at >= :since
+        WHERE tr.created_at >= :since
+          {tenant}
           AND tc.status IN {_FAILING_STATUSES_SQL}
           AND EXISTS (
               SELECT 1 FROM flaky_quarantine_requests fqr
@@ -315,27 +336,32 @@ async def _quarantine_suppressed_counts(
           )
         {bucket_grp}
     """)
-    result = await db.execute(query, {"project_id": str(project_id), "since": since})
+    result = await db.execute(query, params)
     return _rows_to_buckets(
         result.fetchall(), ["quarantine_suppressed_failures"], monthly
     )
 
 
 async def _runs_unblocked_counts(
-    db: AsyncSession, project_id: uuid.UUID, since: datetime, monthly: bool,
+    db: AsyncSession, project_id: Optional[uuid.UUID], since: datetime, monthly: bool,
+    *, allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> dict[str, dict]:
     """runs_unblocked_proxy = runs with >= 1 failing case where EVERY
     failing case matched an active quarantine window. A proxy: no persisted
     "run unblocked" verdict exists, so this approximates "quarantine was
     the difference between red and green"."""
     bucket_sel, bucket_grp = _bucket_parts(monthly, "tr.created_at")
+    params: dict = {"since": since}
+    tenant = tenant_filter_sql(
+        params, project_id=project_id, allowed_project_ids=allowed_project_ids,
+    )
     query = text(f"""
         SELECT
             {bucket_sel}
             COUNT(tr.id) AS runs_unblocked_proxy
         FROM test_runs tr
-        WHERE tr.project_id = :project_id
-          AND tr.created_at >= :since
+        WHERE tr.created_at >= :since
+          {tenant}
           AND EXISTS (
               SELECT 1 FROM test_cases f
               WHERE f.test_run_id = tr.id
@@ -358,21 +384,26 @@ async def _runs_unblocked_counts(
           )
         {bucket_grp}
     """)
-    result = await db.execute(query, {"project_id": str(project_id), "since": since})
+    result = await db.execute(query, params)
     return _rows_to_buckets(result.fetchall(), ["runs_unblocked_proxy"], monthly)
 
 
 async def _gather_leg_counts(
-    db: AsyncSession, project_id: uuid.UUID, since: datetime, monthly: bool,
+    db: AsyncSession, project_id: Optional[uuid.UUID], since: datetime, monthly: bool,
+    *, allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> dict[str, dict]:
     """Merge the four leg queries into ``{bucket: {count_key: int}}`` with
-    every count key present (zero-filled)."""
+    every count key present (zero-filled). Each leg applies the same tenancy
+    (``project_id`` / ``allowed_project_ids``, ``_tenant_filter`` semantics)."""
+    allowed = allowed_project_ids
     merged: dict[str, dict] = {}
     for partial in (
-        await _cluster_counts(db, project_id, since, monthly),
-        await _triage_counts(db, project_id, since, monthly),
-        await _quarantine_suppressed_counts(db, project_id, since, monthly),
-        await _runs_unblocked_counts(db, project_id, since, monthly),
+        await _cluster_counts(db, project_id, since, monthly, allowed_project_ids=allowed),
+        await _triage_counts(db, project_id, since, monthly, allowed_project_ids=allowed),
+        await _quarantine_suppressed_counts(
+            db, project_id, since, monthly, allowed_project_ids=allowed,
+        ),
+        await _runs_unblocked_counts(db, project_id, since, monthly, allowed_project_ids=allowed),
     ):
         for bucket, counts in partial.items():
             merged.setdefault(bucket, {k: 0 for k in _LEG_COUNT_KEYS}).update(counts)
@@ -473,12 +504,13 @@ def assemble_monthly_rows(
 
 
 async def _run_span(
-    db: AsyncSession, project_id: uuid.UUID,
+    db: AsyncSession, project_id: Optional[uuid.UUID],
+    *, allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> tuple[Optional[datetime], Optional[datetime]]:
     result = await db.execute(
         select(
             sa_func.min(TestRun.created_at), sa_func.max(TestRun.created_at)
-        ).where(TestRun.project_id == project_id)
+        ).where(*_tenancy(TestRun.project_id, project_id, allowed_project_ids))
     )
     row = result.first()
     return (row[0], row[1]) if row else (None, None)
@@ -535,7 +567,12 @@ async def get_hours_saved_model(
     assumptions = await get_effective_assumptions(db, project_id)
     if project_id is None:
         # The model is deliberately project-scoped (assumptions are per
-        # project); an all-projects aggregate would mix rate cards.
+        # project); an all-projects aggregate would mix rate cards. That
+        # holds for the admin's every-project read and for a member's
+        # aggregate over their own projects alike (STRAT-01): no query runs
+        # and nothing is cached, so the cache below only ever holds a pinned
+        # project's model. Computing an aggregate here would need the set on
+        # ``_run_span`` / ``_gather_leg_counts`` AND a key segment for it.
         return _empty_model(
             "select a project to compute the hours-saved model", assumptions, headline_days
         )
@@ -716,27 +753,39 @@ def _live_project_ids():
     return select(Project.id).where(Project.is_active.is_(True))
 
 
-def _scope_via_run(stmt, on_clause, project_id):
-    """Restrict a run-linked count to live projects, pinning one when given.
+def _tenancy(column, project_id, allowed_project_ids) -> list:
+    """The WHERE clauses for ``column``: ``analytics_service._tenant_filter``
+    semantics in ORM form (STRAT-01).
+
+    Always the live-project clause, plus: a pinned project -> ``= project``;
+    else a set -> ``IN (set)``, an empty set -> ``FALSE`` (fail closed);
+    else (``None``) nothing more -- every live project, the admin read only.
+    """
+    clauses = [column.in_(_live_project_ids())]
+    if project_id:
+        clauses.append(column == project_id)
+    elif allowed_project_ids is not None:
+        ids = sorted(allowed_project_ids, key=str)
+        clauses.append(column.in_(ids) if ids else false())
+    return clauses
+
+
+def _scope_via_run(stmt, on_clause, project_id, allowed_project_ids=None):
+    """Restrict a run-linked count to live projects, pinning one when given,
+    else to the caller's ``allowed_project_ids`` when given (``_tenancy``).
 
     The join is now unconditional. It was previously applied only on the
     scoped path, which is precisely why the unscoped path counted everything;
     joining on a foreign key to a single row does not multiply the count.
     """
-    stmt = stmt.join(TestRun, on_clause).where(
-        TestRun.project_id.in_(_live_project_ids())
+    return stmt.join(TestRun, on_clause).where(
+        *_tenancy(TestRun.project_id, project_id, allowed_project_ids)
     )
-    if project_id:
-        stmt = stmt.where(TestRun.project_id == project_id)
-    return stmt
 
 
-def _scope_direct(stmt, column, project_id):
+def _scope_direct(stmt, column, project_id, allowed_project_ids=None):
     """Same, for tables carrying ``project_id`` themselves."""
-    stmt = stmt.where(column.in_(_live_project_ids()))
-    if project_id:
-        stmt = stmt.where(column == project_id)
-    return stmt
+    return stmt.where(*_tenancy(column, project_id, allowed_project_ids))
 
 
 async def get_value_metrics(
@@ -744,6 +793,8 @@ async def get_value_metrics(
     project_id: Optional[uuid.UUID] = None,
     days: int = 30,
     months: int = 6,
+    *,
+    allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> dict:
     """
     Compute operational value metrics for a project (or all projects) over a
@@ -752,7 +803,14 @@ async def get_value_metrics(
     Existing keys are preserved for old consumers; their minute rates now
     come from the project's effective assumptions instead of hardcoded
     constants.
+
+    STRAT-01: with no ``project_id``, ``allowed_project_ids`` is the caller's
+    set and every count reads only those projects (an empty set reads
+    nothing). ``None`` for both is the every-project read, which only an
+    admin may reach. An aggregate uses the code-default assumptions, and its
+    hours-saved model is the "select a project" one, as for the admin's.
     """
+    allowed = allowed_project_ids
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     assumptions = await get_effective_assumptions(db, project_id)
 
@@ -763,7 +821,7 @@ async def get_value_metrics(
         is_current_snapshot(),
     )
     cluster_stmt = _scope_via_run(
-        cluster_stmt, FailureCluster.test_run_id == TestRun.id, project_id
+        cluster_stmt, FailureCluster.test_run_id == TestRun.id, project_id, allowed
     )
     defects_grouped = (await db.execute(cluster_stmt)).scalar() or 0
 
@@ -774,7 +832,7 @@ async def get_value_metrics(
         is_current_snapshot(),
     )
     tests_grouped_stmt = _scope_via_run(
-        tests_grouped_stmt, FailureCluster.test_run_id == TestRun.id, project_id
+        tests_grouped_stmt, FailureCluster.test_run_id == TestRun.id, project_id, allowed
     )
     tests_grouped = (await db.execute(tests_grouped_stmt)).scalar() or 0
 
@@ -783,7 +841,7 @@ async def get_value_metrics(
         Defect.created_at >= cutoff,
         Defect.is_duplicate.is_(True),
     )
-    dup_stmt = _scope_direct(dup_stmt, Defect.project_id, project_id)
+    dup_stmt = _scope_direct(dup_stmt, Defect.project_id, project_id, allowed)
     duplicates_avoided = (await db.execute(dup_stmt)).scalar() or 0
 
     # Also count candidates flagged as duplicate (not yet promoted)
@@ -792,7 +850,7 @@ async def get_value_metrics(
         DefectCandidate.is_duplicate.is_(True),
     )
     dup_cand_stmt = _scope_via_run(
-        dup_cand_stmt, DefectCandidate.run_id == TestRun.id, project_id
+        dup_cand_stmt, DefectCandidate.run_id == TestRun.id, project_id, allowed
     )
     dup_candidates = (await db.execute(dup_cand_stmt)).scalar() or 0
     total_duplicates_avoided = duplicates_avoided + dup_candidates
@@ -802,7 +860,7 @@ async def get_value_metrics(
         Defect.created_at >= cutoff,
         Defect.promotion_source == "cluster_promotion",
     )
-    promoted_stmt = _scope_direct(promoted_stmt, Defect.project_id, project_id)
+    promoted_stmt = _scope_direct(promoted_stmt, Defect.project_id, project_id, allowed)
     defects_promoted = (await db.execute(promoted_stmt)).scalar() or 0
 
     # ── Flaky tests identified ───────────────────────────────────────────────
@@ -823,7 +881,7 @@ async def get_value_metrics(
 
     flaky_rows_stmt = select(FlakyCoachResult.status_history)
     flaky_rows_stmt = _scope_direct(
-        flaky_rows_stmt, FlakyCoachResult.project_id, project_id
+        flaky_rows_stmt, FlakyCoachResult.project_id, project_id, allowed
     )
     flaky_identified = sum(
         1
@@ -835,7 +893,7 @@ async def get_value_metrics(
         FlakyCoachResult.quarantine_recommendation == "QUARANTINE",
     )
     quarantine_stmt = _scope_direct(
-        quarantine_stmt, FlakyCoachResult.project_id, project_id
+        quarantine_stmt, FlakyCoachResult.project_id, project_id, allowed
     )
     quarantine_recommended = (await db.execute(quarantine_stmt)).scalar() or 0
 
@@ -845,7 +903,7 @@ async def get_value_metrics(
         ReleaseDecision.recommendation == "NO_GO",
     )
     blocked_stmt = _scope_via_run(
-        blocked_stmt, ReleaseDecision.test_run_id == TestRun.id, project_id
+        blocked_stmt, ReleaseDecision.test_run_id == TestRun.id, project_id, allowed
     )
     releases_blocked = (await db.execute(blocked_stmt)).scalar() or 0
 
@@ -854,7 +912,7 @@ async def get_value_metrics(
         ReleaseDecision.recommendation == "CONDITIONAL_GO",
     )
     conditional_stmt = _scope_via_run(
-        conditional_stmt, ReleaseDecision.test_run_id == TestRun.id, project_id
+        conditional_stmt, ReleaseDecision.test_run_id == TestRun.id, project_id, allowed
     )
     releases_conditional = (await db.execute(conditional_stmt)).scalar() or 0
 
@@ -863,7 +921,7 @@ async def get_value_metrics(
         ReleaseDecision.human_override.isnot(None),
     )
     overrides_stmt = _scope_via_run(
-        overrides_stmt, ReleaseDecision.test_run_id == TestRun.id, project_id
+        overrides_stmt, ReleaseDecision.test_run_id == TestRun.id, project_id, allowed
     )
     release_overrides = (await db.execute(overrides_stmt)).scalar() or 0
 
@@ -872,7 +930,7 @@ async def get_value_metrics(
         RunIntelligenceSnapshot.created_at >= cutoff,
     )
     intel_stmt = _scope_via_run(
-        intel_stmt, RunIntelligenceSnapshot.run_id == TestRun.id, project_id
+        intel_stmt, RunIntelligenceSnapshot.run_id == TestRun.id, project_id, allowed
     )
     intelligence_reports = (await db.execute(intel_stmt)).scalar() or 0
 
@@ -904,5 +962,7 @@ async def get_value_metrics(
     }
 
     # TRND-05: the hours-saved headline covers the same window as the counters.
+    # Unpinned (an admin's every-project read or a member's own-projects
+    # aggregate) it is the "select a project" model: no query, no cache entry.
     model = await get_hours_saved_model(db, project_id, months=months, headline_days=days)
     return {**legacy, **model}

@@ -82,6 +82,8 @@ async def test_summary_allows_own_project_for_non_admin():
     assert result == {"avg_pass_rate_7d": {"value": 90.0}}
     svc.assert_awaited_once()
     assert svc.await_args.args[1] == str(mine)
+    # Pinned to their own project: no set (the pin is the whole scope).
+    assert svc.await_args.kwargs["allowed_project_ids"] is None
 
 
 @pytest.mark.asyncio
@@ -106,9 +108,63 @@ async def test_trends_blocks_foreign_project_for_non_admin():
     svc.assert_not_called()
 
 
+# STRAT-01 / D28 (``METRICS_SCOPE.aggregate_unpinned``). Until W35 this file
+# pinned "a member without a project gets the empty payload". A member of A and
+# B who names no project now reads All Projects over A and B: the scope carries
+# exactly their set (a foreign project is not in it) and both handlers hand it
+# to the service, whose queries apply it (``test_metrics_all_projects_member_
+# scope.py``; over real rows, ``tests/integration/test_all_projects_member_
+# scope_postgres.py``).
+
+
 @pytest.mark.asyncio
-async def test_a_member_without_a_project_gets_the_empty_payload():
-    scope = await _scope(None, {uuid.uuid4()})
+async def test_a_member_without_a_project_reads_only_their_projects():
+    a, b, foreign = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    scope = await _scope(None, {a, b})
+    assert not scope.denied and scope.project is None
+    assert scope.allowed_project_ids == frozenset({a, b})
+    assert foreign not in scope.allowed_project_ids
+
+    summary = AsyncMock(return_value={"ok": True})
+    with patch.object(metrics_router, "get_dashboard_summary", summary):
+        assert await metrics_router.dashboard_summary(scope=scope, db=AsyncMock()) == {"ok": True}
+    assert summary.await_args.args[1] is None
+    assert summary.await_args.kwargs["allowed_project_ids"] == frozenset({a, b})
+
+    trends = AsyncMock(return_value=[{"date": "2026-11-01"}])
+    with patch.object(metrics_router, "get_trend_data", trends), \
+            patch.object(metrics_router, "build_meta", AsyncMock(return_value={})):
+        result = await metrics_router.trend_data(scope=scope, db=AsyncMock())
+    assert result["data"] == [{"date": "2026-11-01"}]
+    assert trends.await_args.args[1] is None
+    assert trends.await_args.kwargs["allowed_project_ids"] == frozenset({a, b})
+
+
+@pytest.mark.asyncio
+async def test_a_caller_with_no_project_at_all_still_gets_the_empty_payload():
+    scope = await _scope(None, set())
     assert scope.denied
-    result = await metrics_router.dashboard_summary(scope=scope, db=AsyncMock())
-    assert _without_meta(result) == {}
+    refuse = AsyncMock(side_effect=AssertionError("a denied scope reads no data"))
+    with patch.object(metrics_router, "get_dashboard_summary", refuse), \
+            patch.object(metrics_router, "get_trend_data", refuse):
+        summary = await metrics_router.dashboard_summary(scope=scope, db=AsyncMock())
+        trends = await metrics_router.trend_data(scope=scope, db=AsyncMock())
+    assert _without_meta(summary) == {}
+    assert _without_meta(trends) == {"data": [], "period_days": 7}
+
+
+@pytest.mark.asyncio
+async def test_the_admin_without_a_project_stays_unrestricted():
+    scope = await _scope(None, None)
+    assert not scope.denied and scope.allowed_project_ids is None
+
+    summary = AsyncMock(return_value={"ok": True})
+    trends = AsyncMock(return_value=[])
+    with patch.object(metrics_router, "get_dashboard_summary", summary), \
+            patch.object(metrics_router, "get_trend_data", trends), \
+            patch.object(metrics_router, "build_meta", AsyncMock(return_value={})):
+        await metrics_router.dashboard_summary(scope=scope, db=AsyncMock())
+        await metrics_router.trend_data(scope=scope, db=AsyncMock())
+    for svc in (summary, trends):
+        assert svc.await_args.args[1] is None
+        assert svc.await_args.kwargs["allowed_project_ids"] is None

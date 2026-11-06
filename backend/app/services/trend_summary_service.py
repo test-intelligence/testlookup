@@ -284,8 +284,10 @@ def utc_today() -> date:
 async def trend_summary(db: AsyncSession, scope: AnalyticsScope, *, today: Optional[date] = None) -> dict:
     """:func:`summarize` over the page's two reads for ``scope``, verbatim.
 
-    A denied scope (the route's ``on_denied="empty"``) reads nothing and is the
-    empty, ``measured: false`` summary.
+    A denied scope (the route's ``on_denied="empty"``: a project the caller
+    cannot read, or a caller with no project) reads nothing and is the empty,
+    ``measured: false`` summary. An unpinned non-admin scope (STRAT-01) carries
+    the caller's projects in ``allowed_project_ids``, and BOTH reads apply it.
     """
     day = today or utc_today()
     if scope.denied:
@@ -295,6 +297,7 @@ async def trend_summary(db: AsyncSession, scope: AnalyticsScope, *, today: Optio
     trend = await metrics_service.get_trend_data(
         db, scope.project, scope.window_days,
         suite_name=scope.suite_arg, release_id=scope.release_arg,
+        allowed_project_ids=scope.allowed_project_ids,
     )
     coverage = await analytics_service.coverage_stats(
         db, scope.project, scope.window_days, scope.suite_arg,

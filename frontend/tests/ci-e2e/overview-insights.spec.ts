@@ -9,7 +9,8 @@
  *  - Dismiss asks inline (`Dismiss for everyone in Checkout?`), POSTs, the row leaves and `Showing …` follows the
  *    server's new total; a scripted 404 reads `Insight not found.` inline;
  *  - a not-measured detector reads its sentence; a VIEWER sees no Dismiss;
- *  - All Projects (an ADMIN's view): no card and NO insights request;
+ *  - All Projects (as the admin: the world lists one project, which any other role is moved onto; `TopBar.tsx`
+ *    offers All Projects to an admin and to a member of two or more projects, W35): no card and NO insights request;
  *  - no row or the card's header scrolls sideways at 1280 and 1440 (CI's wider DejaVu included: ≥ 40 px slack).
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). World: `fixtures-insights-cadence.ts`

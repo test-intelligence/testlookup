@@ -30,7 +30,7 @@ Two items carry a live badge: **Inbox** shows how many failures are assigned to 
 
 ## The top bar
 
-- **Project selector** — picks the project every page shows. Administrators also get **All Projects**, which aggregates across every project they can see; everyone else always has one project selected (the first one they belong to, until they pick another). Some pages stay empty in All Projects until you pick one; see [Getting started](/docs/getting-started#all-projects-mode).
+- **Project selector** — picks the project every page shows. **All Projects** aggregates across projects: administrators get it over every project, and anyone who belongs to two or more projects gets it over their own projects only. Someone in one project always has that project selected. Some pages stay empty in All Projects until you pick one; see [Getting started](/docs/getting-started#all-projects-mode).
 - **Release picker** — **All releases**, one release, or **— Unattributed —** (runs not attached to any release). It narrows the report pages to that release and is kept in the page address (`?release=`), so a shared link opens the same view. It is disabled in All Projects, because a release belongs to one project.
 - **Search** — type and press Enter to search tests, runs and defects; press `/` anywhere to jump to the box. See [Search and discovery](/docs/search).
 - **Notifications bell** — your recent notifications with an unread count, **Mark all read**, and a link to your notification settings.

@@ -332,7 +332,7 @@ class _Runs:
 def _wire_summary(monkeypatch, store: _Runs, *, during_query=None):
     from app.services import metrics_service
 
-    async def _period_stats(db, project_id, start, end, suite, release_id):
+    async def _period_stats(db, project_id, start, end, suite, release_id, *, allowed_project_ids=None):
         store.queries += 1
         # The query's snapshot is taken first; a mutation committing while the
         # rest of the request runs does not change what this read saw.

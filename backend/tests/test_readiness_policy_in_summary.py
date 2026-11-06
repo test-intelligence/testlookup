@@ -77,7 +77,7 @@ def wired(monkeypatch):
     state = SimpleNamespace(cur=_stats(98.0, 4), prev=_stats(96.0, 4))
     calls: list[int] = []
 
-    async def _period_stats(db, project_id, start, end, suite, release_id):
+    async def _period_stats(db, project_id, start, end, suite, release_id, *, allowed_project_ids=None):
         calls.append(1)
         return state.cur if len(calls) == 1 else state.prev
 

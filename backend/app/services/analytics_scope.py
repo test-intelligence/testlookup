@@ -135,6 +135,15 @@ class ScopePolicy:
     #: metrics routes have always answered that way, and a 403 there would
     #: confirm the project exists.
     on_denied: Literal["raise", "empty"] = "raise"
+    #: With ``on_denied="empty"`` only (STRAT-01 / D28): a non-admin who names
+    #: NO project reads the aggregate over their own projects --
+    #: ``allowed_project_ids`` is their membership set and ``project_id`` is
+    #: None -- instead of the empty payload. A project they cannot read is
+    #: still the empty payload (never a 403, which would confirm it exists),
+    #: and so is a caller with no project at all. A route may set this only
+    #: once its services apply ``allowed_project_ids`` (``None`` there is the
+    #: unrestricted ADMIN read; without the set they would count every project).
+    aggregate_unpinned: bool = False
 
 
 @dataclass(frozen=True)
@@ -302,16 +311,20 @@ async def authorize_scope(
 
     if policy.on_denied == "empty":
         accessible = await deps.get_accessible_project_ids(db, user)
-        if accessible is not None and (
-            request.project_id is None or request.project_id not in accessible
-        ):
+        if accessible is None:
+            pinned, allowed = request.project_id, None  # ADMIN: unrestricted
+        elif request.project_id is None and policy.aggregate_unpinned and accessible:
+            # STRAT-01: the member's own projects, never every project.
+            pinned, allowed = None, frozenset(accessible)
+        elif request.project_id is None or request.project_id not in accessible:
             # The release ids are deliberately NOT resolved: the answer is the
             # route's empty payload whatever they are, as it always was.
             return AnalyticsScope(
                 request.project_id, frozenset(accessible), (), request.suite_names,
                 request.days, denied=True,
             )
-        pinned, allowed = request.project_id, None
+        else:
+            pinned, allowed = request.project_id, None
     else:
         pinned, allowed_set = await deps.resolve_project_scope(
             db, user, str(request.project_id) if request.project_id else None
