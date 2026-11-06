@@ -1,11 +1,12 @@
 """Dashboard metrics aggregation service."""
+import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
-from sqlalchemy import ColumnElement, case, func, select
+from sqlalchemy import ColumnElement, case, false, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -39,8 +40,56 @@ logger = logging.getLogger(__name__)
 P0_DEFECT_SEVERITY = "CRITICAL"
 
 
+# ── STRAT-01: the member's own projects ─────────────────────────────────────
+#
+# ``allowed_project_ids`` on every query of the dashboard summary and the trend
+# chart, with ``analytics_service._tenant_filter``'s semantics: a pinned
+# ``project_id`` wins; otherwise ``None`` is the unrestricted ADMIN read, a set
+# (a non-admin's All Projects) is ``IN`` that set, and an empty set reads
+# nothing. Always ANDed with the unconditional active-project clause each query
+# already carries. A non-admin must never reach these with ``None`` and no
+# pinned project: ``None`` counts every project.
+
+
+def _member_clause(column: Any, allowed_project_ids: frozenset[uuid.UUID]) -> ColumnElement[bool]:
+    """The membership branch of ``_tenant_filter`` for an ORM column: ``IN``
+    the sorted set, or FALSE for an empty one (fails closed)."""
+    ids = sorted(allowed_project_ids, key=str)
+    return column.in_(ids) if ids else false()
+
+
+def _member_sql(params: dict, allowed_project_ids: Optional[frozenset[uuid.UUID]]) -> str:
+    """The same for raw SQL on ``tr.project_id``, matching ``_tenant_filter``:
+    ``""`` for ``None`` (the admin read), ``AND FALSE`` for an empty set, else
+    ``AND tr.project_id IN (:pid_0, ...)`` with the ids bound as strings in
+    sorted order. Mutates ``params``; a trailing space so it concatenates like
+    the pinned fragment it replaces."""
+    if allowed_project_ids is None:
+        return ""
+    ids = sorted(allowed_project_ids, key=str)
+    if not ids:
+        return "AND FALSE "
+    for i, pid in enumerate(ids):
+        params[f"pid_{i}"] = str(pid)
+    placeholders = ", ".join(f":pid_{i}" for i in range(len(ids)))
+    return f"AND tr.project_id IN ({placeholders}) "
+
+
+def member_set_key(allowed_project_ids: frozenset[uuid.UUID]) -> str:
+    """Cache-key material for a non-admin's aggregate: the first 16 hex of the
+    sha256 of the sorted ids. Stable across processes (unlike ``hash()``), and
+    two callers share an entry only when they can read exactly the same
+    projects."""
+    blob = ",".join(sorted(str(pid) for pid in allowed_project_ids))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
 async def count_open_critical_defects(
-    db: AsyncSession, project_id, release_id=None
+    db: AsyncSession,
+    project_id,
+    release_id=None,
+    *,
+    allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> int:
     """Count live (OPEN or IN_PROGRESS, ``ACTIVE_STATUSES``) CRITICAL defects
     (the canonical severity behind a policy "P0" hard cap) for a project. An
@@ -65,8 +114,24 @@ async def count_open_critical_defects(
 
     Omitting ``release_id`` leaves the query below byte-identical, so every
     existing caller is unchanged.
+
+    STRAT-01: ``allowed_project_ids`` (no project pinned) restricts every
+    branch to the caller's projects. A release never widens it: the release
+    branches drop any defect outside the set, whatever ``blocking_defects``
+    returns.
     """
     from app.core.release_filter import is_unattributed
+
+    member_ids = (
+        None
+        if project_id or allowed_project_ids is None
+        else {str(pid) for pid in allowed_project_ids}
+    )
+
+    def _counts(defect: Any) -> bool:
+        return (defect.severity or "").upper() == P0_DEFECT_SEVERITY and (
+            member_ids is None or str(defect.project_id) in member_ids
+        )
 
     if release_id is not None and not isinstance(release_id, (str, uuid.UUID)):
         # VIZ-201: several releases are OR. The Unattributed bucket among them
@@ -75,14 +140,16 @@ async def count_open_critical_defects(
         # each defect counted once.
         ids = list(dict.fromkeys(str(item) for item in release_id))
         if len(ids) == 1:
-            return await count_open_critical_defects(db, project_id, ids[0])
+            return await count_open_critical_defects(
+                db, project_id, ids[0], allowed_project_ids=allowed_project_ids
+            )
         if ids and not any(is_unattributed(item) for item in ids):
             from app.services.release_defect_service import blocking_defects
 
             seen: dict = {}
             for item in ids:
                 for d in await blocking_defects(db, item, project_id):
-                    if (d.severity or "").upper() == P0_DEFECT_SEVERITY:
+                    if _counts(d):
                         seen[d.id] = d
             return len(seen)
         release_id = None
@@ -94,11 +161,7 @@ async def count_open_critical_defects(
         # one project_id, so the soft-deleted-project exclusion below (which
         # exists for the aggregate case) has nothing to protect against.
         found = await blocking_defects(db, release_id, project_id)
-        return sum(
-            1
-            for d in found
-            if (d.severity or "").upper() == P0_DEFECT_SEVERITY
-        )
+        return sum(1 for d in found if _counts(d))
 
     # The Unattributed bucket falls through on purpose: its runs belong to no
     # release, so the project's open P0s are the relevant set.
@@ -112,6 +175,8 @@ async def count_open_critical_defects(
     ]
     if project_id:
         conds.append(Defect.project_id == project_id)
+    elif allowed_project_ids is not None:
+        conds.append(_member_clause(Defect.project_id, allowed_project_ids))
     result = await db.execute(select(func.count(Defect.id)).where(*conds))
     return int(result.scalar() or 0)
 
@@ -201,8 +266,15 @@ async def get_dashboard_summary(
     suite_name: SuiteArg = None,
     release_id: ReleaseArg = None,
     meta_builder: Optional[Callable[[], Awaitable[dict]]] = None,
+    *,
+    allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> dict:
     """Compute all Executive Dashboard KPIs for a project.
+
+    STRAT-01: with no ``project_id``, ``allowed_project_ids`` is the caller's
+    horizon -- ``None`` the unrestricted ADMIN read (every active project), a
+    set a non-admin's All Projects (only those projects, on every query and in
+    the cache key), an empty set nothing. Ignored when a project is pinned.
 
     P3-6: Results are cached in Redis for 60 seconds to avoid re-aggregating
     thousands of test cases on every dashboard load.
@@ -261,6 +333,15 @@ async def get_dashboard_summary(
         # which the pages behind this route (``meta``) read. An entry cached
         # before it carries no delta, so it is never served to them.
         release_key["shape"] = SUMMARY_SHAPE_VERSION
+    # STRAT-01: the key's project slot is ``"all"`` for every unpinned read,
+    # and nothing else in it names the caller. A non-admin's All Projects
+    # (only their projects) must never share the admin's entry (every
+    # project), nor another member's: the member set reaches the key. A
+    # conditional kwarg like ``release`` above, so the admin and pinned keys
+    # stay byte-identical. The epoch stays ``get_analytics_epoch(None)``, the
+    # all-projects counter every project's mutation bumps.
+    if not project_id and allowed_project_ids is not None:
+        release_key["members"] = member_set_key(allowed_project_ids)
     # Read ONCE, before the query, and reuse for cache_set (VIZ-212).
     epoch = await get_analytics_epoch(project_id)
     cached: dict[str, Any] | None = await cache_get(
@@ -279,9 +360,13 @@ async def get_dashboard_summary(
     prev_period_start = now - timedelta(days=days * 2)
 
     # ── Current period stats ──────────────────────────────
-    cur = await _period_stats(db, project_id, period_start, now, suite_filter, release_filter)
+    cur = await _period_stats(
+        db, project_id, period_start, now, suite_filter, release_filter,
+        allowed_project_ids=allowed_project_ids,
+    )
     prev = await _period_stats(
-        db, project_id, prev_period_start, period_start, suite_filter, release_filter
+        db, project_id, prev_period_start, period_start, suite_filter, release_filter,
+        allowed_project_ids=allowed_project_ids,
     )
 
     def trend(cur_val, prev_val):
@@ -332,6 +417,8 @@ async def get_dashboard_summary(
     ]
     if project_id:
         defect_conditions.append(Defect.project_id == project_id)
+    elif allowed_project_ids is not None:
+        defect_conditions.append(_member_clause(Defect.project_id, allowed_project_ids))
     defect_stmt = select(func.count(Defect.id))
     if suite_filter:
         defect_stmt = (
@@ -344,7 +431,9 @@ async def get_dashboard_summary(
     active_defects = defect_result.scalar() or 0
 
     # Flaky tests (>20% failure rate over last 10 runs)
-    flaky_count = await _count_flaky_tests(db, project_id, suite_filter)
+    flaky_count = await _count_flaky_tests(
+        db, project_id, suite_filter, allowed_project_ids=allowed_project_ids
+    )
 
     # New failures in last 24h.
     #
@@ -383,6 +472,8 @@ async def get_dashboard_summary(
     ]
     if project_id:
         fail_conditions.append(TestRun.project_id == project_id)
+    elif allowed_project_ids is not None:
+        fail_conditions.append(_member_clause(TestRun.project_id, allowed_project_ids))
     if suite_filter:
         fail_conditions.append(_suite_match_clause(suite_filter))
     new_fail_result = await db.execute(
@@ -406,6 +497,8 @@ async def get_dashboard_summary(
     if total_exec <= 0:
         readiness = None
     else:
+        # A policy LOOKUP, not a data read: with no project pinned the system
+        # default policy applies, for an admin and a member alike (STRAT-01).
         resolved = await resolve_readiness_policy(db, project_id)
         policy_doc = resolved.rules if resolved else None
         if policy_doc is not None:
@@ -415,7 +508,7 @@ async def get_dashboard_summary(
             # ``severity == "P0"`` filter matched no rows (defects are stored
             # CRITICAL/HIGH/MEDIUM/LOW), so the cap silently never fired.
             active_p0 = await count_open_critical_defects(
-                db, project_id, release_filter
+                db, project_id, release_filter, allowed_project_ids=allowed_project_ids
             )
             classified = classify_with_policy(
                 pass_rate=pass_rate,
@@ -513,8 +606,14 @@ async def get_trend_data(
     days: int = 7,
     suite_name: SuiteArg = None,
     release_id: ReleaseArg = None,
+    *,
+    allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> list:
-    """Return daily pass/fail/skip breakdown for the trend chart."""
+    """Return daily pass/fail/skip breakdown for the trend chart.
+
+    ``allowed_project_ids``: as ``get_dashboard_summary`` (STRAT-01) -- with
+    no project pinned, ``None`` is the admin read and a set restricts the
+    series to those projects."""
     # The wire contract is UTC calendar-day buckets. A rolling ``now - N days``
     # cutoff can touch N+1 dates (the partial cutoff day plus today), while the
     # clients render exactly N cells and then sum every returned bucket. Start
@@ -542,8 +641,13 @@ async def get_trend_data(
     # analytics -> ROI -> here). It survived the earlier pass because that pass
     # fixed the function the bug was measured in and did not sweep its
     # siblings in the same file.
+    #
+    # STRAT-01: unpinned, the caller's set (``_member_sql``: ``""`` for the
+    # admin read, so that SQL is unchanged) takes the pin's place.
     project_filter = (
-        "AND tr.project_id = :project_id " if project_id else ""
+        "AND tr.project_id = :project_id "
+        if project_id
+        else _member_sql(params, allowed_project_ids)
     ) + "AND tr.project_id IN (SELECT id FROM projects WHERE is_active)"
     # Release scoping (S5-3b), same conditional-fragment shape as the project
     # pin above and as ``analytics_service._add_release_param``: appending
@@ -652,6 +756,8 @@ async def _period_stats(
     end: datetime,
     suite_name: SuiteArg = None,
     release_id: ReleaseArg = None,
+    *,
+    allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> dict:
     conditions = [TestRun.created_at >= start, TestRun.created_at < end]
     # Release scoping (S5-3b). Reads the DENORMALIZED column added in migration
@@ -684,6 +790,9 @@ async def _period_stats(
     )
     if project_id:
         conditions.append(TestRun.project_id == project_id)
+    elif allowed_project_ids is not None:
+        # STRAT-01: a non-admin's All Projects reads only their projects.
+        conditions.append(_member_clause(TestRun.project_id, allowed_project_ids))
     suite_filter = suite_keys(suite_name)
     if suite_filter:
         # 2026-05-15 bug fix: live-stream runs persist their aggregates on
@@ -907,6 +1016,8 @@ async def _count_flaky_tests(
     db: AsyncSession,
     project_id: str | None,
     suite_name: SuiteArg = None,
+    *,
+    allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> int:
     """Count tests that show the flaky pattern over their last
     ``_FLAKY_WINDOW_RUNS`` executions.
@@ -928,12 +1039,14 @@ async def _count_flaky_tests(
     active_filter = (
         "tr.project_id IN (SELECT id FROM projects WHERE is_active)"
     )
-    project_filter = (
-        f"WHERE {active_filter} AND tr.project_id = :project_id"
-        if project_id
-        else f"WHERE {active_filter}"
-    )
     params: dict = {}
+    if project_id:
+        project_filter = f"WHERE {active_filter} AND tr.project_id = :project_id"
+    elif allowed_project_ids is not None:
+        # STRAT-01: a non-admin's All Projects counts only their projects.
+        project_filter = f"WHERE {active_filter} {_member_sql(params, allowed_project_ids)}"
+    else:
+        project_filter = f"WHERE {active_filter}"
     suite_join = "JOIN test_cases tc ON tc.id = tch.test_case_id" if suite_keys(suite_name) else ""
     # ``project_filter`` now always emits a WHERE (the active-project clause is
     # unconditional), so the suite clause is always a conjunct. The old

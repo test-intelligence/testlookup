@@ -58,9 +58,12 @@ def test_the_route_is_cached_and_takes_the_trend_charts_scope():
             assert any(sub.call is get_current_active_user for sub in dep.dependencies)
     assert len(policies) == 1
     policy = policies[0]
-    assert (policy.default_days, policy.max_days, policy.on_denied, policy.project_required) == (
-        14, 90, "empty", False,
-    )
+    # STRAT-01: ``aggregate_unpinned`` -- a non-admin with no project reads
+    # their own projects (W35; it was the empty body before).
+    assert (
+        policy.default_days, policy.max_days, policy.on_denied, policy.project_required,
+        policy.aggregate_unpinned,
+    ) == (14, 90, "empty", False, True)
 
 
 @pytest.mark.asyncio
@@ -83,7 +86,9 @@ async def test_the_body_is_the_contract_computed_from_the_pages_two_reads(monkey
     assert body["meta"] == {"schema_version": 3}
     assert body["executions"]["total"] == 10 and body["pass_rate"] == 90.0
     # The page's own two reads, with the scope's release and suite (D-3).
-    trend.assert_awaited_once_with(db, str(PROJECT), 14, suite_name="checkout", release_id=RELEASE)
+    trend.assert_awaited_once_with(
+        db, str(PROJECT), 14, suite_name="checkout", release_id=RELEASE, allowed_project_ids=None,
+    )
     coverage.assert_awaited_once_with(db, str(PROJECT), 14, "checkout", None, RELEASE)
     # The envelope states the trend chart's UTC-midnight window.
     kwargs = meta.await_args.kwargs
@@ -105,6 +110,49 @@ async def test_a_denied_scope_is_the_empty_unmeasured_body_and_reads_nothing(mon
     assert body["measured"] is False and body["reason"] == "No executions in this window."
     assert body["executions"]["total"] == 0 and body["confidence"]["verdict"] == "PENDING"
     assert body["meta"]["measured"] is False and body["meta"]["scope"]["projects"] == []
+
+
+MINE_A = uuid.UUID("33333333-3333-4333-8333-333333333333")
+MINE_B = uuid.UUID("44444444-4444-4444-8444-444444444444")
+
+
+@pytest.mark.asyncio
+async def test_a_members_unpinned_scope_reaches_both_reads(monkeypatch):
+    """STRAT-01: the member's set, never ``None`` (every project), on BOTH reads."""
+    from app.services import analytics_service, metrics_service
+
+    trend = AsyncMock(return_value=[])
+    coverage = AsyncMock(return_value={"suites": []})
+    monkeypatch.setattr(metrics_service, "get_trend_data", trend)
+    monkeypatch.setattr(analytics_service, "coverage_stats", coverage)
+    monkeypatch.setattr(route_module, "build_meta", AsyncMock(return_value={}))
+    member = frozenset({MINE_A, MINE_B})
+    db = object()
+
+    await route_module.get_trend_summary(scope=_scope(project_id=None, allowed_project_ids=member), db=db)
+
+    trend.assert_awaited_once_with(
+        db, None, 14, suite_name="checkout", release_id=RELEASE, allowed_project_ids=member,
+    )
+    coverage.assert_awaited_once_with(db, None, 14, "checkout", member, RELEASE)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accessible,denied", [({MINE_A, MINE_B}, False), (set(), True)])
+async def test_a_non_admin_without_a_project_reads_their_own_projects(monkeypatch, accessible, denied):
+    """A member of A and B: their set, not denied. No project at all: the empty body."""
+    from app.core import deps
+    from app.services.analytics_scope import resolve_analytics_scope
+
+    monkeypatch.setattr(deps, "get_accessible_project_ids", AsyncMock(return_value=accessible))
+    monkeypatch.setattr(deps, "resolve_release_query_scopes", AsyncMock(return_value=[]))
+    scope = await resolve_analytics_scope(
+        AsyncMock(), SimpleNamespace(id=uuid.uuid4(), role="VIEWER"),
+        policy=route_module.TREND_SUMMARY_POLICY,
+    )
+    assert scope.denied is denied
+    assert scope.project_id is None
+    assert scope.allowed_project_ids == frozenset(accessible)
 
 
 @pytest.mark.asyncio

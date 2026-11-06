@@ -60,7 +60,7 @@ class TestPassRateDeltaPp:
 def _wire_summary(monkeypatch: pytest.MonkeyPatch, *, cur: dict, prev: dict):
     windows = {}
 
-    async def _period_stats(db, project_id, start, end, suite, release_id):
+    async def _period_stats(db, project_id, start, end, suite, release_id, *, allowed_project_ids=None):
         # The current window is read first, then the one before it.
         answer = cur if not windows else prev
         windows[len(windows)] = (start, end)

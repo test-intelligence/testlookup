@@ -37,16 +37,24 @@ def _project_in_scope(project_id: str, accessible: set) -> bool:
 
 #: The dashboard's scope (VIZ-201): ``days`` 1-90, as it always was.
 #:
-#: ``on_denied="empty"``: a non-admin who names no project, or one they are not
-#: a member of, gets the empty payload rather than a 403. The service trusts
-#: the id it is given, so this membership check is the tenant boundary
-#: (review/metrics-service, 2026-06-01) -- it now lives in the shared resolver.
+#: ``on_denied="empty"``: a non-admin who names a project they are not a member
+#: of, or who has no project at all, gets the empty payload rather than a 403.
+#: The service trusts the id it is given, so this membership check is the
+#: tenant boundary (review/metrics-service, 2026-06-01) -- it now lives in the
+#: shared resolver.
+#:
+#: ``aggregate_unpinned`` (STRAT-01 / D28): a non-admin who names NO project
+#: reads All Projects over their OWN projects -- ``scope.allowed_project_ids``
+#: is their membership set and both handlers pass it to every service query
+#: (``None`` there is the unrestricted admin read). An admin is unchanged.
 #:
 #: A malformed ``project_id`` -- the frontend-only ``"all"`` sentinel, ``""``,
 #: ``"undefined"`` -- is a 422 ``project_id_format`` before any query runs. It
 #: used to reach the UUID comparison for an ADMIN, whose accessible set is
 #: ``None`` and skips the membership check, and 500 (found 2026-08-07).
-METRICS_SCOPE = ScopePolicy(default_days=7, max_days=90, on_denied="empty")
+METRICS_SCOPE = ScopePolicy(
+    default_days=7, max_days=90, on_denied="empty", aggregate_unpinned=True,
+)
 
 #: ``/summary`` fields that honour ``suite_name`` but NOT ``release_id``
 #: while the rest of the body honours both. ``meta.ignored_filters`` is per
@@ -90,6 +98,7 @@ async def dashboard_summary(
     return await get_dashboard_summary(
         db, scope.project, scope.window_days,
         suite_name=scope.suite_arg, release_id=scope.release_arg, meta_builder=_meta,
+        allowed_project_ids=scope.allowed_project_ids,
     )
 
 
@@ -111,6 +120,7 @@ async def trend_data(
     data = await get_trend_data(
         db, scope.project, scope.window_days,
         suite_name=scope.suite_arg, release_id=scope.release_arg,
+        allowed_project_ids=scope.allowed_project_ids,
     )
     return {"data": data, "period_days": scope.window_days, "meta": meta}
 

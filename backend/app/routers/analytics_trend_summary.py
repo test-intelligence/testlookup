@@ -10,9 +10,11 @@ decorator (rate limit, statement timeout, project-epoch cache key, ETag, 304
 and the VIZ-201 scope resolver. Registered in ``app.bootstrap`` beside
 ``analytics_coverage_map.router``.
 
-The scope is ``/metrics/trends``' own (``days`` 1-90, ``on_denied="empty"``):
-a project the caller cannot read answers the empty ``measured: false`` body,
-not a 403, exactly as the trend chart beside it does.
+The scope is ``/metrics/trends``' own (``days`` 1-90, ``on_denied="empty"``,
+``aggregate_unpinned``): a project the caller cannot read, or a caller with no
+project at all, answers the empty ``measured: false`` body, not a 403, exactly
+as the trend chart beside it does; a non-admin who names no project reads the
+summary over their OWN projects (STRAT-01 / D28), never every project.
 """
 from __future__ import annotations
 
@@ -30,8 +32,12 @@ from app.services.metrics_service import PASS_RATE_BASIS_EXECUTIONS
 router = APIRouter(prefix="/api/v1/analytics", tags=["Analytics"])
 
 #: ``/metrics/trends``' rule (``routers/metrics.py`` ``METRICS_SCOPE``), with
-#: the Trends page's 14-day default.
-TREND_SUMMARY_POLICY = ScopePolicy(default_days=14, max_days=90, on_denied="empty")
+#: the Trends page's 14-day default. ``aggregate_unpinned`` (STRAT-01): a
+#: non-admin with no project reads their own projects --
+#: ``trend_summary_service`` passes ``scope.allowed_project_ids`` to both reads.
+TREND_SUMMARY_POLICY = ScopePolicy(
+    default_days=14, max_days=90, on_denied="empty", aggregate_unpinned=True,
+)
 
 
 @router.get("/trend-summary")

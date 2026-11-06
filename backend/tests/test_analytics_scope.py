@@ -282,6 +282,33 @@ class TestAuthorize:
             admin = await authorize_scope(object(), object(), ScopeRequest(None, (), (), 7), empty)
         assert not admin.denied and admin.project_id is None
 
+    @pytest.mark.asyncio
+    async def test_aggregate_unpinned_reads_only_the_members_projects(self):
+        """STRAT-01 / D28: with ``aggregate_unpinned`` a non-admin who names no
+        project aggregates over THEIR set (never None, the unrestricted admin
+        read); a foreign project and a caller with no project stay the empty
+        payload; a pinned own project and the admin are unchanged."""
+        agg = ScopePolicy(default_days=7, max_days=90, on_denied="empty", aggregate_unpinned=True)
+        a, b = uuid.uuid4(), uuid.uuid4()
+        releases = AsyncMock(return_value=[])
+        with patch("app.core.deps.get_accessible_project_ids", AsyncMock(return_value={a, b})), \
+             patch("app.core.deps.resolve_release_query_scopes", releases):
+            unpinned = await authorize_scope(object(), object(), ScopeRequest(None, (), (), 7), agg)
+            foreign = await authorize_scope(object(), object(), ScopeRequest(uuid.uuid4(), (), (), 7), agg)
+            own = await authorize_scope(object(), object(), ScopeRequest(a, (), (), 7), agg)
+        assert not unpinned.denied and unpinned.project_id is None
+        assert unpinned.allowed_project_ids == frozenset({a, b})
+        assert foreign.denied
+        assert not own.denied and own.project_id == a and own.allowed_project_ids is None
+        with patch("app.core.deps.get_accessible_project_ids", AsyncMock(return_value=set())), \
+             patch("app.core.deps.resolve_release_query_scopes", releases):
+            nothing = await authorize_scope(object(), object(), ScopeRequest(None, (), (), 7), agg)
+        assert nothing.denied
+        with patch("app.core.deps.get_accessible_project_ids", AsyncMock(return_value=None)), \
+             patch("app.core.deps.resolve_release_query_scopes", releases):
+            admin = await authorize_scope(object(), object(), ScopeRequest(None, (), (), 7), agg)
+        assert not admin.denied and admin.project_id is None and admin.allowed_project_ids is None
+
 
 def scope_mod_any():
     class _Any:
