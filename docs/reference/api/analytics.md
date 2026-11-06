@@ -4436,7 +4436,7 @@ The trend verdict (``HEALTHY`` / ``MIXED`` / ``INSUFFICIENT`` /
 weighted dimensions, the variance of the daily pass rate, and the longest
 run of days without executions in the window. ``null`` = not measured.
 
-Source: [backend/app/routers/analytics_trend_summary.py:37](../../../backend/app/routers/analytics_trend_summary.py#L37).
+Source: [backend/app/routers/analytics_trend_summary.py:43](../../../backend/app/routers/analytics_trend_summary.py#L43).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

@@ -31,7 +31,7 @@ zero that would read as instant detection.
 ``project_id`` is REQUIRED: detection latency is a claim about one
 project's own history, so a fleet average would be meaningless.
 
-Source: [backend/app/routers/metrics.py:198](../../../backend/app/routers/metrics.py#L198).
+Source: [backend/app/routers/metrics.py:208](../../../backend/app/routers/metrics.py#L208).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -154,7 +154,7 @@ contract as ``/metrics/tia-readiness``.
 ``project_id`` is REQUIRED: corpus depth is a claim about one project's own
 history, so a fleet average would be meaningless.
 
-Source: [backend/app/routers/metrics.py:155](../../../backend/app/routers/metrics.py#L155).
+Source: [backend/app/routers/metrics.py:165](../../../backend/app/routers/metrics.py#L165).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -269,7 +269,7 @@ Field-level exception: ``active_defects``, ``flaky_test_count`` and
 are project-wide inputs of the readiness verdict's hard caps
 (``DASHBOARD_RELEASE_UNSCOPED``). Every other figure honours both.
 
-Source: [backend/app/routers/metrics.py:64](../../../backend/app/routers/metrics.py#L64).
+Source: [backend/app/routers/metrics.py:72](../../../backend/app/routers/metrics.py#L72).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -408,7 +408,7 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
 await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS)
-await get_dashboard_summary(db, scope.project, scope.window_days, suite_name=scope.suite_arg, release_id=scope.release_arg, meta_builder=_meta)
+await get_dashboard_summary(db, scope.project, scope.window_days, suite_name=scope.suite_arg, release_id=scope.release_arg, meta_builder=_meta, allowed_project_ids=scope.allowed_project_ids)
 {'meta': await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_EXECUTIONS)}
 ```
 
@@ -430,7 +430,7 @@ the same honesty contract as the value-metrics headline gate.
 ``project_id`` is REQUIRED: readiness is a claim about one project's own
 change/failure history, so there is no meaningful all-projects rollup.
 
-Source: [backend/app/routers/metrics.py:118](../../../backend/app/routers/metrics.py#L118).
+Source: [backend/app/routers/metrics.py:128](../../../backend/app/routers/metrics.py#L128).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -537,7 +537,7 @@ Trend Data
 
 Return daily pass/fail/skip breakdown for trend charts.
 
-Source: [backend/app/routers/metrics.py:96](../../../backend/app/routers/metrics.py#L96).
+Source: [backend/app/routers/metrics.py:105](../../../backend/app/routers/metrics.py#L105).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
