@@ -267,6 +267,37 @@ def _intended_value_changes(expected: dict) -> int:
     return changed
 
 
+#: STRAT-01 / D28 (W35): value metrics answered a member who names no project with the empty
+#: payload; they now aggregate over the member's OWN projects -- in this world P1 alone, so every
+#: counter is the pinned P1 answer -- with no project id and the "select a project" hours-saved model
+#: an unpinned read always gets (it never computes or caches a model). The golden stays as captured;
+#: the change is stated here. Foreign rows never counting is proven over in-window foreign data by
+#: ``test_value_metrics_member_scope_postgres.py``.
+_STRAT01_VALUE_KEY = "value_metrics/member_all_projects"
+_VALUE_MODEL_KEYS = frozenset({
+    "available", "insufficient_data_reason", "headline", "monthly",
+    "assumptions", "assumptions_source", "methodology_version",
+})
+
+
+def _strat01_value_change(expected: dict) -> None:
+    assert expected[_STRAT01_VALUE_KEY] == {"status": 200, "body": {}}, "the golden predates STRAT-01"
+    pinned = expected["value_metrics/none"]["body"]
+    body = {k: v for k, v in pinned.items() if k not in _VALUE_MODEL_KEYS}
+    body.update(
+        project_id=None,
+        available=False,
+        insufficient_data_reason="select a project to compute the hours-saved model",
+        headline={"hours_saved": 0.0, "fte_equivalent": 0.0, "window_days": 30,
+                  "hours_saved_30d": 0.0, "fte_equivalent_30d": 0.0},
+        monthly=[],
+        assumptions=pinned["assumptions"],
+        assumptions_source="default",
+        methodology_version=pinned["methodology_version"],
+    )
+    expected[_STRAT01_VALUE_KEY] = {"status": 200, "body": body}
+
+
 #: Keys the defects list gained after the golden was captured, set aside before the comparison.
 #: 2026-10-08: each defect's own title, severity and component. W06 (2026-10-15): its project,
 #: the server-derived priority, the owner (team + where it came from), the assignee, the
@@ -320,6 +351,7 @@ async def test_unfiltered_parity_routes_match_the_pre_viz202_golden(world, extra
         pytest.skip(f"golden written: {PARITY_GOLDEN}")
     expected = json.loads(PARITY_GOLDEN.read_text(encoding="utf-8"))
     _intended_value_changes(expected)
+    _strat01_value_change(expected)
     _without_defect_fields(actual)
     # Not vacuous: the golden has the case -- a suite every result of which skipped.
     assert any(

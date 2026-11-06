@@ -2,8 +2,13 @@
 
 A project the caller cannot read used to answer 200 with a one-key
 ``{"report_type": "value_metrics"}`` stub, saved to disk as if it were the
-report. It is a 403 now (``resolve_project_scope``), and so is a non-admin's
-unpinned export: that is the every-project aggregate, which spans tenants.
+report. It is a 403 now (``resolve_project_scope``).
+
+STRAT-01 (W35): a non-admin's unpinned export used to be refused too, because
+it was the every-project aggregate. The service now applies the caller's set,
+so it is the aggregate over THEIR projects -- the foreign project is never in
+the set handed to the service. A caller with no project at all is still
+refused (nothing to aggregate).
 
 The handler is called directly with every argument spelled out (a
 ``Query(None)`` default is not ``None`` outside FastAPI).
@@ -24,6 +29,7 @@ from app.routers import value_metrics as router
 pytestmark = pytest.mark.asyncio
 
 OWN = uuid.uuid4()
+OTHER_OWN = uuid.uuid4()
 FOREIGN = uuid.uuid4()
 
 
@@ -52,8 +58,24 @@ async def test_a_foreign_project_is_a_403_not_a_stub(monkeypatch, metrics):
     metrics.assert_not_awaited()
 
 
-async def test_a_non_admin_without_a_project_is_refused_the_cross_tenant_aggregate(monkeypatch, metrics):
-    _member_of(monkeypatch, {OWN})
+async def test_a_non_admin_without_a_project_exports_only_their_own_projects(monkeypatch, metrics):
+    """STRAT-01: was a 403 (the unpinned export spanned every tenant). Now the
+    service gets the member's set -- never None, the unrestricted admin read --
+    and the foreign project is not in it."""
+    _member_of(monkeypatch, {OWN, OTHER_OWN})
+    db = MagicMock()
+
+    response = await router.export_metrics(project_id=None, days=30, db=db, current_user=_user())
+
+    metrics.assert_awaited_once_with(
+        db, project_id=None, days=30, allowed_project_ids=frozenset({OWN, OTHER_OWN}),
+    )
+    assert FOREIGN not in metrics.await_args.kwargs["allowed_project_ids"]
+    assert json.loads(response.body)["report_type"] == "value_metrics"
+
+
+async def test_a_caller_with_no_project_at_all_is_still_refused(monkeypatch, metrics):
+    _member_of(monkeypatch, set())
 
     with pytest.raises(HTTPException) as exc:
         await router.export_metrics(project_id=None, days=30, db=MagicMock(), current_user=_user())
@@ -79,7 +101,7 @@ async def test_a_member_gets_the_windowed_report_as_an_attachment(monkeypatch, m
 
     response = await router.export_metrics(project_id=str(OWN), days=90, db=db, current_user=_user())
 
-    metrics.assert_awaited_once_with(db, project_id=OWN, days=90)
+    metrics.assert_awaited_once_with(db, project_id=OWN, days=90, allowed_project_ids=None)
     body = json.loads(response.body)
     assert body["report_type"] == "value_metrics"
     assert body["defects_auto_grouped"] == 3
@@ -92,5 +114,5 @@ async def test_an_admin_may_export_every_project(monkeypatch, metrics):
 
     response = await router.export_metrics(project_id=None, days=30, db=db, current_user=_user())
 
-    metrics.assert_awaited_once_with(db, project_id=None, days=30)
+    metrics.assert_awaited_once_with(db, project_id=None, days=30, allowed_project_ids=None)
     assert json.loads(response.body)["report_type"] == "value_metrics"

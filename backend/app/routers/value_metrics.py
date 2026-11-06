@@ -16,9 +16,15 @@ from app.services.value_metrics_service import get_methodology, get_value_metric
 router = APIRouter(prefix="/api/v1/value-metrics", tags=["Value Metrics"])
 
 
-#: VIZ-201/202: the shared scope. A non-admin who names no project, or one
-#: they cannot read, gets the historical empty payload (``on_denied="empty"``).
-_VALUE_SCOPE = ScopePolicy(default_days=30, max_days=365, on_denied="empty")
+#: VIZ-201/202: the shared scope. STRAT-01 (D28): a non-admin who names no
+#: project reads the aggregate over THEIR projects (``aggregate_unpinned``;
+#: the service applies ``allowed_project_ids`` to every count). A project they
+#: cannot read, or a caller with no project at all, still gets the historical
+#: empty payload (``on_denied="empty"``) -- never a 403, which would confirm
+#: the project exists. An admin who names none reads every project.
+_VALUE_SCOPE = ScopePolicy(
+    default_days=30, max_days=365, on_denied="empty", aggregate_unpinned=True,
+)
 
 #: Why value metrics do not take release or suite (VIZ-202). Stated in
 #: ``meta.ignored_filters`` whenever either is sent -- never dropped silently.
@@ -44,9 +50,10 @@ async def get_metrics(
     scope: AnalyticsScope = Depends(analytics_scope(_VALUE_SCOPE)),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return operational value metrics for a project (or all) over a time
-    window, including the US-12.1 engineer-hours-saved model (``months``
-    bounds the monthly trend).
+    """Return operational value metrics for a project (or all the caller's
+    projects) over a time window, including the US-12.1 engineer-hours-saved
+    model (``months`` bounds the monthly trend; unpinned, the model is the
+    "select a project" one, for an admin and a member alike).
 
     ``release_id`` / ``suite_name`` are accepted, authorised and declared in
     ``meta.ignored_filters`` with the reason: these are time-based counts
@@ -63,12 +70,17 @@ async def get_metrics(
         db, scope, ignored_filters=declared, measured=None if scope.denied else True,
     )
     if scope.denied:
-        # Non-admin: the provided project_id is verified by the scope --
-        # otherwise a caller could read any tenant's value metrics via
-        # ?project_id=<foreign-uuid>. The historical empty payload.
+        # Non-admin naming a project outside their set (verified by the scope
+        # -- otherwise ?project_id=<foreign-uuid> would read any tenant's value
+        # metrics), or a caller with no project at all: the historical empty
+        # payload. A member who names none is NOT denied: they get their own
+        # projects' aggregate below.
         return {"meta": meta}
     payload = await get_value_metrics(
         db, project_id=scope.project_id, days=scope.window_days, months=months,
+        # STRAT-01: the member's set when unpinned; None when pinned or for an
+        # admin (the scope never hands a non-admin None without a project).
+        allowed_project_ids=scope.allowed_project_ids,
     )
     return with_meta(payload, meta)
 
@@ -164,19 +176,27 @@ async def export_metrics(
     HON-04: the scope is ``resolve_project_scope``'s, as on ``/by-team``. A
     project the caller cannot read is a 403. It used to be a 200 carrying a
     one-key ``{"report_type": "value_metrics"}`` stub, which the browser saved
-    as if it were the report. A non-admin who names no project is refused
-    too: the unpinned export is the every-project aggregate, which spans
-    tenants, so only an admin may take it.
+    as if it were the report.
+
+    STRAT-01: a non-admin who names no project exports the aggregate over
+    THEIR projects -- the same numbers ``GET /value-metrics`` shows them --
+    because the service applies their set to every count (an earlier
+    revision refused them, when the unpinned export spanned every tenant). A
+    caller with no project at all is still refused: there is nothing to
+    aggregate. An admin who names none exports every project.
     """
     from app.core.deps import resolve_project_scope
     pid, allowed = await resolve_project_scope(db, current_user, project_id)
-    if allowed is not None:
+    if allowed is not None and not allowed:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Select a project to export its value metrics",
         )
     import json
-    metrics = await get_value_metrics(db, project_id=pid, days=days)
+    metrics = await get_value_metrics(
+        db, project_id=pid, days=days,
+        allowed_project_ids=frozenset(allowed) if allowed is not None else None,
+    )
     content = json.dumps({"report_type": "value_metrics", **metrics}, indent=2, default=str)
     return Response(
         content=content,
