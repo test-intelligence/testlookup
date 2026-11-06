@@ -105,6 +105,14 @@ describe('CaseEditForm', () => {
     expect(within(form).queryByLabelText(/^Status/)).toBeNull()
   })
 
+  it('reuses the owner list the page already holds: no re-read of the cached members key when Edit opens late', async () => {
+    const { useProjectMembers } = vi.mocked(await import('@/hooks/useUserManagement'))
+    setup(managedCase())
+    // W34: the second members GET in test-case-edit.spec on a slow CI runner (the form opened after SWR's 2 s
+    // dedup window); the same option as BulkActionBar (W32).
+    expect(useProjectMembers).toHaveBeenLastCalledWith('p-1', { revalidateIfStale: false })
+  })
+
   it('adds, moves and removes steps, numbered by position', () => {
     const { form } = setup()
     fireEvent.click(within(form).getByRole('button', { name: 'Add step' }))

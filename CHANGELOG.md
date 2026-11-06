@@ -1716,6 +1716,13 @@ locally by default.
 
 ### Fixed
 
+- **Opening a test case's Edit form no longer re-reads the project members**
+  (found by W34's CI). The page already holds the list, read for the Owner
+  filter. When Edit opened more than two seconds later, SWR fetched it again,
+  so the members were read twice. The form now reuses the cached list, as the
+  bulk bar does since W32; with nothing cached it still fetches. Tests:
+  `CaseEditForm.test.tsx` and `ci-e2e/test-case-edit.spec.ts`. A 3 s pause
+  before Edit fails without the fix and passes with it.
 - **The Celery worker and beat log through the redacting pipeline** (found
   by W32). Only the API configured logging, so worker and beat lines skipped
   the e-mail, secret and connection-string masking and ignored
