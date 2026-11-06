@@ -7,9 +7,10 @@ Beat schedule (auto-configured in celery_app.py):
 
 Manual triggers available via POST /api/v1/training/export and /finetune.
 
-AIC-01: the fine-tuning tasks obey the Settings > AI "Fine-Tuning Pipeline"
-checkbox (``finetune_enabled``, stored over env ``FINETUNE_ENABLED`` in both
-directions), not the environment alone. ``export_training_data`` itself stays
+AIC-01: the fine-tuning tasks obey the stored ``finetune_enabled`` setting
+(over env ``FINETUNE_ENABLED`` in both directions), not the environment alone.
+Since W34 (STRAT-10 / D37) no page shows it: an operator sets it with
+``PUT /api/v1/settings/ai`` (docs/operations/fine-tuning.md). ``export_training_data`` itself stays
 ungated: it is the operator path that collects verified examples, and it only
 QUEUES fine-tuning through ``_maybe_trigger_finetune``, which is gated.
 """
@@ -102,7 +103,7 @@ def run_finetune_pipeline(self, track: str):
     """
     if not _run_async(_finetune_enabled()):
         logger.info(
-            "[Task %s] fine-tuning is off (Settings > AI / FINETUNE_ENABLED) — skipping track=%s",
+            "[Task %s] fine-tuning is off (finetune_enabled / FINETUNE_ENABLED) — skipping track=%s",
             self.request.id, track,
         )
         return {"skipped": True, "reason": "finetune_disabled"}
