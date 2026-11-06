@@ -27,9 +27,10 @@ Install from the repository root with `pip install ./cli` (Python 3.11 or newer)
 | `auth` | `login`, `logout`, `whoami` | Log in with username and password and save a profile; clear its tokens; show the active profile |
 | `doctor` | (run as `testlookup doctor`) | One verdict on profile, server reachability and build, and credentials; usable as a CI preflight |
 | `health` | (run as `testlookup health`) | Server readiness (`GET /health/ready`) with per-dependency detail |
-| `projects` | `list`, `get` | List and inspect projects |
-| `runs` | `list`, `get` | List runs (filter by project and status) and inspect one |
+| `projects` | `list`, `get`, `export`, `import` | List and inspect projects; export a project's settings and test catalog as a signed ZIP, import one as a new project |
+| `runs` | `list`, `get`, `timing` | List runs (filter by project and status) and inspect one; how long a run took and where the time went |
 | `tests` | `list <run-id>`, `get <run-id> <test-id>` | A run's test cases; one test case, with `--show-steps` for its step tree |
+| `cases` | `list`, `get <id>`, `history <id>`, `export -o <file.xlsx>` | A project's authored test cases from Test Management, read-only: the list with its filters (`--project` required), one case with its steps (a `TC-` short id works with `--project`), its saved versions, the Excel export. See [Test management](test-management.md) |
 | `search` | (run as `testlookup search "<query>"`) | Global search across tests, runs, suites, defects and more |
 | `intelligence` | `show`, `refresh`, `history` | Run-intelligence summary, including the release recommendation; force a refresh; `history` is `ai-history` |
 | `ai-history` | (top-level command) | The stored versions of a run's AI analysis, and with `--diff 1..latest` what changed between two of them |
@@ -37,11 +38,16 @@ Install from the repository root with `pip install ./cli` (Python 3.11 or newer)
 | `deep` | `start`, `status`, `clusters`, `findings` | Deep-investigation workflow for a run |
 | `reports` | `pdf`, `share` | Download a run's PDF report; create a time-limited share link |
 | `reviews` | `list`, `accept`, `reject` | Human review of AI-generated reports (accept and reject need a login, not an API key) |
-| `analytics` | `trends`, `chart` | The chart data the report pages draw: a metric over time, optionally one line per suite or release, or any metric by one or two dimensions, as a table, CSV or JSON |
+| `analytics` | `trends`, `chart`, `execution` | The chart data the report pages draw: a metric over time, optionally one line per suite or release, or any metric by one or two dimensions, as a table, CSV or JSON; a project's execution time per suite and its duration regressions |
 | `keys` | `create`, `list`, `revoke` | Manage your API keys |
 | `upload` | `file <path>`, `dir <directory>` | Upload one report, or every `.xml`, `.json` and `.trx` file in a folder |
 | `ci-verdict` | (top-level command) | Quarantine-aware CI gate |
-| `compliance-pack` | `verify <pack.zip>` | Verify a downloaded compliance pack offline: every file against its manifest and, with `--public-key`, its Ed25519 signature |
+| `compliance-pack` | `verify <pack.zip>`, `list`, `generate`, `download` | Verify a downloaded compliance pack offline: every file against its manifest and, with `--public-key`, its Ed25519 signature; list, build (QA lead) and download a release's packs |
+| `release` | `gate <release>`, `list` | A release's gate verdict as a CI exit code; releases with their standing verdict |
+| `quarantine` | `list`, `approve`, `reject`, `release` | The flaky-test quarantine queue (approve, reject and release are QA lead) |
+| `defects` | `jira preview`, `jira create` | Preview or file a failure signature as a Jira issue |
+| `investigations` | `start <run-id>`, `list`, `show <id>` | Deep investigations: start one for a run, a project's list, one investigation's cause and confidence |
+| `activity` | `list`, `show`, `types`, `export` | A project's activity ledger, newest first; one event's before/after diff; the event vocabulary; CSV / NDJSON export (QA lead) |
 
 Upload syntax: `testlookup upload file results.xml --project <project-uuid> --build <build-id>`. `--project` is the project's UUID; `--format` defaults to `auto` (detected from the content) and accepts `junit`, `testng`, `allure`, `cypress`, `playwright`, `pytest`, `robot`, `cucumber`, `nunit`, `trx` and `xunit`. Add `--wait` to wait for ingestion and fail the step when the server refuses the report.
 
@@ -101,7 +107,7 @@ The CLI honours the options and environment variables only.
 
 ## The MCP server
 
-The `mcp/` directory runs a Model Context Protocol server exposing **74 tools**, **11 resources** and **7 prompts** over your TestLookup data, so an AI assistant can query runs, failures, flakiness, release readiness, compliance packs and more, with the same role and project checks as the API.
+The `mcp/` directory runs a Model Context Protocol server exposing **80 tools**, **11 resources** and **7 prompts** over your TestLookup data, so an AI assistant can query runs, failures, flakiness, release readiness, compliance packs and more, with the same role and project checks as the API.
 
 ```bash
 pip install -r mcp/requirements.txt
@@ -111,7 +117,9 @@ python mcp/server.py --transport sse    # SSE on port 8002: for networked agent 
 
 Authentication: on stdio the server logs in as `TESTLOOKUP_USERNAME` / `TESTLOOKUP_PASSWORD` and holds the JWT; on SSE every request must carry the client's own `Authorization: Bearer <access token>`, validated against the API on each request. API keys are not accepted. `TESTLOOKUP_API_URL` (default `http://localhost:8000`) points it at the API.
 
-Tool coverage mirrors the app's domains, one module each under `mcp/tools/`: `agents`, `analysis`, `analytics`, `assignments`, `auth`, `billing`, `compliance_pack`, `decision_trail`, `deep`, `defects`, `feedback`, `governance`, `intelligence`, `investigations`, `metrics`, `notifications`, `projects`, `quarantine`, `release`, `reports`, `reviews`, `runs` (including `get_test_step_flips` for step-level flakiness) and `search`. `health_check` reports the API's per-dependency health.
+Tool coverage mirrors the app's domains, one module each under `mcp/tools/`: `activity`, `agent_actions`, `agents`, `analysis`, `analytics`, `assignments`, `auth`, `billing`, `compliance_pack`, `decision_trail`, `deep`, `defects`, `feedback`, `governance`, `intelligence`, `investigations`, `metrics`, `notifications`, `projects`, `quarantine`, `release`, `reports`, `reviews`, `runs` (including `get_test_step_flips` for step-level flakiness), `search` and `test_management`. `health_check` reports the API's per-dependency health.
+
+For test management, `list_managed_test_cases` lists a project's authored test cases, newest first, with the list's filters (status, type, priority, suite, search, owner, automation, requirement, archived) and paging, and `get_managed_test_case` returns one case with its steps and, with `include_history=true`, its saved versions. Both are read-only. They are not `list_test_cases` / `get_test_case`, which read one run's executed results. There is no export tool: use `testlookup cases export` for the Excel workbook.
 
 For AI history, `get_ai_history` lists a run's stored AI versions, `diff_ai_versions` shows what changed between two of them, and `compare_ai_with_previous` answers "what changed in the AI analysis since the previous checkout run?": the verdict, new and resolved root causes, tests whose category changed, and `verdict_regressed`. Each returns compact markdown beside the REST body; the summary says `deterministic summary` when no LLM wrote it, and a side that was never analysed is reported as not compared, not as "no change".
 

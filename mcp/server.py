@@ -34,6 +34,8 @@ Tool Domains:
   - Fix-outcome learning loop (record merged/reverted fix outcomes)
   # Architecture E8.4 — human review gate
   - Review queue (list AI reports awaiting review; read-only, no accept/reject)
+  # W34 STRAT-11
+  - Test management (authored test cases: list, get with steps + history; read-only)
 
 Transport: stdio (default) or SSE
 Auth:      stdio uses configured credentials; SSE requires each caller's bearer token
@@ -86,6 +88,7 @@ from tools import reviews
 from tools import agent_actions
 from tools import agents
 from tools import activity
+from tools import test_management
 from resources import registry
 from prompts import templates
 
@@ -164,7 +167,12 @@ mcp = FastMCP(
         "exactly as the REST API and the UI's charts draw it, `meta` included. Unlike "
         "the other analytics tools it takes `release_id` and `suite_name`, so use it "
         "for any release- or suite-scoped number; for a long window group by `week` or "
-        "pass `top_n`."
+        "pass `top_n`.\n\n"
+        "Test management (W34, read-only): `list_managed_test_cases` lists a project's "
+        "authored test cases (status, type, priority, suite, owner, automation and "
+        "requirement filters; paged) and `get_managed_test_case` returns one with its "
+        "steps and, on request, its version history. `list_test_cases` is different: "
+        "it reads one run's executed results."
     ),
 )
 
@@ -212,6 +220,7 @@ reviews.register(mcp)          # E8.4 review queue (read-only)
 agent_actions.register(mcp)    # W15 agent-action queue (read-only)
 agents.register(mcp)           # E1.5 agent catalog + single-agent invocations
 activity.register(mcp)         # W18 DEV-04 project activity ledger (read-only)
+test_management.register(mcp)  # W34 STRAT-11 authored test cases (read-only)
 
 # ── Register Resources ────────────────────────────────────────────────────────
 registry.register(mcp)
