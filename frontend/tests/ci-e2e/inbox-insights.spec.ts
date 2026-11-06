@@ -7,7 +7,9 @@
  *    the server's `total`;
  *  - `Show dismissed (1)` re-reads with `include_dismissed=true` and shows the dismissed row with
  *    `Dismissed by Alice Lead`;
- *  - All Projects (an ADMIN's view): the project prompt, and no insights request;
+ *  - All Projects (as the admin: the world lists one project, which any other role is moved onto; `TopBar.tsx`
+ *    offers All Projects to an admin and to a member of two or more projects, W35): the project prompt, and no
+ *    insights request;
  *  - nothing scrolls sideways at 1280.
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). World: `fixtures-insights-cadence.ts`

@@ -198,10 +198,17 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
     refreshProjects().catch(() => {})
   }, [refreshProjects])
 
-  // Non-admin users cannot use "All Projects" — select the first project once
-  // the list is there.
+  // W35 STRAT-01: "All Projects" is offered to an admin (every project) and to
+  // a member of two or more projects (the backend aggregates over only their
+  // projects). The list is the caller's active memberships (GET /projects).
+  const offersAllProjects = isAdmin || projects.length > 1
+
+  // A non-admin with exactly ONE project has nothing to aggregate: move them
+  // off "All Projects" to that project once the list is there, including a
+  // persisted "All Projects" after their memberships dropped to one. Zero
+  // projects: nothing to select. Two or more: their selection stays.
   useEffect(() => {
-    if (isAdmin || projects.length === 0) return
+    if (isAdmin || projects.length !== 1) return
     if (activeProjectId === ALL_PROJECTS_ID || activeProjectId === null) {
       setActiveProject(projects[0])
     }
@@ -331,7 +338,7 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
         }}
       >
         <option value="">— Select project —</option>
-        {isAdmin && <option value={ALL_PROJECTS_ID}>All Projects</option>}
+        {offersAllProjects && <option value={ALL_PROJECTS_ID}>All Projects</option>}
         {projects.map(p => (
           <option key={p.id} value={p.id}>{p.name}</option>
         ))}

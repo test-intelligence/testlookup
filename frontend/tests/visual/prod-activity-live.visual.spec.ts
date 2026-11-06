@@ -7,7 +7,8 @@
  *    on top (the world answers every reconnect the same way, so the status stays live while it is shot);
  *  - `activity-live-unavailable` — the same page when the stream answers 503: the filter row and, under it, "Live
  *    updates are unavailable right now; the feed still refreshes every 30 seconds.";
- *  - `inbox-activity` — Inbox › Activity in All Projects (an admin's: the top bar pins anyone else to a project):
+ *  - `inbox-activity` — Inbox › Activity in All Projects (shot as an admin; since W35 a member of two or more projects
+ *    gets All Projects too, over their own projects, and a one-project member is pinned to that project):
  *    the toolbar (window, Show chips, the count line) and one row of each involvement with its chip and project.
  *
  * /activity sits in the settings column (732 px at 1280), so the regions are the page's own root (header + filter

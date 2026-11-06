@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import TopBar from './TopBar'
 
 const mocked = vi.hoisted(() => {
@@ -566,7 +566,9 @@ describe('TopBar', () => {
       mocked.projectStoreState.projects = original
     })
 
-    it('a non-admin on "All projects" gets the first project selected once the list arrives', () => {
+    // W35 STRAT-01: only a non-admin with exactly ONE project is moved off
+    // "All projects" (the list arriving here has one project).
+    it('a one-project non-admin on "All projects" gets that project selected once the list arrives', () => {
       mocked.authState.user.role = 'QA_LEAD'
       mocked.projectStoreState.activeProjectId = 'all'
       mocked.projectStoreState.projects = []
@@ -597,6 +599,106 @@ describe('TopBar', () => {
       rerender(shell())
 
       expect(mocked.projectStoreState.refreshProjects).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  // W35 STRAT-01: "All Projects" is offered to an admin and to a member of two
+  // or more projects (the backend counts only their projects); the auto-select
+  // stays only for a non-admin with exactly one project.
+  describe('All Projects for multi-project members (W35 STRAT-01)', () => {
+    const original = mocked.projectStoreState.projects
+    const ONE = [{ id: 'p1', name: 'Core UI' }]
+    const TWO = [
+      { id: 'p1', name: 'Core UI' },
+      { id: 'p2', name: 'Payments' },
+    ]
+    const shell = () => (
+      <MemoryRouter>
+        <TopBar />
+      </MemoryRouter>
+    )
+    const allOption = () => screen.queryByRole('option', { name: 'All Projects' })
+    const picker = () => screen.getByRole('combobox', { name: /select project/i })
+
+    afterEach(() => {
+      mocked.projectStoreState.projects = original
+    })
+
+    it('a one-project non-admin has no All Projects option and stays on their project', () => {
+      mocked.authState.user.role = 'TESTER'
+      mocked.projectStoreState.projects = ONE
+      mocked.projectStoreState.activeProjectId = 'p1'
+      mocked.projectStoreState.activeProject = ONE[0]
+      render(shell())
+
+      expect(allOption()).toBeNull()
+      expect(picker()).toHaveValue('p1')
+      expect(mocked.setActiveProject).not.toHaveBeenCalled()
+      expect(mocked.setAllProjects).not.toHaveBeenCalled()
+    })
+
+    it('a two-project non-admin is offered All Projects and it stays selected (no auto-select)', () => {
+      mocked.authState.user.role = 'QA_LEAD'
+      mocked.projectStoreState.projects = TWO
+      mocked.projectStoreState.activeProjectId = 'all'
+      render(shell())
+
+      expect(allOption()).toBeInTheDocument()
+      expect(picker()).toHaveValue('all')
+      expect(mocked.setActiveProject).not.toHaveBeenCalled()
+    })
+
+    it('a two-project non-admin keeps a picked project and can switch to All Projects', () => {
+      mocked.authState.user.role = 'QA_LEAD'
+      mocked.projectStoreState.projects = TWO
+      mocked.projectStoreState.activeProjectId = 'p2'
+      mocked.projectStoreState.activeProject = TWO[1]
+      render(shell())
+
+      expect(picker()).toHaveValue('p2')
+      expect(mocked.setActiveProject).not.toHaveBeenCalled()
+
+      fireEvent.change(picker(), { target: { value: 'all' } })
+      expect(mocked.setAllProjects).toHaveBeenCalledTimes(1)
+      expect(mocked.setActiveProject).not.toHaveBeenCalled()
+    })
+
+    it('a two-project non-admin whose memberships drop to one, with All Projects persisted, moves to that project', () => {
+      mocked.authState.user.role = 'QA_LEAD'
+      mocked.projectStoreState.projects = TWO
+      mocked.projectStoreState.activeProjectId = 'all'
+      const { rerender } = render(shell())
+      expect(allOption()).toBeInTheDocument()
+      expect(mocked.setActiveProject).not.toHaveBeenCalled()
+
+      mocked.projectStoreState.projects = [TWO[1]]
+      rerender(shell())
+
+      expect(mocked.setActiveProject).toHaveBeenCalledTimes(1)
+      expect(mocked.setActiveProject).toHaveBeenCalledWith({ id: 'p2', name: 'Payments' })
+      expect(allOption()).toBeNull()
+    })
+
+    it('zero projects (unchanged): a non-admin gets no option and nothing is selected for them', () => {
+      mocked.authState.user.role = 'TESTER'
+      mocked.projectStoreState.projects = []
+      mocked.projectStoreState.activeProjectId = 'all'
+      render(shell())
+
+      expect(allOption()).toBeNull()
+      expect(mocked.setActiveProject).not.toHaveBeenCalled()
+    })
+
+    it('an admin (unchanged) is offered All Projects with zero, one or two projects, never auto-selected', () => {
+      mocked.projectStoreState.activeProjectId = 'all'
+      for (const list of [[], ONE, TWO]) {
+        mocked.projectStoreState.projects = list
+        const { unmount } = render(shell())
+        expect(allOption()).toBeInTheDocument()
+        expect(picker()).toHaveValue('all')
+        unmount()
+      }
+      expect(mocked.setActiveProject).not.toHaveBeenCalled()
     })
   })
 })

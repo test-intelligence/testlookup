@@ -39,8 +39,9 @@ const mineQueries = (api: Parameters<typeof requestsTo>[0]) =>
   requestsTo(api, MINE).map((line) => new URL(line.slice(line.indexOf(' ') + 1), 'http://inbox.test').searchParams)
 
 /**
- * All Projects is an ADMIN's: the top bar pins anyone else to their first project (`TopBar.tsx`), so the
- * All-Projects cases sign in as the fixture admin (`openRollout` always pins the fixture project).
+ * All Projects is offered to an admin and to a member of two or more projects (`TopBar.tsx`, W35). The All-Projects
+ * cases sign in as the fixture admin, as they did before W35 (`openRollout` always pins the fixture project);
+ * `all-projects-member.spec.ts` covers a QA lead in two projects.
  */
 function openAllProjects(page: Page, handlers: ApiHandlers) {
   return openProductionPage(page, '/my-failures?tab=activity', {

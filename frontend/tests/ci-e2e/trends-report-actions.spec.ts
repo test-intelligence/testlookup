@@ -142,7 +142,8 @@ test('a viewer: Export PDF and Compare runs, no Email report', async ({ page }) 
 
 test('All Projects (an admin): the report and Compare runs ask for a project', async ({ page }) => {
   const world = trendsReportWorld()
-  // All Projects is an ADMIN's view (every other role is moved onto its first project).
+  // All Projects is offered to an admin and to a member of two or more projects (TopBar.tsx, W35); this
+  // world lists one project, which any other role is moved onto, so the case signs in as the admin.
   const { api, errors } = await openProductionPage(page, '/trends', {
     theme: 'signal',
     now: NOW,
