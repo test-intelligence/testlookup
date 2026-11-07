@@ -17,7 +17,7 @@ read); the QUERY ``fingerprint`` is scoped here to a test case OF THAT RUN
 ``compare.state`` / ``compare.reason`` says so, never an error status. A
 GET: no Postgres write, no lazy resolve.
 
-Source: [backend/app/routers/commit_attribution.py:165](../../../backend/app/routers/commit_attribution.py#L165).
+Source: [backend/app/routers/commit_attribution.py:172](../../../backend/app/routers/commit_attribution.py#L172).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -123,7 +123,7 @@ connector → unavailable) in a dedicated write session so this GET stays
 read-only, then returns the freshly-resolved range. The cooldown gate
 means repeated GETs on a range-less run do NOT re-run the connector.
 
-Source: [backend/app/routers/commit_attribution.py:119](../../../backend/app/routers/commit_attribution.py#L119).
+Source: [backend/app/routers/commit_attribution.py:126](../../../backend/app/routers/commit_attribution.py#L126).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -204,6 +204,108 @@ await svc.get_commit_range(db, run)
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
+## GET `/api/v1/runs/{run_id}/likely-affected-tests`
+
+Get Run Likely Affected Tests
+
+Advisory "Likely affected tests" for a run (W36 STRAT-08).
+
+Ranks THIS run's tests by path overlap with the run's changed files and, when
+the project's TIA readiness is available, past co-failures with those paths.
+``available: false`` + ``no_commit_range`` / ``no_changed_files`` when there is
+nothing to rank from; ``co_failure_runs`` is null (not 0) without history.
+It never selects or skips a test (``caveat``). A GET: no write, and NO
+``lazy_resolve_commit_range`` -- the stored range is read as it is.
+
+Source: [backend/app/routers/commit_attribution.py:203](../../../backend/app/routers/commit_attribution.py#L203).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+run_id: uuid.UUID, limit: int=Query(default=test_impact_service.DEFAULT_LIMIT, ge=1, le=test_impact_service.MAX_LIMIT, description='Most tests returned (1..50), highest score first'), db: Any=Depends(get_db), _: Any=Depends(require_run_access())
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_run_likely_affected_tests_api_v1_runs__run_id__likely_affected_tests_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Run Id",
+        "type": "string"
+      }
+    },
+    {
+      "description": "Most tests returned (1..50), highest score first",
+      "in": "query",
+      "name": "limit",
+      "required": false,
+      "schema": {
+        "default": 20,
+        "description": "Most tests returned (1..50), highest score first",
+        "maximum": 50,
+        "minimum": 1,
+        "title": "Limit",
+        "type": "integer"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/LikelyAffectedTestsResponse"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/runs/{run_id}/suspects`
 
 Get Run Suspects
@@ -213,7 +315,7 @@ Return ranked suspect commits for a newly-failing cluster/test (US-8.2).
 Honest ``available: False`` when there's no commit range for the run.
 Ranking is deterministic + inspectable (per-commit overlapping files).
 
-Source: [backend/app/routers/commit_attribution.py:138](../../../backend/app/routers/commit_attribution.py#L138).
+Source: [backend/app/routers/commit_attribution.py:145](../../../backend/app/routers/commit_attribution.py#L145).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
