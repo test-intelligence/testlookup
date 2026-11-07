@@ -15,7 +15,9 @@ import {
   estimateOptionsOf,
   EXPORT_LABEL,
   EXPORT_QUEUED,
+  exportBodyFromForm,
   exportCardState,
+  exportFormBlocked,
   exportHistoryLine,
   exportSummaryLine,
   formatProgress,
@@ -28,11 +30,15 @@ import {
   IMPORT_FAILED_FALLBACK,
   IMPORT_QUEUED,
   importJobState,
+  importOptionsFromForm,
   importReportLines,
   importSummaryLine,
+  isLargeDownload,
   isUploadingJob,
+  LARGE_DOWNLOAD_BYTES,
   largeDownloadHint,
   newestJob,
+  optionsIgnoredLines,
   partPlan,
   phaseLine,
   SIGNED_ELSEWHERE,
@@ -285,9 +291,10 @@ describe('importJobState and activeJobOf', () => {
 // ── W30 (ADM-05 run history): run history ────────────────────────────────────────
 
 describe('the history form (W30)', () => {
-  it('the window choices: 30 / 90 / 365 days and All history, 90 by default', () => {
-    expect(HISTORY_WINDOW_OPTIONS.map((o) => o.label)).toEqual(['30 days', '90 days', '365 days', 'All history'])
-    expect(HISTORY_WINDOW_OPTIONS.map((o) => o.value)).toEqual(['30', '90', '365', 'all'])
+  // W37 (contract §3, deliberate): a 5th choice "One release" (value `release`) after All history.
+  it('the window choices: 30 / 90 / 365 days, All history and One release (W37), 90 by default', () => {
+    expect(HISTORY_WINDOW_OPTIONS.map((o) => o.label)).toEqual(['30 days', '90 days', '365 days', 'All history', 'One release'])
+    expect(HISTORY_WINDOW_OPTIONS.map((o) => o.value)).toEqual(['30', '90', '365', 'all', 'release'])
     expect(HISTORY_DEFAULT_WINDOW).toBe('90')
     expect(historyDaysOf('365')).toBe(365)
     expect(historyDaysOf('all')).toBeNull()
@@ -370,10 +377,11 @@ describe('phaseLine, uploadLine, partPlan (W30)', () => {
     expect(partPlan(0)).toEqual({ mode: 'single', parts: 0, sizes: [] })
   })
 
-  it('the CLI hint only above 512 MB', () => {
+  // W37 (contract §3, deliberate): the hint now says large archives download straight to disk (the ticket).
+  it('the large-download hint only above 512 MB', () => {
     expect(largeDownloadHint(512 * MB, 'proj')).toBeNull()
     expect(largeDownloadHint(Math.round(512.1 * MB), 'proj')).toBe(
-      'Large archives download more reliably with the CLI: testlookup projects export proj --history',
+      'Large archives download straight to your disk; the CLI also works: testlookup projects export proj --history',
     )
     expect(largeDownloadHint(null, 'proj')).toBeNull()
   })
@@ -473,5 +481,102 @@ describe('historyReportLines (W30)', () => {
     expect(importJobState({ status: 'running', progress: { done: 56, total: 56, phase: 'documents', phase_done: 5000, phase_total: 9120 } })).toEqual({
       kind: 'running', line: 'Stored documents… 5,000 of 9,120',
     })
+  })
+})
+
+// ── W37: one release, the include / import options, the large download, the report's new lines ──
+
+describe('the Export form (W37)', () => {
+  const base = { includeHistory: false, window: '90' as const, releaseId: '', includeMembers: false, includeReviews: false }
+
+  it("nothing ticked → no body (W24's POST); a day window → W30's body exactly", () => {
+    expect(exportBodyFromForm(base)).toBeUndefined()
+    expect(exportBodyFromForm({ ...base, includeHistory: true, window: '365' })).toStrictEqual({
+      include_history: true, history_days: 365, max_runs: 2000,
+    })
+  })
+
+  it('One release → history_release_id and NO history_days key; Export waits until a release is chosen', () => {
+    const release = { ...base, includeHistory: true, window: 'release' as const }
+    expect(exportFormBlocked(release)).toBe(true)
+    expect(exportFormBlocked({ ...release, releaseId: 'rel-spring' })).toBe(false)
+    expect(exportFormBlocked({ ...base, window: 'release' }), 'unticked history never waits').toBe(false)
+    expect(exportFormBlocked({ ...base, includeHistory: true }), 'a day window never waits').toBe(false)
+    const body = exportBodyFromForm({ ...release, releaseId: 'rel-spring' })
+    expect(body).toStrictEqual({ include_history: true, max_runs: 2000, history_release_id: 'rel-spring' })
+    expect(body).not.toHaveProperty('history_days')
+    expect(historyDaysOf('release')).toBeNull()
+  })
+
+  it('the include boxes add a key only when ticked, with or without history', () => {
+    expect(exportBodyFromForm({ ...base, includeMembers: true })).toStrictEqual({ include_members: true })
+    expect(exportBodyFromForm({ ...base, includeReviews: true })).toStrictEqual({ include_reviews: true })
+    expect(exportBodyFromForm({ ...base, includeHistory: true, includeMembers: true, includeReviews: true })).toStrictEqual({
+      include_history: true, history_days: 90, max_runs: 2000, include_members: true, include_reviews: true,
+    })
+  })
+
+  it('the estimate options: a day window stays {historyDays}; One release names the release and no day window', () => {
+    expect(estimateOptionsOf('90', 'rel-spring')).toStrictEqual({ historyDays: 90 })
+    expect(estimateOptionsOf('release', 'rel-spring')).toStrictEqual({ historyDays: null, historyReleaseId: 'rel-spring' })
+  })
+})
+
+describe('the large download (W37, F-W30-6)', () => {
+  it('a ticket above 512 MB only; at or below (or no size) the Blob path', () => {
+    expect(LARGE_DOWNLOAD_BYTES).toBe(512 * MB)
+    expect(isLargeDownload(512 * MB)).toBe(false)
+    expect(isLargeDownload(512 * MB + 1)).toBe(true)
+    expect(isLargeDownload(null)).toBe(false)
+    expect(isLargeDownload(undefined)).toBe(false)
+  })
+})
+
+describe('the import options and the report (W37, F-2 / F-7)', () => {
+  it('the two boxes → a key only when ticked', () => {
+    expect(importOptionsFromForm({ addMembers: false, keepReviews: false })).toStrictEqual({})
+    expect(importOptionsFromForm({ addMembers: true, keepReviews: false })).toStrictEqual({ addMembers: true })
+    expect(importOptionsFromForm({ addMembers: false, keepReviews: true })).toStrictEqual({ keepReviews: true })
+  })
+
+  it('members, owners and reviews: inserted rows, skips read with THEIR reason (never "assignments"), the unclaim suffix', () => {
+    const lines = importReportLines({
+      project_name: 'Payment Service (imported)',
+      inserted: { project_members: 3, test_suite_owners: 1, test_case_reviews: 2, test_case_comments: 0 },
+      skipped: [
+        { entity: 'project_members', reason: 'email_not_found', count: 2 },
+        { entity: 'project_members', reason: 'email_ambiguous', count: 1 },
+        { entity: 'project_members', reason: 'role_unknown', count: 1 },
+        { entity: 'test_suite_owners', reason: 'owner_not_lead', count: 1 },
+        { entity: 'test_case_comments', reason: 'not_chosen', count: 4 },
+      ],
+      cleared: [{ entity: 'managed_test_cases', column: 'author_id', reason: 'user_not_found', count: 1 }],
+      switched_off: { 'managed_test_cases.review_unclaimed': 2 },
+    })
+    expect(lines.inserted.map((l) => [l.entity, l.text])).toEqual([
+      ['project_members', '3 rows'], ['test_suite_owners', '1 row'], ['test_case_reviews', '2 rows'],
+    ])
+    expect(lines.notImported.map((l) => [l.entity, l.text])).toEqual([
+      ['project_members', '2 rows were skipped: no active account here has this e-mail address'],
+      ['project_members', '1 row was skipped: more than one account here has this e-mail address'],
+      ['project_members', '1 row was skipped: its project role is not one this deployment knows'],
+      ['test_suite_owners', '1 row was skipped: the owner is not a QA lead in the new project'],
+      ['test_case_comments', '4 rows were skipped: the option to bring them was not chosen'],
+      ['managed_test_cases.author_id', '1 assignment was cleared: the person does not exist here'],
+    ])
+    expect(lines.switchedOff.map((l) => [l.entity, l.text])).toEqual([
+      ['managed_test_cases.review_unclaimed', '2 rows returned to Review requested — the reviewer is not a member here'],
+    ])
+    expect(lines.optionsIgnored).toEqual([])
+  })
+
+  it('options_ignored: one sentence per option in the server order, once each; an unknown option adds nothing', () => {
+    expect(optionsIgnoredLines(['keep_reviews', 'add_members', 'keep_reviews', 'merge_everything'])).toEqual([
+      UI_SENTENCES.option_ignored_keep_reviews,
+      UI_SENTENCES.option_ignored_add_members,
+    ])
+    expect(UI_SENTENCES.option_ignored_add_members).toBe('Add members: this file lists no members — export it again with Include members.')
+    expect(optionsIgnoredLines(undefined)).toEqual([])
+    expect(importReportLines({ options_ignored: ['add_members'] }).optionsIgnored).toEqual([UI_SENTENCES.option_ignored_add_members])
   })
 })

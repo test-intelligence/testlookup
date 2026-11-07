@@ -11,7 +11,14 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ProjectExportCard from './ProjectExportCard'
-import { ERROR_SENTENCES, EXPORT_QUEUED, SIGNED_HERE, UI_SENTENCES } from './projectDataModel'
+import {
+  ERROR_SENTENCES,
+  EXPORT_QUEUED,
+  INCLUDE_MEMBERS_LABEL,
+  INCLUDE_REVIEWS_LABEL,
+  SIGNED_HERE,
+  UI_SENTENCES,
+} from './projectDataModel'
 
 const jobs: Record<string, unknown> = {}
 const mockUseJob = vi.fn((id: string | null) => ({ data: id ? jobs[id] : undefined }))
@@ -25,14 +32,23 @@ vi.mock('@/hooks/useProjectDataJobs', () => ({
   useExportEstimate: (projectId: string, options: EstimateOptions, enabled: boolean) => mockUseEstimate(projectId, options, enabled),
 }))
 
+// W37: the top bar's cached release list (`useReleases(undefined, {cached: true})`).
+const releasesRead: { data?: unknown } = {}
+const mockUseReleases = vi.fn((..._args: unknown[]) => ({ data: releasesRead.data, isLoading: false, isValidating: false }))
+vi.mock('@/hooks/useReleases', () => ({
+  useReleases: (...args: unknown[]) => mockUseReleases(...args),
+}))
+
 const mockStart = vi.fn()
 const mockDownload = vi.fn()
+const mockDownloadLarge = vi.fn()
 // The requests are mocked; the refusal readers (`projectDataErrorMessage`, `runningExportJobId`) stay real.
 vi.mock('@/services/projectDataService', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/projectDataService')>()),
   projectDataService: {
     startExport: (...args: unknown[]) => mockStart(...args),
     downloadExport: (...args: unknown[]) => mockDownload(...args),
+    downloadLargeExport: (...args: unknown[]) => mockDownloadLarge(...args),
   },
 }))
 
@@ -228,7 +244,8 @@ describe('ProjectExportCard — run history (W30)', () => {
     renderCard()
     fireEvent.click(historyBox())
     expect(windowSelect()).toHaveValue('90')
-    expect([...windowSelect().querySelectorAll('option')].map((o) => o.textContent)).toEqual(['30 days', '90 days', '365 days', 'All history'])
+    // W37 (contract §3, deliberate): + "One release".
+    expect([...windowSelect().querySelectorAll('option')].map((o) => o.textContent)).toEqual(['30 days', '90 days', '365 days', 'All history', 'One release'])
     expect(mockUseEstimate).toHaveBeenLastCalledWith('proj-1', { historyDays: 90 }, true)
     expect(screen.getByText('About 412.3 MB · 412 runs · 9,120 documents · 1,830 attachments')).toBeInTheDocument()
 
@@ -292,8 +309,130 @@ describe('ProjectExportCard — run history (W30)', () => {
     expect(screen.getByText('9,413 rows in 3 tables')).toBeInTheDocument()
     expect(screen.getByText('412 runs · 9,120 documents · 1,830 attachments')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Download (412.3 MB)' })).toBeEnabled()
-    expect(screen.queryByText(/download more reliably with the CLI/)).toBeNull()
+    // W37 (contract §3, deliberate): the hint's new words.
+    expect(screen.queryByText(/download straight to your disk/)).toBeNull()
     rerender(<ProjectExportCard projectId="proj-1" latest={{ ...ready, bytes: 600 * MB } as never} onChanged={onChanged} />)
-    expect(screen.getByText('Large archives download more reliably with the CLI: testlookup projects export proj-1 --history')).toBeInTheDocument()
+    expect(screen.getByText('Large archives download straight to your disk; the CLI also works: testlookup projects export proj-1 --history')).toBeInTheDocument()
+  })
+})
+
+// ── W37: one release, the include boxes, the large download ──────────────────
+
+const RELEASES = [
+  { id: 'rel-old', name: 'Winter 2026', status: 'released', is_active: false },
+  { id: 'rel-next', name: 'Summer 2027', status: 'in_progress', is_active: false },
+  { id: 'rel-now', name: 'Spring 2027', status: 'planned', is_active: true },
+]
+const membersBox = () => screen.getByRole('checkbox', { name: INCLUDE_MEMBERS_LABEL })
+const reviewsBox = () => screen.getByRole('checkbox', { name: INCLUDE_REVIEWS_LABEL })
+const releaseSelect = () => screen.getByRole('combobox', { name: 'Release' })
+
+describe('ProjectExportCard — one release, members and reviews, the large download (W37)', () => {
+  beforeEach(() => {
+    for (const key of Object.keys(jobs)) delete jobs[key]
+    mockUseJob.mockClear()
+    mockUseEstimate.mockClear()
+    mockUseReleases.mockClear()
+    releasesRead.data = { items: RELEASES, total: RELEASES.length }
+    estimateRead.data = estimate({ history_days: null, runs: 12 })
+    estimateRead.error = undefined
+    mockStart.mockReset()
+    mockDownload.mockReset()
+    mockDownloadLarge.mockReset()
+    onChanged.mockReset()
+  })
+
+  it('"One release" shows a SECOND select of the cached releases (active first); no estimate and Export waits until one is chosen', async () => {
+    mockStart.mockResolvedValue({ id: 'job-rel', kind: 'export', status: 'queued' })
+    renderCard()
+    fireEvent.click(historyBox())
+    expect(screen.getAllByRole('combobox'), 'the default window keeps ONE combobox').toHaveLength(1)
+    expect(mockUseReleases, 'no release read before "One release"').not.toHaveBeenCalled()
+
+    fireEvent.change(windowSelect(), { target: { value: 'release' } })
+    expect(screen.getAllByRole('combobox')).toHaveLength(2)
+    expect(mockUseReleases).toHaveBeenLastCalledWith(undefined, { cached: true })
+    expect([...releaseSelect().querySelectorAll('option')].map((o) => o.textContent)).toEqual([
+      'Choose a release…', 'Spring 2027', 'Summer 2027', 'Winter 2026',
+    ])
+    expect(releaseSelect()).toHaveValue('')
+    expect(mockUseEstimate, 'no estimate without a release').toHaveBeenLastCalledWith('proj-1', { historyDays: null, historyReleaseId: '' }, false)
+    expect(document.querySelector('[data-export-estimate]')).toBeNull()
+    expect(exportButton()).toBeDisabled()
+
+    fireEvent.change(releaseSelect(), { target: { value: 'rel-next' } })
+    expect(mockUseEstimate).toHaveBeenLastCalledWith('proj-1', { historyDays: null, historyReleaseId: 'rel-next' }, true)
+    expect(screen.getByText(/^About 412\.3 MB · 12 runs/)).toBeInTheDocument()
+    expect(exportButton()).toBeEnabled()
+    fireEvent.click(exportButton())
+    await waitFor(() => expect(mockStart).toHaveBeenCalledTimes(1))
+    expect(mockStart.mock.calls[0]).toStrictEqual(['proj-1', { include_history: true, max_runs: 2000, history_release_id: 'rel-next' }])
+  })
+
+  it('a project with no releases says so; "Export again" also waits for a release', () => {
+    releasesRead.data = { items: [], total: 0 }
+    renderCard({ latest: readyJob() as never })
+    fireEvent.click(historyBox())
+    fireEvent.change(windowSelect(), { target: { value: 'release' } })
+    expect([...releaseSelect().querySelectorAll('option')].map((o) => o.textContent)).toEqual(['No releases in this project'])
+    expect(screen.getByRole('button', { name: 'Export again' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Download (2.1 MB)' }), 'a Download is never blocked').toBeEnabled()
+  })
+
+  it('the include boxes are independent of history and add a key only when ticked', async () => {
+    mockStart.mockResolvedValue({ id: 'job-inc', kind: 'export', status: 'queued' })
+    renderCard()
+    expect(membersBox()).not.toBeChecked()
+    expect(reviewsBox()).not.toBeChecked()
+    fireEvent.click(membersBox())
+    fireEvent.click(exportButton())
+    await waitFor(() => expect(mockStart).toHaveBeenCalledTimes(1))
+    expect(mockStart.mock.calls[0]).toStrictEqual(['proj-1', { include_members: true }])
+    expect(mockUseEstimate.mock.calls.every(([, , enabled]) => enabled === false), 'no history, no estimate').toBe(true)
+  })
+
+  it('both boxes with a day window: the W30 body plus both keys', async () => {
+    mockStart.mockResolvedValue({ id: 'job-all', kind: 'export', status: 'queued' })
+    renderCard()
+    fireEvent.click(historyBox())
+    fireEvent.click(membersBox())
+    fireEvent.click(reviewsBox())
+    fireEvent.click(exportButton())
+    await waitFor(() => expect(mockStart).toHaveBeenCalledTimes(1))
+    expect(mockStart.mock.calls[0]).toStrictEqual([
+      'proj-1', { include_history: true, history_days: 90, max_runs: 2000, include_members: true, include_reviews: true },
+    ])
+  })
+
+  it('Download above 512 MB takes the ticket; at 512 MB and below, the Blob download (unchanged)', async () => {
+    const big = { ...readyJob('big'), options: { include_history: true }, bytes: 600 * MB, counts: { test_runs: 3 } }
+    mockDownloadLarge.mockResolvedValue('/api/v1/project-data-downloads/big?ticket=t')
+    const { unmount } = renderCard({ latest: big as never })
+    fireEvent.click(screen.getByRole('button', { name: 'Download (600.0 MB)' }))
+    await waitFor(() => expect(mockDownloadLarge).toHaveBeenCalledWith('big'))
+    expect(mockDownload).not.toHaveBeenCalled()
+    unmount()
+
+    const edge = { ...readyJob('edge'), options: { include_history: true }, bytes: 512 * MB, counts: { test_runs: 3 } }
+    mockDownload.mockResolvedValue('edge.zip')
+    renderCard({ latest: edge as never })
+    fireEvent.click(screen.getByRole('button', { name: 'Download (512.0 MB)' }))
+    await waitFor(() => expect(mockDownload).toHaveBeenCalledWith('edge'))
+    expect(mockDownloadLarge).toHaveBeenCalledTimes(1)
+  })
+
+  it("a refused ticket reads its sentence like today's download errors and re-reads the list", async () => {
+    mockDownloadLarge.mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 503'), { isAxiosError: true,
+        response: { status: 503, data: { detail: { code: 'ticket_unavailable', message: ERROR_SENTENCES.ticket_unavailable } } },
+      }),
+    )
+    renderCard({ latest: { ...readyJob('big'), bytes: 600 * MB } as never })
+    fireEvent.click(screen.getByRole('button', { name: 'Download (600.0 MB)' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Downloads through the browser are unavailable right now; try again or use the CLI.',
+    )
+    expect(screen.queryByText(/Request failed/)).toBeNull()
+    expect(onChanged).toHaveBeenCalled()
   })
 })

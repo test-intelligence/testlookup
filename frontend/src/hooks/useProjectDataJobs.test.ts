@@ -19,6 +19,7 @@ import {
   jobFixture,
   jobList,
   PROJECT_DATA_PROJECT_ID,
+  RELEASE_ID,
   uploadFixture,
 } from '@/test/projectDataMocks'
 
@@ -174,5 +175,31 @@ describe('useExportEstimate (W30)', () => {
     await pause(150)
     expect(service.getExportEstimate).toHaveBeenCalledTimes(2)
     expect(exportEstimateKey('p', 365)).not.toBe(exportEstimateKey('p', null))
+  })
+
+  it('W37: a release window reads the release (its own key, one read per release); a day window\'s call stays W30\'s', async () => {
+    service.getExportEstimate.mockImplementation(async (_p: string, o: { historyReleaseId?: string }) =>
+      estimateFixture({ history_days: null, history_release_id: o.historyReleaseId ?? null }),
+    )
+    const { result, rerender } = renderHook(
+      ({ release }: { release: string }) => useExportEstimate(PROJECT_DATA_PROJECT_ID, { historyDays: null, historyReleaseId: release }, true),
+      { wrapper, initialProps: { release: RELEASE_ID } },
+    )
+    await waitFor(() => expect(result.current.data?.history_release_id).toBe(RELEASE_ID))
+    expect(service.getExportEstimate.mock.lastCall).toStrictEqual([
+      PROJECT_DATA_PROJECT_ID, { includeHistory: true, historyDays: null, historyReleaseId: RELEASE_ID },
+    ])
+    rerender({ release: 'rel-other' })
+    await waitFor(() => expect(result.current.data?.history_release_id).toBe('rel-other'))
+    expect(service.getExportEstimate).toHaveBeenCalledTimes(2)
+    expect(exportEstimateKey('p', null, RELEASE_ID)).not.toBe(exportEstimateKey('p', null))
+    expect(exportEstimateKey('p', 90)).toBe('project-data/estimate/p?history_days=90')
+
+    service.getExportEstimate.mockClear()
+    renderHook(() => useExportEstimate(PROJECT_DATA_PROJECT_ID, { historyDays: 30 }, true), { wrapper })
+    await waitFor(() => expect(service.getExportEstimate).toHaveBeenCalledTimes(1))
+    expect(service.getExportEstimate.mock.lastCall, 'no historyReleaseId key for a day window').toStrictEqual([
+      PROJECT_DATA_PROJECT_ID, { includeHistory: true, historyDays: 30 },
+    ])
   })
 })
