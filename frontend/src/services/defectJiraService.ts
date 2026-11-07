@@ -164,17 +164,25 @@ export interface ClusterEpicCreateResult {
   created: boolean
 }
 
-const clusterEpicBase = (projectId: string) => `/api/v1/projects/${encodeURIComponent(projectId)}/systemic-clusters`
-const clusterEpicPath = (projectId: string, membershipKey: string) =>
-  `${clusterEpicBase(projectId)}/${encodeURIComponent(membershipKey)}/epic`
-
+// Each path is written out in full: tests/regression/test_spa_wire_contract.py reads the literal paths
+// and proves every one resolves to a real backend route (a shared base literal is not a route).
 export const clusterEpicService = {
   status: (projectId: string) =>
-    getData<ClusterEpicsStatus>(`${clusterEpicBase(projectId)}/epics`, { suppressToast: true }),
+    getData<ClusterEpicsStatus>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/systemic-clusters/epics`,
+      { suppressToast: true },
+    ),
 
   preview: (projectId: string, membershipKey: string) =>
-    getData<ClusterEpicPreview>(`${clusterEpicPath(projectId, membershipKey)}/preview`, { suppressToast: true }),
+    getData<ClusterEpicPreview>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/systemic-clusters/${encodeURIComponent(membershipKey)}/epic/preview`,
+      { suppressToast: true },
+    ),
 
   create: (projectId: string, membershipKey: string, payload: ClusterEpicCreatePayload) =>
-    postData<ClusterEpicCreateResult>(clusterEpicPath(projectId, membershipKey), payload, { suppressToast: true }),
+    postData<ClusterEpicCreateResult>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/systemic-clusters/${encodeURIComponent(membershipKey)}/epic`,
+      payload,
+      { suppressToast: true },
+    ),
 }

@@ -318,17 +318,20 @@ class Project(Base):
     require_case_review: Mapped[bool] = mapped_column(
         Boolean, default=False, nullable=False, server_default=text("false")
     )
-    # W36 STRAT-03 (migration 0255, owner decision D30): offer "Create epic for
-    # this cluster" on recurring systemic failure clusters; default off.
-    cluster_epic_suggestions: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False, server_default=text("false")
-    )
     # W13 TCL-03 (migration 0228): the share of authored cases the project aims
     # to automate; the library health measures against it. 0-100, enforced by
     # ``ck_projects_automation_target_pct`` in the migration only (as for
     # require_case_review, the ORM declares no constraint the app relies on).
     automation_target_pct: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, default=60, server_default=text("60")
+    )
+    # W36 STRAT-03 (migration 0255, owner decision D30): offer "Create epic for
+    # this cluster" on recurring systemic failure clusters; default off. Declared
+    # after automation_target_pct: 0255 appends the column, and
+    # test_migration_0228_0229 pins automation_target_pct right after
+    # require_case_review.
+    cluster_epic_suggestions: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=text("false")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
