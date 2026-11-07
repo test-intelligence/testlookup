@@ -193,7 +193,10 @@ UI_SENTENCES = {      # the frontend renders these verbatim (React text, never H
     "reindex_queued": "Search is being rebuilt for the new project.",
     "reindex_not_queued": "Search could not be rebuilt automatically — use Reindex on the Search page.",
     "resume_upload": "Choose the same file to resume the upload.",
-    "large_download_hint": "Large archives download more reliably with the CLI: testlookup projects export {project} --history",
+    "large_download_hint": "Large archives download straight to your disk; the CLI also works: testlookup projects export {project} --history",   # W37 §3
+    # ── W37 F-2 / F-7: an import option the archive cannot honour (import_report.options_ignored) ──
+    "option_ignored_add_members": "Add members: this file lists no members — export it again with Include members.",
+    "option_ignored_keep_reviews": "Keep reviews: this file has no reviews — export it again with Include reviews.",
 }
 SKIP_REASONS = {      # import_report.skipped[*] / cleared[*].reason → the sentence after "… were skipped: " / "… were cleared: "
     "user_not_found": "the person does not exist here",            # a user_refs column set NULL (cleared[])
@@ -207,6 +210,12 @@ SKIP_REASONS = {      # import_report.skipped[*] / cleared[*].reason → the sen
     "too_large": "it is larger than 256 MB",                                   # object skipped at export
     "invalid_document": "it is not a valid stored document",                   # Mongo document refused at import → the WHOLE import fails
     "pipeline_scratch": "it pointed at a pipeline scratch file, which is not exported",   # evidence_artifacts.uri_or_ref written NULL at export (manifest)
+    # ── W37 F-2 / F-7 (contract §2.3): members / suite owners by e-mail, keep reviews (skipped[], column null) ──
+    "email_not_found": "no active account here has this e-mail address",
+    "email_ambiguous": "more than one account here has this e-mail address",
+    "role_unknown": "its project role is not one this deployment knows",
+    "owner_not_lead": "the owner is not a QA lead in the new project",
+    "not_chosen": "the option to bring them was not chosen",
 }
 #: Tables a schema_version 1 archive may list that this deployment dropped (W25d HYG-02). Every W24 export
 #: lists all its tables, empty ones included: with 0 rows such a table is ignored silently; with N rows its

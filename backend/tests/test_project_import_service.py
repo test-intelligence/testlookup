@@ -1010,6 +1010,11 @@ _SCHEMA_REFUSALS: list[tuple[str, Callable[[], bytes], str, str]] = [
     ("plan-execution-in-schema-2", lambda: build_archive(
         {"test_plan_items": [_executed_item()]}, manifest_patch={"schema_version": 2, "history": {"runs": 0}}),
      "unknown_column", "test_plan_items.execut"),
+    # W37 D-3 (decided, G-B): plan execution results travel ONLY with history — a members / reviews-only schema-3
+    # archive (no history block) never carries them
+    ("plan-execution-in-schema-3-without-history", lambda: build_archive(
+        {"test_plan_items": [_executed_item()]}, manifest_patch={"schema_version": 3}),
+     "unknown_column", "test_plan_items.execut"),
 ]
 
 
@@ -1030,11 +1035,15 @@ async def test_schema_rules_refuse_before_any_write(builder, code, fragment):
     _assert_nothing_written(session, calls)
 
 
-def test_a_schema_3_archive_without_a_history_block_is_a_catalog_with_its_schema_3_columns():
-    """W37 D-1: no history block → no history (W24's caps, no history entity), yet its schema-3 columns are read."""
-    pre = _preflight(build_archive({"test_plan_items": [_executed_item()]}, manifest_patch={"schema_version": 3}))
+def test_a_schema_3_archive_without_a_history_block_is_a_catalog_without_plan_results():
+    """W37 D-1: no history block → no history (W24's caps, no history entity). W37 D-3 (decided by the
+    orchestrator, G-B): plan execution results travel ONLY with history, so such an archive's plan items carry
+    none — one that does is refused ``unknown_column`` (``_SCHEMA_REFUSALS``)."""
+    plain = {"id": str(uuid.uuid4()), "plan_id": str(uuid.uuid4()), "test_case_id": str(uuid.uuid4())}
+    pre = _preflight(build_archive({"test_plan_items": [plain]}, manifest_patch={"schema_version": 3}))
     assert pre.schema_version == 3 and not pre.has_history and not pre.history_block
     assert pre.rows["test_plan_items"] == 1 and "test_runs" not in pre.rows
+    assert not pre.people and not pre.has_reviews and pre.members == [] and pre.emails == {}
 
 
 def _plan_world(item: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
@@ -1044,11 +1053,19 @@ def _plan_world(item: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
             "test_plan_items": [{**item, "plan_id": plan, "test_case_id": case}]}
 
 
-async def test_a_schema_3_archive_recomputes_the_plan_counters_and_a_schema_1_archive_keeps_them(import_world):
-    """W37 F-W30-3: with the items' statuses (schema 3) the copy's counters are recomputed in ONE UPDATE after the
-    items are inserted; a schema-1 archive's items arrive ``not_run`` and the counters stay as today."""
+async def test_a_schema_3_archive_recomputes_the_plan_counters_and_a_schema_1_archive_keeps_them(history_world):
+    """W37 F-W30-3: with the items' statuses (schema 3 WITH history — W37 D-3: plan results travel only with
+    history) the copy's counters are recomputed in ONE UPDATE after the items are inserted; a schema-1 archive's
+    items arrive ``not_run`` and the counters stay as today."""
+    from tests.test_project_import_history import World, build_history_archive
+
     item = _executed_item()
-    _report, session = await _imported(build_archive(_plan_world(item), manifest_patch={"schema_version": 3}))
+
+    class PlanWorld(World):
+        def rows(self) -> dict[str, list[dict[str, Any]]]:
+            return {**super().rows(), **_plan_world(item)}
+
+    _report, session, _storage = await _imported_history(history_world, build_history_archive(PlanWorld()))
     updates = [s for s in session.statements if s.startswith("UPDATE test_plans")]
     assert len(updates) == 1 and "total_cases=(SELECT count(*)" in updates[0]
     order =[i for i, s in enumerate(session.statements) if s.startswith(("INSERT INTO test_plan_items", "UPDATE test_plans"))]

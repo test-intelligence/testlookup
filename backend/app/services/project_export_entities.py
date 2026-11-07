@@ -3,8 +3,10 @@
 EVERY table of ``Base.metadata`` is classified here exactly once:
 
 * ``EXPORTED`` — the settings + catalog entities (``CATALOG``, phase 1's 29 in
-  phase 1's order), THEN the run-history entities (``HISTORY``, W30, written
-  only by an export WITH history — schema 2 / 3), in DEPENDENCY ORDER (parents
+  phase 1's order), THEN the OPTIONAL catalog entities (``OPTIONAL``, W37 F-7:
+  the test case reviews and comments, written only when the exporter ticks
+  Include reviews — schema 3), THEN the run-history entities (``HISTORY``, W30,
+  written only by an export WITH history — schema 2 / 3), in DEPENDENCY ORDER (parents
   first): the export writes and the import inserts in this order. Each
   :class:`EntitySpec` names the columns that never travel (``drop``), the
   authorship columns remapped by USERNAME (``user_refs``), the assignment
@@ -411,6 +413,20 @@ _H_TIMELINE_NOTES = EntitySpec(
     "timeline_notes", window=WINDOW_PROJECT, user_refs=("created_by_id",), history=True,
 )
 
+# ── W37 F-7 (contract §1 Reviews, D-6): OPTIONAL catalog entities — Include reviews ──
+_TEST_CASE_REVIEWS = EntitySpec(
+    # the claimant / requester map by USERNAME (D-5: authorship unchanged); human_notes get the text pass and
+    # ai_review_notes scrub_json (SCRUB_DEFAULT picks them by type). The import keeps an open review only with
+    # "Keep reviews" and only while it can still be acted on (D-6); a decided review is history.
+    "test_case_reviews", scope="parent:managed_test_cases.test_case_id",
+    user_refs=("reviewer_id", "requested_by_id"), fks={"test_case_id": "managed_test_cases"},
+)
+_TEST_CASE_COMMENTS = EntitySpec(
+    # a reply's parent is set in the second pass; content gets the text pass
+    "test_case_comments", scope="parent:managed_test_cases.test_case_id",
+    user_refs=("author_id",), fks={"test_case_id": "managed_test_cases"}, self_fks=("parent_id",),
+)
+
 #: Phase 1's 29 settings + catalog entities, in phase 1's order (a schema-1 export writes exactly these).
 CATALOG: tuple[EntitySpec, ...] = (
     _PROJECTS,
@@ -431,10 +447,19 @@ HISTORY: tuple[EntitySpec, ...] = (
     _H_RUN_COMMIT_RANGES, _H_RUN_INTELLIGENCE_SNAPSHOTS, _H_TEST_HEALTH_RECOMMENDATIONS, _H_EVIDENCE_ARTIFACTS,
     _H_RELEASE_OUTCOMES, _H_RELEASE_GATE_DECISIONS, _H_TIMELINE_NOTES,
 )
+#: W37 F-7: catalog entities written ONLY when the exporter ticks Include reviews (schema 3, never schema 1),
+#: planned after the catalog (their parent, managed_test_cases, precedes them) and before the history.
+OPTIONAL: tuple[EntitySpec, ...] = (_TEST_CASE_REVIEWS, _TEST_CASE_COMMENTS)
+OPTIONAL_REASON = "exported only when the exporter ticks Include reviews"
+#: What an export WITHOUT Include reviews lists for them in its manifest ``excluded`` — their W24
+#: ``EXCLUSION_REASONS`` key, so a catalog-only (schema 1) manifest stays byte-for-byte phase 1's.
+OPTIONAL_UNTICKED_REASONS: Mapping[str, str] = {"test_case_comments": "per_user_state",
+                                                "test_case_reviews": "per_user_state"}
 #: Dependency order (parents first) — the export writes and the import inserts in this order.
-EXPORTED: tuple[EntitySpec, ...] = CATALOG + HISTORY
+EXPORTED: tuple[EntitySpec, ...] = CATALOG + OPTIONAL + HISTORY
 EXPORTED_TABLES: tuple[str, ...] = tuple(spec.table for spec in EXPORTED)
 CATALOG_TABLES: tuple[str, ...] = tuple(spec.table for spec in CATALOG)
+OPTIONAL_TABLES: tuple[str, ...] = tuple(spec.table for spec in OPTIONAL)
 HISTORY_TABLES: tuple[str, ...] = tuple(spec.table for spec in HISTORY)
 
 #: The settings columns copied onto the new project (contract §2.1 row 1). The
@@ -475,8 +500,7 @@ EXCLUDED: Mapping[str, str] = {
     "saved_views": "per_user_state",
     "digest_subscriptions": "per_user_state",       # NOT copying it is what keeps the copy from mailing
     "notification_preferences": "per_user_state",   # also carries slack / teams webhook URLs
-    "test_case_comments": "per_user_state",
-    "test_case_reviews": "per_user_state",          # per-reviewer requests (their cases arrive draft)
+    # (W37 F-7: test_case_comments / test_case_reviews are OPTIONAL entities now — see OPTIONAL above)
     # this deployment's past
     "access_audit_logs": "audit_or_activity",
     "project_activity_events": "audit_or_activity",
@@ -632,11 +656,15 @@ def spec_for(table: str) -> EntitySpec:
 _SPECS: dict[str, EntitySpec] = {spec.table: spec for spec in EXPORTED}
 
 
-def export_schema_version(*, include_history: bool) -> int:
+def export_schema_version(
+    *, include_history: bool, include_members: bool = False, include_reviews: bool = False,
+) -> int:
     """W37 D-1: the LOWEST schema that holds an export's content — ``CATALOG_SCHEMA_VERSION`` (1, byte-compatible
-    with phase 1) for settings + catalog only, ``SCHEMA_VERSION`` (3) with run history. Schema 2 is never written.
-    (G-B: members / reviews without history are schema 3 too — add their flags here.)"""
-    return SCHEMA_VERSION if include_history else CATALOG_SCHEMA_VERSION
+    with phase 1) for settings + catalog only, ``SCHEMA_VERSION`` (3) with run history, members (F-2) or reviews
+    (F-7) — any of them. Schema 2 is never written."""
+    if include_history or include_members or include_reviews:
+        return SCHEMA_VERSION
+    return CATALOG_SCHEMA_VERSION
 
 
 def archive_has_history(schema_version: int, *, history_block: bool) -> bool:
@@ -648,14 +676,17 @@ def archive_has_history(schema_version: int, *, history_block: bool) -> bool:
 def hidden_columns(spec: EntitySpec, *, schema_version: int, history: bool) -> frozenset[str]:
     """The columns of ``spec`` an archive of ``schema_version`` (with / without run history) never carries:
     ``drop``; the ``history_fks`` (second-pass pointers into history) when it has no history (schema 1, or
-    schema 3 without a history block — there are no runs to point at); the ``schema3_columns`` below schema 3.
-    The export leaves them out and the import refuses a row carrying one (``unknown_column``)."""
+    schema 3 without a history block — there are no runs to point at); the ``schema3_columns`` below schema 3
+    AND without history (W37 D-3: plan execution results travel ONLY with history — a members / reviews-only
+    schema-3 archive never carries them). The export leaves them out and the import refuses a row carrying one
+    (``unknown_column``)."""
     if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
         raise ValueError(f"schema_version {schema_version!r} is not one of {SUPPORTED_SCHEMA_VERSIONS}")
     hidden = set(spec.drop)
-    if not history or schema_version == CATALOG_SCHEMA_VERSION:     # schema 1 never carries history
+    without_history = not history or schema_version == CATALOG_SCHEMA_VERSION     # schema 1 never carries history
+    if without_history:
         hidden |= set(spec.history_fks)
-    if schema_version < SCHEMA_VERSION:
+    if schema_version < SCHEMA_VERSION or without_history:
         hidden |= set(spec.schema3_columns)
     return frozenset(hidden)
 
@@ -708,17 +739,18 @@ def _metadata() -> MetaData:
     return Base.metadata
 
 
-@lru_cache(maxsize=2)
-def _checked_plan(include_history: bool) -> tuple[EntitySpec, ...]:
-    specs = EXPORTED if include_history else CATALOG
+@lru_cache(maxsize=4)
+def _checked_plan(include_history: bool, include_reviews: bool = False) -> tuple[EntitySpec, ...]:
+    specs = CATALOG + (OPTIONAL if include_reviews else ()) + (HISTORY if include_history else ())
     problems = order_problems(specs)
     if problems:
         raise RuntimeError("project export plan is not topologically sorted: " + "; ".join(problems))
     return specs
 
 
-def plan(*, include_history: bool = False) -> list[EntitySpec]:
+def plan(*, include_history: bool = False, include_reviews: bool = False) -> list[EntitySpec]:
     """The entities in dependency order (asserted: every parent precedes its children): phase 1's 29
-    ``CATALOG`` entities (the default — what every phase-1 caller reads, a schema-1 export), or those 29
-    + ``HISTORY`` (an export / import WITH history: schema 2 / 3)."""
-    return list(_checked_plan(include_history))
+    ``CATALOG`` entities (the default — what every phase-1 caller reads, a schema-1 export), + the ``OPTIONAL``
+    reviews / comments when ``include_reviews`` (W37 F-7: an export that ticked Include reviews, or an import of
+    an archive carrying them — schema 3), + ``HISTORY`` (an export / import WITH history: schema 2 / 3)."""
+    return list(_checked_plan(include_history, include_reviews))

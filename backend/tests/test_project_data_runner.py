@@ -342,6 +342,43 @@ async def test_an_import_success_commits_invalidates_caches_and_removes_the_uplo
     assert _count("import", "succeeded") == before + 1
 
 
+@pytest.mark.parametrize(("options", "flags"), [
+    ({"add_members": True, "keep_reviews": True}, {"add_members": True, "keep_reviews": True}),
+    ({"keep_reviews": True}, {"keep_reviews": True}),
+    ({}, {}),
+])
+async def test_the_import_options_reach_run_import_and_every_added_member_is_invalidated_after_commit(
+    factory: Any, world: Any, monkeypatch: pytest.MonkeyPatch, options: dict, flags: dict,
+) -> None:
+    """W37 §2.2: the job's Add members / Keep reviews are passed to ``run_import`` (nothing when unticked — the
+    W30 call exactly); after the commit the runner invalidates the cache of EVERY member the import added."""
+    key = "project-imports/2026/11/07/people.zip"
+    job = await _job(factory, kind="import", status="queued", requested_by_id=world.admin.id,
+                     client_token=uuid.uuid4(), storage_key=key, options=options)
+    added = [uuid.uuid4(), uuid.uuid4()] if options.get("add_members") else []
+    seen: dict[str, Any] = {}
+    invalidated: list[uuid.UUID] = []
+
+    async def imported(db: Any, *, job: Any, outcome: dict, **kwargs: Any) -> Any:
+        seen.update({name: kwargs[name] for name in ("add_members", "keep_reviews") if name in kwargs})
+        row = await db.get(ProjectDataJob, job.id)
+        row.status = "succeeded"
+        outcome["enrolled_service_account_ids"] = []
+        if added:
+            outcome["added_member_ids"] = list(added)
+        return SimpleNamespace(project_id=uuid.uuid4(), inserted={"projects": 1})
+
+    async def invalidate(user_id: uuid.UUID) -> None:
+        row = await _read(factory, job.id)             # after the commit: the job row already reads succeeded
+        invalidated.append((user_id, row.status))
+
+    monkeypatch.setattr(project_import_service, "run_import", imported)
+    monkeypatch.setattr("app.core.deps.invalidate_membership_cache", invalidate)
+    assert await runner.run_import_job(job.id, storage=FakeStorage(), session_factory=factory) == "succeeded"
+    assert seen == flags
+    assert invalidated == [(world.admin.id, "succeeded")] + [(user, "succeeded") for user in added]
+
+
 async def test_a_redelivered_import_is_a_no_op(factory: Any, world: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     job = await _job(factory, kind="import", status="succeeded", requested_by_id=world.admin.id,
                      client_token=uuid.uuid4())
@@ -512,6 +549,27 @@ async def test_a_catalog_export_passes_no_history_arguments(
     assert await runner.run_export_job(job.id, storage=FakeStorage(), session_factory=factory) == "succeeded"
     assert seen["options"] is None and seen["mongo"] is None and seen["on_progress"] is None
     assert activity[0]["context"] == {"rows": 4}
+
+
+@pytest.mark.parametrize("stored", [{"include_members": True}, {"include_reviews": True}])
+async def test_a_members_or_reviews_export_passes_its_options_but_no_history_arguments(
+    factory: Any, world: Any, monkeypatch: pytest.MonkeyPatch, activity: list, stored: dict,
+) -> None:
+    """W37 F-2 / F-7: the flags reach ``run_project_export`` without history (no Mongo, no phase writer)."""
+    job = await _job(factory, kind="export", status="queued", project_id=world.project.id,
+                     requested_by_id=world.admin.id, options=dict(stored))
+    seen: dict[str, Any] = {}
+
+    async def fake_export(db: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        return _outcome()
+
+    monkeypatch.setattr(project_export_service, "run_project_export", fake_export)
+    assert await runner.run_export_job(job.id, storage=FakeStorage(), session_factory=factory) == "succeeded"
+    options = seen["options"]
+    assert options.include_history is False and seen["mongo"] is None and seen["on_progress"] is None
+    assert (options.include_members, options.include_reviews) == (
+        bool(stored.get("include_members")), bool(stored.get("include_reviews")))
 
 
 def _parted_job_values(world: Any) -> dict[str, Any]:

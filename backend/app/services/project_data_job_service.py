@@ -151,29 +151,59 @@ async def _live_export_id(db: AsyncSession, project_id: uuid.UUID) -> Optional[u
     return result.scalar_one_or_none()
 
 
+#: W37 F-2 / F-7: the boolean options stored on a job only when true (export / import).
+EXPORT_FLAGS = ("include_members", "include_reviews")
+IMPORT_FLAGS = ("add_members", "keep_reviews")
+
+
 def stored_options(options: Optional[ProjectDataOptions]) -> dict[str, Any]:
     """The ``options`` JSON of an export: ``{}`` for a catalog-only export (no body / ``include_history:
     false`` — the phase-1 row exactly), else ``{"include_history": true, "history_days", "max_runs"}`` — W37: plus
-    ``history_release_id`` ONLY when set (a release scope; ``history_days`` is then null)."""
-    if options is None or not options.include_history:
+    ``history_release_id`` ONLY when set (a release scope; ``history_days`` is then null). W37 F-2 / F-7:
+    ``{"include_members": true}`` / ``{"include_reviews": true}`` ONLY when ticked (with or without history)."""
+    if options is None:
         return {}
-    stored: dict[str, Any] = {
-        "include_history": True, "history_days": options.history_days, "max_runs": options.max_runs,
-    }
-    if options.history_release_id is not None:
-        stored["history_release_id"] = str(options.history_release_id)
+    stored: dict[str, Any] = {}
+    if options.include_history:
+        stored = {"include_history": True, "history_days": options.history_days, "max_runs": options.max_runs}
+        if options.history_release_id is not None:
+            stored["history_release_id"] = str(options.history_release_id)
+    for flag in EXPORT_FLAGS:
+        if getattr(options, flag):
+            stored[flag] = True
     return stored
 
 
+def import_flags(job: Any) -> dict[str, bool]:
+    """An import job's chosen options (``{"add_members": True}`` …; empty when none was ticked)."""
+    raw = job.options if isinstance(getattr(job, "options", None), dict) else {}
+    return {flag: True for flag in IMPORT_FLAGS if raw.get(flag) is True}
+
+
 def job_options(job: ProjectDataJob) -> ProjectDataOptions:
-    """An export job's options (the default — catalog only — for a phase-1 row or an import)."""
+    """An export job's options (the default — catalog only — for a phase-1 row); W37: an import's Add members /
+    Keep reviews (the default when neither was ticked)."""
     raw = job.options if isinstance(job.options, dict) else {}
-    if job.kind != KIND_EXPORT or not raw.get("include_history"):
-        return ProjectDataOptions()
+    if job.kind != KIND_EXPORT:
+        chosen = import_flags(job)
+        return ProjectDataOptions(add_members=chosen.get("add_members", False),
+                                  keep_reviews=chosen.get("keep_reviews", False))
+    members, reviews = raw.get("include_members") is True, raw.get("include_reviews") is True
+    if not raw.get("include_history"):
+        return ProjectDataOptions(include_members=members, include_reviews=reviews)
     return ProjectDataOptions(
         include_history=True, history_days=raw.get("history_days"), max_runs=raw.get("max_runs"),
-        history_release_id=raw.get("history_release_id"),
+        history_release_id=raw.get("history_release_id"), include_members=members, include_reviews=reviews,
     )
+
+
+def _echoes_options(job: ProjectDataJob) -> bool:
+    """The job read carries ``options`` for an export with history / members / reviews, or an import with an
+    option ticked — never for a catalog-only export or a plain import (their reads are unchanged)."""
+    options = job_options(job)
+    if job.kind == KIND_EXPORT:
+        return options.include_history or options.include_members or options.include_reviews
+    return options.add_members or options.keep_reviews
 
 
 async def create_export_job(
@@ -215,16 +245,20 @@ async def _token_job(db: AsyncSession, actor_id: uuid.UUID, client_token: uuid.U
 
 async def create_import_job(
     db: AsyncSession, *, actor: User, client_token: uuid.UUID, project_name: Optional[str],
+    flags: Optional[dict[str, bool]] = None,
 ) -> tuple[ProjectDataJob, bool]:
     """``(job, created)``. An existing non-failed import of the same requester
     with the same ``client_token`` is returned as ``(it, False)`` — nothing is
-    staged (the idempotent retry); a failed job's token may be reused."""
+    staged (the idempotent retry); a failed job's token may be reused. W37: ``flags`` — the chosen
+    ``IMPORT_FLAGS`` — go into ``options`` only when true (no option: the row is exactly as before)."""
     existing = await _token_job(db, actor.id, client_token)
     if existing is not None:
         return existing, False
+    chosen = {flag: True for flag in IMPORT_FLAGS if (flags or {}).get(flag)}
     job = ProjectDataJob(
         kind=KIND_IMPORT, status=QUEUED, project_id=None, project_name=project_name,
         requested_by_id=actor.id, client_token=client_token, counts={}, attempts=0, requested_at=_now(),
+        **({"options": chosen} if chosen else {}),
     )
     try:
         async with db.begin_nested():
@@ -282,7 +316,8 @@ async def create_upload_job(
     job = ProjectDataJob(
         kind=KIND_IMPORT, status=UPLOADING, project_id=None, project_name=start.name,
         requested_by_id=actor.id, client_token=start.client_token, counts={}, attempts=0, requested_at=_now(),
-        options={"parted": True, "parts": start.parts, "bytes": start.bytes, "sha256": start.sha256},
+        options={"parted": True, "parts": start.parts, "bytes": start.bytes, "sha256": start.sha256,
+                 **{flag: True for flag in IMPORT_FLAGS if getattr(start, flag, False)}},
         upload={"parts": start.parts, "bytes": start.bytes, "received": [], "received_bytes": 0,
                 "part_sha256": {}, "part_bytes": {}},
     )
@@ -587,7 +622,11 @@ def _schema_version(job: ProjectDataJob, report: Optional[ProjectDataImportRepor
     (stamped), else inferred from a finished report (a history block ⇔ W30's schema 2 — every import since
     stamps); None while unknown."""
     if job.kind == KIND_EXPORT:
-        return export_schema_version(include_history=job_options(job).include_history)
+        options = job_options(job)
+        return export_schema_version(
+            include_history=options.include_history, include_members=options.include_members,
+            include_reviews=options.include_reviews,
+        )
     raw = job.options if isinstance(job.options, dict) else {}
     stamped = raw.get("schema_version")
     if isinstance(stamped, int) and not isinstance(stamped, bool):
@@ -623,6 +662,6 @@ def to_read(job: ProjectDataJob, *, requested_by_name: Optional[str], now: datet
         manifest_sha256=job.manifest_sha256, signature=job.signature, expires_at=job.expires_at,
         counts={str(k): int(v) for k, v in (job.counts or {}).items()}, import_report=report, error=error,
         download_path=DOWNLOAD_PATH.format(job_id=job.id) if downloadable else None,
-        options=job_options(job) if job.kind == KIND_EXPORT and job_options(job).include_history else None,
+        options=job_options(job) if _echoes_options(job) else None,
         upload=_upload(job), schema_version=_schema_version(job, report),
     )

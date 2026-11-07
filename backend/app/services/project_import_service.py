@@ -55,7 +55,7 @@ import struct
 import uuid
 import zipfile
 from collections import Counter
-from typing import IO, Annotated, Any, Awaitable, Callable, Iterator, Mapping, Optional, Protocol
+from typing import IO, Annotated, Any, Awaitable, Callable, Iterable, Iterator, Mapping, Optional, Protocol
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
@@ -70,6 +70,7 @@ from app.services.project_export_entities import (
     IMPORT_NOW,
     IMPORT_NOW_PLUS_PAUSE,
     IMPORTER,
+    OPTIONAL_TABLES,
     PROJECT_ROW_COLUMNS,
     EntitySpec,
     ImportValue,
@@ -89,6 +90,10 @@ _README = "README.txt"
 _MEMBER_NAME = re.compile(
     r"^(entities/[a-z_]{1,63}/part-\d{4}\.jsonl|directory/users\.jsonl|README\.txt|manifest\.json|signature\.json)$"
 )
+#: W37 F-2 (contract §1 People): the two people members a schema-3 archive may carry (Include members)
+_MEMBERS = "directory/members.jsonl"
+_SUITE_OWNERS = "directory/suite_owners.jsonl"
+_PEOPLE_MEMBER = re.compile(r"^directory/(members|suite_owners)\.jsonl$")
 _PART_NAME = re.compile(r"^entities/(?P<table>[a-z_]{1,63})/part-(?P<index>\d{4})\.jsonl$")
 _SAFE_IDENT = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 _SLUG = re.compile(r"^[a-z0-9-]+$")
@@ -103,6 +108,11 @@ _SLUG_MAX = 100                           # == Project.slug length
 _LADDER_MAX = 50                          # "(imported 50)" is the last name tried
 _ACCEPTED_SIGNATURES = ("valid", "unknown_key", "unsigned")
 _REVIEW_RESET = "managed_test_cases.review_reset"
+_REVIEW_UNCLAIMED = "managed_test_cases.review_unclaimed"   # W37 F-7: returned to Review requested (D-6)
+_OPEN_REVIEW = ("pending", "in_progress")  # test_case_reviews statuses an action can still decide (0144's partial unique)
+#: == ``test_case_lifecycle_service.REVIEWER_ROLES`` (copied, not imported: the side-effect guard) — a claimant
+#: must hold one of these global roles to decide a review (W37 D-6; pinned equal by a unit test)
+_REVIEWER_ROLES = frozenset({"QA_ENGINEER", "QA_LEAD", "ADMIN"})
 _PLAN_STATUS = "execution_status"         # test_plan_items: travels at schema 3 (W37 F-W30-3) → the plan counters
 _RELEASES_DEACTIVATED = "releases.deactivated"
 
@@ -284,8 +294,10 @@ async def accept_upload(
     name: Optional[str],
     client_token: uuid.UUID,
     actor: User,
+    flags: Optional[dict[str, bool]] = None,
 ) -> tuple[ProjectDataJob, bool]:
     """Accept one import upload; ``(job, created)`` — ``created`` False = the token's existing job.
+    W37: ``flags`` (Add members / Keep reviews) are stored on a NEW job only when true.
 
     Order (contract §2.3 I-0, the token FIRST): an existing non-failed job of
     ``(actor, client_token)`` is returned with NOTHING read or stored — before
@@ -306,7 +318,10 @@ async def accept_upload(
         await check_name_free(db, supplied)
     spool, size = await _spool_upload(file)
     try:
-        job, created = await create_import_job(db, actor=actor, client_token=client_token, project_name=supplied)
+        job, created = await create_import_job(
+            db, actor=actor, client_token=client_token, project_name=supplied,
+            **({"flags": flags} if flags and any(flags.values()) else {}),
+        )
         if not created:
             return job, False
         key = upload_key(job.id, dt.datetime.now(dt.timezone.utc))
@@ -358,6 +373,34 @@ class _DirectoryUser(BaseModel):
     full_name: Optional[Annotated[str, StringConstraints(max_length=255)]] = None
 
 
+class _DirectoryUserV3(_DirectoryUser):
+    """W37 F-2: at schema >= 3 a directory line MAY carry ``email`` (an export that ticked Include members)."""
+    email: Optional[_Str255] = None
+
+
+class _MemberLine(BaseModel):
+    """One ``directory/members.jsonl`` line (W37 F-2): a source user id and its project role (a role this
+    deployment does not know is a report line, ``role_unknown`` — never a refusal)."""
+    model_config = ConfigDict(extra="forbid")
+    user_id: uuid.UUID
+    role: Annotated[str, StringConstraints(min_length=1, max_length=40)]
+
+
+class _SuiteOwnerLine(BaseModel):
+    """One ``directory/suite_owners.jsonl`` line (W37 F-2): ``test_suite_owners`` is keyed by suite NAME."""
+    model_config = ConfigDict(extra="forbid")
+    suite_name: Annotated[str, StringConstraints(min_length=1, max_length=500)]
+    user_id: uuid.UUID
+
+
+@dataclasses.dataclass(frozen=True)
+class _OpenReview:
+    """An archive review an action could still decide (``pending`` / ``in_progress``), by its source ids."""
+    review_id: uuid.UUID
+    status: str
+    reviewer_id: Optional[uuid.UUID]
+
+
 @dataclasses.dataclass
 class _Preflight:
     """What I-2 proved about the archive; nothing here came from an unverified member."""
@@ -381,6 +424,14 @@ class _Preflight:
     run_prefixes: dict[uuid.UUID, Optional[str]] = dataclasses.field(default_factory=dict)   # source run → minio_prefix
     history_pre: Optional[history.HistoryPreflight] = None                      # validate_history's proof (schema 2)
     history_block: bool = False                                                 # the manifest has a ``history`` block
+    # W37 F-2 / F-7 (schema 3): what Add members / Keep reviews need, read and proven in I-2
+    people: bool = False                                                        # directory/members.jsonl is in the archive
+    members: list[tuple[uuid.UUID, str]] = dataclasses.field(default_factory=list)          # (source user, role)
+    suite_owners: list[tuple[str, uuid.UUID]] = dataclasses.field(default_factory=list)     # (suite name, source user)
+    emails: dict[uuid.UUID, str] = dataclasses.field(default_factory=dict)      # source user id → e-mail (directory)
+    has_reviews: bool = False                                                   # the archive lists the OPTIONAL entities
+    in_review: dict[uuid.UUID, str] = dataclasses.field(default_factory=dict)  # source case → review_requested / under_review
+    open_reviews: dict[uuid.UUID, _OpenReview] = dataclasses.field(default_factory=dict)   # source case → its open review
 
     @property
     def has_history(self) -> bool:
@@ -486,13 +537,25 @@ def _check_member_names(
 ) -> list[str]:
     """(d) every entry — directories included — has one of the five shapes; an archive WITH history
     (``archive_has_history``) may also carry ``documents/<collection>/part-NNNN.jsonl``,
-    ``objects/index/part-NNNN.jsonl`` and ``objects/<run uuid>/<NNNNNN>.bin`` (never in schema 1)."""
+    ``objects/index/part-NNNN.jsonl`` and ``objects/<run uuid>/<NNNNNN>.bin`` (never in schema 1). W37 F-2:
+    ``directory/members.jsonl`` / ``directory/suite_owners.jsonl`` only at schema >= 3 (a schema-1 / 2 archive
+    listing one is ``tampered``)."""
     names = [info.filename for info in zf.infolist()]
     with_history = archive_has_history(schema_version, history_block=history_block)
+    people = schema_version >= vocab.SCHEMA_VERSION
     for name in names:
-        if not (_MEMBER_NAME.match(name) or (with_history and history.HISTORY_MEMBER.match(name))):
+        if not (
+            _MEMBER_NAME.match(name) or (with_history and history.HISTORY_MEMBER.match(name))
+            or (people and _PEOPLE_MEMBER.match(name))
+        ):
             raise ProjectImportFailed("tampered", reason="an unexpected member")
     return names
+
+
+def archive_has_reviews(schema_version: int, entities: Iterable[str]) -> bool:
+    """W37 F-7: the archive carries the OPTIONAL reviews / comments — schema >= 3 and its manifest lists one of
+    them (a schema-1 / 2 manifest listing them stays ``unknown_entity``: they are outside its plan)."""
+    return schema_version >= vocab.SCHEMA_VERSION and bool(set(entities) & set(OPTIONAL_TABLES))
 
 
 def _hidden_columns(spec: EntitySpec, schema_version: int, has_history: bool) -> frozenset[str]:
@@ -546,7 +609,8 @@ def _check_entities(
     W30: a schema-2 archive's plan is the catalog + the 27 history entities; a history entity in a
     schema-1 manifest is ``unknown_entity`` (as on a phase-1 deployment); the ``history`` block is present
     if and only if the archive is schema 2. W37 D-1: a schema-3 archive has history exactly when it has the
-    block (``archive_has_history``); without it a history entity is ``unknown_entity`` as in schema 1.
+    block (``archive_has_history``); without it a history entity is ``unknown_entity`` as in schema 1. W37 F-7: a
+    schema-3 manifest listing the reviews / comments plans them too (``archive_has_reviews``).
     """
     from app.services.project_import_rows import column_names
 
@@ -559,7 +623,8 @@ def _check_entities(
         raise ProjectImportFailed(
             "tampered", reason="the history block is missing" if with_history else "an unexpected history block",
         )
-    exported = {spec.table: spec for spec in plan(include_history=with_history)}
+    reviews = archive_has_reviews(schema_version, manifest.entities)       # W37 F-7: + the OPTIONAL entities
+    exported = {spec.table: spec for spec in plan(include_history=with_history, include_reviews=reviews)}
     retired = frozenset(vocab.RETIRED_ENTITIES) - set(exported)
     by_table: dict[str, list[tuple[int, str]]] = {}
     for name in names:
@@ -633,7 +698,7 @@ def _validate_rows(zf: zipfile.ZipFile, manifest: _Manifest, pre: _Preflight) ->
     from app.services.project_export_entities import HISTORY_PREDICATES
 
     single = _single_row_tables()
-    for spec in plan(include_history=pre.has_history):
+    for spec in plan(include_history=pre.has_history, include_reviews=pre.has_reviews):
         model = row_model_for(spec)
         hidden = _hidden_columns(spec, pre.schema_version, pre.has_history)
         predicate = HISTORY_PREDICATES.get(spec.select_where) if spec.select_where else None
@@ -676,6 +741,8 @@ def _validate_rows(zf: zipfile.ZipFile, manifest: _Manifest, pre: _Preflight) ->
                 if spec.table == "releases" and values.get("is_active") and isinstance(source_id, uuid.UUID):
                     stamp = values.get("activated_at")
                     active.append((stamp.isoformat() if stamp else "", str(source_id), source_id))
+                if pre.has_reviews:
+                    _note_review_state(pre, spec.table, values, line, name)
         listed = manifest.entities.get(spec.table)
         if listed is not None and listed.rows != count:
             raise ProjectImportFailed("tampered", reason="a row count differs from the manifest")
@@ -688,20 +755,78 @@ def _validate_rows(zf: zipfile.ZipFile, manifest: _Manifest, pre: _Preflight) ->
         raise _invalid_row("projects", 1, "entities/projects/part-0001.jsonl", "exactly one project row")
 
 
-def _read_directory(zf: zipfile.ZipFile, names: list[str]) -> dict[uuid.UUID, str]:
-    """I-3: ``directory/users.jsonl`` → source user id → lower(username). Nothing else is trusted."""
+def _note_review_state(pre: _Preflight, table: str, values: dict[str, Any], line: int, name: str) -> None:
+    """W37 F-7 (D-6), while every row is validated: the cases in a review state and each case's OPEN review
+    (``pending`` / ``in_progress``). Two open reviews of one case can never be written by an export (the
+    partial unique index of 0144) → ``tampered``."""
+    source_id = values.get("id")
+    if table == "managed_test_cases" and values.get("status") in vocab.REVIEW_RESET_STATES:
+        if isinstance(source_id, uuid.UUID):
+            pre.in_review[source_id] = str(values["status"])
+    elif table == "test_case_reviews" and values.get("status") in _OPEN_REVIEW:
+        case_id = values.get("test_case_id")
+        if not isinstance(case_id, uuid.UUID) or not isinstance(source_id, uuid.UUID):
+            return
+        if case_id in pre.open_reviews:
+            raise ProjectImportFailed("tampered", reason="a test case has two open reviews")
+        reviewer = values.get("reviewer_id")
+        pre.open_reviews[case_id] = _OpenReview(
+            review_id=source_id, status=str(values["status"]),
+            reviewer_id=reviewer if isinstance(reviewer, uuid.UUID) else None,
+        )
+
+
+def _read_directory(
+    zf: zipfile.ZipFile, names: list[str], schema_version: int = vocab.CATALOG_SCHEMA_VERSION,
+    emails: Optional[dict[uuid.UUID, str]] = None,
+) -> dict[uuid.UUID, str]:
+    """I-3: ``directory/users.jsonl`` → source user id → lower(username). Nothing else is trusted. W37 F-2: at
+    schema >= 3 a line may carry ``email`` (into ``emails`` when given) — below it an ``email`` key stays the
+    ``invalid_row`` a W24 / W30 deployment answers."""
     if _DIRECTORY not in names:
         return {}
+    model = _DirectoryUserV3 if schema_version >= vocab.SCHEMA_VERSION else _DirectoryUser
     out: dict[uuid.UUID, str] = {}
     for line, obj in _iter_lines(zf, _DIRECTORY, max_line=_DIRECTORY_LINE_MAX, entity="users"):
         try:
-            user = _DirectoryUser.model_validate(obj)
+            user = model.model_validate(obj)
         except ValidationError as exc:
             raise _invalid_row("users", line, _DIRECTORY, _validation_field(exc)[1]) from None
         if user.id in out:
             raise _invalid_row("users", line, _DIRECTORY, "duplicate id")
         out[user.id] = user.username.lower()
+        address = getattr(user, "email", None)
+        if emails is not None and address:
+            emails[user.id] = address
     return out
+
+
+def _read_people(zf: zipfile.ZipFile, names: list[str], pre: _Preflight) -> None:
+    """I-2 (W37 F-2): ``directory/members.jsonl`` / ``suite_owners.jsonl`` (schema >= 3 only — the member names
+    allowed them) → ``pre.members`` / ``pre.suite_owners``. Every user a line names must be a directory line; a
+    repeated member / suite → ``invalid_row``. Nothing here grants anything: Add members decides in I-4."""
+    pre.people = _MEMBERS in names
+    files = ((_MEMBERS, "project_members", _MemberLine), (_SUITE_OWNERS, "test_suite_owners", _SuiteOwnerLine))
+    for member, entity, model in files:
+        if member not in names:
+            continue
+        seen: set[Any] = set()
+        for line, obj in _iter_lines(zf, member, max_line=_DIRECTORY_LINE_MAX, entity=entity):
+            try:
+                row = model.model_validate(obj)
+            except ValidationError as exc:
+                raise _invalid_row(entity, line, member, _validation_field(exc)[1]) from None
+            if row.user_id not in pre.directory:
+                raise _invalid_row(entity, line, member, "user_id")
+            key = row.user_id if isinstance(row, _MemberLine) else row.suite_name
+            if key in seen:
+                raise _invalid_row(entity, line, member, "duplicate user_id" if entity == "project_members"
+                                   else "duplicate suite_name")
+            seen.add(key)
+            if isinstance(row, _MemberLine):
+                pre.members.append((row.user_id, row.role))
+            else:
+                pre.suite_owners.append((row.suite_name, row.user_id))
 
 
 async def _map_users(db: AsyncSession, directory: Mapping[uuid.UUID, str]) -> dict[uuid.UUID, uuid.UUID]:
@@ -717,6 +842,61 @@ async def _map_users(db: AsyncSession, directory: Mapping[uuid.UUID, str]) -> di
         for user_id, username in rows.all():
             target.setdefault(str(username), user_id)
     return {source: target[name] for source, name in directory.items() if name in target}
+
+
+@dataclasses.dataclass(frozen=True)
+class _Person:
+    """W37 F-2 (D-5): an archived member / owner matched by e-mail — the ONE eligible account (``user_id``, its
+    global ``role``), or why not (``reason``: ``email_not_found`` / ``email_ambiguous``)."""
+    user_id: Optional[uuid.UUID] = None
+    role: Optional[str] = None
+    reason: Optional[str] = None
+
+
+def people_statement(addresses: list[str]) -> Any:
+    """ONE ``SELECT`` per batch of the accounts an archived e-mail may match (D-5): ``lower(email)`` among the
+    ACTIVE, non-erased, non-synthetic, non-service accounts — the rows are grouped by ``lower(email)`` in
+    :func:`_map_people` (two or more for one address = ambiguous, never guessed)."""
+    return (
+        select(User.id, func.lower(User.email), User.role)
+        .where(
+            func.lower(User.email).in_(addresses), User.is_active.is_(True), User.erased_at.is_(None),
+            User.is_synthetic.is_(False), User.is_service_account.is_(False),
+        )
+        .order_by(User.id)
+    )
+
+
+async def _map_people(db: AsyncSession, pre: _Preflight) -> dict[uuid.UUID, _Person]:
+    """I-3 (W37 F-2), SELECTs only: every source user the members / suite-owner lines name → a :class:`_Person`.
+    A line whose directory entry has no e-mail is ``email_not_found``. Run only when Add members is chosen."""
+    wanted = {user for user, _role in pre.members} | {user for _suite, user in pre.suite_owners}
+    address_of = {user: pre.emails[user].strip().lower() for user in wanted if pre.emails.get(user)}
+    addresses = sorted(set(address_of.values()))
+    found: dict[str, list[tuple[uuid.UUID, str]]] = {}
+    for start in range(0, len(addresses), 1000):
+        rows = await db.execute(people_statement(addresses[start:start + 1000]))
+        for user_id, address, role in rows.all():
+            found.setdefault(str(address), []).append((user_id, str(role)))
+    out: dict[uuid.UUID, _Person] = {}
+    for user in wanted:
+        hits = found.get(address_of.get(user, ""), [])
+        if len(hits) == 1:
+            out[user] = _Person(user_id=hits[0][0], role=hits[0][1])
+        else:
+            out[user] = _Person(reason="email_ambiguous" if hits else "email_not_found")
+    return out
+
+
+def _role_rank(role: Any) -> int:
+    """The shared role ranking (``app.core.deps._ROLE_ORDER``, the members router's ceiling rule): -1 when the
+    value is not a role this deployment knows."""
+    from app.core.deps import _ROLE_ORDER, _normalize_user_role
+
+    try:
+        return _ROLE_ORDER.index(_normalize_user_role(role))
+    except ValueError:
+        return -1
 
 
 def _preflight_sync(spool: IO[bytes], public_keys: Mapping[str, str]) -> _Preflight:
@@ -755,11 +935,14 @@ def _preflight_sync(spool: IO[bytes], public_keys: Mapping[str, str]) -> _Prefli
             # the projects row never carries its id (dropped): the manifest's project_id names the source tree
             # whose stored prefixes rebuild_prefix accepts — a wrong value only makes every prefix refused (NULL)
             source_project_id=history.as_uuid(raw.get("project_id")),
+            has_reviews=archive_has_reviews(schema_version, manifest.entities),
         )
         _validate_rows(zf, manifest, pre)                                   # (g)
         if pre.has_history:
             pre.history_pre = history.validate_history(zf, raw, pre)        # (h)
-        pre.directory = _read_directory(zf, names)
+        pre.directory = _read_directory(zf, names, schema_version, pre.emails)
+        if schema_version >= vocab.SCHEMA_VERSION:
+            _read_people(zf, names, pre)                                    # W37 F-2: members / suite owners
     return pre
 
 
@@ -811,6 +994,16 @@ async def choose_slug(db: AsyncSession, *, source_slug: str) -> str:
 # ── I-5: one row at a time through the remap ─────────────────────────────────
 
 
+@dataclasses.dataclass(frozen=True)
+class _KeptReview:
+    """W37 F-7: the state an in-review case keeps with Keep reviews (D-6) — ``review_requested`` (its pending
+    review), ``under_review`` with its mapped ``claimant``, or ``review_requested`` again when the claim could not
+    stay (``unclaimed``: the claimant is not a reviewer-role member of the copy — what Unclaim does)."""
+    state: str
+    claimant: Optional[uuid.UUID] = None
+    unclaimed: bool = False
+
+
 @dataclasses.dataclass
 class _Context:
     project_id: uuid.UUID
@@ -832,6 +1025,10 @@ class _Context:
     history_pending: dict[tuple[str, str], list[tuple[uuid.UUID, uuid.UUID]]] = dataclasses.field(default_factory=dict)
     run_times: list[dt.datetime] = dataclasses.field(default_factory=list)      # created_at of every imported run (≤ 2 000)
     history_skipped: Counter[tuple[str, Optional[str], str]] = dataclasses.field(default_factory=Counter)
+    # W37 F-7 (D-6), filled by _decide_reviews only with Keep reviews: source case → the review state it keeps
+    review_cases: dict[uuid.UUID, "_KeptReview"] = dataclasses.field(default_factory=dict)
+    unclaimed_reviews: set[uuid.UUID] = dataclasses.field(default_factory=set)  # source review ids → pending, no claimant
+    orphan_reviews: set[uuid.UUID] = dataclasses.field(default_factory=set)     # open reviews no kept case stands behind
 
     @property
     def has_history(self) -> bool:
@@ -866,8 +1063,16 @@ class _Context:
 def _entity_rules(ctx: _Context, spec: EntitySpec, values: dict[str, Any], source_id: Any) -> None:
     """The per-entity rules of contract §2.1 that are not plain column specs."""
     if spec.table == "managed_test_cases" and values.get("status") in vocab.REVIEW_RESET_STATES:
-        values["status"] = "draft"                          # row 3: review requests are not exported
-        ctx.switched_off[_REVIEW_RESET] += 1
+        kept = ctx.review_cases.get(source_id)              # W37 F-7: only with Keep reviews (D-6)
+        if kept is None:
+            values["status"] = "draft"                      # row 3: review requests are not exported / kept
+            ctx.switched_off[_REVIEW_RESET] += 1
+        else:
+            values["status"] = kept.state
+            if kept.unclaimed:
+                ctx.switched_off[_REVIEW_UNCLAIMED] += 1
+    elif spec.table == "test_case_reviews" and source_id in ctx.unclaimed_reviews:
+        values["status"], values["reviewer_id"] = "pending", None   # W37 D-6: what Unclaim does
     elif spec.table == "releases" and values.get("is_active"):
         if source_id == ctx.release_keeper and not ctx.active_release_kept:
             ctx.active_release_kept = True                  # I-7: the latest activated release stays active
@@ -905,6 +1110,10 @@ def transform_row(ctx: _Context, spec: EntitySpec, values: dict[str, Any]) -> Op
     ``json_id_paths`` lists are rewritten id by id (an id outside the archive is removed, counted).
     """
     table = Base.metadata.tables[spec.table]
+    if spec.table == "test_case_reviews" and values.get("id") in ctx.orphan_reviews:
+        # W37 F-7: an open review whose case does not keep the matching review state (no export writes one)
+        ctx.skipped[(spec.table, "status", "row_unresolved")] += 1
+        return None
     history_refs = {column: values.pop(column, None) for column in spec.history_fks}
     for column, parent in spec.fks.items():
         ref = values.get(column)
@@ -940,7 +1149,13 @@ def transform_row(ctx: _Context, spec: EntitySpec, values: dict[str, Any]) -> Op
                 # the only person this deployment can vouch for (counted alike).
                 mapped = ctx.actor_id
         values[column] = mapped
+    case_id = values.get("id")
+    kept = (ctx.review_cases.get(case_id)
+            if spec.table == "managed_test_cases" and isinstance(case_id, uuid.UUID) else None)
     for column in spec.cleared:
+        if column == "reviewer_id" and kept is not None and kept.claimant is not None:
+            values[column] = kept.claimant                  # W37 D-6: a kept claim keeps its (mapped) claimant
+            continue
         if values.get(column) is not None:
             ctx.cleared[(spec.table, column, "assignment")] += 1
         values[column] = None
@@ -1112,6 +1327,119 @@ async def _create_project(
         activity_context={"imported_from": pre.source_name},
     )
     return project, enrolled
+
+
+async def _copy_members(db: AsyncSession, project_id: uuid.UUID) -> dict[uuid.UUID, tuple[str, str, bool]]:
+    """The copy's members so far — the importer, the service accounts, its synthetic QA lead — in ONE SELECT:
+    user id → (project role, global role, synthetic)."""
+    members = Base.metadata.tables["project_members"]
+    rows = await db.execute(
+        select(members.c.user_id, members.c.role, User.role, User.is_synthetic)
+        .join(User, User.id == members.c.user_id)
+        .where(members.c.project_id == project_id)
+    )
+    return {user_id: (str(role), str(global_role), bool(synthetic)) for user_id, role, global_role, synthetic in rows.all()}
+
+
+async def _stage_people(
+    db: AsyncSession, ctx: _Context, pre: _Preflight, people: Mapping[uuid.UUID, _Person], actor: User,
+) -> tuple[list[uuid.UUID], set[uuid.UUID]]:
+    """I-4b (W37 F-2, D-5) — Add members, right after provisioning and BEFORE the catalog rows: each archived
+    member matched to ONE eligible account is added with the archived role CAPPED at that person's own global
+    role (``_role_rank``: an archive never raises anyone); an unknown role → ``role_unknown``; no / two matches →
+    ``email_not_found`` / ``email_ambiguous``; someone already a member of the copy (the importer) is skipped
+    silently. Each added member writes ``log_access_change("member_added")`` in this transaction. Then the suite
+    owners: kept only for a matched owner who is an instance ADMIN or a QA_LEAD member of the copy
+    (``suite_review_service.assert_user_is_qa_lead_on_project``'s rule), else ``owner_not_lead``.
+    Returns ``(added user ids, the copy's reviewer-role non-synthetic members)``."""
+    from app.services.access_audit_service import log_access_change
+
+    copy = await _copy_members(db, ctx.project_id)
+    staged: list[dict[str, Any]] = []
+    for source, archived_role in pre.members:
+        archived = _role_rank(archived_role)
+        person = people.get(source, _Person(reason="email_not_found"))
+        if archived < 0:
+            ctx.skipped[("project_members", None, "role_unknown")] += 1
+            continue
+        if person.user_id is None:
+            ctx.skipped[("project_members", None, person.reason or "email_not_found")] += 1
+            continue
+        if person.user_id in copy:
+            continue                                        # already a member (the importer): nothing to grant
+        capped = min(archived, _role_rank(person.role))
+        if capped < 0:
+            ctx.skipped[("project_members", None, "role_unknown")] += 1
+            continue
+        role = _role_name(capped)
+        copy[person.user_id] = (role, str(person.role), False)
+        staged.append({"id": uuid.uuid4(), "user_id": person.user_id, "project_id": ctx.project_id, "role": role,
+                       "source": None})
+    if staged:
+        await _insert_batch(db, Base.metadata.tables["project_members"], staged)
+    for row in staged:
+        await log_access_change(db, "member_added", actor, target_user_id=row["user_id"], project_id=ctx.project_id,
+                                after_value={"role": row["role"], "via": "project_import"})
+    ctx.inserted["project_members"] = len(staged)
+    owned: list[dict[str, Any]] = []
+    for suite_name, source in pre.suite_owners:
+        person = people.get(source, _Person(reason="email_not_found"))
+        if person.user_id is None:
+            ctx.skipped[("test_suite_owners", None, person.reason or "email_not_found")] += 1
+            continue
+        member = copy.get(person.user_id)
+        lead = _role_rank(person.role) == _role_rank("ADMIN") or (
+            member is not None and _role_rank(member[0]) == _role_rank("QA_LEAD"))
+        if not lead:
+            ctx.skipped[("test_suite_owners", None, "owner_not_lead")] += 1
+            continue
+        owned.append({"id": uuid.uuid4(), "project_id": ctx.project_id, "suite_name": suite_name,
+                      "owner_user_id": person.user_id})
+    if owned:
+        await _insert_batch(db, Base.metadata.tables["test_suite_owners"], owned)
+    ctx.inserted["test_suite_owners"] = len(owned)
+    return [row["user_id"] for row in staged], _reviewers(copy)
+
+
+def _reviewers(copy: Mapping[uuid.UUID, tuple[str, str, bool]]) -> set[uuid.UUID]:
+    """The copy's members who may decide a review (D-6): a reviewer-role GLOBAL role (the lifecycle checks the
+    actor's own role), never a synthetic account."""
+    return {user for user, (_role, global_role, synthetic) in copy.items()
+            if not synthetic and _role_name(_role_rank(global_role)) in _REVIEWER_ROLES}
+
+
+def _role_name(rank: int) -> str:
+    """The role at ``rank`` of the shared ranking ("" for -1)."""
+    from app.core.deps import _ROLE_ORDER
+
+    return _ROLE_ORDER[rank].value if rank >= 0 else ""
+
+
+def _decide_reviews(ctx: _Context, pre: _Preflight, reviewers: set[uuid.UUID]) -> None:
+    """W37 F-7 (D-6), with Keep reviews, before the catalog rows: a ``review_requested`` case backed by its
+    ``pending`` review keeps both; an ``under_review`` case backed by its ``in_progress`` review keeps both ONLY
+    when the claimant maps (by username) to a reviewer-role, non-synthetic member of the copy (``reviewers``) —
+    else it is UNCLAIMED (review → ``pending``, no claimant; case → ``review_requested``). An in-review case
+    without its open review → ``draft`` (today's rule, no entry here); an open review no kept case stands behind
+    is not inserted (``orphan_reviews``)."""
+    kept: set[uuid.UUID] = set()
+    for case_id, state in pre.in_review.items():
+        review = pre.open_reviews.get(case_id)
+        if review is None:
+            continue
+        if state == "review_requested" and review.status == "pending":
+            ctx.review_cases[case_id] = _KeptReview(state="review_requested")
+        elif state == "under_review" and review.status == "in_progress":
+            claimant = ctx.user_map.get(review.reviewer_id) if review.reviewer_id is not None else None
+            if claimant is not None and claimant in reviewers:
+                ctx.review_cases[case_id] = _KeptReview(state="under_review", claimant=claimant)
+            else:
+                ctx.review_cases[case_id] = _KeptReview(state="review_requested", unclaimed=True)
+                ctx.unclaimed_reviews.add(review.review_id)
+        else:
+            continue
+        kept.add(review.review_id)
+    ctx.orphan_reviews = {review.review_id for review in pre.open_reviews.values()} - kept
 
 
 async def _insert_entity(db: AsyncSession, zf: zipfile.ZipFile, ctx: _Context, spec: EntitySpec, pre: _Preflight) -> None:
@@ -1348,8 +1676,17 @@ async def run_import(
     spool: Optional[IO[bytes]] = None,
     on_ledger: Optional[Callable[[dict[str, Any]], Awaitable[None]]] = None,
     on_progress: Optional[Callable[[str, int, int], Awaitable[None]]] = None,
+    add_members: bool = False,
+    keep_reviews: bool = False,
 ) -> Any:
     """Import ``job``'s upload as a NEW project on ``db`` — ONE transaction the CALLER commits.
+
+    W37 (contract §2.2 / §2.3, D-5 / D-6), both OFF by default (= today exactly): ``add_members`` — the archive's
+    members matched by e-mail in I-3 (``_map_people``) are staged right after provisioning, with their suite
+    owners (``_stage_people``; ``outcome["added_member_ids"]`` for the runner's cache invalidation);
+    ``keep_reviews`` — the archive's reviews / comments are inserted and the in-review cases keep their state
+    when it can still be acted on (``_decide_reviews``). An option the archive cannot honour is reported in
+    ``options_ignored``; rows the archive carried for an option not chosen are ``skipped`` ``not_chosen``.
 
     Returns the ``ProjectDataImportReport``. Raises ``ProjectImportFailed(code)``
     for every refusal; until I-2 / I-3 complete only SELECTs run on ``db``. The
@@ -1397,9 +1734,14 @@ async def run_import(
         archive_sha256 = await asyncio.to_thread(sha256_of_file, work)
         public_keys = await compliance_signing.public_keys(db)
         pre = await asyncio.to_thread(_preflight_sync, work, public_keys)   # I-2 (a)…(h)
-        specs = plan(include_history=pre.has_history)
+        specs = plan(include_history=pre.has_history, include_reviews=pre.has_reviews)
         total = len(specs)
         user_map = await _map_users(db, pre.directory)              # I-3
+        adding = add_members and pre.people                         # W37 F-2: chosen AND the archive lists members
+        keeping = keep_reviews and pre.has_reviews                  # W37 F-7: chosen AND the archive has reviews
+        people = await _map_people(db, pre) if adding else {}       # I-3: ONE batched SELECT by lower(email)
+        added: list[uuid.UUID] = []
+        reviewers: set[uuid.UUID] = set()
         name = await choose_name(db, requested=requested, source_name=pre.source_name)
         slug = await choose_slug(db, source_slug=pre.source_slug)
         if on_manifest is not None:
@@ -1420,9 +1762,19 @@ async def run_import(
                 db, zf, ctx, spec=specs[0], pre=pre, name=name, slug=slug, actor=actor,
             )
             ctx.inserted["projects"] = 1
+            if adding:                                              # I-4b: members + suite owners BEFORE the catalog
+                added, reviewers = await _stage_people(db, ctx, pre, people, actor)
+            elif keeping:
+                reviewers = _reviewers(await _copy_members(db, ctx.project_id))
+            if keeping:
+                _decide_reviews(ctx, pre, reviewers)
             await on_table(1, total)
             for done, spec in enumerate(specs[1:], start=2):        # I-5 / I-H3
-                await _insert_entity(db, zf, ctx, spec, pre)
+                if spec.table in OPTIONAL_TABLES and not keeping:   # W37 F-7: carried, Keep reviews not chosen
+                    if pre.rows.get(spec.table, 0) > 0:
+                        ctx.skipped[(spec.table, None, "not_chosen")] += pre.rows[spec.table]
+                else:
+                    await _insert_entity(db, zf, ctx, spec, pre)
                 await on_table(done, total)
                 if on_progress is not None and pre.has_history:          # a catalog import reads as phase 1 did
                     phase, phase_done = ("runs", done - catalog_total) if spec.history else ("catalog", done)
@@ -1441,6 +1793,10 @@ async def run_import(
         for table, rows in pre.retired.items():                     # W25d HYG-02: a dropped table's rows
             if rows > 0:
                 ctx.skipped[(table, None, "retired_table")] += rows
+        if pre.people and not add_members:                          # W37 F-2: listed, Add members not chosen
+            for entity, listed in (("project_members", len(pre.members)), ("test_suite_owners", len(pre.suite_owners))):
+                if listed:
+                    ctx.skipped[(entity, None, "not_chosen")] += listed
         if remap is not None and pre.history_pre is not None:
             past_retention, retention_on, retention_days = await _retention_pause(   # I-H4, same transaction
                 db, ctx, project, imported_row=ctx.inserted.get("project_retention_policies", 0) > 0,
@@ -1454,7 +1810,15 @@ async def run_import(
         if own_spool:
             work.close()
 
-    inserted = {spec.table: ctx.inserted.get(spec.table, 0) for spec in specs}
+    # §2.3: the reviews / comments and the people appear in ``inserted`` only when chosen AND carried
+    inserted = {spec.table: ctx.inserted.get(spec.table, 0) for spec in specs
+                if keeping or spec.table not in OPTIONAL_TABLES}
+    if adding:
+        inserted.update(project_members=ctx.inserted.get("project_members", 0),
+                        test_suite_owners=ctx.inserted.get("test_suite_owners", 0))
+    ignored: list[Any] = [option for option, chosen, carried in (("add_members", add_members, pre.people),
+                                                      ("keep_reviews", keep_reviews, pre.has_reviews))
+               if chosen and not carried]
     history_report = (
         _history_report(ctx, pre, documents=documents, objects=objects, skipped=history_skipped,
                         past_retention=past_retention, retention_on=retention_on, retention_days=retention_days)
@@ -1466,6 +1830,7 @@ async def run_import(
         switched_off=dict(sorted(ctx.switched_off.items())), signature=pre.signature,
         source_project_name=pre.source_name, source_app_version=pre.source_app_version,
         exported_at=pre.exported_at, **({"history": history_report} if history_report is not None else {}),
+        options_ignored=ignored,
     )
     row = await db.get(ProjectDataJob, job.id)                      # I-8, same transaction
     if row is None:
@@ -1483,10 +1848,15 @@ async def run_import(
     row.archive_sha256 = archive_sha256
     row.signature = pre.signature
     row.progress = {"done": total, "total": total}
-    if history_report is not None:
+    if history_report is not None or pre.schema_version >= vocab.SCHEMA_VERSION:
         from app.services.project_data_job_service import stamp_schema_version
 
         stamp_schema_version(row, pre.schema_version)          # options["schema_version"], read by to_read
+    if adding:
+        activity_context["members_added"] = inserted["project_members"]     # W37 §2.3
+    if keeping:
+        activity_context["reviews_kept"] = inserted.get("test_case_reviews", 0)
+    if history_report is not None:
         counts.update({f"documents.{name}": n for name, n in sorted(documents.items())})
         counts["objects"] = objects[0]
         # success and "no ledger" commit together (I-H8). SQL NULL, never Python None: the JSONB column would store
@@ -1506,6 +1876,8 @@ async def run_import(
     await db.flush()
     if outcome is not None:
         outcome["enrolled_service_account_ids"] = list(enrolled)
+        if added:
+            outcome["added_member_ids"] = list(added)               # W37 §2.2: the runner invalidates their cache
     _slog.info(
         "project_import_succeeded", job_id=str(job.id), project_id=str(project.id),
         rows=sum(inserted.values()), tables=total, signature=pre.signature,

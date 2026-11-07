@@ -520,6 +520,31 @@ async def test_a_name_an_active_project_has_is_409(
     assert await _count_jobs(factory) == 0 and storage.objects == {}
 
 
+@pytest.mark.parametrize(("fields", "stored"), [
+    ({"add_members": "true"}, {"add_members": True}),
+    ({"keep_reviews": "TRUE "}, {"keep_reviews": True}),
+    ({"add_members": "true", "keep_reviews": "true"}, {"add_members": True, "keep_reviews": True}),
+    ({"add_members": "false", "keep_reviews": "yes"}, {}),
+    ({}, {}),
+])
+async def test_the_import_options_are_stored_and_echoed_only_when_true(
+    factory: Any, world: Any, storage: FakeStorage, dispatched: list, fields: dict, stored: Any,
+) -> None:
+    async with _client(factory, world.admin) as client:
+        answer = await client.post("/api/v1/projects/import", data={"client_token": str(uuid.uuid4()), **fields},
+                                   files={"file": ("export.zip", _zip_bytes(), "application/zip")})
+    assert answer.status_code == 202, answer.text
+    read = answer.json()
+    async with factory() as db:
+        row = await db.get(ProjectDataJob, uuid.UUID(read["id"]))
+    assert row.options == stored                         # no option: the import row is exactly W24's ({})
+    if not stored:
+        assert read["options"] is None
+    else:
+        assert read["options"] == {"include_history": False, "history_days": None, "max_runs": None, **stored}
+    assert dispatched == [("app.worker.tasks.import_project_data", read["id"])]
+
+
 @pytest.mark.parametrize("who", ["lead", "engineer", "viewer", "outsider"])
 async def test_only_an_admin_imports(factory: Any, world: Any, storage: FakeStorage, dispatched: list, who: str) -> None:
     async with _client(factory, getattr(world, who)) as client:
@@ -574,6 +599,58 @@ async def test_a_bad_export_body_reads_its_sentence_and_creates_nothing(
         answer = await client.post(f"/api/v1/projects/{world.project.id}/export", json=body)
     assert answer.status_code == 422
     assert answer.json()["detail"] == {"code": code, "message": vocab.ERROR_SENTENCES[code]}
+    assert dispatched == [] and await _count_jobs(factory) == 0
+
+
+# ── W37 F-2 / F-7: Include members / Include reviews (contract §2.1) ────────
+
+@pytest.mark.parametrize(("body", "stored", "schema"), [
+    ({"include_members": True}, {"include_members": True}, 3),
+    ({"include_reviews": True}, {"include_reviews": True}, 3),
+    ({"include_members": True, "include_reviews": True, "include_history": False},
+     {"include_members": True, "include_reviews": True}, 3),
+    ({"include_members": False, "include_reviews": False}, {}, 1),
+])
+async def test_members_and_reviews_are_stored_and_echoed_only_when_ticked_without_the_history_limits(
+    factory: Any, world: Any, dispatched: _Dispatched, body: dict, stored: dict, schema: int,
+) -> None:
+    async with _client(factory, world.lead) as client:
+        answer = await client.post(f"/api/v1/projects/{world.project.id}/export", json=body)
+    assert answer.status_code == 202, answer.text
+    assert dispatched.options == [{}]                   # no history → the phase-1 payload
+    read = answer.json()
+    assert read["schema_version"] == schema
+    if stored:
+        assert read["options"] == {"include_history": False, "history_days": None, "max_runs": None, **stored}
+    else:
+        assert read["options"] is None                  # a catalog-only export reads exactly as before
+    async with factory() as db:
+        row = await db.get(ProjectDataJob, uuid.UUID(read["id"]))
+    assert row.options == stored
+
+
+async def test_members_with_history_keep_the_w30_keys_exact_and_add_only_theirs(
+    factory: Any, world: Any, dispatched: _Dispatched,
+) -> None:
+    async with _client(factory, world.lead) as client:
+        answer = await client.post(f"/api/v1/projects/{world.project.id}/export", json={
+            "include_history": True, "history_days": 90, "max_runs": 500, "include_reviews": True,
+        })
+    assert answer.status_code == 202, answer.text
+    expected = {"include_history": True, "history_days": 90, "max_runs": 500, "include_reviews": True}
+    assert answer.json()["options"] == expected and dispatched.options == [HISTORY_LIMITS]
+    async with factory() as db:
+        row = await db.get(ProjectDataJob, uuid.UUID(answer.json()["id"]))
+    assert row.options == expected
+
+
+@pytest.mark.parametrize("body", [{"include_members": "maybe"}, {"include_reviews": [1]}, {"include_people": True}])
+async def test_a_bad_members_or_reviews_flag_is_422_and_creates_nothing(
+    factory: Any, world: Any, dispatched: _Dispatched, body: dict,
+) -> None:
+    async with _client(factory, world.lead) as client:
+        answer = await client.post(f"/api/v1/projects/{world.project.id}/export", json=body)
+    assert answer.status_code == 422
     assert dispatched == [] and await _count_jobs(factory) == 0
 
 
@@ -851,6 +928,32 @@ async def test_a_parted_upload_starts_takes_its_parts_and_completes(
     assert again.status_code == 200 and again.json()["status"] == "queued"
     assert dispatched == [("app.worker.tasks.import_project_data", job["id"])]     # ONE enqueue
     assert dispatched.options == [HISTORY_LIMITS]
+
+
+@pytest.mark.parametrize(("extra", "stored"), [
+    ({"add_members": True, "keep_reviews": True}, {"add_members": True, "keep_reviews": True}),
+    ({"add_members": False, "keep_reviews": True}, {"keep_reviews": True}),
+    ({}, {}),
+])
+async def test_a_parted_start_stores_the_import_options_only_when_true(
+    factory: Any, world: Any, storage: FakeStorage, dispatched: _Dispatched, small_parts: int, extra: dict, stored: dict,
+) -> None:
+    data = _archive(PART + 10)
+    async with _client(factory, world.admin) as client:
+        started = await client.post(UPLOADS, json={
+            "client_token": str(uuid.uuid4()), "bytes": len(data), "parts": 2, "sha256": _sha(data), **extra,
+        })
+        refused = await client.post(UPLOADS, json={
+            "client_token": str(uuid.uuid4()), "bytes": len(data), "parts": 2, "sha256": _sha(data),
+            "add_members": "sometimes",
+        })
+    assert started.status_code == 201, started.text
+    assert refused.status_code == 422
+    async with factory() as db:
+        row = await db.get(ProjectDataJob, uuid.UUID(started.json()["id"]))
+    assert row.options == {"parted": True, "parts": 2, "bytes": len(data), "sha256": _sha(data), **stored}
+    echo = started.json()["options"]
+    assert echo == ({"include_history": False, "history_days": None, "max_runs": None, **stored} if stored else None)
 
 
 async def test_a_re_sent_start_answers_the_open_upload_with_its_received_parts(

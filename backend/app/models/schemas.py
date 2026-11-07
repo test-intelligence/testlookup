@@ -986,6 +986,8 @@ class ProjectDataImportReport(BaseModel):
     source_app_version: Optional[str] = None
     exported_at: datetime
     history: Optional["ProjectDataHistoryReport"] = None   # W30: None for a catalog-only (schema 1) import
+    # W37 (contract §2.2): an import option the archive cannot honour (no members / no reviews in the file)
+    options_ignored: list[Literal["add_members", "keep_reviews"]] = []
 
 
 class ProjectDataJobRead(BaseModel):
@@ -1152,6 +1154,10 @@ class ProjectExportRequest(BaseModel):
         self.history_days = None
         return self
 
+    # ── W37 F-2 / F-7 (contract §2.1): independent of history; either one makes the archive schema 3 ──
+    include_members: bool = False                  # the project's human members + suite owners, with e-mails
+    include_reviews: bool = False                  # the test case reviews + comments
+
 
 class ProjectExportEstimate(BaseModel):
     """``GET /projects/{id}/export-estimate``: counts only. A store that could not be read → its counts None and
@@ -1178,8 +1184,15 @@ class ProjectDataOptions(BaseModel):
     history_days: Optional[int] = None
     max_runs: Optional[int] = None
     history_release_id: Optional[uuid.UUID] = None   # W37 F-W30-1: a release-scoped history export (history_days None)
+    # W37 F-2 / F-7: the export's Include members / Include reviews; an import's Add members / Keep reviews
+    include_members: bool = False
+    include_reviews: bool = False
+    add_members: bool = False
+    keep_reviews: bool = False
 
-    _SET_ONLY: ClassVar[tuple[str, ...]] = ("history_release_id",)   # W37 keys left out of the echo while unset
+    _SET_ONLY: ClassVar[tuple[str, ...]] = (          # W37 keys left out of the echo while unset
+        "history_release_id", "include_members", "include_reviews", "add_members", "keep_reviews",
+    )
 
     @model_serializer(mode="wrap")
     def _only_the_set_w37_keys(self, handler: Any) -> Any:
@@ -1225,6 +1238,9 @@ class ProjectImportUploadStart(BaseModel):
     bytes: int = Field(ge=1, le=_pdv.IMPORT_ARCHIVE_MAX_BYTES)
     parts: int = Field(ge=1, le=_pdv.IMPORT_MAX_PARTS)
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")   # of the WHOLE file; checked by the worker after assembly
+    # W37 F-2 / F-7 (contract §2.2): sent only when ticked; stored on the job only when true
+    add_members: bool = False
+    keep_reviews: bool = False
 
     @model_validator(mode="before")
     @classmethod

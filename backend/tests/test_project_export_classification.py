@@ -80,6 +80,9 @@ SCHEMA_V2_HISTORY_REQUIRED_COLUMNS = frozenset({
     "timeline_notes.starts_on", "timeline_notes.ends_on", "timeline_notes.text",
 })
 
+# Guard (7') the same pin for the OPTIONAL entities (W37 F-7): a schema-3 archive with reviews always carries these.
+SCHEMA_V3_OPTIONAL_REQUIRED_COLUMNS = frozenset({"test_case_comments.content"})
+
 # Guard (6') phase 1's 29 catalog entities, in phase 1's order: a schema-1 export writes exactly these.
 PHASE_1_PLAN = (
     "projects", "test_suites", "managed_test_cases", "test_case_versions", "test_case_requirement_links",
@@ -225,6 +228,14 @@ def test_6_both_plans_are_phase_1_then_history():
     assert [s.table for s in e.plan(include_history=False)] == list(PHASE_1_PLAN)
     assert [s.table for s in e.plan(include_history=True)] == list(PHASE_1_PLAN) + list(e.HISTORY_TABLES)
     assert e.order_problems(e.CATALOG) == [] and e.order_problems(e.EXPORTED) == []
+    # W37 F-7: the OPTIONAL reviews / comments join ONLY when chosen, right after the catalog, before history
+    optional = ["test_case_reviews", "test_case_comments"]
+    assert list(e.OPTIONAL_TABLES) == optional
+    assert [s.table for s in e.plan(include_reviews=True)] == list(PHASE_1_PLAN) + optional
+    assert [s.table for s in e.plan(include_history=True, include_reviews=True)] == (
+        list(PHASE_1_PLAN) + optional + list(e.HISTORY_TABLES)
+    )
+    assert e.order_problems(e.CATALOG + e.OPTIONAL) == []
 
 
 def test_6_history_fks_are_second_pass_columns_of_catalog_entities_pointing_at_history():
@@ -265,8 +276,11 @@ def test_6_the_columns_of_each_schema_differ_exactly_where_pinned():
     assert _added(2) == {"canonical_test_cases": canonical}
     assert _added(3, base=2) == {"test_plan_items": _PLAN_EXECUTION}
     assert _added(3) == {"canonical_test_cases": canonical, "test_plan_items": _PLAN_EXECUTION}
-    # schema 3 WITHOUT history (G-B's members / reviews only): no pointer into history, the plan results stay
-    assert _added(3, history=False) == {"test_plan_items": _PLAN_EXECUTION - {"test_case_result_id"}}
+    # schema 3 WITHOUT history (G-B's members / reviews only) — W37 D-3, decided: plan execution results travel
+    # ONLY with history, so such an archive writes exactly schema 1's columns (no pointer, no plan results)
+    assert _added(3, history=False) == {}
+    for spec in e.EXPORTED:
+        assert e.exported_columns(spec, schema_version=3, history=False) == e.exported_columns(spec), spec.table
     # the gating is the spec's: schema3_columns are only ever F-W30-3's, on a catalog entity
     gated = {spec.table: set(spec.schema3_columns) for spec in e.EXPORTED if spec.schema3_columns}
     assert gated == {"test_plan_items": _PLAN_EXECUTION}
@@ -298,15 +312,20 @@ def test_6_the_has_history_rule_and_the_written_schema():
     assert not e.archive_has_history(1, history_block=True) and not e.archive_has_history(1, history_block=False)
     assert e.export_schema_version(include_history=False) == 1
     assert e.export_schema_version(include_history=True) == 3
+    # W37 F-2 / F-7: members or reviews — with or without history — are schema 3 too
+    assert e.export_schema_version(include_history=False, include_members=False, include_reviews=False) == 1
+    assert e.export_schema_version(include_history=False, include_members=True) == 3
+    assert e.export_schema_version(include_history=False, include_reviews=True) == 3
+    assert e.export_schema_version(include_history=True, include_members=True, include_reviews=True) == 3
 
 
 def test_6_plan_is_topologically_sorted():
-    assert [s.table for s in e.plan(include_history=True)] == list(e.EXPORTED_TABLES)
+    assert [s.table for s in e.plan(include_history=True, include_reviews=True)] == list(e.EXPORTED_TABLES)
     assert e.plan()[0].table == "projects" and e.plan()[0].scope == e.SCOPE_ROOT
     assert e.order_problems() == []
     # every fks / parent edge points at an EXPORTED table that precedes the child
     position = {t: i for i, t in enumerate(e.EXPORTED_TABLES)}
-    for i, spec in enumerate(e.plan(include_history=True)):
+    for i, spec in enumerate(e.plan(include_history=True, include_reviews=True)):
         parents = dict(spec.fks)
         parents.update({c: t for c, t in spec.null_unless.items() if t != spec.table and c not in spec.history_fks})
         if spec.parent is not None:
@@ -460,7 +479,8 @@ def _required_without_default(specs: tuple[e.EntitySpec, ...]) -> set[str]:
 
 def test_7_a_new_not_null_column_without_a_default_is_a_deliberate_decision():
     for specs, pin, version in ((e.CATALOG, SCHEMA_V1_REQUIRED_COLUMNS, "SCHEMA_V1_REQUIRED_COLUMNS"),
-                                (e.HISTORY, SCHEMA_V2_HISTORY_REQUIRED_COLUMNS, "SCHEMA_V2_HISTORY_REQUIRED_COLUMNS")):
+                                (e.HISTORY, SCHEMA_V2_HISTORY_REQUIRED_COLUMNS, "SCHEMA_V2_HISTORY_REQUIRED_COLUMNS"),
+                                (e.OPTIONAL, SCHEMA_V3_OPTIONAL_REQUIRED_COLUMNS, "SCHEMA_V3_OPTIONAL_REQUIRED_COLUMNS")):
         found = _required_without_default(specs)
         new = sorted(found - pin)
         assert not new, (
@@ -515,12 +535,18 @@ def test_8_pinned_counts():
     # W31 STRAT-12 (deliberate): + subject_rights_jobs under NOT_PROJECT_SCOPED (24 → 25)
     # W34 STRAT-13 (deliberate): + drop_folder_builds under NOT_PROJECT_SCOPED (25 → 26)
     # W36 STRAT-03 (deliberate): + systemic_cluster_epics under EXCLUDED, external_tracker like defects (77 → 78)
-    assert counts == (56, 78, 26), (
+    # W37 F-7 (deliberate): test_case_reviews / test_case_comments leave EXCLUDED (per_user_state) for EXPORTED as
+    # the 2 OPTIONAL entities, written only when the exporter ticks Include reviews (56 → 58, 78 → 76)
+    assert counts == (58, 76, 26), (
         f"EXPORTED / EXCLUDED / NOT_PROJECT_SCOPED = {counts}: a table was added or moved — "
         "classify it in project_export_entities.py and update this pin deliberately"
     )
     assert sum(counts) == len(TABLES)
-    assert (len(e.CATALOG), len(e.HISTORY)) == (29, 27)
+    assert (len(e.CATALOG), len(e.OPTIONAL), len(e.HISTORY)) == (29, 2, 27)
+    assert e.OPTIONAL_REASON == "exported only when the exporter ticks Include reviews"
+    # without Include reviews they are left out exactly as W24 did — under their W24 reason (a schema-1 manifest)
+    assert dict(e.OPTIONAL_UNTICKED_REASONS) == {t: "per_user_state" for t in e.OPTIONAL_TABLES}
+    assert set(e.OPTIONAL_UNTICKED_REASONS.values()) <= set(EXCLUSION_REASONS)
     assert sum(1 for r in e.EXCLUDED.values() if r == "run_history") == 0   # W30: the reason retired
 
 

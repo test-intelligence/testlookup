@@ -536,3 +536,121 @@ def test_what_the_export_left_out_reads_in_the_servers_sentences():
     })
     assert "evidence_artifacts: 1 was not imported: it pointed at a pipeline scratch file, which is not exported" in lines
     assert "agent_pipeline_runs: 2 were not imported: its AI pipeline was still running at export" in lines
+
+
+# ── W37: --release, --include-members / --include-reviews, --add-members / --keep-reviews ──
+
+RELEASE_ID = str(uuid.uuid4())
+_PEOPLE_REPORT = {
+    **_REPORT,
+    "inserted": {**_REPORT["inserted"], "project_members": 2, "test_suite_owners": 1, "test_case_reviews": 4},
+    "skipped": [{"entity": "project_members", "reason": "email_not_found", "count": 1},
+                {"entity": "project_members", "reason": "email_ambiguous", "count": 2},
+                {"entity": "project_members", "reason": "role_unknown", "count": 1},
+                {"entity": "test_suite_owners", "reason": "owner_not_lead", "count": 1},
+                {"entity": "test_case_comments", "reason": "not_chosen", "count": 3}],
+    "switched_off": {"managed_test_cases.review_unclaimed": 1},
+    "options_ignored": ["keep_reviews"],
+}
+
+
+def test_export_history_with_a_release_sends_the_release_and_no_day_window(wire, tmp_path):
+    seen = wire(_export_handler(_zip_bytes(), counts=_HISTORY_COUNTS))
+    result = _run("projects", "export", PROJECT_ID, "--history", "--release", RELEASE_ID, "-o", str(tmp_path / "r.zip"))
+    assert result.exit_code == 0, result.output
+    post = next(r for r in seen if r.method == "POST")
+    assert json.loads(post.content) == {"include_history": True, "max_runs": 2000, "history_release_id": RELEASE_ID}
+
+
+@pytest.mark.parametrize(("argv", "sentence"), [
+    (("--release", RELEASE_ID), projects.RELEASE_NEEDS_HISTORY),
+    (("--history", "--release", RELEASE_ID, "--days", "30"), projects.RELEASE_OR_DAYS),
+    (("--history", "--release", "not-a-release"), "--release takes a release id"),
+])
+def test_a_release_without_history_with_days_or_not_an_id_is_refused_with_no_request(wire, argv, sentence):
+    seen = wire(_export_handler(_zip_bytes()))
+    result = _run("projects", "export", PROJECT_ID, *argv)
+    assert result.exit_code == 1 and sentence in result.output
+    assert seen == []
+
+
+@pytest.mark.parametrize(("argv", "body"), [
+    (("--include-members",), {"include_members": True}),
+    (("--include-reviews",), {"include_reviews": True}),
+    (("--include-members", "--include-reviews"), {"include_members": True, "include_reviews": True}),
+    (("--history", "--days", "30", "--include-members"),
+     {"include_history": True, "history_days": 30, "max_runs": 2000, "include_members": True}),
+])
+def test_include_members_and_reviews_are_sent_only_when_given(wire, tmp_path, argv, body):
+    seen = wire(_export_handler(_zip_bytes()))
+    result = _run("projects", "export", PROJECT_ID, *argv, "-o", str(tmp_path / "m.zip"))
+    assert result.exit_code == 0, result.output
+    post = next(r for r in seen if r.method == "POST")
+    assert json.loads(post.content) == body
+
+
+def test_the_import_options_are_form_fields_only_when_given_and_part_of_the_token(wire, tmp_path):
+    archive = tmp_path / "export.zip"
+    archive.write_bytes(_zip_bytes())
+    seen = wire(_import_handler())
+    assert _run("projects", "import", str(archive)).exit_code == 0
+    assert _run("projects", "import", str(archive), "--add-members").exit_code == 0
+    assert _run("projects", "import", str(archive), "--add-members", "--keep-reviews").exit_code == 0
+    posts = [r for r in seen if r.method == "POST"]
+    assert [(_form_field(r, "add_members"), _form_field(r, "keep_reviews")) for r in posts] == [
+        (None, None), ("true", None), ("true", "true")]
+    assert b'name="add_members"' not in posts[0].content and b'name="keep_reviews"' not in posts[0].content
+    tokens = [_form_field(r, "client_token") for r in posts]
+    assert tokens[0] == str(projects.import_client_token(archive, None))           # the W24 token, unchanged
+    assert tokens[1] == str(projects.import_client_token(archive, None, options=("add_members",)))
+    assert len(set(tokens)) == 3
+
+
+def test_a_parted_import_sends_the_options_in_the_start_body_only_when_given(wire, big_archive):
+    seen = wire(_parted_handler())
+    assert _run("projects", "import", str(big_archive), "--keep-reviews").exit_code == 0
+    start = json.loads(next(r for r in seen if r.url.path == UPLOADS_PATH).content)
+    assert start["keep_reviews"] is True and "add_members" not in start
+    assert start["client_token"] == str(projects.import_client_token(big_archive, None, options=("keep_reviews",)))
+
+
+def test_the_people_and_review_report_lines_read_in_the_servers_sentences(wire, tmp_path):
+    archive = tmp_path / "export.zip"
+    archive.write_bytes(_zip_bytes())
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(202, json=_job("queued", kind="import"))
+        return httpx.Response(200, json=_job("succeeded", kind="import", import_report=_PEOPLE_REPORT))
+
+    wire(handler)
+    result = _run("projects", "import", str(archive), "--add-members", "--keep-reviews")
+    assert result.exit_code == 0, result.output
+    for line in (
+        "project_members: 1 row was skipped: no active account here has this e-mail address",
+        "project_members: 2 rows were skipped: more than one account here has this e-mail address",
+        "project_members: 1 row was skipped: its project role is not one this deployment knows",
+        "test_suite_owners: 1 row was skipped: the owner is not a QA lead in the new project",
+        "test_case_comments: 3 rows were skipped: the option to bring them was not chosen",
+        "managed_test_cases.review_unclaimed: 1 row returned to Review requested — the reviewer is not a member here",
+        projects.OPTIONS_IGNORED["keep_reviews"],
+        "project_members: 2", "test_suite_owners: 1",
+    ):
+        assert line in result.output, line
+    assert projects.OPTIONS_IGNORED["add_members"] not in result.output
+
+
+def test_the_cli_mirrors_the_servers_w37_sentences():
+    """The CLI installs without the backend; its copies must read exactly the server's (contract §2.3)."""
+    assert {k: projects.SKIP_REASONS[k] for k in ("email_not_found", "email_ambiguous", "role_unknown",
+                                                  "owner_not_lead", "not_chosen")} == {
+        "email_not_found": "no active account here has this e-mail address",
+        "email_ambiguous": "more than one account here has this e-mail address",
+        "role_unknown": "its project role is not one this deployment knows",
+        "owner_not_lead": "the owner is not a QA lead in the new project",
+        "not_chosen": "the option to bring them was not chosen",
+    }
+    assert projects.OPTIONS_IGNORED == {
+        "add_members": "Add members: this file lists no members — export it again with Include members.",
+        "keep_reviews": "Keep reviews: this file has no reviews — export it again with Include reviews.",
+    }
