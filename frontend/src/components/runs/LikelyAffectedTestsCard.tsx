@@ -23,6 +23,7 @@
  */
 import { Crosshair } from 'lucide-react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { RESULT_STATUS_TOKEN, resultStatusToken } from '@/components/ui/statusVocabulary'
 import { useLikelyAffectedTests } from '@/hooks/useCommitAttribution'
 import {
   LIKELY_AFFECTED_LIMIT,
@@ -45,13 +46,12 @@ function unavailableLine(reason: string | null): string {
   return (reason && UNAVAILABLE_COPY[reason]) || 'Likely affected tests are not available for this run.'
 }
 
-const KNOWN_STATUSES = new Set(['passed', 'failed', 'broken', 'skipped'])
-
+/** A result status paints with the shared result vocabulary (`RESULT_STATUS_TOKEN`), never a raw status var. */
 function StatusTag({ status }: { status: string }) {
   const key = status.toLowerCase()
-  const tone = KNOWN_STATUSES.has(key) ? key : 'unknown'
+  const token = resultStatusToken(key) ?? RESULT_STATUS_TOKEN.unknown
   return (
-    <span data-likely-status={key} className="text-xs" style={{ color: `var(--status-${tone})` }}>
+    <span data-likely-status={key} className="text-xs" style={{ color: token.hue }}>
       {key}
     </span>
   )
@@ -62,7 +62,8 @@ function FlakyTag() {
     <span
       data-likely-flaky=""
       title="Known flaky: its past co-failures add nothing to the score (its flakiness alone explains them)."
-      className="eyebrow rounded border border-[var(--status-flaky)] px-1 uppercase text-[var(--status-flaky)]"
+      className="eyebrow rounded border px-1 uppercase"
+      style={{ borderColor: RESULT_STATUS_TOKEN.flaky.hue, color: RESULT_STATUS_TOKEN.flaky.hue }}
     >
       flaky
     </span>
@@ -197,7 +198,7 @@ export default function LikelyAffectedTestsCard({ runId }: { runId: string }) {
         </div>
       )}
       {!isLoading && isError && (
-        <p data-likely-state="error" className="mt-3 text-sm text-[var(--status-failed)]">
+        <p data-likely-state="error" className="mt-3 text-sm text-[var(--ui-danger)]">
           Could not load the likely affected tests for this run.
         </p>
       )}
