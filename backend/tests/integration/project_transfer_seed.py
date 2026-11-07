@@ -13,7 +13,7 @@ catalog part covers the edge cases the export and the import must survive:
   run cadence, a plan item for a case that has versions, a user referenced by
   ``author_id`` and another by ``assignee_id``;
 * the rows that must NOT travel: a run with test cases (the canonical case
-  and the plan item point at them), a defect, a retention hold, a knowledge
+  and the plan item point at them), a defect, a cluster's Jira epic link, a retention hold, a knowledge
   source, a digest subscription, a project API key, members, instance secrets;
 * NON-HEX, real-looking secret sentinels built at run time (string
   concatenation — never a literal token in a file), typed through the REAL
@@ -431,6 +431,12 @@ async def _seed_what_must_not_travel(db: AsyncSession, seed: SeededProject, s: S
         "knowledge_sources": m.KnowledgeSource(project_id=pid, source_type="confluence", title="Payments runbook",
                                                canonical_url=f"https://wiki.example.test/payments/{seed.tag}"),
         "digest_subscriptions": m.DigestSubscription(user_id=seed.admin_id, project_id=pid, name="Weekly payments"),
+        # W36 STRAT-03: an epic filed in the SOURCE's Jira for a cluster (external_tracker, like the defect)
+        "systemic_cluster_epics": m.SystemicClusterEpic(
+            project_id=pid, membership_key=hashlib.sha256(f"epic-{seed.tag}".encode()).hexdigest()[:32],
+            jira_key="PAY-77", jira_url="https://jira.example.test/browse/PAY-77",
+            cluster_label="Gateway timeouts", member_fingerprints=[f"fp-{seed.tag}-a", f"fp-{seed.tag}-b"],
+            created_by=seed.author_id),
     }
     # Hash the freshly minted value, not the attribute: CodeQL reads `seed.api_key_plaintext` as a password and flagged
     # the product's SHA-256 key hash (py/weak-sensitive-data-hashing) through this flow on PR #308.
@@ -683,7 +689,7 @@ async def _seed_history_scoped(db: AsyncSession, seed: SeededProject, s: Sentine
         db.add(row)
         await db.flush()
         seed.history_excluded.setdefault(table, []).append(row.id)
-    for table in ("defects", "retention_holds"):
+    for table in ("defects", "retention_holds", "systemic_cluster_epics"):
         seed.history_excluded.setdefault(table, []).extend(seed.excluded.get(table, []))
     await db.flush()
 

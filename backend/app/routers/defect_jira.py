@@ -24,12 +24,23 @@ authorization ratchet):
 Route-order note: the literal ``/defects/jira/...`` sub-paths sit on their
 own ``/api/v1/projects``-prefixed router (same pattern as the quarantine
 manifest router) so no UUID path param can swallow them.
+
+W36 STRAT-03 — suggest-only Jira epics for recurring systemic clusters
+(``services/cluster_epic_service.py``; opt-in per project, default off):
+
+* ``GET  /api/v1/projects/{project_id}/systemic-clusters/epics`` — the
+  opt-in, Jira's availability, the Epic issue type, the stored links.
+* ``GET  /api/v1/projects/{project_id}/systemic-clusters/{membership_key}/epic/preview``
+  — the epic's summary / description; 404 gone, 422 ``not_recurring``.
+* ``POST /api/v1/projects/{project_id}/systemic-clusters/{membership_key}/epic``
+  — QA_ENGINEER+; 201 filed now, 200 an epic was already stored. Never a
+  Defect row; nothing files an epic but this POST.
 """
 from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,6 +48,10 @@ from app.core.deps import require_project_access, require_role
 from app.db.postgres import get_db
 from app.models.postgres import User, UserRole
 from app.models.schemas import (
+    ClusterEpicCreateRequest,
+    ClusterEpicCreateResponse,
+    ClusterEpicPreviewResponse,
+    ClusterEpicStatusResponse,
     DefectJiraLinkResult,
     DefectPatchRequest,
     DefectPatchResponse,
@@ -215,6 +230,81 @@ async def update_defect(
         jira=DefectJiraLinkResult(**outcome.jira) if outcome.jira else None,
         write_back=DefectWriteBackResult(**write_back) if write_back else None,
     )
+
+
+# ── W36 STRAT-03: Jira epics for recurring systemic clusters ────────────────
+
+#: ``systemic_cluster_service.membership_key``: the first 32 hex characters of a sha256.
+_MEMBERSHIP_KEY_PATTERN = r"^[0-9a-f]{32}$"
+
+
+@router.get(
+    "/{project_id}/systemic-clusters/epics",
+    response_model=ClusterEpicStatusResponse,
+)
+async def cluster_epic_status(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_project_access()),
+):
+    """The cluster list's one status read (reads only; no Jira call while Jira is unavailable)."""
+    from app.services import cluster_epic_service
+
+    return await cluster_epic_service.get_epic_status(db, project_id, user=current_user)
+
+
+@router.get(
+    "/{project_id}/systemic-clusters/{membership_key}/epic/preview",
+    response_model=ClusterEpicPreviewResponse,
+)
+async def cluster_epic_preview(
+    project_id: uuid.UUID,
+    membership_key: str = Path(..., pattern=_MEMBERSHIP_KEY_PATTERN),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_project_access()),
+):
+    """The epic this person would file for this cluster (its description names them as the filer).
+    404 gone, 422 ``not_recurring``."""
+    from app.services import cluster_epic_service
+
+    return await cluster_epic_service.preview_epic(db, project_id, membership_key, actor=current_user)
+
+
+@router.post(
+    "/{project_id}/systemic-clusters/{membership_key}/epic",
+    response_model=ClusterEpicCreateResponse,
+    status_code=201,
+)
+async def create_cluster_epic(
+    project_id: uuid.UUID,
+    payload: ClusterEpicCreateRequest,
+    response: Response,
+    membership_key: str = Path(..., pattern=_MEMBERSHIP_KEY_PATTERN),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
+    _: User = Depends(require_project_access()),
+):
+    """File one Jira epic for a recurring cluster (QA_ENGINEER+, the project's opt-in on).
+
+    201 ``created: true`` when this request stored the link; 200 ``created: false`` when an epic was
+    already stored for this member set (nothing is sent to Jira). The router owns the unit of work:
+    the link row and its activity row commit together.
+    """
+    from app.services import cluster_epic_service
+
+    result = await cluster_epic_service.create_epic_for_cluster(
+        db,
+        project_id,
+        current_user,
+        membership_key,
+        jira_project_key=payload.jira_project_key,
+        summary=payload.summary,
+        confirm_not_filed=payload.confirm_not_filed,
+    )
+    await db.commit()
+    if not result["created"]:
+        response.status_code = 200
+    return result
 
 
 async def _open_twin_of(db: AsyncSession, project_id: uuid.UUID, defect_id: uuid.UUID):

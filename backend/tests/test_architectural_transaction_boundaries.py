@@ -230,6 +230,7 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "subject_export_service.py",
     "subject_erasure_service.py",
     "user_account_guards.py",
+    "cluster_epic_service.py",   # W36 STRAT-03: stages the epic link + activity; routers/defect_jira.py commits
 })
 
 # Services that still own commits, with a cap and a documented reason.
