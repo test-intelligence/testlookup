@@ -154,4 +154,27 @@ describe('SystemicClusters', () => {
     await settle()
     expect(within(failed.container).getByRole('button', { name: 'Retry' })).toBeInTheDocument()
   })
+
+  // STRAT-03: a host (Failures) hands each cluster an action; it is drawn under that cluster's stats line.
+  it('a host action is drawn per cluster, right after its stats line, with that cluster; none without the prop', async () => {
+    const renderClusterAction = vi.fn((cluster: { key: string; coFailureRuns: number | null }) => (
+      <span data-test-action={cluster.key}>action {cluster.coFailureRuns}</span>
+    ))
+    const { container } = renderClusters({ renderClusterAction })
+    await settle()
+    const items = [...container.querySelectorAll('[data-cluster-key]')]
+    expect(items.map((li) => li.querySelector('[data-test-action]')?.getAttribute('data-test-action'))).toEqual([
+      'a'.repeat(32),
+      'b'.repeat(32),
+    ])
+    const action = items[1].querySelector('[data-test-action]') as HTMLElement
+    expect(action).toHaveTextContent('action 4')
+    expect(action.previousElementSibling).toHaveTextContent('4 runs failing together')
+    expect(renderClusterAction).toHaveBeenCalledWith(expect.objectContaining({ membershipKey: 'b'.repeat(32), label: 'constructor' }))
+
+    const plain = renderClusters({ params: { project_id: 'p5' } })
+    await settle()
+    expect(plain.container.querySelectorAll('[data-cluster-key]')).toHaveLength(2)
+    expect(plain.container.querySelector('[data-test-action]')).toBeNull()
+  })
 })

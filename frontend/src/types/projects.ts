@@ -31,6 +31,11 @@ export interface Project {
   require_case_review?: boolean
   /** W13 TCL-03 (migration 0228): the library health's automation target, 0-100. Default 60. */
   automation_target_pct?: number
+  /**
+   * W36 STRAT-03 (migration 0255): offer "Create epic for this cluster" on failure clusters that recur in 3 or more
+   * runs. Suggest-only (nothing is filed until someone clicks it). Default off; an older server sends nothing.
+   */
+  cluster_epic_suggestions?: boolean
 }
 
 export interface ProjectUpdate {
@@ -49,4 +54,6 @@ export interface ProjectUpdate {
   require_case_review?: boolean
   /** W13 TCL-03: 0-100 (QA_LEAD+, the existing PUT). */
   automation_target_pct?: number
+  /** W36 STRAT-03: sent only when it differs from the project's current value (QA_LEAD+, the existing PUT). */
+  cluster_epic_suggestions?: boolean
 }

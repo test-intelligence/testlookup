@@ -416,6 +416,8 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
   const [tagsInput, setTagsInput] = useState((project.tags ?? []).join(', '))
   // W28 TCM-02: the project's "Require review before Active" setting (an older server sends nothing: off).
   const [requireCaseReview, setRequireCaseReview] = useState(project.require_case_review ?? false)
+  // W36 STRAT-03: the per-project opt-in for the cluster epic suggestion (an older server sends nothing: off).
+  const [clusterEpicSuggestions, setClusterEpicSuggestions] = useState(project.cluster_epic_suggestions ?? false)
   const [saving, setSaving] = useState(false)
   // W10 INT-03: the server's 422 sentence per field, shown under it.
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -442,6 +444,9 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
       if (JSON.stringify(newTags) !== JSON.stringify(oldTags)) updates.tags = newTags
       // Sent only when it changed, so an untouched form's PUT stays exactly the fields the reader edited.
       if (requireCaseReview !== (project.require_case_review ?? false)) updates.require_case_review = requireCaseReview
+      if (clusterEpicSuggestions !== (project.cluster_epic_suggestions ?? false)) {
+        updates.cluster_epic_suggestions = clusterEpicSuggestions
+      }
 
       if (Object.keys(updates).length === 0) {
         toast('No changes to save')
@@ -533,6 +538,19 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
             </div>
             <p id="ep-require-review-help" className="text-xs text-[var(--color-text-faint)] mt-1">
               When on, a test case needs an approved review before it can be made Active. A QA lead or administrator can approve their own case with a reason.
+            </p>
+          </div>
+
+          <div>
+            <div className="text-sm">
+              <input id="ep-cluster-epics" type="checkbox" className="mr-2 align-middle" checked={clusterEpicSuggestions}
+                onChange={e => setClusterEpicSuggestions(e.target.checked)} aria-describedby="ep-cluster-epics-help" />
+              <label htmlFor="ep-cluster-epics" className="align-middle text-[var(--color-text)]">
+                Suggest Jira epics for recurring failure clusters
+              </label>
+            </div>
+            <p id="ep-cluster-epics-help" className="text-xs text-[var(--color-text-faint)] mt-1">
+              Shows a &apos;Create epic&apos; action on failure clusters that recur in 3 or more runs. Nothing is filed until someone clicks it.
             </p>
           </div>
 

@@ -283,3 +283,59 @@ describe('Edit Project review setting (W28)', () => {
     expect(projectsService.update).toHaveBeenCalledWith(REVIEWED.id, { require_case_review: false })
   })
 })
+
+// ── W36 STRAT-03: Edit Project's "Suggest Jira epics for recurring failure clusters" (opt-in, default off) ──
+
+describe('Edit Project cluster epic opt-in (W36)', () => {
+  const LABEL = 'Suggest Jira epics for recurring failure clusters'
+  const OPTED_IN = { ...OTHER, cluster_epic_suggestions: true }
+
+  afterEach(() => {
+    storeState.refreshProjects.mockImplementation(async () => [])
+    vi.mocked(projectsService.update).mockClear()
+  })
+
+  async function openEdit(projects: unknown[], name: string) {
+    storeState.refreshProjects.mockImplementation(async () => projects as never[])
+    render(<ProjectsPage />)
+    await screen.findByText(name)
+    const card = screen.getByText(name, { selector: 'p' }).closest('.card') as HTMLElement
+    fireEvent.click(within(card).getByTitle('Edit'))
+    return screen.getByRole('region', { name: 'Edit Project' })
+  }
+
+  it('sits right after "Require review", says what it does, and is left out of an untouched PUT', async () => {
+    const section = await openEdit([LEGACY, OPTED_IN], OPTED_IN.name)
+    const box = within(section).getByLabelText(LABEL) as HTMLInputElement
+    expect(box.type).toBe('checkbox')
+    expect(box).toBeChecked()
+    expect(box).toHaveAccessibleDescription(
+      "Shows a 'Create epic' action on failure clusters that recur in 3 or more runs. Nothing is filed until someone clicks it.",
+    )
+    const order = Array.from(section.querySelectorAll('#ep-require-review, #ep-cluster-epics, #ep-jira')).map((el) => el.id)
+    expect(order).toEqual(['ep-require-review', 'ep-cluster-epics', 'ep-jira'])
+
+    fireEvent.change(within(section).getByLabelText('Description'), { target: { value: 'Payments' } })
+    fireEvent.click(within(section).getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(projectsService.update).toHaveBeenCalledTimes(1))
+    expect(projectsService.update).toHaveBeenCalledWith(OPTED_IN.id, { description: 'Payments' })
+  })
+
+  it('a project without the field reads unticked (default off); ticking it sends exactly cluster_epic_suggestions: true', async () => {
+    const section = await openEdit([LEGACY, OTHER], LEGACY.name)
+    const box = within(section).getByLabelText(LABEL)
+    expect(box).not.toBeChecked()
+    fireEvent.click(box)
+    fireEvent.click(within(section).getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(projectsService.update).toHaveBeenCalledTimes(1))
+    expect(projectsService.update).toHaveBeenCalledWith(LEGACY.id, { cluster_epic_suggestions: true })
+  })
+
+  it('unticking an opted-in project sends cluster_epic_suggestions: false', async () => {
+    const section = await openEdit([LEGACY, OPTED_IN], OPTED_IN.name)
+    fireEvent.click(within(section).getByLabelText(LABEL))
+    fireEvent.click(within(section).getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(projectsService.update).toHaveBeenCalledTimes(1))
+    expect(projectsService.update).toHaveBeenCalledWith(OPTED_IN.id, { cluster_epic_suggestions: false })
+  })
+})

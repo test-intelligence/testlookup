@@ -128,6 +128,8 @@ When no commits can be listed, one line says why:
 | `Commit list unavailable: GitHub did not answer the comparison. It is tried again after 6 hours.` | Check the project's row on **Integration health** |
 | `No commits between build #238 and this run.` | Nothing: the same commit was tested twice |
 
+Right under the main card, **Likely affected tests** ranks this run's tests against the changed files of those commits. It is advisory only and never selects or skips a test (see [Likely affected tests](#likely-affected-tests)).
+
 ### Evidence
 
 The detail behind the analysis. Old links to `/agents/run/<id>` open here.
@@ -184,6 +186,17 @@ The dependencies, runtime, images and variables come from the **run context** th
 - `No configuration drift against build #238.` appears **only** when both runs recorded a context and nothing differs. A missing context never reads as "no drift".
 
 At most 60 differences are listed, with the total.
+
+## Likely affected tests
+
+The **Changes** tab's **Likely affected tests** card ranks this run's tests by how likely the run's changes touched them. It is advisory only: it never selects or skips a test, and nothing in TestLookup reads it to decide what runs, what is quarantined or what the release gate says. Its footer says so in every state.
+
+- **The score** (0 to 1, with a bar) measures how well the test's name and location (the file in its stack trace, its class and package, its name) match the run's changed files. Words that appear in most of the run's test names, such as your organisation's package name, don't count as a match. Once the project has enough commit history it adds how often the test failed in past runs that changed the same files: 60 % path overlap and 40 % past co-failures, with full co-failure credit at 5 such runs. A very large change is compared on its first 2,000 changed files; the count shown is the real one.
+- **Each row** names up to 5 matched files and says `failed with these files in 2 of 7 past runs`: of this project's runs in the last 90 days that changed at least one of the same files, how many there were and in how many this test failed or broke. When no earlier run changed those files, it says `no earlier run changed these files`. A test tagged **flaky** keeps its path match, but its past co-failures add nothing to its score, because its flakiness alone explains them. At most 20 tests are listed.
+- **Path overlap only**: while the project's commit history is thin (fewer than 30 runs whose commits list their changed files, less than 14 days of them, or fewer than 25 distinct changed files), the card ranks by path overlap alone, a banner names the gap (`only 6 of 9 runs carry a usable commit range (need 30)`), and each row reads `no history yet`.
+- **Not available**: without a commit range, or with one whose commits list no changed files, the card says which, never an empty list. When the run has changed files but none of its tests match them, it says `No test in this run matched the 14 changed files.`
+
+The card reads the commit range the run already has and fetches nothing itself. While the commit list is still being fetched for the first time, it can read **No commit range is known for this run**; open the tab again shortly.
 
 ## Narrowing a failure
 

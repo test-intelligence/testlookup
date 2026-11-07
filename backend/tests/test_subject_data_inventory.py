@@ -448,16 +448,17 @@ def test_7_pinned_counts():
     # W31 (deliberate, against the contract's 167 / 121 / 21 / 8 / 10 / 5 / 1 / 1): + subject_rights_jobs' two FKs;
     # + webhook_deliveries.event_payload, notification_logs.title / .body, service_ownership_rules.team_contact;
     # + redis ml:retrain:last / :lock, testlookup:dedup:notify_owner:* (found by the writer scan and its traces)
-    assert counts == (176, 123, 25, 8, 10, 8, 1, 1), (
+    # W36 STRAT-03 (deliberate): + systemic_cluster_epics.created_by, a reference (176 -> 177, FKs 123 -> 124)
+    assert counts == (177, 124, 25, 8, 10, 8, 1, 1), (
         f"(locations, postgres_fk, postgres_other, objects, mongo, redis, chroma, logs) = {counts}: a location was "
         "added or moved — classify it in subject_data_inventory.py and update this pin deliberately"
     )
     erase = collections.Counter(location.erase for location in locations)
     assert (erase["delete"], erase["pseudonymise"] + erase["reference"], erase["keep_audit"], erase["keep_record"],
-            erase["no_personal_data"], erase["out_of_scope"]) == (21, 105, 24, 7, 13, 6), erase
-    assert (erase["pseudonymise"], erase["reference"]) == (11, 94), erase
+            erase["no_personal_data"], erase["out_of_scope"]) == (21, 106, 24, 7, 13, 6), erase
+    assert (erase["pseudonymise"], erase["reference"]) == (11, 95), erase
     exported = sum(1 for location in locations if location.export_as != "none")
-    assert (exported, len(locations) - exported) == (122, 54)
+    assert (exported, len(locations) - exported) == (123, 54)
 
 
 # ── (8) fail-open, and the module stays pure data ────────────────────────────
@@ -477,7 +478,7 @@ def test_8_lookups_and_purity():
     deletes = inv.postgres_locations(erase="delete")
     assert deletes and all(location.store == "postgres" and location.erase == "delete" for location in deletes)
     exported = inv.postgres_locations(export=True)
-    assert all(location.export_as != "none" for location in exported) and len(exported) == 122
+    assert all(location.export_as != "none" for location in exported) and len(exported) == 123
     tree = ast.parse(INVENTORY_PY.read_text(encoding="utf-8"))
     modules = [alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names]
     modules += [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]

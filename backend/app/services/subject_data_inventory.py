@@ -322,6 +322,8 @@ _D_CONFIG: tuple[Location, ...] = (   # configuration attribution; the matching 
 )
 _D_RECORDS: tuple[Location, ...] = (
     _ref("release_attribution_rules", "created_by_id", "Release attribution rules they created"),
+    # W36 STRAT-03 (migration 0255): the epic link row is the project's record, like a classification hint's author
+    _ref("systemic_cluster_epics", "created_by", "Jira epics they filed for failure clusters"),
     _ref("release_gate_decisions", "created_by_id", "Release gate decisions they recorded"),
     _ref("release_gate_policies", "created_by", "Release gate policies they created"),
     _ref("release_gate_policies", "activated_by", "Release gate policies they activated"),

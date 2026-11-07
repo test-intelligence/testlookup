@@ -107,6 +107,9 @@ ENTITY_TYPES: Final[tuple[str, ...]] = (
     "insight",
     # W23a TRND-03: one expected run cadence (run_cadences.id).
     "run_cadence",
+    # W36 STRAT-03: one systemic failure cluster, identified by its
+    # membership_key (the only identity that survives the nightly re-cluster).
+    "systemic_cluster",
 )
 
 #: Where a row of each entity type lives in the SPA. Used to build
@@ -163,6 +166,9 @@ _ENTITY_ROUTES: Final[Mapping[str, str]] = {
     # W23a TRND-03: Settings › Project › Expected runs lists every cadence of
     # the project; there is no per-cadence page.
     "run_cadence": "/settings/expected-runs",
+    # W36 STRAT-03: the clusters tab of the Failures page's Groups section;
+    # there is no per-cluster page.
+    "systemic_cluster": "/failures?tab=groups",
 }
 
 _EVENT_NAME_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z_]+\.[a-z_]+$")
@@ -320,6 +326,10 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # labels and names, never user ids); a review rejection is a status change.
     _spec("defect.updated", "quality", "defect", "Defect {entity_label} changed: {changed}"),
     _spec("defect.ticket_linked", "quality", "defect", "Defect {entity_label} linked to Jira {ticket_key}"),
+    # W36 STRAT-03: a person filed a Jira epic for a recurring systemic cluster
+    # (cluster_epic_service.create_epic_for_cluster; outcome: it commits with the
+    # link row). Written only when a NEW link is stored -- never for a reuse.
+    _spec("cluster.epic_created", "quality", "systemic_cluster", "Jira epic {ticket_key} filed for failure cluster {entity_label}"),
     # W21 ACT-01 (c): no ``flaky.detected`` -- flakiness is a continuous score with no
     # detected/not verdict to emit on; removed rather than left as a dead filter.
     _spec("test.newly_failing", "quality", "test", "{entity_label} started failing"),

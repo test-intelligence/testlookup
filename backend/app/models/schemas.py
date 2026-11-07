@@ -722,6 +722,9 @@ class ProjectUpdate(BaseModel):
     # W28 TCM-02 (migration 0222): a test case needs an approved review before
     # Active. exclude_none in the PUT applies a False (routers/projects.py).
     require_case_review: Optional[bool] = None
+    # W36 STRAT-03 (migration 0255): offer "Create epic for this cluster" on
+    # recurring failure clusters; exclude_none in the PUT applies a False.
+    cluster_epic_suggestions: Optional[bool] = None
     # W13 TCL-03 (migration 0228): the library health's automation target, a
     # whole percentage; exclude_none in the PUT applies it (0 included).
     automation_target_pct: Optional[int] = Field(None, ge=0, le=100)
@@ -756,6 +759,7 @@ class ProjectResponse(TimestampMixin):
     manager_user_id: Optional[uuid.UUID] = None  # migration 0076
     default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
     require_case_review: bool = False  # migration 0222 (W28 TCM-02)
+    cluster_epic_suggestions: bool = False  # migration 0255 (W36 STRAT-03)
     automation_target_pct: int = AUTOMATION_TARGET_DEFAULT  # migration 0228 (W13 TCL-03)
     # W17 ADM-04 (migration 0232): when / by whom it was archived (NULL when active,
     # or archived before 0232), and the archiver's name for the Archived list.
@@ -772,7 +776,7 @@ class ProjectResponse(TimestampMixin):
 
     model_config = ConfigDict(from_attributes=True)
 
-    @field_validator("require_case_review", mode="before")
+    @field_validator("require_case_review", "cluster_epic_suggestions", mode="before")
     @classmethod
     def _unflushed_review_setting_is_off(cls, value: Any) -> Any:
         # The column is NOT NULL DEFAULT false, but its ORM default applies only
@@ -4002,6 +4006,57 @@ class JiraDefectMetadataResponse(BaseModel):
     issue_types: List[str] = []
     default_project_key: Optional[str] = None
     webhook_available: bool = False
+
+
+# ── W36 STRAT-03: suggest-only Jira epics for recurring systemic clusters (routers/defect_jira.py) ──
+
+
+class ClusterEpicLink(BaseModel):
+    """One epic filed for a current cluster (``systemic_cluster_epics``)."""
+    membership_key: str
+    jira_key: str
+    jira_url: Optional[str] = None
+    cluster_label: Optional[str] = None
+    created_at: datetime
+    created_by_name: Optional[str] = None         # "Erased user" for an erased account; null when unknown
+
+
+class ClusterEpicStatusResponse(BaseModel):
+    """GET /projects/{id}/systemic-clusters/epics — the cluster list's one status read."""
+    enabled: bool                                 # projects.cluster_epic_suggestions
+    available: bool                               # Jira reachable by policy (not offline / disabled / unconfigured)
+    reason: Optional[str] = None                  # the human sentence when not available
+    epic_type_available: Optional[bool] = None    # null: Jira unavailable, not opted in, or metadata unreadable
+    min_co_failure_runs: int                      # cluster_epic_service.EPIC_MIN_CO_FAILURE_RUNS
+    links: List[ClusterEpicLink] = []
+
+
+class ClusterEpicPreviewResponse(BaseModel):
+    """GET /projects/{id}/systemic-clusters/{membership_key}/epic/preview (read-only)."""
+    membership_key: str
+    summary: str
+    description_text: str
+    labels: List[str]
+    jira_project_key: Optional[str] = None
+    member_count: int
+    co_failure_runs: int
+    cluster_label: str
+
+
+class ClusterEpicCreateRequest(BaseModel):
+    """POST /projects/{id}/systemic-clusters/{membership_key}/epic. Null fields take the prefill."""
+    jira_project_key: Optional[str] = Field(None, max_length=50)
+    summary: Optional[str] = Field(None, max_length=255)
+    # Set only after a 409 ``jira_outcome_unknown`` (as the one-click defect create).
+    confirm_not_filed: bool = False
+
+
+class ClusterEpicCreateResponse(BaseModel):
+    """201 with ``created: true`` (filed now), 200 with ``created: false`` (an epic was already stored)."""
+    membership_key: str
+    jira_key: str
+    jira_url: Optional[str] = None
+    created: bool
 
 
 class SummaryModes(BaseModel):
@@ -10513,3 +10568,52 @@ class RetentionHoldListResponse(BaseModel):
     #: {"live", "expired", "released"} for the project (entity filters applied,
     #: state ignored) — every key present, 0 when none.
     counts: Dict[str, int] = Field(default_factory=dict)
+
+
+# ── Likely affected tests (W36 STRAT-08, advisory) ───────────────────────────
+# GET /api/v1/runs/{run_id}/likely-affected-tests (routers/commit_attribution.py,
+# services/test_impact_service.py). Advisory only: never selects or skips tests.
+# ``None`` co-failure fields mean "no history to measure", never 0.
+
+
+class LikelyAffectedTestReason(BaseModel):
+    overlapping_paths: List[str] = Field(default_factory=list)  # <= MAX_REASON_PATHS (5), strongest first
+    overlap_score: float                            # max path_overlap over the changed files, 0..1
+    co_failure_runs: Optional[int] = None           # prior runs sharing a changed path where it FAILED/BROKEN
+    history_runs_considered: Optional[int] = None   # prior runs sharing a changed path (None: history not ready)
+    known_flaky: bool = False                       # failure_attribution_service's flaky rule
+
+
+class LikelyAffectedTest(BaseModel):
+    test_fingerprint: str
+    test_name: str
+    class_name: Optional[str] = None
+    status_in_run: str                              # the TestCase status in THIS run
+    score: float                                    # 0..1, W_OVERLAP·overlap + W_COFAIL·co-failure (or overlap)
+    reason: LikelyAffectedTestReason
+
+
+class LikelyAffectedTestsHistory(BaseModel):
+    available: bool                                 # get_tia_readiness(...)["available"]
+    insufficient_data_reason: Optional[str] = None
+    usable_runs: int = 0
+    window_days: int
+    runs_considered: int = 0                        # prior ranges read for co-failure (0: history not ready)
+    scan_capped: bool = False                       # runs_considered hit TIA_READINESS_SCAN_CAP
+
+
+class LikelyAffectedTestsResponse(BaseModel):
+    run_id: uuid.UUID
+    project_id: uuid.UUID
+    available: bool
+    reason: Optional[Literal["no_commit_range", "no_changed_files"]] = None
+    advisory: Literal[True] = True
+    caveat: str
+    changed_files_count: int = 0
+    file_detail_coverage: Optional[float] = None    # this range's commits with files / commits
+    source: Optional[str] = None                    # run_commit_ranges.source
+    base_source: Optional[str] = None               # BASE_SOURCES
+    base_anchor_is_strong: Optional[bool] = None    # None: no range row
+    history: LikelyAffectedTestsHistory
+    tests: List[LikelyAffectedTest] = Field(default_factory=list)   # <= limit, score desc then fingerprint
+    total_candidates: int = 0                       # this run's test cases

@@ -21,6 +21,7 @@
  * investigation, and a floored release-gate decision.
  */
 import { respond, type ApiHandler, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
+import { CLUSTER_EPICS_OFF } from '../../lib/w36-fixtures'
 
 /** Friday 2026-09-18, 12:00 UTC. The browser clock is pinned here. */
 export const NOW = new Date('2026-09-18T12:00:00Z')
@@ -4049,8 +4050,11 @@ export const WAVE3: ApiHandlers = [
 /** /coverage with the catalogue: + the coverage map and the environment / release heatmaps (and their rows). */
 export const COVERAGE_ON: ApiHandlers = [...RELEASES_LIST, ...WAVE3, ...COVERAGE]
 
-/** /failures with the catalogue: + failure groups, clusters, the ladder's chart-data, the project scatter, rows. */
-export const FAILURES_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...WAVE3, ...FAILURES]
+/**
+ * /failures with the catalogue: + failure groups, clusters, the ladder's chart-data, the project scatter, rows.
+ * W36 STRAT-03: the clusters' epic status answers the product default (opted out), so the tab draws no epic action.
+ */
+export const FAILURES_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...WAVE3, ...FAILURES, ...CLUSTER_EPICS_OFF]
 
 /** A request with only a query (and the project), to build a fixture body outside a route. */
 function fixtureRequest(query: string): ApiRequest {

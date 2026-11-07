@@ -52,6 +52,33 @@ locally by default.
 
 ### Added
 
+- **"Create epic for this cluster" on recurring failure clusters** (wave W36, STRAT-03 /
+  D30; branch `feat/df-epic-impact-20261106`; migration `0255_cluster_epic_suggestions`).
+  Suggest-only and opt-in per project: Edit project › "Suggest Jira epics for recurring
+  failure clusters" (`projects.cluster_epic_suggestions`, off by default). A systemic
+  cluster that failed together in 3 or more runs then shows "Create epic for this cluster"
+  to a QA engineer or above. It previews the epic, and files ONE Jira epic only when the
+  person clicks Create. Nothing is filed automatically (no task, beat entry or webhook).
+  The link is kept per cluster membership (table `systemic_cluster_epics`), so it survives
+  the nightly re-cluster while the members stay the same; a changed member set is a new
+  cluster. An epic is never a defect row, so defect counts, KPIs and the release gate are
+  unchanged. Jira offline, not configured or without an Epic issue type: the button is
+  disabled with the reason. Routes `GET /api/v1/projects/{id}/systemic-clusters/epics`,
+  `GET .../{membership_key}/epic/preview`, `POST .../{membership_key}/epic`. Tests:
+  `test_cluster_epic_service.py`, `test_cluster_epic_routes.py`, `test_migration_0255.py`,
+  `integration/test_cluster_epic_postgres.py`, `ClusterEpicAction.test.tsx`,
+  `CreateClusterEpicForm.test.tsx`, `ci-e2e/cluster-epic.spec.ts`.
+- **"Likely affected tests" on Run › Changes** (wave W36, STRAT-08 / D35). An advisory
+  ranking of the run's tests by path overlap with the run's changed files and, once the
+  project's test-impact readiness is met, past co-failures with those files
+  (`GET /api/v1/runs/{id}/likely-affected-tests`). Each row says why: the matched paths and
+  "failed with these files in N of M past runs". With thin history the list is path-only
+  and says so; with no commit range or no changed files the card says that instead of
+  showing an empty list. A package name shared by half or more of the run's tests is
+  ignored. It never selects, skips, quarantines or gates a test, and the card always says
+  so. Read-only: the route writes nothing. Tests: `test_test_impact_service.py`,
+  `test_likely_affected_tests_route.py`, `integration/test_likely_affected_tests_postgres.py`,
+  `LikelyAffectedTestsCard.test.tsx`, `ci-e2e/likely-affected-tests.spec.ts`.
 - **Drop-folder ingest works with the bundled S3 store** (wave W34, STRAT-13 / D40; branch
   `feat/df-strat-tools-20261106`; migration `0254_drop_folder_watcher`). Write a run's
   results under `<project>/runs/<build>/` and `upload_complete.json` last. A beat task

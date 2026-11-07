@@ -136,6 +136,7 @@ test('opening the Changes tab asks exactly the regression diff and the duration 
   await networkQuiet(page, api)
   expect([...observed(api).slice(before)].sort()).toEqual([
     `GET /api/v1/runs/${RUN_ID}/duration-regressions`,
+    `GET /api/v1/runs/${RUN_ID}/likely-affected-tests?limit=20`,
     `GET /api/v1/runs/${RUN_ID}/regression-diff`,
   ])
   expect(world.seen).toEqual([])

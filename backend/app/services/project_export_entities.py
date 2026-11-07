@@ -432,6 +432,7 @@ PROJECT_ROW_COLUMNS: tuple[str, ...] = (
     "description", "jira_project_key", "splunk_index", "ocp_namespace", "jenkins_job_pattern",
     "component_owner_map", "source_roots", "start_date", "end_date", "tags",
     "allow_unreviewed_distribution", "require_case_review", "automation_target_pct",
+    "cluster_epic_suggestions",     # W36 STRAT-03 (0255): a setting; the epics it led to stay behind (EXCLUDED)
 )
 
 #: Project-scoped tables that do NOT travel → one EXCLUSION_REASONS key each. (W30: the former
@@ -523,6 +524,9 @@ EXCLUDED: Mapping[str, str] = {
     "compliance_packs": "artefact_or_index",
     # a legal act on the SOURCE's data
     "retention_holds": "legal_hold",
+    # W36 STRAT-03 (migration 0255): an epic filed in the SOURCE's Jira for a systemic cluster — classified like
+    # ``defects`` (X-17), the closest project-scoped Jira-link table; the copy's own clusters get their own epics
+    "systemic_cluster_epics": "external_tracker",
 }
 
 _IDENTITY = "identity / sign-in state of people, never project data"

@@ -10403,6 +10403,272 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ClusterEpicCreateRequest
+
+```json
+{
+  "description": "POST /projects/{id}/systemic-clusters/{membership_key}/epic. Null fields take the prefill.",
+  "properties": {
+    "confirm_not_filed": {
+      "default": false,
+      "title": "Confirm Not Filed",
+      "type": "boolean"
+    },
+    "jira_project_key": {
+      "anyOf": [
+        {
+          "maxLength": 50,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Project Key"
+    },
+    "summary": {
+      "anyOf": [
+        {
+          "maxLength": 255,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Summary"
+    }
+  },
+  "title": "ClusterEpicCreateRequest",
+  "type": "object"
+}
+```
+
+## ClusterEpicCreateResponse
+
+```json
+{
+  "description": "201 with ``created: true`` (filed now), 200 with ``created: false`` (an epic was already stored).",
+  "properties": {
+    "created": {
+      "title": "Created",
+      "type": "boolean"
+    },
+    "jira_key": {
+      "title": "Jira Key",
+      "type": "string"
+    },
+    "jira_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Url"
+    },
+    "membership_key": {
+      "title": "Membership Key",
+      "type": "string"
+    }
+  },
+  "required": [
+    "membership_key",
+    "jira_key",
+    "created"
+  ],
+  "title": "ClusterEpicCreateResponse",
+  "type": "object"
+}
+```
+
+## ClusterEpicLink
+
+```json
+{
+  "description": "One epic filed for a current cluster (``systemic_cluster_epics``).",
+  "properties": {
+    "cluster_label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cluster Label"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "created_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Created By Name"
+    },
+    "jira_key": {
+      "title": "Jira Key",
+      "type": "string"
+    },
+    "jira_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Url"
+    },
+    "membership_key": {
+      "title": "Membership Key",
+      "type": "string"
+    }
+  },
+  "required": [
+    "membership_key",
+    "jira_key",
+    "created_at"
+  ],
+  "title": "ClusterEpicLink",
+  "type": "object"
+}
+```
+
+## ClusterEpicPreviewResponse
+
+```json
+{
+  "description": "GET /projects/{id}/systemic-clusters/{membership_key}/epic/preview (read-only).",
+  "properties": {
+    "cluster_label": {
+      "title": "Cluster Label",
+      "type": "string"
+    },
+    "co_failure_runs": {
+      "title": "Co Failure Runs",
+      "type": "integer"
+    },
+    "description_text": {
+      "title": "Description Text",
+      "type": "string"
+    },
+    "jira_project_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Jira Project Key"
+    },
+    "labels": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Labels",
+      "type": "array"
+    },
+    "member_count": {
+      "title": "Member Count",
+      "type": "integer"
+    },
+    "membership_key": {
+      "title": "Membership Key",
+      "type": "string"
+    },
+    "summary": {
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "membership_key",
+    "summary",
+    "description_text",
+    "labels",
+    "member_count",
+    "co_failure_runs",
+    "cluster_label"
+  ],
+  "title": "ClusterEpicPreviewResponse",
+  "type": "object"
+}
+```
+
+## ClusterEpicStatusResponse
+
+```json
+{
+  "description": "GET /projects/{id}/systemic-clusters/epics — the cluster list's one status read.",
+  "properties": {
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "epic_type_available": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Epic Type Available"
+    },
+    "links": {
+      "default": [],
+      "items": {
+        "$ref": "#/components/schemas/ClusterEpicLink"
+      },
+      "title": "Links",
+      "type": "array"
+    },
+    "min_co_failure_runs": {
+      "title": "Min Co Failure Runs",
+      "type": "integer"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    }
+  },
+  "required": [
+    "enabled",
+    "available",
+    "min_co_failure_runs"
+  ],
+  "title": "ClusterEpicStatusResponse",
+  "type": "object"
+}
+```
+
 ## ClusterInsightResponse
 
 ```json
@@ -24983,6 +25249,276 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## LikelyAffectedTest
+
+```json
+{
+  "properties": {
+    "class_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Class Name"
+    },
+    "reason": {
+      "$ref": "#/components/schemas/LikelyAffectedTestReason"
+    },
+    "score": {
+      "title": "Score",
+      "type": "number"
+    },
+    "status_in_run": {
+      "title": "Status In Run",
+      "type": "string"
+    },
+    "test_fingerprint": {
+      "title": "Test Fingerprint",
+      "type": "string"
+    },
+    "test_name": {
+      "title": "Test Name",
+      "type": "string"
+    }
+  },
+  "required": [
+    "test_fingerprint",
+    "test_name",
+    "status_in_run",
+    "score",
+    "reason"
+  ],
+  "title": "LikelyAffectedTest",
+  "type": "object"
+}
+```
+
+## LikelyAffectedTestReason
+
+```json
+{
+  "properties": {
+    "co_failure_runs": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Co Failure Runs"
+    },
+    "history_runs_considered": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "History Runs Considered"
+    },
+    "known_flaky": {
+      "default": false,
+      "title": "Known Flaky",
+      "type": "boolean"
+    },
+    "overlap_score": {
+      "title": "Overlap Score",
+      "type": "number"
+    },
+    "overlapping_paths": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Overlapping Paths",
+      "type": "array"
+    }
+  },
+  "required": [
+    "overlap_score"
+  ],
+  "title": "LikelyAffectedTestReason",
+  "type": "object"
+}
+```
+
+## LikelyAffectedTestsHistory
+
+```json
+{
+  "properties": {
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "insufficient_data_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Insufficient Data Reason"
+    },
+    "runs_considered": {
+      "default": 0,
+      "title": "Runs Considered",
+      "type": "integer"
+    },
+    "scan_capped": {
+      "default": false,
+      "title": "Scan Capped",
+      "type": "boolean"
+    },
+    "usable_runs": {
+      "default": 0,
+      "title": "Usable Runs",
+      "type": "integer"
+    },
+    "window_days": {
+      "title": "Window Days",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "available",
+    "window_days"
+  ],
+  "title": "LikelyAffectedTestsHistory",
+  "type": "object"
+}
+```
+
+## LikelyAffectedTestsResponse
+
+```json
+{
+  "properties": {
+    "advisory": {
+      "const": true,
+      "default": true,
+      "title": "Advisory",
+      "type": "boolean"
+    },
+    "available": {
+      "title": "Available",
+      "type": "boolean"
+    },
+    "base_anchor_is_strong": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Base Anchor Is Strong"
+    },
+    "base_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Base Source"
+    },
+    "caveat": {
+      "title": "Caveat",
+      "type": "string"
+    },
+    "changed_files_count": {
+      "default": 0,
+      "title": "Changed Files Count",
+      "type": "integer"
+    },
+    "file_detail_coverage": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "File Detail Coverage"
+    },
+    "history": {
+      "$ref": "#/components/schemas/LikelyAffectedTestsHistory"
+    },
+    "project_id": {
+      "format": "uuid",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "enum": [
+            "no_commit_range",
+            "no_changed_files"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Reason"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Source"
+    },
+    "tests": {
+      "items": {
+        "$ref": "#/components/schemas/LikelyAffectedTest"
+      },
+      "title": "Tests",
+      "type": "array"
+    },
+    "total_candidates": {
+      "default": 0,
+      "title": "Total Candidates",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "run_id",
+    "project_id",
+    "available",
+    "caveat",
+    "history"
+  ],
+  "title": "LikelyAffectedTestsResponse",
+  "type": "object"
+}
+```
+
 ## LinkRunRequest
 
 ```json
@@ -33390,6 +33926,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Automation Target Pct",
       "type": "integer"
     },
+    "cluster_epic_suggestions": {
+      "default": false,
+      "title": "Cluster Epic Suggestions",
+      "type": "boolean"
+    },
     "component_owner_map": {
       "anyOf": [
         {
@@ -33691,6 +34232,17 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Automation Target Pct"
+    },
+    "cluster_epic_suggestions": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cluster Epic Suggestions"
     },
     "component_owner_map": {
       "anyOf": [

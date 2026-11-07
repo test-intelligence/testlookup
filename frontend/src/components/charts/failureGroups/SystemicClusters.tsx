@@ -18,7 +18,7 @@
  * `validateClustersResponse` before anything is drawn. All Projects asks
  * nothing: clusters exist per project.
  */
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, type ReactNode } from 'react'
 import type { SeriesChart } from '@/lib/viz/contracts'
 import { formatNumber } from '@/utils/formatters'
 import ChartFrame, { type ChartHeadingLevel } from '../ChartFrame'
@@ -75,6 +75,11 @@ export interface SystemicClustersProps {
   state?: ChartState<SystemicClustersResponse>
   /** The frame's title; default the window's sentence (`clustersTitle`). A page with several frames names each. */
   title?: string
+  /**
+   * A host's per-cluster action, drawn under the cluster's stats line (STRAT-03: Failures' epic action). Absent
+   * (the chart gallery, every other caller): nothing is drawn there.
+   */
+  renderClusterAction?: (cluster: SystemicCluster) => ReactNode
 }
 
 export default function SystemicClusters({
@@ -85,6 +90,7 @@ export default function SystemicClusters({
   plotWidth,
   state: given,
   title: titleProp,
+  renderClusterAction,
 }: SystemicClustersProps) {
   // With a given state nothing is asked (the gallery has no network).
   const fetched = useSystemicClusters(allProjects || given ? null : params)
@@ -171,6 +177,7 @@ export default function SystemicClusters({
                   {causeLabel(cluster.causeFamily)} · {formatNumber(cluster.size)} tests · cohesion{' '}
                   {formatCohesion(cluster.cohesion)} · {formatNumber(cluster.coFailureRuns)} runs failing together
                 </p>
+                {renderClusterAction?.(cluster)}
                 {cluster.members.length > 0 && (
                   <details className="mt-1">
                     <summary className="cursor-pointer">{membersLabel(cluster)}</summary>

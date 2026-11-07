@@ -383,6 +383,9 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/projects/{project_id}/run-cadences/{cadence_id}/pause` | Pause Run Cadence | [Expected runs](api/expected-runs.md) |
 | POST | `/api/v1/projects/{project_id}/run-cadences/{cadence_id}/resume` | Resume Run Cadence | [Expected runs](api/expected-runs.md) |
 | GET | `/api/v1/projects/{project_id}/storage` | Get Project Storage | [Retention](api/retention.md) |
+| GET | `/api/v1/projects/{project_id}/systemic-clusters/epics` | Cluster Epic Status | [Defects](api/defects.md) |
+| POST | `/api/v1/projects/{project_id}/systemic-clusters/{membership_key}/epic` | Create Cluster Epic | [Defects](api/defects.md) |
+| GET | `/api/v1/projects/{project_id}/systemic-clusters/{membership_key}/epic/preview` | Cluster Epic Preview | [Defects](api/defects.md) |
 | GET | `/api/v1/projects/{project_id}/timeline-notes` | List Timeline Notes | [Timeline notes](api/timeline-notes.md) |
 | POST | `/api/v1/projects/{project_id}/timeline-notes` | Create Timeline Note | [Timeline notes](api/timeline-notes.md) |
 | DELETE | `/api/v1/projects/{project_id}/timeline-notes/{note_id}` | Delete Timeline Note | [Timeline notes](api/timeline-notes.md) |
@@ -492,6 +495,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/runs/{run_id}/intelligence` | Get Run Intelligence Endpoint | [Run Intelligence](api/run-intelligence.md) |
 | POST | `/api/v1/runs/{run_id}/intelligence/refresh` | Refresh Intelligence | [Run Intelligence](api/run-intelligence.md) |
 | POST | `/api/v1/runs/{run_id}/investigations` | Start Investigation | [Agent Investigations](api/agent-investigations.md) |
+| GET | `/api/v1/runs/{run_id}/likely-affected-tests` | Get Run Likely Affected Tests | [Commit Attribution](api/commit-attribution.md) |
 | GET | `/api/v1/runs/{run_id}/previous` | Get Previous Run | [AI History](api/ai-history.md) |
 | POST | `/api/v1/runs/{run_id}/recover-live` | Recover Live Run From Buffer | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/regression-diff` | Get Regression Diff | [Test Runs](api/test-runs.md) |
@@ -736,4 +740,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **727 HTTP operations**, **616 paths**, **92 domain pages**.
+Total: **731 HTTP operations**, **620 paths**, **92 domain pages**.

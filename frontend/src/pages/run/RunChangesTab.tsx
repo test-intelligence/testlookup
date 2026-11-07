@@ -21,6 +21,9 @@
  * rewritten once the diff arrives) renders the bisect narrowing under its row.
  * No `/bisect` read happens until one is opened. FAIL-13: a separate
  * "Configuration drift" card under the main one, from the same answer.
+ *
+ * W36 STRAT-08: "Likely affected tests" (`LikelyAffectedTestsCard`, its own
+ * read) right after the main card: advisory, it never selects or skips tests.
  */
 import { useEffect, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
@@ -30,6 +33,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import ScopedLink from '@/components/ui/ScopedLink'
 import DurationRegressionsCard from '@/components/runs/DurationRegressionsCard'
 import ConfigDriftSection from '@/components/runs/ConfigDriftSection'
+import LikelyAffectedTestsCard from '@/components/runs/LikelyAffectedTestsCard'
 import BisectNarrowing from '@/components/bisect/BisectNarrowing'
 import { inlineHeading } from '@/components/bisect/bisectModel'
 import { INSIGHT_LINK_CLASS } from '@/components/insights/InsightsList'
@@ -209,6 +213,9 @@ export default function RunChangesTab({
           </div>
         )}
       </section>
+
+      {/* W36 STRAT-08: this run's tests ranked against the changed files above. Advisory: never selects or skips. */}
+      <LikelyAffectedTestsCard runId={runId} />
 
       {/* W23b FAIL-13: runtime / dependency / environment drift against the baseline above. */}
       {!isLoading && !error && drift && <ConfigDriftSection drift={drift} />}

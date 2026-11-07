@@ -754,6 +754,10 @@ async def _file_or_reuse(
     extra_comment: Optional[str],
     confirm_not_filed: bool,
     exclude_defect_id: Optional[_uuid.UUID] = None,
+    scope_prefix: str = "one-click",
+    labels: tuple[str, ...] = ("testlookup", "one-click-defect"),
+    target_type: str = "failure_signature",
+    description: Optional[dict] = None,
 ) -> _Filing:
     """The filing core shared by the one-click create and the approval path.
 
@@ -764,6 +768,12 @@ async def _file_or_reuse(
     promoted defect can never file one failure twice. Raises the same
     ``HTTPException`` texts as before (502 never-sent / rejected, 409
     ``jira_outcome_unknown``). Stage-only.
+
+    W36 STRAT-03: ``scope_prefix`` (the claim namespace ``{scope_prefix}:{pid}``),
+    ``labels`` (sent before the claim label) and ``target_type`` (the ledger
+    row's) let the cluster-epic filing reuse this core in its own namespace;
+    ``description`` (an ADF document) replaces the defect wording of
+    ``_adf_from_prefill``. The defaults are the one-click request byte for byte.
     """
     signature = prefill["signature"]
 
@@ -795,7 +805,7 @@ async def _file_or_reuse(
     # signature and its generation, so a request whose outcome was lost (the
     # commit failed, the worker died, the read timed out) is never filed twice.
     generation = await _signature_generation(db, pid, signature)
-    scope_id = f"one-click:{pid}"
+    scope_id = f"{scope_prefix}:{pid}"
     subject_id = f"{signature}:{generation}"
     key = tci.tool_call_key(
         tool=tci.JIRA_TICKET_TOOL, scope_id=scope_id, subject_id=subject_id,
@@ -807,8 +817,8 @@ async def _file_or_reuse(
         "project": {"key": project_key},
         "summary": prefill["summary"],
         "issuetype": {"name": issue_type or "Bug"},
-        "description": _adf_from_prefill(prefill, extra_comment),
-        "labels": ["testlookup", "one-click-defect", label],
+        "description": description if description is not None else _adf_from_prefill(prefill, extra_comment),
+        "labels": [*labels, label],
     }
     if assignee:
         fields["assignee"] = {"accountId": assignee}
@@ -823,7 +833,7 @@ async def _file_or_reuse(
                 tool=tci.JIRA_TICKET_TOOL,
                 scope_id=scope_id,
                 subject_id=subject_id,
-                target_type="failure_signature",
+                target_type=target_type,
                 request_payload={
                     "signature": signature,
                     "generation": generation,

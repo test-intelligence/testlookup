@@ -325,6 +325,14 @@ class Project(Base):
     automation_target_pct: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, default=60, server_default=text("60")
     )
+    # W36 STRAT-03 (migration 0255, owner decision D30): offer "Create epic for
+    # this cluster" on recurring systemic failure clusters; default off. Declared
+    # after automation_target_pct: 0255 appends the column, and
+    # test_migration_0228_0229 pins automation_target_pct right after
+    # require_case_review.
+    cluster_epic_suggestions: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=text("false")
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
 
@@ -6899,6 +6907,43 @@ class SystemicFlakeClusterMember(Base):
             "ux_systemic_member_cluster_fingerprint",
             "cluster_id", "test_fingerprint", unique=True,
         ),
+    )
+
+
+class SystemicClusterEpic(Base):
+    """A Jira epic a person filed for a recurring systemic cluster (W36 STRAT-03; migration 0255).
+
+    Keyed by ``membership_key`` -- the cluster identity that survives the
+    nightly delete + re-insert of ``systemic_flake_cluster`` (for an UNCHANGED
+    member set). A member change is a new key and so no link (OD-4: no overlap
+    matching). One epic per (project, membership_key): ``uq_sce_project_membership``.
+    ``cluster_label`` / ``member_fingerprints`` snapshot the cluster at filing.
+    Never a ``Defect`` row (it would count in /defects, the KPIs and the gate).
+    """
+
+    __tablename__ = "systemic_cluster_epics"
+    __table_args__ = (
+        Index("uq_sce_project_membership", "project_id", "membership_key", unique=True),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("projects.id", ondelete="CASCADE", name="fk_sce_project_id_projects"),
+        nullable=False,
+    )
+    membership_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    jira_key: Mapped[str] = mapped_column(String(50), nullable=False)
+    jira_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    cluster_label: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    member_fingerprints: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL", name="fk_sce_created_by_users"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False,
     )
 
 

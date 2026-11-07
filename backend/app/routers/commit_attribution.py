@@ -22,6 +22,12 @@ Endpoints (both project/run-guarded via ``require_run_access``):
       Writes no Postgres row and never calls ``lazy_resolve_commit_range``
       (``services/bisect_service``).
 
+  GET /api/v1/runs/{run_id}/likely-affected-tests?limit=20
+      W36 STRAT-08: an ADVISORY ranking of this run's tests by path overlap
+      with the run's changed files plus past co-failures (when the project's
+      TIA readiness is available). Never selects or skips a test. Read-only:
+      no write, no ``lazy_resolve_commit_range`` (``services/test_impact_service``).
+
 All logic lives in ``services/commit_attribution_service``. The one write --
 the lazy resolve -- lives HERE (``lazy_resolve_commit_range``) because the
 service is stage-only and the services' commit allow-list is at its bound; the
@@ -39,9 +45,10 @@ from app.core.config import settings
 from app.core.deps import require_run_access
 from app.db.postgres import AsyncSessionLocal, get_db, release_read_connection
 from app.models.postgres import RunCommitRange, TestRun
-from app.models.schemas import BisectResponse
+from app.models.schemas import BisectResponse, LikelyAffectedTestsResponse
 from app.services import bisect_service
 from app.services import commit_attribution_service as svc
+from app.services import test_impact_service
 from app.services.bisect_vocab import BISECT_ERRORS
 
 logger = structlog.get_logger("routers.commit_attribution")
@@ -191,3 +198,26 @@ async def get_run_bisect(
     return await bisect_service.get_bisect(
         db, run, fingerprint, now=datetime.now(timezone.utc), test_name=test_name,
     )
+
+
+@router.get("/{run_id}/likely-affected-tests", response_model=LikelyAffectedTestsResponse)
+async def get_run_likely_affected_tests(
+    run_id: uuid.UUID,
+    limit: int = Query(
+        default=test_impact_service.DEFAULT_LIMIT, ge=1, le=test_impact_service.MAX_LIMIT,
+        description="Most tests returned (1..50), highest score first",
+    ),
+    db: Any = Depends(get_db),
+    _: Any = Depends(require_run_access()),
+):
+    """Advisory "Likely affected tests" for a run (W36 STRAT-08).
+
+    Ranks THIS run's tests by path overlap with the run's changed files and, when
+    the project's TIA readiness is available, past co-failures with those paths.
+    ``available: false`` + ``no_commit_range`` / ``no_changed_files`` when there is
+    nothing to rank from; ``co_failure_runs`` is null (not 0) without history.
+    It never selects or skips a test (``caveat``). A GET: no write, and NO
+    ``lazy_resolve_commit_range`` -- the stored range is read as it is.
+    """
+    run = await _load_run(db, run_id)
+    return await test_impact_service.get_likely_affected_tests(db, run, limit=limit)
