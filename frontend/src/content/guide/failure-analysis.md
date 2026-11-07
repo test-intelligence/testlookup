@@ -53,13 +53,26 @@ Open a failed test from a run (see [Runs and run detail](/docs/runs#one-test-res
   - **Mute** — opens a form under the row that proposes the test for quarantine, with a required reason. A QA lead decides the proposal under **Flaky tests → Proposed**. Needs quarantine to be on for the project; see [Flaky tests](/docs/flaky#quarantine-on-the-flaky-tests-page).
   - **Jira** — opens **Create Jira issue** under the row (see [Promoting to a defect](#promoting-to-a-defect)).
   - **Suspects** — opens **Who / what changed** under the row: the commits that landed since the last green run, ranked by how much their changed files overlap with the failing test. They are suspects to check, never a verdict. Needs the run to carry a commit range.
-- **Tabs**: **Groups** (failure groups, and **Systemic flake clusters** — flaky failures that share a cause), **By suite** (drill down from suite to status to test to execution), **Scatter** (test duration against failure rate) and **Categories** (the split by failure category).
+- **Tabs**: **Groups** (failure groups, and **Systemic flake clusters** — flaky failures that share a cause, each with an optional [epic action](#epics-for-recurring-clusters)), **By suite** (drill down from suite to status to test to execution), **Scatter** (test duration against failure rate) and **Categories** (the split by failure category).
 - **⋯ menu**: **Export CSV**; **Notify suite owner**; and **Classify uncategorised failures**, offered when half or more of the window's failures have no category, which applies one category you choose to all of them (pick a single suite first).
 - **Open triage queue** opens Runs for the same window.
 
 A test you marked as **Flaky test** in your Inbox shows a **Flagged** pill here.
 
 In **All Projects**, the actions ask you to pick a project first.
+
+### Epics for recurring clusters
+
+A project can offer a Jira epic for a systemic flake cluster that keeps coming back. A QA lead turns it on with **Suggest Jira epics for recurring failure clusters** in the project's **Edit** on **Projects** (see [Settings and administration](/docs/administration#projects)). It is off for every project by default, and while it is off the **Systemic flake clusters** tab shows no epic action at all.
+
+- **When it is offered**: a cluster recurs when its tests failed together in **3 or more runs** (the "runs failing together" on its stats line). A cluster below 3 has no action. The clusters keep no night-by-night history, so this count is what "recurring" means.
+- **Create epic for this cluster** (`QA_ENGINEER` or higher) opens a form under the cluster. The summary (`[TestLookup] Recurring failure cluster: <label>`) and the Jira project key are filled in and can be changed; the key starts as the project's own Jira key, else the Jira integration's default project. The description (the label, cause family, runs failing together, cohesion and the member tests) and the labels (`testlookup`, `systemic-cluster-epic`) are shown as they will be sent. **Create epic** files it.
+- **Nothing is filed until someone clicks it**: no schedule, agent or webhook files an epic.
+- **Epic PAY-101**: once filed, the cluster shows a link to its epic in Jira in place of the button. Filing again for the same cluster returns that epic; it never files a second one.
+- **Disabled, with the reason**: when Jira is not available (offline mode, the integration turned off, or not set up) or the Jira project has no Epic issue type, the button is greyed out and the reason is written beside it.
+- **Jira may already have this epic**: when an earlier attempt's outcome is unknown, the form names the Jira label to search for. If Jira has no issue with it, **I checked Jira, file it** files the epic, exactly as **Create Jira issue** does.
+
+An epic belongs to the cluster's exact set of tests. When a test joins or leaves, the nightly clustering sees a new cluster: it has no epic yet (it can be offered one), and the old epic stays in Jira. Filing an epic creates no defect in TestLookup, so **Defects**, the KPIs and the release gate do not change.
 
 ## Correcting a classification
 

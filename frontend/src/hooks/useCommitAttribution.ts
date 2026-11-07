@@ -4,6 +4,7 @@ import {
   CommitRange,
   SuspectRanking,
   SuspectQuery,
+  type LikelyAffectedTests,
 } from '@/services/commitAttributionService'
 
 /** Epic 8 US-8.1 — the commit range associated with a run. */
@@ -54,4 +55,14 @@ export function useSuspects(runId: string | null, query: SuspectQuery = {}) {
     isError: !!error,
     refresh: mutate,
   }
+}
+
+/** W36 STRAT-08 — the run's advisory "Likely affected tests" (path overlap + past co-failures; never skips tests). */
+export function useLikelyAffectedTests(runId: string | null) {
+  const { data, error, isLoading } = useSWR<LikelyAffectedTests>(
+    runId ? `likely-affected-tests-${runId}` : null,
+    () => commitAttributionService.getLikelyAffectedTests(runId as string),
+    { revalidateOnFocus: false },
+  )
+  return { data: data ?? null, isLoading, isError: !!error }
 }

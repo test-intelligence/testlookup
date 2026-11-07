@@ -4,12 +4,12 @@ This page moved into the in-app user guide, which is the single source for using
 
 | Topic | In the app | Source |
 |---|---|---|
-| The run list, a run's tabs (Tests, Analysis, Changes, Evidence, Timing), the run's AI history and "vs previous run", one test result, comparing runs (with both runs' AI analyses), configuration drift, narrowing a failure to its last pass, bisect from last green, a red-build routine | `/docs/runs` | [runs.md](../frontend/src/content/guide/runs.md) |
+| The run list, a run's tabs (Tests, Analysis, Changes, Evidence, Timing), the run's AI history and "vs previous run", one test result, comparing runs (with both runs' AI analyses), configuration drift, likely affected tests, narrowing a failure to its last pass, bisect from last green, a red-build routine | `/docs/runs` | [runs.md](../frontend/src/content/guide/runs.md) |
 | Watching a run while it streams | `/docs/live` | [live.md](../frontend/src/content/guide/live.md) |
 
 For wiring CI so runs arrive in the first place, see [Connecting CI and test frameworks](getting-results-in.md).
 
-Two features of the run page are summarised here for operators, because they depend on what CI sends and on how the instance is configured.
+Three features of the run page are summarised here for operators, because they depend on what CI sends and on how the instance is configured.
 
 ### Configuration drift
 
@@ -47,3 +47,13 @@ How the walk works:
 **Merges and rebases.** The host's three-dot compare lists the commits reachable from the failing build and not from the passing one. With merge commits or a rebase in between, that is not a straight line of history, and the answer says so beside the list.
 
 `GET /api/v1/runs/{run_id}/bisect?fingerprint=<test fingerprint>` returns the answer for a test of that run (any role that can open the run; a fingerprint that is not a test of that run is `404`).
+
+### Likely affected tests
+
+The Changes tab's **Likely affected tests** card ranks the run's own tests by how likely the run's changes touched them. It is **advisory only**: nothing reads it to choose, skip, quarantine or gate a test, there is no SDK or CLI skip list, and every answer carries the caveat `Advisory only: ranked by path overlap and past co-failures. It never selects or skips tests.` It is always on (no flag).
+
+**What it needs.** The run's stored commit range with changed files per commit: a range your CI supplies with the run, or one the GitHub / GitLab integration resolved. GitHub returns the files of the oldest `COMMIT_RANGE_FILE_FETCH_LIMIT` (25) commits of a range only, and GitLab puts all the files on the head commit. Without a range the answer is `available: false` with `no_commit_range`; with a range whose commits list no files, `no_changed_files`. The card never resolves a range itself (a read never writes).
+
+**How it ranks.** Each test's best path overlap with the changed files (the same matcher as the **Suspects** ranking: the stack trace's file, class and package tokens, the test name) scores it. Words that appear in most of the run's test names, such as your organisation's package name, don't count as a match (a module token shared by half or more of the run's tests is ignored). When the project's commit history is ready (the TIA readiness rule: at least 30 runs with a usable range, spanning 14 days, with 25 distinct changed paths, in the last 90 days), the score is `0.6 × overlap + 0.4 × min(1, co-failure runs / 5)`, where a co-failure run is an earlier run of the **same project** in that window whose range changed at least one of these exact paths and in which the test was `FAILED` or `BROKEN`. A known-flaky test (the attribution engine's flaky rule) keeps its overlap, but its co-failures earn no score; the count is still shown. With the history ready, `co_failure_runs` and `history_runs_considered` are counts even when no earlier run touched these paths (`0`, measured; the card reads `no earlier run changed these files`). Before the history is ready the score is the overlap alone, both are `null` (not measured, never `0`) and the card names the readiness reason. `changed_files_count` is the true de-duplicated count; only the first 2,000 paths are scored, and the history scan is capped like the readiness scan (`scan_capped`).
+
+`GET /api/v1/runs/{run_id}/likely-affected-tests?limit=20` (any role that can open the run; anyone else gets `404` "Test run not found"; `limit` up to 50) returns `available`, `reason`, `advisory`, `caveat`, `changed_files_count`, `file_detail_coverage`, `source`, `base_source`, `base_anchor_is_strong`, `history` (`available`, `insufficient_data_reason`, `usable_runs`, `window_days`, `runs_considered`, `scan_capped`), `tests` (each with `score` and a `reason`: `overlapping_paths`, `overlap_score`, `co_failure_runs`, `history_runs_considered`, `known_flaky`) and `total_candidates`. The pull-request comment does not carry it yet: the comment is posted before a connector range resolves.

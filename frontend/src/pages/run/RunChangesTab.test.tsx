@@ -18,6 +18,10 @@ import { formatDay } from '@/utils/formatters'
 const getData = vi.fn()
 vi.mock('@/services/http', () => ({ getData: (...a: unknown[]) => getData(...a) }))
 vi.mock('@/components/runs/DurationRegressionsCard', () => ({ default: () => null }))
+// W36 STRAT-08: the card reads its own route (its own test drives it); here it only marks where it is mounted.
+vi.mock('@/components/runs/LikelyAffectedTestsCard', () => ({
+  default: ({ runId }: { runId: string }) => <div data-likely-affected-mock={runId} />,
+}))
 const perms = vi.hoisted(() => ({ isAdmin: false }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isAdmin: perms.isAdmin }) }))
 
@@ -373,5 +377,18 @@ describe('RunChangesTab — the Configuration drift card (W23b FAIL-13)', () => 
   it('a malformed config_drift renders no card (and no crash)', async () => {
     await renderWith({ ...BASE, config_drift: { context_state: 'from_the_future' } })
     expect(screen.queryByRole('region', { name: 'Configuration drift' })).toBeNull()
+  })
+})
+
+describe('RunChangesTab — Likely affected tests (W36 STRAT-08)', () => {
+  beforeEach(() => getData.mockReset())
+
+  it('mounts the card for this run right after the main card (after the commit list), outside it', async () => {
+    await renderWith({ ...BASE })
+    const card = document.querySelector('[data-likely-affected-mock]') as HTMLElement
+    expect(card.getAttribute('data-likely-affected-mock')).toBe('run-1')
+    const main = screen.getByRole('region', { name: 'What changed since the last good run' })
+    expect(main.contains(card)).toBe(false)
+    expect(main.nextElementSibling).toBe(card)
   })
 })

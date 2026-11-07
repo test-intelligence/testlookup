@@ -20,6 +20,7 @@
  *             pipelines, the newest one's stages and timeline, the AI report
  */
 import { type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
+import { LIKELY_AFFECTED_LISTED } from '../../lib/w36-fixtures'
 import { DEEP_INVESTIGATION, isoAgo, LAYOUT, PROJECT_ID, RUN_ID, RUN_INTELLIGENCE, RUNS, runs } from './fixtures'
 
 /** The run on the page: `runs()[0]`. */
@@ -378,4 +379,6 @@ export const RUN_PAGE: ApiHandlers = [
   ...AI_HISTORY_QUIET,
   // Evidence (W15 AGT-01): the decision report's action chips, read for a QA lead (the fixture user is one). None.
   [`/api/v1/projects/${PROJECT_ID}/agent-actions`, () => ({ items: [], count: 0, total: 0 })],
+  // Changes (W36 STRAT-08): the advisory "Likely affected tests" card, a ranked list with history.
+  ...LIKELY_AFFECTED_LISTED,
 ]

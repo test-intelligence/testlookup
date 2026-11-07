@@ -17,6 +17,7 @@ import {
   HOSTILE_GROUP_LABELS,
 } from '@/components/charts/failureGroups/failureGroups.fixtures'
 import { __resetChartConcurrency } from '@/services/chartApi'
+import { useAuthStore } from '@/store/authStore'
 import type { RowsPanelProps } from './RowsPanel.model'
 import FailureGroupsSection, { CLUSTERS_TAB, FailureGroupsSection as Named, GROUPS_TAB } from './FailureGroupsSection'
 
@@ -301,5 +302,47 @@ describe('FailureGroupsSection', () => {
     await settle()
     expect(calls(CLUSTERS_URL)).toEqual([])
     expect(screen.getByText('systemic clusters are computed per project; choose a project to see them')).toBeInTheDocument()
+  })
+
+  describe('STRAT-03 epic action on the clusters', () => {
+    const EPICS_URL = '/api/v1/projects/p1/systemic-clusters/epics'
+    const epicCalls = () => get.mock.calls.filter(([url]) => typeof url === 'string' && url.includes('/systemic-clusters/epics'))
+
+    beforeEach(() => {
+      act(() => useAuthStore.setState({ user: { id: 'u-1', role: 'QA_ENGINEER' } as never }))
+      const fallback = get.getMockImplementation() as (url: string) => Promise<unknown>
+      get.mockImplementation((url: string) =>
+        url === EPICS_URL
+          ? Promise.resolve({
+              data: { enabled: true, available: true, reason: null, epic_type_available: true, min_co_failure_runs: 3, links: [] },
+            })
+          : fallback(url),
+      )
+    })
+    afterEach(() => act(() => useAuthStore.setState({ user: null })))
+
+    it('asked only with the clusters tab open, ONCE for the project however many clusters; each recurring one offers Create', async () => {
+      renderSection()
+      await settle()
+      expect(epicCalls()).toEqual([])
+      fireEvent.mouseDown(screen.getByRole('tab', { name: CLUSTERS_TAB }))
+      await settle()
+      expect(epicCalls()).toEqual([[EPICS_URL, { suppressToast: true }]])
+      const items = [...document.querySelectorAll('[data-cluster-key]')]
+      expect(items).toHaveLength(2)
+      for (const item of items) {
+        expect(within(item as HTMLElement).getByRole('button', { name: 'Create epic for this cluster' })).toBeEnabled()
+      }
+    })
+
+    it('All Projects: no epic status is asked and no action drawn', async () => {
+      project.id = '__ALL__'
+      renderSection()
+      await settle()
+      fireEvent.mouseDown(screen.getByRole('tab', { name: CLUSTERS_TAB }))
+      await settle()
+      expect(epicCalls()).toEqual([])
+      expect(document.querySelector('[data-cluster-epic]')).toBeNull()
+    })
   })
 })

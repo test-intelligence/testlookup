@@ -12,7 +12,10 @@
  *                           (offered only when linked), ranked table; a
  *                           group's details in a side panel
  *   Systemic flake clusters `/analytics/systemic-clusters`, asked only when the
- *                           tab is opened (Radix mounts the open panel only)
+ *                           tab is opened (Radix mounts the open panel only);
+ *                           each cluster carries its STRAT-03 epic action
+ *                           (ClusterEpicAction: one epics-status request per
+ *                           project, nothing shown unless the project opted in)
  *
  * Activating a group (click, Enter, the readout's buttons, its name in the
  * table): "drill" opens its details here; "rows" opens the shared rows panel on
@@ -44,7 +47,9 @@ import FailureGroupsFrame from '@/components/charts/FailureGroupsFrame'
 import FailureGroupPanel from '@/components/charts/failureGroups/FailureGroupPanel'
 import { failureGroupsModel, ownRows, type FailureGroup } from '@/components/charts/failureGroups/failureGroups.model'
 import SystemicClusters from '@/components/charts/failureGroups/SystemicClusters'
+import type { SystemicCluster } from '@/components/charts/failureGroups/systemicClusters.model'
 import type { MarkActivateHandler, MarkIntentsFor } from '@/components/charts/marks'
+import ClusterEpicAction from '@/components/defects/ClusterEpicAction'
 import { useCatalogueParams } from './catalogueScope'
 import RowsPanel from './RowsPanel'
 import type { FailureGroupsSectionProps } from './sectionContracts'
@@ -98,6 +103,17 @@ function FailureGroupsBody({ days, suiteFilter }: FailureGroupsSectionProps) {
     delete rest.days // clusters have no window: the sweep's 60 days, project-wide
     return rest
   }, [scope])
+
+  // STRAT-03: each cluster's epic action, for the project the clusters are asked for (none for All Projects or
+  // before the project resolves). Every row reads ONE status request per project (ClusterEpicAction).
+  const epicProjectId = !allProjects && typeof clusterParams?.project_id === 'string' ? clusterParams.project_id : null
+  const renderClusterAction = useMemo(
+    () =>
+      epicProjectId === null
+        ? undefined
+        : (cluster: SystemicCluster) => <ClusterEpicAction projectId={epicProjectId} cluster={cluster} />,
+    [epicProjectId],
+  )
 
   const key: ChartKey | null = params === null ? null : catalogKey('failure-groups', params)
   const fetcher = useMemo(() => catalogFetcher('failure-groups', params ?? {}), [params])
@@ -168,7 +184,12 @@ function FailureGroupsBody({ days, suiteFilter }: FailureGroupsSectionProps) {
           value="clusters"
           className="min-w-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]"
         >
-          <SystemicClusters params={clusterParams} allProjects={allProjects} headingLevel={3} />
+          <SystemicClusters
+            params={clusterParams}
+            allProjects={allProjects}
+            headingLevel={3}
+            renderClusterAction={renderClusterAction}
+          />
         </Tabs.Content>
       </Tabs.Root>
       <FailureGroupPanel
