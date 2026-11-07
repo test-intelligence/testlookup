@@ -254,14 +254,16 @@ def _user(tag: str, role: str, label: str) -> Any:
 
 
 async def _export(sessions: Any, storage: Any, runner: Any, *, project_id: uuid.UUID, actor: Any,
-                  history: bool) -> tuple[Any, bytes]:
-    """One export of the source through G-B's REAL runner; ``(job, archive bytes)``."""
+                  history: bool, options: Any = None) -> tuple[Any, bytes]:
+    """One export of the source through G-B's REAL runner; ``(job, archive bytes)`` — all history by default,
+    or the given ``ProjectDataOptions`` (W37: a 30-day window, one release)."""
     from app.models.postgres import Project, ProjectDataJob
     from app.models.schemas import ProjectDataOptions
     from app.services import project_data_job_service as jobs
     from app.services.compliance_pack_service import COMPLIANCE_BUCKET
 
-    options = ProjectDataOptions(include_history=True, history_days=None, max_runs=2000) if history else None
+    if options is None and history:
+        options = ProjectDataOptions(include_history=True, history_days=None, max_runs=2000)
     async with sessions() as db:
         source = await db.get(Project, project_id)
         job = await jobs.create_export_job(db, project=source, actor=actor, options=options)
@@ -728,7 +730,7 @@ async def test_the_copys_purge_is_paused_and_the_report_says_what_was_written(en
     assert await _ledger_is_sql_null(env, imported.job.id) and imported.job.storage_key is None
     # The parted upload's state is cleared at completion to SQL NULL (none_as_null), not to a JSON null.
     assert await _scalar(env, "SELECT upload IS NULL FROM project_data_jobs WHERE id = :j", j=uuid.UUID(str(imported.job.id)))
-    assert imported.job.options.get("schema_version") == 2
+    assert imported.job.options.get("schema_version") == 3          # W37 D-1: a history export is schema 3
     from app.services.compliance_pack_service import COMPLIANCE_BUCKET
 
     assert await env.storage.list_objects(f"project-imports/parts/{imported.job.id}/", bucket=COMPLIANCE_BUCKET) == []
@@ -860,6 +862,191 @@ async def test_a_catalog_archive_still_imports_with_no_history_and_no_pause(env)
     assert await _scalar(env, "SELECT count(*) FROM project_retention_policies WHERE project_id = :p "
                               "AND purge_paused_until IS NOT NULL", p=job.project_id) == 0
     assert env.rec.publishes == [] and env.rec.outward() == {"mail": 0, "http": 0, "llm": 0}   # phase 1, unchanged
+
+
+# ── W37 F-W30-3: plan execution results travel with history (schema 3) ───────
+
+CHARGED, OTHER = "Checkout charges the saved card", "Refund reverses the ledger entries"   # the seed's two items
+_PLAN_EXECUTION = ("execution_status", "executed_by_id", "executed_at", "execution_notes", "actual_duration_minutes",
+                   "executed_case_version", "test_case_result_id")
+
+
+async def _plan_items(env: Any, project_id: uuid.UUID) -> dict[str, dict[str, Any]]:
+    """The project's plan items keyed by their managed case's title."""
+    async with env.sessions() as db:
+        rows = (await db.execute(text(
+            "SELECT c.title, " + ", ".join(f"i.{c}" for c in _PLAN_EXECUTION) + " FROM test_plan_items i "
+            "JOIN test_plans p ON p.id = i.plan_id JOIN managed_test_cases c ON c.id = i.test_case_id "
+            "WHERE p.project_id = :p"), {"p": project_id})).mappings().all()
+    return {row["title"]: dict(row) for row in rows}
+
+
+async def _plan_counters(env: Any, project_id: uuid.UUID) -> list[tuple[int, ...]]:
+    async with env.sessions() as db:
+        return [tuple(r) for r in (await db.execute(text(
+            "SELECT total_cases, executed_cases, passed_cases, failed_cases, blocked_cases FROM test_plans "
+            "WHERE project_id = :p"), {"p": project_id})).all()]
+
+
+def _archive_rows(archive: bytes, table: str) -> dict[str, dict[str, Any]]:
+    members = _members(archive)
+    rows: dict[str, dict[str, Any]] = {}
+    for name in sorted(n for n in members if n.startswith(f"entities/{table}/")):
+        for line in members[name].decode("utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                rows[row["id"]] = row
+    return rows
+
+
+async def test_plan_execution_results_travel_with_history_and_point_at_the_copys_case(env, imported):
+    """Status, time, author (by USERNAME), version, duration, notes (S-6 scrubbed) arrive; ``test_case_result_id``
+    is the copy's case of the same run (uuid5 of the job); the copy's counters are recomputed from its items."""
+    from app.services.project_import_history import history_id
+
+    seed, job = env.seeded, imported.job
+    source, copy = await _plan_items(env, seed.project_id), await _plan_items(env, imported.copy)
+    assert set(copy) == {CHARGED, OTHER}
+    for title in (CHARGED, OTHER):
+        for column in ("execution_status", "executed_at", "executed_case_version", "actual_duration_minutes"):
+            assert copy[title][column] == source[title][column], (title, column)
+    assert (copy[CHARGED]["execution_status"], copy[OTHER]["execution_status"]) == ("passed", "failed")
+    assert copy[CHARGED]["executed_by_id"] == seed.assignee_id and copy[OTHER]["executed_by_id"] == seed.author_id
+    notes = copy[CHARGED]["execution_notes"]
+    assert notes.startswith("Passed after re-auth") and seed.sentinels.jwt not in notes and notes != source[CHARGED][
+        "execution_notes"]
+    assert copy[CHARGED]["test_case_result_id"] == history_id(job.id, seed.ids["run_case_charge"])
+    assert copy[OTHER]["test_case_result_id"] == history_id(job.id, seed.ids["case_old"])     # all history: it travelled
+    assert await _plan_counters(env, imported.copy) == [(2, 2, 1, 1, 0)]                      # recompute_plan_counts' formula
+    rows = _archive_rows(env.archive, "test_plan_items")
+    assert json.loads(_members(env.archive)["manifest.json"])["schema_version"] == 3
+    assert set(_PLAN_EXECUTION) <= set(rows[str(seed.ids["plan_item"])])
+
+
+async def test_a_catalog_round_trip_still_drops_the_plan_execution_results(env):
+    manifest = json.loads(_members(env.catalog_archive)["manifest.json"])
+    assert manifest["schema_version"] == 1
+    assert not set(_PLAN_EXECUTION) & set(manifest["entities"]["test_plan_items"]["columns"])
+    assert all(not set(_PLAN_EXECUTION) & set(row) for row in _archive_rows(env.catalog_archive, "test_plan_items").values())
+    job = await _import_parted(env, env.catalog_archive)
+    assert job.status == "succeeded", (job.error_code, job.error)
+    copy = await _plan_items(env, job.project_id)
+    assert {row["execution_status"] for row in copy.values()} == {"not_run"}
+    assert all(row[c] is None for row in copy.values() for c in _PLAN_EXECUTION if c != "execution_status")
+    assert await _plan_counters(env, job.project_id) == [(1, 0, 0, 0, 0)]     # total_cases as exported, the rest 0
+
+
+@pytest_asyncio.fixture(loop_scope="module", scope="module")
+async def windowed(env):
+    """A 30-DAY history export of the seed (the 45-day-old run stays behind) and its import."""
+    from app.models.schemas import ProjectDataOptions
+
+    options = ProjectDataOptions(include_history=True, history_days=30, max_runs=2000)
+    export, archive = await _export(env.sessions, env.storage, env.runner, project_id=env.seeded.project_id,
+                                    actor=env.admin, history=True, options=options)
+    job = await _import_parted(env, archive)
+    assert job.status == "succeeded", (job.error_code, job.error)
+    return SimpleNamespace(export=export, archive=archive, job=job, copy=job.project_id)
+
+
+async def test_a_plan_result_whose_case_is_outside_the_window_arrives_null_with_its_manual_result(env, windowed):
+    from app.services.project_import_history import history_id
+
+    seed = env.seeded
+    written = _archive_rows(windowed.archive, "test_plan_items")
+    assert written[str(seed.ids["plan_item_old"])]["test_case_result_id"] is None    # the EXPORT wrote it NULL
+    assert written[str(seed.ids["plan_item"])]["test_case_result_id"] == str(seed.ids["run_case_charge"])
+    source, copy = await _plan_items(env, seed.project_id), await _plan_items(env, windowed.copy)
+    assert copy[OTHER]["test_case_result_id"] is None
+    for column in ("execution_status", "executed_at", "executed_by_id", "executed_case_version"):
+        assert copy[OTHER][column] == source[OTHER][column], column                  # the manual result is kept
+    assert copy[CHARGED]["test_case_result_id"] == history_id(windowed.job.id, seed.ids["run_case_charge"])
+    assert not any(e["entity"] == "test_plan_items" for e in windowed.job.report["cleared"])   # nothing to clear
+    assert await _plan_counters(env, windowed.copy) == [(2, 2, 1, 1, 0)]
+
+
+# ── W37 F-W30-1: a release-scoped history export (D-2: primary AND secondary links) ──
+
+
+@pytest_asyncio.fixture(loop_scope="module", scope="module")
+async def release_scoped(env):
+    """A history export scoped to the seed's release "2026.11" — linked: the FAILED run (primary; it is also linked
+    to another release), the OLD run (SECONDARY) and the IN_PROGRESS run; unlinked: the W24 run — plus a CROSS-
+    PROJECT link row (another project's run under "2026.11", its link even claiming the source project); its
+    import through the parted routes. The extra project / run / link are removed here."""
+    from app.models import postgres as m
+    from app.models.schemas import ProjectDataOptions
+
+    seed = env.seeded
+    other = m.Project(id=uuid.uuid4(), name=f"W37 other {env.tag}", slug=f"w37-other-{env.tag}", is_active=True)
+    stray = m.TestRun(id=uuid.uuid4(), project_id=other.id, build_number=f"w37-stray-{env.tag}", status="PASSED",
+                      ingestion_source="file", created_at=datetime.now(timezone.utc) - timedelta(days=1))
+    link = m.ReleaseTestRunLink(id=uuid.uuid4(), release_id=seed.ids["release_child"], test_run_id=stray.id,
+                                is_primary=False, link_source="manual_ui", project_id=seed.project_id)
+    async with env.sessions() as db:
+        db.add(other)
+        await db.flush()
+        db.add(stray)
+        await db.flush()
+        db.add(link)
+        await db.commit()
+    try:
+        options = ProjectDataOptions(include_history=True, history_days=None, max_runs=2000,
+                                     history_release_id=seed.ids["release_child"])
+        export, archive = await _export(env.sessions, env.storage, env.runner, project_id=seed.project_id,
+                                        actor=env.admin, history=True, options=options)
+        job = await _import_parted(env, archive)
+        assert job.status == "succeeded", (job.error_code, job.error)
+        yield SimpleNamespace(export=export, archive=archive, job=job, copy=job.project_id, stray=stray.id)
+    finally:
+        async with env.sessions() as db:
+            await db.execute(text("DELETE FROM release_test_run_links WHERE id = :l"), {"l": link.id})
+            await db.execute(text("DELETE FROM test_runs WHERE id = :r"), {"r": stray.id})
+            await db.execute(text("DELETE FROM projects WHERE id = :p"), {"p": other.id})
+            await db.commit()
+
+
+def _run_lines(archive: bytes) -> list[str]:
+    members = _members(archive)
+    return [json.loads(line)["id"] for name in sorted(n for n in members if n.startswith("entities/test_runs/"))
+            for line in members[name].decode("utf-8").splitlines() if line.strip()]
+
+
+async def test_a_release_scoped_export_holds_exactly_the_releases_linked_terminal_runs(env, release_scoped):
+    from app.services.project_import_history import history_id
+
+    seed, release = env.seeded, str(env.seeded.ids["release_child"])
+    lines = _run_lines(release_scoped.archive)
+    assert sorted(lines) == sorted([str(seed.ids["run_failed"]), str(seed.ids["run_old"])])   # each ONCE
+    assert str(release_scoped.stray) not in lines and str(seed.ids["run"]) not in lines         # cross-project / unlinked
+    manifest = json.loads(_members(release_scoped.archive)["manifest.json"])
+    block = manifest["history"]
+    assert manifest["schema_version"] == 3 and block["window_days"] is None
+    assert block["release"] == {"id": release, "name": "2026.11"}
+    assert (block["runs"], block["runs_in_progress_skipped"], block["runs_over_cap"]) == (2, 1, 0)
+    assert release_scoped.export.options == {"include_history": True, "history_days": None, "max_runs": 2000,
+                                             "history_release_id": release}
+    copied = await _ids(env, "test_runs", release_scoped.copy)
+    assert copied == {history_id(release_scoped.job.id, seed.ids["run_failed"]),
+                      history_id(release_scoped.job.id, seed.ids["run_old"])}
+
+
+async def test_the_estimate_of_a_release_counts_its_runs_and_refuses_another_projects_release(env, release_scoped):
+    seed = env.seeded
+    path = f"/api/v1/projects/{seed.project_id}/export-estimate"
+    before = await _scalar(env, "SELECT count(*) FROM project_data_jobs")
+    answer = await env.call("GET", path, params={"history_release_id": str(seed.ids["release_child"])})
+    assert answer.status_code == 200, answer.text
+    body = answer.json()
+    assert (body["runs"], body["runs_in_progress"], body["runs_over_cap"]) == (2, 1, 0)
+    assert body["history_days"] is None and body["history_release_id"] == str(seed.ids["release_child"])
+    async with env.sessions() as db:
+        foreign = (await db.execute(text("SELECT id FROM releases WHERE project_id <> :p LIMIT 1"),
+                                    {"p": seed.project_id})).scalar()
+    for release in [r for r in (foreign, uuid.uuid4()) if r is not None]:
+        refused = await env.call("GET", path, params={"history_release_id": str(release)})
+        assert refused.status_code == 422 and refused.json()["detail"]["code"] == "history_release_invalid"
+    assert await _scalar(env, "SELECT count(*) FROM project_data_jobs") == before
 
 
 # ── 4. a failure mid-import: three stores, one outcome ───────────────────────
@@ -1101,8 +1288,8 @@ _CRAFTED: list[tuple[str, Callable[[bytes], bytes], str, str]] = [
     ("ratio-bomb", lambda a: _rezip({**_members(a), "bomb.bin": b"\x00" * (4 * 1024 * 1024)}), "unsafe_archive",
      "compression ratio"),
     ("forty-thousand-and-one-members", _too_many, "unsafe_archive", "the limit is 40000"),
-    ("schema-3", lambda a: _rezip(_members(a), manifest=lambda m: m.update(schema_version=3)), "schema_newer",
-     "(schema 3); this deployment reads schema 1, 2"),
+    ("schema-4", lambda a: _rezip(_members(a), manifest=lambda m: m.update(schema_version=4)), "schema_newer",
+     "(schema 4); this deployment reads schema 1, 2, 3"),
     ("unknown-collection", _unknown_collection, "unknown_entity", "contains secret_stash"),
     ("operator-key", lambda a: _with_document(a, {"test_run_id": _run_key(a), _OPERATOR: "SENTINELquokka"}),
      "invalid_document", "documents/run_summaries/part-0001.jsonl"),

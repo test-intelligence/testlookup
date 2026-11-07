@@ -310,9 +310,14 @@ async def _seed_catalog(db: AsyncSession, seed: SeededProject, s: Sentinels, now
                       actual_start_date=now - timedelta(days=2))
     db.add(plan)
     await db.flush()
-    db.add(m.TestPlanItem(plan_id=plan.id, test_case_id=case_a.id, execution_status="passed",
+    # W37 F-W30-3: a person's manual execution (record_test_plan_execution's columns) — travels with history only;
+    # its notes carry a sentinel the S-6 text pass must remove, its result points at a case of the W24 run
+    item = m.TestPlanItem(id=uuid.uuid4(), plan_id=plan.id, test_case_id=case_a.id, execution_status="passed",
                           executed_by_id=seed.assignee_id, executed_at=now - timedelta(days=1),
-                          executed_case_version=1, test_case_result_id=run_cases[0].id))
+                          execution_notes="Passed after re-auth with Bearer " + s.jwt, actual_duration_minutes=7,
+                          executed_case_version=1, test_case_result_id=run_cases[0].id)
+    db.add(item)
+    seed.ids.update(plan=plan.id, plan_item=item.id, run_case_charge=run_cases[0].id)
     db.add(m.TestStrategy(project_id=pid, name="Payments strategy", objective="Cover every money path",
                           created_by_id=seed.author_id, approved_by_id=seed.admin_id, approved_at=now))
     await db.flush()
@@ -543,6 +548,28 @@ async def _seed_history_runs(db: AsyncSession, seed: SeededProject, s: Sentinels
                     case_in_progress=case_live.id)
     seed.history_excluded.setdefault("agent_pipeline_runs", []).append(running.id)
     seed.history_excluded.setdefault("test_cases", []).append(case_live.id)
+
+    # W37 F-W30-3: a second manual execution whose result is a case of the 45-day-old run — a 30-day export writes
+    # its test_case_result_id NULL (the case does not travel) and keeps the manual result itself
+    old_item = m.TestPlanItem(id=uuid.uuid4(), plan_id=seed.ids["plan"], test_case_id=seed.ids["case_other"],
+                              execution_status="failed", executed_by_id=seed.author_id,
+                              executed_at=now - timedelta(days=40), executed_case_version=1,
+                              test_case_result_id=case_old.id)
+    db.add(old_item)
+    seed.ids["plan_item_old"] = old_item.id
+    # W37 F-W30-1 (D-2): "the runs linked to one release" = primary AND secondary links. release_child has the
+    # FAILED run (primary, _seed_history_results) + the OLD run (SECONDARY) + the IN_PROGRESS run (secondary,
+    # never exported); the W24 run stays unlinked; the FAILED run is also linked to release_grandchild (counted once)
+    db.add_all([
+        _row(seed, m.ReleaseTestRunLink(id=uuid.uuid4(), release_id=seed.ids["release_child"], test_run_id=old.id,
+                                        is_primary=False, link_source="manual_ui", project_id=pid), RUN_OLD),
+        _row(seed, m.ReleaseTestRunLink(id=uuid.uuid4(), release_id=seed.ids["release_child"], test_run_id=live.id,
+                                        is_primary=False, link_source="manual_ui", project_id=pid), RUN_IN_PROGRESS),
+        _row(seed, m.ReleaseTestRunLink(id=uuid.uuid4(), release_id=seed.ids["release_grandchild"],
+                                        test_run_id=failed.id, is_primary=False, link_source="manual_ui",
+                                        project_id=pid), RUN_FAILED),
+    ])
+    await db.flush()
     return {
         "failed": failed, "old": old, "live": live, "done": done, "running": running,
         "case_failed": case_failed, "case_passed": case_passed, "case_old": case_old, "case_live": case_live,

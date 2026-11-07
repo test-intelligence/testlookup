@@ -55,7 +55,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_active_user, require_project_access, require_role
 from app.db.postgres import get_db
-from app.models.postgres import Project, ProjectDataJob, User, UserRole
+from app.models.postgres import Project, ProjectDataJob, Release, User, UserRole
 from app.models.schemas import (
     ProjectDataJobList,
     ProjectDataJobRead,
@@ -75,6 +75,7 @@ _slog = structlog.get_logger(__name__)
 _LOC_CODES: dict[tuple[str, ...], str] = {
     ("query", "history_days"): "history_window_invalid",
     ("query", "max_runs"): "max_runs_invalid",
+    ("query", "history_release_id"): "history_release_invalid",     # W37 F-W30-1: not a UUID
 }
 
 
@@ -207,7 +208,9 @@ async def start_project_export(
     """Queue an export of the project's settings + catalog (an archived project too: the access rule is
     ``require_project_access``'s, unchanged). 409 ``export_running`` names the live job. W30: no body /
     ``include_history: false`` == phase 1 exactly; ``include_history: true`` stores the options and dispatches
-    with the history time limits (422 ``history_window_invalid`` / ``max_runs_invalid`` for a bad body)."""
+    with the history time limits (422 ``history_window_invalid`` / ``max_runs_invalid`` for a bad body). W37
+    F-W30-1: ``history_release_id`` (with history, without ``history_days``) must name a release OF THIS PROJECT —
+    unknown, another project's or deleted alike answer 422 ``history_release_invalid`` (no existence oracle)."""
     from app.worker.tasks import export_project_data
 
     project = await db.get(Project, project_id)
@@ -215,7 +218,12 @@ async def start_project_export(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
     options = None
     if body is not None and body.include_history:
-        options = ProjectDataOptions(include_history=True, history_days=body.history_days, max_runs=body.max_runs)
+        if body.history_release_id is not None:
+            await _require_release_of_project(db, project_id, body.history_release_id)
+        options = ProjectDataOptions(
+            include_history=True, history_days=body.history_days, max_runs=body.max_runs,
+            history_release_id=body.history_release_id,
+        )
     try:
         job = await jobs.create_export_job(db, project=project, actor=current_user, options=options)
     except jobs.ExportRunning as running:
@@ -240,11 +248,14 @@ async def estimate_project_export(
     include_history: bool = Query(True),
     history_days: Optional[int] = Query(None),
     max_runs: int = Query(vocab.HISTORY_MAX_RUNS),
+    history_release_id: Optional[uuid.UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> ProjectExportEstimate:
     """What an export with these options would hold — counts only (the export's rule: QA lead or ADMIN with
     access). Writes NOTHING (no job, no object, no cache). An unreachable Mongo / object store answers
-    ``measured[store] = false`` with NULL counts (200, never 0). ``history_days`` absent = all history."""
+    ``measured[store] = false`` with NULL counts (200, never 0). ``history_days`` absent = all history. W37:
+    ``history_release_id`` = the export POST's rule (with history, without ``history_days``, a release of THIS
+    project — else 422 ``history_release_invalid``, one body)."""
     from app.db.mongo import get_mongo_db
     from app.db.storage import get_storage_provider
     from app.services.project_export_history import estimate
@@ -255,17 +266,34 @@ async def estimate_project_export(
         raise _refusal("max_runs_invalid", status.HTTP_422_UNPROCESSABLE_ENTITY)
     if await db.get(Project, project_id) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+    if history_release_id is not None:
+        if not include_history or history_days is not None:
+            raise _refusal("history_release_invalid", status.HTTP_422_UNPROCESSABLE_ENTITY)
+        await _require_release_of_project(db, project_id, history_release_id)
     try:
         mongo = get_mongo_db()
     except Exception as exc:  # noqa: BLE001 - a Mongo that cannot even be configured is "not measured"
         _slog.warning("project_export_estimate_mongo_unavailable", error_type=type(exc).__name__)
         mongo = None
-    options = {"include_history": include_history, "history_days": history_days, "max_runs": max_runs}
+    options: dict[str, Any] = {"include_history": include_history, "history_days": history_days, "max_runs": max_runs}
+    if history_release_id is not None:              # only when set: every W30 caller's options stay exact
+        options["history_release_id"] = history_release_id
     result: ProjectExportEstimate = await estimate(
         db, mongo if mongo is not None else _Unmeasured(), get_storage_provider(),
         project_id=project_id, options=options,
     )
     return result
+
+
+async def _require_release_of_project(db: AsyncSession, project_id: uuid.UUID, release_id: uuid.UUID) -> None:
+    """W37 F-W30-1: the body / query release must be a release OF THE PATH PROJECT (the authorization ratchet
+    skips ``{project_id}`` routes, so this is the guard). ONE SELECT scoped by both ids; an unknown, another
+    project's or a deleted release are the same 422 ``history_release_invalid`` — no existence oracle."""
+    found = (await db.execute(
+        select(Release.id).where(Release.id == release_id, Release.project_id == project_id)
+    )).scalar_one_or_none()
+    if found is None:
+        raise _refusal("history_release_invalid", status.HTTP_422_UNPROCESSABLE_ENTITY)
 
 
 class _Unmeasured:

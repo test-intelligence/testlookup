@@ -42,6 +42,7 @@ from app.services.project_export_entities import (
     EXCLUDED,
     SCOPE_ROOT,
     EntitySpec,
+    export_schema_version,
     exported_columns,
     plan,
     spec_for,
@@ -197,7 +198,7 @@ README_TEXT = "\n".join((
     "",
 ))
 
-#: The README of an export WITH run history (schema 2): phase 1's text + a "Run history" section.
+#: The README of an export WITH run history (schema 3, W37 D-1): phase 1's text + a "Run history" section.
 HISTORY_README_TEXT = README_TEXT.replace(
     "It does NOT hold: run history, logs, attachments or other stored files, members, roles, API keys,",
     "It does NOT hold: members, roles, API keys, or any secret (see Run history below for what of the",
@@ -205,10 +206,11 @@ HISTORY_README_TEXT = README_TEXT.replace(
     "or any secret. Secrets kept in the deployment's secret store never travel; a secret typed into a",
     "runs travels). Secrets kept in the deployment's secret store never travel; a secret typed into a",
 ) + "\n".join((
-    "Run history (schema_version 2):",
+    f"Run history (schema_version {vocab.SCHEMA_VERSION}):",
     "The runs of the chosen window (newest first, at most 2000; finished runs only) with their test results,",
     "AI analyses and their versions, AI pipeline results (finished pipelines only), clusters, reviews, release",
-    "links and gate decisions, under entities/<table>/; the runs' stored documents under",
+    "links and gate decisions, under entities/<table>/, and the test plans' execution results; the runs'",
+    "stored documents under",
     "documents/<collection>/ (MongoDB relaxed Extended JSON, one document per line); and the runs' attachments",
     "and result files under objects/<run>/, listed in objects/index/. Attachments are copied byte-for-byte and",
     "NOT scanned: a binary cannot be scrubbed, so a token a test wrote into a screenshot or a result file",
@@ -337,7 +339,7 @@ def manifest_extra(
 ) -> dict[str, Any]:
     """The project branch's manifest keys (§1.3), from what the member iterator recorded. A catalog export
     (no ``history``) writes ``CATALOG_SCHEMA_VERSION`` and exactly phase 1's keys; a history export writes
-    ``SCHEMA_VERSION`` and the ``history`` block (W30 §1.3)."""
+    ``export_schema_version(include_history=True)`` (3, W37 D-1) and the ``history`` block (W30 §1.3)."""
     from app.core.config import settings
 
     extra = {
@@ -454,7 +456,7 @@ async def _build(
 
             extra.update(manifest_extra(
                 project_name=project_name, project_slug=project_slug, stats=stats,
-                schema_version=vocab.SCHEMA_VERSION,
+                schema_version=export_schema_version(include_history=True),
                 history=hx.history_block(history.window, stats, skipped=history.skipped, plan=history.objects),
             ))
 

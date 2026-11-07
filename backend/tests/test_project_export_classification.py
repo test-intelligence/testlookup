@@ -239,21 +239,65 @@ def test_6_history_fks_are_second_pass_columns_of_catalog_entities_pointing_at_h
     }
 
 
-def test_6_schema_1_columns_are_phase_1s_and_schema_2_adds_the_history_fks():
-    spec = e.spec_for("canonical_test_cases")
-    v1 = e.exported_columns(spec)
-    assert v1 == e.exported_columns(spec, schema_version=1)
-    assert not {"first_seen_run_id", "last_seen_run_id", "deleted_at_run_id"} & set(v1)
-    assert set(e.exported_columns(spec, schema_version=2)) - set(v1) == set(spec.history_fks)
-    for other in e.CATALOG:
-        if not other.history_fks:
-            assert e.exported_columns(other, schema_version=2) == e.exported_columns(other)
-    try:
-        e.exported_columns(spec, schema_version=3)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("an unsupported schema_version must raise")
+_PLAN_EXECUTION = {"execution_status", "executed_by_id", "executed_at", "execution_notes", "actual_duration_minutes",
+                   "executed_case_version", "test_case_result_id"}
+
+
+def _added(schema_version: int, *, history: bool | None = None, base: int = 1) -> dict[str, set[str]]:
+    """table → the columns ``schema_version`` writes beyond ``base`` (only the specs that differ)."""
+    out = {}
+    for spec in e.EXPORTED:
+        extra = set(e.exported_columns(spec, schema_version=schema_version, history=history))
+        extra -= set(e.exported_columns(spec, schema_version=base))
+        if extra:
+            out[spec.table] = extra
+    return out
+
+
+def test_6_the_columns_of_each_schema_differ_exactly_where_pinned():
+    # (6') W37 D-1: schema 1 is phase 1's columns; schema 2 (W30, read only) adds C-1's canonical run pointers;
+    # schema 3 adds the version-gated columns (F-W30-3's plan execution result) — no other spec differs
+    canonical = {"first_seen_run_id", "last_seen_run_id", "deleted_at_run_id"}
+    for spec in e.EXPORTED:
+        assert e.exported_columns(spec) == e.exported_columns(spec, schema_version=1), spec.table
+        v1, v2, v3 = (set(e.exported_columns(spec, schema_version=v)) for v in (1, 2, 3))
+        assert v1 <= v2 <= v3, f"{spec.table}: a newer schema never loses a column"
+    assert _added(2) == {"canonical_test_cases": canonical}
+    assert _added(3, base=2) == {"test_plan_items": _PLAN_EXECUTION}
+    assert _added(3) == {"canonical_test_cases": canonical, "test_plan_items": _PLAN_EXECUTION}
+    # schema 3 WITHOUT history (G-B's members / reviews only): no pointer into history, the plan results stay
+    assert _added(3, history=False) == {"test_plan_items": _PLAN_EXECUTION - {"test_case_result_id"}}
+    # the gating is the spec's: schema3_columns are only ever F-W30-3's, on a catalog entity
+    gated = {spec.table: set(spec.schema3_columns) for spec in e.EXPORTED if spec.schema3_columns}
+    assert gated == {"test_plan_items": _PLAN_EXECUTION}
+    assert not any(spec.history for spec in e.EXPORTED if spec.schema3_columns)
+    for unsupported in (0, 4):
+        try:
+            e.exported_columns(e.spec_for("canonical_test_cases"), schema_version=unsupported)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"schema_version {unsupported} is not read here: it must raise")
+
+
+def test_6_schema_3_columns_are_never_dropped_and_their_pointers_are_second_pass():
+    for spec in e.EXPORTED:
+        assert not set(spec.schema3_columns) & set(spec.drop), f"{spec.table}: a gated column is not also dropped"
+        assert not set(spec.schema3_columns) & set(spec.fks), f"{spec.table}: a gated FK is a second-pass column"
+    items = e.spec_for("test_plan_items")
+    assert dict(items.history_fks) == dict(items.null_unless) == {"test_case_result_id": "test_cases"}
+    assert "executed_by_id" in items.user_refs
+    assert {"last_executed_at", "last_execution_status"} <= set(e.spec_for("managed_test_cases").drop)   # D-3
+    assert {"actual_start_date", "actual_end_date"} <= set(e.spec_for("test_plans").drop)               # D-3
+
+
+def test_6_the_has_history_rule_and_the_written_schema():
+    # W37 D-1: schema 2 always; schema 3 only with a manifest history block; schema 1 never
+    assert e.archive_has_history(2, history_block=True) and e.archive_has_history(2, history_block=False)
+    assert e.archive_has_history(3, history_block=True) and not e.archive_has_history(3, history_block=False)
+    assert not e.archive_has_history(1, history_block=True) and not e.archive_has_history(1, history_block=False)
+    assert e.export_schema_version(include_history=False) == 1
+    assert e.export_schema_version(include_history=True) == 3
 
 
 def test_6_plan_is_topologically_sorted():
@@ -313,6 +357,7 @@ def test_7_every_named_column_exists_on_its_table():
             "self_fks": spec.self_fks, "inert": tuple(spec.inert), "natural_key": spec.natural_key,
             "history_fks": tuple(spec.history_fks), "object_refs": spec.object_refs,
             "json_id_paths": tuple(spec.json_id_paths), "null_unless": tuple(spec.null_unless),
+            "schema3_columns": spec.schema3_columns,
         }
         for kind, columns in named.items():
             missing = sorted(set(columns) - cols)

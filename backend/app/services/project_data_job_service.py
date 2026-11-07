@@ -45,14 +45,15 @@ from app.models.schemas import (
     ProjectImportPartReceipt,
     ProjectImportUploadStart,
 )
+from app.services.project_export_entities import export_schema_version
 from app.services.project_export_vocab import (
     CATALOG_SCHEMA_VERSION,
     ERROR_SENTENCES,
     EXPORT_TTL_HOURS,
+    HISTORY_SCHEMA_VERSION,
     IMPORT_PART_MAX_BYTES,
     JOB_PHASES,
     JOBS_LIST_LIMIT,
-    SCHEMA_VERSION,
     STORAGE_PREFIX_IMPORT_PARTS,
 )
 
@@ -152,10 +153,16 @@ async def _live_export_id(db: AsyncSession, project_id: uuid.UUID) -> Optional[u
 
 def stored_options(options: Optional[ProjectDataOptions]) -> dict[str, Any]:
     """The ``options`` JSON of an export: ``{}`` for a catalog-only export (no body / ``include_history:
-    false`` — the phase-1 row exactly), else ``{"include_history": true, "history_days", "max_runs"}``."""
+    false`` — the phase-1 row exactly), else ``{"include_history": true, "history_days", "max_runs"}`` — W37: plus
+    ``history_release_id`` ONLY when set (a release scope; ``history_days`` is then null)."""
     if options is None or not options.include_history:
         return {}
-    return {"include_history": True, "history_days": options.history_days, "max_runs": options.max_runs}
+    stored: dict[str, Any] = {
+        "include_history": True, "history_days": options.history_days, "max_runs": options.max_runs,
+    }
+    if options.history_release_id is not None:
+        stored["history_release_id"] = str(options.history_release_id)
+    return stored
 
 
 def job_options(job: ProjectDataJob) -> ProjectDataOptions:
@@ -163,7 +170,10 @@ def job_options(job: ProjectDataJob) -> ProjectDataOptions:
     raw = job.options if isinstance(job.options, dict) else {}
     if job.kind != KIND_EXPORT or not raw.get("include_history"):
         return ProjectDataOptions()
-    return ProjectDataOptions(include_history=True, history_days=raw.get("history_days"), max_runs=raw.get("max_runs"))
+    return ProjectDataOptions(
+        include_history=True, history_days=raw.get("history_days"), max_runs=raw.get("max_runs"),
+        history_release_id=raw.get("history_release_id"),
+    )
 
 
 async def create_export_job(
@@ -573,16 +583,17 @@ def _upload(job: ProjectDataJob) -> Optional[ProjectDataUpload]:
 
 
 def _schema_version(job: ProjectDataJob, report: Optional[ProjectDataImportReport]) -> Optional[int]:
-    """Export: the schema its options write (2 with history, else 1); import: the manifest's (stamped), else
-    inferred from a finished report (a history block ⇔ schema 2); None while unknown."""
+    """Export: the schema its options write (W37 D-1: 3 with history, else 1); import: the manifest's
+    (stamped), else inferred from a finished report (a history block ⇔ W30's schema 2 — every import since
+    stamps); None while unknown."""
     if job.kind == KIND_EXPORT:
-        return SCHEMA_VERSION if job_options(job).include_history else CATALOG_SCHEMA_VERSION
+        return export_schema_version(include_history=job_options(job).include_history)
     raw = job.options if isinstance(job.options, dict) else {}
     stamped = raw.get("schema_version")
     if isinstance(stamped, int) and not isinstance(stamped, bool):
         return stamped
     if report is not None:
-        return SCHEMA_VERSION if report.history is not None else CATALOG_SCHEMA_VERSION
+        return HISTORY_SCHEMA_VERSION if report.history is not None else CATALOG_SCHEMA_VERSION
     return None
 
 

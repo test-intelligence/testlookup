@@ -14,6 +14,7 @@ from pydantic import (
     Field,
     computed_field,
     field_validator,
+    model_serializer,
     model_validator,
 )
 from pydantic_core import PydanticCustomError
@@ -1125,6 +1126,32 @@ class ProjectExportRequest(BaseModel):
             raise _project_data_error("max_runs_invalid")
         return value
 
+    # ── W37 F-W30-1 (contract §2.1, D-2): the runs linked to ONE release of the path project ──
+    history_release_id: Optional[uuid.UUID] = None             # only with include_history; replaces history_days
+
+    @field_validator("history_release_id", mode="before")
+    @classmethod
+    def _history_release(cls, value: Any) -> Any:
+        if value is None or isinstance(value, uuid.UUID):
+            return value
+        if not isinstance(value, str):
+            raise _project_data_error("history_release_invalid")
+        try:
+            return uuid.UUID(value)
+        except ValueError:
+            raise _project_data_error("history_release_invalid") from None
+
+    @model_validator(mode="after")
+    def _release_scope(self) -> "ProjectExportRequest":
+        """A release scope needs history and REPLACES the day window: ``history_days`` null or absent, else
+        422 ``history_release_invalid`` (the release's own project is checked by the route)."""
+        if self.history_release_id is None:
+            return self
+        if not self.include_history or ("history_days" in self.model_fields_set and self.history_days is not None):
+            raise _project_data_error("history_release_invalid")
+        self.history_days = None
+        return self
+
 
 class ProjectExportEstimate(BaseModel):
     """``GET /projects/{id}/export-estimate``: counts only. A store that could not be read → its counts None and
@@ -1141,13 +1168,27 @@ class ProjectExportEstimate(BaseModel):
     estimated_bytes: Optional[int] = None          # None when any store is unmeasured
     over_limit: Optional[bool] = None              # estimated_bytes > HISTORY_EXPORT_MAX_BYTES (None when unmeasured)
     measured: dict[str, bool]                      # {"postgres": True, "documents": bool, "objects": bool}
+    history_release_id: Optional[uuid.UUID] = None   # W37 F-W30-1: the release the estimate was scoped to
 
 
 class ProjectDataOptions(BaseModel):
-    """Echoed on an export job: what was asked for."""
+    """Echoed on an export job: what was asked for. W37: a key W37 adds is echoed ONLY when it is set (so every
+    pre-W37 echo — ``{"include_history", "history_days", "max_runs"}`` — stays exact)."""
     include_history: bool = False
     history_days: Optional[int] = None
     max_runs: Optional[int] = None
+    history_release_id: Optional[uuid.UUID] = None   # W37 F-W30-1: a release-scoped history export (history_days None)
+
+    _SET_ONLY: ClassVar[tuple[str, ...]] = ("history_release_id",)   # W37 keys left out of the echo while unset
+
+    @model_serializer(mode="wrap")
+    def _only_the_set_w37_keys(self, handler: Any) -> Any:
+        data = handler(self)
+        if isinstance(data, dict):
+            for key in self._SET_ONLY:
+                if data.get(key) in (None, False):
+                    data.pop(key, None)
+        return data
 
 
 class ProjectDataUpload(BaseModel):

@@ -258,6 +258,67 @@ def test_run_window_counts_in_progress_and_over_cap_runs() -> None:
     assert len(db.statements) == 2     # the window SELECT + ONE aggregate of the counts
 
 
+# ── W37 F-W30-1: the runs linked to ONE release (D-2) ───────────────────────
+
+_RELEASE_FILTER = ("test_runs.id IN (SELECT release_test_run_links.test_run_id \nFROM release_test_run_links \n"
+                   "WHERE release_test_run_links.release_id = %(release_id_1)s::UUID "
+                   "AND release_test_run_links.project_id = %(project_id_2)s::UUID)")
+
+
+def test_a_release_window_is_still_one_select_with_the_link_subquery_and_no_time_cut() -> None:
+    project_id, release_id = uuid.uuid4(), uuid.uuid4()
+    statement = hx.window_statement(project_id, since=None, max_runs=2000, release_id=release_id)
+    sql = _sql(statement)
+    assert sql.startswith("SELECT test_runs.id, test_runs.created_at \nFROM test_runs \nWHERE")
+    assert sql.count("SELECT") == 2 and "JOIN" not in sql          # the run list itself + ONE IN-subquery
+    assert f"test_runs.project_id = %(project_id_1)s::UUID AND {_RELEASE_FILTER} AND test_runs.status IN" in sql
+    assert "created_at >=" not in sql
+    assert sql.endswith("ORDER BY test_runs.created_at DESC, test_runs.id DESC \n LIMIT %(param_1)s")
+    params = statement.compile(dialect=PG).params
+    assert params["project_id_1"] == params["project_id_2"] == project_id and params["release_id_1"] == release_id
+    # the counts use the SAME filter (in progress / over the cap are the release's runs)
+    counts = _sql(hx.window_counts_statement(project_id, since=None, release_id=release_id))
+    assert _RELEASE_FILTER in counts and "JOIN" not in counts and "created_at >=" not in counts
+    assert "release_test_run_links" not in _sql(hx.window_statement(project_id, since=None, max_runs=10))
+
+
+def test_a_release_replaces_the_day_window() -> None:
+    now = datetime(2026, 11, 3, 12, 0, tzinfo=timezone.utc)
+    release = uuid.uuid4()
+    assert hx.window_bounds({"history_days": 90, "history_release_id": str(release)}, now=now) == (
+        None, vocab.HISTORY_MAX_RUNS, None)
+    assert hx.release_of(SimpleNamespace(history_release_id=release)) == release
+    assert hx.release_of({"history_days": 30}) is None and hx.release_of(None) is None
+
+
+class _ReleaseSession(RecordingSession):
+    """Answers the scoped release's name (and records it like every statement)."""
+
+    async def execute(self, stmt: Any, *args: Any, **kwargs: Any) -> _Result:
+        if self._table(stmt) == "releases":
+            self._check(stmt)
+            return _Result([], scalar="2026.11")
+        return await super().execute(stmt, *args, **kwargs)
+
+
+def test_a_release_window_counts_its_runs_and_names_the_release_in_the_manifest() -> None:
+    project_id, release_id = uuid.uuid4(), uuid.uuid4()
+    base = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    runs = [{"id": uuid.uuid4(), "created_at": base - timedelta(days=400)}, {"id": uuid.uuid4(), "created_at": base}]
+    db = _ReleaseSession({"test_runs": runs}, counts=(3, 1))
+    window = asyncio.run(hx.run_window(db, project_id=project_id, now=base, options={
+        "include_history": True, "history_days": None, "max_runs": 2, "history_release_id": str(release_id)}))
+    assert (window.release_id, window.release_name, window.days, window.since) == (release_id, "2026.11", None, None)
+    assert (window.in_progress, window.over_cap) == (1, 1)            # the release's own counts
+    sqls = [_sql(s) for s in db.statements]
+    assert len(sqls) == 3 and _RELEASE_FILTER in sqls[0] and _RELEASE_FILTER in sqls[1]
+    assert sqls[2].startswith("SELECT releases.name \nFROM releases \nWHERE releases.id = ")
+    assert "releases.project_id = " in sqls[2]                        # the path project's release only
+    block = hx.history_block(window, {}, skipped=[], plan=None)
+    assert block["window_days"] is None and block["release"] == {"id": str(release_id), "name": "2026.11"}
+    assert "release" not in hx.history_block(_window([uuid.uuid4()]), {}, skipped=[], plan=None)
+
+
 def test_every_history_statement_is_scoped_by_the_one_bound_array_or_a_subquery() -> None:
     window = _window([uuid.uuid4() for _ in range(3)])
     for spec in HISTORY:
@@ -306,6 +367,27 @@ def test_dropped_columns_are_never_selected_and_c1_pointers_are_null_unless_in_t
     assert "CASE WHEN (canonical_test_cases.first_seen_run_id = ANY (%(run_window)s::UUID[]))" in canonical
     # schema 1 (the catalog export) still drops them
     assert "first_seen_run_id" not in _sql(svc.rows_statement(spec_for("canonical_test_cases"), window.project_id))
+
+
+def test_plan_execution_results_travel_with_history_and_their_case_only_inside_the_window() -> None:
+    """W37 F-W30-3: a history export writes the items' execution columns; ``test_case_result_id`` is written NULL
+    unless its case is a case of a window run (``test_cases`` is unbounded on import); the catalog export drops
+    every one of them (W24 row 9)."""
+    window = _window([uuid.uuid4()])
+    items = _sql(hx.rows_statement(spec_for("test_plan_items"), window))
+    selected = items.split("\nFROM test_plan_items")[0]
+    for column in ("execution_status", "executed_by_id", "executed_at", "execution_notes", "actual_duration_minutes",
+                   "executed_case_version"):
+        assert f"test_plan_items.{column}" in selected
+    assert ("CASE WHEN (test_plan_items.test_case_result_id IN (SELECT test_cases.id \nFROM test_cases \n"
+            "WHERE test_cases.test_run_id = ANY (%(run_window)s::UUID[])))") in items
+    assert "test_plan_items.plan_id IN (SELECT test_plans.id" in items        # the phase-1 scope, unchanged
+    catalog = _sql(svc.rows_statement(spec_for("test_plan_items"), window.project_id))
+    for column in ("execution_status", "executed_by_id", "executed_at", "execution_notes", "test_case_result_id"):
+        assert column not in catalog
+    # the managed case's stored last execution and the plan's actual dates stay dropped even with history (D-3)
+    assert "last_executed_at" not in _sql(hx.rows_statement(spec_for("managed_test_cases"), window))
+    assert "actual_start_date" not in _sql(hx.rows_statement(spec_for("test_plans"), window))
 
 
 def test_skipped_pipelines_and_their_stage_results_are_counted() -> None:
@@ -645,7 +727,7 @@ def _export(world: dict[str, Any], db: Any, **kwargs: Any) -> svc.ProjectExportO
     ))
 
 
-def test_a_history_export_reads_only_and_writes_a_schema_2_archive(
+def test_a_history_export_reads_only_and_writes_a_schema_3_archive(
     monkeypatch: pytest.MonkeyPatch, signing: Any,
 ) -> None:
     import io
@@ -666,14 +748,14 @@ def test_a_history_export_reads_only_and_writes_a_schema_2_archive(
     (data,) = world["store"].archives.values()
     archive = zipfile.ZipFile(io.BytesIO(data))
     manifest = json.loads(archive.read("manifest.json"))
-    assert manifest["schema_version"] == vocab.SCHEMA_VERSION == 2
+    assert manifest["schema_version"] == vocab.SCHEMA_VERSION == 3          # W37 D-1: history is written as schema 3
     history = manifest["history"]
     assert (history["runs"], history["runs_in_progress_skipped"], history["runs_over_cap"]) == (1, 1, 0)
     assert history["documents"]["raw_allure_json"] == {"docs": 1, "parts": 1}
     assert history["objects"]["count"] == 1
     assert "entities/test_runs/part-0001.jsonl" in archive.namelist()
     assert f"objects/{world['run_id']}/000001.bin" in archive.namelist()
-    assert "Run history (schema_version 2):" in archive.read("README.txt").decode("utf-8")
+    assert "Run history (schema_version 3):" in archive.read("README.txt").decode("utf-8")
     assert outcome.counts["test_runs"] == 1 and outcome.counts["documents.raw_allure_json"] == 1
     assert outcome.counts["objects"] == 1
     phases = [entry["phase"] for entry in progress]

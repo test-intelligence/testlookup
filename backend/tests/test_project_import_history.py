@@ -83,8 +83,10 @@ def build_history_archive(
     index: Optional[list[dict[str, Any]]] = None,
     history_patch: Optional[dict[str, Any]] = None,
     extra_members: Optional[dict[str, bytes]] = None,
+    schema_version: int = vocab.SCHEMA_VERSION,
 ) -> bytes:
-    """A schema-2 project export (contract §1.3): rows, documents, one object + its index line, manifest."""
+    """A project export WITH history (contract §1.3): rows, documents, one object + its index line, manifest —
+    schema 3 as W37 writes it, or ``schema_version=2`` as a W30 exporter did."""
     members: dict[str, bytes] = {}
     listed: dict[str, dict[str, Any]] = {}
     for table, rows in world.rows().items():
@@ -117,7 +119,7 @@ def build_history_archive(
         "format_version": 1, "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "project_id": str(world.project),
         "files": [{"name": n, "bytes": len(b), "sha256": hashlib.sha256(b).hexdigest()} for n, b in sorted(members.items())],
-        "scope": "project", "format": vocab.ARCHIVE_FORMAT, "schema_version": vocab.SCHEMA_VERSION,
+        "scope": "project", "format": vocab.ARCHIVE_FORMAT, "schema_version": schema_version,
         "source": {"app_version": "9.9.9", "host": None},
         "project": {"name": "Payment Service", "slug": "payment-service"},
         "entities": listed, "history": history_block,

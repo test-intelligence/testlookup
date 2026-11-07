@@ -35,7 +35,7 @@ from app.core.deps import (
     get_current_active_user,
 )
 from app.db.postgres import get_db
-from app.models.postgres import Base, Project, ProjectDataJob, ProjectMember, User, UserRole
+from app.models.postgres import Base, Project, ProjectDataJob, ProjectMember, Release, User, UserRole
 from app.routers import project_data as routes
 from app.services import project_export_vocab as vocab
 from app.worker import tasks
@@ -59,7 +59,8 @@ class _AwareDateTime(SQLITE_DATETIME):
         return process
 
 
-_TABLES = [Project.__table__, User.__table__, ProjectMember.__table__, ProjectDataJob.__table__]
+_TABLES = [Project.__table__, User.__table__, ProjectMember.__table__, ProjectDataJob.__table__,
+           Release.__table__]   # W37: the release-scoped export checks a release's project
 _PARTIAL = (
     "CREATE UNIQUE INDEX uq_pdj_one_live_export ON project_data_jobs (project_id) "
     "WHERE kind = 'export' AND status IN ('queued', 'running')",
@@ -667,6 +668,100 @@ async def test_a_bad_estimate_query_reads_its_sentence(
     assert answer.status_code == 422
     assert answer.json()["detail"] == {"code": code, "message": vocab.ERROR_SENTENCES[code]}
     assert estimates == []
+
+
+# ── W37 F-W30-1: a release-scoped history export (§2.1) — the ratchet skips {project_id} routes: these ARE the guard ──
+
+RELEASE_INVALID = {"code": "history_release_invalid", "message": "Choose a release of this project."}
+
+
+@pytest.fixture
+async def releases(factory: Any, world: Any) -> SimpleNamespace:
+    """One release of the path project and one of ANOTHER project (one each: SQLite drops the partial WHEREs)."""
+    own = Release(id=uuid.uuid4(), project_id=world.project.id, name="2026.11")
+    foreign = Release(id=uuid.uuid4(), project_id=world.other.id, name="auth-1")
+    async with factory() as db:
+        db.add_all([own, foreign])
+        await db.commit()
+    return SimpleNamespace(own=own, foreign=foreign)
+
+
+async def test_a_release_scoped_export_stores_and_echoes_only_the_keys_that_are_set(
+    factory: Any, world: Any, releases: Any, dispatched: _Dispatched,
+) -> None:
+    async with _client(factory, world.lead) as client:
+        answer = await client.post(f"/api/v1/projects/{world.project.id}/export", json={
+            "include_history": True, "history_release_id": str(releases.own.id), "max_runs": 2000})
+    assert answer.status_code == 202, answer.text
+    expected = {"include_history": True, "history_days": None, "max_runs": 2000,
+                "history_release_id": str(releases.own.id)}
+    assert answer.json()["options"] == expected
+    assert dispatched.options == [HISTORY_LIMITS]
+    async with factory() as db:
+        row = await db.get(ProjectDataJob, uuid.UUID(answer.json()["id"]))
+    assert row.options == expected
+    from app.services.project_data_job_service import job_options
+
+    assert job_options(row).history_release_id == releases.own.id     # what the worker reads back
+
+
+@pytest.mark.parametrize("which", ["another_projects_release", "a_random_uuid"])
+async def test_a_release_outside_the_path_project_is_one_refusal_on_both_routes_and_writes_nothing(
+    factory: Any, world: Any, releases: Any, dispatched: _Dispatched, estimates: list, storage: FakeStorage,
+    which: str,
+) -> None:
+    release = releases.foreign.id if which == "another_projects_release" else uuid.uuid4()
+    before = len(factory.statements)
+    async with _client(factory, world.admin) as client:      # an ADMIN: access to every project, still refused
+        post = await client.post(f"/api/v1/projects/{world.project.id}/export",
+                                 json={"include_history": True, "history_release_id": str(release)})
+        estimate = await client.get(f"/api/v1/projects/{world.project.id}/export-estimate",
+                                    params={"history_release_id": str(release)})
+    assert (post.status_code, post.json()["detail"]) == (422, RELEASE_INVALID)          # no existence oracle:
+    assert (estimate.status_code, estimate.json()["detail"]) == (422, RELEASE_INVALID)  # the same body for both
+    assert dispatched == [] and estimates == [] and await _count_jobs(factory) == 0
+    assert _writes(factory.statements[before:]) == []
+    checks = [s for s in factory.statements[before:] if "FROM releases" in s]
+    assert len(checks) == 2 and all("releases.project_id = " in s for s in checks)     # scoped by BOTH ids
+
+
+@pytest.mark.parametrize("body", [
+    {"history_release_id": "RELEASE"},                                             # include_history absent
+    {"include_history": False, "history_release_id": "RELEASE"},
+    {"include_history": True, "history_days": 90, "history_release_id": "RELEASE"},  # a day window AND a release
+    {"include_history": True, "history_release_id": "not-a-uuid"},
+    {"include_history": True, "history_release_id": 7},
+])
+async def test_a_release_without_history_with_a_day_window_or_not_an_id_is_refused(
+    factory: Any, world: Any, releases: Any, dispatched: _Dispatched, body: dict,
+) -> None:
+    sent = {k: (str(releases.own.id) if v == "RELEASE" else v) for k, v in body.items()}
+    async with _client(factory, world.lead) as client:
+        answer = await client.post(f"/api/v1/projects/{world.project.id}/export", json=sent)
+    assert (answer.status_code, answer.json()["detail"]) == (422, RELEASE_INVALID)
+    assert dispatched == [] and await _count_jobs(factory) == 0
+
+
+async def test_the_estimate_of_a_release_passes_it_on_and_refuses_it_with_days_or_without_history(
+    factory: Any, world: Any, releases: Any, estimates: list,
+) -> None:
+    own = str(releases.own.id)
+    before = len(factory.statements)
+    async with _client(factory, world.lead) as client:
+        ok = await client.get(f"/api/v1/projects/{world.project.id}/export-estimate",
+                              params={"history_release_id": own})
+        with_days = await client.get(f"/api/v1/projects/{world.project.id}/export-estimate",
+                                     params={"history_release_id": own, "history_days": 90})
+        no_history = await client.get(f"/api/v1/projects/{world.project.id}/export-estimate",
+                                      params={"history_release_id": own, "include_history": "false"})
+        not_an_id = await client.get(f"/api/v1/projects/{world.project.id}/export-estimate",
+                                     params={"history_release_id": "nope"})
+    assert ok.status_code == 200, ok.text
+    assert estimates == [{"project_id": world.project.id, "mongo_ok": True, "options": {
+        "include_history": True, "history_days": None, "max_runs": 2000, "history_release_id": releases.own.id}}]
+    for refused in (with_days, no_history, not_an_id):
+        assert (refused.status_code, refused.json()["detail"]) == (422, RELEASE_INVALID)
+    assert _writes(factory.statements[before:]) == [], "the estimate GET wrote"
 
 
 async def test_an_unconfigurable_mongo_is_unmeasured_not_a_500(

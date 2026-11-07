@@ -4,7 +4,7 @@ EVERY table of ``Base.metadata`` is classified here exactly once:
 
 * ``EXPORTED`` — the settings + catalog entities (``CATALOG``, phase 1's 29 in
   phase 1's order), THEN the run-history entities (``HISTORY``, W30, written
-  only by an export WITH history — schema 2), in DEPENDENCY ORDER (parents
+  only by an export WITH history — schema 2 / 3), in DEPENDENCY ORDER (parents
   first): the export writes and the import inserts in this order. Each
   :class:`EntitySpec` names the columns that never travel (``drop``), the
   authorship columns remapped by USERNAME (``user_refs``), the assignment
@@ -39,7 +39,9 @@ from sqlalchemy import MetaData
 from app.services.project_export_vocab import (
     CATALOG_SCHEMA_VERSION,
     HISTORY_RUN_STATUSES,
+    HISTORY_SCHEMA_VERSION,
     IMPORTED_PAUSE_REASON,
+    SCHEMA_VERSION,
     SUPPORTED_SCHEMA_VERSIONS,
     TERMINAL_PIPELINE_STATUSES,
 )
@@ -103,13 +105,15 @@ class EntitySpec:
     scrub: str | None = SCRUB_DEFAULT                            # a SCRUBBERS name (None = typed columns only)
     natural_key: tuple[str, ...] = ()                            # UNIQUE key inside the project (source values): a repeat → invalid_row
     # ── W30 run history (all default empty, so phase-1 specs are unchanged) ──
-    history: bool = False                                        # written only by a history export (schema 2); rows selected by ``window``
+    history: bool = False                                        # written only by a history export (schema 2 / 3); rows selected by ``window``
     window: str | None = None                                    # WINDOW_RUNS | WINDOW_PROJECT | "<kind>:<column>" (WINDOW_KINDS)
-    history_fks: Mapping[str, str] = field(default_factory=dict, hash=False)   # CATALOG column dropped in schema 1, remapped in schema 2 (second pass)
+    history_fks: Mapping[str, str] = field(default_factory=dict, hash=False)   # CATALOG column dropped without history, remapped with it (second pass)
     object_refs: tuple[str, ...] = ()                            # columns holding a stored key / prefix → rebuilt under the new root (§2.3 R-1)
     json_id_paths: Mapping[str, str] = field(default_factory=dict, hash=False)  # JSON list of ids the product READS → the table whose remap rewrites each id
     null_unless: Mapping[str, str] = field(default_factory=dict, hash=False)    # column → table: written NULL by the EXPORT when its target is outside the archive
     select_where: str | None = None                              # a HISTORY_PREDICATES name
+    # ── W37 D-1: version-gated columns ──
+    schema3_columns: tuple[str, ...] = ()                        # dropped below schema 3 (a schema-1 / 2 archive never carries them), exported at schema 3
 
     @property
     def parent(self) -> tuple[str, str] | None:
@@ -140,7 +144,7 @@ _MANAGED_TEST_CASES = EntitySpec(
     "managed_test_cases",
     drop=(
         "generation_batch_id",                                   # generation history is excluded (ai_history)
-        "last_executed_at", "last_execution_status",             # run history
+        "last_executed_at", "last_execution_status",             # run history — W37 D-3: stay dropped, even with history
         "is_stale", "stale_reason",                              # knowledge sources are excluded
         "faithfulness_score", "faithfulness_evaluator", "faithfulness_evaluated_at",   # an AI evaluation of the source
     ),
@@ -177,16 +181,23 @@ _CANONICAL_TEST_CASES = EntitySpec(
 )
 _TEST_PLANS = EntitySpec(
     "test_plans",
+    # the four counters are recomputed by the import from the items (W37 F-W30-3); W37 D-3: actual_start_date /
+    # actual_end_date stay dropped (no writer exists)
     drop=("actual_start_date", "actual_end_date", "executed_cases", "passed_cases", "failed_cases", "blocked_cases"),
     user_refs=("created_by_id",), cleared=("assigned_to_id",),
 )
+_PLAN_EXECUTION_RESULT = {"test_case_result_id": "test_cases"}   # → a per-run case (HISTORY; unbounded in the remap)
 _TEST_PLAN_ITEMS = EntitySpec(
     "test_plan_items", scope="parent:test_plans.plan_id",
-    # execution history; execution_status falls back to the column default "not_run"
-    drop=("executed_by_id", "executed_at", "execution_notes", "actual_duration_minutes",
-          "executed_case_version", "test_case_result_id", "execution_status"),
+    # W37 F-W30-3 (D-3): a person's manual execution result travels at schema 3 (an export with history); a
+    # schema-1 / 2 archive never carries it and execution_status falls back to the column default "not_run".
+    # test_case_result_id is written NULL unless its case is a case of the window, and set in the second pass.
+    user_refs=("executed_by_id",),
     fks={"plan_id": "test_plans", "test_case_id": "managed_test_cases"},
     natural_key=("plan_id", "test_case_id"),
+    history_fks=dict(_PLAN_EXECUTION_RESULT), null_unless=dict(_PLAN_EXECUTION_RESULT),
+    schema3_columns=("executed_by_id", "executed_at", "execution_notes", "actual_duration_minutes",
+                     "executed_case_version", "test_case_result_id", "execution_status"),
 )
 _TEST_STRATEGIES = EntitySpec("test_strategies", user_refs=("created_by_id", "approved_by_id"))
 _RELEASES = EntitySpec(
@@ -621,16 +632,46 @@ def spec_for(table: str) -> EntitySpec:
 _SPECS: dict[str, EntitySpec] = {spec.table: spec for spec in EXPORTED}
 
 
-def exported_columns(
-    spec: EntitySpec, metadata: MetaData | None = None, *, schema_version: int = CATALOG_SCHEMA_VERSION,
-) -> tuple[str, ...]:
-    """The columns written for ``spec``'s rows, table order: every column minus ``drop``; schema 1 (the
-    default — phase 1's columns, what every phase-1 caller reads) also drops the ``history_fks`` (C-1's
-    canonical run pointers), schema 2 keeps them. A schema this deployment does not read → ValueError."""
+def export_schema_version(*, include_history: bool) -> int:
+    """W37 D-1: the LOWEST schema that holds an export's content — ``CATALOG_SCHEMA_VERSION`` (1, byte-compatible
+    with phase 1) for settings + catalog only, ``SCHEMA_VERSION`` (3) with run history. Schema 2 is never written.
+    (G-B: members / reviews without history are schema 3 too — add their flags here.)"""
+    return SCHEMA_VERSION if include_history else CATALOG_SCHEMA_VERSION
+
+
+def archive_has_history(schema_version: int, *, history_block: bool) -> bool:
+    """W37 D-1, THE "has history" rule of an archive: schema 2 (W30 — always), or schema >= 3 WITH a manifest
+    ``history`` block (a schema-3 archive without one carries members / reviews only). Schema 1: never."""
+    return schema_version == HISTORY_SCHEMA_VERSION or (schema_version > HISTORY_SCHEMA_VERSION and history_block)
+
+
+def hidden_columns(spec: EntitySpec, *, schema_version: int, history: bool) -> frozenset[str]:
+    """The columns of ``spec`` an archive of ``schema_version`` (with / without run history) never carries:
+    ``drop``; the ``history_fks`` (second-pass pointers into history) when it has no history (schema 1, or
+    schema 3 without a history block — there are no runs to point at); the ``schema3_columns`` below schema 3.
+    The export leaves them out and the import refuses a row carrying one (``unknown_column``)."""
     if schema_version not in SUPPORTED_SCHEMA_VERSIONS:
         raise ValueError(f"schema_version {schema_version!r} is not one of {SUPPORTED_SCHEMA_VERSIONS}")
+    hidden = set(spec.drop)
+    if not history or schema_version == CATALOG_SCHEMA_VERSION:     # schema 1 never carries history
+        hidden |= set(spec.history_fks)
+    if schema_version < SCHEMA_VERSION:
+        hidden |= set(spec.schema3_columns)
+    return frozenset(hidden)
+
+
+def exported_columns(
+    spec: EntitySpec, metadata: MetaData | None = None, *, schema_version: int = CATALOG_SCHEMA_VERSION,
+    history: bool | None = None,
+) -> tuple[str, ...]:
+    """The columns written for ``spec``'s rows, table order: every column minus :func:`hidden_columns`.
+    Schema 1 (the default — phase 1's columns, what every phase-1 caller reads) also drops the ``history_fks``
+    (C-1's canonical run pointers) and the ``schema3_columns``; schema 2 keeps the ``history_fks``; schema 3
+    keeps both. ``history`` defaults to the schema's own (1: none; 2 / 3: with history) — a schema-3 export
+    WITHOUT history passes ``history=False``. A schema this deployment does not read → ValueError."""
+    with_history = schema_version != CATALOG_SCHEMA_VERSION if history is None else history
+    hidden = hidden_columns(spec, schema_version=schema_version, history=with_history)
     md = metadata if metadata is not None else _metadata()
-    hidden = set(spec.drop) | (set(spec.history_fks) if schema_version == CATALOG_SCHEMA_VERSION else set())
     return tuple(c.name for c in md.tables[spec.table].columns if c.name not in hidden)
 
 
@@ -679,5 +720,5 @@ def _checked_plan(include_history: bool) -> tuple[EntitySpec, ...]:
 def plan(*, include_history: bool = False) -> list[EntitySpec]:
     """The entities in dependency order (asserted: every parent precedes its children): phase 1's 29
     ``CATALOG`` entities (the default — what every phase-1 caller reads, a schema-1 export), or those 29
-    + ``HISTORY`` (a schema-2 export / import)."""
+    + ``HISTORY`` (an export / import WITH history: schema 2 / 3)."""
     return list(_checked_plan(include_history))

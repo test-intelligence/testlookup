@@ -73,6 +73,8 @@ from app.services.project_export_entities import (
     PROJECT_ROW_COLUMNS,
     EntitySpec,
     ImportValue,
+    archive_has_history,
+    hidden_columns,
     plan,
 )
 from app.services.project_import_rows import row_model_for, row_values
@@ -101,6 +103,7 @@ _SLUG_MAX = 100                           # == Project.slug length
 _LADDER_MAX = 50                          # "(imported 50)" is the last name tried
 _ACCEPTED_SIGNATURES = ("valid", "unknown_key", "unsigned")
 _REVIEW_RESET = "managed_test_cases.review_reset"
+_PLAN_STATUS = "execution_status"         # test_plan_items: travels at schema 3 (W37 F-W30-3) → the plan counters
 _RELEASES_DEACTIVATED = "releases.deactivated"
 
 #: The HTTP status the import ROUTE answers for each refusal ``accept_upload``
@@ -377,15 +380,18 @@ class _Preflight:
     bounded_ids: dict[str, set[uuid.UUID]] = dataclasses.field(default_factory=dict)   # BOUNDED_PARENTS → source ids
     run_prefixes: dict[uuid.UUID, Optional[str]] = dataclasses.field(default_factory=dict)   # source run → minio_prefix
     history_pre: Optional[history.HistoryPreflight] = None                      # validate_history's proof (schema 2)
+    history_block: bool = False                                                 # the manifest has a ``history`` block
 
     @property
     def has_history(self) -> bool:
-        return self.schema_version >= vocab.SCHEMA_VERSION
+        """W37 D-1 (``archive_has_history``): schema 2, or schema >= 3 with a manifest ``history`` block."""
+        return archive_has_history(self.schema_version, history_block=self.history_block)
 
 
-def _scan_caps(schema_version: int) -> dict[str, int]:
-    """The safe-scan caps of a schema: W24's for schema 1, the history caps for schema 2 (§2.6 I-H2 (c))."""
-    if schema_version >= vocab.SCHEMA_VERSION:
+def _scan_caps(has_history: bool) -> dict[str, int]:
+    """The safe-scan caps of an archive: W24's without run history, the history caps with it (§2.6 I-H2 (c);
+    W37 D-1: "with history" is ``archive_has_history``, not a schema number)."""
+    if has_history:
         return {
             "max_total": vocab.IMPORT_HISTORY_MAX_TOTAL_UNCOMPRESSED,
             "max_entries": vocab.IMPORT_HISTORY_MAX_ENTRIES,
@@ -400,10 +406,10 @@ def _scan_caps(schema_version: int) -> dict[str, int]:
     }
 
 
-def _scan(spool: IO[bytes], schema_version: int = vocab.CATALOG_SCHEMA_VERSION) -> int:
-    """(c) the safe scan with THAT schema's caps; returns the member count."""
+def _scan(spool: IO[bytes], has_history: bool = False) -> int:
+    """(c) the safe scan with THAT archive's caps; returns the member count."""
     try:
-        members = scan_zip(spool, **_scan_caps(schema_version))
+        members = scan_zip(spool, **_scan_caps(has_history))
     except UnsafeZipError as exc:
         if exc.code == "bad_zip":
             raise ProjectImportFailed("not_a_zip") from None
@@ -475,22 +481,25 @@ def _read_manifest(zf: zipfile.ZipFile) -> tuple[dict[str, Any], str]:
     return manifest, hashlib.sha256(raw).hexdigest()
 
 
-def _check_member_names(zf: zipfile.ZipFile, schema_version: int = vocab.CATALOG_SCHEMA_VERSION) -> list[str]:
-    """(d) every entry — directories included — has one of the five shapes; a schema-2 archive may also
-    carry ``documents/<collection>/part-NNNN.jsonl``, ``objects/index/part-NNNN.jsonl`` and
-    ``objects/<run uuid>/<NNNNNN>.bin`` (never in schema 1)."""
+def _check_member_names(
+    zf: zipfile.ZipFile, schema_version: int = vocab.CATALOG_SCHEMA_VERSION, history_block: bool = False,
+) -> list[str]:
+    """(d) every entry — directories included — has one of the five shapes; an archive WITH history
+    (``archive_has_history``) may also carry ``documents/<collection>/part-NNNN.jsonl``,
+    ``objects/index/part-NNNN.jsonl`` and ``objects/<run uuid>/<NNNNNN>.bin`` (never in schema 1)."""
     names = [info.filename for info in zf.infolist()]
-    with_history = schema_version >= vocab.SCHEMA_VERSION
+    with_history = archive_has_history(schema_version, history_block=history_block)
     for name in names:
         if not (_MEMBER_NAME.match(name) or (with_history and history.HISTORY_MEMBER.match(name))):
             raise ProjectImportFailed("tampered", reason="an unexpected member")
     return names
 
 
-def _hidden_columns(spec: EntitySpec, schema_version: int) -> frozenset[str]:
-    """Columns a row of ``spec`` may NOT carry in this schema: schema 1 hides the ``history_fks`` (C-1's
-    canonical run pointers, dropped by every phase-1 export) exactly as a phase-1 deployment does."""
-    return frozenset(spec.history_fks) if schema_version < vocab.SCHEMA_VERSION else frozenset()
+def _hidden_columns(spec: EntitySpec, schema_version: int, has_history: bool) -> frozenset[str]:
+    """Columns a row of ``spec`` may NOT carry in this archive (``project_export_entities.hidden_columns``):
+    without history the ``history_fks`` (C-1's canonical run pointers, dropped by every phase-1 export, exactly
+    as a phase-1 deployment hides them); below schema 3 the ``schema3_columns`` (W37 D-1)."""
+    return hidden_columns(spec, schema_version=schema_version, history=has_history)
 
 
 def _tamper_reason(result: Mapping[str, Any]) -> str:
@@ -536,7 +545,8 @@ def _check_entities(
 
     W30: a schema-2 archive's plan is the catalog + the 27 history entities; a history entity in a
     schema-1 manifest is ``unknown_entity`` (as on a phase-1 deployment); the ``history`` block is present
-    if and only if the archive is schema 2.
+    if and only if the archive is schema 2. W37 D-1: a schema-3 archive has history exactly when it has the
+    block (``archive_has_history``); without it a history entity is ``unknown_entity`` as in schema 1.
     """
     from app.services.project_import_rows import column_names
 
@@ -544,7 +554,7 @@ def _check_entities(
         manifest = _Manifest.model_validate(raw)
     except ValidationError:
         raise ProjectImportFailed("not_a_project_export") from None
-    with_history = schema_version >= vocab.SCHEMA_VERSION
+    with_history = archive_has_history(schema_version, history_block="history" in raw)
     if ("history" in raw) != with_history:
         raise ProjectImportFailed(
             "tampered", reason="the history block is missing" if with_history else "an unexpected history block",
@@ -562,7 +572,7 @@ def _check_entities(
     for table, entry in sorted(manifest.entities.items()):
         if entry.columns is not None and table not in retired:
             spec = exported[table]
-            known = column_names(row_model_for(spec)) - _hidden_columns(spec, schema_version)
+            known = column_names(row_model_for(spec)) - _hidden_columns(spec, schema_version, with_history)
             for column in entry.columns:
                 if column not in known:
                     raise ProjectImportFailed(
@@ -625,7 +635,7 @@ def _validate_rows(zf: zipfile.ZipFile, manifest: _Manifest, pre: _Preflight) ->
     single = _single_row_tables()
     for spec in plan(include_history=pre.has_history):
         model = row_model_for(spec)
-        hidden = _hidden_columns(spec, pre.schema_version)
+        hidden = _hidden_columns(spec, pre.schema_version, pre.has_history)
         predicate = HISTORY_PREDICATES.get(spec.select_where) if spec.select_where else None
         bounded = spec.table in history.BOUNDED_PARENTS
         track_ids = not spec.history or bounded
@@ -712,18 +722,20 @@ async def _map_users(db: AsyncSession, directory: Mapping[uuid.UUID, str]) -> di
 def _preflight_sync(spool: IO[bytes], public_keys: Mapping[str, str]) -> _Preflight:
     """I-2 on the spool, in the §0.12 order; raises the first refusal. (a) the central directory's entry
     count ≤ ``IMPORT_HISTORY_MAX_ENTRIES``; (b) the manifest (bounded read) → format / scope →
-    ``schema_version`` (1 or 2); (c) ``scan_zip`` with THAT schema's caps; (d) the member names; (e) the
-    verifier (every member hashed against the signed manifest); (f) the listed entities / columns / parts /
-    collections; (g) every row; (h) every document and object index line (schema 2) — then the directory."""
+    ``schema_version`` (1, 2 or 3) and whether it carries history (W37 D-1); (c) ``scan_zip`` with THAT
+    archive's caps; (d) the member names; (e) the verifier (every member hashed against the signed manifest);
+    (f) the listed entities / columns / parts / collections; (g) every row; (h) every document and object
+    index line (with history) — then the directory."""
     _entry_count(spool)                                                     # (a)
     spool.seek(0)
     with zipfile.ZipFile(spool) as zf:
         raw, manifest_sha256 = _read_manifest(zf)                           # (b)
     schema_version = int(raw["schema_version"])
-    file_count = _scan(spool, schema_version)                               # (c)
+    history_block = "history" in raw
+    file_count = _scan(spool, archive_has_history(schema_version, history_block=history_block))   # (c)
     spool.seek(0)
     with zipfile.ZipFile(spool) as zf:
-        names = _check_member_names(zf, schema_version)                     # (d)
+        names = _check_member_names(zf, schema_version, history_block)      # (d)
     signature = _verify(spool, public_keys)                                 # (e)
     spool.seek(0)
     with zipfile.ZipFile(spool) as zf:
@@ -739,6 +751,7 @@ def _preflight_sync(spool: IO[bytes], public_keys: Mapping[str, str]) -> _Prefli
             parts=parts,
             retired=retired,
             schema_version=schema_version,
+            history_block=history_block,
             # the projects row never carries its id (dropped): the manifest's project_id names the source tree
             # whose stored prefixes rebuild_prefix accepts — a wrong value only makes every prefix refused (NULL)
             source_project_id=history.as_uuid(raw.get("project_id")),
@@ -820,6 +833,12 @@ class _Context:
     run_times: list[dt.datetime] = dataclasses.field(default_factory=list)      # created_at of every imported run (≤ 2 000)
     history_skipped: Counter[tuple[str, Optional[str], str]] = dataclasses.field(default_factory=Counter)
 
+    @property
+    def has_history(self) -> bool:
+        """The archive carries run history (``run_import`` builds ``history_remap`` exactly when the preflight's
+        ``has_history`` — W37 D-1's ONE rule — holds)."""
+        return self.history_remap is not None
+
     def retention_paused_until(self) -> dt.datetime:
         """§2.7: the import's clock + ``IMPORTED_PURGE_PAUSE_DAYS`` (== retention_vocab.PAUSE_DAYS_MAX)."""
         return self.now + dt.timedelta(days=vocab.IMPORTED_PURGE_PAUSE_DAYS)
@@ -864,9 +883,9 @@ def _entity_rules(ctx: _Context, spec: EntitySpec, values: dict[str, Any], sourc
         a, b = values.get("case_a_id"), values.get("case_b_id")
         if isinstance(a, uuid.UUID) and isinstance(b, uuid.UUID) and a > b:
             values["case_a_id"], values["case_b_id"] = b, a  # ck_dismissed_dup_canonical_order on the NEW ids
-    elif spec.table == "project_retention_policies" and ctx.schema_version >= vocab.SCHEMA_VERSION:
+    elif spec.table == "project_retention_policies" and ctx.has_history:
         # §2.7: a history import pauses the copy's purge — the ONE inert rule that overrides the phase-1
-        # drop of purge_paused_until, only in schema 2 (else the hourly purge would delete the history tonight)
+        # drop of purge_paused_until, only with history (else the hourly purge would delete the history tonight)
         values["purge_paused_until"] = ctx.retention_paused_until()
 
 
@@ -951,7 +970,7 @@ def transform_row(ctx: _Context, spec: EntitySpec, values: dict[str, Any]) -> Op
             if isinstance(ref, uuid.UUID):
                 ctx.self_pending.setdefault((spec.table, column), []).append((new_id, ref))
         for column, ref in history_refs.items():
-            if isinstance(ref, uuid.UUID) and ctx.schema_version >= vocab.SCHEMA_VERSION:
+            if isinstance(ref, uuid.UUID) and ctx.has_history:
                 ctx.history_pending.setdefault((spec.table, column), []).append((new_id, ref))
     return values
 
@@ -1023,8 +1042,9 @@ async def _insert_batch(db: AsyncSession, table: Any, rows: list[dict[str, Any]]
 
 
 async def _second_pass(db: AsyncSession, ctx: _Context) -> None:
-    """I-6: set every self reference through the remap, in batches — and (W30, schema 2) every
-    ``history_fks`` column (C-1: a canonical case's run pointers → the copy's runs) once the runs exist."""
+    """I-6: set every self reference through the remap, in batches — and (W30, with history) every
+    ``history_fks`` column (C-1: a canonical case's run pointers → the copy's runs; W37 F-W30-3: a plan item's
+    ``test_case_result_id`` → the copy's case of the same run) once the history rows exist."""
     from app.services.project_export_entities import spec_for
 
     pending = [((t, c), t, pairs) for (t, c), pairs in sorted(ctx.self_pending.items())]
@@ -1038,9 +1058,34 @@ async def _second_pass(db: AsyncSession, ctx: _Context) -> None:
                 ctx.cleared[(table_name, column, "row_unresolved")] += 1
             else:
                 resolved.append({"p_id": new_id, "p_value": target})
+        resolved = await _inserted_targets(db, ctx, (table_name, column), target_table, resolved)
         statement = update(table).where(table.c.id == bindparam("p_id")).values({column: bindparam("p_value")})
         for start in range(0, len(resolved), vocab.INSERT_BATCH_ROWS):
             await db.execute(statement, resolved[start:start + vocab.INSERT_BATCH_ROWS])
+
+
+async def _inserted_targets(
+    db: AsyncSession, ctx: _Context, where: tuple[str, str], target_table: str, resolved: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """A second-pass pointer into an UNBOUNDED history table (``test_plan_items.test_case_result_id`` →
+    ``test_cases``): uuid5 resolves any id, so ONE SELECT per batch keeps only the targets this import inserted
+    (the export wrote the pointer NULL unless its case travelled — a pointer past that is unresolved, set NULL
+    and counted ``row_unresolved``, never a dangling-FK failure). Self refs and bounded targets pass through."""
+    remap = ctx.history_remap
+    if remap is None or target_table not in HISTORY_TABLES or target_table in remap.bounded or not resolved:
+        return resolved
+    target = Base.metadata.tables[target_table]
+    kept: list[dict[str, Any]] = []
+    for start in range(0, len(resolved), vocab.INSERT_BATCH_ROWS):
+        chunk = resolved[start:start + vocab.INSERT_BATCH_ROWS]
+        wanted = sorted({item["p_value"] for item in chunk}, key=str)
+        found = set((await db.execute(select(target.c.id).where(target.c.id.in_(wanted)))).scalars().all())
+        for item in chunk:
+            if item["p_value"] in found:
+                kept.append(item)
+            else:
+                ctx.cleared[(where[0], where[1], "row_unresolved")] += 1
+    return kept
 
 
 async def _create_project(
@@ -1089,6 +1134,30 @@ async def _insert_entity(db: AsyncSession, zf: zipfile.ZipFile, ctx: _Context, s
         await _prune_unbounded_ids(db, ctx, spec, batch)
         await _insert_batch(db, table, batch)
         ctx.inserted[spec.table] += len(batch)
+    if spec.table == "test_plan_items" and _PLAN_STATUS not in _hidden_columns(spec, pre.schema_version, pre.has_history):
+        await db.execute(plan_counts_statement(ctx.project_id))
+
+
+def plan_counts_statement(project_id: uuid.UUID) -> Any:
+    """W37 F-W30-3: the copy's ``test_plans`` counters from its imported items, in ONE ``UPDATE`` — the formula of
+    ``test_management_service.recompute_plan_counts`` (copied, not imported: the side-effect guard): ``total`` =
+    the items, ``executed`` = total − ``not_run`` (a NULL status counts as executed), ``passed`` / ``failed`` /
+    ``blocked`` = ``== X``. Run only when the archive carries the items' statuses (schema 3); a schema-1 / 2
+    archive keeps today's counters (``total_cases`` as exported, the rest their defaults)."""
+    plans = Base.metadata.tables["test_plans"]
+    items = Base.metadata.tables["test_plan_items"]
+
+    def count(status: Optional[str] = None) -> Any:
+        query = select(func.count()).select_from(items).where(items.c.plan_id == plans.c.id)
+        if status is not None:
+            query = query.where(items.c.execution_status == status)
+        return query.scalar_subquery()
+
+    return update(plans).where(plans.c.project_id == project_id).values(
+        total_cases=count(), executed_cases=count() - count("not_run"),
+        passed_cases=count("passed"), failed_cases=count("failed"), blocked_cases=count("blocked"),
+        updated_at=plans.c.updated_at,      # the imported stamp stays (the column's onupdate would write now())
+    )
 
 
 async def _prune_unbounded_ids(db: AsyncSession, ctx: _Context, spec: EntitySpec, rows: list[dict[str, Any]]) -> None:

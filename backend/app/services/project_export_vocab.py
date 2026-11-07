@@ -10,9 +10,13 @@ job's ``error`` carries the same sentence. The frontend mirrors these values in
 are also the CHECK literal lists of migrations ``0247`` / ``0252`` (pinned by
 ``tests/test_migration_0247.py`` / ``tests/test_migration_0252.py``).
 
-One format, two schema versions (W30): an export WITHOUT history writes
-``CATALOG_SCHEMA_VERSION`` (phase 1's entities and columns, so a phase-1
-deployment still imports it); an export WITH history writes ``SCHEMA_VERSION``.
+One format, three schema versions (W30, W37 D-1): an export writes the LOWEST
+schema that holds its content — ``CATALOG_SCHEMA_VERSION`` (1) for settings +
+catalog only (phase 1's entities and columns, so a phase-1 deployment still
+imports it), ``SCHEMA_VERSION`` (3) for anything with run history (members /
+reviews: G-B). ``HISTORY_SCHEMA_VERSION`` (2, W30) is no longer written but is
+still read. "Has history" = schema 2, or schema >= 3 with a manifest
+``history`` block (``project_export_entities.archive_has_history``).
 
 Constants only: no ``app.*`` import, no session, no I/O
 (``STAGE_ONLY_SERVICES``).
@@ -20,9 +24,10 @@ Constants only: no ``app.*`` import, no session, no I/O
 from __future__ import annotations
 
 ARCHIVE_FORMAT = "testlookup.project-export"   # manifest["format"]; anything else → refused "not_a_project_export"
-SCHEMA_VERSION = 2                             # written by an export WITH history; > max(SUPPORTED) → "schema_newer"; < 1 / not int → "schema_unknown"
+SCHEMA_VERSION = 3                             # W37: the newest written (history / members / reviews); > max(SUPPORTED) → "schema_newer"; < 1 / not int → "schema_unknown"
+HISTORY_SCHEMA_VERSION = 2                     # W30's history archive: no longer written, still read (always carries history)
 CATALOG_SCHEMA_VERSION = 1                     # written by an export WITHOUT history (phase 1's entities + columns; a phase-1 importer reads it)
-SUPPORTED_SCHEMA_VERSIONS = (1, 2)             # the import accepts exactly these
+SUPPORTED_SCHEMA_VERSIONS = (1, 2, 3)          # the import accepts exactly these
 JOB_KINDS = ("export", "import")               # CHECK in 0247 uses the same literals
 JOB_STATUSES = ("uploading", "queued", "running", "succeeded", "failed", "expired")   # CHECK in 0252 (0247 + "uploading" = a parted import upload); "expired" = export object removed by the janitor
 TERMINAL_STATUSES = ("succeeded", "failed", "expired")
@@ -93,6 +98,7 @@ UPLOAD_STALE_HOURS = 24                        # janitor: an "uploading" job old
 DIGEST_LOOKBACK_DAYS = 7                       # newest imported run within this of the import → recent_runs_note (contract §0.9)
 STORAGE_PREFIX_IMPORT_PARTS = "project-imports/parts/"      # project-imports/parts/<job_id>/part-0001 …
 IMPORTED_PURGE_PAUSE_DAYS = 90                 # == retention_vocab.PAUSE_DAYS_MAX (asserted): a history import pauses the copy's purge (§2.7)
+DOWNLOAD_TICKET_SECONDS = 60                   # W37 F-W30-6: a browser download ticket's lifetime (single use; capped at the export's expires_at)
 ERROR_SENTENCES = {   # detail = {"code": <key>, "message": <sentence>} on every W24 4xx/5xx; the job's `error` uses the same text
     "job_not_found": "Project data job not found.",                                     # 404 — another project's / requester's alike
     "export_running": "An export of this project is already running.",                  # 409 (one queued/running export per project)
@@ -139,6 +145,10 @@ ERROR_SENTENCES = {   # detail = {"code": <key>, "message": <sentence>} on every
     "object_unreadable": "An object in the archive could not be written to storage ({error_type}); nothing was imported.",
     "documents_unwritable": "The documents could not be written ({error_type}); nothing was imported.",
     "upload_too_large_history": "The file is larger than 2 GB.",   # the parted route / the card's file check (the 50 MB sentence stays for the single route)
+    # ── W37 F-W30-1 the release-scoped history export ──
+    "history_release_invalid": "Choose a release of this project.",   # 422: without history, with history_days, or unknown / foreign / deleted (one body)
+    # ── W37 F-W30-6 the browser download ticket ──
+    "ticket_unavailable": "Downloads through the browser are unavailable right now; try again or use the CLI.",   # 503 (the ticket store is unreachable)
 }
 UI_SENTENCES = {      # the frontend renders these verbatim (React text, never HTML)
     "export_intro": "Download this project's settings and test catalog as a ZIP, with run history if you choose.",
