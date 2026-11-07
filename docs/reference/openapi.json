@@ -8033,6 +8033,17 @@
       },
       "Body_start_project_import_api_v1_projects_import_post": {
         "properties": {
+          "add_members": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Add Members"
+          },
           "client_token": {
             "anyOf": [
               {
@@ -8055,6 +8066,17 @@
               }
             ],
             "title": "File"
+          },
+          "keep_reviews": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keep Reviews"
           },
           "name": {
             "anyOf": [
@@ -30582,6 +30604,30 @@
         "title": "ProjectCreate",
         "type": "object"
       },
+      "ProjectDataDownloadTicket": {
+        "description": "The POST's answer: navigate to ``url`` within ``expires_in`` seconds, once.",
+        "properties": {
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "ticket": {
+            "title": "Ticket",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticket",
+          "expires_in",
+          "url"
+        ],
+        "title": "ProjectDataDownloadTicket",
+        "type": "object"
+      },
       "ProjectDataError": {
         "description": "A W24 refusal: also the 4xx ``detail`` shape ``{code, message}`` (ERROR_SENTENCES).",
         "properties": {
@@ -30739,6 +30785,18 @@
             },
             "title": "Inserted",
             "type": "object"
+          },
+          "options_ignored": {
+            "default": [],
+            "items": {
+              "enum": [
+                "add_members",
+                "keep_reviews"
+              ],
+              "type": "string"
+            },
+            "title": "Options Ignored",
+            "type": "array"
           },
           "project_id": {
             "format": "uuid",
@@ -31047,40 +31105,7 @@
         "title": "ProjectDataJobRead",
         "type": "object"
       },
-      "ProjectDataOptions": {
-        "description": "Echoed on an export job: what was asked for.",
-        "properties": {
-          "history_days": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "History Days"
-          },
-          "include_history": {
-            "default": false,
-            "title": "Include History",
-            "type": "boolean"
-          },
-          "max_runs": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Runs"
-          }
-        },
-        "title": "ProjectDataOptions",
-        "type": "object"
-      },
+      "ProjectDataOptions": {},
       "ProjectDataProgress": {
         "properties": {
           "done": {
@@ -31242,6 +31267,18 @@
             ],
             "title": "History Days"
           },
+          "history_release_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "History Release Id"
+          },
           "include_history": {
             "title": "Include History",
             "type": "boolean"
@@ -31354,9 +31391,31 @@
             "default": 90,
             "title": "History Days"
           },
+          "history_release_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "History Release Id"
+          },
           "include_history": {
             "default": false,
             "title": "Include History",
+            "type": "boolean"
+          },
+          "include_members": {
+            "default": false,
+            "title": "Include Members",
+            "type": "boolean"
+          },
+          "include_reviews": {
+            "default": false,
+            "title": "Include Reviews",
             "type": "boolean"
           },
           "max_runs": {
@@ -31406,6 +31465,11 @@
         "additionalProperties": false,
         "description": "Body of ``POST /project-imports/uploads``: every part but the last is exactly IMPORT_PART_MAX_BYTES.",
         "properties": {
+          "add_members": {
+            "default": false,
+            "title": "Add Members",
+            "type": "boolean"
+          },
           "bytes": {
             "maximum": 2147483648.0,
             "minimum": 1.0,
@@ -31416,6 +31480,11 @@
             "format": "uuid",
             "title": "Client Token",
             "type": "string"
+          },
+          "keep_reviews": {
+            "default": false,
+            "title": "Keep Reviews",
+            "type": "boolean"
           },
           "name": {
             "anyOf": [
@@ -72123,6 +72192,59 @@
         ]
       }
     },
+    "/api/v1/project-data-downloads/{data_job_id}": {
+      "get": {
+        "description": "Stream the export the ticket opens, exactly as the Bearer download does, plus ``Referrer-Policy:\nno-referrer``. Every refusal is the 404 ``LINK_GONE`` text; a storage fault before the first byte is a 502\ntext. Writes NO SQL.",
+        "operationId": "download_project_export_by_ticket_api_v1_project_data_downloads__data_job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "data_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Data Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ticket",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "title": "Ticket",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Download Project Export By Ticket",
+        "tags": [
+          "Project data"
+        ]
+      }
+    },
     "/api/v1/project-data-jobs/{data_job_id}": {
       "get": {
         "description": "One export or import job (the page and the CLI poll it). Writes nothing.",
@@ -72246,6 +72368,71 @@
           }
         ],
         "summary": "Download Project Export",
+        "tags": [
+          "Project data"
+        ]
+      }
+    },
+    "/api/v1/project-data-jobs/{data_job_id}/download-ticket": {
+      "post": {
+        "description": "A single-use ticket for ``GET /project-data-downloads/{data_job_id}`` (a navigation cannot send\nAuthorization). Refuses exactly as the download does; 503 ``ticket_unavailable`` without Redis.",
+        "operationId": "issue_project_export_download_ticket_api_v1_project_data_jobs__data_job_id__download_ticket_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "data_job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Data Job Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDataDownloadTicket"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Issue Project Export Download Ticket",
         "tags": [
           "Project data"
         ]
@@ -72672,7 +72859,7 @@
     },
     "/api/v1/projects/import": {
       "post": {
-        "description": "Accept an export ZIP to import as a NEW project. The body is counted into a spool before any job\nrow exists (413 past 50 MB, nothing stored); a repeated ``client_token`` answers 200 with its job and\nreads nothing. Commit, then enqueue; 202.",
+        "description": "Accept an export ZIP to import as a NEW project. The body is counted into a spool before any job\nrow exists (413 past 50 MB, nothing stored); a repeated ``client_token`` answers 200 with its job and\nreads nothing. Commit, then enqueue; 202. W37 F-2 / F-7 (contract §2.2): the Form fields ``add_members`` /\n``keep_reviews`` are ``\"true\"`` when chosen (sent only then); the job stores them only when true.",
         "operationId": "start_project_import_api_v1_projects_import_post",
         "parameters": [
           {
@@ -76661,7 +76848,7 @@
     },
     "/api/v1/projects/{project_id}/export": {
       "post": {
-        "description": "Queue an export of the project's settings + catalog (an archived project too: the access rule is\n``require_project_access``'s, unchanged). 409 ``export_running`` names the live job. W30: no body /\n``include_history: false`` == phase 1 exactly; ``include_history: true`` stores the options and dispatches\nwith the history time limits (422 ``history_window_invalid`` / ``max_runs_invalid`` for a bad body).",
+        "description": "Queue an export of the project's settings + catalog (an archived project too: the access rule is\n``require_project_access``'s, unchanged). 409 ``export_running`` names the live job. W30: no body /\n``include_history: false`` == phase 1 exactly; ``include_history: true`` stores the options and dispatches\nwith the history time limits (422 ``history_window_invalid`` / ``max_runs_invalid`` for a bad body). W37\nF-W30-1: ``history_release_id`` (with history, without ``history_days``) must name a release OF THIS PROJECT —\nunknown, another project's or deleted alike answer 422 ``history_release_invalid`` (no existence oracle).\nW37 F-2 / F-7: ``include_members`` / ``include_reviews`` (independent of history) are stored only when ticked.",
         "operationId": "start_project_export_api_v1_projects__project_id__export_post",
         "parameters": [
           {
@@ -76743,7 +76930,7 @@
     },
     "/api/v1/projects/{project_id}/export-estimate": {
       "get": {
-        "description": "What an export with these options would hold — counts only (the export's rule: QA lead or ADMIN with\naccess). Writes NOTHING (no job, no object, no cache). An unreachable Mongo / object store answers\n``measured[store] = false`` with NULL counts (200, never 0). ``history_days`` absent = all history.",
+        "description": "What an export with these options would hold — counts only (the export's rule: QA lead or ADMIN with\naccess). Writes NOTHING (no job, no object, no cache). An unreachable Mongo / object store answers\n``measured[store] = false`` with NULL counts (200, never 0). ``history_days`` absent = all history. W37:\n``history_release_id`` = the export POST's rule (with history, without ``history_days``, a release of THIS\nproject — else 422 ``history_release_invalid``, one body).",
         "operationId": "estimate_project_export_api_v1_projects__project_id__export_estimate_get",
         "parameters": [
           {
@@ -76790,6 +76977,23 @@
               "default": 2000,
               "title": "Max Runs",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "history_release_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "History Release Id"
             }
           },
           {
