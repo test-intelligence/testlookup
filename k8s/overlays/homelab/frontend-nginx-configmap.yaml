@@ -81,6 +81,21 @@ data:
             proxy_send_timeout 120s;
         }
 
+        # W37 F-W30-6: a large project export streams to the browser's disk
+        # through a one-time ticket. Longer prefix than /api/; unbuffered, so a
+        # 2 GB archive is not spooled to this pod's disk; the timeouts are idle
+        # gaps, not a total. No add_header: the server headers are inherited.
+        location /api/v1/project-data-downloads/ {
+            proxy_pass http://testlookup-backend:8000;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_buffering off;
+            proxy_read_timeout 300s;
+            proxy_send_timeout 300s;
+        }
+
         location /ws/ {
             proxy_pass http://testlookup-backend:8000;
             proxy_http_version 1.1;

@@ -369,3 +369,54 @@ def test_the_parser_reads_a_map_with_quoted_keys() -> None:
     servers = _servers(tree)
     assert len(servers) == 1
     assert _locations(servers[0])["= /index.html"] == [("sub_filter", ["__P__", "$c"], None)]
+
+
+# ── W37 F-W30-6: the ticket download streams through unbuffered ─────────────
+#
+# A large project export (up to 2 GB) downloads straight to the browser's disk
+# through a one-time ticket (backend/app/routers/project_data_download.py). With
+# nginx's default buffering the frontend pod would spool the whole archive to
+# its own disk first; its location turns buffering off, proxies exactly as
+# /api/ does, and declares no add_header, so it keeps the server's headers.
+
+TICKET_DOWNLOAD = "/api/v1/project-data-downloads/"
+TICKET_DOWNLOAD_SAMPLE = TICKET_DOWNLOAD + "0b9f3c1e-6a5d-4f7e-9a51-2f3c4d5e6f70"
+TICKET_DOWNLOAD_CONFIGS = (
+    "frontend/nginx.conf.template",
+    "k8s/overlays/homelab/frontend-nginx-configmap.yaml:default.conf",
+    "k8s/overlays/openshift-artifactory/frontend-nginx-configmap.yaml:default.conf",
+)
+
+
+def _proxying(directives: list) -> list:
+    return [(n, args) for n, args, _ in directives if n in ("proxy_pass", "proxy_set_header")]
+
+
+@pytest.mark.parametrize("name", TICKET_DOWNLOAD_CONFIGS)
+def test_the_ticket_download_streams_unbuffered_and_keeps_the_headers(name: str) -> None:
+    for server in _servers(parse(CONFIGS[name])):
+        locations = _locations(server)
+        download = locations.get(TICKET_DOWNLOAD)
+        assert download is not None, f"{name}: no `location {TICKET_DOWNLOAD}`"
+        settings = {n: args for n, args, _ in download}
+        assert settings.get("proxy_buffering") == ["off"], name
+        assert settings.get("proxy_read_timeout") == ["300s"], name
+        assert settings.get("proxy_send_timeout") == ["300s"], name
+        assert _proxying(download) == _proxying(locations["/api/"]), f"{name}: proxies unlike /api/"
+        assert _headers(download) == {}, f"{name}: an add_header here would drop the server's headers"
+        assert _effective_headers(server, download) == _headers(server)
+        assert SECURITY_HEADERS <= set(_effective_headers(server, download))
+
+
+@pytest.mark.parametrize("name", TICKET_DOWNLOAD_CONFIGS)
+def test_nginx_picks_the_ticket_download_location_for_a_download(name: str) -> None:
+    """The longest matching prefix wins unless a regex location matches: no regex matches a download URL."""
+    for server in _servers(parse(CONFIGS[name])):
+        locations = _locations(server)
+        prefixes = [loc for loc in locations if not loc.startswith(("~", "=")) and TICKET_DOWNLOAD_SAMPLE.startswith(loc)]
+        assert max(prefixes, key=len) == TICKET_DOWNLOAD, (name, prefixes)
+        for loc in locations:
+            if loc.startswith("~"):
+                modifier, pattern = loc.split(" ", 1)
+                flags = re.I if modifier == "~*" else 0
+                assert not re.search(pattern, TICKET_DOWNLOAD_SAMPLE, flags), (name, loc)
