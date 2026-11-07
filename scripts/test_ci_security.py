@@ -223,6 +223,27 @@ def test_the_nginx_image_takes_alpine_security_updates() -> None:
     assert upgrade and upgrade[0] < next(i for i, s in enumerate(steps) if s.startswith("CMD"))
 
 
+def test_the_os_upgrade_layer_is_rebuilt_daily_in_the_ci_scan() -> None:
+    """PR #342: the image scan builds from the GitHub Actions layer cache, which replayed an `apt-get upgrade`
+    layer from before Debian shipped a zlib fix, so Trivy failed on a CVE whose fix the Dockerfile already takes.
+    Each runtime stage declares OS_PATCH_DAY right before its upgrade step (an ARG whose value changes misses the
+    cache of the RUN after it), and the scan build passes the UTC day, computed BEFORE the build."""
+    upgrades = {"backend/Dockerfile": "apt-get upgrade -y", "mcp/Dockerfile": "apt-get upgrade -y",
+                "frontend/Dockerfile": "apk upgrade --no-cache"}
+    for dockerfile, marker in upgrades.items():
+        steps = _joined(_final_stage(dockerfile))
+        at = next(i for i, s in enumerate(steps) if s.startswith("RUN ") and marker in s)
+        args = [i for i, s in enumerate(steps) if s.startswith("ARG OS_PATCH_DAY")]
+        assert len(args) == 1 and args[0] < at, f"{dockerfile}: ARG OS_PATCH_DAY must come right before the upgrade"
+        assert not any(s.startswith("RUN ") for s in steps[args[0] + 1:at]), dockerfile
+    steps = _jobs()["security-images"]["steps"]
+    names = [step.get("name", "") for step in steps]
+    day = next(i for i, step in enumerate(steps) if step.get("id") == "day")
+    build = names.index("Build the image (not pushed)")
+    assert day < build, "the day stamp must exist before the image build"
+    assert "OS_PATCH_DAY=${{ steps.day.outputs.day }}" in steps[build]["with"].get("build-args", "")
+
+
 def test_the_nginx_stage_trusts_the_staged_ca_before_apk_goes_online() -> None:
     """R-B45-T-2: apk upgrade reaches the Alpine mirror over HTTPS; behind a TLS
     interceptor (INSTALL_EXTRA_CA=1) the staged CA must be trusted first."""

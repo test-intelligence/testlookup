@@ -114,6 +114,9 @@ WORKDIR /app
 # apt-get upgrade takes Debian's security fixes for packages the base image
 # already carries; installing alone never upgrades them (see mcp/Dockerfile and
 # scripts/test_ci_security.py::test_the_debian_runtime_images_take_security_updates).
+# OS_PATCH_DAY (CI passes the UTC date) rebuilds this layer at least once a day, so
+# the CI scan's layer cache cannot replay an upgrade older than Debian's newest fix.
+ARG OS_PATCH_DAY=unset
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \

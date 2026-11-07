@@ -1810,6 +1810,13 @@ locally by default.
 
 ### Fixed
 
+- **The CI image scan no longer replays a stale OS-upgrade layer** (found by W37's CI, PR #342).
+  The scan builds from the GitHub Actions layer cache, so the mcp image's `apt-get upgrade`
+  layer came from before Debian shipped a zlib fix and Trivy failed on CVE-2026-85091 although
+  the Dockerfile already takes Debian's fixes. Each runtime stage (backend, mcp, frontend) now
+  declares `ARG OS_PATCH_DAY` right before its upgrade step and the scan passes the UTC day, so
+  that layer is rebuilt at least daily. Test:
+  `scripts/test_ci_security.py::test_the_os_upgrade_layer_is_rebuilt_daily_in_the_ci_scan`.
 - **Opening a test case's Edit form no longer re-reads the project members**
   (found by W34's CI). The page already holds the list, read for the Owner
   filter. When Edit opened more than two seconds later, SWR fetched it again,

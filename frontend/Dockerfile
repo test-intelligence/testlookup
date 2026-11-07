@@ -55,6 +55,9 @@ FROM nginx:alpine AS production
 # against, BEFORE apk touches the network. Empty certs/ (CI) = no-op.
 ARG INSTALL_EXTRA_CA=0
 COPY certs/ /opt/extra-ca/
+# OS_PATCH_DAY (CI passes the UTC date) rebuilds this layer at least once a day, so
+# the CI scan's layer cache cannot replay an upgrade older than Alpine's newest fix.
+ARG OS_PATCH_DAY=unset
 RUN if [ "$INSTALL_EXTRA_CA" = "1" ] && ls /opt/extra-ca/*.crt >/dev/null 2>&1; then \
       cat /opt/extra-ca/*.crt >> /etc/ssl/certs/ca-certificates.crt; \
       echo "[frontend] trusting interception CA for apk"; \

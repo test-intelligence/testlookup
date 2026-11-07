@@ -1724,6 +1724,11 @@ jobs:
             [registry."docker.io"]
               mirrors = ["mirror.gcr.io"]
 
+      - name: Day stamp (the OS-upgrade layer and the vulnerability-DB cache)
+        if: steps.scope.outputs.run == 'true'
+        id: day
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
       - name: Build the image (not pushed)
         if: steps.scope.outputs.run == 'true'
         uses: docker/build-push-action@v7
@@ -1734,6 +1739,11 @@ jobs:
           push: false
           load: true
           tags: testlookup-scan/${{ matrix.name }}:${{ github.sha }}
+          # OS_PATCH_DAY rebuilds each runtime stage's apt / apk upgrade layer at least daily: from the layer cache
+          # alone, an upgrade from before the distribution's newest fix replays (PR #342: a CACHED apt layer kept
+          # zlib CVE-2026-85091 in the mcp image although Debian had shipped the fix).
+          build-args: |
+            OS_PATCH_DAY=${{ steps.day.outputs.day }}
           cache-from: |
             type=gha,scope=scan-${{ matrix.name }}
             type=gha
@@ -1752,11 +1762,6 @@ jobs:
           sudo install -m 0755 trivy /usr/local/bin/trivy
           rm -f trivy trivy.tar.gz
         if: steps.scope.outputs.run == 'true'
-
-      - name: Day stamp for the vulnerability-DB cache
-        if: steps.scope.outputs.run == 'true'
-        id: day
-        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Cache the Trivy vulnerability database (refreshed daily)
         if: steps.scope.outputs.run == 'true'
