@@ -32,6 +32,7 @@ import { BarChart3, Download, FileText, Layers, TriangleAlert } from 'lucide-rea
 import PageHeader from '@/components/ui/PageHeader'
 import type { OverflowItem } from '@/components/ui/OverflowMenu'
 import KpiStrip from '@/components/ui/KpiStrip'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import MetricCard from '@/components/ui/MetricCard'
 import WindowPicker from '@/components/ui/WindowPicker'
 import Disclosure from '@/components/ui/Disclosure'
@@ -436,9 +437,9 @@ export default function SummaryReportPage() {
             </SectionErrorBoundary>
 
             <section>
-              <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
+              <h2 className={clsx(PANEL_TITLE_CLASS, 'mb-2 flex items-center gap-2')}>
                 <Layers className="h-3.5 w-3.5" /> Per-suite breakdown
-                <span className="ml-1 text-2xs font-normal text-[var(--color-text-faint)] normal-case tracking-normal">{suites.length} suite{suites.length === 1 ? '' : 's'}</span>
+                <span className="ml-1 text-2xs font-normal text-[var(--color-text-faint)]">{suites.length} suite{suites.length === 1 ? '' : 's'}</span>
               </h2>
               <SuiteTable rows={suites} />
             </section>
@@ -461,9 +462,9 @@ export default function SummaryReportPage() {
               top ten of these same rows; the table lists every one, with its
               suite, class and count. */}
           <section>
-            <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-muted)] mb-2 flex items-center gap-2">
+            <h2 className={clsx(PANEL_TITLE_CLASS, 'mb-2 flex items-center gap-2')}>
               <TriangleAlert className="h-3.5 w-3.5" /> Top failing tests
-              <span className="ml-1 text-2xs font-normal text-[var(--color-text-faint)] normal-case tracking-normal">{topFailing.length} test{topFailing.length === 1 ? '' : 's'}</span>
+              <span className="ml-1 text-2xs font-normal text-[var(--color-text-faint)]">{topFailing.length} test{topFailing.length === 1 ? '' : 's'}</span>
             </h2>
             {topFailing.length === 0 ? (
               <p className="text-sm text-[var(--color-text-muted)]">No failures in this window.</p>
@@ -811,7 +812,7 @@ function SuiteTable({ rows }: { rows: SummarySuiteRow[] }) {
 }
 
 function passPctClass(pct: number): string {
-  if (pct >= 95) return 'bg-[var(--status-passed-bg)]/30 text-[var(--status-passed)]'
-  if (pct >= 80) return 'bg-[var(--status-broken-bg)]/30 text-[var(--status-broken)]'
-  return 'bg-[var(--status-failed-bg)]/30 text-[var(--status-failed)]'
+  if (pct >= 95) return 'bg-[var(--status-passed-bg)]/30 text-[var(--status-passed-ink)]'
+  if (pct >= 80) return 'bg-[var(--status-broken-bg)]/30 text-[var(--status-broken-ink)]'
+  return 'bg-[var(--status-failed-bg)]/30 text-[var(--status-failed-ink)]'
 }

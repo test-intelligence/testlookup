@@ -9,6 +9,7 @@ import GenerationReviewPanel from '@/components/rag/GenerationReviewPanel'
 import { ragService } from '@/services/ragGenerationService'
 import type { RagGenerateResponse, RetrievedChunk } from '@/types/rag-generation'
 import EmptyState from '@/components/ui/EmptyState'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 
 export default function KnowledgeGenerationTab() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
@@ -128,8 +129,8 @@ function KnowledgeGenerationProject({ projectId }: { projectId: string | null })
   return (
     <div className="space-y-6">
       {/* Source picker */}
-      <section className="card space-y-4">
-        <h3 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider">
+      <section className="card flex flex-col gap-4">
+        <h3 className={PANEL_TITLE_CLASS}>
           Knowledge Sources
         </h3>
         <KnowledgeSourcePicker
@@ -142,8 +143,8 @@ function KnowledgeGenerationProject({ projectId }: { projectId: string | null })
       </section>
 
       {/* Prompt input */}
-      <section className="card space-y-3">
-        <h3 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider">
+      <section className="card flex flex-col gap-3">
+        <h3 className={PANEL_TITLE_CLASS}>
           Generation Prompt
         </h3>
         <textarea
@@ -178,8 +179,8 @@ function KnowledgeGenerationProject({ projectId }: { projectId: string | null })
 
       {/* Retrieved chunks preview */}
       {retrievedChunks.length > 0 && !result && (
-        <section className="card space-y-3">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider">
+        <section className="card flex flex-col gap-3">
+          <h3 className={PANEL_TITLE_CLASS}>
             Retrieved Evidence ({retrievedChunks.length})
           </h3>
           <div className="space-y-2 max-h-64 overflow-y-auto">
@@ -203,8 +204,8 @@ function KnowledgeGenerationProject({ projectId }: { projectId: string | null })
 
       {/* Generation results */}
       {result && (
-        <section className="card space-y-4">
-          <h3 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider">
+        <section className="card flex flex-col gap-4">
+          <h3 className={PANEL_TITLE_CLASS}>
             Generated Test Cases — Review
           </h3>
           <GenerationReviewPanel result={result} />

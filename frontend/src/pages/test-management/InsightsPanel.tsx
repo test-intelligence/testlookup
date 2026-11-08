@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { FileText } from 'lucide-react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import MetricCard from '@/components/ui/MetricCard'
+import { Panel } from '@/components/ui/PanelHeader'
 import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import { useNow } from '@/hooks/useNow'
 import LibraryCaseListRows from '@/pages/test-management/LibraryCaseListRows'
@@ -32,6 +33,9 @@ import type { LibraryCaseList, LibraryHealth, ReviewQueueSummary, StrategyGapRea
  * right under the health banner, above the filter bar, closed by default, its
  * cards in two columns from `lg` (each wider than the 440 px drawer they were
  * drawn for). X `Close panel` and Escape inside it close it.
+ *
+ * Each card is the ONE `Panel` (W40, W29d F-3): `.card` corners and surface, the 14 px panel title (the page-local
+ * `CasesCardShell` it replaced was a `rounded-xl` inline card surface with a 13 px title).
  */
 
 /** Where a card's health data comes from: the one read of the page. */
@@ -42,26 +46,6 @@ export interface HealthSource {
 }
 
 export interface RecentEvent { id: string; action?: string; actor_name?: string; entity_id?: string; created_at: string; event_type?: string }
-
-export function CasesCardShell({
-  title, rightSlot, children,
-}: { title: ReactNode; rightSlot?: ReactNode; children?: ReactNode }) {
-  return (
-    <div
-      className="overflow-hidden rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-    >
-      <div
-        className="flex items-center justify-between gap-2.5 px-4 py-3"
-        style={{ borderBottom: '1px solid var(--color-border)' }}
-      >
-        <h3 className="text-sm font-semibold m-0 text-[var(--color-text)]">{title}</h3>
-        {rightSlot && <div className="flex items-center gap-2.5 text-xs text-[var(--color-text-muted)]">{rightSlot}</div>}
-      </div>
-      {children}
-    </div>
-  )
-}
 
 /**
  * A card body while there is no health answer: All Projects (nothing asked),
@@ -85,9 +69,9 @@ export function HealthPending({ projectId, error }: { projectId: string | null; 
 /** A health-backed card's shell with the pending body (its heading always rendered). */
 export function HealthPendingCard({ title, projectId, error }: { title: string } & Omit<HealthSource, 'health'>) {
   return (
-    <CasesCardShell title={title}>
+    <Panel title={title}>
       <HealthPending projectId={projectId} error={error} />
-    </CasesCardShell>
+    </Panel>
   )
 }
 
@@ -119,7 +103,7 @@ export function LibraryHealthCard(p: LibraryHealthCardProps) {
   const ink = (h.tag && TAG_INK[h.tag]) || 'text-[var(--color-text)]'
   const strong = (n: ReactNode) => <strong className="text-[var(--color-text)]">{n}</strong>
   return (
-    <CasesCardShell title="Library health">
+    <Panel title="Library health">
       <div className="px-4 py-3.5 space-y-3">
         {!h.measured ? (
           <p className="text-sm m-0 text-[var(--color-text-secondary)]">
@@ -163,7 +147,7 @@ export function LibraryHealthCard(p: LibraryHealthCardProps) {
             from useDataFreshness over the health answer), so it is what remains. */}
         <p className="text-xs m-0 text-[var(--color-text-muted)]">Library refreshed {p.refreshedAt}</p>
       </div>
-    </CasesCardShell>
+    </Panel>
   )
 }
 
@@ -185,7 +169,7 @@ export function AutomationCoverageCard({ auto, manual }: { auto: number; manual:
   const autoPct = pct(auto)
   const manualPct = total > 0 ? 100 - autoPct : 0
   return (
-    <CasesCardShell title="Automation coverage">
+    <Panel title="Automation coverage">
       <div className="px-4 py-3.5">
         {total === 0 ? (
           <p className="text-xs text-[var(--color-text-muted)] m-0">
@@ -220,7 +204,7 @@ export function AutomationCoverageCard({ auto, manual }: { auto: number; manual:
           </>
         )}
       </div>
-    </CasesCardShell>
+    </Panel>
   )
 }
 
@@ -243,7 +227,7 @@ export function ReviewQueueCard({ projectId, health, error, onPick }: HealthSour
   const queue: ReviewQueueSummary | undefined = health?.review_queue
   if (!queue) return <HealthPendingCard title="Review queue" projectId={projectId} error={error} />
   return (
-    <CasesCardShell title={`Review queue · ${queue.total}`}>
+    <Panel title={`Review queue · ${queue.total}`}>
       {queue.items.length === 0 ? (
         <div className="px-4 py-6 text-center text-sm text-[var(--color-text-secondary)]">
           Caught up — review queue is empty.
@@ -280,7 +264,7 @@ export function ReviewQueueCard({ projectId, health, error, onPick }: HealthSour
           )}
         </div>
       )}
-    </CasesCardShell>
+    </Panel>
   )
 }
 
@@ -316,7 +300,7 @@ export function StrategyGapsCard({ projectId, health, error, onOpenCase }: Healt
   if (!health) return <HealthPendingCard title="Strategy gaps" projectId={projectId} error={error} />
   const rows = gapRows(health)
   return (
-    <CasesCardShell title="Strategy gaps">
+    <Panel title="Strategy gaps">
       {rows.length === 0 ? (
         <div className="px-4 py-6 text-center text-sm text-[var(--color-text-secondary)]">
           No gaps detected against current strategy.
@@ -346,14 +330,14 @@ export function StrategyGapsCard({ projectId, health, error, onOpenCase }: Healt
           })}
         </div>
       )}
-    </CasesCardShell>
+    </Panel>
   )
 }
 
 export function RecentActivityCard({ events }: { events: RecentEvent[] }) {
   const now = useNow()  // captured at mount — avoids impure Date.now() in render
   return (
-    <CasesCardShell title="Recent activity">
+    <Panel title="Recent activity">
       {events.length === 0 ? (
         <div className="px-4 py-6 text-center text-sm text-[var(--color-text-secondary)]">
           No recent activity.
@@ -400,7 +384,7 @@ export function RecentActivityCard({ events }: { events: RecentEvent[] }) {
           })}
         </div>
       )}
-    </CasesCardShell>
+    </Panel>
   )
 }
 

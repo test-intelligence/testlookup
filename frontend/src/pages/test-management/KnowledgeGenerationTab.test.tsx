@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 
 import KnowledgeGenerationTab from './KnowledgeGenerationTab'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 
 const state = { activeProjectId: 'project-a' }
 
@@ -43,5 +44,21 @@ describe('KnowledgeGenerationTab project isolation', () => {
       expect((screen.getByPlaceholderText(/Describe what test cases/) as HTMLTextAreaElement).value).toBe('')
       expect(screen.getByRole('button', { name: 'Selected 0' })).toBeInTheDocument()
     })
+  })
+})
+
+describe('KnowledgeGenerationTab heading roles (W40 F-1)', () => {
+  it('each card heading reads the panel-title role, and its card spaces with flex gap (a space-y gap loses to m-0)', () => {
+    state.activeProjectId = 'project-a'
+    render(<MemoryRouter><KnowledgeGenerationTab /></MemoryRouter>)
+    for (const name of ['Knowledge Sources', 'Generation Prompt']) {
+      const heading = screen.getByRole('heading', { level: 3, name })
+      expect(heading.className).toBe(PANEL_TITLE_CLASS)
+      // Tailwind v4: `space-y-*` reaches the children through a zero-specificity :where(), so the title's `m-0`
+      // would zero the gap under it; the card spaces its children with `gap-*` instead.
+      const card = heading.parentElement as HTMLElement
+      expect(card.className.split(/\s+/)).toEqual(expect.arrayContaining(['card', 'flex', 'flex-col']))
+      expect(card.className).not.toMatch(/\bspace-y-/)
+    }
   })
 })

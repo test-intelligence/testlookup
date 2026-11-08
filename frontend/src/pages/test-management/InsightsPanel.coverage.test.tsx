@@ -7,7 +7,8 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { AutomationCoverageCard } from './InsightsPanel'
+import { AutomationCoverageCard, HealthPendingCard } from './InsightsPanel'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 
 describe('AutomationCoverageCard split', () => {
   it.each([
@@ -30,5 +31,21 @@ describe('AutomationCoverageCard split', () => {
     render(<AutomationCoverageCard auto={0} manual={0} />)
     expect(screen.getByText('No authored cases yet — nothing to split.')).toBeInTheDocument()
     expect(screen.queryByText(/^Manual ·/)).toBeNull()
+  })
+})
+
+describe('Insights cards are the ONE Panel (W40 F-3)', () => {
+  it.each([
+    ['a filled card', () => <AutomationCoverageCard auto={3} manual={5} />, 'Automation coverage'],
+    ['a pending card', () => <HealthPendingCard title="Library health" projectId={null} />, 'Library health'],
+  ])('%s: `.card` root (12 px corners, no inline surface), the h3 panel title', (_label, card, title) => {
+    render(card())
+    const heading = screen.getByRole('heading', { level: 3, name: title })
+    expect(heading.className).toBe(PANEL_TITLE_CLASS)
+    const root = heading.closest('[data-panel]') as HTMLElement
+    expect(root).not.toBeNull()
+    expect(root.classList.contains('card')).toBe(true)
+    expect(root.classList.contains('rounded-xl')).toBe(false)
+    expect(root.getAttribute('style')).toBeNull()
   })
 })

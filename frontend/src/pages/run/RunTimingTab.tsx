@@ -36,6 +36,7 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ExternalLink, Timer } from 'lucide-react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { Table, Td, Th, Tr } from '@/components/ui/Table'
 import MasterDetail from '@/components/ui/inPage/MasterDetail'
 import DetailPane from '@/components/ui/inPage/DetailPane'
@@ -61,7 +62,6 @@ import {
   shareText,
 } from './runTimingText'
 
-const SECTION_TITLE = 'm-0 text-sm font-semibold text-[var(--color-text)]'
 const NOTE = 'text-xs text-[var(--color-text-muted)]'
 
 /** A block the server could not measure: its reason, as plain text. */
@@ -102,7 +102,7 @@ function Headline({ timing }: { timing: RunTiming }) {
       : NOT_REPORTED
   return (
     <section data-primary="" aria-label="Execution time" className="card">
-      <h2 className={`${SECTION_TITLE} flex items-center gap-2`}>
+      <h2 className={`${PANEL_TITLE_CLASS} flex items-center gap-2`}>
         <Timer className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
         Execution time
         {/* EXEC-06: every test of the run with its timing, through the authed client (never a bare href). */}
@@ -142,7 +142,7 @@ function Phases({ phases, testCount }: { phases: RunTimingPhases; testCount: num
   const total = PHASES.reduce((sum, phase) => sum + (phases[phase.key] ?? 0), 0)
   return (
     <section aria-label="Setup, test and teardown" className="card">
-      <h2 className={SECTION_TITLE}>Setup, test and teardown</h2>
+      <h2 className={PANEL_TITLE_CLASS}>Setup, test and teardown</h2>
       {!phases.measured ? (
         <Unmeasured block="phases" reason={phases.reason} />
       ) : (
@@ -193,7 +193,7 @@ function TimelineSection({
   const durationsOnly = timing.slowest.measured && timing.slowest.items.length > 0
   return (
     <section aria-label="Timeline" className="card">
-      <h2 className={SECTION_TITLE}>Timeline</h2>
+      <h2 className={PANEL_TITLE_CLASS}>Timeline</h2>
       {model ? (
         <div className="mt-3">
           <ExecutionTimeline model={model} onSelect={onSelect} selectedTestId={selectedTestId} />
@@ -216,7 +216,7 @@ function Workers({ timing }: { timing: RunTiming }) {
   const { workers } = timing
   return (
     <section aria-label="Worker lanes" className="card">
-      <h2 className={SECTION_TITLE}>Workers</h2>
+      <h2 className={PANEL_TITLE_CLASS}>Workers</h2>
       {!workers.measured ? (
         <Unmeasured block="workers" reason={workers.reason} />
       ) : (
@@ -264,7 +264,7 @@ function Suites({ timing }: { timing: RunTiming }) {
   const { suites } = timing
   return (
     <section aria-label="Suites" className="card">
-      <h2 className={SECTION_TITLE}>Suites</h2>
+      <h2 className={PANEL_TITLE_CLASS}>Suites</h2>
       {!suites.measured ? (
         <Unmeasured block="suites" reason={suites.reason} />
       ) : (
@@ -353,7 +353,7 @@ function Slowest({ timing, onSelect }: { timing: RunTiming; onSelect: (testId: s
   return (
     <section aria-label="Slowest tests" className="card">
       {/* "20 slowest tests" only when the limit cut the list: a 6-test run read "20 slowest tests" over six rows. */}
-      <h2 className={SECTION_TITLE}>
+      <h2 className={PANEL_TITLE_CLASS}>
         {slowest.total > slowest.limit ? `${formatNumber(slowest.limit)} slowest tests` : 'Slowest tests'}
       </h2>
       {!slowest.measured ? (
@@ -471,7 +471,7 @@ export default function RunTimingTab({ runId }: { runId: string }) {
     return (
       <div className="space-y-4">
         <section data-primary="" aria-label="Execution time" className="card">
-          <h2 className={SECTION_TITLE}>Execution time</h2>
+          <h2 className={PANEL_TITLE_CLASS}>Execution time</h2>
           <p data-timing-error="" className="mt-3 text-sm text-[var(--status-failed)]">
             Could not load the timing of this run.
           </p>

@@ -8,6 +8,7 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import TestHistoryTimeline, { MAX_TIMELINE_CELLS } from './TestHistoryTimeline'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import type { CanonicalRunHistoryItem } from '@/types/suites'
 
 function item(overrides: Partial<CanonicalRunHistoryItem> = {}): CanonicalRunHistoryItem {
@@ -127,6 +128,13 @@ describe('TestHistoryTimeline', () => {
     const cells = screen.getAllByRole('listitem')
     const titles = cells.map((c) => c.querySelector('span')?.getAttribute('title') ?? '')
     expect(titles.some((t) => t.includes('newest-run'))).toBe(true)
+  })
+
+  it('W40 F-1: its heading titles this ONE card, so it reads the panel-title role (14 px / 600, sentence case)', () => {
+    render(<TestHistoryTimeline items={[item(), item()]} />)
+    const heading = screen.getByRole('heading', { level: 2, name: /^History \(/ })
+    expect(heading.className).toBe(PANEL_TITLE_CLASS)
+    expect(heading).toHaveAttribute('id', 'test-history-timeline-heading')
   })
 
   it('renders nothing when there is no history rather than an empty chrome', () => {

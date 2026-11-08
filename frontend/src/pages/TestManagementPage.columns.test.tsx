@@ -66,6 +66,22 @@ describe('Test Management cases table columns', () => {
     expect((headers[1] as HTMLElement).style.maxWidth).toBe('')
   })
 
+  it('W40 F-2: is the ONE table at dense density — every header a `.th`, no hand-made padding or colour', () => {
+    renderTable()
+    expect(screen.getByRole('table')).toHaveAttribute('data-density', 'dense')
+    const headers = screen.getAllByRole('columnheader') as HTMLElement[]
+    for (const th of headers) {
+      expect(th.classList.contains('th')).toBe(true)
+      expect(th.classList.contains('eyebrow')).toBe(false)
+      expect(th.style.padding).toBe('')
+      expect(th.style.color).toBe('')
+      expect(th).toHaveAttribute('scope', 'col')
+    }
+    // Last run and the actions column stay right-aligned and no label wraps; the widths are pinned above.
+    expect(headers.map((h) => h.classList.contains('text-right'))).toEqual([false, false, false, true, true])
+    expect(headers.every((h) => h.classList.contains('whitespace-nowrap'))).toBe(true)
+  })
+
   it('folds the demoted fields into the meta line rather than dropping them', () => {
     // Demoting a column must relocate its data, not discard it.
     renderTable()

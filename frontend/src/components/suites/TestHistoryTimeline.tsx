@@ -28,6 +28,7 @@
  */
 import { useMemo } from 'react'
 
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import type { CanonicalRunHistoryItem } from '@/types/suites'
 import { formatCompactDateTime } from '@/utils/formatters'
 
@@ -125,7 +126,7 @@ export function TestHistoryTimeline({ items }: TestHistoryTimelineProps) {
       <div className="mb-3 flex items-baseline justify-between gap-4">
         <h2
           id="test-history-timeline-heading"
-          className="text-sm font-semibold uppercase text-[var(--color-text-muted)]"
+          className={PANEL_TITLE_CLASS}
         >
           History (
           {truncated

@@ -253,6 +253,13 @@ describe('SearchPage', () => {
     for (const gone of [/Queries today/i, /Zero-result rate/i, /Latency p95/i, /target ≤ 5%/, /no data/i]) {
       expect(screen.queryByText(gone)).toBeNull()
     }
+    // W40 F-3: the verdict is the ONE card surface (`.card`, 12 px corners; no padding of its own), still a section.
+    expect(verdict.tagName).toBe('SECTION')
+    expect(verdict.className.split(/\s+/)).toEqual(expect.arrayContaining(['card', '!p-0']))
+    expect(verdict.className).not.toMatch(/\brounded-xl\b/)
+    expect(verdict.style.background).toBe('')
+    expect(verdict.style.borderColor).toBe('')
+    expect(verdict.style.gridTemplateColumns).toBe('minmax(0, 1fr) auto')
   })
 
   // UX redesign P6: the page template's header, not a page-made heading.
