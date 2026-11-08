@@ -30078,6 +30078,404 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ObservabilityAnalysis
+
+```json
+{
+  "properties": {
+    "analysed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Analysed At"
+    },
+    "other_analyses": {
+      "default": 0,
+      "title": "Other Analyses",
+      "type": "integer"
+    },
+    "pipeline_run_id": {
+      "title": "Pipeline Run Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "pipeline_run_id"
+  ],
+  "title": "ObservabilityAnalysis",
+  "type": "object"
+}
+```
+
+## ObservabilityConfiguredNow
+
+```json
+{
+  "description": "Read NOW from the saved integration settings (enabled + a URL) -- not the state at analysis time.\nBooleans only: never a token, URL or index.",
+  "properties": {
+    "ocp": {
+      "default": false,
+      "title": "Ocp",
+      "type": "boolean"
+    },
+    "prometheus": {
+      "default": false,
+      "title": "Prometheus",
+      "type": "boolean"
+    },
+    "splunk": {
+      "default": false,
+      "title": "Splunk",
+      "type": "boolean"
+    }
+  },
+  "title": "ObservabilityConfiguredNow",
+  "type": "object"
+}
+```
+
+## ObservabilityEvent
+
+```json
+{
+  "properties": {
+    "at": {
+      "format": "date-time",
+      "title": "At",
+      "type": "string"
+    },
+    "cluster_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cluster Id"
+    },
+    "count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Count"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Detail"
+    },
+    "end": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "End"
+    },
+    "level": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Level"
+    },
+    "test_case_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Case Id"
+    },
+    "test_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Name"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "zone_assumed": {
+      "default": false,
+      "title": "Zone Assumed",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "at",
+    "title"
+  ],
+  "title": "ObservabilityEvent",
+  "type": "object"
+}
+```
+
+## ObservabilityLane
+
+```json
+{
+  "properties": {
+    "events": {
+      "items": {
+        "$ref": "#/components/schemas/ObservabilityEvent"
+      },
+      "title": "Events",
+      "type": "array"
+    },
+    "fetched_by": {
+      "enum": [
+        "analysis",
+        "ingest",
+        "per_test_analysis"
+      ],
+      "title": "Fetched By",
+      "type": "string"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "sentence": {
+      "title": "Sentence",
+      "type": "string"
+    },
+    "series": {
+      "items": {
+        "$ref": "#/components/schemas/ObservabilitySeries"
+      },
+      "title": "Series",
+      "type": "array"
+    },
+    "source": {
+      "enum": [
+        "prometheus",
+        "splunk_trace",
+        "ocp_events",
+        "splunk_per_test",
+        "ocp_per_test"
+      ],
+      "title": "Source",
+      "type": "string"
+    },
+    "state": {
+      "enum": [
+        "evidence",
+        "none_found",
+        "not_recorded",
+        "not_analysed",
+        "unavailable"
+      ],
+      "title": "State",
+      "type": "string"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    },
+    "untimed": {
+      "items": {
+        "$ref": "#/components/schemas/ObservabilityUntimed"
+      },
+      "title": "Untimed",
+      "type": "array"
+    }
+  },
+  "required": [
+    "source",
+    "label",
+    "fetched_by",
+    "state",
+    "sentence"
+  ],
+  "title": "ObservabilityLane",
+  "type": "object"
+}
+```
+
+## ObservabilitySeries
+
+```json
+{
+  "properties": {
+    "cluster_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cluster Id"
+    },
+    "label": {
+      "title": "Label",
+      "type": "string"
+    },
+    "points": {
+      "items": {
+        "items": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": "array"
+      },
+      "title": "Points",
+      "type": "array"
+    },
+    "rose": {
+      "default": false,
+      "title": "Rose",
+      "type": "boolean"
+    },
+    "sentence": {
+      "default": "",
+      "title": "Sentence",
+      "type": "string"
+    },
+    "unit": {
+      "title": "Unit",
+      "type": "string"
+    }
+  },
+  "required": [
+    "label",
+    "unit"
+  ],
+  "title": "ObservabilitySeries",
+  "type": "object"
+}
+```
+
+## ObservabilityUntimed
+
+```json
+{
+  "properties": {
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Detail"
+    },
+    "reason": {
+      "enum": [
+        "no_time_stored",
+        "time_unreadable"
+      ],
+      "title": "Reason",
+      "type": "string"
+    },
+    "test_case_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Case Id"
+    },
+    "test_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Name"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    }
+  },
+  "required": [
+    "title",
+    "reason"
+  ],
+  "title": "ObservabilityUntimed",
+  "type": "object"
+}
+```
+
+## ObservabilityWindow
+
+```json
+{
+  "properties": {
+    "end": {
+      "format": "date-time",
+      "title": "End",
+      "type": "string"
+    },
+    "start": {
+      "format": "date-time",
+      "title": "Start",
+      "type": "string"
+    }
+  },
+  "required": [
+    "start",
+    "end"
+  ],
+  "title": "ObservabilityWindow",
+  "type": "object"
+}
+```
+
 ## OutboxRequeueRequest
 
 ```json
@@ -41655,6 +42053,72 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "RunContext",
+  "type": "object"
+}
+```
+
+## RunObservabilityTimeline
+
+```json
+{
+  "properties": {
+    "analysis": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ObservabilityAnalysis"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "axis": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ObservabilityWindow"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "configured_now": {
+      "$ref": "#/components/schemas/ObservabilityConfiguredNow"
+    },
+    "lanes": {
+      "items": {
+        "$ref": "#/components/schemas/ObservabilityLane"
+      },
+      "title": "Lanes",
+      "type": "array"
+    },
+    "offline_now": {
+      "title": "Offline Now",
+      "type": "boolean"
+    },
+    "run_id": {
+      "format": "uuid",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "run_window": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ObservabilityWindow"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "run_id",
+    "offline_now",
+    "configured_now",
+    "lanes"
+  ],
+  "title": "RunObservabilityTimeline",
   "type": "object"
 }
 ```

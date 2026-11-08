@@ -28063,6 +28063,369 @@
         "title": "NotifyTestOwnerResponse",
         "type": "object"
       },
+      "ObservabilityAnalysis": {
+        "properties": {
+          "analysed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysed At"
+          },
+          "other_analyses": {
+            "default": 0,
+            "title": "Other Analyses",
+            "type": "integer"
+          },
+          "pipeline_run_id": {
+            "title": "Pipeline Run Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pipeline_run_id"
+        ],
+        "title": "ObservabilityAnalysis",
+        "type": "object"
+      },
+      "ObservabilityConfiguredNow": {
+        "description": "Read NOW from the saved integration settings (enabled + a URL) -- not the state at analysis time.\nBooleans only: never a token, URL or index.",
+        "properties": {
+          "ocp": {
+            "default": false,
+            "title": "Ocp",
+            "type": "boolean"
+          },
+          "prometheus": {
+            "default": false,
+            "title": "Prometheus",
+            "type": "boolean"
+          },
+          "splunk": {
+            "default": false,
+            "title": "Splunk",
+            "type": "boolean"
+          }
+        },
+        "title": "ObservabilityConfiguredNow",
+        "type": "object"
+      },
+      "ObservabilityEvent": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "test_case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Case Id"
+          },
+          "test_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Name"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "zone_assumed": {
+            "default": false,
+            "title": "Zone Assumed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "at",
+          "title"
+        ],
+        "title": "ObservabilityEvent",
+        "type": "object"
+      },
+      "ObservabilityLane": {
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/ObservabilityEvent"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "fetched_by": {
+            "enum": [
+              "analysis",
+              "ingest",
+              "per_test_analysis"
+            ],
+            "title": "Fetched By",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "sentence": {
+            "title": "Sentence",
+            "type": "string"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/ObservabilitySeries"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "source": {
+            "enum": [
+              "prometheus",
+              "splunk_trace",
+              "ocp_events",
+              "splunk_per_test",
+              "ocp_per_test"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "evidence",
+              "none_found",
+              "not_recorded",
+              "not_analysed",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "untimed": {
+            "items": {
+              "$ref": "#/components/schemas/ObservabilityUntimed"
+            },
+            "title": "Untimed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source",
+          "label",
+          "fetched_by",
+          "state",
+          "sentence"
+        ],
+        "title": "ObservabilityLane",
+        "type": "object"
+      },
+      "ObservabilitySeries": {
+        "properties": {
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "points": {
+            "items": {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "title": "Points",
+            "type": "array"
+          },
+          "rose": {
+            "default": false,
+            "title": "Rose",
+            "type": "boolean"
+          },
+          "sentence": {
+            "default": "",
+            "title": "Sentence",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "unit"
+        ],
+        "title": "ObservabilitySeries",
+        "type": "object"
+      },
+      "ObservabilityUntimed": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "reason": {
+            "enum": [
+              "no_time_stored",
+              "time_unreadable"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "test_case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Case Id"
+          },
+          "test_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Name"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "reason"
+        ],
+        "title": "ObservabilityUntimed",
+        "type": "object"
+      },
+      "ObservabilityWindow": {
+        "properties": {
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "ObservabilityWindow",
+        "type": "object"
+      },
       "OutboxRequeueRequest": {
         "description": "Which failed run-outbox intents to put back.",
         "properties": {
@@ -38827,6 +39190,67 @@
           }
         },
         "title": "RunContext",
+        "type": "object"
+      },
+      "RunObservabilityTimeline": {
+        "properties": {
+          "analysis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObservabilityAnalysis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "axis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObservabilityWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "configured_now": {
+            "$ref": "#/components/schemas/ObservabilityConfiguredNow"
+          },
+          "lanes": {
+            "items": {
+              "$ref": "#/components/schemas/ObservabilityLane"
+            },
+            "title": "Lanes",
+            "type": "array"
+          },
+          "offline_now": {
+            "title": "Offline Now",
+            "type": "boolean"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObservabilityWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "run_id",
+          "offline_now",
+          "configured_now",
+          "lanes"
+        ],
+        "title": "RunObservabilityTimeline",
         "type": "object"
       },
       "RunSignatureBatchResponse": {
@@ -91147,6 +91571,71 @@
         "summary": "Get Run Likely Affected Tests",
         "tags": [
           "Commit Attribution"
+        ]
+      }
+    },
+    "/api/v1/runs/{run_id}/observability-timeline": {
+      "get": {
+        "description": "The evidence the AI analysis already fetched for this run, on one time axis (W39 STRAT-07).\n\nFive lanes, always in this order: ``prometheus`` and ``splunk_trace`` (the newest decision evidence snapshot of\nthe deep analysis), ``ocp_events`` (the pod events stored when the run was ingested), ``splunk_per_test`` and\n``ocp_per_test`` (the per-test analysis' stored tool observations). Each lane names who fetched it\n(``fetched_by``) and says in words why it holds nothing (``state`` + ``sentence``). An item whose stored time\ncannot be read is listed in ``untimed``, never placed. ``offline_now`` / ``configured_now`` are read NOW, not at\nanalysis time. Read-only: nothing is fetched or written.",
+        "operationId": "get_run_observability_timeline_api_v1_runs__run_id__observability_timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunObservabilityTimeline"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Run Observability Timeline",
+        "tags": [
+          "Test Runs"
         ]
       }
     },

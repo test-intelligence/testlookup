@@ -501,6 +501,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/runs/{run_id}/intelligence/refresh` | Refresh Intelligence | [Run Intelligence](api/run-intelligence.md) |
 | POST | `/api/v1/runs/{run_id}/investigations` | Start Investigation | [Agent Investigations](api/agent-investigations.md) |
 | GET | `/api/v1/runs/{run_id}/likely-affected-tests` | Get Run Likely Affected Tests | [Commit Attribution](api/commit-attribution.md) |
+| GET | `/api/v1/runs/{run_id}/observability-timeline` | Get Run Observability Timeline | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/previous` | Get Previous Run | [AI History](api/ai-history.md) |
 | POST | `/api/v1/runs/{run_id}/recover-live` | Recover Live Run From Buffer | [Test Runs](api/test-runs.md) |
 | GET | `/api/v1/runs/{run_id}/regression-diff` | Get Regression Diff | [Test Runs](api/test-runs.md) |
@@ -749,4 +750,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **740 HTTP operations**, **627 paths**, **92 domain pages**.
+Total: **741 HTTP operations**, **628 paths**, **92 domain pages**.

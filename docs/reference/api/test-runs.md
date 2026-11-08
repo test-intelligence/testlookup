@@ -1219,6 +1219,100 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/runs/{run_id}/observability-timeline`
+
+Get Run Observability Timeline
+
+The evidence the AI analysis already fetched for this run, on one time axis (W39 STRAT-07).
+
+Five lanes, always in this order: ``prometheus`` and ``splunk_trace`` (the newest decision evidence snapshot of
+the deep analysis), ``ocp_events`` (the pod events stored when the run was ingested), ``splunk_per_test`` and
+``ocp_per_test`` (the per-test analysis' stored tool observations). Each lane names who fetched it
+(``fetched_by``) and says in words why it holds nothing (``state`` + ``sentence``). An item whose stored time
+cannot be read is listed in ``untimed``, never placed. ``offline_now`` / ``configured_now`` are read NOW, not at
+analysis time. Read-only: nothing is fetched or written.
+
+Source: [backend/app/routers/run_observability.py:26](../../../backend/app/routers/run_observability.py#L26).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+run_id: uuid.UUID, db: AsyncSession=Depends(get_db), _: User=Depends(require_run_access())
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=404, detail='Test run not found')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_run_observability_timeline_api_v1_runs__run_id__observability_timeline_get",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "run_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Run Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/RunObservabilityTimeline"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## POST `/api/v1/runs/{run_id}/recover-live`
 
 Recover Live Run From Buffer
