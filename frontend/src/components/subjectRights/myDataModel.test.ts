@@ -1,15 +1,18 @@
 /**
  * W31 STRAT-12: the export card's pure model (contract §4.3, §4.4) — status → sentence, size / expiry, the
- * unsigned and expired cases, and which job a card polls.
+ * unsigned and expired cases, and which job a card polls. W38: the erasure request block's states.
  */
 import { describe, expect, it } from 'vitest'
 
-import { subjectJobFixture, subjectJobList } from '@/test/subjectRightsMocks'
-import { ERROR_SENTENCES, UI_SENTENCES } from '@/types/subjectRights'
+import { myErasureRequestFixture, subjectJobFixture, subjectJobList } from '@/test/subjectRightsMocks'
+import { DECLINE_SENTENCES, ERROR_SENTENCES, UI_SENTENCES } from '@/types/subjectRights'
 import {
+  declinedRequestLine,
+  erasureRequestView,
   EXPORT_PERSON,
   EXPORT_QUEUED_PERSON,
   exportView,
+  LOAD_ERASURE_REQUEST_FAILED,
   MY_DATA_RESTART,
   MY_DATA_START,
   newestErasure,
@@ -120,5 +123,54 @@ describe('the list helpers', () => {
     expect(watchedJobId(null, running)).toBe(running.id)
     expect(watchedJobId(null, done)).toBeNull()
     expect(watchedJobId(null, null)).toBeNull()
+  })
+})
+
+describe('erasureRequestView (W38, contract §4)', () => {
+  it('loading / none / error: the Ask button offered except while the read is in flight', () => {
+    expect(erasureRequestView(undefined)).toEqual({ kind: 'loading', line: null, canAsk: false, canWithdraw: false })
+    expect(erasureRequestView(null)).toEqual({ kind: 'none', line: null, canAsk: true, canWithdraw: false })
+    expect(erasureRequestView(undefined, new Error('boom'))).toEqual({
+      kind: 'error', line: LOAD_ERASURE_REQUEST_FAILED, canAsk: true, canWithdraw: false,
+    })
+  })
+
+  it('pending: "You asked on <day>. An administrator will review it." + Withdraw, never Ask', () => {
+    const pending = myErasureRequestFixture({ requested_at: '2026-09-18T10:00:00Z' })
+    expect(erasureRequestView(pending)).toEqual({
+      kind: 'pending', line: 'You asked on Sep 18, 2026. An administrator will review it.', canAsk: false, canWithdraw: true,
+    })
+  })
+
+  it('declined: the server sentence, else the code sentence, else "other"; Ask again', () => {
+    const declined = myErasureRequestFixture({
+      status: 'declined', decline_code: 'identity_unconfirmed', decided_at: '2026-09-19T10:00:00Z',
+    })
+    expect(erasureRequestView(declined)).toEqual({
+      kind: 'declined',
+      line: `Declined on Sep 19, 2026: ${DECLINE_SENTENCES.identity_unconfirmed}`,
+      canAsk: true,
+      canWithdraw: false,
+    })
+    expect(declinedRequestLine({ ...declined, decline_message: null })).toBe(
+      `Declined on Sep 19, 2026: ${DECLINE_SENTENCES.identity_unconfirmed}`,
+    )
+    expect(declinedRequestLine({ ...declined, decline_message: '  ', decline_code: 'not_a_code' })).toBe(
+      `Declined on Sep 19, 2026: ${DECLINE_SENTENCES.other}`,
+    )
+  })
+
+  it('withdrawn: Ask again, no line; accepted: the accepted sentence, no action; an unknown status reads as none', () => {
+    expect(erasureRequestView(myErasureRequestFixture({ status: 'withdrawn' }))).toEqual({
+      kind: 'withdrawn', line: null, canAsk: true, canWithdraw: false,
+    })
+    expect(erasureRequestView(myErasureRequestFixture({ status: 'accepted' }))).toEqual({
+      kind: 'accepted', line: UI_SENTENCES.erasure_request_accepted, canAsk: false, canWithdraw: false,
+    })
+    expect(erasureRequestView({ ...myErasureRequestFixture(), status: 'archived' }).kind).toBe('none')
+  })
+
+  it('a stale read error does not hide a request that is known', () => {
+    expect(erasureRequestView(myErasureRequestFixture(), new Error('boom')).kind).toBe('pending')
   })
 })

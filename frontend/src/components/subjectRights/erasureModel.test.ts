@@ -14,6 +14,7 @@ import {
 } from '@/test/subjectRightsMocks'
 import { ERASED_DISPLAY, UI_SENTENCES } from '@/types/subjectRights'
 import {
+  askedLine,
   canErase,
   confirmLabel,
   effectiveBlockers,
@@ -29,6 +30,7 @@ import {
   offersPersonalData,
   phaseLine,
   previewSummary,
+  requesterDisplay,
 } from './erasureModel'
 
 describe('canErase — the typed confirm', () => {
@@ -148,5 +150,19 @@ describe('the row rules', () => {
     expect(isErasedUser({ ...row, erased_at: '2026-11-04T10:00:00Z' })).toBe(true)
     expect(erasedName({ ...row, full_name: ERASED_DISPLAY })).toBe(ERASED_DISPLAY)
     expect(erasedName({ ...row, full_name: null })).toBe(ERASED_DISPLAY)
+  })
+})
+
+describe('W38: the requester and the pending request', () => {
+  it('requesterDisplay: SCIM reads "Your identity provider (SCIM)" even without a display; else the display; else null', () => {
+    expect(requesterDisplay({ source: 'scim', requested_by_display: null })).toBe(UI_SENTENCES.requester_scim)
+    expect(requesterDisplay({ source: 'scim', requested_by_display: 'Ignored' })).toBe('Your identity provider (SCIM)')
+    expect(requesterDisplay({ source: 'admin', requested_by_display: ' Morgan Admin ' })).toBe('Morgan Admin')
+    expect(requesterDisplay({ source: 'admin', requested_by_display: null })).toBeNull()
+    expect(requesterDisplay(null)).toBeNull()
+  })
+
+  it('askedLine: "This person asked for erasure on <day>."', () => {
+    expect(askedLine('2026-09-18T10:00:00Z')).toBe('This person asked for erasure on Sep 18, 2026.')
   })
 })

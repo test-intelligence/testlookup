@@ -58,7 +58,9 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 900
       // W32 (OR-10 (5)): with the export ready, the start button offers a NEW copy; Download fetches the ready one.
       await expect(myData(page).getByRole('button', { name: 'Prepare a new copy' })).toBeEnabled()
       await expect(myData(page).getByRole('button', { name: 'Download my data' })).toHaveCount(0)
-      await expect(myData(page).getByText('To have your account erased, ask an administrator.', { exact: false })).toBeVisible()
+      // W38 (2026-11-07): the "ask an administrator" line became the erasure REQUEST block (never asked: the button).
+      await expect(myData(page).locator('[data-my-erasure]')).toHaveAttribute('data-erasure-request-state', 'none')
+      await expect(myData(page).getByRole('button', { name: 'Ask to have your account erased' })).toBeVisible()
       await networkQuiet(page, api)
       expect(world.writes).toEqual([{ line: 'POST /api/v1/me/data-export', body: null }])
 

@@ -9,9 +9,14 @@
  * count) and 2 open items, with the inventory's own labels and reasons. Names are non-hex words; times derive from
  * the frozen `NOW`. The erasure POST checks the typed username exactly as the server does (422 `confirm_mismatch`),
  * and its job reaches `done` through every phase — then the users list answers the row erased.
+ *
+ * W38 (W31 F-1): my newest erasure request (`GET/POST /api/v1/me/erasure-request`, `…/withdraw`: one pending at a
+ * time, 409 `request_pending` with `request_id`, an optional configured refusal) and the administrators' queue
+ * (`GET /api/v1/users/erasure-requests?status=`, `POST …/{id}/decline` with the server's refusal order); an erasure
+ * POST accepts the person's pending request in the same answer (D-5) and the preview names it (`pending_request`).
  */
 import { respond, respondRaw, type ApiHandlers, type ApiRequest } from '../../lib/production-pages'
-import { ERROR_SENTENCES } from '../../../src/types/subjectRights'
+import { DECLINE_CODES, DECLINE_SENTENCES, ERROR_SENTENCES } from '../../../src/types/subjectRights'
 import { LAYOUT, NOW } from './fixtures'
 import { EMPTY_ZIP } from './fixtures-in-page-b'
 import { bodyOf, type RecordedWrite } from './fixtures-in-page'
@@ -189,6 +194,8 @@ export function erasurePreview(overrides: Record<string, unknown> = {}) {
       loc('defects.assignee_user_id', 'Defects assigned to them', 'reference', 1, REF),
     ],
     erasure_job: null as SubjectJobShape | null,
+    /** W38: the person's pending erasure request (the world fills it from its queue). */
+    pending_request: null as { id: string; requested_at: string } | null,
     ...overrides,
   }
 }
@@ -196,6 +203,72 @@ export function erasurePreview(overrides: Record<string, unknown> = {}) {
 /** A `{detail: {code, message}}` refusal. */
 export const subjectRefusal = (status: number, code: keyof typeof ERROR_SENTENCES) =>
   respond(status, { detail: { code, message: ERROR_SENTENCES[code] } })
+
+// ── W38 (W31 F-1): the person's erasure request and the administrators' queue (contract §2) ──
+
+export const MY_REQUEST_ID = 'dada0000-0000-4000-8000-0000000005f1'
+export const OWN_REQUEST_ID = 'dada0000-0000-4000-8000-0000000005f2'
+/** A request the decline / review walks act on (SUBJECT's). */
+export const QUEUE_REQUEST_ID = 'dada0000-0000-4000-8000-0000000005f3'
+
+export interface MyErasureRequestShape {
+  id: string
+  status: string
+  requested_at: string
+  decided_at: string | null
+  decline_code: string | null
+  decline_message: string | null
+}
+
+/** My newest request in the server's shape for `status` (asked 3 days before NOW; decided a day before NOW). */
+export function myErasureRequest(status: string, overrides: Partial<MyErasureRequestShape> = {}): MyErasureRequestShape {
+  const code = status === 'declined' ? (overrides.decline_code ?? 'legal_obligation') : null
+  return {
+    id: MY_REQUEST_ID,
+    status,
+    requested_at: at(-3 * 24 * 60),
+    decided_at: status === 'pending' ? null : at(-24 * 60),
+    decline_code: code,
+    decline_message: code ? DECLINE_SENTENCES[code as keyof typeof DECLINE_SENTENCES] : null,
+    ...overrides,
+  }
+}
+
+export interface ErasureRequestRowShape {
+  id: string
+  subject_user_id: string
+  subject_display: string
+  subject_username: string | null
+  subject_is_erased: boolean
+  subject_is_active: boolean
+  requester_is_you: boolean
+  status: string
+  requested_at: string
+  decided_at: string | null
+  decided_by_display: string | null
+  decline_code: string | null
+  erasure_job_id: string | null
+}
+
+/** A queue row for `subject` (default SUBJECT, asked 3 days before NOW). */
+export function erasureRequestRow(subject: SubjectUserRow = SUBJECT, overrides: Partial<ErasureRequestRowShape> = {}): ErasureRequestRowShape {
+  return {
+    id: QUEUE_REQUEST_ID,
+    subject_user_id: subject.id,
+    subject_display: subject.full_name,
+    subject_username: subject.username,
+    subject_is_erased: subject.is_erased,
+    subject_is_active: subject.is_active,
+    requester_is_you: false,
+    status: 'pending',
+    requested_at: at(-3 * 24 * 60),
+    decided_at: null,
+    decided_by_display: null,
+    decline_code: null,
+    erasure_job_id: null,
+    ...overrides,
+  }
+}
 
 /** The successive GET answers of a job the world created (the last repeats). */
 export const myExportProgression = () => [exportJob('queued'), exportJob('running'), exportJob('running'), exportJob('succeeded')]
@@ -214,6 +287,12 @@ export interface SubjectRightsWorldOptions {
   previews?: Record<string, ReturnType<typeof erasurePreview>>
   /** Successive `GET /api/v1/subject-data-jobs/{id}` answers per job id (defaults: the two progressions). */
   jobAnswers?: Record<string, SubjectJobShape[]>
+  /** W38: `GET /api/v1/me/erasure-request` (default null: never asked). */
+  myErasureRequest?: MyErasureRequestShape | null
+  /** W38: the file POST answers this refusal (409) instead of filing — e.g. `last_admin_self`. */
+  fileRefusal?: keyof typeof ERROR_SENTENCES
+  /** W38: the administrators' queue rows (default none). */
+  erasureRequests?: ErasureRequestRowShape[]
 }
 
 /**
@@ -238,6 +317,10 @@ export function subjectRightsWorld(options: SubjectRightsWorldOptions = {}) {
   }
   const current: Record<string, SubjectJobShape> = {}
   const userIdOf = (request: ApiRequest) => request.path.split('/')[4]
+  // W38: my newest request, and the queue (pending oldest first, then decided).
+  let myRequest: MyErasureRequestShape | null = options.myErasureRequest ? { ...options.myErasureRequest } : null
+  const queue = (options.erasureRequests ?? []).map((r) => ({ ...r }))
+  const pendingFor = (userId: string) => queue.find((r) => r.subject_user_id === userId && r.status === 'pending')
   const list = (items: SubjectJobShape[]) => ({ items: items.slice(0, 10).map((j) => current[j.id] ?? j), total: items.length })
 
   /** The erasure reached `done`: the users list now answers the row pseudonymised (as the Postgres phase left it). */
@@ -251,6 +334,42 @@ export function subjectRightsWorld(options: SubjectRightsWorldOptions = {}) {
   }
 
   const handlers: ApiHandlers = [
+    // W38: the person's request (no body: D-2) and the administrators' queue (exact paths before the users regexes).
+    ['/api/v1/me/erasure-request', () => myRequest],
+    ['/api/v1/me/erasure-request', (request) => {
+      writes.push({ line: `POST ${request.path}`, body: bodyOf(request) })
+      if (options.fileRefusal) return subjectRefusal(409, options.fileRefusal)
+      if (myRequest?.status === 'pending') {
+        return respond(409, { detail: { code: 'request_pending', message: ERROR_SENTENCES.request_pending, request_id: myRequest.id } })
+      }
+      myRequest = myErasureRequest('pending', { requested_at: at(0) })
+      return respond(201, myRequest)
+    }, 'POST'],
+    ['/api/v1/me/erasure-request/withdraw', (request) => {
+      writes.push({ line: `POST ${request.path}`, body: bodyOf(request) })
+      if (myRequest?.status !== 'pending') return subjectRefusal(409, 'no_pending_request')
+      myRequest = { ...myRequest, status: 'withdrawn', decided_at: at(0) }
+      return myRequest
+    }, 'POST'],
+    ['/api/v1/users/erasure-requests', (request) => {
+      const status = request.url.searchParams.get('status') ?? 'all'
+      const pending = queue.filter((r) => r.status === 'pending')
+      const decided = queue.filter((r) => r.status !== 'pending')
+      const items = status === 'pending' ? pending : status === 'decided' ? decided : [...pending, ...decided]
+      return { items, total: items.length }
+    }],
+    [/^\/api\/v1\/users\/erasure-requests\/[^/]+\/decline$/, (request) => {
+      const body = bodyOf(request) as { decline_code?: string } | null
+      writes.push({ line: `POST ${request.path}`, body })
+      const row = queue.find((r) => r.id === request.path.split('/')[5])
+      if (!row) return subjectRefusal(404, 'request_not_found')
+      if (row.status !== 'pending') return subjectRefusal(409, 'request_not_pending')
+      if (row.requester_is_you) return subjectRefusal(409, 'own_request')
+      const code = body?.decline_code ?? ''
+      if (!(DECLINE_CODES as readonly string[]).includes(code)) return subjectRefusal(422, 'decline_code_invalid')
+      Object.assign(row, { status: 'declined', decline_code: code, decided_at: at(0), decided_by_display: ADMIN.full_name })
+      return row
+    }, 'POST'],
     ['/api/v1/me/data-export', (request) => {
       writes.push({ line: `POST ${request.path}`, body: bodyOf(request) })
       const job = answers[MY_EXPORT_JOB_ID][0]
@@ -267,7 +386,13 @@ export function subjectRightsWorld(options: SubjectRightsWorldOptions = {}) {
       return respond(202, job)
     }, 'POST'],
     [/^\/api\/v1\/users\/[^/]+\/data-jobs$/, (request) => list(userJobs[userIdOf(request)] ?? [])],
-    [/^\/api\/v1\/users\/[^/]+\/erasure-preview$/, (request) => previews[userIdOf(request)] ?? subjectRefusal(404, 'user_not_found')],
+    [/^\/api\/v1\/users\/[^/]+\/erasure-preview$/, (request) => {
+      const preview = previews[userIdOf(request)]
+      if (!preview) return subjectRefusal(404, 'user_not_found')
+      // W38: the person's pending request, as the server's preview names it.
+      const asked = pendingFor(userIdOf(request))
+      return asked ? { ...preview, pending_request: { id: asked.id, requested_at: asked.requested_at } } : preview
+    }],
     [/^\/api\/v1\/users\/[^/]+\/erasure$/, (request) => {
       const body = bodyOf(request) as { confirm_username?: string } | null
       writes.push({ line: `POST ${request.path}`, body })
@@ -278,6 +403,9 @@ export function subjectRightsWorld(options: SubjectRightsWorldOptions = {}) {
       const job = { ...answers[ERASURE_JOB_ID][0], subject_user_id: userIdOf(request) }
       userJobs[job.subject_user_id] = [job, ...(userJobs[job.subject_user_id] ?? [])]
       current[job.id] = job
+      // W38 D-5: the erasure's commit closes the person's pending request.
+      const asked = pendingFor(job.subject_user_id)
+      if (asked) Object.assign(asked, { status: 'accepted', decided_at: at(0), decided_by_display: ADMIN.full_name, erasure_job_id: job.id })
       return respond(202, job)
     }, 'POST'],
     [/^\/api\/v1\/subject-data-jobs\/[^/]+\/download$/, (request) => {
@@ -299,6 +427,6 @@ export function subjectRightsWorld(options: SubjectRightsWorldOptions = {}) {
     })],
     ...LAYOUT,
   ]
-  return { handlers, writes, downloads, users }
+  return { handlers, writes, downloads, users, queue }
 }
 

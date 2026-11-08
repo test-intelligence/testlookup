@@ -3,15 +3,21 @@
  * theme (`THEMES_WITH_PAPER`), each a state the product produces together:
  *
  *  - `profile-my-data` — Settings › Profile's "Your data" card with a finished export of my own data: the body,
- *    "Prepare a new copy" + Download (W32), "Ready — 1.4 MB, signed. Available until Sep 21, 11:59." and the line saying an
- *    erasure is asked of an administrator;
+ *    "Prepare a new copy" + Download (W32), "Ready — 1.4 MB, signed. Available until Sep 21, 11:59." and (W38) the
+ *    erasure request block with nothing asked yet ("Ask to have your account erased");
  *  - `users-personal-data` — a Users row's Personal data section as an ADMIN opens it for a person with no export yet:
  *    the Export block ("No export yet."), and the Erase panel's preview — 6 changes, 4 kept (one "not counted (took
  *    too long)"), 2 open items — with the username typed into the confirm, so "Erase permanently" is enabled;
  *  - `users-erased-row` — an erased person's row in the table: "Erased user" over the pseudonym, the "Erased" badge,
  *    the role as text and the Personal data action alone.
  *
- * No existing region changes (`users-row-edit` shoots only the Edit section). World: `subjectRightsWorld({...})` in
+ * W38 (W31 F-1 / F-2) changes `profile-my-data` (the erasure line became the request block) and adds three regions:
+ * `profile-erasure-pending` (the card with a pending request: the line + "Withdraw request"),
+ * `users-erasure-requests` (the queue: filter + a pending row with Review / Decline + the admin's own row with its
+ * note) and `sso-scim-delete-erase` (SSO › SCIM Tokens' delete setting with erase chosen, the warning and the
+ * acknowledgement ticked, Save enabled).
+ *
+ * No other existing region changes (`users-row-edit` shoots only the Edit section). World: `subjectRightsWorld({...})` in
  * `production/fixtures-subject-rights.ts`. PNGs are rendered by CI only (`visual-baselines.yml`, Linux) and READ
  * before merge; nobody generates them locally.
  */
@@ -19,8 +25,18 @@ import { expect, test, type Page } from '@playwright/test'
 import { assertHermetic, PINNED, THEMES_WITH_PAPER, visualRegion } from '../lib/production-pages'
 import { networkQuiet, openRollout } from '../lib/rollout'
 import { USER } from './production/fixtures'
+import { ssoInPageWorld } from './production/fixtures-in-page-b'
 import { ADMIN } from './production/fixtures-releases'
-import { ERASED, exportJob, SUBJECT, subjectRightsWorld } from './production/fixtures-subject-rights'
+import {
+  ADMIN_ROW,
+  ERASED,
+  erasureRequestRow,
+  exportJob,
+  myErasureRequest,
+  OWN_REQUEST_ID,
+  SUBJECT,
+  subjectRightsWorld,
+} from './production/fixtures-subject-rights'
 
 test.use(PINNED)
 
@@ -35,6 +51,8 @@ for (const theme of THEMES_WITH_PAPER) {
     const { api, errors } = await openRollout(page, '/settings/profile', { theme, handlers: world.handlers, ready: myData, user: ME })
     await expect(myData(page).getByText('Ready — 1.4 MB, signed. Available until Sep 21, 11:59.', { exact: true })).toBeVisible()
     await expect(myData(page).getByRole('button', { name: 'Download', exact: true })).toBeEnabled()
+    // W38: the erasure block has answered (nothing asked yet) before the shot.
+    await expect(myData(page).locator('[data-my-erasure]')).toHaveAttribute('data-erasure-request-state', 'none')
     await networkQuiet(page, api)
     await visualRegion(page, 'profile-my-data', theme, myData(page))
     assertHermetic(api, errors)
@@ -57,6 +75,42 @@ for (const theme of THEMES_WITH_PAPER) {
     await networkQuiet(page, api)
     expect(world.writes, 'opening and typing write nothing').toEqual([])
     await visualRegion(page, 'users-personal-data', theme, section)
+    assertHermetic(api, errors)
+  })
+
+  // ── W38 (W31 F-1 / F-2): three NEW regions ──
+
+  test(`"Your data" with a pending erasure request — ${theme}`, async ({ page }) => {
+    const world = subjectRightsWorld({ myExports: [exportJob('succeeded')], myErasureRequest: myErasureRequest('pending') })
+    const { api, errors } = await openRollout(page, '/settings/profile', { theme, handlers: world.handlers, ready: myData, user: ME })
+    await expect(myData(page).locator('[data-my-erasure]')).toHaveAttribute('data-erasure-request-state', 'pending')
+    await expect(myData(page).getByText('You asked on Sep 15, 2026. An administrator will review it.', { exact: true })).toBeVisible()
+    await networkQuiet(page, api)
+    await visualRegion(page, 'profile-erasure-pending', theme, myData(page))
+    assertHermetic(api, errors)
+  })
+
+  test(`Users › Erasure requests: a pending request and the admin's own — ${theme}`, async ({ page }) => {
+    const own = erasureRequestRow(ADMIN_ROW, { id: OWN_REQUEST_ID, requester_is_you: true, requested_at: '2026-09-17T09:30:00Z' })
+    const world = subjectRightsWorld({ erasureRequests: [erasureRequestRow(), own] })
+    const { api, errors } = await openRollout(page, '/users?tab=erasure-requests', { theme, handlers: world.handlers, ready: h1('User Management'), user: ADMIN })
+    const tab = page.locator('[data-erasure-requests-tab]')
+    await expect(tab.getByText('Another administrator must review your own request.', { exact: true })).toBeVisible()
+    await networkQuiet(page, api)
+    await visualRegion(page, 'users-erasure-requests', theme, tab)
+    assertHermetic(api, errors)
+  })
+
+  test(`SSO › SCIM: erase chosen, the warning and the acknowledgement — ${theme}`, async ({ page }) => {
+    const { api, errors } = await openRollout(page, '/settings/sso', { theme, handlers: ssoInPageWorld().handlers, ready: h1('SSO & Identity Management'), user: ADMIN })
+    await page.getByRole('button', { name: 'SCIM Tokens' }).click()
+    const section = page.locator('[data-scim-delete-action]')
+    await section.getByRole('radio', { name: /Erase the person's data/ }).check()
+    await section.getByRole('checkbox', { name: 'I understand an erasure cannot be undone' }).check()
+    await expect(section.getByRole('button', { name: 'Save', exact: true })).toBeEnabled()
+    await blur(page)
+    await networkQuiet(page, api)
+    await visualRegion(page, 'sso-scim-delete-erase', theme, section)
     assertHermetic(api, errors)
   })
 

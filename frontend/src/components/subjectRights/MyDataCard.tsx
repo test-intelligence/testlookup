@@ -2,7 +2,9 @@
  * MyDataCard — "Your data" on Settings › Profile (W31 STRAT-12, contract §4.1): the person's own export (Art. 15 / 20).
  *
  * "Download my data" → `POST /api/v1/me/data-export` → the job polls ("Preparing your archive…") → "Ready — 1.4 MB,
- * signed. Available until …" + Download. Below: erasure is asked of an administrator (never self-service, §2.3).
+ * signed. Available until …" + Download. Below (W38, W31 F-1): the erasure REQUEST block — "Ask to have your account
+ * erased" → an inline confirm → `POST /api/v1/me/erasure-request`; pending (withdraw) / declined (the reason's
+ * sentence) / withdrawn. An administrator reviews the request and runs the erasure; the person never erases.
  * With a ready export the start button reads "Prepare a new copy" (W32, OR-10 (5)): it starts a NEW export, and
  * Download beside it fetches the ready one.
  *
@@ -16,9 +18,11 @@
  *   - No modal, no native confirm dialog; every name and sentence is React text.
  */
 import { useEffect, useState } from 'react'
-import { Download, FileLock2 } from 'lucide-react'
+import { Download, FileLock2, UserX } from 'lucide-react'
 
+import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { useMyErasureRequest } from '@/hooks/useErasureRequests'
 import { useSubjectJob } from '@/hooks/useSubjectRights'
 import {
   runningSubjectExportJobId,
@@ -29,14 +33,21 @@ import { isActiveJob, type SubjectJob } from '@/types/subjectRights'
 import {
   DOWNLOAD_FAILED,
   DOWNLOAD_LABEL,
-  ERASURE_BY_ADMIN,
+  ERASURE_REQUEST_CONFIRM,
+  ERASURE_REQUEST_SEND,
+  ERASURE_REQUEST_START,
+  ERASURE_REQUEST_WITHDRAW,
+  erasureRequestView,
   exportView,
+  FILE_REQUEST_FAILED,
   LOAD_EXPORTS_FAILED,
   MY_DATA_BODY,
   MY_DATA_START,
   MY_DATA_TITLE,
   START_FAILED,
   watchedJobId,
+  WITHDRAW_CONFIRM,
+  WITHDRAW_REQUEST_FAILED,
 } from './myDataModel'
 
 interface Props {
@@ -167,9 +178,106 @@ export default function MyDataCard({ latest, loadError, onChanged }: Props) {
         )}
       </div>
 
-      <p className="m-0 text-xs text-[var(--color-text-muted)]" data-my-data-erasure="">
-        {ERASURE_BY_ADMIN}
-      </p>
+      <ErasureRequestBlock />
     </section>
+  )
+}
+
+type Confirming = 'file' | 'withdraw' | null
+
+/**
+ * W38 (W31 F-1, contract §4): the erasure block under the export — the person ASKS an administrator to erase the
+ * account (`POST /api/v1/me/erasure-request`, no body), sees the pending request (and may withdraw it) or the
+ * decline's sentence. Both questions are asked in the card (`InlineConfirm`); the strip's button is the only sender.
+ */
+function ErasureRequestBlock() {
+  const { data: request, error: loadError, mutate } = useMyErasureRequest()
+  const [confirming, setConfirming] = useState<Confirming>(null)
+  const [busy, setBusy] = useState(false)
+  const [refusal, setRefusal] = useState<string | null>(null)
+  const view = erasureRequestView(request, loadError)
+
+  async function send(action: 'file' | 'withdraw') {
+    if (busy) return
+    setBusy(true)
+    setRefusal(null)
+    try {
+      const updated =
+        action === 'file'
+          ? await subjectRightsService.fileErasureRequest()
+          : await subjectRightsService.withdrawErasureRequest()
+      setConfirming(null)
+      await mutate(updated, { revalidate: false })
+    } catch (err: unknown) {
+      setConfirming(null)
+      setRefusal(await subjectRightsErrorMessage(err, action === 'file' ? FILE_REQUEST_FAILED : WITHDRAW_REQUEST_FAILED))
+      // A request filed (or decided) in another tab: re-read, so the block shows what is true now.
+      void mutate()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function open(action: 'file' | 'withdraw') {
+    setRefusal(null)
+    setConfirming(action)
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-2 border-t border-[var(--color-border)] pt-3"
+      data-my-erasure=""
+      data-erasure-request-state={view.kind}
+    >
+      {view.kind === 'loading' && <LoadingSpinner size="sm" />}
+      {view.line && (
+        <p
+          data-my-erasure-line=""
+          className={`m-0 text-xs ${view.kind === 'error' ? 'text-[var(--ui-danger-ink)]' : 'text-[var(--color-text)]'}`}
+        >
+          {view.line}
+        </p>
+      )}
+      {(view.canAsk || view.canWithdraw) && (
+        <div className="flex items-center gap-3">
+          {view.canAsk && (
+            <button type="button" className="btn-secondary inline-flex items-center gap-1.5" onClick={() => open('file')} disabled={busy}>
+              <UserX className="h-4 w-4" aria-hidden="true" />
+              {ERASURE_REQUEST_START}
+            </button>
+          )}
+          {view.canWithdraw && (
+            <button type="button" className="btn-secondary inline-flex items-center gap-1.5" onClick={() => open('withdraw')} disabled={busy}>
+              {ERASURE_REQUEST_WITHDRAW}
+            </button>
+          )}
+        </div>
+      )}
+      {confirming === 'file' && view.canAsk && (
+        <InlineConfirm
+          message={ERASURE_REQUEST_CONFIRM}
+          confirmLabel={ERASURE_REQUEST_SEND}
+          busy={busy}
+          onConfirm={() => void send('file')}
+          onCancel={() => setConfirming(null)}
+          testId="my-erasure-confirm"
+        />
+      )}
+      {confirming === 'withdraw' && view.canWithdraw && (
+        <InlineConfirm
+          message={WITHDRAW_CONFIRM}
+          confirmLabel={ERASURE_REQUEST_WITHDRAW}
+          busy={busy}
+          onConfirm={() => void send('withdraw')}
+          onCancel={() => setConfirming(null)}
+          testId="my-erasure-withdraw-confirm"
+        />
+      )}
+      {refusal && (
+        <p role="alert" data-my-erasure-refusal="" className="m-0 text-xs text-[var(--ui-danger-ink)]">
+          {refusal}
+        </p>
+      )}
+    </div>
   )
 }

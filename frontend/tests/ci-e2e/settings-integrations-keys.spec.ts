@@ -87,8 +87,11 @@ const MFA: ApiHandlers = [
   ],
 ]
 
-/** W31 STRAT-12: Profile's "Your data" card reads my exports (none yet). */
-const MY_DATA: ApiHandlers = [['/api/v1/me/data-exports', () => ({ items: [], total: 0 })]]
+/** W31 STRAT-12: Profile's "Your data" card reads my exports (none yet) — and (W38) my erasure request (none). */
+const MY_DATA: ApiHandlers = [
+  ['/api/v1/me/data-exports', () => ({ items: [], total: 0 })],
+  ['/api/v1/me/erasure-request', () => null],
+]
 
 const HANDLERS: ApiHandlers = [
   ...LAYOUT,

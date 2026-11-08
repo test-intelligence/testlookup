@@ -23,7 +23,7 @@ import {
   type ErasurePreview,
   type SubjectJob,
 } from '@/types/subjectRights'
-import { formatNumber } from '@/utils/formatters'
+import { formatDay, formatNumber } from '@/utils/formatters'
 
 // ── Copy ─────────────────────────────────────────────────────────────────────
 
@@ -52,6 +52,24 @@ export const ERASED_COUNTS_TITLE = 'Rows changed'
 export const confirmLabel = (username: string) => fillSentence(UI_SENTENCES.erase_confirm_label, { username })
 export const eraseBody = (pseudonym: string) => fillSentence(UI_SENTENCES.erase_body, { pseudonym })
 export const erasedLine = (pseudonym: string) => fillSentence(UI_SENTENCES.erase_done, { pseudonym })
+
+/** W38: the preview's `pending_request` — "This person asked for erasure on Sep 18, 2026." */
+export const askedLine = (requestedAt: string) =>
+  fillSentence(UI_SENTENCES.erasure_request_asked, { date: formatDay(requestedAt) })
+
+/** "Requested by Morgan Admin." under an erasure job's line. */
+export const requestedByLine = (display: string) => `Requested by ${display}.`
+
+/**
+ * Who started an erasure job (W38 D-11): a SCIM `DELETE` in erase mode has no requester (`requested_by_display`
+ * null) and reads "Your identity provider (SCIM)"; otherwise the requester's display ("Erased user" once erased);
+ * null when the job names nobody.
+ */
+export function requesterDisplay(job: Pick<SubjectJob, 'source' | 'requested_by_display'> | null | undefined): string | null {
+  if (!job) return null
+  if (job.source === 'scim') return UI_SENTENCES.requester_scim
+  return job.requested_by_display?.trim() || null
+}
 
 // ── The phase line ───────────────────────────────────────────────────────────
 

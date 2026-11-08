@@ -31,6 +31,8 @@ import {
   erasedName,
   erasureCountLines,
   isErasedUser,
+  requestedByLine,
+  requesterDisplay,
   sectionTitle,
   type UserRowLike,
 } from './erasureModel'
@@ -151,9 +153,15 @@ function ExportBlock({ userId, latest, loadError, onChanged }: {
 /** An erased row: the finished erasure's line and its per-location counts, read-only. */
 function ErasedOutcome({ job, pseudonym }: { job: SubjectJob | null; pseudonym: string }) {
   const { lines, untouched } = erasureCountLines(job)
+  const requester = requesterDisplay(job)
   return (
     <div className="flex flex-col gap-2" data-erased-outcome="">
       <p className="m-0 text-sm text-[var(--color-text)]">{job ? erasedLine(pseudonym) : ERASED_NO_JOB}</p>
+      {requester && (
+        <p className="m-0 text-xs text-[var(--color-text-muted)]" data-erased-requester="">
+          {requestedByLine(requester)}
+        </p>
+      )}
       {lines.length > 0 && (
         <div className="flex flex-col gap-1">
           <h4 className="m-0 text-xs font-semibold uppercase tracking-wider text-[var(--color-text-muted)]">{ERASED_COUNTS_TITLE}</h4>

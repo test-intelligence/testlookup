@@ -1,7 +1,9 @@
 /**
  * NTF-01: the bell follows only the server's two allow-listed path shapes,
  * re-checked here, and `/releases/<id>` (a management route) only for a QA
- * lead or admin. Equality on the whole value, never a substring.
+ * lead or admin. Equality on the whole value, never a substring. W38: the two
+ * exact strings `/users?tab=erasure-requests` (management only) and
+ * `/settings/profile` (every role), and their near misses.
  */
 import { describe, expect, it } from 'vitest'
 import { notificationChannelLabel, notificationHref } from './notificationHref'
@@ -24,6 +26,16 @@ describe('notificationHref', () => {
   it('a release links for a QA lead or admin only', () => {
     expect(notificationHref({ link: `/releases/${ID}` }, LEAD)).toBe(`/releases/${ID}`)
     expect(notificationHref({ link: `/releases/${ID}` }, VIEWER)).toBeNull()
+  })
+
+  it('W38: the erasure-request queue links (exactly) for a QA lead or admin only — /users is a management route', () => {
+    expect(notificationHref({ link: '/users?tab=erasure-requests' }, LEAD)).toBe('/users?tab=erasure-requests')
+    expect(notificationHref({ link: '/users?tab=erasure-requests' }, VIEWER)).toBeNull()
+  })
+
+  it('W38: a declined request links (exactly) to the person\'s Profile for every role', () => {
+    expect(notificationHref({ link: '/settings/profile' }, LEAD)).toBe('/settings/profile')
+    expect(notificationHref({ link: '/settings/profile' }, VIEWER)).toBe('/settings/profile')
   })
 
   it.each([
@@ -56,6 +68,27 @@ describe('notificationHref', () => {
     ['any character for the ?', { link: `/test-managementXcase=${ID}` }],
     ['a case on another host', { link: `https://example.com/test-management?case=${ID}` }],
     ['a case after a newline', { link: `/test-management?case=${ID}\n` }],
+    // W38: the two exact strings' near misses.
+    ['the users page without the tab', { link: '/users' }],
+    ['another users tab', { link: '/users?tab=invitations' }],
+    ['the tab id upper-cased', { link: '/users?tab=Erasure-Requests' }],
+    ['the tab with another parameter', { link: '/users?tab=erasure-requests&id=1' }],
+    ['the tab with a fragment', { link: '/users?tab=erasure-requests#row' }],
+    ['the tab with a trailing slash', { link: '/users?tab=erasure-requests/' }],
+    ['the tab under a slash', { link: '/users/?tab=erasure-requests' }],
+    ['the tab with a trailing space', { link: '/users?tab=erasure-requests ' }],
+    ['the tab after a newline', { link: '/users?tab=erasure-requests\n' }],
+    ['the tab on another host', { link: 'https://example.com/users?tab=erasure-requests' }],
+    ['the tab protocol-relative', { link: '//example.com/users?tab=erasure-requests' }],
+    ['the tab prefix only', { link: '/users?tab=erasure' }],
+    ['the profile with a trailing slash', { link: '/settings/profile/' }],
+    ['the profile with a query', { link: '/settings/profile?tab=data' }],
+    ['the profile with a fragment', { link: '/settings/profile#my-data' }],
+    ['the profile upper-cased', { link: '/Settings/Profile' }],
+    ['a profile sub-path', { link: '/settings/profile/edit' }],
+    ['the profile with a leading space', { link: ' /settings/profile' }],
+    ['the profile on another host', { link: 'https://example.com/settings/profile' }],
+    ['another settings page', { link: '/settings/sso' }],
   ])('%s → null for every role', (_name, log) => {
     expect(notificationHref(log as never, LEAD)).toBeNull()
     expect(notificationHref(log as never, VIEWER)).toBeNull()

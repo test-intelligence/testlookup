@@ -34,6 +34,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import SSORoleMappingEditor from './SSORoleMappingEditor'
 import SCIMGroupsSection from './SCIMGroupsSection'
+import ScimDeleteActionSection from './ScimDeleteActionSection'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { usePermissions } from '@/hooks/usePermissions'
 
@@ -583,6 +584,8 @@ export default function SSOSettingsPage() {
                   </Fragment>
                 ))}
               </div>
+              {/* W38 (W31 F-2): what a SCIM DELETE does — deactivate (default) or erase. */}
+              <ScimDeleteActionSection />
               <SCIMGroupsSection />
             </div>
           )}

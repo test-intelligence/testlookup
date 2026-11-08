@@ -9,8 +9,17 @@ import type { ReactNode } from 'react'
 import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { exportRunningBody, subjectErrorBody, subjectJobFixture, subjectJobList, subjectRefusal } from '@/test/subjectRightsMocks'
-import { ERROR_SENTENCES, UI_SENTENCES } from '@/types/subjectRights'
+import {
+  exportRunningBody,
+  myErasureRequestFixture,
+  REQUEST_ID,
+  subjectErrorBody,
+  subjectJobFixture,
+  subjectJobList,
+  subjectRefusal,
+} from '@/test/subjectRightsMocks'
+import { DECLINE_SENTENCES, ERROR_SENTENCES, UI_SENTENCES } from '@/types/subjectRights'
+import { formatDay } from '@/utils/formatters'
 
 vi.mock('@/types/subjectRights', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/types/subjectRights')>()),
@@ -18,6 +27,7 @@ vi.mock('@/types/subjectRights', async (importOriginal) => ({
 }))
 const service = vi.hoisted(() => ({
   startMyExport: vi.fn(), listMyExports: vi.fn(), getJob: vi.fn(), downloadExport: vi.fn(),
+  getMyErasureRequest: vi.fn(), fileErasureRequest: vi.fn(), withdrawErasureRequest: vi.fn(),
 }))
 vi.mock('@/services/subjectRightsService', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/services/subjectRightsService')>()),
@@ -32,7 +42,7 @@ vi.mock('@/components/mfa/MfaSecuritySection', () => ({ default: () => <section 
 import { useMyExports } from '@/hooks/useSubjectRights'
 import ProfilePage from '@/pages/settings/ProfilePage'
 import MyDataCard from './MyDataCard'
-import { DOWNLOAD_LABEL, ERASURE_BY_ADMIN, LOAD_EXPORTS_FAILED, newestExport } from './myDataModel'
+import { DOWNLOAD_LABEL, LOAD_ERASURE_REQUEST_FAILED, LOAD_EXPORTS_FAILED, newestExport } from './myDataModel'
 
 /** The page's wiring, exactly: the list read's data and error handed to the card. */
 function Harness() {
@@ -50,10 +60,12 @@ const restartButton = () => screen.getByRole('button', { name: UI_SENTENCES.my_d
 
 beforeEach(() => {
   for (const fn of Object.values(service)) fn.mockReset()
+  // W38: the card's erasure block reads my newest request; none by default.
+  service.getMyErasureRequest.mockResolvedValue(null)
 })
 
 describe('MyDataCard', () => {
-  it('no export yet: the heading, the body, "No export yet.", an enabled start button, no Download, the erasure line', async () => {
+  it('no export yet: the heading, the body, "No export yet.", an enabled start button, no Download, the erasure block', async () => {
     service.listMyExports.mockResolvedValue(subjectJobList([]))
     render(withSwr(<Harness />))
     expect(await screen.findByText(UI_SENTENCES.export_none)).toBeInTheDocument()
@@ -61,7 +73,9 @@ describe('MyDataCard', () => {
     expect(screen.getByText(UI_SENTENCES.my_data_body)).toBeInTheDocument()
     expect(startButton()).toBeEnabled()
     expect(downloadButton()).toBeNull()
-    expect(screen.getByText(ERASURE_BY_ADMIN)).toBeInTheDocument()
+    // W38 (2026-11-07): the muted "ask an administrator" line became the erasure REQUEST block (contract §4).
+    expect(await screen.findByRole('button', { name: UI_SENTENCES.erasure_request_start })).toBeEnabled()
+    expect(screen.queryByText(/To have your account erased, ask an administrator/)).toBeNull()
   })
 
   it('start → ONE POST → "Preparing your archive…" while the job polls → ready (size, signed, expiry) + Download', async () => {
@@ -144,6 +158,120 @@ describe('MyDataCard', () => {
     render(withSwr(<Harness />))
     fireEvent.click(await screen.findByRole('button', { name: UI_SENTENCES.my_data_start }))
     expect(await screen.findByRole('alert')).toHaveTextContent(ERROR_SENTENCES.session_required)
+  })
+})
+
+describe('MyDataCard erasure request (W38, contract §4)', () => {
+  const block = () => document.querySelector('[data-my-erasure]') as HTMLElement
+  const askButton = () => screen.queryByRole('button', { name: UI_SENTENCES.erasure_request_start })
+  const withdrawTrigger = () => screen.getAllByRole('button', { name: UI_SENTENCES.erasure_request_withdraw })[0]
+
+  async function renderCard() {
+    service.listMyExports.mockResolvedValue(subjectJobList([]))
+    const view = render(withSwr(<Harness />))
+    await screen.findByText(UI_SENTENCES.export_none)
+    await waitFor(() => expect(block().getAttribute('data-erasure-request-state')).not.toBe('loading'))
+    return view
+  }
+
+  it('none: the button alone; it opens the confirm IN the card (no dialog, no native confirm); Cancel sends nothing', async () => {
+    const nativeConfirm = vi.spyOn(window, 'confirm')
+    await renderCard()
+    expect(block()).toHaveAttribute('data-erasure-request-state', 'none')
+    expect(block().querySelector('[data-my-erasure-line]')).toBeNull()
+    fireEvent.click(askButton() as HTMLElement)
+    const strip = screen.getByTestId('my-erasure-confirm')
+    expect(block().contains(strip)).toBe(true)
+    expect(strip).toHaveTextContent(UI_SENTENCES.erasure_request_confirm)
+    expect(screen.getByRole('button', { name: UI_SENTENCES.erasure_request_send })).toBeEnabled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByTestId('my-erasure-confirm')).toBeNull()
+    expect(service.fileErasureRequest).not.toHaveBeenCalled()
+    expect(nativeConfirm).not.toHaveBeenCalled()
+    nativeConfirm.mockRestore()
+  })
+
+  it('Send request → ONE POST (no body) → pending: "You asked on <date>. …" + Withdraw request, no Ask button', async () => {
+    const pending = myErasureRequestFixture()
+    service.fileErasureRequest.mockResolvedValueOnce(pending)
+    await renderCard()
+    fireEvent.click(askButton() as HTMLElement)
+    fireEvent.click(screen.getByRole('button', { name: UI_SENTENCES.erasure_request_send }))
+    await waitFor(() => expect(block()).toHaveAttribute('data-erasure-request-state', 'pending'))
+    expect(service.fileErasureRequest).toHaveBeenCalledTimes(1)
+    expect(service.fileErasureRequest).toHaveBeenCalledWith()
+    const line = `You asked on ${formatDay(pending.requested_at)}. An administrator will review it.`
+    expect(screen.getByText(line)).toBeInTheDocument()
+    expect(withdrawTrigger()).toBeEnabled()
+    expect(askButton()).toBeNull()
+    expect(screen.queryByTestId('my-erasure-confirm')).toBeNull()
+  })
+
+  it('pending → Withdraw request asks in the card → the strip sends ONE withdraw → withdrawn: the Ask button again', async () => {
+    service.getMyErasureRequest.mockResolvedValue(myErasureRequestFixture())
+    service.withdrawErasureRequest.mockResolvedValueOnce(myErasureRequestFixture({ status: 'withdrawn' }))
+    await renderCard()
+    expect(block()).toHaveAttribute('data-erasure-request-state', 'pending')
+    fireEvent.click(withdrawTrigger())
+    const strip = screen.getByTestId('my-erasure-withdraw-confirm')
+    expect(strip).toHaveTextContent('Withdraw your erasure request?')
+    expect(service.withdrawErasureRequest).not.toHaveBeenCalled()
+    fireEvent.click(strip.querySelector('[data-inline-confirm-action]') as HTMLElement)
+    await waitFor(() => expect(block()).toHaveAttribute('data-erasure-request-state', 'withdrawn'))
+    expect(service.withdrawErasureRequest).toHaveBeenCalledTimes(1)
+    expect(askButton()).toBeEnabled()
+    expect(block().querySelector('[data-my-erasure-line]')).toBeNull()
+  })
+
+  it('declined: "Declined on <date>: <the reason\'s sentence>" + the Ask button again', async () => {
+    const declined = myErasureRequestFixture({ status: 'declined', decline_code: 'active_contract' })
+    service.getMyErasureRequest.mockResolvedValue(declined)
+    await renderCard()
+    expect(block()).toHaveAttribute('data-erasure-request-state', 'declined')
+    expect(screen.getByText(`Declined on ${formatDay(declined.decided_at)}: ${DECLINE_SENTENCES.active_contract}`)).toBeInTheDocument()
+    expect(askButton()).toBeEnabled()
+  })
+
+  it('withdrawn: the Ask button, no line', async () => {
+    service.getMyErasureRequest.mockResolvedValue(myErasureRequestFixture({ status: 'withdrawn' }))
+    await renderCard()
+    expect(block()).toHaveAttribute('data-erasure-request-state', 'withdrawn')
+    expect(askButton()).toBeEnabled()
+    expect(block().querySelector('[data-my-erasure-line]')).toBeNull()
+  })
+
+  it('a refusal renders inline as its sentence (last_admin_self) and the block re-reads; never the Axios words', async () => {
+    service.fileErasureRequest.mockRejectedValueOnce(subjectRefusal(409, subjectErrorBody('last_admin_self')))
+    await renderCard()
+    fireEvent.click(askButton() as HTMLElement)
+    fireEvent.click(screen.getByRole('button', { name: UI_SENTENCES.erasure_request_send }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(ERROR_SENTENCES.last_admin_self)
+    expect(block().contains(alert)).toBe(true)
+    expect(screen.queryByText(/Request failed with status code/)).toBeNull()
+    expect(screen.queryByTestId('my-erasure-confirm')).toBeNull()
+    await waitFor(() => expect(service.getMyErasureRequest).toHaveBeenCalledTimes(2))
+  })
+
+  it('a 409 request_pending (another tab) re-reads: the block shows the pending request', async () => {
+    service.getMyErasureRequest.mockResolvedValueOnce(null).mockResolvedValue(myErasureRequestFixture())
+    service.fileErasureRequest.mockRejectedValueOnce(
+      subjectRefusal(409, subjectErrorBody('request_pending', {}, { request_id: REQUEST_ID })),
+    )
+    await renderCard()
+    fireEvent.click(askButton() as HTMLElement)
+    fireEvent.click(screen.getByRole('button', { name: UI_SENTENCES.erasure_request_send }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(ERROR_SENTENCES.request_pending)
+    await waitFor(() => expect(block()).toHaveAttribute('data-erasure-request-state', 'pending'))
+  })
+
+  it('the read fails: "Could not load your erasure request." and the Ask button stays offered', async () => {
+    service.getMyErasureRequest.mockRejectedValue(new Error('boom'))
+    await renderCard()
+    expect(block()).toHaveAttribute('data-erasure-request-state', 'error')
+    expect(screen.getByText(LOAD_ERASURE_REQUEST_FAILED)).toBeInTheDocument()
+    expect(askButton()).toBeEnabled()
   })
 })
 
