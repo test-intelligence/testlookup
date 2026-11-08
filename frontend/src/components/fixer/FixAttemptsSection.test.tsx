@@ -116,6 +116,18 @@ describe('FixAttemptsSection', () => {
     expect(screen.getByTestId('attempt-status-diagnosing')).toBeInTheDocument()
   })
 
+  it('W40 F-2: the attempts table is the shared dense Table; Attempt # and Created are numeric headers', async () => {
+    await mockHooks({ items: [attempt('a1', 'validated')] })
+    renderSection()
+
+    expect(screen.getByRole('table')).toHaveAttribute('data-density', 'dense')
+    const headers = screen.getAllByRole('columnheader')
+    expect(headers.map((h) => h.textContent)).toEqual(['Test', 'Status', 'Attempt #', 'Validation', 'PR', 'Created'])
+    for (const h of headers) expect(h).toHaveClass('th')
+    const numeric = headers.filter((h) => h.classList.contains('th-num')).map((h) => h.textContent)
+    expect(numeric).toEqual(['Attempt #', 'Created'])
+  })
+
   it('gives the honest statuses (rejected_globs, skipped_budget) explanatory tooltips', async () => {
     await mockHooks({
       items: [attempt('a1', 'rejected_globs'), attempt('a2', 'skipped_budget')],

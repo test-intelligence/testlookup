@@ -383,6 +383,7 @@ export default function DecisionIntelligencePanel({
               </div>
               {release?.reasoning && <p className="mb-0 text-xs text-[var(--color-text-secondary)]">{release.reasoning}</p>}
             </div>
+            {/* W40 F-3 kept (D-3): not `MetricCard sm` — its value grows to 40 px in presentation mode in this cell (rejected in W29d D-3). */}
             <dl className="m-0 grid grid-cols-2 gap-2 sm:grid-cols-4">
               {metricLabels.map(([key, label]) => {
                 const value = number(displayReport.metrics[key])

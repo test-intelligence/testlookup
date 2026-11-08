@@ -524,11 +524,13 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
   const promptEntries = Object.entries(detail?.prompt_versions ?? {})
 
   return (
+    // W40 F-3: the shared `.card` surface (12 px corners), with no padding of its own as in `Panel`; it stays a
+    // `<section>` (Panel is a `<div>`): the aria-label region is how the ci-e2e spec finds the cockpit.
     <section
       aria-label="Agent investigation"
       data-testid="investigator-cockpit"
-      className="overflow-hidden rounded-xl"
-      style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', marginBottom: 14 }}
+      className="card !p-0 overflow-hidden"
+      style={{ marginBottom: 14 }}
     >
       {/* Header */}
       <div className="flex items-center justify-between gap-2.5 px-4 py-3 flex-wrap" style={{ borderBottom: '1px solid var(--color-border)' }}>

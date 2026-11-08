@@ -52,6 +52,7 @@ function ageText(iso: string | null, now: number): string {
     : `${Math.round(ms / 86400_000)}d ago`
 }
 
+// W40 F-3 kept (D-3): not `Panel` — `releases-rail.spec.ts` finds each rail panel as a `section` with an `h4`; `Panel` is a `<div>` with an `h3`.
 function PanelShell({
   title, count, action, children,
 }: {

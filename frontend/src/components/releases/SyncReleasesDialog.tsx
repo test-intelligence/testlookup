@@ -152,7 +152,7 @@ export default function SyncReleasesDialog({ projectId, onClose, onDone, slot }:
             role="alert"
             data-sync-error=""
             data-status={failure.status ?? ''}
-            className="mt-4 rounded-md border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)]/10 px-3 py-2 text-sm text-[var(--status-failed)]"
+            className="mt-4 rounded-md border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)]/10 px-3 py-2 text-sm text-[var(--ui-danger-ink)]"
           >
             <p className="whitespace-pre-wrap break-words">{failure.detail}</p>
             {failure.status === 503 && (

@@ -360,8 +360,8 @@ const STAGE_META: Record<string, StageMeta> = {
 const STATUS_META: Record<string, { label: string; icon: ElementType; cls: string }> = {
   pending: { label: 'Pending', icon: Clock3, cls: 'text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]/70 border-[var(--color-border)]' },
   running: { label: 'Running', icon: RefreshCw, cls: 'text-[var(--color-text-secondary)] bg-[var(--color-bg-secondary)]/40 border-[var(--color-border-light)]' },
-  completed: { label: 'Done', icon: CheckCircle2, cls: 'text-[var(--status-passed)] bg-[var(--status-passed-bg)] border-[var(--status-passed-bd)]' },
-  failed: { label: 'Failed', icon: XCircle, cls: 'text-[var(--status-failed)] bg-[var(--status-failed-bg)] border-[var(--status-failed-bd)]' },
+  completed: { label: 'Done', icon: CheckCircle2, cls: 'text-[var(--status-passed-ink)] bg-[var(--status-passed-bg)] border-[var(--status-passed-bd)]' },
+  failed: { label: 'Failed', icon: XCircle, cls: 'text-[var(--status-failed-ink)] bg-[var(--status-failed-bg)] border-[var(--status-failed-bd)]' },
   skipped: { label: 'Skipped', icon: ChevronRight, cls: 'text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)]/80 border-[var(--color-border)]' },
 }
 
@@ -480,10 +480,10 @@ function StageNode({
               <span className={clsx(
                 'badge text-2xs',
                 stage.confidence_score >= 80
-                  ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border-[var(--status-passed-bd)]'
+                  ? 'bg-[var(--status-passed-bg)] text-[var(--ui-success-ink)] border-[var(--status-passed-bd)]'
                   : stage.confidence_score >= 50
-                    ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border-[var(--status-broken-bd)]'
-                    : 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border-[var(--status-failed-bd)]',
+                    ? 'bg-[var(--status-broken-bg)] text-[var(--ui-warning-ink)] border-[var(--status-broken-bd)]'
+                    : 'bg-[var(--status-failed-bg)] text-[var(--ui-danger-ink)] border-[var(--status-failed-bd)]',
               )}>
                 {stage.confidence_score}% confidence
               </span>
@@ -499,7 +499,7 @@ function StageNode({
               </span>
             )}
             {stage.cost_usd != null && stage.cost_usd > 0 && (
-              <span className="badge bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)] text-2xs">
+              <span className="badge bg-[var(--status-broken-bg)] text-[var(--ui-warning-ink)] border border-[var(--status-broken-bd)] text-2xs">
                 ${stage.cost_usd.toFixed(4)}
               </span>
             )}
@@ -508,7 +508,7 @@ function StageNode({
             <p className="mt-2 text-xs text-[var(--color-text-muted)] italic">{stage.skipped_reason}</p>
           )}
           {stage.error && !compact && (
-            <p className="mt-2 text-xs text-[var(--status-failed)] bg-[var(--status-failed-bg)] border border-[var(--status-failed-bd)] rounded-lg px-2.5 py-1.5">
+            <p className="mt-2 text-xs text-[var(--ui-danger-ink)] bg-[var(--status-failed-bg)] border border-[var(--status-failed-bd)] rounded-lg px-2.5 py-1.5">
               {stage.error}
             </p>
           )}
@@ -797,7 +797,7 @@ export default function WorkflowTimeline({
               )}
 
               {selectedStage.error && (
-                <div className="rounded-xl border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]">
+                <div className="rounded-xl border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--ui-danger-ink)]">
                   {selectedStage.error}
                 </div>
               )}
