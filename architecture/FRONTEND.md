@@ -134,7 +134,7 @@ desk value (16 px text in an 18 px line). A heading that needs a tighter line ta
 | `text-xs` | 12 px | 16 px | meta lines, change lines, panel actions |
 | `text-sm` | 13 px | 18.6 px | body text and table cells (the app's body size) |
 | `text-base` | 14 px | 21 px | panel and chart titles (`PANEL_TITLE_CLASS`, with `leading-tight`) |
-| `text-md` | 16 px | 24 px | section and verdict titles |
+| `text-md` | 16 px | 24 px | section and verdict titles (`SECTION_TITLE_CLASS`, with `leading-tight`) |
 | `text-lg` / `text-xl` / `text-2xl` | 18 / 20 / 24 px | 28 / 28 / 32 px | page-level headings |
 | `--text-stat-sm` / `--text-stat-lg` / `--text-display-lg` | 18 / 24 / 44 px | `leading-[1.3333]` on the tile | the in-panel stat, the KPI tile, the hero score |
 
@@ -154,8 +154,11 @@ the floor, pinned by
 (`TYPE_SCALE_FLOOR`): `components/ui/AppLogo.tsx` 4 — the brackets' `1.4em` /
 `1.45em`, the logo's glyph proportions, not type — and `pages/LoginPage.tsx` /
 `pages/ResetPasswordPage.tsx` 1 each — the 42 px sign-in mark (OR-06: no
-rebrand). A numeric size the gate's regex cannot see (a ternary, a JSX / SVG
-attribute) is refused by `test_type_scale_has_no_uncounted_numeric_font_size`.
+rebrand). Since W40 the gate's regex also counts the two forms it used to miss
+— an expression after `fontSize:` (a ternary, `base * 1.2`) and a JSX / SVG
+`fontSize=` attribute — once per `fontSize`;
+`test_type_scale_has_no_uncounted_numeric_font_size` is that regex's self-test
+(each numeric form counted, a `var(--text-…)`, `CHART_FONT` or type form not).
 Three rules joined the map in wave 2: a number or verdict word outside the KPI
 tile takes the step at or above its size, never a `--text-stat-*` token
 (rule 4); text inside a fixed-geometry drawing (the compute graph, the
@@ -213,6 +216,20 @@ because the visual specs' `cardByHeading` finds a card as the nearest
 `section` / `.card` / `.rounded-xl` ancestor of a real heading. `.card` is
 12 px (`rounded-lg`, the radius of `ChartFrame` and every `rounded-lg`
 panel). `frontend.adhoc-card-surfaces` counts hand-made card surfaces (§5).
+
+**Heading roles** (W40, W29d F-1) — a heading takes a role, never an ad-hoc
+class. One that titles ONE card or panel is `PANEL_TITLE_CLASS` (14 px / 600);
+one that titles a page SECTION holding several cards is `SECTION_TITLE_CLASS`
+(16 px / 600, `text-md` + `leading-tight`), exported beside it from
+`PanelHeader.tsx` — import it, never copy the string. Both are sentence case:
+the 13 px `uppercase tracking-wider` headings they replaced lost only the CSS
+uppercase (the DOM text was already mixed case, so accessible names and
+`cardByHeading` matches do not change), and the heading element and level
+stay. The page title is `PageHeader`'s `h1`; a small uppercase label is
+`.eyebrow` (role rule 2), not a heading. Both roles carry `m-0`, and Tailwind v4
+emits `space-y-*` with zero specificity, so inside a `space-y-*` parent the role
+removes the gap under the heading: give that heading the gap back (`mb-N`) or
+switch the parent to `flex flex-col gap-N` — never drop `m-0` from the role.
 
 **One KPI tile** — `components/ui/MetricCard.tsx` (the full variant with its
 30 px value and icon tile is gone):

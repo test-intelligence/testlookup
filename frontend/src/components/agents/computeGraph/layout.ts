@@ -1,7 +1,7 @@
 /**
  * Layout constants for the compute graph.
  *
- * Coordinates are absolute pixel positions inside the 1750×560 canvas — every
+ * Coordinates are absolute pixel positions inside the 1750×576 canvas — every
  * node, edge endpoint, and edge label is anchored relative to these. Keep this
  * file pure-data so the renderer + edge-label math + Bézier path generator can
  * all read the same source.
@@ -9,23 +9,30 @@
 import type { ComputeStageId, DecisionId } from './types'
 
 export const NODE_W = 226
-export const NODE_H = 132
+/**
+ * W40 (W29d F-4): 168 holds a done / pending / skipped card's content (head row,
+ * a two-line description, the 2×2 metric grid: ≈ 163.4 px on CI's DejaVu); a
+ * running / failed card clamps its description to one line to make room for its
+ * suffix row (`ComputeNode`). Was 132, which every state overflowed by 28-56 px.
+ */
+export const NODE_H = 168
 export const DECISION_SIZE = 88  // full square width / height (before rotation)
 export const DECISION_HALF = DECISION_SIZE / 2
 
 export const CANVAS_W = 1750
-export const CANVAS_H = 560
+/** Three 168 px lanes 16 px apart from y 24 (24 … 560) plus 16 px: fits the 600 px pane without a scroll. */
+export const CANVAS_H = 576
 
 /** Per-node top-left positions, in pixels: a fixed, hand-placed layout, not computed. */
 export const POS: Record<ComputeStageId | DecisionId, { x: number; y: number }> = {
   ingestion: { x:   32, y:  80 },
   anomaly:   { x:  290, y:  80 },
-  route_analysis_mode: { x: 564, y: 110 },   // decision diamond, 88x88
-  rca:       { x:  700, y:  30 },
-  cluster:   { x:  700, y: 250 },
-  triage:    { x:  970, y: 250 },  // skipped on the LLM branch
-  flaky:     { x:  970, y: 380 },
-  health:    { x: 1240, y: 380 },
+  route_analysis_mode: { x: 564, y: 120 },   // decision diamond, 88x88, centred on the y 80 row
+  rca:       { x:  700, y:  24 },
+  cluster:   { x:  700, y: 208 },
+  triage:    { x:  970, y: 208 },  // skipped on the LLM branch
+  flaky:     { x:  970, y: 392 },
+  health:    { x: 1240, y: 392 },
   summary:   { x: 1240, y:  80 },
   release:   { x: 1500, y:  80 },
 }

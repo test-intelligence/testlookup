@@ -2669,7 +2669,23 @@ def _count_ratchet_update(spec: _CountRatchet) -> None:
 # frontend.type-scale (UIX-04a): an arbitrary Tailwind size, and a numeric
 # inline fontSize outside the chart kit (whose fonts are W29b's UIX-05).
 _TYPE_SCALE_CLASS_RE = re.compile(r"(?<![\w-])text-\[\d+(?:\.\d+)?(?:px|rem|em)\]")
-_TYPE_SCALE_INLINE_RE = re.compile(r"""fontSize\s*:\s*['"]?\d""")
+# The inline form counts ONE per `fontSize` whose value holds a numeric literal
+# outside a `var(...)` read: a style property up to the first `,` `}` or newline
+# (`fontSize: 12`, `'9px'`, `'1.4em'`, and since W40 an expression such as
+# `compact ? 9.5 : 10` or `base * 1.2`) or a JSX / SVG attribute (`fontSize="9.5"`,
+# `fontSize={12}`, `fontSize={dense ? 10 : 11}`) — the two forms W29d's T3 found
+# blind (W29d F-5 = W29e F-10). A literal glued to a word, `.`, `$` or `-` is not a
+# size (`CHART_FONT.h2`, `var(--text-2xs)`; a bare `'.875rem'` is); the types
+# `fontSize?: number` / `fontSize: number`, `fontSize: CHART_FONT.tick` and
+# `fontSize: 'var(--text-…)'` stay uncounted.
+_TYPE_SCALE_INLINE_RE = re.compile(
+    r"""fontSize\s*(?:"""
+    r""":\s*(?:var\([^)\n]*\)|(?!var\()[^,}\n])*?"""        # a style property
+    r"""|=\s*(?:"(?:var\([^)\n]*\)|(?!var\()[^"\n])*?"""    # a JSX / SVG attribute "…"
+    r"""|'(?:var\([^)\n]*\)|(?!var\()[^'\n])*?"""           # '…'
+    r"""|\{\s*(?:var\([^)\n]*\)|(?!var\()[^}\n])*?)"""      # {…}
+    r""")(?<![\w.$-])\.?\d"""
+)
 
 
 def _type_scale_counts() -> dict[str, int]:
