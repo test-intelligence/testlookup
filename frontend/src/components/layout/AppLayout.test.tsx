@@ -2,7 +2,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 // The demo banner reads GET /auth/options; off the demo it renders nothing.
-vi.mock("@/hooks/useDemoMode", () => ({ useDemoMode: () => false }))
+const demoMode = vi.hoisted(() => ({ on: false }))
+vi.mock("@/hooks/useDemoMode", () => ({ useDemoMode: () => demoMode.on }))
 import AppLayout from './AppLayout'
 import { openHelp, useHelpStore } from '@/store/helpStore'
 
@@ -40,6 +41,25 @@ describe('AppLayout', () => {
     expect(screen.getByText('TopBar Stub')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument()
     expect(screen.getByText('Overview Content')).toBeInTheDocument()
+    expect(screen.queryByTestId('demo-banner')).not.toBeInTheDocument()
+  })
+
+  it('loads the demo banner only on the public demo', async () => {
+    demoMode.on = true
+    try {
+      render(
+        <MemoryRouter initialEntries={['/overview']}>
+          <Routes>
+            <Route element={<AppLayout />}>
+              <Route path="/overview" element={<div>Overview Content</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      )
+      expect(await screen.findByTestId('demo-banner')).toHaveTextContent(/live demo/i)
+    } finally {
+      demoMode.on = false
+    }
   })
 
   it('moves keyboard focus past navigation to the main landmark', () => {

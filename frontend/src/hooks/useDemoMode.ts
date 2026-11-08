@@ -1,5 +1,5 @@
 import useSWR from 'swr'
-import { getAuthOptions } from '@/services/authService'
+import { getAuthOptions } from '@/services/authOptions'
 
 /**
  * Whether this server is the public read-only demo (`GET /api/v1/auth/options`

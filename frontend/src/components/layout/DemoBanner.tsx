@@ -1,5 +1,4 @@
 import { Eye } from 'lucide-react'
-import { useDemoMode } from '@/hooks/useDemoMode'
 
 /** Where a demo visitor goes to get their own copy. */
 export const GET_TESTLOOKUP_URL = 'https://testlookup.app'
@@ -7,12 +6,12 @@ export const GET_TESTLOOKUP_URL = 'https://testlookup.app'
 /**
  * The public read-only demo's standing notice. It sets expectations before the
  * first refused save: nothing a visitor does is kept, and the data is sample
- * data that is rebuilt every night. Renders nothing off the demo.
+ * data that is rebuilt every night.
+ *
+ * AppLayout lazy-loads this only when the server is the demo (`useDemoMode`),
+ * so a normal deployment never downloads it (scripts/check-bundle-budget.mjs).
  */
 export default function DemoBanner() {
-  const demoMode = useDemoMode()
-  if (!demoMode) return null
-
   return (
     <div
       role="status"

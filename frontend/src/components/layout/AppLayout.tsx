@@ -3,7 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 import DegradedBanner from './DegradedBanner'
-import DemoBanner from './DemoBanner'
+import { useDemoMode } from '@/hooks/useDemoMode'
 import { isSettingsAreaPath } from './settingsRoutes'
 import SectionTabs from './SectionTabs'
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
@@ -13,6 +13,8 @@ import { useHelpStore } from '@/store/helpStore'
 // page): loaded the first time help opens, never in the shell's first load
 // (the eager bundle budget).
 const HelpDrawer = lazy(() => import('@/components/help/HelpDrawer'))
+// Only the public read-only demo shows it; everyone else never downloads it.
+const DemoBanner = lazy(() => import('./DemoBanner'))
 
 // The settings sub-nav (UX redesign P5) and its groups' words: loaded on the
 // first settings or admin page, never in the shell's first load (the budget).
@@ -50,6 +52,7 @@ export default function AppLayout() {
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
   const helpOpen = useHelpStore((s) => s.topic !== null)
+  const demoMode = useDemoMode()
   // Every settings and admin page sits in the settings layout, keyed off the
   // route here, never per page (BUG-009: a per-page rule is one 14 of 23
   // pages forgot). It replaced the "Back to Settings" bar.
@@ -96,7 +99,11 @@ export default function AppLayout() {
         <Sidebar drawer={narrow ? { open: navOpen, onClose: closeNav, id: SHELL_NAV_ID } : null} />
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
           <TopBar navToggle={narrow ? { open: drawerOpen, onToggle: toggleNav, controls: SHELL_NAV_ID } : null} />
-          <DemoBanner />
+          {demoMode && (
+            <Suspense fallback={null}>
+              <DemoBanner />
+            </Suspense>
+          )}
           <DegradedBanner />
           {/* `relative`: the scroll box is the containing block of the page's
               absolutely positioned descendants (every `sr-only` label, the chart
