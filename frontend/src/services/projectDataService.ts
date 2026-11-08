@@ -6,6 +6,7 @@ import {
   IMPORT_ARCHIVE_MAX_BYTES,
   IMPORT_PART_MAX_BYTES,
   IMPORT_UPLOAD_MAX_BYTES,
+  type ProjectDataDownloadTicket,
   type ProjectDataJob,
   type ProjectDataJobList,
   type ProjectExportEstimate,
@@ -22,6 +23,8 @@ import { getData, postData } from './http'
  * W24 ADM-05 phase 1: export a project's settings + catalog, import an export as a NEW project.
  * W30 (ADM-05 run history): the export may carry run history (an optional body), an estimate is read first, and an archive
  * larger than IMPORT_UPLOAD_MAX_BYTES is imported through the PARTED upload (start → parts → complete).
+ * W37: the estimate may name a release; an archive over 512 MB downloads through a one-time ticket (POST, then a
+ * same-origin navigation); the import's `add_members` / `keep_reviews` travel only when chosen.
  *
  * Every request path is written out in full (the SPA wire contract reads the
  * quoted literals). The POSTs, the PUT and the download suppress the shared toast:
@@ -36,10 +39,44 @@ export interface ImportArchiveProgress {
   total: number
 }
 
-export interface ImportArchiveOptions {
+/** W37: the import's two options — sent ONLY when true (the default POST stays `file` + `client_token`). */
+export interface ImportChoices {
+  addMembers?: boolean
+  keepReviews?: boolean
+}
+
+export interface ImportArchiveOptions extends ImportChoices {
   name?: string | null
   clientToken: string
   onProgress?: (progress: ImportArchiveProgress) => void
+}
+
+/**
+ * W37 (F-W30-6): the ticket's link only when it is THIS job's same-origin ticket route —
+ * `/api/v1/project-data-downloads/<job id>?ticket=<url-safe token>` — else null. The link is the server's, but it
+ * becomes an href, so nothing else (another origin, another path, another job) is ever navigated to.
+ */
+function ticketLink(url: unknown, jobId: string): string | null {
+  const prefix = `/api/v1/project-data-downloads/${jobId}?ticket=`
+  if (typeof url !== 'string' || !url.startsWith(prefix)) return null
+  return /^[\w\-.~%]+$/.test(url.slice(prefix.length)) ? url : null
+}
+
+/**
+ * W37: navigate a hidden same-origin `<a href>` (no new window): the response is an attachment, so the browser saves
+ * it straight to disk while this page stays where it is.
+ */
+function followDownloadLink(href: string): void {
+  const link = document.createElement('a')
+  link.href = href
+  link.rel = 'noopener'
+  link.style.display = 'none'
+  document.body.appendChild(link)
+  try {
+    link.click()
+  } finally {
+    link.remove()
+  }
 }
 
 /** `attachment; filename="x.zip"` (plain, quoted or RFC 5987) → `x.zip`; else null. */
@@ -109,16 +146,23 @@ export const projectDataService = {
 
   /**
    * What an export with history would carry (counts only; a store that could not be read answers null with
-   * `measured[store] = false`). `historyDays` null = all history (the parameter is then omitted).
+   * `measured[store] = false`). `historyDays` null = all history (the parameter is then omitted). W37: a
+   * `historyReleaseId` reads the runs linked to that release (`?include_history=true&history_release_id=<id>`).
    */
   getExportEstimate: (
     projectId: string,
-    { includeHistory, historyDays, maxRuns }: { includeHistory: boolean; historyDays?: number | null; maxRuns?: number },
+    {
+      includeHistory,
+      historyDays,
+      maxRuns,
+      historyReleaseId,
+    }: { includeHistory: boolean; historyDays?: number | null; maxRuns?: number; historyReleaseId?: string | null },
   ) =>
     getData<ProjectExportEstimate>(`/api/v1/projects/${projectId}/export-estimate`, {
       params: {
         include_history: includeHistory,
         ...(historyDays != null ? { history_days: historyDays } : {}),
+        ...(historyReleaseId ? { history_release_id: historyReleaseId } : {}),
         ...(maxRuns != null ? { max_runs: maxRuns } : {}),
       },
     }),
@@ -155,17 +199,42 @@ export const projectDataService = {
     return filename
   },
 
+  /** W37 (F-W30-6): a 60-second, single-use download link for a succeeded export (`{ticket, expires_in, url}`). */
+  createDownloadTicket: (jobId: string) =>
+    postData<ProjectDataDownloadTicket>(`/api/v1/project-data-jobs/${jobId}/download-ticket`, undefined, {
+      suppressToast: true,
+    }),
+
+  /**
+   * W37 (F-W30-6): download an archive larger than 512 MB straight to disk — ONE ticket POST (its refusal rejects,
+   * with the same `{code, message}` as the Blob download's), then a hidden same-origin `<a href>` navigates to the
+   * ticket's link (no Blob in memory, no Axios timeout, no new window). Resolves the link it followed.
+   */
+  downloadLargeExport: async (jobId: string): Promise<string> => {
+    const ticket = await projectDataService.createDownloadTicket(jobId)
+    const href = ticketLink(ticket?.url, jobId)
+    if (!href) throw new Error(ERROR_SENTENCES.ticket_unavailable)
+    followDownloadLink(href)
+    return href
+  },
+
   /**
    * Upload an export to create a NEW project (ADMIN). Multipart: `file`, `client_token` (minted once per chosen
    * file, so a retry of the same selection is the same job) and `name` only when one was typed. Resolves the
-   * job — a new one (202) or the existing job of that token (200).
+   * job — a new one (202) or the existing job of that token (200). W37: `add_members` / `keep_reviews` = "true"
+   * only when chosen (unchosen = no field, so the default POST is W24's `file` + `client_token` exactly).
    */
-  startImport: (file: File, { name, clientToken }: { name?: string | null; clientToken: string }) => {
+  startImport: (
+    file: File,
+    { name, clientToken, addMembers, keepReviews }: { name?: string | null; clientToken: string } & ImportChoices,
+  ) => {
     const form = new FormData()
     form.append('file', file)
     form.append('client_token', clientToken)
     const trimmed = typedName(name)
     if (trimmed) form.append('name', trimmed)
+    if (addMembers) form.append('add_members', 'true')
+    if (keepReviews) form.append('keep_reviews', 'true')
     return api
       .post<ProjectDataJob>('/api/v1/projects/import', form, {
         // The shared client defaults Content-Type to JSON: unset it so the
@@ -207,8 +276,13 @@ export const projectDataService = {
    * ONE in flight, each a `Blob.slice` → complete. A start that answers a job no longer `uploading` (the same
    * file was already imported) resolves that job without sending anything.
    */
-  importArchive: async (file: File, { name, clientToken, onProgress }: ImportArchiveOptions): Promise<ProjectDataJob> => {
-    if (file.size <= IMPORT_UPLOAD_MAX_BYTES) return projectDataService.startImport(file, { name, clientToken })
+  importArchive: async (
+    file: File,
+    { name, clientToken, onProgress, addMembers, keepReviews }: ImportArchiveOptions,
+  ): Promise<ProjectDataJob> => {
+    // W37: the options travel only when chosen — as Form fields on the single POST, as booleans in the parted start.
+    const choices = { ...(addMembers ? { addMembers: true } : {}), ...(keepReviews ? { keepReviews: true } : {}) }
+    if (file.size <= IMPORT_UPLOAD_MAX_BYTES) return projectDataService.startImport(file, { name, clientToken, ...choices })
     if (file.size > IMPORT_ARCHIVE_MAX_BYTES) throw new Error(ERROR_SENTENCES.upload_too_large_history)
     const digests = await sha256Parts(file, {
       sliceBytes: IMPORT_PART_MAX_BYTES,
@@ -221,6 +295,8 @@ export const projectDataService = {
       bytes: file.size,
       parts: total,
       sha256: digests.sha256,
+      ...(addMembers ? { add_members: true } : {}),
+      ...(keepReviews ? { keep_reviews: true } : {}),
     })
     if (job.status !== 'uploading') return job
     const received = new Set(job.upload?.received ?? [])

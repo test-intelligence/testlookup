@@ -1082,7 +1082,43 @@ export interface ProjectDataWorldOptions {
    * `historyImportProgression()`); the last one repeats.
    */
   historyJob?: { exportAnswers?: ProjectDataJob[]; importAnswers?: ProjectDataJob[] }
+  /** W37: the top bar's release list (default LAYOUT's empty one) — the "One release" select reads the same entry. */
+  releases?: unknown[]
+  /**
+   * W37 (F-W30-6): the answer to `POST …/download-ticket` — default a ticket whose link is
+   * `/api/v1/project-data-downloads/<job id>?ticket=${PROJECT_DATA_TICKET}`; or a scripted refusal.
+   */
+  ticket?: ApiResponse
 }
+
+/** W37: the ticket the world mints (url-safe, non-hex words) — the navigation GET must carry exactly this. */
+export const PROJECT_DATA_TICKET = 'tkt_Quokka-Lantern_42'
+
+/**
+ * W37 (W24 F-2 / F-7): what an import with Add members + Keep reviews reports — two members and a suite owner added,
+ * one member whose e-mail matched nobody, an owner who is not a QA lead, one case returned to Review requested, and
+ * `options_ignored` as given. The rest is `projectDataJob('import', 'succeeded')`'s report.
+ */
+export function peopleImportReport(optionsIgnored: string[] = []): ProjectDataImportReport {
+  const base = projectDataJob('import', 'succeeded').import_report as ProjectDataImportReport
+  return {
+    ...base,
+    inserted: { ...base.inserted, project_members: 2, test_suite_owners: 1, test_case_reviews: 3, test_case_comments: 0 },
+    skipped: [
+      ...(base.skipped ?? []),
+      { entity: 'project_members', column: null, reason: 'email_not_found', count: 1 },
+      { entity: 'test_suite_owners', column: null, reason: 'owner_not_lead', count: 1 },
+    ],
+    switched_off: { ...base.switched_off, 'managed_test_cases.review_unclaimed': 1 },
+    options_ignored: optionsIgnored,
+  }
+}
+
+/** queued → running 5 of 30 → succeeded with `peopleImportReport(optionsIgnored)`. */
+export const peopleImportProgression = (optionsIgnored: string[] = []) =>
+  importProgression().map((job) =>
+    job.status === 'succeeded' ? { ...job, import_report: peopleImportReport(optionsIgnored), counts: peopleImportReport(optionsIgnored).inserted } : job,
+  )
 
 /** One recorded parted-upload PUT: the part number, its `X-Part-Sha256`, and the body's real size and SHA-256. */
 export interface RecordedPart {
@@ -1118,6 +1154,10 @@ export function projectDataWorld(options: ProjectDataWorldOptions = {}) {
   // W30: every parted-upload PUT (part number, header digest, body size + digest) and every estimate GET's window.
   const parts: RecordedPart[] = []
   const estimates: Array<number | null> = []
+  // W37: every release-scoped estimate's `history_release_id`, and every job a download ticket was minted for (a
+  // ticket is a 60-second Redis credential, not a data write: it is not in `writes`).
+  const estimateReleases: string[] = []
+  const tickets: string[] = []
   const exports = [...(options.exports ?? [])]
   const imports = [...(options.imports ?? [])]
   const answers: Record<string, ProjectDataJob[]> = {
@@ -1153,6 +1193,12 @@ export function projectDataWorld(options: ProjectDataWorldOptions = {}) {
       return accepted(options.exportPost ?? fallback, exports)
     }, 'POST'],
     [/^\/api\/v1\/projects\/[^/]+\/export-estimate$/, (request) => {
+      // W37: a release-scoped estimate names the release and no day window.
+      const release = request.url.searchParams.get('history_release_id')
+      if (release) {
+        estimateReleases.push(release)
+        return options.estimate ?? historyEstimate(null, { history_release_id: release })
+      }
       const days = request.url.searchParams.get('history_days')
       const historyDays = days ? Number(days) : null
       estimates.push(historyDays)
@@ -1205,6 +1251,22 @@ export function projectDataWorld(options: ProjectDataWorldOptions = {}) {
     ['/api/v1/project-imports', (request) => page(imports, request)],
     [/^\/api\/v1\/project-data-jobs\/[^/]+\/download$/, () =>
       options.download instanceof ApiResponse ? options.download : respondRaw(EMPTY_ZIP, 'application/zip')],
+    // W37 (F-W30-6): mint a 60-second ticket (contract §2.4 shape), then answer the browser's navigation to its link
+    // with the archive — only for the job and the ticket it was minted for (anything else: the 404 text page).
+    [/^\/api\/v1\/project-data-jobs\/[^/]+\/download-ticket$/, (request) => {
+      const id = request.path.split('/')[4]
+      tickets.push(id)
+      if (options.ticket) return options.ticket
+      return { ticket: PROJECT_DATA_TICKET, expires_in: 60, url: `/api/v1/project-data-downloads/${id}?ticket=${PROJECT_DATA_TICKET}` }
+    }, 'POST'],
+    [/^\/api\/v1\/project-data-downloads\/[^/]+$/, (request) => {
+      const id = request.path.split('/')[4]
+      const minted = tickets.includes(id) && request.url.searchParams.get('ticket') === PROJECT_DATA_TICKET
+      // No Content-Disposition (as the Blob download above): Chrome saves a navigation to application/zip.
+      return minted
+        ? respondRaw(EMPTY_ZIP, 'application/zip')
+        : respondRaw('This download link has expired or was already used. Go back to Project data and click Download again.', 'text/plain', 404)
+    }],
     [/^\/api\/v1\/project-data-jobs\/[^/]+$/, (request) => {
       const id = request.path.split('/')[4]
       if (uploading.has(id)) return current[id]
@@ -1213,9 +1275,10 @@ export function projectDataWorld(options: ProjectDataWorldOptions = {}) {
       current[id] = queue.length > 1 ? (queue.shift() as ProjectDataJob) : queue[0]
       return current[id]
     }],
+    ...(options.releases ? ([['/api/v1/releases', () => ({ items: options.releases, total: options.releases?.length ?? 0, page: 1, size: 100, pages: 1 })]] as ApiHandlers) : []),
     ...LAYOUT,
   ]
-  return { handlers, writes, parts, estimates }
+  return { handlers, writes, parts, estimates, estimateReleases, tickets }
 }
 
 // ── Policies, search, chat, the settings pages (PAN-05d, PAN-06b) ──────────

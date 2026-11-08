@@ -209,6 +209,8 @@ async def _run_export(job_id: uuid.UUID, *, storage: Any, session_factory: Calla
 
     store = _storage(storage)
     history = bool(options.include_history)
+    # W37 F-2 / F-7: Include members / Include reviews need the options with or without history
+    chosen = history or bool(options.include_members) or bool(options.include_reviews)
     started = _now()
 
     async def on_written(key: str) -> None:
@@ -228,7 +230,7 @@ async def _run_export(job_id: uuid.UUID, *, storage: Any, session_factory: Calla
                 result = await run_project_export(
                     snapshot, job_id=job_id, project=project, storage=store, now=started,
                     on_written=on_written, sign_db=sign_db, on_table=_progress_writer(session_factory, job_id),
-                    options=options if history else None, mongo=_mongo(mongo) if history else None,
+                    options=options if chosen else None, mongo=_mongo(mongo) if history else None,
                     on_progress=_export_phase_writer(session_factory, job_id) if history else None,
                 )
                 await sign_db.commit()      # a deployment's first pack created the signing key here
@@ -401,6 +403,7 @@ async def _run_import(
             return "skipped"
         upload_key, requester_id = claimed.storage_key, claimed.requested_by_id
         parted = bool((claimed.options if isinstance(claimed.options, dict) else {}).get("parted"))
+        flags = jobs.import_flags(claimed)          # W37 §2.2: Add members / Keep reviews (empty: today's import)
 
     store = _storage(storage)
 
@@ -434,7 +437,7 @@ async def _run_import(
                         db, job=job, storage=store, actor=actor, now=_now(),
                         on_table=_progress_writer(session_factory, job_id), on_manifest=on_manifest, outcome=extra,
                         mongo=mongo, spool=spool, on_ledger=on_ledger,
-                        on_progress=_import_phase_writer(session_factory, job_id),
+                        on_progress=_import_phase_writer(session_factory, job_id), **flags,
                     )
                     await db.commit()       # ONE transaction: the project, its catalog + history, the job's success
                 except BaseException:
@@ -455,8 +458,9 @@ async def _run_import(
                        error_type=type(exc).__name__)
         return "failed"
 
-    # After the commit, in create_project's order: the requester's and the service accounts' caches.
-    for user_id in [actor_id, *extra.get("enrolled_service_account_ids", [])]:
+    # After the commit, in create_project's order: the requester's and the service accounts' caches — and (W37
+    # §2.2, Add members) every member the import added.
+    for user_id in [actor_id, *extra.get("enrolled_service_account_ids", []), *extra.get("added_member_ids", [])]:
         if user_id is not None:
             await invalidate_membership_cache(user_id)
     await _remove_upload(session_factory, store, job_id, upload_key)

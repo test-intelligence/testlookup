@@ -18,6 +18,11 @@
  * W30 (ADM-05 run history) adds run history: the window form and its export body, the estimate line (a store
  * that could not be read says "not measured", never 0), the phase lines, the parted upload's part plan and
  * its "Uploading… n of m parts" line, and the history block of an import report.
+ *
+ * W37 (import / export follow-ups): the window's 5th choice "One release" (its body names `history_release_id`, no
+ * `history_days`; Export waits for a release), the Include members / Include reviews and Add members / Keep reviews
+ * boxes (a key only when ticked), the large-download rule (a ticket above 512 MB) and the report's
+ * `options_ignored` lines and `review_unclaimed` suffix.
  */
 import {
   ACTIVE_STATUSES,
@@ -82,8 +87,25 @@ export const HISTORY_SKIPPED_HEADING = 'Not imported'
 export const RETENTION_PAUSED = 'The retention purge of the new project is paused until {date}.'
 /** `UI_SENTENCES.recent_runs_note` for a count of 1. */
 export const RECENT_RUN_NOTE_ONE = '1 imported run is from the last 7 days; an all-projects digest can list it.'
-/** A history export whose archive is larger than this shows `UI_SENTENCES.large_download_hint` (R-2). */
+/**
+ * A history export whose archive is larger than this shows `UI_SENTENCES.large_download_hint` (R-2) and — W37
+ * (F-W30-6) — downloads through a one-time ticket (a browser navigation straight to disk), not as a Blob.
+ */
 export const LARGE_DOWNLOAD_BYTES = 512 * 1024 * 1024
+
+// W37 — the card labels the contract does not word (the wire sentences are the vocabulary's).
+/** The window select's 5th option: the runs linked to ONE release replace the day window (F-W30-1). */
+export const ONE_RELEASE_LABEL = 'One release'
+/** The release select's label and its first, empty option. */
+export const RELEASE_LABEL = 'Release'
+export const CHOOSE_RELEASE = 'Choose a release…'
+export const NO_RELEASES = 'No releases in this project'
+/** Export: two boxes independent of history (W24 F-2 / F-7), sent only when ticked. */
+export const INCLUDE_MEMBERS_LABEL = 'Include members and suite owners (with their e-mail addresses)'
+export const INCLUDE_REVIEWS_LABEL = 'Include test case reviews and comments'
+/** Import: two boxes, sent only when ticked. */
+export const ADD_MEMBERS_LABEL = 'Add members who have an account here (matched by e-mail)'
+export const KEEP_REVIEWS_LABEL = 'Keep test case reviews'
 
 /** The text after "<entity>: N rows " for an entity that arrived switched off / paused. */
 const SWITCHED_OFF_SUFFIX: Record<string, string> = {
@@ -96,6 +118,8 @@ const SWITCHED_OFF_SUFFIX: Record<string, string> = {
   run_cadences: 'paused for 90 days',
   'releases.deactivated': 'set inactive — one active release is kept',
   'managed_test_cases.review_reset': 'returned to draft — review requests are not exported',
+  // W37 (F-7, keep reviews): an under-review case whose claimant is not a reviewer member of the copy.
+  'managed_test_cases.review_unclaimed': 'returned to Review requested — the reviewer is not a member here',
 }
 const SWITCHED_OFF_DEFAULT = 'switched off'
 
@@ -140,23 +164,24 @@ export function formatProgress(progress: ProgressLike | null | undefined, kind: 
 
 // ── W30: run history — the form, the estimate, the phases, the parted upload ──
 
-/** The window `<select>`'s value: a number of days, or every run. */
-export type HistoryWindow = `${(typeof HISTORY_WINDOWS_DAYS)[number]}` | 'all'
+/** The window `<select>`'s value: a number of days, every run, or (W37) the runs linked to one release. */
+export type HistoryWindow = `${(typeof HISTORY_WINDOWS_DAYS)[number]}` | 'all' | 'release'
 
 export const HISTORY_DEFAULT_WINDOW = String(HISTORY_DEFAULT_DAYS) as HistoryWindow
 
 /**
- * "30 days" / "90 days" / "365 days" / "All history". The longest, "All history" (11 characters ≈ 85 px at 12 px
- * under DejaVu, + the 24 px arrow), sits in a 144 px `w-36` select with 35 px to spare.
+ * "30 days" / "90 days" / "365 days" / "All history" / "One release" (W37). The longest, "All history" and "One
+ * release" (11 characters ≈ 85 px at 12 px under DejaVu, + the 24 px arrow), sit in the 160 px `w-40` select.
  */
 export const HISTORY_WINDOW_OPTIONS: ReadonlyArray<{ value: HistoryWindow; label: string }> = [
   ...HISTORY_WINDOWS_DAYS.map((days) => ({ value: String(days) as HistoryWindow, label: `${days} days` })),
   { value: 'all', label: ALL_HISTORY_LABEL },
+  { value: 'release', label: ONE_RELEASE_LABEL },
 ]
 
-/** `'90'` → 90; `'all'` → null (every run). */
+/** `'90'` → 90; `'all'` → null (every run); `'release'` → null (no day window: the release is the window). */
 export function historyDaysOf(window: HistoryWindow): number | null {
-  return window === 'all' ? null : Number(window)
+  return window === 'all' || window === 'release' ? null : Number(window)
 }
 
 export interface HistoryForm {
@@ -172,8 +197,54 @@ export function historyOptionsFromForm(
   return { include_history: true, history_days: historyDaysOf(form.window), max_runs: HISTORY_MAX_RUNS }
 }
 
-/** The estimate GET's options for the window (`useExportEstimate`). */
-export function estimateOptionsOf(window: HistoryWindow): { historyDays: number | null } {
+/** W37: the whole Export form — the history window, the release it may name, and the two include boxes. */
+export interface ExportForm extends HistoryForm {
+  /** `window === 'release'`: the chosen release's id (`''` = none chosen yet). */
+  releaseId?: string
+  includeMembers?: boolean
+  includeReviews?: boolean
+}
+
+export interface ExportBody {
+  include_history?: true
+  history_days?: number | null
+  max_runs?: number
+  history_release_id?: string
+  include_members?: true
+  include_reviews?: true
+}
+
+/** W37: "One release" is chosen but no release is: Export (and Export again) wait, and no estimate is read. */
+export function exportFormBlocked(form: ExportForm): boolean {
+  return form.includeHistory && form.window === 'release' && !form.releaseId
+}
+
+/**
+ * W37: the body of `POST …/export`. Nothing ticked → `undefined` (W24's body-less POST, exactly). A day window keeps
+ * W30's `{include_history, history_days, max_runs}`; "One release" sends `history_release_id` and NO `history_days`
+ * (the release replaces the window). `include_members` / `include_reviews` are keys only when ticked.
+ */
+export function exportBodyFromForm(form: ExportForm): ExportBody | undefined {
+  const body: ExportBody = {}
+  if (form.includeHistory && form.window === 'release') {
+    Object.assign(body, { include_history: true, max_runs: HISTORY_MAX_RUNS, history_release_id: form.releaseId ?? '' })
+  } else if (form.includeHistory) {
+    Object.assign(body, historyOptionsFromForm(form))
+  }
+  if (form.includeMembers) body.include_members = true
+  if (form.includeReviews) body.include_reviews = true
+  return Object.keys(body).length > 0 ? body : undefined
+}
+
+/**
+ * The estimate GET's options for the window (`useExportEstimate`). W37: "One release" reads the release's runs
+ * (`historyReleaseId`, no day window); the key is only added then, so a day window's options stay `{historyDays}`.
+ */
+export function estimateOptionsOf(
+  window: HistoryWindow,
+  releaseId?: string,
+): { historyDays: number | null; historyReleaseId?: string } {
+  if (window === 'release') return { historyDays: null, historyReleaseId: releaseId ?? '' }
   return { historyDays: historyDaysOf(window) }
 }
 
@@ -296,9 +367,14 @@ export function partPlan(bytes: number): PartPlan {
   return { mode: 'parted', parts, sizes }
 }
 
-/** A history export's archive over 512 MB: the CLI line (`UI_SENTENCES.large_download_hint`), else null. */
+/** W37 (F-W30-6): an archive over 512 MB downloads through a one-time ticket; at or below, as a Blob (unchanged). */
+export function isLargeDownload(bytes: number | null | undefined): boolean {
+  return typeof bytes === 'number' && bytes > LARGE_DOWNLOAD_BYTES
+}
+
+/** A history export's archive over 512 MB: the hint line (`UI_SENTENCES.large_download_hint`), else null. */
 export function largeDownloadHint(bytes: number | null | undefined, project: string): string | null {
-  return typeof bytes === 'number' && bytes > LARGE_DOWNLOAD_BYTES ? fill(UI_SENTENCES.large_download_hint, { project }) : null
+  return isLargeDownload(bytes) ? fill(UI_SENTENCES.large_download_hint, { project }) : null
 }
 
 // ── The jobs (structural: the API's ProjectDataJob fits) ─────────────────────
@@ -339,6 +415,8 @@ export interface ImportReportLike {
   switched_off?: Record<string, number> | null
   signature?: string | null
   history?: HistoryReportLike | null
+  /** W37: the import options the archive could not honour (`add_members` / `keep_reviews`). */
+  options_ignored?: readonly string[] | null
 }
 
 export interface JobLike {
@@ -527,6 +605,28 @@ export interface ImportReportLines {
   switchedOff: ReportLine[]
   /** "1 row was skipped: it pointed at a row that is not in the export" / "2 assignments were cleared: …". */
   notImported: ReportLine[]
+  /** W37: one sentence per option the archive could not honour ("Add members: this file lists no members — …"). */
+  optionsIgnored: string[]
+}
+
+/** W37: `options_ignored` entry → its sentence (an option a newer server names that this page does not know: none). */
+const OPTION_IGNORED_SENTENCES: Record<string, string> = {
+  add_members: UI_SENTENCES.option_ignored_add_members,
+  keep_reviews: UI_SENTENCES.option_ignored_keep_reviews,
+}
+
+/** W37: one line per `options_ignored` entry, in the server's order, each option once. */
+export function optionsIgnoredLines(options: readonly string[] | null | undefined): string[] {
+  const keys = Array.isArray(options) ? options.filter((key) => Object.prototype.hasOwnProperty.call(OPTION_IGNORED_SENTENCES, key)) : []
+  return [...new Set(keys)].map((key) => OPTION_IGNORED_SENTENCES[key])
+}
+
+/** W37: the Import form's two boxes → the service's options: a key only when ticked (the default POST is W24's). */
+export function importOptionsFromForm(form: { addMembers: boolean; keepReviews: boolean }): {
+  addMembers?: true
+  keepReviews?: true
+} {
+  return { ...(form.addMembers ? { addMembers: true as const } : {}), ...(form.keepReviews ? { keepReviews: true as const } : {}) }
 }
 
 function reasonText(reason: string | null | undefined): string {
@@ -599,7 +699,10 @@ export function importReportLines(report: ImportReportLike, fallbackName = ''): 
       entity,
       text: `${countNoun(n, 'row')} ${SWITCHED_OFF_SUFFIX[entity] ?? SWITCHED_OFF_DEFAULT}`,
     })),
+    // W37: a member / suite-owner / review skip is a `skipped` entry, so it reads "N rows were skipped: <its reason>"
+    // (e.g. "no active account here has this e-mail address") — never the cleared columns' "assignments" wording.
     notImported: [...skipLines(report.skipped, 's', skippedSentence), ...skipLines(report.cleared, 'c', clearedSentence)],
+    optionsIgnored: optionsIgnoredLines(report.options_ignored),
   }
 }
 

@@ -439,16 +439,17 @@ def test_the_manifest_keys_of_a_catalog_and_a_history_export() -> None:
     stats = {"entities": {"projects": {"rows": 1, "parts": 1, "columns": ["id"]}}, "directory": {"users": 0}}
     catalog = svc.manifest_extra(project_name="P", project_slug="p", stats=stats)
     history = svc.manifest_extra(project_name="P", project_slug="p", stats=stats,
-                                 schema_version=vocab.SCHEMA_VERSION, history={"runs": 3})
+                                 schema_version=svc.export_schema_version(include_history=True), history={"runs": 3})
     assert catalog["schema_version"] == vocab.CATALOG_SCHEMA_VERSION == 1 and "history" not in catalog
-    assert history["schema_version"] == 2 and history["history"] == {"runs": 3}
+    assert history["schema_version"] == 3 and history["history"] == {"runs": 3}      # W37 D-1
     assert set(history) - set(catalog) == {"history"}
 
 
 def test_the_history_readme_says_what_travels_and_that_binaries_are_unscanned() -> None:
     text = svc.HISTORY_README_TEXT
     assert text.startswith(svc.README_TEXT.split("\n")[0]) and text != svc.README_TEXT
-    assert "Run history (schema_version 2):" in text and "NOT scanned" in text
+    assert "Run history (schema_version 3):" in text and "NOT scanned" in text
+    assert "the test plans' execution results" in text            # W37 F-W30-3 travels with history
     assert "It does NOT hold: run history" not in text           # the phase-1 sentence no longer applies
     assert "It does NOT hold: run history" in svc.README_TEXT
 

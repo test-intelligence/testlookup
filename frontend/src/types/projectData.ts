@@ -96,6 +96,8 @@ export const ERROR_SENTENCES = {
   object_unreadable: 'An object in the archive could not be written to storage ({error_type}); nothing was imported.',
   documents_unwritable: 'The documents could not be written ({error_type}); nothing was imported.',
   upload_too_large_history: 'The file is larger than 2 GB.',
+  history_release_invalid: 'Choose a release of this project.',
+  ticket_unavailable: 'Downloads through the browser are unavailable right now; try again or use the CLI.',
 } as const
 export type ProjectDataErrorCode = keyof typeof ERROR_SENTENCES
 
@@ -142,7 +144,9 @@ export const UI_SENTENCES = {
   reindex_queued: 'Search is being rebuilt for the new project.',
   reindex_not_queued: 'Search could not be rebuilt automatically — use Reindex on the Search page.',
   resume_upload: 'Choose the same file to resume the upload.',
-  large_download_hint: 'Large archives download more reliably with the CLI: testlookup projects export {project} --history',
+  large_download_hint: 'Large archives download straight to your disk; the CLI also works: testlookup projects export {project} --history',
+  option_ignored_add_members: 'Add members: this file lists no members — export it again with Include members.',
+  option_ignored_keep_reviews: 'Keep reviews: this file has no reviews — export it again with Include reviews.',
 } as const
 
 /** import_report.skipped[*] / cleared[*].reason → the words after "… were skipped: " / "… were cleared: ". */
@@ -157,6 +161,11 @@ export const SKIP_REASONS = {
   too_large: 'it is larger than 256 MB',
   invalid_document: 'it is not a valid stored document',
   pipeline_scratch: 'it pointed at a pipeline scratch file, which is not exported',
+  email_not_found: 'no active account here has this e-mail address',
+  email_ambiguous: 'more than one account here has this e-mail address',
+  role_unknown: 'its project role is not one this deployment knows',
+  owner_not_lead: 'the owner is not a QA lead in the new project',
+  not_chosen: 'the option to bring them was not chosen',
 } as const
 export type ProjectDataSkipReason = keyof typeof SKIP_REASONS
 
@@ -179,18 +188,30 @@ export interface ProjectDataProgress {
   phase_total?: number | null
 }
 
-/** W30: the optional body of `POST /api/v1/projects/{id}/export` (no body = the catalog-only export). */
+/**
+ * W30: the optional body of `POST /api/v1/projects/{id}/export` (no body = the catalog-only export).
+ * W37: a release-scoped history export sends `history_release_id` and NO `history_days`; `include_members` /
+ * `include_reviews` are sent only when ticked (an unticked box is an absent key).
+ */
 export interface ProjectExportRequest {
-  include_history: boolean
+  include_history?: boolean
   /** A HISTORY_WINDOWS_DAYS value, or null = all history. */
   history_days?: number | null
   max_runs?: number
+  /** W37 (F-W30-1): the runs linked to ONE release of this project replace the day window. */
+  history_release_id?: string
+  /** W37 (W24 F-2): the project's members and suite owners, with their e-mail addresses. */
+  include_members?: boolean
+  /** W37 (W24 F-7): test case reviews and comments. */
+  include_reviews?: boolean
 }
 
 /** W30: `GET /api/v1/projects/{id}/export-estimate` — counts only; null = that store was not measured. */
 export interface ProjectExportEstimate {
   include_history: boolean
   history_days?: number | null
+  /** W37: the release the estimate was scoped to (null / absent = a day window). */
+  history_release_id?: string | null
   runs?: number | null
   runs_in_progress?: number | null
   runs_over_cap?: number | null
@@ -205,11 +226,30 @@ export interface ProjectExportEstimate {
   measured: Record<string, boolean>
 }
 
-/** W30: what an export was asked for (echoed on the job). */
+/** W30: what an export was asked for (echoed on the job). W37: only the keys that were set; imports echo theirs. */
 export interface ProjectDataOptions {
-  include_history: boolean
+  include_history?: boolean
   history_days?: number | null
   max_runs?: number | null
+  /** W37: a release-scoped history export (then `history_days` is null). */
+  history_release_id?: string | null
+  include_members?: boolean
+  include_reviews?: boolean
+  /** W37: an import's options. */
+  add_members?: boolean
+  keep_reviews?: boolean
+}
+
+/** W37: the import options an archive may not be able to honour (`import_report.options_ignored`). */
+export const IMPORT_OPTIONS = ['add_members', 'keep_reviews'] as const
+export type ProjectImportOption = (typeof IMPORT_OPTIONS)[number]
+
+/** W37 (F-W30-6): `POST /api/v1/project-data-jobs/{id}/download-ticket` — a 60-second, single-use link. */
+export interface ProjectDataDownloadTicket {
+  ticket: string
+  expires_in: number
+  /** Same-origin `/api/v1/project-data-downloads/<job id>?ticket=…` — the browser navigates to it. */
+  url: string
 }
 
 /** W30: a parted upload's state while the import job is `uploading`. */
@@ -229,6 +269,9 @@ export interface ProjectImportUploadStart {
   parts: number
   /** SHA-256 of the WHOLE file, lower-case hex. */
   sha256: string
+  /** W37: sent only when ticked. */
+  add_members?: boolean
+  keep_reviews?: boolean
 }
 
 /** W30: the answer of `PUT /api/v1/project-imports/uploads/{id}/parts/{n}`. */
@@ -285,6 +328,8 @@ export interface ProjectDataImportReport {
   exported_at: string
   /** W30: the history block (null for a catalog-only import). */
   history?: ProjectDataHistoryReport | null
+  /** W37: an option the archive could not honour (no members / no reviews in the file) — reported, never an error. */
+  options_ignored?: (ProjectImportOption | string)[]
 }
 
 export interface ProjectDataJob {

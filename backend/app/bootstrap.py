@@ -71,6 +71,7 @@ from app.routers import (
     ownership,
     performance,
     project_data,
+    project_data_download,
     projects,
     rag_generation,
     release_attribution_rules,
@@ -119,6 +120,12 @@ PUBLIC_ROUTERS: Sequence[APIRouter] = (
     # redeems a short-lived, single-use invocation ticket issued by the
     # protected agent-invocation router.
     agent_invoke.stream_router,
+    # W37 F-W30-6: a browser navigation cannot send Authorization either. The
+    # only route on this router streams a large project export to disk after
+    # redeeming a 60-second, single-use ticket bound to (job, user), issued by
+    # project_data_download.router behind require_project_data_job_access; the
+    # redeem re-checks that user's access before the first byte.
+    project_data_download.public_router,
     auth.router,
     # MFA is public for the same reason auth is: /mfa/verify and the forced
     # enrollment path carry an interstitial MFA token, not an access token, so
@@ -156,6 +163,8 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     # W24 ADM-05: project export / import, BEFORE projects.router so the literal
     # ``POST /projects/import`` is matched before any ``/projects/{project_id}`` route.
     project_data.router,
+    # W37 F-W30-6: the download-ticket POST (its download is in PUBLIC_ROUTERS).
+    project_data_download.router,
     projects.router,
     # run_compare must be registered BEFORE runs.router because both share the
     # ``/api/v1/runs`` prefix and runs.router has ``GET /{run_id}`` which

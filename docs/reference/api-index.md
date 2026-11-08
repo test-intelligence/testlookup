@@ -266,8 +266,10 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/performance/observed` | Get Observed Performance | [Performance](api/performance.md) |
 | GET | `/api/v1/performance/search-config` | Get Search Config | [Performance](api/performance.md) |
 | GET | `/api/v1/performance/slow-queries` | Get Slow Queries | [Performance](api/performance.md) |
+| GET | `/api/v1/project-data-downloads/{data_job_id}` | Download Project Export By Ticket | [Project data](api/project-data.md) |
 | GET | `/api/v1/project-data-jobs/{data_job_id}` | Get Project Data Job | [Project data](api/project-data.md) |
 | GET | `/api/v1/project-data-jobs/{data_job_id}/download` | Download Project Export | [Project data](api/project-data.md) |
+| POST | `/api/v1/project-data-jobs/{data_job_id}/download-ticket` | Issue Project Export Download Ticket | [Project data](api/project-data.md) |
 | GET | `/api/v1/project-imports` | List My Project Imports | [Project data](api/project-data.md) |
 | POST | `/api/v1/project-imports/uploads` | Start Import Upload | [Project data](api/project-data.md) |
 | POST | `/api/v1/project-imports/uploads/{data_job_id}/complete` | Complete Import Upload | [Project data](api/project-data.md) |
@@ -740,4 +742,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **731 HTTP operations**, **620 paths**, **92 domain pages**.
+Total: **733 HTTP operations**, **622 paths**, **92 domain pages**.

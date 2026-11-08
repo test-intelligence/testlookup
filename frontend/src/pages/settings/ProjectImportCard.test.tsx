@@ -13,7 +13,14 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ProjectImportCard from './ProjectImportCard'
-import { ERROR_SENTENCES, LAST_IMPORT_HEADING, NAME_PLACEHOLDER, UI_SENTENCES } from './projectDataModel'
+import {
+  ADD_MEMBERS_LABEL,
+  ERROR_SENTENCES,
+  KEEP_REVIEWS_LABEL,
+  LAST_IMPORT_HEADING,
+  NAME_PLACEHOLDER,
+  UI_SENTENCES,
+} from './projectDataModel'
 
 const jobs: Record<string, unknown> = {}
 const mockUseJob = vi.fn((id: string | null) => ({ data: id ? jobs[id] : undefined }))
@@ -371,5 +378,69 @@ describe('ProjectImportCard — parted upload and history (W30)', () => {
     choose(zip('old-history.zip', 12 * 1024))
     fireEvent.click(importButton())
     expect(await screen.findByText('Retention is off for this project: imported runs are kept.')).toBeInTheDocument()
+  })
+})
+
+// ── W37: Add members / Keep reviews and the report's new lines ──────────────
+
+const addMembersBox = () => screen.getByRole('checkbox', { name: ADD_MEMBERS_LABEL })
+const keepReviewsBox = () => screen.getByRole('checkbox', { name: KEEP_REVIEWS_LABEL })
+
+describe('ProjectImportCard — Add members and Keep reviews (W37)', () => {
+  beforeEach(() => {
+    for (const key of Object.keys(jobs)) delete jobs[key]
+    window.sessionStorage.clear()
+    mockUseJob.mockClear()
+    mockStartImport.mockReset()
+    mockImportArchive.mockReset()
+    onChanged.mockReset()
+  })
+
+  it('both boxes start unticked (the default POST stays file + token); ticked, the single POST carries both', async () => {
+    mockStartImport.mockResolvedValue({ id: 'job-opt', kind: 'import', status: 'queued' })
+    renderCard()
+    expect(addMembersBox()).not.toBeChecked()
+    expect(keepReviewsBox()).not.toBeChecked()
+    choose(zip())
+    fireEvent.click(addMembersBox())
+    fireEvent.click(keepReviewsBox())
+    fireEvent.click(importButton())
+    await waitFor(() => expect(mockStartImport).toHaveBeenCalledTimes(1))
+    expect(mockStartImport.mock.calls[0][1]).toEqual({ clientToken: expect.stringMatching(UUID), addMembers: true, keepReviews: true })
+  })
+
+  it('one box only: only that option travels — on the parted path too', async () => {
+    mockImportArchive.mockResolvedValue({ id: 'job-part', kind: 'import', status: 'queued' })
+    renderCard()
+    choose(zip('history.zip', 60 * MB))
+    fireEvent.click(keepReviewsBox())
+    fireEvent.click(importButton())
+    await waitFor(() => expect(mockImportArchive).toHaveBeenCalledTimes(1))
+    expect(archiveOptions()).toMatchObject({ keepReviews: true })
+    expect(archiveOptions()).not.toHaveProperty('addMembers')
+  })
+
+  it('the report: members read through the lists, skips with their own reason, the unclaim line, one line per ignored option', async () => {
+    const report = {
+      ...REPORT,
+      inserted: { ...REPORT.inserted, project_members: 2, test_case_reviews: 0 },
+      skipped: [{ entity: 'project_members', reason: 'email_not_found', count: 1 }],
+      switched_off: { 'managed_test_cases.review_unclaimed': 1 },
+      options_ignored: ['keep_reviews'],
+    }
+    jobs['job-rep'] = { id: 'job-rep', kind: 'import', status: 'succeeded', import_report: report }
+    mockStartImport.mockResolvedValue({ id: 'job-rep', kind: 'import', status: 'queued' })
+    renderCard()
+    choose(zip())
+    fireEvent.click(addMembersBox())
+    fireEvent.click(keepReviewsBox())
+    fireEvent.click(importButton())
+    expect(await screen.findByText('Keep reviews: this file has no reviews — export it again with Include reviews.')).toBeInTheDocument()
+    expect(screen.queryByText(/^Add members: this file lists no members/), 'only the ignored option is said').toBeNull()
+    const inserted = within(document.querySelector('[data-report-list="inserted"]') as HTMLElement)
+    expect(inserted.getByText('project_members')).toBeInTheDocument()
+    expect(inserted.queryByText('test_case_reviews'), 'a zero count is not listed').toBeNull()
+    expect(screen.getByText('1 row was skipped: no active account here has this e-mail address')).toBeInTheDocument()
+    expect(screen.getByText('1 row returned to Review requested — the reviewer is not a member here')).toBeInTheDocument()
   })
 })

@@ -8511,6 +8511,17 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "add_members": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Add Members"
+    },
     "client_token": {
       "anyOf": [
         {
@@ -8533,6 +8544,17 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "File"
+    },
+    "keep_reviews": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Keep Reviews"
     },
     "name": {
       "anyOf": [
@@ -32787,6 +32809,35 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ProjectDataDownloadTicket
+
+```json
+{
+  "description": "The POST's answer: navigate to ``url`` within ``expires_in`` seconds, once.",
+  "properties": {
+    "expires_in": {
+      "title": "Expires In",
+      "type": "integer"
+    },
+    "ticket": {
+      "title": "Ticket",
+      "type": "string"
+    },
+    "url": {
+      "title": "Url",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ticket",
+    "expires_in",
+    "url"
+  ],
+  "title": "ProjectDataDownloadTicket",
+  "type": "object"
+}
+```
+
 ## ProjectDataError
 
 ```json
@@ -32957,6 +33008,18 @@ These are the full generated JSON Schema definitions, including required fields,
       },
       "title": "Inserted",
       "type": "object"
+    },
+    "options_ignored": {
+      "default": [],
+      "items": {
+        "enum": [
+          "add_members",
+          "keep_reviews"
+        ],
+        "type": "string"
+      },
+      "title": "Options Ignored",
+      "type": "array"
     },
     "project_id": {
       "format": "uuid",
@@ -33280,40 +33343,7 @@ These are the full generated JSON Schema definitions, including required fields,
 ## ProjectDataOptions
 
 ```json
-{
-  "description": "Echoed on an export job: what was asked for.",
-  "properties": {
-    "history_days": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "title": "History Days"
-    },
-    "include_history": {
-      "default": false,
-      "title": "Include History",
-      "type": "boolean"
-    },
-    "max_runs": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "title": "Max Runs"
-    }
-  },
-  "title": "ProjectDataOptions",
-  "type": "object"
-}
+{}
 ```
 
 ## ProjectDataProgress
@@ -33495,6 +33525,18 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "History Days"
     },
+    "history_release_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "History Release Id"
+    },
     "include_history": {
       "title": "Include History",
       "type": "boolean"
@@ -33612,9 +33654,31 @@ These are the full generated JSON Schema definitions, including required fields,
       "default": 90,
       "title": "History Days"
     },
+    "history_release_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "History Release Id"
+    },
     "include_history": {
       "default": false,
       "title": "Include History",
+      "type": "boolean"
+    },
+    "include_members": {
+      "default": false,
+      "title": "Include Members",
+      "type": "boolean"
+    },
+    "include_reviews": {
+      "default": false,
+      "title": "Include Reviews",
       "type": "boolean"
     },
     "max_runs": {
@@ -33674,6 +33738,11 @@ These are the full generated JSON Schema definitions, including required fields,
   "additionalProperties": false,
   "description": "Body of ``POST /project-imports/uploads``: every part but the last is exactly IMPORT_PART_MAX_BYTES.",
   "properties": {
+    "add_members": {
+      "default": false,
+      "title": "Add Members",
+      "type": "boolean"
+    },
     "bytes": {
       "maximum": 2147483648.0,
       "minimum": 1.0,
@@ -33684,6 +33753,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "format": "uuid",
       "title": "Client Token",
       "type": "string"
+    },
+    "keep_reviews": {
+      "default": false,
+      "title": "Keep Reviews",
+      "type": "boolean"
     },
     "name": {
       "anyOf": [

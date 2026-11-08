@@ -383,12 +383,15 @@ _E_OBJECTS: tuple[Location, ...] = (
            reason="Their export archives are removed and the export jobs read \"expired\""),
     _store("objects:project-exports/", "objects", match="content", erase="delete",
            label="Project exports that list them",
-           # a live export whose directory/users.jsonl lists them: object removed, job "expired", error_code subject_erased
-           reason="Project exports still in storage that list them are removed; export the project again"),
+           # a live export whose directory/users.jsonl (W37: or members / suite-owner list) lists them: object
+           # removed, job "expired", error_code subject_erased — their e-mail and member line leave with it
+           reason="Project exports still in storage that list them — with their e-mail address when the export "
+                  "included members — are removed; export the project again"),
     _store("objects:project-imports/", "objects", match="content", erase="keep_record",
            label="Uploaded project archives",
            # W24's janitor removes it at its 1-hour TTL; never re-read
-           reason="An uploaded project archive may list them; it is removed within the hour, unread"),
+           reason="An uploaded project archive may list them, with their e-mail address when it includes members; "
+                  "it is removed within the hour, unread"),
     _store("objects:exports/", "objects", match="content", erase="keep_audit", label="Retention archives",
            # the manifest's requested_by.name; gone at the 72-hour collect TTL
            reason="Art. 17(3)(e): signed deletion evidence that names who asked; removed when its 72-hour download "

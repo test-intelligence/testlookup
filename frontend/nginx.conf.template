@@ -94,6 +94,24 @@ server {
         proxy_send_timeout 120s;
     }
 
+    # W37 F-W30-6: a large project export downloads straight to the browser's
+    # disk through a one-time ticket (backend/app/routers/project_data_download.py).
+    # A longer prefix than /api/, so nginx picks this block. proxy_buffering
+    # off: the archive (up to 2 GB) passes through instead of spooling to this
+    # pod's disk. The timeouts are idle gaps between two reads / writes, not a
+    # total. No add_header here, so the server-level security headers are
+    # inherited. Pinned by backend/tests/regression/test_nginx_configs.py.
+    location /api/v1/project-data-downloads/ {
+        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
     # Same-origin WebSocket endpoint used by the live execution UI. This also
     # keeps Compose and direct frontend port-forwards working when no cluster
     # ingress is present to route /ws independently.

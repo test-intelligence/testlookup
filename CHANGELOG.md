@@ -52,6 +52,43 @@ locally by default.
 
 ### Added
 
+- **Project data: export the runs of one release** (wave W37, F-W30-1; branch
+  `feat/df-import-export-20261107`). Settings › Project data › Export › Include run history
+  gains "One release": the archive then holds every finished run linked to that release
+  (primary and secondary links), instead of the last N days; the 2,000-run cap stays. The
+  release must belong to the exported project (`history_release_id`; one 422
+  `history_release_invalid` otherwise). Tests: `test_project_export_history.py`,
+  `test_project_data_routes.py`, `integration/test_project_history_transfer_postgres_mongo.py`,
+  `ProjectExportCard.test.tsx`, `ci-e2e/settings-project-data-transfer.spec.ts`.
+- **Project data: test plan results travel with run history** (wave W37, F-W30-3). An export
+  with run history now carries each plan item's manual result (status, time, who ran it by
+  username, notes, duration, case version) and links it to the imported run's result when that
+  run travelled; the copy's plan counters are recomputed. A catalog-only export still leaves
+  them out. Archives with history, members or reviews are written as schema 3 (a catalog-only
+  export stays schema 1; schema 2 is still read; an older deployment refuses schema 3 cleanly
+  as "written by a newer TestLookup"). Tests: `test_project_export_classification.py`,
+  `test_project_import_service.py`, `integration/test_project_import_postgres.py`.
+- **Project data: members and suite owners by e-mail, and reviews, on import** (wave W37,
+  W24 F-2 / F-7). Export › "Include members and suite owners" and "Include test case reviews
+  and comments"; Import › "Add members who have an account here (matched by e-mail)" and
+  "Keep test case reviews" — all off by default, so an archive still grants no access unless
+  the importing administrator ticks the box. A member is added only when their e-mail matches
+  exactly one active, real account here (none or two → skipped and reported), with the
+  archived role capped at that person's own role; a suite owner only when they are a QA lead
+  of the copy. Kept reviews keep their state when the reviewer is a member of the copy, else
+  return to Review requested. The CLI gains `--release`, `--include-members`,
+  `--include-reviews`, `--add-members` and `--keep-reviews`. Tests:
+  `test_project_export_people.py`, `test_project_import_people.py`,
+  `test_subject_erasure_project_exports.py`, `integration/test_project_people_transfer_postgres.py`,
+  `ProjectImportCard.test.tsx`, `cli/tests/test_projects_export_import.py`.
+- **Project data: large archives download straight to disk** (wave W37, F-W30-6). Above
+  512 MiB, Download asks for a one-time, 60-second link
+  (`POST /api/v1/project-data-jobs/{id}/download-ticket`) and the browser streams
+  `GET /api/v1/project-data-downloads/{id}?ticket=…` to disk, instead of holding the file in
+  memory. The link works once, is re-checked when used, and writes nothing; smaller archives
+  and the CLI download are unchanged. nginx streams that path unbuffered. Tests:
+  `test_project_data_download.py`, `regression/test_nginx_configs.py`,
+  `test_architectural_authorization.py`, `ProjectExportCard.test.tsx`.
 - **"Create epic for this cluster" on recurring failure clusters** (wave W36, STRAT-03 /
   D30; branch `feat/df-epic-impact-20261106`; migration `0255_cluster_epic_suggestions`).
   Suggest-only and opt-in per project: Edit project › "Suggest Jira epics for recurring
@@ -1773,6 +1810,13 @@ locally by default.
 
 ### Fixed
 
+- **The CI image scan no longer replays a stale OS-upgrade layer** (found by W37's CI, PR #342).
+  The scan builds from the GitHub Actions layer cache, so the mcp image's `apt-get upgrade`
+  layer came from before Debian shipped a zlib fix and Trivy failed on CVE-2026-85091 although
+  the Dockerfile already takes Debian's fixes. Each runtime stage (backend, mcp, frontend) now
+  declares `ARG OS_PATCH_DAY` right before its upgrade step and the scan passes the UTC day, so
+  that layer is rebuilt at least daily. Test:
+  `scripts/test_ci_security.py::test_the_os_upgrade_layer_is_rebuilt_daily_in_the_ci_scan`.
 - **Opening a test case's Edit form no longer re-reads the project members**
   (found by W34's CI). The page already holds the list, read for the Owner
   filter. When Edit opened more than two seconds later, SWR fetched it again,

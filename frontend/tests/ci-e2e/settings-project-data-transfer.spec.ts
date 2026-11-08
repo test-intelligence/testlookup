@@ -24,6 +24,13 @@
  *    "Search is being rebuilt for the new project."); a proxy's HTML 413 on part 2 → `A part is larger than 32 MB.`
  *    and no complete.
  *  - QA lead: the history checkbox and the estimate (export is QA-lead allowed), no Import card.
+ *
+ * W37 (`work/W37-contract.md` §3): "One release" → the release select (the top bar's list) → ONE estimate GET
+ * `?include_history=true&history_release_id=<id>` → Export `{include_history, max_runs, history_release_id}`; the two
+ * include boxes → `{include_members, include_reviews}`; a download over 512 MB → ONE ticket POST + ONE navigation GET
+ * to `/api/v1/project-data-downloads/<job>?ticket=…` (a small one stays ONE `GET …/download`), a refused ticket reads
+ * its sentence; an import with Add members + Keep reviews → fields `file, client_token, add_members, keep_reviews`
+ * and the report's new lines.
  */
 import { createHash } from 'node:crypto'
 import { statSync, truncateSync, writeFileSync } from 'node:fs'
@@ -33,14 +40,19 @@ import { networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { PROJECT_ID, PROJECTS, USER } from '../visual/production/fixtures'
 import {
   HISTORY_EXPORT_BYTES,
+  HISTORY_EXPORT_JOB_ID,
   historyDataJob,
   IMPORTED_PROJECT_ID,
   IMPORTED_PROJECT_NAME,
+  peopleImportProgression,
+  PROJECT_DATA_IMPORT_JOB_ID,
+  PROJECT_DATA_TICKET,
   PROXY_413_HTML,
   projectDataJob,
   projectDataRefusal,
   projectDataWorld,
 } from '../visual/production/fixtures-in-page-b'
+import { RELEASE_ID, RELEASES } from '../visual/production/fixtures'
 import { ADMIN } from '../visual/production/fixtures-releases'
 
 const P = PROJECT_ID
@@ -62,6 +74,15 @@ const ESTIMATE = `/api/v1/projects/${P}/export-estimate`
 const ESTIMATE_LINE = 'About 412.3 MB · 412 runs · 9,120 documents · 1,830 attachments'
 const SHA256 = /^[0-9a-f]{64}$/
 const GENERATED = { name: 'history-export.zip', bytes: 60 * MB, lastModified: 1_790_000_000_000 }
+// W37: the release select (its own line, only after "One release"), the include boxes, the ticket download.
+const releaseSelect = (p: Page) => exportCard(p).locator('[data-export-release] select')
+const membersBox = (p: Page) => exportCard(p).getByRole('checkbox', { name: 'Include members and suite owners (with their e-mail addresses)' })
+const reviewsBox = (p: Page) => exportCard(p).getByRole('checkbox', { name: 'Include test case reviews and comments' })
+const addMembersBox = (p: Page) => importCard(p).getByRole('checkbox', { name: 'Add members who have an account here (matched by e-mail)' })
+const keepReviewsBox = (p: Page) => importCard(p).getByRole('checkbox', { name: 'Keep test case reviews' })
+const TICKET_POST = /^\/api\/v1\/project-data-jobs\/[^/]+\/download-ticket$/
+const TICKET_GET = /^\/api\/v1\/project-data-downloads\/[^/]+$/
+const BLOB_GET = /^\/api\/v1\/project-data-jobs\/[^/]+\/download$/
 
 /** The generated ZIP's bytes (the ZIP end record's magic, then zeros) — built the same way in Node and in the page. */
 function generatedBytes(bytes: number): Buffer {
@@ -123,6 +144,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 900
       expect(statSync(savedPath).size, 'the saved file is not empty').toBeGreaterThan(0)
       await networkQuiet(page, api)
       expect(requestsTo(api, /^\/api\/v1\/project-data-jobs\/[^/]+\/download$/)).toHaveLength(1)
+      expect(requestsTo(api, TICKET_POST), 'W37: a small download takes no ticket').toEqual([])
       expect(world.writes, 'a download writes nothing').toHaveLength(1)
       await noAxiosWording(page)
       assertHermetic(api, errors)
@@ -231,7 +253,8 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 900
       await expect(exportCard(page).getByText('Attachments… 100 of 1,830')).toBeVisible(PROGRESS)
       await expect(exportCard(page).getByRole('button', { name: 'Download (412.3 MB)' })).toBeVisible(PROGRESS)
       await expect(exportCard(page).getByText('412 runs · 9,120 documents · 1,830 attachments', { exact: true })).toBeVisible()
-      await expect(exportCard(page).getByText(/download more reliably with the CLI/), 'under 512 MB: no CLI hint').toHaveCount(0)
+      // W37 (contract §3): the hint's new words — still absent under 512 MB.
+      await expect(exportCard(page).getByText(/download straight to your disk/), 'under 512 MB: no hint').toHaveCount(0)
       await networkQuiet(page, api)
       expect(world.writes).toEqual([
         { line: `POST /api/v1/projects/${P}/export`, body: { include_history: true, history_days: 365, max_runs: 2000 } },
@@ -245,7 +268,8 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 900
       const world = projectDataWorld({ exports: [big] })
       const { api, errors } = await openRollout(page, '/settings/project-data', { handlers: world.handlers, ready: exportCard, user: ADMIN })
       await expect(exportCard(page).getByRole('button', { name: 'Download (612.3 MB)' })).toBeVisible()
-      await expect(exportCard(page).getByText(`Large archives download more reliably with the CLI: testlookup projects export ${P} --history`, { exact: true })).toBeVisible()
+      // W37 (contract §3): the hint now says the archive downloads straight to disk (the ticket), the CLI also works.
+      await expect(exportCard(page).getByText(`Large archives download straight to your disk; the CLI also works: testlookup projects export ${P} --history`, { exact: true })).toBeVisible()
       await networkQuiet(page, api)
       expect(world.writes).toEqual([])
       assertHermetic(api, errors)
@@ -302,6 +326,116 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 900
       await networkQuiet(page, api)
       expect(world.parts.map((p) => p.part)).toEqual([1, 2])
       expect(world.writes.map((w) => w.line), 'no complete after a refused part').toEqual(['POST /api/v1/project-imports/uploads'])
+      await noAxiosWording(page)
+      assertHermetic(api, errors)
+    })
+
+    test('ADMIN (W37): One release → a second select → ONE estimate GET for the release → Export with history_release_id', async ({ page }) => {
+      const world = projectDataWorld({ releases: RELEASES })
+      const { api, errors } = await openRollout(page, '/settings/project-data', { handlers: world.handlers, ready: exportCard, user: ADMIN })
+      await historyBox(page).check()
+      await expect(exportCard(page).getByText(ESTIMATE_LINE, { exact: true })).toBeVisible()
+      await expect(releaseSelect(page), 'the default window has no release select').toHaveCount(0)
+      await windowSelect(page).selectOption('release')
+      await expect(releaseSelect(page)).toHaveValue('')
+      await expect(releaseSelect(page).locator('option').first()).toHaveText('Choose a release…')
+      await expect(releaseSelect(page).locator('option')).toHaveCount(RELEASES.length + 1)
+      await expect(exportButton(page), 'Export waits for a release').toBeDisabled()
+      await networkQuiet(page, api)
+      expect(requestsTo(api, ESTIMATE), 'no estimate without a release').toEqual([`GET ${ESTIMATE}?include_history=true&history_days=90`])
+
+      await releaseSelect(page).selectOption(RELEASE_ID.planned)
+      await expect(exportCard(page).getByText(ESTIMATE_LINE, { exact: true })).toBeVisible()
+      await networkQuiet(page, api)
+      expect(requestsTo(api, ESTIMATE)).toEqual([
+        `GET ${ESTIMATE}?include_history=true&history_days=90`,
+        `GET ${ESTIMATE}?include_history=true&history_release_id=${RELEASE_ID.planned}`,
+      ])
+      expect(world.estimateReleases).toEqual([RELEASE_ID.planned])
+      await exportButton(page).click()
+      await expect(exportCard(page).getByRole('button', { name: 'Download (412.3 MB)' })).toBeVisible(PROGRESS)
+      await networkQuiet(page, api)
+      expect(world.writes).toEqual([
+        { line: `POST /api/v1/projects/${P}/export`, body: { include_history: true, max_runs: 2000, history_release_id: RELEASE_ID.planned } },
+      ])
+      await noAxiosWording(page)
+      assertHermetic(api, errors)
+    })
+
+    test('ADMIN (W37): Include members + Include reviews → the export body names both, and nothing else', async ({ page }) => {
+      const world = projectDataWorld()
+      const { api, errors } = await openRollout(page, '/settings/project-data', { handlers: world.handlers, ready: exportCard, user: ADMIN })
+      await membersBox(page).check()
+      await reviewsBox(page).check()
+      await exportButton(page).click()
+      await expect(downloadButton(page)).toBeVisible(PROGRESS)
+      await networkQuiet(page, api)
+      expect(world.writes).toEqual([{ line: `POST /api/v1/projects/${P}/export`, body: { include_members: true, include_reviews: true } }])
+      expect(requestsTo(api, ESTIMATE), 'no history, no estimate').toEqual([])
+      await noAxiosWording(page)
+      assertHermetic(api, errors)
+    })
+
+    test('ADMIN (W37): Download over 512 MB → ONE ticket POST, then ONE navigation GET to the ticket link and a saved file', async ({ page }) => {
+      const big = historyDataJob('export', 'succeeded', { bytes: HISTORY_EXPORT_BYTES + 200 * MB })
+      const world = projectDataWorld({ exports: [big] })
+      const { api, errors } = await openRollout(page, '/settings/project-data', { handlers: world.handlers, ready: exportCard, user: ADMIN })
+      const saved = page.waitForEvent('download')
+      await exportCard(page).getByRole('button', { name: 'Download (612.3 MB)' }).click()
+      const download = await saved
+      expect(statSync(await download.path()).size, 'the saved file is not empty').toBeGreaterThan(0)
+      await networkQuiet(page, api)
+      expect(requestsTo(api, TICKET_POST)).toEqual([`POST /api/v1/project-data-jobs/${HISTORY_EXPORT_JOB_ID}/download-ticket`])
+      expect(requestsTo(api, TICKET_GET)).toEqual([`GET /api/v1/project-data-downloads/${HISTORY_EXPORT_JOB_ID}?ticket=${PROJECT_DATA_TICKET}`])
+      expect(requestsTo(api, BLOB_GET), 'no Blob read above 512 MB').toEqual([])
+      expect(world.tickets).toEqual([HISTORY_EXPORT_JOB_ID])
+      expect(world.writes, 'a download writes nothing').toEqual([])
+      await expect(page, 'the page stays where it is').toHaveURL(/\/settings\/project-data$/)
+      await expect(exportCard(page).getByRole('alert')).toHaveCount(0)
+      await noAxiosWording(page)
+      assertHermetic(api, errors)
+    })
+
+    test('ADMIN (W37): a refused ticket (503) reads its sentence and navigates nowhere', async ({ page }) => {
+      const big = historyDataJob('export', 'succeeded', { bytes: HISTORY_EXPORT_BYTES + 200 * MB })
+      const world = projectDataWorld({ exports: [big], ticket: projectDataRefusal(503, 'ticket_unavailable') })
+      const { api, errors } = await openRollout(page, '/settings/project-data', { handlers: world.handlers, ready: exportCard, user: ADMIN })
+      await exportCard(page).getByRole('button', { name: 'Download (612.3 MB)' }).click()
+      await expect(exportCard(page).getByRole('alert')).toHaveText('Downloads through the browser are unavailable right now; try again or use the CLI.')
+      await networkQuiet(page, api)
+      expect(requestsTo(api, TICKET_POST)).toHaveLength(1)
+      expect(requestsTo(api, TICKET_GET)).toEqual([])
+      expect(world.writes).toEqual([])
+      await noAxiosWording(page)
+      assertHermetic(api, errors)
+    })
+
+    test('ADMIN (W37): Import with Add members + Keep reviews → the multipart fields → the report\'s new lines', async ({ page }, testInfo) => {
+      const world = projectDataWorld({ jobAnswers: { [PROJECT_DATA_IMPORT_JOB_ID]: peopleImportProgression(['keep_reviews']) } })
+      const zip = fileOnDisk(testInfo, 'payment-service.zip', 3 * 1024)
+      const { api, errors } = await openRollout(page, '/settings/project-data', { handlers: world.handlers, ready: importCard, user: ADMIN })
+      await expect(addMembersBox(page)).not.toBeChecked()
+      await expect(keepReviewsBox(page)).not.toBeChecked()
+      await page.getByLabel('Export file (.zip)').setInputFiles(zip)
+      await addMembersBox(page).check()
+      await keepReviewsBox(page).check()
+      await importButton(page).click()
+      await expect(importCard(page).getByText(`Created ${IMPORTED_PROJECT_NAME}.`, { exact: true })).toBeVisible(PROGRESS)
+      await expect(importCard(page).getByText('Keep reviews: this file has no reviews — export it again with Include reviews.', { exact: true })).toBeVisible()
+      await expect(importCard(page).getByText(/^Add members: this file lists no members/)).toHaveCount(0)
+      await expect(importCard(page).getByText('1 row was skipped: no active account here has this e-mail address', { exact: true })).toBeVisible()
+      await expect(importCard(page).getByText('1 row was skipped: the owner is not a QA lead in the new project', { exact: true })).toBeVisible()
+      await expect(importCard(page).getByText('1 row returned to Review requested — the reviewer is not a member here', { exact: true })).toBeVisible()
+      // 5 W24 rows + project_members, test_suite_owners, test_case_reviews (test_case_comments 0 is not listed).
+      await expect(importCard(page).locator('[data-report-list="inserted"] li')).toHaveCount(8)
+      await networkQuiet(page, api)
+      expect(world.writes).toHaveLength(1)
+      const first = world.writes[0] as { line: string; body: Record<string, unknown> }
+      expect(first.line).toBe('POST /api/v1/projects/import')
+      expect(first.body.fields).toEqual(['file', 'client_token', 'add_members', 'keep_reviews'])
+      expect(first.body.add_members).toBe('true')
+      expect(first.body.keep_reviews).toBe('true')
+      expect(first.body, 'no name was typed').not.toHaveProperty('name')
       await noAxiosWording(page)
       assertHermetic(api, errors)
     })

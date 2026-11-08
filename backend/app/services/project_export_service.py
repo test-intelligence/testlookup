@@ -8,7 +8,10 @@
   (§2.2) → JSONL parts of ≤ ``PART_ROWS_MAX`` rows / ≤ ``PART_BYTES_MAX`` bytes.
   Each part is one ``build_archive`` member, so peak memory is one part. Then
   ``directory/users.jsonl`` (only the users an exported row references: id,
-  username, full name -- no e-mail, no role) and ``README.txt``.
+  username, full name -- no e-mail, no role) and ``README.txt``. W37 F-2 / F-7:
+  only when the exporter ticks Include members, ``directory/members.jsonl`` +
+  ``directory/suite_owners.jsonl`` and the e-mail of the people they name; only
+  with Include reviews, the OPTIONAL reviews / comments (both schema 3).
 * :func:`run_project_export` -- ``compliance_pack_service.build_archive`` (the ONE
   archive builder, manifest LAST) into a spool → ``_sign_pack`` → the object
   store → ``on_written(key)`` → RE-READ + verify (``verify_stored_archive``).
@@ -40,8 +43,10 @@ from sqlalchemy import Table, select
 from app.services import project_export_vocab as vocab
 from app.services.project_export_entities import (
     EXCLUDED,
+    OPTIONAL_UNTICKED_REASONS,
     SCOPE_ROOT,
     EntitySpec,
+    export_schema_version,
     exported_columns,
     plan,
     spec_for,
@@ -52,6 +57,8 @@ _slog = structlog.get_logger(__name__)
 
 OnTable = Callable[[int, int], Awaitable[None]]
 DIRECTORY_MEMBER = "directory/users.jsonl"
+MEMBERS_MEMBER = "directory/members.jsonl"            # W37 F-2: only with Include members (schema 3)
+SUITE_OWNERS_MEMBER = "directory/suite_owners.jsonl"  # W37 F-2: only with Include members (schema 3)
 README_MEMBER = "README.txt"
 _USER_CHUNK = 1_000
 
@@ -126,12 +133,13 @@ def scope_clause(spec: EntitySpec, project_id: uuid.UUID) -> Any:
     return table.c[fk_column].in_(parent_rows)
 
 
-def rows_statement(spec: EntitySpec, project_id: uuid.UUID) -> Any:
-    """ONE ``SELECT`` of the exported columns of ``spec``'s rows, ordered by the primary key, streamed."""
+def rows_statement(spec: EntitySpec, project_id: uuid.UUID, *, columns: Optional[tuple[str, ...]] = None) -> Any:
+    """ONE ``SELECT`` of the exported columns of ``spec``'s rows (schema 1's unless ``columns`` names them),
+    ordered by the primary key, streamed."""
     table = _table(spec.table)
-    columns = [table.c[name] for name in exported_columns(spec)]
+    selected = [table.c[name] for name in (exported_columns(spec) if columns is None else columns)]
     return (
-        select(*columns)
+        select(*selected)
         .where(scope_clause(spec, project_id))
         .order_by(*table.primary_key.columns)
         .execution_options(yield_per=vocab.CURSOR_BATCH_ROWS)
@@ -153,20 +161,67 @@ def _part_name(table: str, number: int) -> str:
     return f"entities/{table}/part-{number:04d}.jsonl"
 
 
-async def _directory(db: Any, user_ids: set[Any]) -> list[dict[str, Any]]:
-    """``{id, username, full_name}`` of the referenced users, ordered by id (no e-mail, role or hash)."""
+async def _directory(db: Any, user_ids: set[Any], *, emails_for: Optional[set[Any]] = None) -> list[dict[str, Any]]:
+    """``{id, username, full_name}`` of the referenced users, ordered by id (no e-mail, role or hash). W37 F-2:
+    with ``emails_for`` (an export that ticked Include members) the users it names — the members and suite
+    owners — also carry ``email``; every other line stays exactly as before."""
     users = _table("users")
     ids = sorted(user_ids, key=str)
+    columns = [users.c.id, users.c.username, users.c.full_name]
+    if emails_for is not None:
+        columns.append(users.c.email)
     found: list[dict[str, Any]] = []
     for start in range(0, len(ids), _USER_CHUNK):
         chunk = ids[start:start + _USER_CHUNK]
-        result = await db.execute(
-            select(users.c.id, users.c.username, users.c.full_name).where(users.c.id.in_(chunk)).order_by(users.c.id)
-        )
+        result = await db.execute(select(*columns).where(users.c.id.in_(chunk)).order_by(users.c.id))
         for row in result.all():
-            found.append({"id": str(row[0]), "username": row[1], "full_name": row[2]})
+            entry = {"id": str(row[0]), "username": row[1], "full_name": row[2]}
+            if emails_for is not None and row[0] in emails_for:
+                entry["email"] = row[3]
+            found.append(entry)
     found.sort(key=lambda entry: entry["id"])
     return found
+
+
+# ── W37 F-2 (contract §1 People, D-5): members + suite owners, only with Include members ──
+
+def _human(users: Table) -> list[Any]:
+    """D-5's human member: active, not synthetic, not a service account, not erased."""
+    return [users.c.is_active.is_(True), users.c.is_synthetic.is_(False), users.c.is_service_account.is_(False),
+            users.c.erased_at.is_(None)]
+
+
+def members_statement(project_id: uuid.UUID) -> Any:
+    """ONE ``SELECT`` of the project's HUMAN members — ``(user_id, project role)`` ordered by user id."""
+    members, users = _table("project_members"), _table("users")
+    return (
+        select(members.c.user_id, members.c.role)
+        .join(users, users.c.id == members.c.user_id)
+        .where(members.c.project_id == project_id, *_human(users))
+        .order_by(members.c.user_id)
+    )
+
+
+def suite_owners_statement(project_id: uuid.UUID) -> Any:
+    """ONE ``SELECT`` of the project's suite owners who are HUMAN — ``(suite_name, owner)`` ordered by suite name
+    (a synthetic default QA lead never travels: no deployment could match it)."""
+    owners, users = _table("test_suite_owners"), _table("users")
+    return (
+        select(owners.c.suite_name, owners.c.owner_user_id)
+        .join(users, users.c.id == owners.c.owner_user_id)
+        .where(owners.c.project_id == project_id, *_human(users))
+        .order_by(owners.c.suite_name, owners.c.id)
+    )
+
+
+async def people_of(db: Any, project_id: uuid.UUID) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """``(members, suite_owners)`` lines of ``directory/members.jsonl`` / ``directory/suite_owners.jsonl``."""
+    members = [{"user_id": str(row[0]), "role": str(row[1])} for row in (await db.execute(members_statement(project_id))).all()]
+    owners = [
+        {"suite_name": row[0], "user_id": str(row[1])}
+        for row in (await db.execute(suite_owners_statement(project_id))).all()
+    ]
+    return members, owners
 
 
 README_TEXT = "\n".join((
@@ -197,7 +252,7 @@ README_TEXT = "\n".join((
     "",
 ))
 
-#: The README of an export WITH run history (schema 2): phase 1's text + a "Run history" section.
+#: The README of an export WITH run history (schema 3, W37 D-1): phase 1's text + a "Run history" section.
 HISTORY_README_TEXT = README_TEXT.replace(
     "It does NOT hold: run history, logs, attachments or other stored files, members, roles, API keys,",
     "It does NOT hold: members, roles, API keys, or any secret (see Run history below for what of the",
@@ -205,10 +260,11 @@ HISTORY_README_TEXT = README_TEXT.replace(
     "or any secret. Secrets kept in the deployment's secret store never travel; a secret typed into a",
     "runs travels). Secrets kept in the deployment's secret store never travel; a secret typed into a",
 ) + "\n".join((
-    "Run history (schema_version 2):",
+    f"Run history (schema_version {vocab.SCHEMA_VERSION}):",
     "The runs of the chosen window (newest first, at most 2000; finished runs only) with their test results,",
     "AI analyses and their versions, AI pipeline results (finished pipelines only), clusters, reviews, release",
-    "links and gate decisions, under entities/<table>/; the runs' stored documents under",
+    "links and gate decisions, under entities/<table>/, and the test plans' execution results; the runs'",
+    "stored documents under",
     "documents/<collection>/ (MongoDB relaxed Extended JSON, one document per line); and the runs' attachments",
     "and result files under objects/<run>/, listed in objects/index/. Attachments are copied byte-for-byte and",
     "NOT scanned: a binary cannot be scrubbed, so a token a test wrote into a screenshot or a result file",
@@ -220,29 +276,68 @@ HISTORY_README_TEXT = README_TEXT.replace(
     "",
 ))
 
+#: W37 F-2 / F-7: the README sections of what the exporter chose to add (schema 3); appended to either text.
+MEMBERS_README_TEXT = "\n".join((
+    f"Members (schema_version {vocab.SCHEMA_VERSION}, chosen at export with Include members):",
+    "directory/members.jsonl lists the project's members (user id and project role; people only, no service or",
+    "synthetic accounts) and directory/suite_owners.jsonl the suite owners; their lines in directory/users.jsonl",
+    "carry an e-mail address. An import adds them only when the importing administrator ticks Add members, only",
+    "to an existing active account with that e-mail address, and never above that person's own role.",
+    "",
+))
+REVIEWS_README_TEXT = "\n".join((
+    f"Reviews (schema_version {vocab.SCHEMA_VERSION}, chosen at export with Include reviews):",
+    "entities/test_case_reviews/ and entities/test_case_comments/ hold the test cases' reviews and comments",
+    "(review notes and comment text are scrubbed). An import keeps them only when Keep reviews is ticked.",
+    "",
+))
+
+
+def readme_text(*, history: bool, members: bool = False, reviews: bool = False) -> str:
+    """The README of an export: phase 1's (catalog only), the history one, + the sections the exporter chose."""
+    text = HISTORY_README_TEXT if history else README_TEXT
+    if members:
+        # the "It does NOT hold" line of either text names members and roles: this archive holds both
+        text = text.replace(" members, roles, API keys,", " API keys,", 1) + MEMBERS_README_TEXT
+    if reviews:
+        text += REVIEWS_README_TEXT
+    return text
+
 
 async def iter_members(
     db: Any, *, project_id: uuid.UUID, stats: dict[str, Any], on_table: Optional[OnTable] = None,
+    include_members: bool = False, include_reviews: bool = False,
 ) -> AsyncGenerator[tuple[str, bytes], None]:
     """Every member of the archive but the manifest, in plan order: the JSONL parts, the directory, the
     README. Fills ``stats["entities"]`` ({table: {rows, parts, columns}}) table by table and
     ``stats["directory"]`` ({users}); calls ``on_table(done, total)`` after each table.
 
+    W37 (no history): ``include_reviews`` adds the OPTIONAL reviews / comments after the catalog,
+    ``include_members`` the members / suite owners (+ their e-mails) after the directory. Either makes the
+    archive schema 3 WITHOUT history, whose catalog columns are schema 1's (D-3: no plan execution results).
+
     A row whose encoding exceeds ``ROW_BYTES_MAX`` is counted and NOT written; the table then fails the
     export with ``row_too_large`` (the entity and the count, never the row)."""
-    specs = plan(include_history=False)
+    specs = plan(include_history=False, include_reviews=include_reviews)
+    schema = export_schema_version(
+        include_history=False, include_members=include_members, include_reviews=include_reviews,
+    )
     total = len(specs)
     entities: dict[str, dict[str, Any]] = stats.setdefault("entities", {})
     referenced: set[Any] = set()
     for done, spec in enumerate(specs, start=1):
+        columns = exported_columns(spec, schema_version=schema, history=False)
         async for member in entity_parts(
-            db, spec, rows_statement(spec, project_id), exported_columns(spec),
+            db, spec, rows_statement(spec, project_id, columns=columns), columns,
             entities=entities, referenced=referenced,
         ):
             yield member
         if on_table is not None:
             await on_table(done, total)
-    async for member in directory_and_readme(db, referenced, stats, readme=README_TEXT):
+    async for member in directory_and_readme(
+        db, referenced, stats, readme=readme_text(history=False, members=include_members, reviews=include_reviews),
+        project_id=project_id if include_members else None,
+    ):
         yield member
 
 
@@ -298,11 +393,27 @@ async def entity_parts(
 
 async def directory_and_readme(
     db: Any, referenced: set[Any], stats: dict[str, Any], *, readme: str,
+    project_id: Optional[uuid.UUID] = None,
 ) -> AsyncGenerator[tuple[str, bytes], None]:
-    """``directory/users.jsonl`` (the referenced users: id, username, full name) then ``README.txt``."""
-    directory = await _directory(db, referenced)
-    stats["directory"] = {"users": len(directory)}
+    """``directory/users.jsonl`` (the referenced users: id, username, full name) then ``README.txt``.
+
+    W37 F-2: with ``project_id`` (the export ticked Include members) the project's human members and suite owners
+    are read FIRST (two SELECTs), every user they name joins the directory with an ``email``, and
+    ``directory/members.jsonl`` + ``directory/suite_owners.jsonl`` follow it (written even when empty — the file
+    says the export carried members); ``stats["directory"]`` gains ``members`` / ``suite_owners``."""
+    if project_id is None:
+        directory = await _directory(db, referenced)
+        stats["directory"] = {"users": len(directory)}
+        yield DIRECTORY_MEMBER, b"".join(encode_row(entry) for entry in directory)
+        yield README_MEMBER, readme.encode("utf-8")
+        return
+    members, owners = await people_of(db, project_id)
+    named = {uuid.UUID(line["user_id"]) for line in (*members, *owners)}
+    directory = await _directory(db, set(referenced) | named, emails_for=named)
+    stats["directory"] = {"users": len(directory), "members": len(members), "suite_owners": len(owners)}
     yield DIRECTORY_MEMBER, b"".join(encode_row(entry) for entry in directory)
+    yield MEMBERS_MEMBER, b"".join(encode_row(line) for line in members)
+    yield SUITE_OWNERS_MEMBER, b"".join(encode_row(line) for line in owners)
     yield README_MEMBER, readme.encode("utf-8")
 
 
@@ -323,10 +434,12 @@ def _public_host() -> Optional[str]:
         return None
 
 
-def excluded_by_reason() -> dict[str, list[str]]:
-    """``{reason: [tables]}`` -- what this archive deliberately leaves out, and why."""
+def excluded_by_reason(*, include_reviews: bool = False) -> dict[str, list[str]]:
+    """``{reason: [tables]}`` -- what this archive deliberately leaves out, and why. W37 F-7: without Include
+    reviews the OPTIONAL entities are left out under their W24 reason (a catalog manifest stays phase 1's)."""
     out: dict[str, list[str]] = {}
-    for table, reason in EXCLUDED.items():
+    left_out = dict(EXCLUDED) if include_reviews else {**EXCLUDED, **OPTIONAL_UNTICKED_REASONS}
+    for table, reason in left_out.items():
         out.setdefault(reason, []).append(table)
     return {reason: sorted(tables) for reason, tables in sorted(out.items())}
 
@@ -334,10 +447,11 @@ def excluded_by_reason() -> dict[str, list[str]]:
 def manifest_extra(
     *, project_name: str, project_slug: str, stats: dict[str, Any],
     schema_version: int = vocab.CATALOG_SCHEMA_VERSION, history: Optional[dict[str, Any]] = None,
+    include_reviews: bool = False,
 ) -> dict[str, Any]:
     """The project branch's manifest keys (§1.3), from what the member iterator recorded. A catalog export
     (no ``history``) writes ``CATALOG_SCHEMA_VERSION`` and exactly phase 1's keys; a history export writes
-    ``SCHEMA_VERSION`` and the ``history`` block (W30 §1.3)."""
+    ``export_schema_version(include_history=True)`` (3, W37 D-1) and the ``history`` block (W30 §1.3)."""
     from app.core.config import settings
 
     extra = {
@@ -347,7 +461,7 @@ def manifest_extra(
         "project": {"name": project_name, "slug": project_slug},
         "entities": dict(stats.get("entities") or {}),
         "directory": dict(stats.get("directory") or {"users": 0}),
-        "excluded": excluded_by_reason(),
+        "excluded": excluded_by_reason(include_reviews=include_reviews),
     }
     if history is not None:
         extra["history"] = history
@@ -370,23 +484,30 @@ class HistoryPlan:
 OnProgress = Callable[[dict[str, Any]], Awaitable[None]]
 
 
-def _include_history(options: Any) -> bool:
+def _option(options: Any, name: str) -> bool:
+    """A boolean export option of a dict / ``ProjectDataOptions`` (False when absent or no options)."""
     if options is None:
         return False
-    value = options.get("include_history") if isinstance(options, dict) else getattr(options, "include_history", False)
+    value = options.get(name) if isinstance(options, dict) else getattr(options, name, False)
     return bool(value)
+
+
+def _include_history(options: Any) -> bool:
+    return _option(options, "include_history")
 
 
 async def iter_history_members(
     db: Any, *, project_id: uuid.UUID, history: HistoryPlan, stats: dict[str, Any],
-    on_progress: Optional[OnProgress] = None,
+    on_progress: Optional[OnProgress] = None, include_members: bool = False, include_reviews: bool = False,
 ) -> AsyncGenerator[tuple[str, Any], None]:
     """Every member of a schema-2 archive but the manifest, in order, on ONE snapshot: the 29 catalog entities
     (schema-2 columns) → the history entities → documents → objects (+ index) → directory → README. Progress
-    ``{done, total, phase, phase_done, phase_total}`` after each table / document batch / object batch."""
+    ``{done, total, phase, phase_done, phase_total}`` after each table / document batch / object batch.
+    W37: ``include_reviews`` / ``include_members`` add the reviews / comments (after the catalog, phase "catalog")
+    and the members / suite owners (after the directory), as in :func:`iter_members`."""
     from app.services import project_export_history as hx
 
-    specs = plan(include_history=True)
+    specs = plan(include_history=True, include_reviews=include_reviews)
     total = len(specs)
     catalog_total = sum(1 for spec in specs if not spec.history)
     entities: dict[str, dict[str, Any]] = stats.setdefault("entities", {})
@@ -420,27 +541,34 @@ async def iter_history_members(
         on_progress=phase_progress, plan=history.objects,
     ):
         yield member
-    async for member in directory_and_readme(db, referenced, stats, readme=HISTORY_README_TEXT):
+    async for member in directory_and_readme(
+        db, referenced, stats, readme=readme_text(history=True, members=include_members, reviews=include_reviews),
+        project_id=project_id if include_members else None,
+    ):
         yield member
 
 
 async def _build(
     db: Any, *, project_id: uuid.UUID, project_name: str, project_slug: str, sink: Any, now: datetime,
     stats: dict[str, Any], on_table: Optional[OnTable], history: Optional[HistoryPlan] = None,
-    on_progress: Optional[OnProgress] = None,
+    on_progress: Optional[OnProgress] = None, include_members: bool = False, include_reviews: bool = False,
 ) -> Any:
     from app.services import compliance_pack_service as packs
 
     extra: dict[str, Any] = {}
     scope = packs.ExportScope.for_project(project_id=project_id, manifest_extra=extra)
+    chosen = {"include_members": include_members, "include_reviews": include_reviews}
+    schema = export_schema_version(include_history=history is not None, **chosen)
 
     if history is None:
         inner: AsyncGenerator[tuple[str, Any], None] = iter_members(
-            db, project_id=project_id, stats=stats, on_table=on_table,
+            db, project_id=project_id, stats=stats, on_table=on_table, **chosen,
         )
         max_bytes = vocab.EXPORT_MAX_BYTES
     else:
-        inner = iter_history_members(db, project_id=project_id, history=history, stats=stats, on_progress=on_progress)
+        inner = iter_history_members(
+            db, project_id=project_id, history=history, stats=stats, on_progress=on_progress, **chosen,
+        )
         max_bytes = vocab.HISTORY_EXPORT_MAX_BYTES
 
     async def members() -> AsyncGenerator[tuple[str, Any], None]:
@@ -448,14 +576,17 @@ async def _build(
             yield item
         # build_archive writes the manifest AFTER the last member: fill the scope's keys now.
         if history is None:
-            extra.update(manifest_extra(project_name=project_name, project_slug=project_slug, stats=stats))
+            extra.update(manifest_extra(
+                project_name=project_name, project_slug=project_slug, stats=stats, schema_version=schema,
+                include_reviews=include_reviews,
+            ))
         else:
             from app.services import project_export_history as hx
 
             extra.update(manifest_extra(
-                project_name=project_name, project_slug=project_slug, stats=stats,
-                schema_version=vocab.SCHEMA_VERSION,
+                project_name=project_name, project_slug=project_slug, stats=stats, schema_version=schema,
                 history=hx.history_block(history.window, stats, skipped=history.skipped, plan=history.objects),
+                include_reviews=include_reviews,
             ))
 
     outer = members()
@@ -520,7 +651,9 @@ async def run_project_export(
     ``options.include_history`` (W30): the run window, the object plan and its precheck run FIRST on the same
     snapshot (``history_too_large`` before any member), then the schema-2 members (``mongo`` = the Motor
     database, default ``get_mongo_db()``), capped at ``HISTORY_EXPORT_MAX_BYTES``; ``on_progress`` receives the
-    phase progress. No options (every phase-1 caller) = exactly phase 1: schema 1, 50 MiB."""
+    phase progress. No options (every phase-1 caller) = exactly phase 1: schema 1, 50 MiB. W37:
+    ``options.include_members`` / ``include_reviews`` add the members / reviews (schema 3, with or without
+    history; without history the caps stay phase 1's)."""
     from app.services import compliance_pack_service as packs
     from app.services import compliance_signing
     from app.services.retention_export_service import (
@@ -546,6 +679,7 @@ async def run_project_export(
             scope, archive = await _build(
                 db, project_id=project_id, project_name=str(project.name), project_slug=str(project.slug),
                 sink=spool, now=now, stats=stats, on_table=on_table, history=history, on_progress=on_progress,
+                include_members=_option(options, "include_members"), include_reviews=_option(options, "include_reviews"),
             )
             # End the read-only snapshot NOW: every row is in the spool, and holding its connection through the
             # sign / write / verify steps needed a THIRD one (on_written, the storage config) — the worker's pool

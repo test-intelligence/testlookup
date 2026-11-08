@@ -40,7 +40,21 @@ SKIP_REASONS = {
     "too_large": "it is larger than 256 MB",
     "invalid_document": "it is not a valid stored document",
     "pipeline_scratch": "it pointed at a pipeline scratch file, which is not exported",
+    # W37 (members by e-mail / keep reviews)
+    "email_not_found": "no active account here has this e-mail address",
+    "email_ambiguous": "more than one account here has this e-mail address",
+    "role_unknown": "its project role is not one this deployment knows",
+    "owner_not_lead": "the owner is not a QA lead in the new project",
+    "not_chosen": "the option to bring them was not chosen",
 }
+#: W37: an import option the file could not honour (``import_report.options_ignored``) — UI_SENTENCES
+#: ``option_ignored_<option>``, with the CLI's own flag names.
+OPTIONS_IGNORED = {
+    "add_members": "Add members: this file lists no members — export it again with Include members.",
+    "keep_reviews": "Keep reviews: this file has no reviews — export it again with Include reviews.",
+}
+RELEASE_NEEDS_HISTORY = "--release needs --history (the release scopes the run history)."
+RELEASE_OR_DAYS = "Choose --release or --days, not both: a release replaces the day window."
 HISTORY_IMPORTED = "{runs} runs from {oldest} to {newest}"
 RETENTION_NOTE = (
     "Runs older than this project's retention window ({days} days) will be purged on the next nightly purge."
@@ -66,6 +80,7 @@ SWITCHED_OFF_SUFFIX = {
     "run_cadences": "paused for 90 days",
     "releases.deactivated": "set inactive — one active release is kept",
     "managed_test_cases.review_reset": "returned to draft — review requests are not exported",
+    "managed_test_cases.review_unclaimed": "returned to Review requested — the reviewer is not a member here",
 }
 SWITCHED_OFF_DEFAULT = "switched off"
 _ZIP_MAGIC = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
@@ -89,14 +104,18 @@ def file_sha256(file: Path) -> str:
 
 def import_client_token(
     file: Path, name: Optional[str], *, new_copy: bool = False, sha256: Optional[str] = None,
+    options: tuple[str, ...] = (),
 ) -> uuid.UUID:
     """The idempotency token: the same file + name always give the same token, so
     re-running ``projects import`` creates ONE project — and, for a parted upload,
-    finds the open upload and RESUMES it; ``--new-copy`` is a fresh uuid4."""
+    finds the open upload and RESUMES it; ``--new-copy`` is a fresh uuid4. W37: the chosen import options
+    (``add_members`` / ``keep_reviews``) are part of the token, so re-running WITH an option is a new import
+    rather than "already imported" without it; no option = the W24 token exactly."""
     if new_copy:
         return uuid.uuid4()
     digest = sha256 or file_sha256(file)
-    return uuid.uuid5(uuid.NAMESPACE_URL, "testlookup-import:" + digest + ":" + (name or ""))
+    chosen = (":" + ",".join(sorted(options))) if options else ""
+    return uuid.uuid5(uuid.NAMESPACE_URL, "testlookup-import:" + digest + ":" + (name or "") + chosen)
 
 
 def check_import_file(file: Path) -> int:
@@ -159,6 +178,8 @@ def report_lines(report: dict[str, Any]) -> list[str]:
     for entity, count in sorted((report.get("switched_off") or {}).items()):
         what = SWITCHED_OFF_SUFFIX.get(entity, SWITCHED_OFF_DEFAULT)
         lines.append(f"{entity}: " + _plural(int(count), f"1 row {what}", "{count} rows " + what))
+    for option in report.get("options_ignored") or []:     # W37: one line per option the file could not honour
+        lines.append(OPTIONS_IGNORED.get(str(option), f"{option}: this file cannot honour it."))
     return lines
 
 
@@ -310,6 +331,35 @@ def history_body(days: str, max_runs: int) -> dict[str, Any]:
     return {"include_history": True, "history_days": None if choice == "all" else int(choice), "max_runs": max_runs}
 
 
+def export_body(
+    *, history: bool, days: Optional[str], max_runs: int, release: Optional[str] = None,
+    include_members: bool = False, include_reviews: bool = False,
+) -> Optional[dict[str, Any]]:
+    """The ``ProjectExportRequest`` body: None with nothing chosen (the W24 request, byte for byte); ``--history``
+    as before (``--days`` default 90); W37 ``--release <id>`` (with ``--history``) sends ``history_release_id`` and NO
+    ``history_days``; ``include_members`` / ``include_reviews`` only when given."""
+    body: dict[str, Any] = {}
+    if release is not None and not history:
+        raise CLIError(RELEASE_NEEDS_HISTORY, EXIT_ERROR)
+    if history and release is not None:
+        if days is not None:
+            raise CLIError(RELEASE_OR_DAYS, EXIT_ERROR)
+        try:
+            release_id = str(uuid.UUID(release.strip()))
+        except ValueError:
+            raise CLIError("--release takes a release id (a UUID).", EXIT_ERROR) from None
+        body = history_body(HISTORY_DEFAULT_DAYS, max_runs)
+        del body["history_days"]
+        body["history_release_id"] = release_id
+    elif history:
+        body = history_body(days if days is not None else HISTORY_DEFAULT_DAYS, max_runs)
+    if include_members:
+        body["include_members"] = True
+    if include_reviews:
+        body["include_reviews"] = True
+    return body or None
+
+
 def export_summary(name: Any, job: dict[str, Any], written: int, *, history: bool) -> str:
     """The success line. ``counts`` = rows per table (+ ``documents.<collection>`` and ``objects`` with history)."""
     counts = {str(k): int(v) for k, v in (job.get("counts") or {}).items()}
@@ -337,7 +387,7 @@ async def _export(
     if out is not None and out.exists() and not force:
         raise CLIError(f"{out} already exists; pass --force to overwrite it.", EXIT_ERROR)
     try:
-        # No body without --history: byte-for-byte the W24 request (the server reads it as a catalog export).
+        # No body without an option: byte-for-byte the W24 request (the server reads it as a catalog export).
         job = await client.request(
             "POST", f"/api/v1/projects/{project_id}/export", profile_name=profile_name, json_body=body,
         )
@@ -372,8 +422,17 @@ def export_project(
     ),
     force: bool = typer.Option(False, "--force", help="Overwrite an existing file"),
     history: bool = typer.Option(False, "--history", help="Include run history (runs, results, AI analyses, attachments)"),
-    days: str = typer.Option(HISTORY_DEFAULT_DAYS, "--days", help="With --history: runs from the last 30, 90 or 365 days, or all"),
+    days: Optional[str] = typer.Option(
+        None, "--days", help="With --history: runs from the last 30, 90 (default) or 365 days, or all",
+    ),
     max_runs: int = typer.Option(HISTORY_MAX_RUNS, "--max-runs", help="With --history: at most this many runs, newest first"),
+    release: Optional[str] = typer.Option(
+        None, "--release", help="With --history: the runs linked to this release (its id) instead of a day window",
+    ),
+    include_members: bool = typer.Option(
+        False, "--include-members", help="Include the members and suite owners, with their e-mail addresses",
+    ),
+    include_reviews: bool = typer.Option(False, "--include-reviews", help="Include test case reviews and comments"),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for the export and download it"),
     timeout: Optional[float] = typer.Option(
         None, "--timeout", help="Seconds to wait for the export (default 600; 10800 with --history)",
@@ -385,14 +444,20 @@ def export_project(
     With --history the ZIP also carries the run history of the chosen window: runs, test
     results, AI analyses, stored documents and attachments (copied as stored, unscanned).
     Raw report uploads and pipeline scratch files are never included; secrets never are.
+    --release <id> (with --history) exports the runs linked to that release instead of a day
+    window. --include-members adds the members and suite owners with their e-mail addresses;
+    --include-reviews adds the test case reviews and comments.
 
     Examples:
         testlookup projects export "Payment Service"
         testlookup projects export <project-id> -o payments.zip --force
         testlookup projects export "Payment Service" --history --days all
+        testlookup projects export "Payment Service" --history --release <release-id>
+        testlookup projects export "Payment Service" --include-members --include-reviews
     """
     try:
-        body = history_body(days, max_runs) if history else None
+        body = export_body(history=history, days=days, max_runs=max_runs, release=release,
+                           include_members=include_members, include_reviews=include_reviews)
         wait_for = timeout if timeout is not None else (HISTORY_TIMEOUT_SECONDS if history else CATALOG_TIMEOUT_SECONDS)
         found, job, dest, written = asyncio.run(
             _export(project, out, force=force, wait=wait, timeout=wait_for, profile_name=profile_name, body=body)
@@ -409,14 +474,18 @@ def export_project(
 
 async def _parted_upload(
     file: Path, name: Optional[str], *, size: int, new_copy: bool, profile_name: Optional[str],
+    options: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """Start (or find) the upload, send the parts it lacks, complete it; returns the job as the server has it."""
+    """Start (or find) the upload, send the parts it lacks, complete it; returns the job as the server has it.
+    W37: each chosen option is ``true`` in the start body (absent otherwise — the W30 body exactly)."""
     digest = file_sha256(file)
-    token = import_client_token(file, name, new_copy=new_copy, sha256=digest)
+    token = import_client_token(file, name, new_copy=new_copy, sha256=digest, options=options)
     parts = part_count(size)
     start: dict[str, Any] = {"client_token": str(token), "bytes": size, "parts": parts, "sha256": digest}
     if name:
         start["name"] = name
+    for option in options:
+        start[option] = True
     job: dict[str, Any] = await client.start_upload(start, profile_name=profile_name)
     if job.get("status") != "uploading":
         return job                    # the token's upload already completed: queued, running or finished
@@ -435,21 +504,26 @@ async def _parted_upload(
 
 async def _import(
     file: Path, name: Optional[str], *, new_copy: bool, wait: bool, timeout: float, profile_name: Optional[str],
+    options: tuple[str, ...] = (),
 ) -> tuple[dict[str, Any], bool]:
     """``(job, already_imported)``. Every local refusal happens before any request.
 
     ≤ 50 MB: the W24 single multipart POST, unchanged. Larger (≤ 2 GB): the parted upload —
     start (the deterministic token finds an open upload of the same file + name), the
-    MISSING parts only, one 32 MB slice read from disk at a time, then complete.
+    MISSING parts only, one 32 MB slice read from disk at a time, then complete. W37: each chosen
+    option (``add_members`` / ``keep_reviews``) is a ``"true"`` Form field / a ``true`` start key, never sent unchosen.
     """
     size = check_import_file(file)
     if size > IMPORT_UPLOAD_MAX_BYTES:
-        job = await _parted_upload(file, name, size=size, new_copy=new_copy, profile_name=profile_name)
+        job = await _parted_upload(file, name, size=size, new_copy=new_copy, profile_name=profile_name,
+                                   options=options)
     else:
-        token = import_client_token(file, name, new_copy=new_copy)
+        token = import_client_token(file, name, new_copy=new_copy, options=options)
         fields = {"client_token": str(token)}
         if name:
             fields["name"] = name
+        for option in options:
+            fields[option] = "true"
         job = await client.upload_file("/api/v1/projects/import", file, fields, profile_name=profile_name)
     if job.get("status") == "succeeded":
         return job, True          # the server answered 200 with the token's finished job
@@ -466,6 +540,10 @@ def import_project(
     file: Path = typer.Argument(..., help="A ZIP written by `testlookup projects export` or the Project data page"),
     name: Optional[str] = typer.Option(None, "--name", help="The new project's name (default: '<source> (imported)')"),
     new_copy: bool = typer.Option(False, "--new-copy", help="Import a second copy of a file already imported"),
+    add_members: bool = typer.Option(
+        False, "--add-members", help="Add the file's members who have an account here (matched by e-mail)",
+    ),
+    keep_reviews: bool = typer.Option(False, "--keep-reviews", help="Keep the file's test case reviews"),
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for the import to finish"),
     timeout: float = typer.Option(HISTORY_TIMEOUT_SECONDS, "--timeout", help="Seconds to wait for the import"),
     profile_name: Optional[str] = typer.Option(None, "--profile"),
@@ -475,15 +553,22 @@ def import_project(
     Re-running the same command with the same file and name creates ONE project;
     --new-copy makes a deliberate second one. A file over 50 MB (up to 2 GB) is sent
     in 32 MB parts; an interrupted upload resumes where it stopped when re-run.
+    --add-members adds the file's members who have an active account here with the same
+    e-mail address, never above their own role; --keep-reviews keeps the test case reviews.
+    Both are off by default (an archive never grants access unless you choose it).
 
     Examples:
         testlookup projects import payment-service-settings-catalog-20261030-1200.zip
         testlookup projects import payments.zip --name "Payments sandbox"
+        testlookup projects import payments.zip --add-members --keep-reviews
     """
     clean = name.strip() if name and name.strip() else None
+    options = tuple(option for option, chosen in (("add_members", add_members), ("keep_reviews", keep_reviews))
+                    if chosen)
     try:
         job, already = asyncio.run(
-            _import(file, clean, new_copy=new_copy, wait=wait, timeout=timeout, profile_name=profile_name)
+            _import(file, clean, new_copy=new_copy, wait=wait, timeout=timeout, profile_name=profile_name,
+                    options=options)
         )
     except Exception as e:
         output.print_error(str(e))

@@ -251,7 +251,7 @@ _REFUSALS: list[tuple[str, Callable[[], bytes], str, str]] = [
     ("zip-slip-member", lambda: build_archive(extra_members={"../evil": b"x"}), "unsafe_archive", "unsafe path"),
     ("ratio-bomb", lambda: build_archive(extra_members={"bomb.bin": b"\x00" * (2 * 1024 * 1024)}),
      "unsafe_archive", "compression ratio"),
-    ("schema-newer", lambda: build_archive(manifest_patch={"schema_version": 3}), "schema_newer", "(schema 3)"),
+    ("schema-newer", lambda: build_archive(manifest_patch={"schema_version": 4}), "schema_newer", "(schema 4)"),
     ("schema-not-an-int", lambda: build_archive(manifest_patch={"schema_version": "1"}), "schema_unknown", "schema"),
     ("retention-archive", lambda: build_archive(manifest_patch={"scope": "runs", "format": None}),
      "not_a_project_export", "not a TestLookup project export"),
@@ -306,7 +306,7 @@ async def test_a_wrong_type_names_entity_line_file_and_field_never_the_value():
 
 async def test_schema_newer_names_both_versions():
     failure, _session, _calls = await _refused(build_archive(manifest_patch={"schema_version": 7}))
-    assert failure.message == vocab.ERROR_SENTENCES["schema_newer"].format(found=7, supported="1, 2")
+    assert failure.message == vocab.ERROR_SENTENCES["schema_newer"].format(found=7, supported="1, 2, 3")
 
 
 async def test_a_supplied_name_already_taken_is_refused_by_selects_only():
@@ -938,17 +938,18 @@ async def test_a_central_directory_past_its_cap_is_refused_before_it_is_read(mon
 
 async def test_the_schema_version_is_read_before_the_safe_scan():
     """A newer archive carrying a member the scan would refuse still reads schema_newer: (b) before (c)."""
-    blob = build_archive(manifest_patch={"schema_version": 3}, extra_members={"bomb.bin": b"\x00" * (2 * 1024 * 1024)})
+    blob = build_archive(manifest_patch={"schema_version": 4}, extra_members={"bomb.bin": b"\x00" * (2 * 1024 * 1024)})
     failure, session, calls = await _refused(blob)
     assert failure.code == "schema_newer"
-    assert failure.message == vocab.ERROR_SENTENCES["schema_newer"].format(found=3, supported="1, 2")
+    assert failure.message == vocab.ERROR_SENTENCES["schema_newer"].format(found=4, supported="1, 2, 3")
     _assert_nothing_written(session, calls)
 
 
 def test_each_schema_is_scanned_with_its_own_caps(monkeypatch):
-    assert svc._scan_caps(1) == {"max_total": vocab.IMPORT_MAX_TOTAL_UNCOMPRESSED, "max_entries": vocab.IMPORT_MAX_ENTRIES,
-                                 "max_entry": vocab.IMPORT_MAX_ENTRY_UNCOMPRESSED, "max_ratio": vocab.IMPORT_MAX_RATIO}
-    assert svc._scan_caps(2) == {
+    # W37 D-1: the caps follow "has history" (schema 2, or schema 3 with a history block), not the number
+    assert svc._scan_caps(False) == {"max_total": vocab.IMPORT_MAX_TOTAL_UNCOMPRESSED, "max_entries": vocab.IMPORT_MAX_ENTRIES,
+                                     "max_entry": vocab.IMPORT_MAX_ENTRY_UNCOMPRESSED, "max_ratio": vocab.IMPORT_MAX_RATIO}
+    assert svc._scan_caps(True) == {
         "max_total": vocab.IMPORT_HISTORY_MAX_TOTAL_UNCOMPRESSED, "max_entries": vocab.IMPORT_HISTORY_MAX_ENTRIES,
         "max_entry": vocab.IMPORT_HISTORY_MAX_ENTRY_UNCOMPRESSED, "max_ratio": vocab.IMPORT_HISTORY_MAX_RATIO}
     monkeypatch.setattr(vocab, "IMPORT_MAX_ENTRIES", 2)                 # schema 1's cap only
@@ -965,11 +966,12 @@ def _history_blob(**kwargs: Any) -> tuple[Any, bytes]:
     return world, build_history_archive(world, **kwargs)
 
 
-def test_schema_1_and_schema_2_are_both_accepted():
+@pytest.mark.parametrize("schema_version", [2, 3])
+def test_schema_1_2_and_3_are_all_accepted(schema_version):
     assert not _preflight(build_archive({"test_suites": [_suite()]})).has_history
-    world, blob = _history_blob()
+    world, blob = _history_blob(schema_version=schema_version)     # W30's schema 2 and W37's schema 3
     pre = _preflight(blob)
-    assert pre.has_history and pre.schema_version == 2 and pre.rows["test_runs"] == 1
+    assert pre.has_history and pre.schema_version == schema_version and pre.rows["test_runs"] == 1
 
 
 def _drop_history_block(members: dict[str, bytes]) -> None:
@@ -991,7 +993,38 @@ _SCHEMA_REFUSALS: list[tuple[str, Callable[[], bytes], str, str]] = [
      "unknown_column", "canonical_test_cases.first_seen_run_id"),
     ("schema-2-without-history-block", lambda: build_archive(manifest_patch={"schema_version": 2}),
      "tampered", "the history block is missing"),
+    # W37 D-1: a schema-3 archive WITHOUT a history block (members / reviews only) has no history, as schema 1
+    ("history-entity-in-schema-3-without-history", lambda: build_archive(
+        {"test_runs": [{"id": str(uuid.uuid4()), "build_number": "b"}]}, manifest_patch={"schema_version": 3}),
+     "unknown_entity", "contains test_runs"),
+    ("history-member-in-schema-3-without-history", lambda: build_archive(
+        manifest_patch={"schema_version": 3}, extra_members={"documents/run_summaries/part-0001.jsonl": b"{}\n"}),
+     "tampered", "an unexpected member"),
+    ("canonical-run-pointer-in-schema-3-without-history", lambda: build_archive({"canonical_test_cases": [{
+        "id": str(uuid.uuid4()), "test_suite_id": str(uuid.uuid4()), "test_fingerprint": "fp-1",
+        "test_name": "pays", "first_seen_run_id": str(uuid.uuid4())}]}, manifest_patch={"schema_version": 3}),
+     "unknown_column", "canonical_test_cases.first_seen_run_id"),
+    # W37 F-W30-3: the plan execution result is a schema-3 column — a schema-1 / 2 archive never carries it
+    ("plan-execution-in-schema-1", lambda: build_archive({"test_plan_items": [_executed_item()]}),
+     "unknown_column", "test_plan_items.execut"),
+    ("plan-execution-in-schema-2", lambda: build_archive(
+        {"test_plan_items": [_executed_item()]}, manifest_patch={"schema_version": 2, "history": {"runs": 0}}),
+     "unknown_column", "test_plan_items.execut"),
+    # W37 D-3 (decided, G-B): plan execution results travel ONLY with history — a members / reviews-only schema-3
+    # archive (no history block) never carries them
+    ("plan-execution-in-schema-3-without-history", lambda: build_archive(
+        {"test_plan_items": [_executed_item()]}, manifest_patch={"schema_version": 3}),
+     "unknown_column", "test_plan_items.execut"),
 ]
+
+
+def _executed_item(**overrides: Any) -> dict[str, Any]:
+    """A plan item with a person's manual execution result (``record_test_plan_execution``'s columns)."""
+    row = {"id": str(uuid.uuid4()), "plan_id": str(uuid.uuid4()), "test_case_id": str(uuid.uuid4()),
+           "execution_status": "passed", "executed_at": "2026-11-01T10:00:00+00:00",
+           "executed_by_id": str(uuid.uuid4()), "execution_notes": "ok", "executed_case_version": 2}
+    row.update(overrides)
+    return row
 
 
 @pytest.mark.parametrize(("builder", "code", "fragment"), [r[1:] for r in _SCHEMA_REFUSALS],
@@ -1000,6 +1033,116 @@ async def test_schema_rules_refuse_before_any_write(builder, code, fragment):
     failure, session, calls = await _refused(builder())
     assert failure.code == code and fragment in failure.message, failure.message
     _assert_nothing_written(session, calls)
+
+
+def test_a_schema_3_archive_without_a_history_block_is_a_catalog_without_plan_results():
+    """W37 D-1: no history block → no history (W24's caps, no history entity). W37 D-3 (decided by the
+    orchestrator, G-B): plan execution results travel ONLY with history, so such an archive's plan items carry
+    none — one that does is refused ``unknown_column`` (``_SCHEMA_REFUSALS``)."""
+    plain = {"id": str(uuid.uuid4()), "plan_id": str(uuid.uuid4()), "test_case_id": str(uuid.uuid4())}
+    pre = _preflight(build_archive({"test_plan_items": [plain]}, manifest_patch={"schema_version": 3}))
+    assert pre.schema_version == 3 and not pre.has_history and not pre.history_block
+    assert pre.rows["test_plan_items"] == 1 and "test_runs" not in pre.rows
+    assert not pre.people and not pre.has_reviews and pre.members == [] and pre.emails == {}
+
+
+def _plan_world(item: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    suite, case, plan = _suite(), str(uuid.uuid4()), str(uuid.uuid4())
+    return {"test_suites": [suite], "managed_test_cases": [{"id": case, "title": "Pays", "test_suite_id": suite["id"]}],
+            "test_plans": [{"id": plan, "name": "Release plan", "total_cases": 9}],
+            "test_plan_items": [{**item, "plan_id": plan, "test_case_id": case}]}
+
+
+async def test_a_schema_3_archive_recomputes_the_plan_counters_and_a_schema_1_archive_keeps_them(history_world):
+    """W37 F-W30-3: with the items' statuses (schema 3 WITH history — W37 D-3: plan results travel only with
+    history) the copy's counters are recomputed in ONE UPDATE after the items are inserted; a schema-1 archive's
+    items arrive ``not_run`` and the counters stay as today."""
+    from tests.test_project_import_history import World, build_history_archive
+
+    item = _executed_item()
+
+    class PlanWorld(World):
+        def rows(self) -> dict[str, list[dict[str, Any]]]:
+            return {**super().rows(), **_plan_world(item)}
+
+    _report, session, _storage = await _imported_history(history_world, build_history_archive(PlanWorld()))
+    updates = [s for s in session.statements if s.startswith("UPDATE test_plans")]
+    assert len(updates) == 1 and "total_cases=(SELECT count(*)" in updates[0]
+    order =[i for i, s in enumerate(session.statements) if s.startswith(("INSERT INTO test_plan_items", "UPDATE test_plans"))]
+    assert [session.statements[i].split()[0] for i in order] == ["INSERT", "UPDATE"], "after the items, never before"
+    inserted = next(s for s in session.statements if s.startswith("INSERT INTO test_plan_items"))
+    assert "executed_at" in inserted and "executed_by_id" in inserted and "test_case_result_id" not in inserted
+
+    _report, session = await _imported(build_archive(_plan_world({"id": str(uuid.uuid4())})))
+    assert not any(s.startswith("UPDATE test_plans") for s in session.statements)
+    inserted = next(s for s in session.statements if s.startswith("INSERT INTO test_plan_items"))
+    assert "executed_at" not in inserted and "executed_by_id" not in inserted   # status = the column default
+
+
+def test_the_plan_counters_are_the_recompute_formula_scoped_to_the_copy():
+    from sqlalchemy.dialects import postgresql
+
+    project = uuid.uuid4()
+    compiled = svc.plan_counts_statement(project).compile(dialect=postgresql.dialect())
+    sql, params = str(compiled), compiled.params
+    assert sql.startswith("UPDATE test_plans SET total_cases=(SELECT count(*)")
+    assert sql.endswith("WHERE test_plans.project_id = %(project_id_1)s::UUID") and params["project_id_1"] == project
+    assert sql.count("WHERE test_plan_items.plan_id = test_plans.id") == 6       # every count is per plan
+    assert "executed_cases=((SELECT count(*)" in sql and ") - (SELECT count(*)" in sql   # total − not_run
+    assert sorted(v for k, v in params.items() if k.startswith("execution_status")) == [
+        "blocked", "failed", "not_run", "passed"]
+    assert "updated_at=test_plans.updated_at" in sql                               # the imported stamp stays
+
+
+def test_a_plan_items_execution_maps_its_author_and_waits_for_its_case_only_with_history():
+    from app.services import project_import_history as hist
+
+    author_src, author_new, plan, case, result = (uuid.uuid4() for _ in range(5))
+    source = {"id": uuid.uuid4(), "plan_id": plan, "test_case_id": case, "execution_status": "passed",
+              "executed_by_id": author_src, "execution_notes": "ok", "test_case_result_id": result}
+    ctx = _ctx(user_map={author_src: author_new}, schema_version=3,
+               history_remap=hist.HistoryRemap(uuid.uuid4(), {"test_runs": frozenset()}))
+    ctx.remap.update({"test_plans": {plan: uuid.uuid4()}, "managed_test_cases": {case: uuid.uuid4()}})
+    row = svc.transform_row(ctx, spec_for("test_plan_items"), dict(source))
+    assert row["executed_by_id"] == author_new and row["execution_status"] == "passed"
+    assert "test_case_result_id" not in row                              # inserted NULL, set in the second pass
+    assert ctx.history_pending == {("test_plan_items", "test_case_result_id"): [(row["id"], result)]}
+    # schema 3 WITHOUT history: an unknown author → NULL (counted), no pointer into history waits
+    bare = _ctx(schema_version=3)
+    bare.remap.update(ctx.remap)
+    row = svc.transform_row(bare, spec_for("test_plan_items"), {**source, "executed_by_id": uuid.uuid4()})
+    assert row["executed_by_id"] is None and bare.cleared[("test_plan_items", "executed_by_id", "user_not_found")] == 1
+    assert bare.history_pending == {}
+
+
+class _ParamSession(RecordingSession):
+    """Records each statement's params too (the second pass's UPDATE batches)."""
+
+    def __init__(self, answers: Callable[[str], list[Any]]) -> None:
+        super().__init__(answers)
+        self.params: list[Any] = []
+
+    async def execute(self, statement: Any, params: Any = None) -> _Result:
+        self.params.append(params)
+        return await super().execute(statement, params)
+
+
+async def test_a_plan_items_case_pointer_is_set_only_to_a_case_this_import_inserted():
+    """W37 F-W30-3: ``test_cases`` is UNBOUNDED in the remap (uuid5 resolves any id), so the second pass keeps only
+    the cases this import inserted (ONE SELECT per batch); a pointer past that → NULL, counted — never an FK error."""
+    from app.services import project_import_history as hist
+
+    job, kept_src, gone_src, item_a, item_b = (uuid.uuid4() for _ in range(5))
+    kept = hist.history_id(job, kept_src)
+    session = _ParamSession(lambda sql: [(kept,)] if "FROM test_cases" in sql else [])
+    ctx = _ctx(schema_version=3, history_remap=hist.HistoryRemap(job, {"test_runs": frozenset()}))
+    ctx.history_pending[("test_plan_items", "test_case_result_id")] = [(item_a, kept_src), (item_b, gone_src)]
+    await svc._second_pass(session, ctx)
+    selects = [s for s in session.statements if s.startswith("SELECT test_cases.id")]
+    assert len(selects) == 1 and "test_cases.id IN" in selects[0]
+    update_at = next(i for i, s in enumerate(session.statements) if s.startswith("UPDATE test_plan_items"))
+    assert session.params[update_at] == [{"p_id": item_a, "p_value": kept}]
+    assert ctx.cleared[("test_plan_items", "test_case_result_id", "row_unresolved")] == 1
 
 
 @pytest.fixture
@@ -1067,7 +1210,7 @@ async def test_a_history_import_reports_its_history_and_pauses_retention(history
     from sqlalchemy.sql.elements import Null
 
     # the ledger is cleared with SQL NULL (``null()``), never Python None (a JSON ``null`` in the JSONB column)
-    assert row.status == "succeeded" and isinstance(row.cleanup, Null) and row.options["schema_version"] == 2
+    assert row.status == "succeeded" and isinstance(row.cleanup, Null) and row.options["schema_version"] == 3
     assert row.counts["objects"] == 1 and row.counts["documents.run_summaries"] == 1 and row.counts["test_runs"] == 1
     assert row.report["history"]["runs"] == 1
     assert all(key.startswith(f"{report.project_id}/") for key in storage.puts)

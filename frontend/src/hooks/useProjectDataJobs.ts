@@ -18,7 +18,8 @@ import {
  *   import) / queued / running and not at all once it is terminal; never without a job id.
  * - `useExportEstimate(projectId, options, enabled)` (W30) — what an export with history would carry; the key
  *   holds the options (a new window is a new read), no polling, no focus revalidation, and NO request at all
- *   unless enabled (the card enables it only once "Include run history" is ticked).
+ *   unless enabled (the card enables it only once "Include run history" is ticked). W37: with `historyReleaseId` it
+ *   reads the release's runs (its own key), and the card enables it only once a release is chosen.
  *
  * The job's `refreshInterval` is a NUMBER recomputed from the cached job on every render, never SWR's function
  * form: SWR re-reads a function only when a timer it armed fires, so a function that once answered 0 never
@@ -29,13 +30,20 @@ import {
 export const projectExportsKey = (projectId: string, limit = 1) => `project-data/exports/${projectId}?limit=${limit}`
 export const myImportsKey = (limit = 1) => `project-data/imports/mine?limit=${limit}`
 export const projectDataJobKey = (jobId: string) => `project-data/jobs/${jobId}`
-/** W30: the estimate's key carries the window, so changing it reads again. `null` days = all history. */
-export const exportEstimateKey = (projectId: string, historyDays: number | null | undefined) =>
-  `project-data/estimate/${projectId}?history_days=${historyDays ?? 'all'}`
+/**
+ * W30: the estimate's key carries the window, so changing it reads again. `null` days = all history. W37: a release
+ * window is keyed by the release (each release is its own read).
+ */
+export const exportEstimateKey = (projectId: string, historyDays: number | null | undefined, historyReleaseId?: string | null) =>
+  historyReleaseId
+    ? `project-data/estimate/${projectId}?history_release_id=${historyReleaseId}`
+    : `project-data/estimate/${projectId}?history_days=${historyDays ?? 'all'}`
 
 export interface ExportEstimateOptions {
   /** A HISTORY_WINDOWS_DAYS value, or null = all history. */
   historyDays: number | null
+  /** W37: the runs linked to this release instead of a day window. */
+  historyReleaseId?: string
 }
 
 /** `JOB_POLL_MS` while the job is uploading / queued / running, else 0 (polling off). */
@@ -75,13 +83,15 @@ export function useExportEstimate(
   options: ExportEstimateOptions,
   enabled: boolean,
 ) {
-  const key = enabled && projectId ? exportEstimateKey(projectId, options.historyDays) : null
+  const key = enabled && projectId ? exportEstimateKey(projectId, options.historyDays, options.historyReleaseId) : null
   return useSWR<ProjectExportEstimate>(
     key,
     () =>
       projectDataService.getExportEstimate(projectId as string, {
         includeHistory: true,
         historyDays: options.historyDays,
+        // W37: only a release window names the key, so a day window's call stays W30's exactly.
+        ...(options.historyReleaseId ? { historyReleaseId: options.historyReleaseId } : {}),
       }),
     { revalidateOnFocus: false, shouldRetryOnError: false },
   )

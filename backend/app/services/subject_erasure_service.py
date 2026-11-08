@@ -90,6 +90,12 @@ LOCKOUT_COUNT_KEY = "refresh_token_records.user_id"
 REWRITE_BATCH_ROWS = 500
 #: The W24 project export member that lists the referenced users (E2).
 _DIRECTORY_MEMBER = "directory/users.jsonl"
+#: W37 F-2: the people members of an export that ticked Include members — member → the key naming the user. Their
+#: users always have a users.jsonl line (with the e-mail); the scan reads them too, so a person a crafted or
+#: partial archive lists ONLY there still takes the export down with their line and e-mail.
+_PEOPLE_MEMBERS = {
+    _DIRECTORY_MEMBER: "id", "directory/members.jsonl": "user_id", "directory/suite_owners.jsonl": "user_id",
+}
 _DIRECTORY_MAX_BYTES = 64 * 1024 * 1024
 _SPOOL_BYTES = 8 * 1024 * 1024
 _LIVE_REVIEW_STATUSES = ("pending", "in_progress")
@@ -723,23 +729,25 @@ def _is_missing(exc: BaseException) -> bool:
 
 
 def _directory_lists(spool: Any, user_id: uuid.UUID) -> bool:
-    """True when the archive's ``directory/users.jsonl`` names ``user_id`` (only that member is read)."""
+    """True when the archive's ``directory/users.jsonl`` names ``user_id`` — or (W37 F-2) its
+    ``directory/members.jsonl`` / ``directory/suite_owners.jsonl`` does (by ``user_id``). Only those members are read."""
     spool.seek(0)
+    wanted = str(user_id)
     with zipfile.ZipFile(spool) as archive:
-        try:
-            info = archive.getinfo(_DIRECTORY_MEMBER)
-        except KeyError:
-            return False
-        if info.file_size > _DIRECTORY_MAX_BYTES:
-            raise ValueError("directory member too large")
-        wanted = str(user_id)
-        with archive.open(info) as member:
-            for line in member:
-                if not line.strip():
-                    continue
-                entry = json.loads(line)
-                if isinstance(entry, dict) and str(entry.get("id")) == wanted:
-                    return True
+        for name, key in _PEOPLE_MEMBERS.items():
+            try:
+                info = archive.getinfo(name)
+            except KeyError:
+                continue
+            if info.file_size > _DIRECTORY_MAX_BYTES:
+                raise ValueError("directory member too large")
+            with archive.open(info) as member:
+                for line in member:
+                    if not line.strip():
+                        continue
+                    entry = json.loads(line)
+                    if isinstance(entry, dict) and str(entry.get(key)) == wanted:
+                        return True
     return False
 
 
@@ -758,7 +766,8 @@ async def _archive_lists(storage: Any, *, key: str, user_id: uuid.UUID, bucket: 
 
 async def remove_project_exports_listing(db: AsyncSession, storage: Any, *, user_id: uuid.UUID) -> int:
     """E2: every LIVE project export (``kind='export' AND status='succeeded' AND storage_key IS NOT NULL``)
-    whose ``directory/users.jsonl`` lists the person → the job ``expired`` / ``subject_erased`` (a guarded
+    whose ``directory/users.jsonl`` (W37: or members / suite-owner list) names the person — so their line, their
+    e-mail and their member line leave with it → the job ``expired`` / ``subject_erased`` (a guarded
     UPDATE … WHERE id AND status = 'succeeded', staged first) and the object removed. A missing object is
     skipped (W24's janitor expires its job); a storage fault raises (the phase is re-run)."""
     from app.services.compliance_pack_service import COMPLIANCE_BUCKET

@@ -236,6 +236,13 @@ def _route_is_protected(route: APIRoute) -> bool:
     # requester (import), router-local guard in routers/project_data.py.
     if "{data_job_id}" in path and any("require_project_data_job_access" in n for n in dep_names):
         return True
+    # W37 F-W30-6: the browser download of a large export. A navigation cannot
+    # send Authorization, so the credential is a single-use ticket bound to the
+    # job AND its issuer, issued only behind require_project_data_job_access;
+    # the redeem re-checks that issuer with load_job_for (routers/
+    # project_data_download.py).
+    if "{data_job_id}" in path and any("require_project_data_download_ticket" in n for n in dep_names):
+        return True
     # W31 STRAT-12: a person's export / erasure job → its requester or an ADMIN,
     # session principals only (router-local guard in routers/subject_rights.py).
     if "{subject_job_id}" in path and any("require_subject_job_access" in n for n in dep_names):

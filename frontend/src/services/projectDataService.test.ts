@@ -22,6 +22,7 @@ import {
 } from '@/types/projectData'
 import { downloadBlob } from '@/utils/download'
 import {
+  downloadTicketFixture,
   errorBlob,
   errorBody,
   estimateFixture,
@@ -31,6 +32,7 @@ import {
   partReceiptFixture,
   PROJECT_DATA_PROJECT_ID,
   refusal,
+  RELEASE_ID,
   uploadFixture,
 } from '@/test/projectDataMocks'
 
@@ -275,5 +277,90 @@ describe('projectDataService.importArchive', () => {
     expect(job.status).toBe('succeeded')
     expect(api.put).not.toHaveBeenCalled()
     expect(api.post).toHaveBeenCalledTimes(1)
+  })
+
+  it('W37: the chosen options travel as booleans in the parted start, and only the chosen ones', async () => {
+    vi.mocked(api.post).mockResolvedValueOnce({ data: jobFixture({ kind: 'import', status: 'succeeded', id: JOB }) })
+    await projectDataService.importArchive(sizedFile(60 * MIB), { clientToken: TOKEN, addMembers: true, keepReviews: false })
+    expect(api.post).toHaveBeenLastCalledWith('/api/v1/project-imports/uploads', {
+      client_token: TOKEN, name: null, bytes: 60 * MIB, parts: 2, sha256: WHOLE, add_members: true,
+    }, { suppressToast: true })
+  })
+
+  it('W37: a small file with options takes the single POST with the Form fields', async () => {
+    await projectDataService.importArchive(sizedFile(3 * 1024), { clientToken: TOKEN, keepReviews: true })
+    const form = vi.mocked(api.post).mock.lastCall?.[1] as FormData
+    expect([...form.keys()]).toEqual(['file', 'client_token', 'keep_reviews'])
+  })
+})
+
+// ── W37: the release estimate, the import options, the download ticket ─────
+
+describe('projectDataService W37 paths (every path IN FULL)', () => {
+  it('the estimate names a release instead of a day window: ?include_history=true&history_release_id=<id>', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: estimateFixture() })
+    await projectDataService.getExportEstimate(PROJECT, { includeHistory: true, historyDays: null, historyReleaseId: RELEASE_ID })
+    const [path, config] = vi.mocked(api.get).mock.lastCall as [string, { params: Record<string, unknown> }]
+    expect(path).toBe(`/api/v1/projects/${PROJECT}/export-estimate`)
+    expect(config.params).toStrictEqual({ include_history: true, history_release_id: RELEASE_ID })
+    expect(Object.keys(config.params), 'the order the URL is written in').toEqual(['include_history', 'history_release_id'])
+  })
+
+  it('the import Form fields add_members / keep_reviews = "true", only when chosen', async () => {
+    const file = new File(['PK'], 'x.zip')
+    await projectDataService.startImport(file, { clientToken: TOKEN, addMembers: true, keepReviews: true })
+    const form = vi.mocked(api.post).mock.lastCall?.[1] as FormData
+    expect([...form.keys()]).toEqual(['file', 'client_token', 'add_members', 'keep_reviews'])
+    expect(form.get('add_members')).toBe('true')
+    expect(form.get('keep_reviews')).toBe('true')
+    await projectDataService.startImport(file, { clientToken: TOKEN, addMembers: false, keepReviews: false })
+    expect([...(vi.mocked(api.post).mock.lastCall?.[1] as FormData).keys()]).toEqual(['file', 'client_token'])
+  })
+
+  it('a large download: ONE ticket POST, then a hidden same-origin link is clicked (no Blob, no new window)', async () => {
+    const ticket = downloadTicketFixture(JOB)
+    vi.mocked(api.post).mockResolvedValueOnce({ data: ticket })
+    const clicked: string[] = []
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push(this.getAttribute('href') ?? '')
+      expect(this.isConnected, 'the link is in the document when clicked').toBe(true)
+      expect(this.hasAttribute('target'), 'never a new window').toBe(false)
+    })
+    const open = vi.spyOn(window, 'open')
+    try {
+      await expect(projectDataService.downloadLargeExport(JOB)).resolves.toBe(ticket.url)
+      expect(api.post).toHaveBeenCalledTimes(1)
+      expect(api.post).toHaveBeenLastCalledWith(`/api/v1/project-data-jobs/${JOB}/download-ticket`, undefined, { suppressToast: true })
+      expect(clicked).toEqual([`/api/v1/project-data-downloads/${JOB}?ticket=tkt_Quokka-Lantern_42`])
+      expect(api.get, 'no Blob read').not.toHaveBeenCalled()
+      expect(downloadBlob).not.toHaveBeenCalled()
+      expect(open).not.toHaveBeenCalled()
+      expect(document.querySelectorAll('a').length, 'the link is removed again').toBe(0)
+    } finally {
+      click.mockRestore()
+      open.mockRestore()
+    }
+  })
+
+  it('a ticket refusal rejects with its sentence; a link to another origin, path or job is never followed', async () => {
+    vi.mocked(api.post).mockRejectedValueOnce(refusal(503, errorBody('ticket_unavailable')))
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
+    try {
+      const err = await projectDataService.downloadLargeExport(JOB).catch((e: unknown) => e)
+      expect(await projectDataErrorMessage(err)).toBe(ERROR_SENTENCES.ticket_unavailable)
+      for (const url of [
+        `https://elsewhere.example/api/v1/project-data-downloads/${JOB}?ticket=t`,
+        `//elsewhere.example/api/v1/project-data-downloads/${JOB}?ticket=t`,
+        `/api/v1/project-data-downloads/${PROJECT}?ticket=t`,
+        `/api/v1/project-data-downloads/${JOB}?ticket=t&next=//elsewhere.example`,
+        `/api/v1/project-data-jobs/${JOB}/download`,
+      ]) {
+        vi.mocked(api.post).mockResolvedValueOnce({ data: { ticket: 't', expires_in: 60, url } })
+        await expect(projectDataService.downloadLargeExport(JOB), url).rejects.toThrow(ERROR_SENTENCES.ticket_unavailable)
+      }
+      expect(click).not.toHaveBeenCalled()
+    } finally {
+      click.mockRestore()
+    }
   })
 })

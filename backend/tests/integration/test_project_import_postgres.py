@@ -30,7 +30,9 @@ the ASGI route (``POST /api/v1/projects/import`` as an ADMIN) and the REAL runne
 7. W30 (ADM-05 phase 2) — a body-less export is still the W24 schema-1 archive and imports UNCHANGED
    (no ``history`` block, no documents / objects counts, no retention pause); a phase-1 importer
    (``SUPPORTED_SCHEMA_VERSIONS`` patched to ``(1,)``) meeting a small schema-2 archive reads
-   ``schema_newer`` naming "2" and "1"; a schema-3 archive reads ``schema_newer`` naming "1, 2".
+   ``schema_newer`` naming "2" and "1"; a schema-4 archive reads ``schema_newer`` naming "1, 2, 3".
+   W37 D-1: its 2-vs-3 twin — a W30 importer (``(1, 2)``) meeting a schema-3 history archive reads
+   ``schema_newer`` naming "3" and "1, 2".
    The run-history round trip is ``test_project_history_transfer_postgres_mongo.py``.
 
 Fixture rule (§6.3): ``dispose_engine_for_loop()`` before the engine is built and
@@ -333,7 +335,7 @@ async def _column_values(env, table_name: str, column: str, project_id: uuid.UUI
 async def test_the_round_trip_copies_every_entity_into_a_new_project_and_nothing_else(env):
     from app.models.postgres import Base, User
     from app.services import project_export_vocab as vocab
-    from app.services.project_export_entities import plan
+    from app.services.project_export_entities import exported_columns, plan
     from tests.integration.project_transfer_seed import exported_counts
 
     seeded = env.seeded
@@ -343,6 +345,7 @@ async def test_the_round_trip_copies_every_entity_into_a_new_project_and_nothing
     source_users = {
         (spec.table, column): Counter(await _column_values(env, spec.table, column, seeded.project_id))
         for spec in plan() for column in spec.user_refs
+        if column in exported_columns(spec)      # W37: a schema-3 user ref (executed_by_id) is not in a schema-1 archive
     }
     source_cleared = {
         (spec.table, column): sum(v is not None for v in await _column_values(env, spec.table, column, seeded.project_id))
@@ -505,7 +508,7 @@ async def _assert_isolated(env, new_id: uuid.UUID, in_review: int, report: dict[
 
 
 async def test_the_same_upload_and_token_make_one_project_and_a_new_token_the_next_name(env):
-    from app.services.project_export_entities import plan
+    from app.services.project_export_entities import exported_columns, plan
     from app.services.project_import_service import name_candidates
 
     token = uuid.uuid4()
@@ -525,7 +528,7 @@ async def test_the_same_upload_and_token_make_one_project_and_a_new_token_the_ne
 
     # Every author is active here: authorship maps to the SAME users, by username.
     for spec in plan():
-        for column in spec.user_refs:
+        for column in (c for c in spec.user_refs if c in exported_columns(spec)):   # W37: schema 1's user refs
             before = Counter(await _column_values(env, spec.table, column, env.seeded.project_id))
             assert Counter(await _column_values(env, spec.table, column, job.project_id)) == before, (spec.table, column)
 
@@ -621,9 +624,9 @@ _REFUSED: list[tuple[str, Callable[[bytes], bytes], str, str]] = [
     ("zip-slip", lambda a: _rewrap(a, replace={"../evil": b"x"}), "unsafe_archive", "unsafe path"),
     ("ratio-bomb", lambda a: _rewrap(a, replace={"bomb.bin": b"\x00" * (4 * 1024 * 1024)}),
      "unsafe_archive", "compression ratio"),
-    # W30: schema 2 is read now (run history); a NEWER one still reads schema_newer naming both versions
-    ("schema-3", lambda a: _rewrap(a, manifest=lambda m: m.update(schema_version=3)), "schema_newer",
-     "(schema 3); this deployment reads schema 1, 2"),
+    # W30: schema 2 is read now (run history); W37 D-1: schema 3 too — a NEWER one still reads schema_newer
+    ("schema-4", lambda a: _rewrap(a, manifest=lambda m: m.update(schema_version=4)), "schema_newer",
+     "(schema 4); this deployment reads schema 1, 2, 3"),
     ("unknown-entity", _unknown_entity, "unknown_entity", "contains test_runs"),
     ("unknown-column", _unknown_column, "unknown_column", "test_suites.added_later"),
     ("wrong-type", _wrong_type, "invalid_row",
@@ -691,6 +694,46 @@ async def test_a_phase1_importer_meets_a_schema2_archive_and_reads_schema_newer(
     assert (job.status, job.error_code) == ("failed", "schema_newer")
     assert job.error == vocab.ERROR_SENTENCES["schema_newer"].format(found=2, supported="1")
     assert "(schema 2)" in job.error and "reads schema 1." in job.error
+    assert env.counter.inserts == [] and await _scalar(env, "SELECT count(*) FROM projects") == projects_before
+
+
+def _small_schema3(archive: bytes) -> bytes:
+    """The same small history archive as a W37 exporter writes it: schema_version 3 + the ``history`` block, its
+    plan items carrying F-W30-3's schema-3 columns (what a W30 importer would read as ``unknown_column``)."""
+    small = _small_schema2(archive)
+    part = "entities/test_plan_items/part-0001.jsonl"
+    rows = [json.loads(line) for line in _members(small)[part].decode("utf-8").splitlines() if line.strip()]
+    assert rows, "the seed has a plan item"
+    executed = b"".join(json.dumps({**row, "execution_status": "passed", "executed_case_version": 1},
+                                   sort_keys=True).encode("utf-8") + b"\n" for row in rows)
+
+    def bump(m: dict[str, Any]) -> None:
+        m["schema_version"] = 3
+        m["entities"]["test_plan_items"]["columns"] += ["execution_status", "executed_case_version"]
+    return _rewrap(small, replace={part: executed}, manifest=bump, relist=True, unsign=True)
+
+
+async def test_a_w30_importer_meets_a_schema3_archive_and_reads_schema_newer(env, monkeypatch):
+    """W37 D-1, the 2-vs-3 twin of the test above: a DEPLOYED W30 importer (``SUPPORTED_SCHEMA_VERSIONS ==
+    (1, 2)``) meeting a schema-3 history archive answers its own ``schema_newer`` sentence naming "3" and "1, 2"
+    — never ``unknown_column`` on the schema-3 plan columns — and writes nothing."""
+    from app.services import project_export_vocab as vocab
+
+    monkeypatch.setattr(vocab, "SUPPORTED_SCHEMA_VERSIONS", (1, 2))
+    projects_before = await _scalar(env, "SELECT count(*) FROM projects")
+    response = await _post(env, _small_schema3(env.archive))
+    assert response.status_code == 202, response.text
+    job_id = response.json()["id"]
+    env.counter.inserts.clear()
+    env.counter.armed = True
+    try:
+        await env.runner.run_import_job(uuid.UUID(job_id), storage=env.storage, session_factory=env.sessions)
+    finally:
+        env.counter.armed = False
+    job = await _job(env, job_id)
+    assert (job.status, job.error_code) == ("failed", "schema_newer")
+    assert job.error == vocab.ERROR_SENTENCES["schema_newer"].format(found=3, supported="1, 2")
+    assert "(schema 3)" in job.error and "reads schema 1, 2." in job.error
     assert env.counter.inserts == [] and await _scalar(env, "SELECT count(*) FROM projects") == projects_before
 
 

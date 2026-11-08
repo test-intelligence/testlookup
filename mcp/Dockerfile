@@ -21,6 +21,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # PR #56) stays out of the image until python:3.11-slim is rebuilt upstream.
 # The Debian sources are plain http:// with signed Release files, so unlike the
 # frontend's apk step this does not need the staged interception CA first.
+# OS_PATCH_DAY (CI passes the UTC date) rebuilds this layer at least once a day:
+# the CI image scan builds from the GitHub Actions layer cache, which otherwise
+# replays an upgrade from before Debian's newest fix (PR #342: zlib CVE-2026-85091,
+# fixed in deb13u1, arrived through a CACHED upgrade layer).
+ARG OS_PATCH_DAY=unset
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
     && apt-get install -y --no-install-recommends ca-certificates \

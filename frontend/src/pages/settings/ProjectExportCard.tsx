@@ -11,22 +11,31 @@
  * phase ("Runs and results… 120 of 412"); a finished history export adds "412 runs · 9,120 documents · 1,830
  * attachments" on its own line and, above 512 MB, the CLI hint.
  *
+ * W37: the window's 5th choice "One release" shows a release select (the top bar's cached list) on its own line; the
+ * estimate and the POST then name `history_release_id` (no `history_days`) and Export waits until a release is
+ * chosen. "Include members and suite owners …" / "Include test case reviews and comments" are independent of history
+ * and add `include_members` / `include_reviews` only when ticked. Above 512 MB, Download asks for a one-time ticket
+ * and navigates to it (the browser saves straight to disk); at or below, the Blob download is unchanged.
+ *
  *   - The newest export comes from the PAGE's list read (`latest`; the page binds its load error, the
  *     routed-pages error guard reads the page). This card polls ONE job: the one it started or resumed,
  *     or the newest when it is still queued / running (a reload mid-export resumes the progress).
  *   - A 409 `export_running` names the running job: the card resumes it — no error.
  *   - Download streams through the API as a Blob (the token rides the Authorization header; no
  *     `window.open` of an API URL). A refused download's JSON sentence is read OUT OF THE BLOB, never
- *     "Request failed with status code …".
+ *     "Request failed with status code …". W37: a large one's ticket refusal reads its sentence the same way.
  *   - In the page, no modal or side panel; every name and sentence is React text.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Download, PackageOpen } from 'lucide-react'
+import { releaseOptions } from '@/components/digests/digestScopeModel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useExportEstimate, useProjectDataJob } from '@/hooks/useProjectDataJobs'
+import { useReleases } from '@/hooks/useReleases'
 import { projectDataErrorMessage, projectDataService, runningExportJobId } from '@/services/projectDataService'
 import type { ProjectDataJob } from '@/types/projectData'
 import {
+  CHOOSE_RELEASE,
   DOWNLOAD_FAILED,
   ESTIMATE_FAILED,
   ESTIMATING,
@@ -34,17 +43,76 @@ import {
   estimateOptionsOf,
   EXPORT_AGAIN_LABEL,
   EXPORT_START_FAILED,
+  exportBodyFromForm,
   exportCardState,
+  exportFormBlocked,
   HISTORY_DEFAULT_WINDOW,
   HISTORY_WINDOW_OPTIONS,
-  historyOptionsFromForm,
+  INCLUDE_MEMBERS_LABEL,
+  INCLUDE_REVIEWS_LABEL,
   isActiveJob,
+  isLargeDownload,
   largeDownloadHint,
+  NO_RELEASES,
+  RELEASE_LABEL,
   UI_SENTENCES,
   type EstimateLines,
   type HistoryWindow,
   type JobLike,
 } from './projectDataModel'
+
+/**
+ * W37 (F-W30-1): the release a release-scoped history export is about — the top bar's own cached release list
+ * (`useReleases(…, {cached: true})`, the ReleasePicker's SWR entry: no request of its own), ordered by the digests'
+ * `releaseOptions` (the active release, then in-progress ones, then the rest). Mounted only once "One release" is
+ * chosen. A 240 px select on its own line under the window row (that row has ≈ 211 px left of the 704 px card).
+ */
+function ReleaseSelect({ value, disabled, onChange }: { value: string; disabled: boolean; onChange: (id: string) => void }) {
+  const { data } = useReleases(undefined, { cached: true })
+  const options = useMemo(() => releaseOptions(Array.isArray(data?.items) ? data.items : []), [data])
+  return (
+    <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text)]" data-export-release="">
+      {RELEASE_LABEL}
+      <select className="input w-60 text-xs" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{options.length ? CHOOSE_RELEASE : NO_RELEASES}</option>
+        {options.map((release) => (
+          <option key={release.id} value={release.id}>{release.name}</option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+/**
+ * W37 (W24 F-2 / F-7): two boxes independent of run history; each is a body key only when ticked. The longer label
+ * (≈ 62 characters ≈ 430 px at 14 px under DejaVu, + the 20 px box) fits the 704 px card on one line.
+ */
+function IncludeOptions({
+  includeMembers,
+  includeReviews,
+  disabled,
+  onMembers,
+  onReviews,
+}: {
+  includeMembers: boolean
+  includeReviews: boolean
+  disabled: boolean
+  onMembers: (value: boolean) => void
+  onReviews: (value: boolean) => void
+}) {
+  return (
+    <div className="flex flex-col gap-1" data-export-include="">
+      <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text)]">
+        <input type="checkbox" checked={includeMembers} disabled={disabled} onChange={(e) => onMembers(e.target.checked)} />
+        {INCLUDE_MEMBERS_LABEL}
+      </label>
+      <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text)]">
+        <input type="checkbox" checked={includeReviews} disabled={disabled} onChange={(e) => onReviews(e.target.checked)} />
+        {INCLUDE_REVIEWS_LABEL}
+      </label>
+    </div>
+  )
+}
 
 /**
  * The history form: the checkbox row (≈ 146 px label + 139 px label + the 160 px select ≈ 493 px of the 704 px card at
@@ -53,15 +121,19 @@ import {
 function HistoryOptions({
   includeHistory,
   selected,
+  releaseId,
   disabled,
   lines,
   error,
   onInclude,
   onWindow,
+  onRelease,
 }: {
   includeHistory: boolean
   /** The chosen window. */
   selected: HistoryWindow
+  /** W37: the chosen release (`''` = none yet) when the window is "One release". */
+  releaseId: string
   disabled: boolean
   /** The estimate's lines once it answered (ticked only). */
   lines: EstimateLines | null
@@ -69,7 +141,10 @@ function HistoryOptions({
   error: unknown
   onInclude: (value: boolean) => void
   onWindow: (value: HistoryWindow) => void
+  onRelease: (releaseId: string) => void
 }) {
+  // W37: "One release" with no release chosen reads no estimate — nothing to show under the intro yet.
+  const awaitingRelease = selected === 'release' && !releaseId
   return (
     <div className="flex flex-col gap-2" data-export-history="">
       <div className="flex items-center gap-4">
@@ -93,8 +168,9 @@ function HistoryOptions({
           </label>
         )}
       </div>
+      {includeHistory && selected === 'release' && <ReleaseSelect value={releaseId} disabled={disabled} onChange={onRelease} />}
       <p className="m-0 text-xs text-[var(--color-text-muted)]">{UI_SENTENCES.history_intro}</p>
-      {includeHistory && (
+      {includeHistory && !awaitingRelease && (
         <div className="flex flex-col gap-0.5 text-xs" data-export-estimate={lines?.kind ?? (error ? 'error' : 'loading')}>
           {error ? (
             <p className="m-0 text-[var(--ui-danger-ink)]">{ESTIMATE_FAILED}</p>
@@ -142,8 +218,19 @@ export default function ProjectExportCard({ loadError, projectId, latest, onChan
   // W30: the history form. The estimate is read only while ticked, once per window (the hook's key).
   const [includeHistory, setIncludeHistory] = useState(false)
   const [historyWindow, setHistoryWindow] = useState<HistoryWindow>(HISTORY_DEFAULT_WINDOW)
-  const { data: estimate, error: estimateError } = useExportEstimate(projectId, estimateOptionsOf(historyWindow), includeHistory)
-  const estimated = includeHistory && estimate ? estimateLine(estimate) : null
+  // W37: the release of a "One release" window ('' = none chosen) and the two include boxes.
+  const [releaseId, setReleaseId] = useState('')
+  const [includeMembers, setIncludeMembers] = useState(false)
+  const [includeReviews, setIncludeReviews] = useState(false)
+  const form = { includeHistory, window: historyWindow, releaseId, includeMembers, includeReviews }
+  // "One release" with no release yet: Export waits and no estimate is read (there is nothing to estimate).
+  const awaitingRelease = exportFormBlocked(form)
+  const { data: estimate, error: estimateError } = useExportEstimate(
+    projectId,
+    estimateOptionsOf(historyWindow, releaseId),
+    includeHistory && !awaitingRelease,
+  )
+  const estimated = includeHistory && !awaitingRelease && estimate ? estimateLine(estimate) : null
 
   const watchedId = startedId ?? (latest && isActiveJob(latest) ? latest.id : null)
   const { data: watched } = useProjectDataJob(watchedId)
@@ -163,8 +250,9 @@ export default function ProjectExportCard({ loadError, projectId, latest, onChan
     setStarting(true)
     setRefusal(null)
     try {
-      // Unticked: W24's body-less POST, exactly. Ticked: {include_history, history_days, max_runs}.
-      const body = historyOptionsFromForm({ includeHistory, window: historyWindow })
+      // Nothing ticked: W24's body-less POST, exactly. History: {include_history, history_days, max_runs} — or, for
+      // one release, {include_history, max_runs, history_release_id}; W37's include boxes add a key only when ticked.
+      const body = exportBodyFromForm(form)
       const created = body ? await projectDataService.startExport(projectId, body) : await projectDataService.startExport(projectId)
       setStartedId(created.id)
       onChanged()
@@ -182,7 +270,9 @@ export default function ProjectExportCard({ loadError, projectId, latest, onChan
     setDownloading(true)
     setRefusal(null)
     try {
-      await projectDataService.downloadExport(job.id)
+      // W37 (F-W30-6): over 512 MB, a one-time ticket and a navigation straight to disk; otherwise W24's Blob, unchanged.
+      if (isLargeDownload(job.bytes)) await projectDataService.downloadLargeExport(job.id)
+      else await projectDataService.downloadExport(job.id)
     } catch (err: unknown) {
       setRefusal(await projectDataErrorMessage(err, DOWNLOAD_FAILED))
       onChanged()
@@ -193,8 +283,9 @@ export default function ProjectExportCard({ loadError, projectId, latest, onChan
 
   const loading = latest === undefined && !loadError && !startedId
   const busy = state.kind === 'running'
-  // An estimate over 2 GB blocks starting an export with history (Export and Export again), never a Download.
-  const overLimit = Boolean(estimated?.blocksExport)
+  // An estimate over 2 GB — or (W37) "One release" with no release chosen — blocks starting an export (Export and
+  // Export again), never a Download.
+  const overLimit = Boolean(estimated?.blocksExport) || awaitingRelease
   const primaryDisabled =
     state.button.disabled || starting || downloading || loading || (state.button.action === 'export' && overLimit)
   const onPrimary = state.button.action === 'download' ? download : startExport
@@ -218,11 +309,20 @@ export default function ProjectExportCard({ loadError, projectId, latest, onChan
       <HistoryOptions
         includeHistory={includeHistory}
         selected={historyWindow}
+        releaseId={releaseId}
         disabled={busy || starting}
         lines={estimated}
-        error={includeHistory ? estimateError : undefined}
+        error={includeHistory && !awaitingRelease ? estimateError : undefined}
         onInclude={setIncludeHistory}
         onWindow={setHistoryWindow}
+        onRelease={setReleaseId}
+      />
+      <IncludeOptions
+        includeMembers={includeMembers}
+        includeReviews={includeReviews}
+        disabled={busy || starting}
+        onMembers={setIncludeMembers}
+        onReviews={setIncludeReviews}
       />
 
       <div className="flex items-center justify-between gap-4">

@@ -23,6 +23,12 @@
  * proxy's HTML 413 on a part reads `A part is larger than 32 MB.`, never "Request failed …". A finished history
  * import adds the History block: the runs and their dates, the stored documents, the attachments, the skips, the
  * retention pause, the recent-runs (digest) note and the search rebuild.
+ *
+ * W37 (W24 F-2 / F-7): "Add members who have an account here (matched by e-mail)" and "Keep test case reviews", both
+ * unticked by default and sent only when ticked (`add_members` / `keep_reviews` = "true" Form fields on the single
+ * POST, booleans in the parted start). The report's new rows (members, suite owners, reviews, comments) read through
+ * the same lists — a skipped member reads its own reason, e.g. "no active account here has this e-mail address" — a
+ * case returned to Review requested is a Switched off line, and each option the file could not honour gets one line.
  */
 import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { isAxiosError } from 'axios'
@@ -34,6 +40,7 @@ import { projectDataErrorMessage, projectDataService, type ImportArchiveProgress
 import { useProjectStore } from '@/store/projectStore'
 import type { ProjectDataJob } from '@/types/projectData'
 import {
+  ADD_MEMBERS_LABEL,
   ATTACHMENTS_HEADING,
   CHECKING_FILE,
   chosenFileLine,
@@ -47,10 +54,12 @@ import {
   IMPORT_START_FAILED,
   IMPORTED_HEADING,
   importJobState,
+  importOptionsFromForm,
   importReportLines,
   importSummaryLine,
   isActiveJob,
   isUploadingJob,
+  KEEP_REVIEWS_LABEL,
   LAST_IMPORT_HEADING,
   NAME_LABEL,
   NAME_PLACEHOLDER,
@@ -185,6 +194,14 @@ function ImportReport({ report, onOpen }: { report: ImportReportLike; onOpen: ()
           {lines.openLabel}
         </button>
       </div>
+      {lines.optionsIgnored.length > 0 && (
+        // W37: an option the file could not honour — said, never an error (≤ 82 characters, one text-xs line).
+        <div className="flex flex-col gap-0.5" data-import-options-ignored="">
+          {lines.optionsIgnored.map((line) => (
+            <p key={line} className="m-0 text-xs text-[var(--color-text)]">{line}</p>
+          ))}
+        </div>
+      )}
       <ReportList id="inserted" heading={IMPORTED_HEADING} lines={lines.inserted} />
       <ReportList id="switched-off" heading={SWITCHED_OFF_HEADING} lines={lines.switchedOff} />
       <ReportList id="not-imported" heading={NOT_IMPORTED_HEADING} lines={lines.notImported} stacked />
@@ -255,6 +272,9 @@ export default function ProjectImportCard({ loadError, latest, onChanged }: Prop
 
   const [file, setFile] = useState<File | null>(null)
   const [name, setName] = useState('')
+  // W37: Add members (W24 F-2) / Keep reviews (W24 F-7) — unticked by default, sent only when ticked.
+  const [addMembers, setAddMembers] = useState(false)
+  const [keepReviews, setKeepReviews] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [refusal, setRefusal] = useState<string | null>(null)
   // The job of this visit: started here, or the newest import resumed while it was still running.
@@ -311,7 +331,7 @@ export default function ProjectImportCard({ loadError, latest, onChanged }: Prop
     setRefusal(null)
     try {
       const trimmed = name.trim()
-      const options = { clientToken, ...(trimmed ? { name: trimmed } : {}) }
+      const options = { clientToken, ...(trimmed ? { name: trimmed } : {}), ...importOptionsFromForm({ addMembers, keepReviews }) }
       let job: ProjectDataJob
       if (parted) {
         // W30: over 50 MB — checked, then sent in 32 MB parts; the service reports each step.
@@ -390,6 +410,17 @@ export default function ProjectImportCard({ loadError, latest, onChanged }: Prop
             className="input w-80 text-xs"
           />
           {nameError && <p className="m-0 text-xs text-[var(--ui-danger-ink)]">{nameError}</p>}
+        </div>
+        {/* W37: both off by default — "an archive never grants access" unless the admin ticks Add members. */}
+        <div className="flex flex-col gap-1" data-import-options="">
+          <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text)]">
+            <input type="checkbox" checked={addMembers} disabled={submitting || running} onChange={(e) => setAddMembers(e.target.checked)} />
+            {ADD_MEMBERS_LABEL}
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-[var(--color-text)]">
+            <input type="checkbox" checked={keepReviews} disabled={submitting || running} onChange={(e) => setKeepReviews(e.target.checked)} />
+            {KEEP_REVIEWS_LABEL}
+          </label>
         </div>
         <div>
           <button type="button" className="btn-primary inline-flex items-center gap-1.5" onClick={startImport} disabled={!canImport}>

@@ -9,7 +9,7 @@ W30 items (§6.3 G-B 1-7):
 1. the body-less export is schema 1: its members and manifest keys are exactly W24's (no ``documents/``,
    ``objects/``, history entity or ``history`` block); every CATALOG entity ``counts[t] == SELECT count(*)``;
 2. the history export (the seed's 30-day window — its out-of-window run is 45 days old) through the REAL runner
-   on a 1 + 1 pool → ``succeeded``, schema 2; EVERY history entity ``counts[t]`` == the seed's in-window rows
+   on a 1 + 1 pool → ``succeeded``, schema 3 (W37 D-1); EVERY history entity ``counts[t]`` == the seed's in-window rows
    and ``> 0``; the IN_PROGRESS run, the non-terminal pipeline, the out-of-window run, the outbox row, the share
    link, the defect, the ingest-input and refused-prefix objects ABSENT (the skips counted in the manifest); per
    ``MongoSpec`` the documents' line count == the seed's in-window documents and ``> 0``; every object member's
@@ -381,7 +381,7 @@ async def test_a_history_export_carries_every_history_entity_of_its_window(histo
     assert history_export.status == "succeeded", (job.error_code, job.error)
     members = _members(history_export.archive)
     manifest = json.loads(members["manifest.json"])
-    assert manifest["schema_version"] == 2 and set(manifest) == _W24_MANIFEST_KEYS | {"history"}
+    assert manifest["schema_version"] == 3 and set(manifest) == _W24_MANIFEST_KEYS | {"history"}   # W37 D-1
     assert job.options == {"include_history": True, "history_days": 30, "max_runs": 2000}
     expected = expected_history_counts(seed, history_days=30)
     thin = sorted(t for t in HISTORY_TABLES if job.counts.get(t, 0) <= 0)

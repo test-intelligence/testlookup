@@ -15,6 +15,9 @@
  *   succeeded one), `historyReportFixture()` / `historyImportReportFixture()` (one skip, the retention pause,
  *   recent runs, search rebuilt), `uploadFixture()` / `partReceiptFixture()`; `jobFixture({status: 'uploading'})`
  *   is a parted import with its upload state.
+ * - W37: `RELEASE_ID`, `downloadTicketFixture(jobId)` (the ticket POST's `{ticket, expires_in, url}`) and
+ *   `peopleImportReportFixture()` (members / suite owners / reviews inserted, an e-mail skip, an owner skip, one
+ *   case returned to Review requested, `options_ignored`).
  *
  * Names are non-hex words; timestamps are built at CALL time (never a module constant).
  */
@@ -24,6 +27,7 @@ import {
   ERROR_SENTENCES,
   EXPORT_TTL_HOURS,
   fillSentence,
+  type ProjectDataDownloadTicket,
   type ProjectDataErrorCode,
   type ProjectDataHistoryReport,
   type ProjectDataImportReport,
@@ -295,6 +299,33 @@ export function historyJobFixture(overrides: HistoryJobOverrides = {}): ProjectD
   return { ...job, ...rest, kind, status, id: job.id }
 }
 
+// ── W37: the download ticket, the release-scoped export, the people / reviews report ──
+
+/** A release of the source project (the top bar's cached list). */
+export const RELEASE_ID = '00000000-0000-4000-8000-0000000071e5'
+
+/** `POST …/download-ticket`'s answer: a 60-second, single-use same-origin link for `jobId`. */
+export function downloadTicketFixture(jobId: string, ticket = 'tkt_Quokka-Lantern_42'): ProjectDataDownloadTicket {
+  return { ticket, expires_in: 60, url: `/api/v1/project-data-downloads/${jobId}?ticket=${ticket}` }
+}
+
+/**
+ * A finished import with Add members + Keep reviews: two members and one suite owner added, one member whose e-mail
+ * matched nobody, one owner who is not a QA lead, one case returned to Review requested, and `options_ignored` as
+ * given (default `[]`).
+ */
+export function peopleImportReportFixture(overrides: Partial<ProjectDataImportReport> = {}): ProjectDataImportReport {
+  return importReportFixture({
+    inserted: { test_suites: 3, managed_test_cases: 42, releases: 2, project_members: 2, test_suite_owners: 1, test_case_reviews: 3, test_case_comments: 5 },
+    skipped: [
+      { entity: 'project_members', column: null, reason: 'email_not_found', count: 1 },
+      { entity: 'test_suite_owners', column: null, reason: 'owner_not_lead', count: 1 },
+    ],
+    switched_off: { webhook_subscriptions: 3, 'managed_test_cases.review_unclaimed': 1 },
+    options_ignored: [],
+    ...overrides,
+  })
+}
 
 export function jobList(items: ProjectDataJob[], total = items.length): ProjectDataJobList {
   return { items, total }

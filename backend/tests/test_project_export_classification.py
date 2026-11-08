@@ -80,6 +80,9 @@ SCHEMA_V2_HISTORY_REQUIRED_COLUMNS = frozenset({
     "timeline_notes.starts_on", "timeline_notes.ends_on", "timeline_notes.text",
 })
 
+# Guard (7') the same pin for the OPTIONAL entities (W37 F-7): a schema-3 archive with reviews always carries these.
+SCHEMA_V3_OPTIONAL_REQUIRED_COLUMNS = frozenset({"test_case_comments.content"})
+
 # Guard (6') phase 1's 29 catalog entities, in phase 1's order: a schema-1 export writes exactly these.
 PHASE_1_PLAN = (
     "projects", "test_suites", "managed_test_cases", "test_case_versions", "test_case_requirement_links",
@@ -225,6 +228,14 @@ def test_6_both_plans_are_phase_1_then_history():
     assert [s.table for s in e.plan(include_history=False)] == list(PHASE_1_PLAN)
     assert [s.table for s in e.plan(include_history=True)] == list(PHASE_1_PLAN) + list(e.HISTORY_TABLES)
     assert e.order_problems(e.CATALOG) == [] and e.order_problems(e.EXPORTED) == []
+    # W37 F-7: the OPTIONAL reviews / comments join ONLY when chosen, right after the catalog, before history
+    optional = ["test_case_reviews", "test_case_comments"]
+    assert list(e.OPTIONAL_TABLES) == optional
+    assert [s.table for s in e.plan(include_reviews=True)] == list(PHASE_1_PLAN) + optional
+    assert [s.table for s in e.plan(include_history=True, include_reviews=True)] == (
+        list(PHASE_1_PLAN) + optional + list(e.HISTORY_TABLES)
+    )
+    assert e.order_problems(e.CATALOG + e.OPTIONAL) == []
 
 
 def test_6_history_fks_are_second_pass_columns_of_catalog_entities_pointing_at_history():
@@ -239,30 +250,82 @@ def test_6_history_fks_are_second_pass_columns_of_catalog_entities_pointing_at_h
     }
 
 
-def test_6_schema_1_columns_are_phase_1s_and_schema_2_adds_the_history_fks():
-    spec = e.spec_for("canonical_test_cases")
-    v1 = e.exported_columns(spec)
-    assert v1 == e.exported_columns(spec, schema_version=1)
-    assert not {"first_seen_run_id", "last_seen_run_id", "deleted_at_run_id"} & set(v1)
-    assert set(e.exported_columns(spec, schema_version=2)) - set(v1) == set(spec.history_fks)
-    for other in e.CATALOG:
-        if not other.history_fks:
-            assert e.exported_columns(other, schema_version=2) == e.exported_columns(other)
-    try:
-        e.exported_columns(spec, schema_version=3)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("an unsupported schema_version must raise")
+_PLAN_EXECUTION = {"execution_status", "executed_by_id", "executed_at", "execution_notes", "actual_duration_minutes",
+                   "executed_case_version", "test_case_result_id"}
+
+
+def _added(schema_version: int, *, history: bool | None = None, base: int = 1) -> dict[str, set[str]]:
+    """table → the columns ``schema_version`` writes beyond ``base`` (only the specs that differ)."""
+    out = {}
+    for spec in e.EXPORTED:
+        extra = set(e.exported_columns(spec, schema_version=schema_version, history=history))
+        extra -= set(e.exported_columns(spec, schema_version=base))
+        if extra:
+            out[spec.table] = extra
+    return out
+
+
+def test_6_the_columns_of_each_schema_differ_exactly_where_pinned():
+    # (6') W37 D-1: schema 1 is phase 1's columns; schema 2 (W30, read only) adds C-1's canonical run pointers;
+    # schema 3 adds the version-gated columns (F-W30-3's plan execution result) — no other spec differs
+    canonical = {"first_seen_run_id", "last_seen_run_id", "deleted_at_run_id"}
+    for spec in e.EXPORTED:
+        assert e.exported_columns(spec) == e.exported_columns(spec, schema_version=1), spec.table
+        v1, v2, v3 = (set(e.exported_columns(spec, schema_version=v)) for v in (1, 2, 3))
+        assert v1 <= v2 <= v3, f"{spec.table}: a newer schema never loses a column"
+    assert _added(2) == {"canonical_test_cases": canonical}
+    assert _added(3, base=2) == {"test_plan_items": _PLAN_EXECUTION}
+    assert _added(3) == {"canonical_test_cases": canonical, "test_plan_items": _PLAN_EXECUTION}
+    # schema 3 WITHOUT history (G-B's members / reviews only) — W37 D-3, decided: plan execution results travel
+    # ONLY with history, so such an archive writes exactly schema 1's columns (no pointer, no plan results)
+    assert _added(3, history=False) == {}
+    for spec in e.EXPORTED:
+        assert e.exported_columns(spec, schema_version=3, history=False) == e.exported_columns(spec), spec.table
+    # the gating is the spec's: schema3_columns are only ever F-W30-3's, on a catalog entity
+    gated = {spec.table: set(spec.schema3_columns) for spec in e.EXPORTED if spec.schema3_columns}
+    assert gated == {"test_plan_items": _PLAN_EXECUTION}
+    assert not any(spec.history for spec in e.EXPORTED if spec.schema3_columns)
+    for unsupported in (0, 4):
+        try:
+            e.exported_columns(e.spec_for("canonical_test_cases"), schema_version=unsupported)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"schema_version {unsupported} is not read here: it must raise")
+
+
+def test_6_schema_3_columns_are_never_dropped_and_their_pointers_are_second_pass():
+    for spec in e.EXPORTED:
+        assert not set(spec.schema3_columns) & set(spec.drop), f"{spec.table}: a gated column is not also dropped"
+        assert not set(spec.schema3_columns) & set(spec.fks), f"{spec.table}: a gated FK is a second-pass column"
+    items = e.spec_for("test_plan_items")
+    assert dict(items.history_fks) == dict(items.null_unless) == {"test_case_result_id": "test_cases"}
+    assert "executed_by_id" in items.user_refs
+    assert {"last_executed_at", "last_execution_status"} <= set(e.spec_for("managed_test_cases").drop)   # D-3
+    assert {"actual_start_date", "actual_end_date"} <= set(e.spec_for("test_plans").drop)               # D-3
+
+
+def test_6_the_has_history_rule_and_the_written_schema():
+    # W37 D-1: schema 2 always; schema 3 only with a manifest history block; schema 1 never
+    assert e.archive_has_history(2, history_block=True) and e.archive_has_history(2, history_block=False)
+    assert e.archive_has_history(3, history_block=True) and not e.archive_has_history(3, history_block=False)
+    assert not e.archive_has_history(1, history_block=True) and not e.archive_has_history(1, history_block=False)
+    assert e.export_schema_version(include_history=False) == 1
+    assert e.export_schema_version(include_history=True) == 3
+    # W37 F-2 / F-7: members or reviews — with or without history — are schema 3 too
+    assert e.export_schema_version(include_history=False, include_members=False, include_reviews=False) == 1
+    assert e.export_schema_version(include_history=False, include_members=True) == 3
+    assert e.export_schema_version(include_history=False, include_reviews=True) == 3
+    assert e.export_schema_version(include_history=True, include_members=True, include_reviews=True) == 3
 
 
 def test_6_plan_is_topologically_sorted():
-    assert [s.table for s in e.plan(include_history=True)] == list(e.EXPORTED_TABLES)
+    assert [s.table for s in e.plan(include_history=True, include_reviews=True)] == list(e.EXPORTED_TABLES)
     assert e.plan()[0].table == "projects" and e.plan()[0].scope == e.SCOPE_ROOT
     assert e.order_problems() == []
     # every fks / parent edge points at an EXPORTED table that precedes the child
     position = {t: i for i, t in enumerate(e.EXPORTED_TABLES)}
-    for i, spec in enumerate(e.plan(include_history=True)):
+    for i, spec in enumerate(e.plan(include_history=True, include_reviews=True)):
         parents = dict(spec.fks)
         parents.update({c: t for c, t in spec.null_unless.items() if t != spec.table and c not in spec.history_fks})
         if spec.parent is not None:
@@ -313,6 +376,7 @@ def test_7_every_named_column_exists_on_its_table():
             "self_fks": spec.self_fks, "inert": tuple(spec.inert), "natural_key": spec.natural_key,
             "history_fks": tuple(spec.history_fks), "object_refs": spec.object_refs,
             "json_id_paths": tuple(spec.json_id_paths), "null_unless": tuple(spec.null_unless),
+            "schema3_columns": spec.schema3_columns,
         }
         for kind, columns in named.items():
             missing = sorted(set(columns) - cols)
@@ -415,7 +479,8 @@ def _required_without_default(specs: tuple[e.EntitySpec, ...]) -> set[str]:
 
 def test_7_a_new_not_null_column_without_a_default_is_a_deliberate_decision():
     for specs, pin, version in ((e.CATALOG, SCHEMA_V1_REQUIRED_COLUMNS, "SCHEMA_V1_REQUIRED_COLUMNS"),
-                                (e.HISTORY, SCHEMA_V2_HISTORY_REQUIRED_COLUMNS, "SCHEMA_V2_HISTORY_REQUIRED_COLUMNS")):
+                                (e.HISTORY, SCHEMA_V2_HISTORY_REQUIRED_COLUMNS, "SCHEMA_V2_HISTORY_REQUIRED_COLUMNS"),
+                                (e.OPTIONAL, SCHEMA_V3_OPTIONAL_REQUIRED_COLUMNS, "SCHEMA_V3_OPTIONAL_REQUIRED_COLUMNS")):
         found = _required_without_default(specs)
         new = sorted(found - pin)
         assert not new, (
@@ -470,12 +535,18 @@ def test_8_pinned_counts():
     # W31 STRAT-12 (deliberate): + subject_rights_jobs under NOT_PROJECT_SCOPED (24 → 25)
     # W34 STRAT-13 (deliberate): + drop_folder_builds under NOT_PROJECT_SCOPED (25 → 26)
     # W36 STRAT-03 (deliberate): + systemic_cluster_epics under EXCLUDED, external_tracker like defects (77 → 78)
-    assert counts == (56, 78, 26), (
+    # W37 F-7 (deliberate): test_case_reviews / test_case_comments leave EXCLUDED (per_user_state) for EXPORTED as
+    # the 2 OPTIONAL entities, written only when the exporter ticks Include reviews (56 → 58, 78 → 76)
+    assert counts == (58, 76, 26), (
         f"EXPORTED / EXCLUDED / NOT_PROJECT_SCOPED = {counts}: a table was added or moved — "
         "classify it in project_export_entities.py and update this pin deliberately"
     )
     assert sum(counts) == len(TABLES)
-    assert (len(e.CATALOG), len(e.HISTORY)) == (29, 27)
+    assert (len(e.CATALOG), len(e.OPTIONAL), len(e.HISTORY)) == (29, 2, 27)
+    assert e.OPTIONAL_REASON == "exported only when the exporter ticks Include reviews"
+    # without Include reviews they are left out exactly as W24 did — under their W24 reason (a schema-1 manifest)
+    assert dict(e.OPTIONAL_UNTICKED_REASONS) == {t: "per_user_state" for t in e.OPTIONAL_TABLES}
+    assert set(e.OPTIONAL_UNTICKED_REASONS.values()) <= set(EXCLUSION_REASONS)
     assert sum(1 for r in e.EXCLUDED.values() if r == "run_history") == 0   # W30: the reason retired
 
 

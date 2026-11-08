@@ -75,6 +75,8 @@ class RunWindow:
     over_cap: int = 0               # window runs beyond max_runs — not exported
     oldest_run_at: Optional[datetime] = None
     newest_run_at: Optional[datetime] = None
+    release_id: Optional[uuid.UUID] = None   # W37 F-W30-1: the runs linked to this release (no day window)
+    release_name: Optional[str] = None
     _param: Any = field(default=None, repr=False)
 
     @property
@@ -103,53 +105,90 @@ def _option(options: Any, name: str, default: Any) -> Any:
     return getattr(options, name, default)
 
 
+def release_of(options: Any) -> Optional[uuid.UUID]:
+    """W37 F-W30-1: the ``history_release_id`` of ``options`` (None = a day window)."""
+    value = _option(options, "history_release_id", None)
+    if value is None or isinstance(value, uuid.UUID):
+        return value
+    return uuid.UUID(str(value))
+
+
 def window_bounds(options: Any, *, now: datetime) -> tuple[Optional[int], int, Optional[datetime]]:
-    """``(history_days, max_runs, since)`` of ``options`` (``history_days`` None = all history)."""
+    """``(history_days, max_runs, since)`` of ``options`` (``history_days`` None = all history). W37 D-2: a
+    release scope REPLACES the day window — no time cut (``(None, max_runs, None)``)."""
     days = _option(options, "history_days", vocab.HISTORY_DEFAULT_DAYS)
+    if release_of(options) is not None:
+        days = None
     max_runs = _option(options, "max_runs", None) or vocab.HISTORY_MAX_RUNS
     max_runs = max(1, min(int(max_runs), vocab.HISTORY_MAX_RUNS))
     since = now - timedelta(days=int(days)) if days is not None else None
     return (int(days) if days is not None else None), max_runs, since
 
 
-def _window_filter(runs: Any, project_id: uuid.UUID, since: Optional[datetime]) -> list[Any]:
+def _window_filter(
+    runs: Any, project_id: uuid.UUID, since: Optional[datetime], release_id: Optional[uuid.UUID] = None,
+) -> list[Any]:
+    """``project_id = :source`` [+ ``id IN (the release's linked runs)``] [+ ``created_at >= :since``]. W37 D-2: a
+    release's runs are every ``release_test_run_links`` row of it (primary AND secondary) — a SUBQUERY, never a
+    JOIN (a run linked twice is one run); the link's own ``project_id`` AND the run's are both the source (a
+    historical cross-project link row names nothing here)."""
     clauses = [runs.c.project_id == project_id]
+    if release_id is not None:
+        links = _table("release_test_run_links")
+        clauses.append(runs.c.id.in_(
+            select(links.c.test_run_id).where(links.c.release_id == release_id, links.c.project_id == project_id)
+        ))
     if since is not None:
         clauses.append(runs.c.created_at >= since)
     return clauses
 
 
-def window_statement(project_id: uuid.UUID, *, since: Optional[datetime], max_runs: int) -> Any:
-    """``SELECT id, created_at FROM test_runs WHERE project_id = :source AND status IN :HISTORY_RUN_STATUSES
-    [AND created_at >= :since] ORDER BY created_at DESC, id DESC LIMIT :max_runs`` — the ONE window statement."""
+def window_statement(
+    project_id: uuid.UUID, *, since: Optional[datetime], max_runs: int, release_id: Optional[uuid.UUID] = None,
+) -> Any:
+    """``SELECT id, created_at FROM test_runs WHERE project_id = :source [AND id IN (SELECT
+    release_test_run_links.test_run_id ... WHERE release_id = :release AND project_id = :source)] AND status IN
+    :HISTORY_RUN_STATUSES [AND created_at >= :since] ORDER BY created_at DESC, id DESC LIMIT :max_runs`` — the
+    ONE window statement."""
     runs = _table("test_runs")
     return (
         select(runs.c.id, runs.c.created_at)
-        .where(*_window_filter(runs, project_id, since), runs.c.status.in_(vocab.HISTORY_RUN_STATUSES))
+        .where(*_window_filter(runs, project_id, since, release_id), runs.c.status.in_(vocab.HISTORY_RUN_STATUSES))
         .order_by(runs.c.created_at.desc(), runs.c.id.desc())
         .limit(max_runs)
     )
 
 
-def window_counts_statement(project_id: uuid.UUID, *, since: Optional[datetime]) -> Any:
-    """The window's run counts in ONE aggregate: exportable (terminal) and in progress."""
+def window_counts_statement(
+    project_id: uuid.UUID, *, since: Optional[datetime], release_id: Optional[uuid.UUID] = None,
+) -> Any:
+    """The window's run counts in ONE aggregate: exportable (terminal) and in progress (the same filter)."""
     runs = _table("test_runs")
     terminal = func.count().filter(runs.c.status.in_(vocab.HISTORY_RUN_STATUSES))
     in_progress = func.count().filter(runs.c.status.not_in(vocab.HISTORY_RUN_STATUSES))
-    return select(terminal, in_progress).where(*_window_filter(runs, project_id, since))
+    return select(terminal, in_progress).where(*_window_filter(runs, project_id, since, release_id))
+
+
+def release_name_statement(project_id: uuid.UUID, release_id: uuid.UUID) -> Any:
+    """W37: the scoped release's name for the manifest — the path project's release only."""
+    releases = _table("releases")
+    return select(releases.c.name).where(releases.c.id == release_id, releases.c.project_id == project_id)
 
 
 async def run_window(db: Any, *, project_id: uuid.UUID, options: Any, now: Optional[datetime] = None) -> RunWindow:
     """The window's run ids (≤ ``max_runs``, newest first) and its skipped counts, on the caller's snapshot."""
     at = now or datetime.now(timezone.utc)
     days, max_runs, since = window_bounds(options, now=at)
-    rows = (await db.execute(window_statement(project_id, since=since, max_runs=max_runs))).all()
-    counts = (await db.execute(window_counts_statement(project_id, since=since))).one()
+    release_id = release_of(options)
+    rows = (await db.execute(window_statement(project_id, since=since, max_runs=max_runs, release_id=release_id))).all()
+    counts = (await db.execute(window_counts_statement(project_id, since=since, release_id=release_id))).one()
     terminal, in_progress = int(counts[0] or 0), int(counts[1] or 0)
     window = RunWindow(
         project_id=project_id, run_ids=[row[0] for row in rows], days=days, max_runs=max_runs, since=since,
-        in_progress=in_progress, over_cap=max(0, terminal - len(rows)),
+        in_progress=in_progress, over_cap=max(0, terminal - len(rows)), release_id=release_id,
     )
+    if release_id is not None:
+        window.release_name = (await db.execute(release_name_statement(project_id, release_id))).scalar()
     stamps = [row[1] for row in rows if row[1] is not None]
     if stamps:
         window.oldest_run_at, window.newest_run_at = min(stamps), max(stamps)
@@ -260,10 +299,11 @@ def row_hook(spec: Any, window: RunWindow, row_skips: dict[tuple[str, str], int]
 
 
 def columns_of(spec: Any) -> tuple[str, ...]:
-    """The schema-2 columns of ``spec`` (phase 1's + C-1's ``history_fks``), table order."""
-    from app.services.project_export_entities import exported_columns
+    """The columns of ``spec`` in an export WITH history (schema 3, W37 D-1: phase 1's + C-1's ``history_fks``
+    + the ``schema3_columns``), table order."""
+    from app.services.project_export_entities import export_schema_version, exported_columns
 
-    return exported_columns(spec, schema_version=vocab.SCHEMA_VERSION)
+    return exported_columns(spec, schema_version=export_schema_version(include_history=True), history=True)
 
 
 def rows_statement(spec: Any, window: RunWindow) -> Any:
@@ -749,8 +789,8 @@ def history_block(window: RunWindow, stats: dict[str, Any], *, skipped: list[dic
         rows.append({"entity": entity, "reason": reason, "count": count})
     for (entity, reason), count in sorted((history.get("row_skips") or {}).items()):
         rows.append({"entity": entity, "reason": reason, "count": count})
-    return {
-        "window_days": window.days,
+    block: dict[str, Any] = {
+        "window_days": window.days,            # W37: null for a release scope (the release replaces the window)
         "max_runs": window.max_runs,
         "runs": len(window.run_ids),
         "runs_in_progress_skipped": window.in_progress,
@@ -762,6 +802,9 @@ def history_block(window: RunWindow, stats: dict[str, Any], *, skipped: list[dic
         "skipped": rows,
         "excluded_objects": list(_excluded_object_notes()),
     }
+    if window.release_id is not None:          # W37 F-W30-1 (the W30 importer ignores an unknown history key)
+        block["release"] = {"id": str(window.release_id), "name": window.release_name}
+    return block
 
 
 def history_counts(stats: dict[str, Any]) -> dict[str, int]:
@@ -833,5 +876,5 @@ async def estimate(
         include_history=True, history_days=window.days, runs=len(window.run_ids),
         runs_in_progress=window.in_progress, runs_over_cap=window.over_cap, test_cases=test_cases,
         documents=documents, objects=objects, object_bytes=object_bytes,
-        estimated_bytes=estimated, over_limit=over, measured=measured,
+        estimated_bytes=estimated, over_limit=over, measured=measured, history_release_id=window.release_id,
     )
