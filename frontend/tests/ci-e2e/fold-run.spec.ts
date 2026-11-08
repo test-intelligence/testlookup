@@ -56,6 +56,8 @@ const TAB_ONLY = {
   analysis: [new RegExp(`^${RUN}/intelligence$`), /^\/api\/v1\/deep-investigate\//],
   changes: [new RegExp(`^${RUN}/regression-diff$`), new RegExp(`^${RUN}/duration-regressions$`)],
   evidence: [/^\/api\/v1\/agents\/pipelines/, /^\/api\/v1\/agents\/runs\/[^/]+\/summary$/],
+  // W39 STRAT-07: the Timing tab's reads — its timing and the Observability evidence card's stored evidence.
+  timing: [new RegExp(`^${RUN}/timing$`), new RegExp(`^${RUN}/observability-timeline$`)],
 }
 
 test('the test table starts within the fold budget at 1440 x 900, failures first, and no closed tab asks for anything', async ({ page }) => {
@@ -130,6 +132,8 @@ test('each tab renders its section and makes its own requests only when opened',
   await expect(page.getByRole('region', { name: 'AI report' })).toContainText(AI_REPORT_SUMMARY)
   await networkQuiet(page, api)
   for (const path of TAB_ONLY.evidence) expect(requestsTo(api, path).length, String(path)).toBeGreaterThan(0)
+  // No other tab asked for the Timing tab's reads (W39: the evidence timeline belongs to Timing only).
+  for (const path of TAB_ONLY.timing) expect(requestsTo(api, path), String(path)).toEqual([])
 
   // Back to Tests: the clean URL.
   await tabs.getByRole('tab', { name: /Tests/ }).click()

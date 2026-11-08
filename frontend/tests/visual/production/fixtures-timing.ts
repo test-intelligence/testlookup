@@ -12,6 +12,7 @@ import { type ApiHandlers } from '../../lib/production-pages'
 import { isoAgo, RUN_ID } from './fixtures'
 import { TEST_CASE, TEST_CASE_ID, TEST_CASE_NAME } from './fixtures-pages'
 import { RUN_PAGE } from './fixtures-run'
+import { OBSERVABILITY_NOT_ANALYSED, OBSERVABILITY_PATH } from './fixtures-observability'
 
 export const TIMING_PATH = `/api/v1/runs/${RUN_ID}/timing`
 export const REGRESSIONS_PATH = `/api/v1/runs/${RUN_ID}/duration-regressions`
@@ -109,5 +110,13 @@ export const NO_TIMESTAMPS = {
   duration_findings: null,
 }
 
-/** The run page (and the test opened beside the tab) with this timing answer. */
-export const withTiming = (body: unknown): ApiHandlers => [[TIMING_PATH, () => body], ...TEST_CASE, ...RUN_PAGE]
+/**
+ * The run page (and the test opened beside the tab) with this timing answer. W39 STRAT-07: the tab's last card reads
+ * the run's stored observability evidence — "not analysed" unless a spec passes its own answer (fail closed).
+ */
+export const withTiming = (body: unknown, observability: unknown = OBSERVABILITY_NOT_ANALYSED): ApiHandlers => [
+  [TIMING_PATH, () => body],
+  [OBSERVABILITY_PATH, () => observability],
+  ...TEST_CASE,
+  ...RUN_PAGE,
+]

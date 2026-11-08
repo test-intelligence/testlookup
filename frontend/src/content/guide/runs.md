@@ -149,8 +149,11 @@ How long the run took and where the time went (`?tab=timing`).
 - **Workers**, **Suites** — per worker and per suite: tests, wall clock and summed time.
 - **Slowest tests** — the 20 slowest tests, each with its duration baseline when it has one.
 - **Duration regressions** — tests and suites slower than their usual time, the same findings as the **Changes** tab.
+- **Observability evidence** — the last card: the Splunk, OpenShift and Prometheus evidence the AI analysis already fetched for this run, on one time axis.
 
 When a report format does not record start times (a JUnit file without timestamps, for example), the tab says so and shows durations only: no timeline, no empty chart, and the wall clock is **not reported** rather than the summed time. Project-wide execution time is on [Trends › Execution time](/docs/charts#execution-time).
+
+**Observability evidence** shows what is already stored: opening it asks Splunk, OpenShift and Prometheus nothing, and changes nothing. Its first lines name the analysis it comes from ("From the analysis of …", and how many earlier analyses are not shown) and two facts about **now** — whether AI offline mode is on, and which of Splunk, OpenShift and Prometheus the project has settings for — which may differ from when the analysis ran. Then one row per source, each saying who fetched it: **Prometheus metrics** and **Splunk trace (deep analysis)** from the run's newest deep analysis, **OpenShift pod events (at ingest)** from when the run was ingested, and **Splunk logs** / **OpenShift pod checks (per-test analysis)** from the per-test AI analyses. A metric is a small line (its sentence says whether it rose), a log event is a dot, and an OpenShift event is a bar from its first to its last time; point at or focus one to read it. The run itself is the shaded band. An item whose time was not stored or cannot be read (a redacted time, for example) is listed under **Without a time**, never placed on the axis. A source with nothing to show says why in words — none found, unavailable, not recorded, or not analysed yet — and when nothing has a time there is no axis at all.
 
 ## One test result
 

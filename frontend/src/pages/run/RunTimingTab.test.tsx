@@ -23,6 +23,10 @@ const hooks = vi.hoisted(() => ({
 }))
 vi.mock('@/hooks/useExecutionMetrics', () => ({ useRunTiming: hooks.useRunTiming }))
 vi.mock('@/hooks/useDurationRegressions', () => ({ useDurationRegressions: hooks.useDurationRegressions }))
+// W39 STRAT-07: the evidence card reads its own route (its own test drives it); here it only marks where it is mounted.
+vi.mock('@/components/runs/ObservabilityEvidenceCard', () => ({
+  default: ({ runId }: { runId: string }) => <section data-observability-evidence-mock={runId} />,
+}))
 const service = vi.hoisted(() => ({ downloadRunTimingCsv: vi.fn(() => Promise.resolve(true)) }))
 vi.mock('@/services/executionMetricsService', () => ({ executionMetricsService: service }))
 // Every render's props are recorded: a value that is not an id must never reach it.
@@ -315,6 +319,28 @@ describe('RunTimingTab — loading and failure', () => {
   it('a failed read says so', () => {
     const { container } = show({ error: new Error('404') })
     expect(container.querySelector('[data-timing-error]')).toHaveTextContent('Could not load the timing of this run.')
+  })
+})
+
+describe('RunTimingTab — Observability evidence (W39 STRAT-07)', () => {
+  const card = (container: HTMLElement) => container.querySelector('[data-observability-evidence-mock]') as HTMLElement | null
+
+  it('mounts the card for this run LAST, right after the duration regressions card, outside every timing card', () => {
+    const { container } = show({ data: TIMED })
+    const mounted = card(container)
+    expect(mounted?.getAttribute('data-observability-evidence-mock')).toBe('run-1')
+    const regressions = screen.getByRole('region', { name: 'Duration regressions' })
+    expect(regressions.nextElementSibling).toBe(mounted)
+    expect(mounted?.nextElementSibling).toBeNull()
+    expect(container.querySelector('[data-primary]')?.contains(mounted as Node)).toBe(false)
+    expect(container.querySelectorAll('[data-primary]')).toHaveLength(1)
+  })
+
+  it('is not mounted while the timing loads (nothing asked before the tab has its answer); under a failed read it is', () => {
+    expect(card(show({ isLoading: true }).container)).toBeNull()
+    const failed = show({ error: new Error('404') }).container
+    expect(card(failed)?.getAttribute('data-observability-evidence-mock')).toBe('run-1')
+    expect(failed.querySelectorAll('[data-primary]')).toHaveLength(1)
   })
 })
 

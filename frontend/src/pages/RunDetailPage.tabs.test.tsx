@@ -226,6 +226,9 @@ function renderAt(entry: string) {
 const askedFor = (fn: ReturnType<typeof vi.fn>, arg: unknown) => fn.mock.calls.some((call) => call[0] === arg)
 const pageTabs = () => screen.getByRole('tablist', { name: 'Run sections' })
 const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+/** W39 STRAT-07: was the run's observability evidence (the Timing tab's card) ever keyed for this run? */
+const askedForEvidenceTimeline = () =>
+  hooks.useSWR.mock.calls.some((c) => Array.isArray(c[0]) && c[0][0] === 'run-observability-timeline' && c[0][1] === 'run-1')
 
 describe('Run page — tabs', () => {
   it('opens on Tests: the tab bar, then the test table as the one primary content, no Disclosure above it', () => {
@@ -249,6 +252,7 @@ describe('Run page — tabs', () => {
     expect(askedFor(hooks.usePipelines, 'run-1')).toBe(false)
     expect(hooks.useSWR.mock.calls.some((c) => c[0] === 'regression-diff-run-1')).toBe(false)
     expect(hooks.useSWR.mock.calls.some((c) => Array.isArray(c[0]) && c[0][0] === 'run-timing')).toBe(false)
+    expect(askedForEvidenceTimeline()).toBe(false)
   })
 
   it('lists failed and broken tests first, keeping the order within each group', () => {
@@ -350,6 +354,15 @@ describe('Run page — tabs', () => {
     expect(hooks.useSWR.mock.calls.some((c) => Array.isArray(c[0]) && c[0][0] === 'run-timing' && c[0][1] === 'run-1')).toBe(true)
     expect(askedFor(hooks.useTestCases, 'run-1')).toBe(false)
     expect(askedFor(hooks.useRunIntelligence, 'run-1')).toBe(false)
+    // W39 STRAT-07: the Observability evidence card is the tab's last card, and its read belongs to this tab.
+    expect(screen.getByRole('region', { name: 'Observability evidence' })).toHaveAttribute('data-observability-evidence', '')
+    expect(askedForEvidenceTimeline()).toBe(true)
+  })
+
+  it.each(['tests', 'analysis', 'changes', 'evidence'])('the %s tab never asks for the observability evidence (W39: Timing only)', (tab) => {
+    renderAt(tab === 'tests' ? '/runs/run-1' : `/runs/run-1?tab=${tab}`)
+    expect(screen.queryByRole('region', { name: 'Observability evidence' })).toBeNull()
+    expect(askedForEvidenceTimeline()).toBe(false)
   })
 
   it('says so when no agent pipeline has analysed the run', () => {

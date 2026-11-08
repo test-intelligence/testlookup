@@ -11,7 +11,13 @@
  *   Workers          one row per worker: tests, busy time, span;
  *   Suites           wall clock against summed time per suite;
  *   Slowest tests    the 20 slowest, with the baseline when the test has one;
- *   Duration regressions  EXEC-05's card, fed from the same answer.
+ *   Duration regressions  EXEC-05's card, fed from the same answer;
+ *   Observability evidence  W39 STRAT-07's card, LAST (below every timing card,
+ *                    so their fixed-viewport baselines keep their frames): the
+ *                    Splunk / OpenShift / Prometheus evidence the AI analysis
+ *                    already fetched, on one time axis — its own read
+ *                    (`GET /runs/{id}/observability-timeline`, which fetches
+ *                    and writes nothing), shown under a failed timing read too.
  *
  * Absence is not health: `null` is "not reported", never "0 ms", and a block
  * the server could not measure shows its reason as plain text (an old JUnit
@@ -37,6 +43,7 @@ import { useDetailParam } from '@/components/ui/inPage/useDetailParam'
 import { isUuid } from '@/components/ui/inPage/ids'
 import StatusBadge from '@/components/ui/StatusBadge'
 import DurationRegressionsCard from '@/components/runs/DurationRegressionsCard'
+import ObservabilityEvidenceCard from '@/components/runs/ObservabilityEvidenceCard'
 import ExecutionTimeline from '@/components/charts/ExecutionTimeline'
 import { buildExecutionTimelineModel } from '@/components/charts/executionTimeline.model'
 import TestCaseBody from '@/pages/testCase/TestCaseBody'
@@ -462,12 +469,15 @@ export default function RunTimingTab({ runId }: { runId: string }) {
   // A failed read with nothing cached, or an answer without its run block (not this contract).
   if (!data || !data.run || !data.phases || !data.suites || !data.slowest || !data.workers || !data.timeline) {
     return (
-      <section data-primary="" aria-label="Execution time" className="card">
-        <h2 className={SECTION_TITLE}>Execution time</h2>
-        <p data-timing-error="" className="mt-3 text-sm text-[var(--status-failed)]">
-          Could not load the timing of this run.
-        </p>
-      </section>
+      <div className="space-y-4">
+        <section data-primary="" aria-label="Execution time" className="card">
+          <h2 className={SECTION_TITLE}>Execution time</h2>
+          <p data-timing-error="" className="mt-3 text-sm text-[var(--status-failed)]">
+            Could not load the timing of this run.
+          </p>
+        </section>
+        <ObservabilityEvidenceCard runId={runId} />
+      </div>
     )
   }
 
@@ -487,6 +497,7 @@ export default function RunTimingTab({ runId }: { runId: string }) {
           </div>
           <Phases phases={data.phases} testCount={data.run.test_count} />
           <DurationRegressionsCard runId={runId} findings={data.duration_findings} />
+          <ObservabilityEvidenceCard runId={runId} />
         </>
       }
       detail={
