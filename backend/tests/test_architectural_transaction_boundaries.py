@@ -236,6 +236,10 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "subject_erasure_request_service.py",
     # W38 (W31 F-2, 2026-11-08): reads / stages the scim_delete_action app_settings row; routers/app_settings.py commits.
     "scim_delete_setting.py",
+    # W39 STRAT-07 (2026-11-08): the observability timeline -- the vocabulary (constants + one pure time parser) and
+    # the READ-ONLY build behind GET /runs/{run_id}/observability-timeline (reads Postgres + Mongo, writes nothing).
+    "observability_timeline_vocab.py",
+    "run_observability_service.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

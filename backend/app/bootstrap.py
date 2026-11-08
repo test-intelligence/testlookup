@@ -82,6 +82,7 @@ from app.routers import (
     retention,
     run_compare,
     run_intelligence,
+    run_observability,
     runs,
     saved_views,
     scim,
@@ -197,6 +198,9 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     # nothing and nothing above shadows them.
     execution_metrics_export.runs_router,
     execution_metrics_export.analytics_router,
+    # W39 STRAT-07: GET /runs/{run_id}/observability-timeline (the Timing tab's evidence card; read-only, fetches
+    # nothing). A literal last segment after runs.router, so it shadows nothing and nothing above shadows it.
+    run_observability.router,
     integrations.router,
     notifications.router,
     app_settings.router,

@@ -10752,3 +10752,83 @@ class LikelyAffectedTestsResponse(BaseModel):
     history: LikelyAffectedTestsHistory
     tests: List[LikelyAffectedTest] = Field(default_factory=list)   # <= limit, score desc then fingerprint
     total_candidates: int = 0                       # this run's test cases
+
+
+# ── Observability evidence timeline (W39 STRAT-07 first slice) ───────────────
+# GET /api/v1/runs/{run_id}/observability-timeline (routers/run_observability.py,
+# services/run_observability_service.py, vocabulary services/observability_timeline_vocab.py).
+# The Splunk / OpenShift / Prometheus evidence the AI analysis ALREADY fetched, read from what
+# is stored: nothing is fetched and nothing is written when it is read. Instants are UTC. A
+# time that could not be read is never invented: the item is in its lane's ``untimed`` list.
+# Every lane says in words why it holds nothing (``state`` + ``sentence``), never an empty chart.
+
+
+class ObservabilityWindow(BaseModel):
+    start: datetime
+    end: datetime
+
+
+class ObservabilityAnalysis(BaseModel):
+    pipeline_run_id: str                            # the snapshot the prometheus / splunk_trace lanes read
+    analysed_at: Optional[datetime] = None          # the snapshot's created_at
+    other_analyses: int = 0                         # this run's other stored snapshots (not shown)
+
+
+class ObservabilityConfiguredNow(BaseModel):
+    """Read NOW from the saved integration settings (enabled + a URL) -- not the state at analysis time.
+    Booleans only: never a token, URL or index."""
+    splunk: bool = False
+    ocp: bool = False
+    prometheus: bool = False
+
+
+class ObservabilitySeries(BaseModel):
+    cluster_id: Optional[str] = None                # None: the run-level (no-context) metrics block
+    label: str
+    unit: str
+    points: List[List[Optional[float]]] = Field(default_factory=list)   # [[epoch_seconds, value | null]], <= 120
+    sentence: str = ""                              # the stored finding sentence
+    rose: bool = False
+
+
+class ObservabilityEvent(BaseModel):
+    at: datetime
+    end: Optional[datetime] = None                  # OCP first -> last only
+    zone_assumed: bool = False                      # the stored time had no zone; read as UTC
+    title: str
+    detail: Optional[str] = None
+    level: Optional[str] = None
+    cluster_id: Optional[str] = None
+    test_case_id: Optional[str] = None
+    test_name: Optional[str] = None
+    count: Optional[int] = None
+
+
+class ObservabilityUntimed(BaseModel):
+    title: str
+    detail: Optional[str] = None
+    test_case_id: Optional[str] = None
+    test_name: Optional[str] = None
+    reason: Literal["no_time_stored", "time_unreadable"]
+
+
+class ObservabilityLane(BaseModel):
+    source: Literal["prometheus", "splunk_trace", "ocp_events", "splunk_per_test", "ocp_per_test"]
+    label: str
+    fetched_by: Literal["analysis", "ingest", "per_test_analysis"]
+    state: Literal["evidence", "none_found", "not_recorded", "not_analysed", "unavailable"]
+    sentence: str                                   # server-written (observability_timeline_vocab.LANE_SENTENCES)
+    truncated: bool = False                         # the lane cut items to the stored caps
+    series: List[ObservabilitySeries] = Field(default_factory=list)      # prometheus only
+    events: List[ObservabilityEvent] = Field(default_factory=list)       # by ``at``
+    untimed: List[ObservabilityUntimed] = Field(default_factory=list)
+
+
+class RunObservabilityTimeline(BaseModel):
+    run_id: uuid.UUID
+    run_window: Optional[ObservabilityWindow] = None   # the run's own start / end; None when unknown
+    analysis: Optional[ObservabilityAnalysis] = None   # None: no snapshot (or the store could not be read)
+    offline_now: bool                                  # AI_OFFLINE_MODE now -- not at analysis time
+    configured_now: ObservabilityConfiguredNow
+    axis: Optional[ObservabilityWindow] = None         # every timed item + run_window; None when nothing is timed
+    lanes: List[ObservabilityLane]                     # always the five sources, in LANE_SOURCES order
