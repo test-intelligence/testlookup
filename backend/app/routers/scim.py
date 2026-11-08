@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import require_role
+from app.core.deps import invalidate_membership_cache, require_role
 from app.core.scim_errors import SCIMJSONResponse
 from app.db.postgres import get_db
 from app.models.postgres import IdentityEventType, SCIMToken, User, UserRole
@@ -39,6 +39,7 @@ from app.services.scim_service import (
     create_scim_token,
     normalize_scim_pagination,
     scim_create_user,
+    scim_delete_user,
     scim_get_user,
     scim_identity_map,
     scim_list_users,
@@ -801,15 +802,25 @@ async def scim_delete(
     scim_token: SCIMToken = Depends(verify_scim_bearer),
     db: AsyncSession = Depends(get_db),
 ):
-    """SCIM 2.0: Deactivate (soft-delete) a user."""
+    """SCIM 2.0: Delete a user — deactivate (soft-delete) by default, or erase the person's data when the
+    operator setting ``scim_delete_action`` is ``erase`` (W38).
+
+    Deactivate (the default): the account is switched off and kept; a later ``GET`` still answers it with
+    ``active: false``. Erase: the W31 erasure with the identity provider as the requester — the account is locked
+    out at once (sessions, tokens and keys) in this request's one commit, the person's data is pseudonymised by the
+    worker afterwards, and a pending erasure request of theirs is accepted. A retry while that erasure runs, or a
+    ``DELETE`` of an erased account, changes nothing. When the erasure is refused (a service account, an export
+    still running, the last active administrator) the account is deactivated instead and the refusal is recorded
+    as a failed identity event. Every case answers 204 with no body.
+    """
     client_ip = request.client.host if request.client else None
 
     try:
-        await scim_update_user(
-            db=db,
+        job_id = await scim_delete_user(
+            db,
             user_id=user_id,
-            active=False,
             sso_config_id=scim_token.sso_config_id,
+            scim_token_id=getattr(scim_token, "id", None),
             ip_address=client_ip,
         )
         await db.commit()
@@ -821,7 +832,22 @@ async def scim_delete(
             detail=str(exc),
         )
 
+    if job_id is not None:
+        # AFTER the commit (the worker must see the job): the erasure route's order — the membership cache,
+        # then the enqueue. A lost enqueue only logs; the janitor re-sends a job left queued.
+        await invalidate_membership_cache(user_id)
+        _dispatch_erasure(job_id)
     return None
+
+
+def _dispatch_erasure(job_id: uuid.UUID) -> None:
+    """Enqueue the erasure worker for a SCIM-started erasure (``routers/subject_erasure.py``'s ``_dispatch``)."""
+    try:
+        from app.worker.tasks import erase_subject_data
+
+        erase_subject_data.apply_async(args=[str(job_id)])
+    except Exception as exc:  # noqa: BLE001 - the job row is committed; the janitor re-sends it
+        logger.warning("scim_erasure_dispatch_failed job_id=%s error_type=%s", job_id, type(exc).__name__)
 
 
 # ── SCIM Group Endpoints (W20 ADM-09) ───────────────────────────────────────

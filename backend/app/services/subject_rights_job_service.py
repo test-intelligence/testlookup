@@ -48,6 +48,7 @@ from app.services.subject_rights_vocab import (
     JOBS_LIST_LIMIT,
     LIVE_STATUSES,
     REQUEST_SOURCES,
+    SOURCE_SCIM,
 )
 
 _slog = structlog.get_logger(__name__)
@@ -55,6 +56,12 @@ _slog = structlog.get_logger(__name__)
 KIND_EXPORT, KIND_ERASURE = "export", "erasure"
 QUEUED, RUNNING, SUCCEEDED, FAILED, EXPIRED = "queued", "running", "succeeded", "failed", "expired"
 PHASE_DONE = "done"
+SOURCE_ADMIN = "admin"
+#: W38 D-11: migration 0256 widened the shared ``ck_srj_source`` to admit "scim", but an identity provider only
+#: ever ERASES — an export is still asked for by the person ("self") or an administrator ("admin").
+EXPORT_SOURCES = tuple(source for source in REQUEST_SOURCES if source != SOURCE_SCIM)
+#: The sources an erasure may carry (``ck_srj_erasure_is_admin`` of 0256).
+ERASURE_SOURCES = (SOURCE_ADMIN, SOURCE_SCIM)
 
 
 class ExportRunning(Exception):
@@ -162,10 +169,10 @@ async def _stage(db: AsyncSession, job: SubjectRightsJob, refusal: type[Exceptio
 
 
 async def create_export_job(db: AsyncSession, *, subject: User, actor: User, source: str) -> SubjectRightsJob:
-    """Stage a ``queued`` export of ``subject`` asked for by ``actor`` (``source`` "self" | "admin").
-    Raises :class:`ExportRunning` (with the live job's id) when one is already queued / running —
+    """Stage a ``queued`` export of ``subject`` asked for by ``actor`` (``source`` "self" | "admin"; never
+    "scim" — ``EXPORT_SOURCES``). Raises :class:`ExportRunning` (with the live job's id) when one is already queued / running —
     checked first, and again by ``uq_srj_one_live_export`` for a concurrent request."""
-    if source not in REQUEST_SOURCES:
+    if source not in EXPORT_SOURCES:
         raise ValueError(f"unknown request source {source!r}")
     running = await _live_id(db, subject.id, KIND_EXPORT)
     if running is not None:
@@ -177,15 +184,24 @@ async def create_export_job(db: AsyncSession, *, subject: User, actor: User, sou
     return await _stage(db, job, ExportRunning)
 
 
-async def create_erasure_job(db: AsyncSession, *, subject: User, actor: User) -> SubjectRightsJob:
-    """Stage a ``queued`` erasure of ``subject`` (source "admin", phase NULL — ``stage_lockout`` sets
-    ``lockout``). Raises :class:`ErasureRunning` when one is already queued / running."""
+async def create_erasure_job(
+    db: AsyncSession, *, subject: User, actor: Optional[User], source: str = SOURCE_ADMIN,
+) -> SubjectRightsJob:
+    """Stage a ``queued`` erasure of ``subject`` (phase NULL — ``stage_lockout`` sets ``lockout``). Raises
+    :class:`ErasureRunning` when one is already queued / running.
+
+    ``source`` "admin" (the default: an administrator, who is the ``actor`` and the requester) or W38's
+    "scim" (an identity provider's DELETE: no actor, ``requested_by_id`` NULL). Any other pairing is a bug."""
+    if source not in ERASURE_SOURCES:
+        raise ValueError(f"unknown erasure source {source!r}")
+    if (actor is None) != (source == SOURCE_SCIM):
+        raise ValueError("an admin erasure names its actor; a SCIM erasure has none")
     running = await _live_id(db, subject.id, KIND_ERASURE)
     if running is not None:
         raise ErasureRunning(running)
     job = SubjectRightsJob(
-        kind=KIND_ERASURE, status=QUEUED, source="admin", phase=None, subject_user_id=subject.id,
-        requested_by_id=actor.id, counts={}, attempts=0, requested_at=_now(),
+        kind=KIND_ERASURE, status=QUEUED, source=source, phase=None, subject_user_id=subject.id,
+        requested_by_id=actor.id if actor is not None else None, counts={}, attempts=0, requested_at=_now(),
     )
     return await _stage(db, job, ErasureRunning)
 

@@ -57,6 +57,19 @@ Sign-in is started by TestLookup: **Sign in with SSO** sends a SAML request to t
 
 **Identity Events** shows sign-ins, provisioning and role changes for the last 30 days; **Sync Status** shows federated users, the last SSO sign-in and SCIM sync, and recent failures. SSO-managed accounts are exempt from the MFA requirement below.
 
+### When your identity provider deletes a user
+
+On the **SCIM Tokens** tab, **When your identity provider deletes a user** decides what a SCIM `DELETE` does, for every token:
+
+- **Deactivate the account (default)** — the account is switched off and kept. The person can no longer sign in or use the API, and an administrator can reactivate them. This is what happens until you change the setting.
+- **Erase the person's data — cannot be undone** — the identity provider's `DELETE` runs the same erasure an administrator can start from **Users** ([Personal data](compliance.md)): the person is signed out and their sessions, tokens and API keys stop working at once, then their account is pseudonymised in the background. Audit records are kept, as the law allows. If the person had asked for erasure, that request is marked accepted. Choosing it shows a warning and the box **I understand an erasure cannot be undone**, which you must tick before **Save**.
+
+Only an administrator signed in to the app can change the setting (an API key can read it, not change it). Every change is written to the settings audit log and appears in **Identity Events** as `SCIM_DELETE_ACTION_UPDATED`, by the administrator who made it.
+
+In erase mode, an erasure the identity provider starts appears as `SCIM_USER_ERASURE_STARTED` in **Identity Events**, and in the person's **Personal data** panel under **Users**, with the requester shown as "Your identity provider (SCIM)". The identity provider retrying the `DELETE`, or deleting someone already erased, changes nothing.
+
+**When the erasure is refused, the account is deactivated instead.** TestLookup never leaves a deleted user able to sign in. It refuses to erase a service or synthetic account, a person whose personal-data export is still running, and the last active administrator. In those cases the account is deactivated as in the default mode and a failed `SCIM_ERASURE_REFUSED` event (with the reason) appears in **Identity Events** and in **Sync Status** under recent failures. Once the reason is gone (for example the export has finished, or there is another administrator), erase the person by hand from **Users**.
+
 ## Multi-factor authentication & account lockout
 
 Shipped 2026-08-05 (migration 0117). Before this, MFA had to come from your IdP over SAML and there was no lockout at all.

@@ -35,7 +35,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 import structlog
 from sqlalchemy import and_, delete, false, func, or_, select, text, update
@@ -64,6 +64,7 @@ from app.services.subject_rights_vocab import (
     PREVIEW_COUNT_TIMEOUT_MS,
     PSEUDONYM_HEX_LENGTHS,
     PSEUDONYM_PREFIX,
+    SOURCE_SCIM,
 )
 from app.services.user_account_guards import is_last_active_admin
 
@@ -170,13 +171,16 @@ def is_resumable(job: Optional[SubjectRightsJob]) -> bool:
     return job.error_code == "erasure_incomplete"
 
 
-async def blockers(db: AsyncSession, *, subject: User, actor: User) -> list[str]:
+async def blockers(db: AsyncSession, *, subject: User, actor: Optional[User]) -> list[str]:
     """Every refusal code that applies to erasing ``subject``, in E-1's order (after the session /
-    existence checks, which the route answers itself). Empty → the erasure may start (or resume)."""
+    existence checks, which the route answers itself). Empty → the erasure may start (or resume).
+
+    ``actor`` None = no human caller (W38: a SCIM ``DELETE`` in erase mode, where the operator setting is
+    the consent): ``self_erasure`` cannot apply and is skipped; every other code is checked as usual."""
     codes: list[str] = []
     if bool(getattr(subject, "is_service_account", False)) or bool(getattr(subject, "is_synthetic", False)):
         codes.append("not_a_person")
-    if subject.id == actor.id:
+    if actor is not None and subject.id == actor.id:
         codes.append("self_erasure")
     erasure = await live_job(db, subject_id=subject.id, kind=KIND_ERASURE)
     if subject.erased_at is not None and erasure is None:
@@ -190,11 +194,12 @@ async def blockers(db: AsyncSession, *, subject: User, actor: User) -> list[str]
     return codes
 
 
-async def refusal(db: AsyncSession, *, subject: Optional[User], actor: User) -> Optional[str]:
+async def refusal(db: AsyncSession, *, subject: Optional[User], actor: Optional[User]) -> Optional[str]:
     """The FIRST refusal code in E-1's order, or None: ``session_required`` (any API-key principal),
     ``user_not_found``, ``not_a_person``, ``self_erasure``, ``user_erased``, ``erasure_running``,
-    ``export_blocks_erasure``, ``last_admin``. (``confirm_mismatch`` is :func:`confirm_matches`.)"""
-    if is_api_key_principal(actor):
+    ``export_blocks_erasure``, ``last_admin``. (``confirm_mismatch`` is :func:`confirm_matches`.)
+    ``actor`` None (W38 SCIM, no session at all) skips ``session_required`` and ``self_erasure``."""
+    if actor is not None and is_api_key_principal(actor):
         return "session_required"
     if subject is None:
         return "user_not_found"
@@ -461,13 +466,24 @@ async def _lock_user(db: AsyncSession, user_id: uuid.UUID) -> User:
     return result.scalar_one()
 
 
-async def stage_lockout(db: AsyncSession, *, subject: User, actor: User, job: SubjectRightsJob) -> None:
+async def stage_lockout(
+    db: AsyncSession, *, subject: User, actor: Optional[User], job: SubjectRightsJob,
+    audit_extra: Optional[Mapping[str, Optional[str]]] = None,
+) -> None:
     """Disable the account, revoke every access token (the durable cutoff, IN this transaction), delete
     every session, disable every key, append ONE ``subject_erasure_requested`` access-audit row (actor =
     the caller) and put the job at phase ``lockout`` / ``queued``. Flushes; the route commits all of it
-    together, then drops the membership cache and enqueues the worker."""
+    together, then drops the membership cache and enqueues the worker.
+
+    W38: ``actor`` None (a SCIM-started erasure) writes the audit row with actor NULL. ``audit_extra`` is
+    merged into that row's ``after_value`` next to ``job_id`` — the erasure route's ``{"request_id"}`` when
+    it accepts a pending request, SCIM's ``{"via": "scim", "scim_token_id"}``. It may not replace
+    ``job_id`` (the row is append-only: what it says first is what it says for good)."""
     from app.core.token_revocation import revoke_all_user_tokens
 
+    extra = dict(audit_extra or {})
+    if "job_id" in extra:
+        raise ValueError("audit_extra may not replace job_id")
     user = await _lock_user(db, subject.id)
     was_active = bool(user.is_active)
     user.is_active = False
@@ -478,7 +494,7 @@ async def stage_lockout(db: AsyncSession, *, subject: User, actor: User, job: Su
     await db.execute(update(keys).where(keys.c.user_id == user.id).values(is_active=False))
     await log_access_change(
         db, ACTION_REQUESTED, actor, target_user_id=user.id,
-        before_value={"is_active": was_active}, after_value={"job_id": str(job.id)},
+        before_value={"is_active": was_active}, after_value={"job_id": str(job.id), **extra},
     )
     job.phase = "lockout"
     job.status = QUEUED
@@ -822,10 +838,31 @@ async def run_object_phase(db: AsyncSession, storage: Any, *, job_id: uuid.UUID)
 async def stage_erased_audit(db: AsyncSession, *, job: SubjectRightsJob) -> None:
     """ONE ``subject_erased`` access-audit row at phase ``done``: actor = the requesting admin (from the job
     row), target = the subject, ``after_value = {"job_id", "counts"}`` — keys and counts only, never a name,
-    never the pseudonym. ``record_activity`` is NOT called (no project event)."""
+    never the pseudonym. ``record_activity`` is NOT called (no project event).
+
+    W38 D-11: a SCIM-started job (``source="scim"``, no requester) has actor NULL and adds ``{"via": "scim",
+    "scim_token_id"}`` — the token id read back from the same job's ``subject_erasure_requested`` row."""
     actor = await db.get(User, job.requested_by_id) if job.requested_by_id else None
     counts = {str(key): int(value) for key, value in dict(job.counts or {}).items()}
+    extra: dict[str, Any] = {}
+    if job.source == SOURCE_SCIM:
+        extra = {"via": "scim", "scim_token_id": await _requested_token_id(db, job)}
     await log_access_change(
         db, ACTION_ERASED, actor, target_user_id=job.subject_user_id,
-        after_value={"job_id": str(job.id), "counts": counts},
+        after_value={"job_id": str(job.id), "counts": counts, **extra},
     )
+
+
+async def _requested_token_id(db: AsyncSession, job: SubjectRightsJob) -> Optional[str]:
+    """The ``scim_token_id`` the lock-out wrote into this job's ``subject_erasure_requested`` row (a READ of the
+    append-only table; None when absent)."""
+    audit = _table("access_audit_logs")
+    rows = await db.execute(
+        select(audit.c.after_value).where(audit.c.action == ACTION_REQUESTED,
+                                          audit.c.target_user_id == job.subject_user_id)
+    )
+    for value in rows.scalars().all():
+        if isinstance(value, dict) and value.get("job_id") == str(job.id):
+            token = value.get("scim_token_id")
+            return str(token) if token else None
+    return None
