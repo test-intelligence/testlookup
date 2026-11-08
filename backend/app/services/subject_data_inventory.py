@@ -357,6 +357,15 @@ _SUBJECT_JOBS: tuple[Location, ...] = (
                 "the export jobs' archives are removed and the jobs read \"expired\""),
     _row("subject_rights_jobs", "requested_by_id", export_as="none", category=None, erase="reference",
          label="Export and erasure requests they made", reason=_REF),
+    # W38 (W31 F-1, migration 0256, 2026-11-07): the person's erasure REQUESTS — ids, statuses, codes, dates; no
+    # free text (D-2). Kept (D-7, like subject_rights_jobs.subject_user_id): after the erasure the row reads
+    # "Erased user" through the queue's displays.
+    _row("subject_erasure_requests", "subject_user_id", export_as="none", category=None, erase="keep_record",
+         label="Their erasure requests",
+         reason="The record that the person asked for erasure and how it was decided (ids, statuses, decline "
+                "codes, dates — never a name or free text); the queue shows the person as \"Erased user\""),
+    _row("subject_erasure_requests", "decided_by_id", export_as="none", category=None, erase="reference",
+         label="Erasure requests they decided", reason=_REF),
 )
 
 _NOT_ACCOUNT = ("Out of scope: a CI- or admin-supplied handle / contact, not TestLookup account data "

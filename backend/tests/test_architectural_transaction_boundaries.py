@@ -231,6 +231,11 @@ STAGE_ONLY_SERVICES: frozenset[str] = frozenset({
     "subject_erasure_service.py",
     "user_account_guards.py",
     "cluster_epic_service.py",   # W36 STRAT-03: stages the epic link + activity; routers/defect_jira.py commits
+    # W38 (W31 F-1, 2026-11-07): the erasure request (file / withdraw / decline / close on erasure) + its bell rows,
+    # staged on the caller's session; routers/subject_erasure_requests.py and routers/subject_erasure.py commit once.
+    "subject_erasure_request_service.py",
+    # W38 (W31 F-2, 2026-11-08): reads / stages the scim_delete_action app_settings row; routers/app_settings.py commits.
+    "scim_delete_setting.py",
 })
 
 # Services that still own commits, with a cap and a documented reason.

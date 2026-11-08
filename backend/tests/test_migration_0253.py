@@ -37,6 +37,13 @@ CHECKS = {
     "ck_srj_phase": "phase IS NULL OR phase IN ('lockout', 'postgres', 'objects', 'redis', 'done')",
     "ck_srj_erasure_is_admin": "kind <> 'erasure' OR source = 'admin'",
 }
+# W38 2026-11-07: migration 0256 widened these two CHECKs (D-11, the "scim" source); 0253's DDL above is
+# pinned as written -- the ORM carries 0256's text (pinned by tests/test_migration_0256.py).
+WIDENED_BY_0256 = {
+    "ck_srj_source": "source IN ('self', 'admin', 'scim')",
+    "ck_srj_erasure_is_admin": "kind <> 'erasure' OR source IN ('admin', 'scim')",
+}
+SOURCES_0253 = vocab.REQUEST_SOURCES[:2]   # ("self", "admin"); 0256 appended "scim"
 
 
 def _load(name: str, *, invalid: bool = False, as_sql: bool = False):
@@ -93,7 +100,7 @@ def test_the_check_literals_are_the_vocabulary():
     mod = _load("m0253_vocab")
     assert mod._KINDS == vocab.JOB_KINDS
     assert mod._STATUSES == vocab.JOB_STATUSES
-    assert mod._SOURCES == vocab.REQUEST_SOURCES
+    assert mod._SOURCES == SOURCES_0253 == ("self", "admin")
     assert mod._PHASES == vocab.ERASURE_PHASES
     assert tuple(re.findall(r"'([^']+)'", mod._LIVE)) == vocab.LIVE_STATUSES
 
@@ -113,7 +120,7 @@ def test_upgrade_shape():
     columns, checks = _created(mod)
     assert checks == CHECKS
     for name, literals in (("ck_srj_kind", vocab.JOB_KINDS), ("ck_srj_status", vocab.JOB_STATUSES),
-                           ("ck_srj_source", vocab.REQUEST_SOURCES), ("ck_srj_phase", vocab.ERASURE_PHASES)):
+                           ("ck_srj_source", SOURCES_0253), ("ck_srj_phase", vocab.ERASURE_PHASES)):
         assert tuple(re.findall(r"'([^']+)'", checks[name])) == literals, name
     assert list(columns) == [
         "id", "kind", "status", "source", "phase", "subject_user_id", "requested_by_id", "storage_key", "bytes",
@@ -185,7 +192,7 @@ def test_the_orm_matches_0253():
     assert [c.name for c in table.columns] == list(ddl)
     assert {c.name: c.nullable for c in table.columns} == {n: c.nullable for n, c in ddl.items()}
     orm_checks = {c.name: str(c.sqltext) for c in table.constraints if c.__class__.__name__ == "CheckConstraint"}
-    assert orm_checks == checks
+    assert orm_checks == {**checks, **WIDENED_BY_0256}
     for name in ("subject_user_id", "requested_by_id"):
         (orm_fk,) = table.c[name].foreign_keys
         (ddl_fk,) = ddl[name].foreign_keys

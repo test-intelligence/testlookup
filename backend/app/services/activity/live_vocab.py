@@ -82,6 +82,11 @@ MAX_MENTIONS_PER_COMMENT: Final[int] = 10
 # NotificationLog.event_type (String(50)); NOT a NotificationEventType value,
 # so no notification preference can subscribe to it (no e-mail, no Slack).
 MENTION_NOTIFICATION_EVENT: Final[str] = "test_case.mentioned"
+# W38 (W31 F-1, D-6): the erasure request's in-app bell rows (services/subject_erasure_request_service.py) —
+# likewise NOT NotificationEventType values and written status="sent", so they can never be mailed. Their
+# titles carry no name (subject_rights_vocab.BELL_SENTENCES).
+ERASURE_REQUEST_NOTIFICATION_EVENT: Final[str] = "erasure_request"             # every OTHER active admin, on filing
+ERASURE_REQUEST_DECLINED_EVENT: Final[str] = "erasure_request.declined"        # the person, on a decline
 # NotificationLog.channel (String(20)); NOT a NotificationChannel value.
 IN_APP_CHANNEL: Final[str] = "in_app"
 # Clipped to 200 characters (gate_notifications.clip).

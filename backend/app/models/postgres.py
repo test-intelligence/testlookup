@@ -4997,6 +4997,13 @@ class IdentityEventType(str, PyEnum):
     # ``DELETE /api/v1/keys/{id}``: ``user_id`` is the key's owner, ``actor_id``
     # who revoked it (an ADMIN may revoke anyone's key, for incident response).
     API_KEY_REVOKED = "API_KEY_REVOKED"
+    # ── W38 (W31 F-2): SCIM DELETE → an optional erasure (contract D-8..D-10) ──
+    # The operator setting changed (actor = the admin, detail {before, after}); an erase-mode DELETE whose
+    # erasure was refused and fell back to deactivation (success=False, detail {code}); an erase-mode DELETE
+    # that started an erasure (no actor, detail {job_id, scim_token_id}).
+    SCIM_DELETE_ACTION_UPDATED = "SCIM_DELETE_ACTION_UPDATED"
+    SCIM_ERASURE_REFUSED = "SCIM_ERASURE_REFUSED"
+    SCIM_USER_ERASURE_STARTED = "SCIM_USER_ERASURE_STARTED"
 
 
 class SSOConfiguration(Base):
@@ -8017,11 +8024,12 @@ class SubjectRightsJob(Base):
         CheckConstraint(
             "status IN ('queued', 'running', 'succeeded', 'failed', 'expired')", name="ck_srj_status",
         ),
-        CheckConstraint("source IN ('self', 'admin')", name="ck_srj_source"),
+        CheckConstraint("source IN ('self', 'admin', 'scim')", name="ck_srj_source"),   # W38 0256: + 'scim'
         CheckConstraint(
             "phase IS NULL OR phase IN ('lockout', 'postgres', 'objects', 'redis', 'done')", name="ck_srj_phase",
         ),
-        CheckConstraint("kind <> 'erasure' OR source = 'admin'", name="ck_srj_erasure_is_admin"),
+        # W38 0256: an erasure is started by an administrator or an IdP's SCIM DELETE, never self-service
+        CheckConstraint("kind <> 'erasure' OR source IN ('admin', 'scim')", name="ck_srj_erasure_is_admin"),
         Index("ix_srj_subject_kind", "subject_user_id", "kind", text("requested_at DESC")),   # lists + refusals
         # one queued / running job per subject and kind (409 export_running / erasure_running)
         Index(
@@ -8041,7 +8049,7 @@ class SubjectRightsJob(Base):
     kind: Mapped[str] = mapped_column(String(10), nullable=False)
     #: subject_rights_vocab.JOB_STATUSES
     status: Mapped[str] = mapped_column(String(12), nullable=False, default="queued", server_default=text("'queued'"))
-    #: subject_rights_vocab.REQUEST_SOURCES — an erasure is always "admin" (ck_srj_erasure_is_admin)
+    #: subject_rights_vocab.REQUEST_SOURCES — an erasure is "admin" or "scim" (ck_srj_erasure_is_admin, W38 0256)
     source: Mapped[str] = mapped_column(String(8), nullable=False, default="admin", server_default=text("'admin'"))
     #: erasure only: the LAST committed subject_rights_vocab.ERASURE_PHASES value
     phase: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
@@ -8072,6 +8080,59 @@ class SubjectRightsJob(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     #: export only: finished_at + EXPORT_TTL_HOURS; the janitor removes the object after it
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SubjectErasureRequest(Base):
+    """A person's request to have their account erased (W38: W31 F-1; migration 0256).
+
+    A request is NOT a job (D-1): ``POST /users/{id}/erasure`` stays the only
+    thing that starts an erasure, and running it closes the pending request in
+    the same commit (``accepted`` + ``erasure_job_id``, D-5). ``status`` /
+    ``decline_code`` are the ``subject_rights_vocab.ERASURE_REQUEST_STATUSES`` /
+    ``DECLINE_CODES`` vocabularies (CHECKed); there is no free text anywhere
+    (D-2). One pending request per person (``uq_ser_one_pending``, D-3).
+    ``subject_user_id`` is ``RESTRICT`` (the user row is never deleted); a
+    decided row is kept and reads "Erased user" after the erasure (D-7).
+    """
+
+    __tablename__ = "subject_erasure_requests"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'withdrawn', 'declined', 'accepted')", name="ck_ser_status"),
+        CheckConstraint("(status = 'pending') = (decided_at IS NULL)", name="ck_ser_decided"),
+        CheckConstraint(
+            "decline_code IS NULL OR decline_code IN ('legal_obligation', 'active_contract', "
+            "'identity_unconfirmed', 'other')",
+            name="ck_ser_decline_code",
+        ),
+        CheckConstraint("(status = 'declined') = (decline_code IS NOT NULL)", name="ck_ser_declined_has_code"),
+        # one pending request per person (409 request_pending; the backstop of the route's FOR UPDATE)
+        Index("uq_ser_one_pending", "subject_user_id", unique=True, postgresql_where=text("status = 'pending'")),
+        Index("ix_ser_status_requested", "status", text("requested_at DESC")),                 # the queue
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    subject_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    #: subject_rights_vocab.ERASURE_REQUEST_STATUSES
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default=text("'pending'")
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    #: set exactly when the request leaves "pending" (ck_ser_decided)
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: the administrator who declined / whose erasure accepted it; NULL for a withdrawal and a SCIM erasure
+    decided_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: subject_rights_vocab.DECLINE_CODES — set exactly for a declined request (ck_ser_declined_has_code)
+    decline_code: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    #: the erasure that accepted the request
+    erasure_job_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("subject_rights_jobs.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class RetentionHold(Base):

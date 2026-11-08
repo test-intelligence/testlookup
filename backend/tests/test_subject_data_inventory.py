@@ -449,16 +449,18 @@ def test_7_pinned_counts():
     # + webhook_deliveries.event_payload, notification_logs.title / .body, service_ownership_rules.team_contact;
     # + redis ml:retrain:last / :lock, testlookup:dedup:notify_owner:* (found by the writer scan and its traces)
     # W36 STRAT-03 (deliberate): + systemic_cluster_epics.created_by, a reference (176 -> 177, FKs 123 -> 124)
-    assert counts == (177, 124, 25, 8, 10, 8, 1, 1), (
+    # W38 W31 F-1 (deliberate, 2026-11-07): + subject_erasure_requests.subject_user_id (keep_record) and
+    # .decided_by_id (reference), both FKs, neither exported (177 -> 179, FKs 124 -> 126)
+    assert counts == (179, 126, 25, 8, 10, 8, 1, 1), (
         f"(locations, postgres_fk, postgres_other, objects, mongo, redis, chroma, logs) = {counts}: a location was "
         "added or moved — classify it in subject_data_inventory.py and update this pin deliberately"
     )
     erase = collections.Counter(location.erase for location in locations)
     assert (erase["delete"], erase["pseudonymise"] + erase["reference"], erase["keep_audit"], erase["keep_record"],
-            erase["no_personal_data"], erase["out_of_scope"]) == (21, 106, 24, 7, 13, 6), erase
-    assert (erase["pseudonymise"], erase["reference"]) == (11, 95), erase
+            erase["no_personal_data"], erase["out_of_scope"]) == (21, 107, 24, 8, 13, 6), erase   # W38: +1 ref, +1 keep_record
+    assert (erase["pseudonymise"], erase["reference"]) == (11, 96), erase
     exported = sum(1 for location in locations if location.export_as != "none")
-    assert (exported, len(locations) - exported) == (123, 54)
+    assert (exported, len(locations) - exported) == (123, 56)   # W38: the two request columns are not exported
 
 
 # ── (8) fail-open, and the module stays pure data ────────────────────────────

@@ -69,9 +69,14 @@ MAX_REASONS = 3              # reasons quoted in a body
 REASON_MAX_CHARS = 300       # each reason clipped with "…"
 TITLE_MAX_CHARS = 200        # NotificationLog.title is String(500); the bell truncates at its width anyway
 _UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
-# The ONLY three shapes a notification may link to: a release, a run's release
-# decision, and (W21d ACT-02, a comment mention) a test case on /test-management.
-APP_PATH_RE = re.compile(rf"^(?:/(?:releases|release-gate)/{_UUID}|/test-management\?case={_UUID})$")
+# The ONLY shapes a notification may link to: a release, a run's release
+# decision, (W21d ACT-02, a comment mention) a test case on /test-management, and
+# (W38 W31 F-1, the erasure request's bell rows) exactly two fixed pages: the
+# administrators' queue and the person's Profile.
+APP_PATH_RE = re.compile(
+    rf"^(?:/(?:releases|release-gate)/{_UUID}|/test-management\?case={_UUID}"
+    r"|/users\?tab=erasure-requests|/settings/profile)$"
+)
 
 TRIGGER_AGENT = "agent"
 TRIGGER_OVERRIDE = "override"
@@ -115,7 +120,9 @@ def app_link(metadata: Mapping[str, Any] | None) -> str | None:
     """``metadata["app_path"]`` when it is one of the allowed in-app shapes, else None. Never raises.
 
     The shapes (``APP_PATH_RE``, whole value, lower-case uuid): ``/releases/<uuid>``,
-    ``/release-gate/<uuid>`` and ``/test-management?case=<uuid>`` (a mention's case).
+    ``/release-gate/<uuid>``, ``/test-management?case=<uuid>`` (a mention's case) and the two
+    exact pages of the erasure request's bell rows, ``/users?tab=erasure-requests`` and
+    ``/settings/profile`` (W38).
     """
     try:
         if not isinstance(metadata, Mapping):
