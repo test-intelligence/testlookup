@@ -24,8 +24,9 @@ export const onboardingService = {
   detectProgress: (projectId: string) =>
     api.post<OnboardingStatus>(`/api/v1/onboarding/${projectId}/detect`).then(r => r.data),
 
-  completeStep: (projectId: string, stepKey: string) =>
-    api.post<OnboardingStatus>(`/api/v1/onboarding/${projectId}/complete`, { step_key: stepKey }).then(r => r.data),
+  /** `opts.suppressToast` for a background call that must not raise a toast on refusal. */
+  completeStep: (projectId: string, stepKey: string, opts?: { suppressToast?: boolean }) =>
+    api.post<OnboardingStatus>(`/api/v1/onboarding/${projectId}/complete`, { step_key: stepKey }, opts).then(r => r.data),
 
   skipStep: (projectId: string, stepKey: string) =>
     api.post<OnboardingStatus>(`/api/v1/onboarding/${projectId}/skip`, { step_key: stepKey }).then(r => r.data),
@@ -34,5 +35,6 @@ export const onboardingService = {
     api.post<OnboardingStatus>(`/api/v1/onboarding/${projectId}/restore`, { step_key: stepKey }).then(r => r.data),
 
   trackEvent: (eventName: string, projectId?: string, payload?: Record<string, unknown>) =>
-    api.post('/api/v1/onboarding/track', { event_name: eventName, project_id: projectId, payload }).catch(() => {}),
+    // Fire-and-forget telemetry: a refusal (e.g. the read-only demo) must not toast.
+    api.post('/api/v1/onboarding/track', { event_name: eventName, project_id: projectId, payload }, { suppressToast: true }).catch(() => {}),
 }

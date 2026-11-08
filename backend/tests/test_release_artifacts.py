@@ -87,7 +87,8 @@ def test_optional_services_are_profile_gated(release):
 
 def test_frontend_maps_host_3000_to_container_80(release):
     ports = release["services"]["frontend"].get("ports", [])
-    assert any(str(p).startswith("3000:80") for p in ports), f"frontend ports: {ports}"
+    # An optional bind address may prefix it (FRONTEND_PUBLISH_ADDR, the public demo).
+    assert any(str(p).endswith("3000:80") for p in ports), f"frontend ports: {ports}"
 
 
 def test_version_file_is_a_sane_semver_ish_string():

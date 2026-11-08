@@ -50,6 +50,7 @@ def test_every_direct_session_issuer_locks_the_user_row():
     from app.routers import auth, sso
 
     assert _calls_method(auth.dev_login, "with_for_update")
+    assert _calls_method(auth.demo_login, "with_for_update")
     assert _calls_method(sso.saml_acs, "with_for_update")
 
 

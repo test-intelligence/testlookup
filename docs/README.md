@@ -20,6 +20,7 @@ Start with the [README](../README.md) for what TestLookup is, and [GETTING_START
 | Choose a deployment mode | [Deployment guide](operations/deployment.md): mode matrix, secrets, TLS, backups, upgrade order |
 | Docker Compose (demo, dev, release images, air-gapped, monitoring) | [Compose](operations/deploy-compose.md) |
 | One VM, or Cloud Run | [Single VM](operations/deploy-single-vm.md) |
+| Run a public read-only demo | [Public demo](operations/public-demo.md): fixed-price VM behind a Cloudflare tunnel, nightly reset |
 | Kubernetes | [Kubernetes](operations/deploy-kubernetes.md), [overlay map](../k8s/README.md), [single-node K3s](operations/deploy-k3s.md) |
 | OpenShift | [OpenShift and air-gapped OpenShift](operations/deploy-openshift.md) |
 | EKS, GKE, AKS | [Managed clouds](operations/deploy-cloud.md) |

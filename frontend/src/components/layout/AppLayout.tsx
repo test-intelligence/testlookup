@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 import DegradedBanner from './DegradedBanner'
+import DemoBanner from './DemoBanner'
 import { isSettingsAreaPath } from './settingsRoutes'
 import SectionTabs from './SectionTabs'
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
@@ -95,6 +96,7 @@ export default function AppLayout() {
         <Sidebar drawer={narrow ? { open: navOpen, onClose: closeNav, id: SHELL_NAV_ID } : null} />
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
           <TopBar navToggle={narrow ? { open: drawerOpen, onToggle: toggleNav, controls: SHELL_NAV_ID } : null} />
+          <DemoBanner />
           <DegradedBanner />
           {/* `relative`: the scroll box is the containing block of the page's
               absolutely positioned descendants (every `sr-only` label, the chart

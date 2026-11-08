@@ -45,6 +45,16 @@ export function isPasswordChangeRequired(detail: unknown): boolean {
 }
 
 /**
+ * Whether a 403 is the public demo refusing a write (``demo_read_only``,
+ * server-side ``DEMO_MODE``). Every save button on the demo hits it, so the
+ * client shows it as one reused toast rather than a stack of identical ones.
+ */
+export function isDemoReadOnly(detail: unknown): boolean {
+  return !!detail && typeof detail === 'object'
+    && (detail as { code?: unknown }).code === 'demo_read_only'
+}
+
+/**
  * Best-effort human-readable message from a FastAPI error ``detail``.
  *
  * ``detail`` may be a plain string (``HTTPException(detail="…")``) OR, for a 422,

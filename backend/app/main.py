@@ -20,6 +20,7 @@ from app.bootstrap import (
     register_routers,
 )
 from app.core.config import settings
+from app.core.demo_mode import install_demo_mode
 from app.core.http_client import close_http_client
 from app.core.logging_config import configure_logging
 from app.core.startup_gc import freeze_startup_heap
@@ -234,6 +235,12 @@ _AUTH_RATE_LIMITS: dict[str, tuple[str, str]] = {
         "10/minute",
         "Too many login attempts. Try again in a minute.",
     ),
+    # Public demo sign-in (404 unless DEMO_MODE). It mints a session without a
+    # password, so a script could otherwise fill the token tables in a loop.
+    "/api/v1/auth/demo-login": (
+        "10/minute",
+        "Too many demo sign-ins. Try again in a minute.",
+    ),
     "/api/v1/auth/register": (
         "5/minute",
         "Too many registration attempts. Try again in a minute.",
@@ -359,6 +366,12 @@ async def rate_limit_auth(request: Request, call_next):
                 content={"detail": error_msg},
             )
     return await call_next(request)
+
+
+# Public read-only demo (DEMO_MODE). Registered after rate_limit_auth, so it
+# runs before it: a refused write never spends an auth rate-limit token. Inert
+# unless settings.DEMO_MODE is true. See app/core/demo_mode.py.
+install_demo_mode(app)
 
 
 # ── The proxy trust boundary goes on LAST ───────────────────────────────────

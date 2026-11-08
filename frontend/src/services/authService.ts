@@ -46,11 +46,22 @@ export interface AuthOptions {
   registration_enabled: boolean
   /** W17b ADM-02: SMTP is configured, so "Forgot password?" offers the email form. Older servers omit it. */
   password_reset_email?: boolean
+  /** The public read-only demo (server `DEMO_MODE`): one-click demo sign-in and the demo banner. Older servers omit it. */
+  demo_mode?: boolean
 }
 
 /** Quiet on failure: the page then offers sign-in only, which is the safe default. */
 export function getAuthOptions(): Promise<AuthOptions> {
   return getData<AuthOptions>('/api/v1/auth/options', { suppressToast: true })
+}
+
+/**
+ * Public demo only: sign in as the demo account without a password
+ * (`POST /api/v1/auth/demo-login`). 404 off the demo, 503 during the nightly
+ * reset, 429 when one address signs in too often. The caller reports failures.
+ */
+export function demoLogin(): Promise<TokenResponse> {
+  return postData<TokenResponse>('/api/v1/auth/demo-login', {}, { suppressToast: true })
 }
 
 // ── W17b ADM-01 / ADM-02: one-time links (public; the token travels in a JSON body, never a URL) ──
