@@ -2678,14 +2678,21 @@ _TYPE_SCALE_CLASS_RE = re.compile(r"(?<![\w-])text-\[\d+(?:\.\d+)?(?:px|rem|em)\
 # size (`CHART_FONT.h2`, `var(--text-2xs)`; a bare `'.875rem'` is); the types
 # `fontSize?: number` / `fontSize: number`, `fontSize: CHART_FONT.tick` and
 # `fontSize: 'var(--text-…)'` stay uncounted.
+# Two linear passes, never one regex with a `(var(…)|char)*` alternation (CodeQL
+# flagged that as exponential backtracking on repeated `var()`): every `var(…)`
+# read is blanked to `var()` first, then the plain regex counts.
+_TYPE_SCALE_VAR_READ_RE = re.compile(r"var\([^)\n]*\)")
 _TYPE_SCALE_INLINE_RE = re.compile(
     r"""fontSize\s*(?:"""
-    r""":\s*(?:var\([^)\n]*\)|(?!var\()[^,}\n])*?"""        # a style property
-    r"""|=\s*(?:"(?:var\([^)\n]*\)|(?!var\()[^"\n])*?"""    # a JSX / SVG attribute "…"
-    r"""|'(?:var\([^)\n]*\)|(?!var\()[^'\n])*?"""           # '…'
-    r"""|\{\s*(?:var\([^)\n]*\)|(?!var\()[^}\n])*?)"""      # {…}
+    r""":[^,}\n]*?"""                                       # a style property
+    r"""|=\s*(?:"[^"\n]*?|'[^'\n]*?|\{[^}\n]*?)"""          # a JSX / SVG attribute "…" '…' {…}
     r""")(?<![\w.$-])\.?\d"""
 )
+
+
+def _type_scale_inline_count(text: str) -> int:
+    """The numeric inline font sizes of ``text`` (one per `fontSize`), `var(…)` reads skipped whole."""
+    return len(_TYPE_SCALE_INLINE_RE.findall(_TYPE_SCALE_VAR_READ_RE.sub("var()", text)))
 
 
 def _type_scale_counts() -> dict[str, int]:
@@ -2694,7 +2701,7 @@ def _type_scale_counts() -> dict[str, int]:
         text = _ui_read(path)
         n = len(_TYPE_SCALE_CLASS_RE.findall(text))
         if not rel.startswith(_UI_CHART_KIT):
-            n += len(_TYPE_SCALE_INLINE_RE.findall(text))
+            n += _type_scale_inline_count(text)
         if n:
             counts[rel] = n
     return counts

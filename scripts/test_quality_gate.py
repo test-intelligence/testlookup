@@ -5408,13 +5408,25 @@ _TYPE_SCALE_UNCOUNTED_FORMS = (
 )
 
 
+def test_type_scale_inline_regex_keeps_var_reads_out_of_its_repeat() -> None:
+    """CodeQL (PR #345, code-scanning #72-#75) flagged the first W40 regex — a
+    `(var(…)|(?!var\\()char)*` alternation — as exponential backtracking: its static model ignores
+    the lookahead (Python ran it in ~6 ms on 20,000 `var()`). The fix blanks `var(…)` reads in a
+    separate linear pass, so the counting regex never mentions `var(` — keep it that way — and the
+    count stays 0 on CodeQL's own inputs."""
+    assert "var" not in qg._TYPE_SCALE_INLINE_RE.pattern
+    assert qg._TYPE_SCALE_VAR_READ_RE.pattern == r"var\([^)\n]*\)"
+    for opener in ("fontSize: ", 'fontSize="', "fontSize='", "fontSize={{"):
+        assert qg._type_scale_inline_count(opener + "var()" * 20_000 + "x") == 0
+
+
 def test_type_scale_has_no_uncounted_numeric_font_size(monkeypatch, tmp_path) -> None:
     """The gate's inline regex counts every numeric font size form once — the
     expression and attribute forms too (W40) — and no token or type form."""
     for planted in _TYPE_SCALE_COUNTED_FORMS:
-        assert len(qg._TYPE_SCALE_INLINE_RE.findall(planted)) == 1, f"not counted once: {planted}"
+        assert qg._type_scale_inline_count(planted) == 1, f"not counted once: {planted}"
     for planted in _TYPE_SCALE_UNCOUNTED_FORMS:
-        assert qg._TYPE_SCALE_INLINE_RE.findall(planted) == [], f"counted: {planted}"
+        assert qg._type_scale_inline_count(planted) == 0, f"counted: {planted}"
 
     src = _ui_repo(monkeypatch, tmp_path)
     _write(src / "components" / "ai" / "Badge.tsx", """
