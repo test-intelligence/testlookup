@@ -36,17 +36,27 @@ SPLUNK_TOOL, OCP_TOOL = "query_splunk_logs", "analyze_openshift_pod_events"
 POD_HOST_IP, POD_NODE = "10.0.4.12", "worker-2"
 
 
+#: The real resolver, captured before any test patches ``socket.getaddrinfo`` (the patch is process-wide:
+#: ``url_safety.socket`` IS the ``socket`` module).
+_REAL_GETADDRINFO = socket.getaddrinfo
+FAKE_HOST_SUFFIX = ".fake.test"
+
+
 def _resolver():
-    """``socket.getaddrinfo`` for the egress check: a fake host name never resolves (so it is not refused as
-    private); an IP literal resolves to itself WITH its port, so a real store on 127.0.0.1 (the integration test's
-    Mongo / Redis) still connects while this is patched."""
+    """``socket.getaddrinfo`` for the egress check: a fake host name (``*.fake.test``) never resolves (so it is not
+    refused as private); an IP literal resolves to itself WITH its port; EVERY OTHER name goes to the real resolver —
+    the patch is process-wide, and the integration test's real stores are ``localhost`` on CI (``127.0.0.1``
+    locally), so blocking every name broke their connections on CI only."""
     def getaddrinfo(host, port, *args, **kwargs):
-        try:
-            ipaddress.ip_address(host)
-        except ValueError:
+        name = host.decode() if isinstance(host, bytes) else str(host)
+        if name.endswith(FAKE_HOST_SUFFIX):
             raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
-        family = socket.AF_INET6 if ":" in str(host) else socket.AF_INET
-        return [(family, socket.SOCK_STREAM, 6, "", (host, int(port or 0)))]
+        try:
+            ipaddress.ip_address(name)
+        except ValueError:
+            return _REAL_GETADDRINFO(host, port, *args, **kwargs)
+        family = socket.AF_INET6 if ":" in name else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, 6, "", (name, int(port or 0)))]
 
     return getaddrinfo
 
