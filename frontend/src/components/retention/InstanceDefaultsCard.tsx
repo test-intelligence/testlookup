@@ -17,6 +17,7 @@ import { isAxiosError } from 'axios'
 import { RefreshCw, SlidersHorizontal } from 'lucide-react'
 import toast from 'react-hot-toast'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { InlineConfirm } from '@/components/ui/inPage/InlineConfirm'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { Table, Td, Th, Tr } from '@/components/ui/Table'
@@ -451,7 +452,7 @@ export default function InstanceDefaultsCard({ open: initiallyOpen = false }: In
           <SlidersHorizontal aria-hidden="true" className="h-4 w-4 text-[var(--color-accent)]" />
           <h2
             id="retention-instance-defaults-heading"
-            className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]"
+            className={PANEL_TITLE_CLASS}
           >
             {INSTANCE_DEFAULTS_TITLE}
           </h2>

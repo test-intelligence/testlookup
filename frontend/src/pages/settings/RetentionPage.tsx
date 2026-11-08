@@ -50,6 +50,7 @@ import {
 import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import RetentionActivationNudge from '@/components/retention/RetentionActivationNudge'
 import StoragePanel from '@/components/retention/StoragePanel'
 import CriteriaDeletionPanel from '@/components/retention/CriteriaDeletionPanel'
@@ -671,7 +672,7 @@ export default function RetentionPage() {
       <section className="card space-y-4">
         <div className="flex items-center gap-2">
           <Archive className="h-4 w-4 text-[var(--color-accent)]" />
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]">
+          <h2 className={PANEL_TITLE_CLASS}>
             Retention policy
           </h2>
           <span
@@ -857,7 +858,7 @@ export default function RetentionPage() {
       <section className="card space-y-3">
         <div className="flex items-center gap-2">
           <ScanSearch className="h-4 w-4 text-[var(--color-accent)]" />
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]">
+          <h2 className={PANEL_TITLE_CLASS}>
             Purge preview
           </h2>
         </div>
@@ -985,9 +986,10 @@ export default function RetentionPage() {
       <DeletionJobsCard projectId={activeProjectId} refreshSignal={jobsRefresh} />
 
       <section className="card space-y-4 border-[var(--status-failed-bd)]/40" aria-labelledby="retention-danger-heading">
-        <header className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--status-failed)]">
+        {/* W40 F-1: the panel title role on the h2; it inherits the header's status colour (the icon's too). */}
+        <header className="flex items-center gap-2 text-[var(--status-failed)]">
           <AlertTriangle className="h-4 w-4" />
-          <h2 id="retention-danger-heading">Danger zone</h2>
+          <h2 id="retention-danger-heading" className={`${PANEL_TITLE_CLASS} !text-inherit`}>Danger zone</h2>
         </header>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">

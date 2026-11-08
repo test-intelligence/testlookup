@@ -85,6 +85,27 @@ describe('AgentActivityPage', () => {
     expect(screen.getByText('1–1 of 1')).toBeInTheDocument()
   })
 
+  it('W40 F-2: the ledger is the shared dense Table — nine column headers, the four right-aligned ones numeric', async () => {
+    await mockRuns([ENTRY])
+    renderPage()
+
+    const table = screen.getByRole('table')
+    expect(table).toHaveAttribute('data-density', 'dense')
+    expect(table.style.minWidth).toBe('900px')
+    const headers = screen.getAllByRole('columnheader')
+    expect(headers.map((h) => h.textContent)).toEqual(
+      ['Agent', 'Mode', 'Trigger', 'Status', 'Summary', 'Tokens', 'Cost', 'Duration', 'When'],
+    )
+    for (const h of headers) {
+      expect(h).toHaveClass('th')
+      expect(h).toHaveAttribute('scope', 'col')
+      expect(h.className).not.toMatch(/eyebrow|px-|py-/)
+    }
+    expect(headers.filter((h) => h.classList.contains('th-num')).map((h) => h.textContent)).toEqual(
+      ['Tokens', 'Cost', 'Duration', 'When'],
+    )
+  })
+
   it('expands a row to show proposed/taken actions, prompt digest, and the details link', async () => {
     await mockRuns([ENTRY])
     renderPage()

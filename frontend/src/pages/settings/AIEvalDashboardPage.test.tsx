@@ -215,6 +215,34 @@ describe('runtime eval provenance', () => {
     expect(screen.getByText(/3 of 12 recent runs/)).toBeInTheDocument()
     expect(screen.getByText(/Unknown: f{64}/)).toBeInTheDocument()
   })
+
+  // W40 F-6: a status hue on its own tint misses 4.5:1 in several themes; the chip's text is the -ink token. A
+  // checksum health chip is a UI meaning (not a test result), so it reads --ui-danger-ink / --ui-success-ink.
+  it.each([
+    [true, 'UNRESOLVED', 'text-[var(--ui-danger-ink)]'],
+    [false, 'RESOLVED', 'text-[var(--ui-success-ink)]'],
+  ] as const)('W40 F-6: unresolvable=%s — the %s chip text is the -ink token on its tint', async (bad, word, ink) => {
+    const value = dashboard(null)
+    value.eval_provenance = {
+      window_days: 7,
+      window_start: '2026-09-07T00:00:00Z',
+      window_end: '2026-09-14T00:00:00Z',
+      total_runs: 12,
+      stamped_runs: 12,
+      resolved_runs: bad ? 9 : 12,
+      missing_checksum_count: 0,
+      unresolvable_run_count: bad ? 3 : 0,
+      unresolvable_checksums: bad ? ['f'.repeat(64)] : [],
+      has_unresolvable_checksums: bad,
+    }
+    mockGetDashboard.mockResolvedValue(value)
+    renderPage()
+
+    const chip = await screen.findByText(word)
+    expect(chip.className).toContain(ink)
+    expect(chip.className).toMatch(/bg-\[var\(--status-(failed|passed)-bg\)\]/)
+    expect(chip.className).not.toMatch(/text-\[var\(--status-[a-z]+\)\]/)
+  })
 })
 
 // P2 item 3: the evaluation workflow timeline is a collapsed "Pipeline"

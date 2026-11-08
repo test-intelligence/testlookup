@@ -15,6 +15,7 @@ import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MfaSecuritySection from './MfaSecuritySection'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import type { MfaStatus } from '@/types/mfa'
 
 const mockStatus = vi.fn<() => Promise<MfaStatus>>()
@@ -82,6 +83,25 @@ describe('MfaSecuritySection', () => {
     expect(screen.getByText(/identity provider/i)).toBeInTheDocument()
     expect(screen.queryAllByRole('button')).toHaveLength(0)
     expect(screen.queryByTestId('mfa-not-enrolled')).toBeNull()
+  })
+
+  // W40 F-1: the title is the panel title role. The role's `m-0` beats the card's `space-y-*` (a zero-specificity
+  // margin), so each shell hands its own gap to the title as a bottom margin — a space-y-3 shell gets mb-3.
+  it.each([
+    ['mfa-sso-managed', { sso_managed: true, enabled: true }, 'space-y-3', 'mb-3'],
+    ['mfa-secret-unreadable', { enabled: true, secret_unreadable: true }, 'space-y-3', 'mb-3'],
+    ['mfa-not-enrolled', {}, 'space-y-4', 'mb-4'],
+  ] as const)('W40 F-1: the %s title is the panel title role and keeps the card gap', async (testId, patch, gap, margin) => {
+    mockStatus.mockResolvedValue({ ...BASE, ...patch })
+    renderSection()
+
+    const card = await screen.findByTestId(testId)
+    const title = screen.getByRole('heading', { level: 2, name: 'Two-Factor Authentication' })
+    expect(card.contains(title)).toBe(true)
+    for (const cls of PANEL_TITLE_CLASS.split(' ')) expect(title.classList).toContain(cls)
+    expect(title.className).not.toMatch(/uppercase|tracking-/)
+    expect(card.classList).toContain(gap)
+    expect(title.classList).toContain(margin)
   })
 
   it('renders a loud broken state for secret_unreadable — NOT "not enrolled"', async () => {

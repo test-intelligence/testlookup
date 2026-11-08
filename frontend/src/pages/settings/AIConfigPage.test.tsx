@@ -294,6 +294,16 @@ describe('AIConfigPage — live model status', () => {
     expect(chainRow('rules')).toHaveTextContent('available')
   })
 
+  it('W40 F-6: the tier badge on its danger tint reads --ui-danger-ink, never the raw status hue', async () => {
+    mockGetModelStatus.mockResolvedValue(unreachableStatus())
+    await renderPage()
+
+    const badge = await screen.findByText('Unreachable')
+    expect(badge.className).toContain('bg-[var(--status-failed-bg)]')
+    expect(badge.className).toContain('text-[var(--ui-danger-ink)]')
+    expect(badge.className).not.toMatch(/text-\[var\(--status-[a-z]+\)\]/)
+  })
+
   it('reports a missing cloud API key as a key problem, not a missing model', async () => {
     // Regression (homelab, 2026-08-16): the badge was derived from
     // `ollama_reachable`, so every non-Ollama failure read "Model Missing".

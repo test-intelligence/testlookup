@@ -18,6 +18,7 @@ import { useActiveProjectId } from '@/hooks/useProjectScopedSWR'
 import { ALL_PROJECTS_ID } from '@/store/projectStore'
 import type { AgentRunEntry } from '@/types/investigator'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { Table, Th } from '@/components/ui/Table'
 import FixAttemptsSection from '@/components/fixer/FixAttemptsSection'
 import { formatDateTime, formatDuration, formatNumber } from '@/utils/formatters'
 import PageHeader from '@/components/ui/PageHeader'
@@ -211,21 +212,22 @@ export default function AgentActivityPage() {
         </div>
       ) : (
         <div className="card p-0 overflow-x-auto">
-          <table className="w-full text-sm" style={{ minWidth: 900 }}>
+          {/* W40 F-2: the shared Table — `dense` is the header's px-3 py-2; the right-aligned columns are `Th numeric`. */}
+          <Table density="dense" style={{ minWidth: 900 }}>
             <thead>
-              <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
+              <tr>
                 {['Agent', 'Mode', 'Trigger', 'Status', 'Summary'].map((h) => (
-                  <th key={h} className="px-3 py-2 text-left eyebrow uppercase text-[var(--color-text-muted)]">{h}</th>
+                  <Th key={h}>{h}</Th>
                 ))}
                 {['Tokens', 'Cost', 'Duration', 'When'].map((h) => (
-                  <th key={h} className="px-3 py-2 text-right eyebrow uppercase text-[var(--color-text-muted)]">{h}</th>
+                  <Th key={h} numeric>{h}</Th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {items.map((entry) => <LedgerRow key={entry.id} entry={entry} />)}
             </tbody>
-          </table>
+          </Table>
           <div className="flex items-center justify-between px-3 py-2.5 text-xs text-[var(--color-text-muted)]">
             <span className="tabular-nums">
               {total === 0 ? '0' : `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)}`} of {total}

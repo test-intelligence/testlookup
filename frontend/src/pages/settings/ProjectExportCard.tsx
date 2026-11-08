@@ -30,6 +30,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Download, PackageOpen } from 'lucide-react'
 import { releaseOptions } from '@/components/digests/digestScopeModel'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { useExportEstimate, useProjectDataJob } from '@/hooks/useProjectDataJobs'
 import { useReleases } from '@/hooks/useReleases'
 import { projectDataErrorMessage, projectDataService, runningExportJobId } from '@/services/projectDataService'
@@ -299,7 +300,7 @@ export default function ProjectExportCard({ loadError, projectId, latest, onChan
     >
       <h2
         id="project-export-heading"
-        className="m-0 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]"
+        className={`${PANEL_TITLE_CLASS} flex items-center gap-2`}
       >
         <PackageOpen className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
         {UI_SENTENCES.export_heading}

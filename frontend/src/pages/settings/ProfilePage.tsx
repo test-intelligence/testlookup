@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Check, Eye, EyeOff, KeyRound, Loader2, UserCircle2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import MfaSecuritySection from '@/components/mfa/MfaSecuritySection'
 import MyDataCard from '@/components/subjectRights/MyDataCard'
@@ -162,7 +163,8 @@ export default function ProfilePage() {
       <div data-profile-forms="" className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
         {/* ── Profile Information ───────────────────────────────────────────── */}
         <section className="card space-y-6">
-          <h2 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider flex items-center gap-2">
+          {/* W40 F-1: the panel title role; its `m-0` beats `space-y-*`'s zero-specificity margin, so `mb-*` keeps the gap. */}
+          <h2 className={`${PANEL_TITLE_CLASS} mb-6 flex items-center gap-2`}>
             <UserCircle2 className="h-4 w-4 text-[var(--color-text-muted)]" />
             Profile Information
           </h2>
@@ -272,7 +274,7 @@ export default function ProfilePage() {
 
         {/* ── Change Password ───────────────────────────────────────────────── */}
         <section className="card space-y-5">
-          <h2 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider flex items-center gap-2">
+          <h2 className={`${PANEL_TITLE_CLASS} mb-5 flex items-center gap-2`}>
             <KeyRound className="h-4 w-4 text-[var(--color-text-muted)]" />
             Change Password
           </h2>

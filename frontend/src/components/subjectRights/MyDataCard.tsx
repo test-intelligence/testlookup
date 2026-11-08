@@ -22,6 +22,7 @@ import { Download, FileLock2, UserX } from 'lucide-react'
 
 import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { useMyErasureRequest } from '@/hooks/useErasureRequests'
 import { useSubjectJob } from '@/hooks/useSubjectRights'
 import {
@@ -122,7 +123,7 @@ export default function MyDataCard({ latest, loadError, onChanged }: Props) {
     <section className="card flex flex-col gap-3" data-my-data="" data-export-state={state} aria-labelledby="my-data-heading">
       <h2
         id="my-data-heading"
-        className="m-0 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]"
+        className={`${PANEL_TITLE_CLASS} flex items-center gap-2`}
       >
         <FileLock2 className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
         {MY_DATA_TITLE}

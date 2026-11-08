@@ -16,6 +16,7 @@
 import { AlertTriangle, Database, HardDrive, RefreshCw } from 'lucide-react'
 import { useDeletedProjectStorage, useProjectStorage } from '@/hooks/useStorage'
 import { formatBytes, formatNumber } from '@/utils/formatters'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import type { StoreFootprint } from '@/types/storage'
 import { STORE_LABELS } from './storeLabels'
 
@@ -80,7 +81,7 @@ export default function StoragePanel({ projectId, canReadDeployment = true }: Pr
     <section className="card space-y-3" data-testid="storage-panel">
       <div className="flex items-center gap-2">
         <HardDrive className="h-4 w-4 text-[var(--color-accent)]" />
-        <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]">
+        <h2 className={PANEL_TITLE_CLASS}>
           Storage footprint
         </h2>
         <button
