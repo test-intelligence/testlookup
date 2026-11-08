@@ -1,6 +1,15 @@
 import { isAxiosError } from 'axios'
 
-import type { ErasurePreview, SubjectJob, SubjectJobList } from '@/types/subjectRights'
+import type {
+  DeclineCode,
+  ErasurePreview,
+  ErasureRequestFilter,
+  ErasureRequestList,
+  ErasureRequestRead,
+  MyErasureRequest,
+  SubjectJob,
+  SubjectJobList,
+} from '@/types/subjectRights'
 import { downloadBlob } from '@/utils/download'
 import { api } from './api'
 import { extractErrorMessage } from './apiErrors'
@@ -118,6 +127,38 @@ export const subjectRightsService = {
     postData<SubjectJob>(
       `/api/v1/users/${userId}/erasure`,
       { confirm_username: confirmUsername },
+      { suppressToast: true },
+    ),
+
+  // ── W38 (W31 F-1): the person's erasure request and the administrators' queue ──
+
+  /** My NEWEST erasure request (any status), or null when I never asked. */
+  getMyErasureRequest: () => getData<MyErasureRequest | null>('/api/v1/me/erasure-request'),
+
+  /**
+   * Ask an administrator to erase my account (no body: D-2, no free text). 201 → the pending request. Refusals
+   * render inline: 409 `request_pending` (with `detail.request_id`), `last_admin_self` / `last_admin`,
+   * `not_a_person`, `user_erased`; 403 `session_required`.
+   */
+  fileErasureRequest: () =>
+    postData<MyErasureRequest>('/api/v1/me/erasure-request', undefined, { suppressToast: true }),
+
+  /** Withdraw my pending request. 200 → the request at `withdrawn`; 409 `no_pending_request`. */
+  withdrawErasureRequest: () =>
+    postData<MyErasureRequest>('/api/v1/me/erasure-request/withdraw', undefined, { suppressToast: true }),
+
+  /** ADMIN: the queue — pending first (oldest first), then decided (newest decided first), at most 200. */
+  listErasureRequests: (status: ErasureRequestFilter) =>
+    getData<ErasureRequestList>('/api/v1/users/erasure-requests', { params: { status } }),
+
+  /**
+   * ADMIN: decline a pending request with one of the fixed codes. 200 → the decided row; 404
+   * `request_not_found`, 409 `request_not_pending` / `own_request`, 422 `decline_code_invalid`.
+   */
+  declineErasureRequest: (requestId: string, declineCode: DeclineCode) =>
+    postData<ErasureRequestRead>(
+      `/api/v1/users/erasure-requests/${requestId}/decline`,
+      { decline_code: declineCode },
       { suppressToast: true },
     ),
 }

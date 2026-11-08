@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from sqlalchemy import event, text
+from sqlalchemy import event, select, text
 from sqlalchemy import types as sqltypes
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
@@ -303,6 +303,72 @@ async def test_every_refusal_in_e1_order(maker: Any, world: SimpleNamespace) -> 
         caller.is_active = True
         await db.commit()
         assert await svc.refusal(db, subject=other, actor=caller) is None
+
+
+# ── W38: no human actor (a SCIM DELETE in erase mode) ────────────────────────
+
+async def test_no_actor_skips_only_the_session_and_self_checks(maker: Any, world: SimpleNamespace) -> None:
+    admin, subject = world.admin, world.subject
+    async with maker.session() as db:
+        assert await svc.refusal(db, subject=None, actor=None) == "user_not_found"
+        assert await svc.refusal(db, subject=subject, actor=None) is None
+        assert await svc.refusal(db, subject=world.bot, actor=None) == "not_a_person"
+        # the only active admin: no self_erasure without an actor, last_admin still applies
+        assert await svc.blockers(db, subject=admin, actor=None) == ["last_admin"]
+        db.add(_job(subject, admin, kind="export", status="running"))
+        await db.commit()
+        assert await svc.refusal(db, subject=subject, actor=None) == "export_blocks_erasure"
+        erasure = _job(subject, admin, kind="erasure", status="queued")
+        db.add(erasure)
+        await db.commit()
+        assert await svc.blockers(db, subject=subject, actor=None) == ["erasure_running", "export_blocks_erasure"]
+
+
+async def _lock_out(maker: Any, subject: User, actor: Any, **extra: Any) -> tuple[SubjectRightsJob, list[Any]]:
+    from app.models.postgres import AccessAuditLog
+
+    async with maker.session() as db:
+        job = _job(subject, subject, kind="erasure")
+        job.requested_by_id = actor.id if actor is not None else None
+        job.source = "admin" if actor is not None else "scim"
+        db.add(job)
+        await db.flush()
+        await svc.stage_lockout(db, subject=subject, actor=actor, job=job, **extra)
+        await db.commit()
+        audit = list((await db.execute(select(AccessAuditLog))).scalars().all())
+    return job, audit
+
+
+async def test_the_lockout_audits_a_null_actor_and_the_callers_extra(
+    maker: Any, world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _revoke(user_id: uuid.UUID, db: Any = None) -> None:
+        return None
+
+    monkeypatch.setattr("app.core.token_revocation.revoke_all_user_tokens", _revoke)
+    token_id = str(uuid.uuid4())
+    job, audit = await _lock_out(maker, world.subject, None,
+                                 audit_extra={"via": "scim", "scim_token_id": token_id})
+    assert len(audit) == 1 and audit[0].action == "subject_erasure_requested"
+    assert (audit[0].actor_user_id, audit[0].actor_name) == (None, None)
+    assert audit[0].target_user_id == world.subject.id and audit[0].before_value == {"is_active": True}
+    assert audit[0].after_value == {"job_id": str(job.id), "via": "scim", "scim_token_id": token_id}
+    assert (job.phase, job.status) == ("lockout", "queued")
+    async with maker.session() as db:
+        assert (await db.get(User, world.subject.id)).is_active is False
+
+
+async def test_the_lockout_extra_never_replaces_the_job_id(
+    maker: Any, world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _revoke(user_id: uuid.UUID, db: Any = None) -> None:
+        raise AssertionError("refused before any write")
+
+    monkeypatch.setattr("app.core.token_revocation.revoke_all_user_tokens", _revoke)
+    with pytest.raises(ValueError):
+        await _lock_out(maker, world.subject, world.admin, audit_extra={"job_id": "forged"})
+    async with maker.session() as db:
+        assert (await db.get(User, world.subject.id)).is_active is True
 
 
 def test_confirm_is_exact_and_case_sensitive() -> None:

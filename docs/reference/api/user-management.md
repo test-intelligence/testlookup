@@ -1286,7 +1286,7 @@ Erase User
 Erase (pseudonymise) this person: refusals in E-1's order, the exact typed username, then the
 lock-out committed in ONE transaction and the worker enqueued. An unfinished erasure is resumed.
 
-Source: [backend/app/routers/subject_erasure.py:92](../../../backend/app/routers/subject_erasure.py#L92).
+Source: [backend/app/routers/subject_erasure.py:96](../../../backend/app/routers/subject_erasure.py#L96).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_signed_in_session.<locals>.signed_in_session`.
 
@@ -1376,9 +1376,10 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Get Erasure Preview
 
 Counts of what erasing this person would delete / rewrite, keep and leave open, the blockers (listed,
-not raised), the pseudonym, and an unfinished erasure job to resume. Writes nothing.
+not raised), the pseudonym, an unfinished erasure job to resume, and the person's pending erasure request
+(W38). Writes nothing.
 
-Source: [backend/app/routers/subject_erasure.py:78](../../../backend/app/routers/subject_erasure.py#L78).
+Source: [backend/app/routers/subject_erasure.py:79](../../../backend/app/routers/subject_erasure.py#L79).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_signed_in_session.<locals>.signed_in_session`.
 

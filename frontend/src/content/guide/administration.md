@@ -26,6 +26,8 @@ The sections below follow the groups of the settings index.
 
 Once enabled, the section shows how many recovery codes remain, with **Regenerate recovery codes** (which invalidates the old ones) and **Turn off two-factor authentication**; both ask for your password and a current code. If your organisation requires two-factor sign-in for your role, you cannot turn it off. Accounts that sign in through SSO manage their second factor with their identity provider instead.
 
+**Your data**, the last card: **Download my data** prepares a signed archive of what TestLookup holds about you (kept for 72 hours). Below it, **Ask to have your account erased** asks the administrators to erase your account; you confirm in the card (**Send request**), and nothing is erased yet. The card then reads *You asked on Sep 18, 2026. An administrator will review it.* and offers **Withdraw request**. An administrator either erases the account — you are signed out at once, it cannot be undone, and audit records are kept, as the law allows — or declines with a reason, which the card shows (*Declined on Sep 19, 2026: …*, plus a bell entry). After a decline or a withdrawal you may ask again. The only administrator cannot ask: make someone else an administrator first.
+
 ### My notifications
 
 **My notifications** (`/settings/my-notifications`) decides what reaches you, per channel: **Email**, **Slack** and **Microsoft Teams**.
@@ -85,6 +87,8 @@ Users see only projects they are a member of. Project membership, not role alone
 **Users** (`/users`): QA leads see the list. Administrators **Add User** (a temporary password is shown once, and the user must change it at first sign-in), change a user's role inline, edit, and activate or deactivate accounts.
 
 **Members & access** (`/users?tab=project-members`): pick a project to see its members and its **Default QA Lead**. Administrators add and remove members, set each member's project role, and change the default QA lead; **Reset QA Lead password** is available to QA leads.
+
+**Erasure requests** (`/users?tab=erasure-requests`, administrators): the people who asked on their Profile to be erased — **Pending** (the default, oldest first), **Decided** or **All**. A new request puts an in-app bell entry (never an e-mail) in front of every other administrator, linking here. **Review** opens that person's **Personal data** under the row; its erasure preview says *This person asked for erasure on Sep 18, 2026.*, and erasing there (type the username, **Erase permanently**) is the approval — the row then reads **Accepted — erasure started**. Erasing the person from the Users tab closes the request the same way. **Decline** asks for one of four reasons (legal obligation, work in progress, identity not confirmed, other) and shows the sentence the person will read; there is no free text. Your own request offers nothing: *Another administrator must review your own request.* An erasure started by your identity provider reads **Requested by Your identity provider (SCIM)** in Personal data.
 
 Self-registration is off unless the deployment turns it on (`REGISTRATION_ENABLED`). When it is on, the sign-in page offers **Register**; such an account is a Viewer in no project until someone adds it here.
 
@@ -336,7 +340,7 @@ QA leads can read every tab and label live pairs (signed in, not with an API key
 **SSO & identity** (`/settings/sso`, administrators) configures SAML 2.0 single sign-on. Tabs:
 
 - **SSO Configuration** — display name, the identity provider's entity ID, SSO URL and certificate, TestLookup's own entity ID and ACS URL, an optional group attribute for role mapping, the enforcement (**Optional (password login allowed)** or **SSO Required (admin fallback only)**) and the default role for new SSO users. **Test Connection** checks the certificate and reaches the identity provider; **Activate** turns a configuration on.
-- **SCIM Tokens** — tokens your identity provider uses to provision users automatically (shown once; revocable).
+- **SCIM Tokens** — tokens your identity provider uses to provision users automatically (shown once; revocable), and **When your identity provider deletes a user**: **Deactivate the account (default)** — the person can no longer sign in, and an administrator can reactivate the account — or **Erase the person's data — cannot be undone**, the same erasure as Users › Personal data, for every SCIM token. Choosing erase shows a warning; tick **I understand an erasure cannot be undone** to **Save**. Only a signed-in administrator can change it (an API key cannot). When a delete cannot erase someone (a service or synthetic account, a running export, the last administrator), the account is deactivated instead and **Identity Events** records the refusal.
 - **Identity Events** — sign-ins, provisioning and role changes from the last 30 days.
 - **Sync Status** — federated users, last SSO sign-in, last SCIM sync and recent failures.
 

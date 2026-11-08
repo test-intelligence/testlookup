@@ -229,6 +229,38 @@ export async function revokeSCIMToken(id: string): Promise<void> {
   await api.delete(`/api/v1/scim-tokens/${id}`);
 }
 
+// ── SCIM DELETE behaviour (W38, W31 F-2: an app_settings row, D-8) ─────────
+
+/** What a SCIM `DELETE /Users/{id}` does: `deactivate` (today's soft delete, the default) or `erase`. */
+export const SCIM_DELETE_ACTIONS = ['deactivate', 'erase'] as const;
+export type ScimDeleteAction = (typeof SCIM_DELETE_ACTIONS)[number];
+
+export interface ScimDeleteActionSetting {
+  /** `deactivate` when no row was ever saved. */
+  action: ScimDeleteAction | string;
+  updated_at?: string | null;
+  updated_by_display?: string | null;
+}
+
+/** ADMIN: the instance's SCIM delete action. */
+export async function getScimDeleteAction(): Promise<ScimDeleteActionSetting> {
+  const { data } = await api.get<ScimDeleteActionSetting>('/api/v1/settings/scim-delete-action');
+  return data;
+}
+
+/**
+ * ADMIN in a signed-in session: change it. The caller renders a refusal inline (no toast): 403
+ * `instance_interactive_only` for an API key, 422 `scim_delete_action_invalid`.
+ */
+export async function setScimDeleteAction(action: ScimDeleteAction): Promise<ScimDeleteActionSetting> {
+  const { data } = await api.put<ScimDeleteActionSetting>(
+    '/api/v1/settings/scim-delete-action',
+    { action },
+    { suppressToast: true },
+  );
+  return data;
+}
+
 // ── Identity Events API ─────────────────────────────────────────────────────
 
 export async function listIdentityEvents(params?: {

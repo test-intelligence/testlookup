@@ -28,6 +28,7 @@ from app.core.deps import invalidate_membership_cache, require_role
 from app.db.postgres import get_db
 from app.models.postgres import SubjectRightsJob, User, UserRole
 from app.models.schemas import ErasurePreview, ErasureRequest, SubjectJobRead
+from app.services import subject_erasure_request_service as erasure_requests
 from app.services import subject_erasure_service as erasure
 from app.services import subject_rights_job_service as jobs
 
@@ -83,9 +84,12 @@ async def get_erasure_preview(
     db: AsyncSession = Depends(get_db),
 ) -> ErasurePreview:
     """Counts of what erasing this person would delete / rewrite, keep and leave open, the blockers (listed,
-    not raised), the pseudonym, and an unfinished erasure job to resume. Writes nothing."""
+    not raised), the pseudonym, an unfinished erasure job to resume, and the person's pending erasure request
+    (W38). Writes nothing."""
     subject = await _subject(db, user_id)
-    return await erasure.preview(db, subject=subject, actor=current_user)
+    preview = await erasure.preview(db, subject=subject, actor=current_user)
+    preview.pending_request = await erasure_requests.pending_summary(db, subject.id)
+    return preview
 
 
 # activity: none - an erasure is not a project event; its two access-audit rows are the record (§2.3 E-11)
@@ -117,7 +121,17 @@ async def erase_user(
             job = await jobs.create_erasure_job(db, subject=subject, actor=current_user)
         except jobs.ErasureRunning:
             raise _refused("erasure_running") from None
-        await erasure.stage_lockout(db, subject=subject, actor=current_user, job=job)
+        # W38 D-5: the SAME commit closes the person's pending erasure request (accepted by this job), whether
+        # the administrator came from the queue or not. The user row is locked above, so the order is user →
+        # request (the request routes' order). A resume (above) closes nothing new. It runs BEFORE the lock-out
+        # so the lock-out's (append-only) audit row can name the accepted request.
+        closed = await erasure_requests.close_pending_for(
+            db, subject_id=subject.id, job_id=job.id, decided_by_id=current_user.id,
+        )
+        await erasure.stage_lockout(
+            db, subject=subject, actor=current_user, job=job,
+            audit_extra={"request_id": str(closed)} if closed else None,
+        )
         await db.commit()
         await db.refresh(job)
     if job is None:  # pragma: no cover - the row was committed above

@@ -25,8 +25,11 @@ export const ACTIVE_STATUSES = ['queued', 'running'] as const
 export const ERASURE_PHASES = ['lockout', 'postgres', 'objects', 'redis', 'done'] as const
 export type ErasurePhase = (typeof ERASURE_PHASES)[number]
 
-/** Who asked for an export (`job.source`). */
-export const REQUEST_SOURCES = ['self', 'admin'] as const
+/**
+ * Who asked for a job (`job.source`): the person (an export), an administrator, or — W38 D-11 — the identity
+ * provider (a SCIM `DELETE` in erase mode; `requested_by_display` is then null and the panel reads `requester_scim`).
+ */
+export const REQUEST_SOURCES = ['self', 'admin', 'scim'] as const
 
 export const ERASE_ACTIONS = ['delete', 'pseudonymise', 'reference', 'keep_audit', 'keep_record', 'out_of_scope', 'no_personal_data'] as const
 export type EraseAction = (typeof ERASE_ACTIONS)[number]
@@ -64,6 +67,13 @@ export const ERROR_SENTENCES = {
   erasure_incomplete: 'The erasure stopped after the {phase} step; it resumes on its own within the hour, or run it again now.',
   username_reserved: 'Usernames starting with "erased-" are reserved.',
   project_export_removed: 'This export was removed because a person it lists was erased; export the project again.',
+  request_pending: 'You already asked for erasure. An administrator will review it.',
+  no_pending_request: 'There is no pending erasure request.',
+  request_not_pending: 'This request was already decided or withdrawn.',
+  request_not_found: 'Erasure request not found.',
+  own_request: 'Another administrator must review your own request.',
+  decline_code_invalid: 'Choose a reason from the list.',
+  last_admin_self: 'You are the only administrator, so your account cannot be erased. Make someone else an administrator first.',
 } as const
 export type SubjectRightsErrorCode = keyof typeof ERROR_SENTENCES
 
@@ -82,10 +92,37 @@ export const UI_SENTENCES = {
   erase_done: 'Erased. This account now reads as “Erased user” ({pseudonym}).',
   erase_kept_title: 'Kept (Art. 17(3))',
   erased_badge: 'Erased',
+  erasure_request_start: 'Ask to have your account erased',
+  erasure_request_confirm: 'An administrator reviews the request. If they erase your account you are signed out at once and it cannot be undone; audit records are kept, as the law allows.',
+  erasure_request_send: 'Send request',
+  erasure_request_pending: 'You asked on {date}. An administrator will review it.',
+  erasure_request_withdraw: 'Withdraw request',
+  erasure_request_declined: 'Declined on {date}: {message}',
+  erasure_request_asked: 'This person asked for erasure on {date}.',
+  erasure_request_accepted: 'Accepted — erasure started',
+  requester_scim: 'Your identity provider (SCIM)',
 } as const
 export type SubjectRightsUiSentence = keyof typeof UI_SENTENCES
 
-export const AUDIT_ACTIONS = ['subject_export_requested', 'subject_export_downloaded', 'subject_erasure_requested', 'subject_erased'] as const
+export const AUDIT_ACTIONS = ['subject_export_requested', 'subject_export_downloaded', 'subject_erasure_requested', 'subject_erased', 'erasure_request_filed', 'erasure_request_withdrawn', 'erasure_request_declined'] as const
+
+// ── W38 (W31 F-1): the person's erasure REQUEST and the administrators' queue ──
+
+/** A request's `status` (`subject_erasure_requests.status`); only `pending` is open. */
+export const ERASURE_REQUEST_STATUSES = ['pending', 'withdrawn', 'declined', 'accepted'] as const
+export type ErasureRequestStatus = (typeof ERASURE_REQUEST_STATUSES)[number]
+
+/** The fixed reasons an administrator declines with (D-2: a code, never free text). */
+export const DECLINE_CODES = ['legal_obligation', 'active_contract', 'identity_unconfirmed', 'other'] as const
+export type DeclineCode = (typeof DECLINE_CODES)[number]
+
+/** What the person reads for each decline code (the server sends the same text as `decline_message`). */
+export const DECLINE_SENTENCES = {
+  legal_obligation: 'We must keep your account for a legal obligation. Ask your administrator for details.',
+  active_contract: 'Your account is still needed for work in progress. Ask your administrator when it can be erased.',
+  identity_unconfirmed: 'We could not confirm the request came from you. Ask your administrator.',
+  other: 'Your administrator declined the request. Ask them why.',
+} as const
 
 // ── wire shapes (mirror backend/app/models/schemas.py Subject* / Erasure*) ──
 
@@ -165,11 +202,63 @@ export interface ErasurePreview {
   open_items?: ErasureLocationCount[]
   /** An unfinished erasure of this user (resume). */
   erasure_job?: SubjectJob | null
+  /** W38: the person's PENDING erasure request, if any — the panel says "This person asked for erasure on <date>." */
+  pending_request?: ErasurePendingRequest | null
 }
 
 /** The body of the erasure POST. */
 export interface ErasureRequest {
   confirm_username: string
+}
+
+/** W38: `ErasurePreview.pending_request`. */
+export interface ErasurePendingRequest {
+  id: string
+  requested_at: string
+}
+
+/** W38 §2: `GET /api/v1/me/erasure-request` (the caller's NEWEST request, or null) and the two POSTs' answer. */
+export interface MyErasureRequest {
+  id: string
+  status: ErasureRequestStatus | string
+  requested_at: string
+  decided_at?: string | null
+  decline_code?: DeclineCode | string | null
+  /** The decline code's sentence (DECLINE_SENTENCES), sent by the server. */
+  decline_message?: string | null
+}
+
+/** W38 §2: one row of the administrators' queue. Displays come from the server ("Erased user" once erased). */
+export interface ErasureRequestRead {
+  id: string
+  subject_user_id: string
+  /** Full name, else username; "Erased user" once erased. */
+  subject_display?: string | null
+  subject_username?: string | null
+  subject_is_erased?: boolean
+  subject_is_active?: boolean
+  /** The signed-in administrator filed this request: no actions, the `own_request` note. */
+  requester_is_you?: boolean
+  status: ErasureRequestStatus | string
+  requested_at: string
+  decided_at?: string | null
+  decided_by_display?: string | null
+  decline_code?: DeclineCode | string | null
+  erasure_job_id?: string | null
+}
+
+export interface ErasureRequestList {
+  items: ErasureRequestRead[]
+  total: number
+}
+
+/** The queue's `?status=` filter (the server's default is `all`; the tab's is `pending`). */
+export const ERASURE_REQUEST_FILTERS = ['pending', 'decided', 'all'] as const
+export type ErasureRequestFilter = (typeof ERASURE_REQUEST_FILTERS)[number]
+
+/** The body of the decline POST. */
+export interface ErasureRequestDecline {
+  decline_code: DeclineCode
 }
 
 /** `{name}` placeholders → values (React text); an unknown placeholder stays as written. */

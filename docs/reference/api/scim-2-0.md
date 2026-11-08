@@ -10,7 +10,7 @@ Scim List Groups
 
 SCIM 2.0: list groups (W20 ADM-09); ``filter=displayName eq "<name>"`` only.
 
-Source: [backend/app/routers/scim.py:904](../../../backend/app/routers/scim.py#L904).
+Source: [backend/app/routers/scim.py:930](../../../backend/app/routers/scim.py#L930).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -120,7 +120,7 @@ Scim Create Group
 
 SCIM 2.0: create a group; its members' project memberships follow the group's mappings.
 
-Source: [backend/app/routers/scim.py:943](../../../backend/app/routers/scim.py#L943).
+Source: [backend/app/routers/scim.py:969](../../../backend/app/routers/scim.py#L969).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -192,7 +192,7 @@ Scim Delete Group
 
 SCIM 2.0: delete a group; memberships it alone granted are removed.
 
-Source: [backend/app/routers/scim.py:1045](../../../backend/app/routers/scim.py#L1045).
+Source: [backend/app/routers/scim.py:1071](../../../backend/app/routers/scim.py#L1071).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -254,7 +254,7 @@ Scim Get Group
 
 SCIM 2.0: one group with its members.
 
-Source: [backend/app/routers/scim.py:931](../../../backend/app/routers/scim.py#L931).
+Source: [backend/app/routers/scim.py:957](../../../backend/app/routers/scim.py#L957).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -329,7 +329,7 @@ Scim Patch Group
 
 SCIM 2.0 PatchOp on ``members`` (add / remove / replace, and ``members[value eq "<id>"]``) and ``displayName``.
 
-Source: [backend/app/routers/scim.py:996](../../../backend/app/routers/scim.py#L996).
+Source: [backend/app/routers/scim.py:1022](../../../backend/app/routers/scim.py#L1022).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -413,7 +413,7 @@ Scim Replace Group
 
 SCIM 2.0: replace a group's name and members.
 
-Source: [backend/app/routers/scim.py:972](../../../backend/app/routers/scim.py#L972).
+Source: [backend/app/routers/scim.py:998](../../../backend/app/routers/scim.py#L998).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -494,7 +494,7 @@ Scim Resource Types
 
 SCIM 2.0: List provisionable resource types.
 
-Source: [backend/app/routers/scim.py:338](../../../backend/app/routers/scim.py#L338).
+Source: [backend/app/routers/scim.py:339](../../../backend/app/routers/scim.py#L339).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -559,7 +559,7 @@ Scim Resource Type
 
 SCIM 2.0: Retrieve one provisionable resource type.
 
-Source: [backend/app/routers/scim.py:347](../../../backend/app/routers/scim.py#L347).
+Source: [backend/app/routers/scim.py:348](../../../backend/app/routers/scim.py#L348).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -640,7 +640,7 @@ Scim Schemas
 
 SCIM 2.0: List supported resource schemas.
 
-Source: [backend/app/routers/scim.py:361](../../../backend/app/routers/scim.py#L361).
+Source: [backend/app/routers/scim.py:362](../../../backend/app/routers/scim.py#L362).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -763,7 +763,7 @@ Scim Service Provider Config
 
 SCIM 2.0: Discover implemented protocol capabilities.
 
-Source: [backend/app/routers/scim.py:329](../../../backend/app/routers/scim.py#L329).
+Source: [backend/app/routers/scim.py:330](../../../backend/app/routers/scim.py#L330).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -828,7 +828,7 @@ Scim List
 
 SCIM 2.0: List users.
 
-Source: [backend/app/routers/scim.py:384](../../../backend/app/routers/scim.py#L384).
+Source: [backend/app/routers/scim.py:385](../../../backend/app/routers/scim.py#L385).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -972,7 +972,7 @@ Scim Create
 
 SCIM 2.0: Create a user.
 
-Source: [backend/app/routers/scim.py:466](../../../backend/app/routers/scim.py#L466).
+Source: [backend/app/routers/scim.py:467](../../../backend/app/routers/scim.py#L467).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -1087,9 +1087,18 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 Scim Delete
 
-SCIM 2.0: Deactivate (soft-delete) a user.
+SCIM 2.0: Delete a user — deactivate (soft-delete) by default, or erase the person's data when the
+operator setting ``scim_delete_action`` is ``erase`` (W38).
 
-Source: [backend/app/routers/scim.py:797](../../../backend/app/routers/scim.py#L797).
+Deactivate (the default): the account is switched off and kept; a later ``GET`` still answers it with
+``active: false``. Erase: the W31 erasure with the identity provider as the requester — the account is locked
+out at once (sessions, tokens and keys) in this request's one commit, the person's data is pseudonymised by the
+worker afterwards, and a pending erasure request of theirs is accepted. A retry while that erasure runs, or a
+``DELETE`` of an erased account, changes nothing. When the erasure is refused (a service account, an export
+still running, the last active administrator) the account is deactivated instead and the refusal is recorded
+as a failed identity event. Every case answers 204 with no body.
+
+Source: [backend/app/routers/scim.py:798](../../../backend/app/routers/scim.py#L798).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -1157,7 +1166,7 @@ Scim Get
 
 SCIM 2.0: Get a single user.
 
-Source: [backend/app/routers/scim.py:441](../../../backend/app/routers/scim.py#L441).
+Source: [backend/app/routers/scim.py:442](../../../backend/app/routers/scim.py#L442).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -1270,7 +1279,7 @@ Scim Patch
 
 SCIM 2.0: Patch (partial update) a user.
 
-Source: [backend/app/routers/scim.py:608](../../../backend/app/routers/scim.py#L608).
+Source: [backend/app/routers/scim.py:609](../../../backend/app/routers/scim.py#L609).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -1402,7 +1411,7 @@ Scim Replace
 
 SCIM 2.0: Replace (full update) a user.
 
-Source: [backend/app/routers/scim.py:533](../../../backend/app/routers/scim.py#L533).
+Source: [backend/app/routers/scim.py:534](../../../backend/app/routers/scim.py#L534).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 

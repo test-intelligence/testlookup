@@ -36,6 +36,8 @@ import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { ProjectMembersTab } from './ProjectMembersTab'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { OneTimeLinkBox, PendingInvitationsTab } from './PendingInvitationsTab'
+import { ErasureRequestsTab } from './ErasureRequestsTab'
+import { TAB_LABEL as ERASURE_REQUESTS_TAB_LABEL } from './erasureRequestsModel'
 import PersonalDataSection from '@/components/subjectRights/PersonalDataSection'
 import {
   ERASED_BADGE,
@@ -89,9 +91,9 @@ function useSecretHoldsSlot(slot: InlineSlot | undefined, holding: boolean) {
 
 const HELP_TOPIC = helpTopicParam('/users')
 
-type UsersPageTab = 'users' | 'project-members' | 'invitations'
+type UsersPageTab = 'users' | 'project-members' | 'invitations' | 'erasure-requests'
 
-const TAB_IDS: readonly UsersPageTab[] = ['users', 'project-members', 'invitations']
+const TAB_IDS: readonly UsersPageTab[] = ['users', 'project-members', 'invitations', 'erasure-requests']
 
 /**
  * `?tab=` ids are a contract: the settings sub-nav links "Members & access" to
@@ -104,8 +106,15 @@ const TAB_ITEMS: readonly TabItem<UsersPageTab>[] = [
   { id: 'users', label: 'Users' },
   { id: 'project-members', label: 'Project access' },
 ]
-/** W17b ADM-01: admins also see the invitations nobody has accepted yet. */
-const ADMIN_TAB_ITEMS: readonly TabItem<UsersPageTab>[] = [...TAB_ITEMS, { id: 'invitations', label: 'Pending invitations' }]
+/**
+ * W17b ADM-01: admins also see the invitations nobody has accepted yet. W38 (W31 F-1): and the erasure requests
+ * people filed on their Profile (`?tab=erasure-requests` is also the administrators' bell link, D-6).
+ */
+const ADMIN_TAB_ITEMS: readonly TabItem<UsersPageTab>[] = [
+  ...TAB_ITEMS,
+  { id: 'invitations', label: 'Pending invitations' },
+  { id: 'erasure-requests', label: ERASURE_REQUESTS_TAB_LABEL },
+]
 
 export default function UserManagementPage() {
   const [tab, setTab] = useTabParam(TAB_IDS, 'users')
@@ -127,6 +136,7 @@ export default function UserManagementPage() {
       {tab === 'users' && <UsersTab canManageUsers={canManageUsers} isAdmin={isAdmin} />}
       {tab === 'project-members' && <ProjectMembersTab isAdmin={isAdmin} canManageUsers={canManageUsers} />}
       {tab === 'invitations' && (isAdmin ? <PendingInvitationsTab /> : <UsersTab canManageUsers={canManageUsers} isAdmin={isAdmin} />)}
+      {tab === 'erasure-requests' && (isAdmin ? <ErasureRequestsTab /> : <UsersTab canManageUsers={canManageUsers} isAdmin={isAdmin} />)}
     </div>
   )
 }

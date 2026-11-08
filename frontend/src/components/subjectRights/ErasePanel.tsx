@@ -7,7 +7,9 @@
  * permanently", enabled ONLY on the exact username with no blocker. Erase → `POST …/erasure` → the job's phase line
  * polled by `useSubjectJob` ("Erasure in progress — signed out and disabled. Step 2 of 4: …") → `erase_done`. A job
  * at `lockout` reads "Erasure in progress", never "Erased" (E-11b). An unfinished erasure offers "Resume erasure"
- * (the same confirm, E-8).
+ * (the same confirm, E-8). W38: a person who asked for erasure (`preview.pending_request`) reads "This person asked
+ * for erasure on <date>." above the preview; a job's line is followed by "Requested by <who>." (a SCIM erasure:
+ * "Your identity provider (SCIM)", D-11).
  *
  * In the page: no modal, no `role="dialog"`, no portal, no native confirm dialog. Names, sentences and counts are React text.
  */
@@ -19,6 +21,7 @@ import { useErasurePreview, useSubjectJob } from '@/hooks/useSubjectRights'
 import { subjectRightsErrorCode, subjectRightsErrorMessage, subjectRightsService } from '@/services/subjectRightsService'
 import { isActiveJob, type ErasureLocationCount, type ErasurePreview, type SubjectJob } from '@/types/subjectRights'
 import {
+  askedLine,
   canErase,
   CHANGES_TITLE,
   confirmLabel,
@@ -35,6 +38,8 @@ import {
   NOT_COUNTED,
   OPEN_ITEMS_TITLE,
   previewSummary,
+  requestedByLine,
+  requesterDisplay,
   RESUME_BUTTON,
   type UserRowLike,
 } from './erasureModel'
@@ -150,6 +155,8 @@ export default function ErasePanel({ user, latestErasure, onChanged, onUsersChan
   const polled = watched && watched.id === watchedId ? watched : null
   const job = polled ?? started ?? pending ?? null
   const view = erasureView(job, preview?.pseudonym ?? user.username)
+  // W38 D-11: who started this erasure ("Your identity provider (SCIM)" for a SCIM one).
+  const requester = requesterDisplay(job)
 
   // `done` re-reads the job list and the users list ONCE per job (the row then renders "Erased user").
   const doneKey = view.kind === 'done' && job ? job.id : null
@@ -207,6 +214,11 @@ export default function ErasePanel({ user, latestErasure, onChanged, onUsersChan
             {view.kind === 'in_progress' && <LoadingSpinner size="sm" />}
             <span>{view.line}</span>
           </div>
+          {requester && (
+            <p className="m-0 text-xs text-[var(--color-text-muted)]" data-erase-requester="">
+              {requestedByLine(requester)}
+            </p>
+          )}
           {view.detail && (
             <p className="m-0 text-xs text-[var(--ui-danger-ink)]" data-erase-incomplete="">
               {view.detail}
@@ -220,6 +232,11 @@ export default function ErasePanel({ user, latestErasure, onChanged, onUsersChan
         <LoadingSpinner size="sm" />
       ) : (
         <>
+          {preview.pending_request?.requested_at && (
+            <p className="m-0 text-sm font-medium text-[var(--color-text)]" data-erase-pending-request="">
+              {askedLine(preview.pending_request.requested_at)}
+            </p>
+          )}
           <p className="m-0 text-sm text-[var(--color-text-secondary)]">{eraseBody(preview.pseudonym)}</p>
           {blockers.length > 0 && (
             <ul className="m-0 flex list-none flex-col gap-1 p-0" data-erase-blockers="">

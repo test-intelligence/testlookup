@@ -537,7 +537,8 @@ def test_8_pinned_counts():
     # W36 STRAT-03 (deliberate): + systemic_cluster_epics under EXCLUDED, external_tracker like defects (77 → 78)
     # W37 F-7 (deliberate): test_case_reviews / test_case_comments leave EXCLUDED (per_user_state) for EXPORTED as
     # the 2 OPTIONAL entities, written only when the exporter ticks Include reviews (56 → 58, 78 → 76)
-    assert counts == (58, 76, 26), (
+    # W38 W31 F-1 (deliberate, 2026-11-07): + subject_erasure_requests under NOT_PROJECT_SCOPED (26 → 27)
+    assert counts == (58, 76, 27), (
         f"EXPORTED / EXCLUDED / NOT_PROJECT_SCOPED = {counts}: a table was added or moved — "
         "classify it in project_export_entities.py and update this pin deliberately"
     )

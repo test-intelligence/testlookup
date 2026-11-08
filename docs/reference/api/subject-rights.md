@@ -147,6 +147,228 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## GET `/api/v1/me/erasure-request`
+
+Get My Erasure Request
+
+The caller's newest erasure request (pending, withdrawn, declined or accepted), or null. Reads only.
+
+Source: [backend/app/routers/subject_erasure_requests.py:58](../../../backend/app/routers/subject_erasure_requests.py#L58).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_signed_in_session.<locals>.signed_in_session`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+current_user: User=Depends(_signed_in_session), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "get_my_erasure_request_api_v1_me_erasure_request_get",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MyErasureRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Get My Erasure Request Api V1 Me Erasure Request Get"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/me/erasure-request`
+
+File My Erasure Request
+
+Ask an administrator to erase the caller's account. One pending request per person: 409
+``request_pending`` names it in ``detail.request_id``. Every other active administrator gets a bell row.
+
+Source: [backend/app/routers/subject_erasure_requests.py:69](../../../backend/app/routers/subject_erasure_requests.py#L69).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_signed_in_session.<locals>.signed_in_session`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+current_user: User=Depends(_signed_in_session), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "file_my_erasure_request_api_v1_me_erasure_request_post",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "201": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/MyErasureRequest"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/me/erasure-request/withdraw`
+
+Withdraw My Erasure Request
+
+Withdraw the caller's pending erasure request; 409 ``no_pending_request`` when there is none.
+
+Source: [backend/app/routers/subject_erasure_requests.py:85](../../../backend/app/routers/subject_erasure_requests.py#L85).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_signed_in_session.<locals>.signed_in_session`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+current_user: User=Depends(_signed_in_session), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "withdraw_my_erasure_request_api_v1_me_erasure_request_withdraw_post",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/MyErasureRequest"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/subject-data-jobs/{subject_job_id}`
 
 Get Subject Data Job
@@ -316,6 +538,188 @@ StreamingResponse(_body(), media_type='application/zip', headers=headers)
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
+
+## GET `/api/v1/users/erasure-requests`
+
+List Erasure Requests
+
+Every erasure request of the instance: pending first (oldest first), then decided (newest decided
+first), with how many match in all. Reads only.
+
+Source: [backend/app/routers/subject_erasure_requests.py:101](../../../backend/app/routers/subject_erasure_requests.py#L101).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_signed_in_session.<locals>.signed_in_session`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+status_filter: str=Query('all', alias='status', pattern=_FILTER_PATTERN), current_user: User=Depends(_signed_in_session), _admin: User=Depends(require_role(UserRole.ADMIN)), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "list_erasure_requests_api_v1_users_erasure_requests_get",
+  "parameters": [
+    {
+      "in": "query",
+      "name": "status",
+      "required": false,
+      "schema": {
+        "default": "all",
+        "pattern": "^(pending|decided|all)$",
+        "title": "Status",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/ErasureRequestList"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+## POST `/api/v1/users/erasure-requests/{erasure_request_id}/decline`
+
+Decline Erasure Request
+
+Decline a pending request with one of ``DECLINE_CODES``; the person gets a bell row and reads the code's
+sentence on their Profile. Never the caller's own request (409 ``own_request``).
+
+Source: [backend/app/routers/subject_erasure_requests.py:115](../../../backend/app/routers/subject_erasure_requests.py#L115).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_signed_in_session.<locals>.signed_in_session`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+erasure_request_id: uuid.UUID, payload: Optional[ErasureRequestDecline]=Body(default=None), current_user: User=Depends(_signed_in_session), _admin: User=Depends(require_role(UserRole.ADMIN)), db: AsyncSession=Depends(get_db)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "decline_erasure_request_api_v1_users_erasure_requests__erasure_request_id__decline_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "erasure_request_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Erasure Request Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "requestBody": {
+    "content": {
+      "application/json": {
+        "schema": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ErasureRequestDecline"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Payload"
+        }
+      }
+    }
+  },
+  "responses": {
+    "200": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/ErasureRequestRead"
+          }
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
 
 ## POST `/api/v1/users/{user_id}/data-export`
 

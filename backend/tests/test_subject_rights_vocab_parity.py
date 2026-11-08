@@ -72,6 +72,9 @@ def _record(name: str) -> dict[str, str]:
         ("REQUEST_SOURCES", v.REQUEST_SOURCES),
         ("ERASE_ACTIONS", v.ERASE_ACTIONS),
         ("AUDIT_ACTIONS", v.AUDIT_ACTIONS),
+        # W38 (W31 F-1, 2026-11-07): the erasure request's statuses and decline codes
+        ("ERASURE_REQUEST_STATUSES", v.ERASURE_REQUEST_STATUSES),
+        ("DECLINE_CODES", v.DECLINE_CODES),
     ],
 )
 def test_the_frontend_arrays_equal_the_server(name, server):
@@ -102,10 +105,22 @@ def test_the_frontend_numbers_equal_the_server(name, server):
 
 
 @pytest.mark.parametrize(
-    ("name", "server"), [("ERROR_SENTENCES", v.ERROR_SENTENCES), ("UI_SENTENCES", v.UI_SENTENCES)],
+    ("name", "server"),
+    [("ERROR_SENTENCES", v.ERROR_SENTENCES), ("UI_SENTENCES", v.UI_SENTENCES),
+     ("DECLINE_SENTENCES", v.DECLINE_SENTENCES)],   # W38 2026-11-07
 )
 def test_the_frontend_records_equal_the_server(name, server):
     assert _record(name) == server
+
+
+def test_the_erasure_request_vocabulary_is_closed():
+    # W38 (W31 F-1): every decline code has the sentence the person reads; the decided statuses are the rest.
+    assert tuple(v.DECLINE_SENTENCES) == v.DECLINE_CODES
+    assert v.ERASURE_REQUEST_STATUSES[0] == "pending"
+    assert v.DECIDED_REQUEST_STATUSES == v.ERASURE_REQUEST_STATUSES[1:]
+    assert v.ERASURE_REQUEST_FILTERS == ("pending", "decided", "all")
+    assert v.SOURCE_SCIM in v.REQUEST_SOURCES and v.REQUEST_SOURCES[:2] == ("self", "admin")
+    assert set(v.BELL_APP_PATHS) == {"erasure_request_waiting", "erasure_request_declined"} < set(v.BELL_SENTENCES)
 
 
 def test_the_vocabulary_agrees_with_the_modules_it_copies():
@@ -134,7 +149,7 @@ def test_the_sentences_state_the_caps_and_the_markers():
     assert v.JOB_STALE_MINUTES > v.QUEUED_REDISPATCH_MINUTES and v.REDISPATCH_MAX >= 1
 
 
-@pytest.mark.parametrize("table", ["ERROR_SENTENCES", "UI_SENTENCES"])
+@pytest.mark.parametrize("table", ["ERROR_SENTENCES", "UI_SENTENCES", "DECLINE_SENTENCES", "BELL_SENTENCES"])
 def test_every_placeholder_is_well_formed(table):
     for key, sentence in getattr(v, table).items():
         fields = [name for _, name, spec, conv in string.Formatter().parse(sentence) if name is not None]

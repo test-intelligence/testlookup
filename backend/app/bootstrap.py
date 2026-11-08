@@ -93,6 +93,7 @@ from app.routers import (
     sso,
     stream,
     subject_erasure,
+    subject_erasure_requests,
     subject_rights,
     suites,
     summary_report,
@@ -240,6 +241,9 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     # API-key principal itself (require_signed_in_session) — the protected dependency only authenticates.
     subject_rights.router,
     subject_erasure.router,
+    # W38 (W31 F-1): the erasure request + the admin queue. BEFORE users.router, or GET /api/v1/users/{user_id}
+    # would parse the literal ``erasure-requests`` as a user id (route-shadowing guard).
+    subject_erasure_requests.router,
     users.router,
     users.projects_router,
     api_keys.router,

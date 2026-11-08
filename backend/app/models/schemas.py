@@ -646,6 +646,28 @@ class MfaPolicyUpdate(BaseModel):
     clear_required_for_role: bool = False
 
 
+# ── W38 (W31 F-2): what a SCIM DELETE does (services/scim_delete_setting.py) ──
+
+class ScimDeleteActionRead(BaseModel):
+    """``GET`` / ``PUT /api/v1/settings/scim-delete-action``: the effective action (``deactivate`` when never set),
+    when it was last changed and by whom (a display name; "Erased user" once erased)."""
+    action: Literal["deactivate", "erase"]
+    updated_at: Optional[datetime] = None
+    updated_by_display: Optional[str] = None
+
+
+class ScimDeleteActionWrite(BaseModel):
+    """The PUT's body: ``deactivate`` or ``erase``. Anything else (or nothing) is the route's coded 422
+    ``scim_delete_action_invalid`` — the sentence, not FastAPI's validation envelope."""
+    action: Optional[str] = None
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def _the_route_checks_every_value(cls, value: Any) -> Optional[str]:
+        # a non-string reaches the route as "" (not an action) so it, too, answers the coded 422
+        return value if value is None or isinstance(value, str) else ""
+
+
 # ── Project Schemas ───────────────────────────────────────────
 
 _JENKINS_JOB_PATTERN_DESCRIPTION = "Stored only; TestLookup does not use it (W10 D22)."
@@ -1036,7 +1058,7 @@ class SubjectJobRead(BaseModel):
     id: uuid.UUID
     kind: str                                      # subject_rights_vocab.JOB_KINDS
     status: str                                    # subject_rights_vocab.JOB_STATUSES
-    source: str                                    # "self" | "admin"
+    source: str                                    # "self" | "admin" | "scim" (W38: an IdP's SCIM DELETE in erase mode)
     subject_user_id: Optional[uuid.UUID] = None
     subject_display: Optional[str] = None          # full name or username; "Erased user" once erased — never an e-mail
     requested_by_display: Optional[str] = None     # same rule
@@ -1076,6 +1098,12 @@ class ErasureBlocker(BaseModel):
     message: str                                   # its sentence
 
 
+class ErasurePendingRequest(BaseModel):
+    """W38 (W31 F-1): the person's pending erasure request, shown on the erase panel ("asked on <date>")."""
+    id: uuid.UUID
+    requested_at: datetime
+
+
 class ErasurePreview(BaseModel):
     user_id: uuid.UUID
     username: str
@@ -1088,10 +1116,60 @@ class ErasurePreview(BaseModel):
     kept: list[ErasureLocationCount]               # keep_audit / keep_record with their reasons
     open_items: list[ErasureLocationCount] = []    # references a lead may want to reassign first — never blockers
     erasure_job: Optional[SubjectJobRead] = None   # an unfinished erasure of this user (resume)
+    pending_request: Optional[ErasurePendingRequest] = None   # W38: the person asked for erasure (read-only)
 
 
 class ErasureRequest(BaseModel):
     confirm_username: str = Field(min_length=1, max_length=100)   # == the user's CURRENT username, exactly
+
+
+# ── W38 (W31 F-1): the self-service erasure REQUEST and the administrators' queue ──
+# status / decline_code are plain str checked against subject_rights_vocab (ERASURE_REQUEST_STATUSES /
+# DECLINE_CODES). No free text anywhere (D-2): a decline carries a CODE, the person reads its sentence.
+
+class MyErasureRequest(BaseModel):
+    """The caller's NEWEST erasure request (``GET /api/v1/me/erasure-request``)."""
+    id: uuid.UUID
+    status: str                                    # subject_rights_vocab.ERASURE_REQUEST_STATUSES
+    requested_at: datetime
+    decided_at: Optional[datetime] = None
+    decline_code: Optional[str] = None             # subject_rights_vocab.DECLINE_CODES (declined only)
+    decline_message: Optional[str] = None          # DECLINE_SENTENCES[decline_code]
+
+
+class ErasureRequestRead(BaseModel):
+    """One row of the administrators' queue. Displays follow the job rule: full name, else username;
+    "Erased user" once erased — never an e-mail address."""
+    id: uuid.UUID
+    subject_user_id: uuid.UUID
+    subject_display: Optional[str] = None
+    subject_username: Optional[str] = None
+    subject_is_erased: bool = False
+    subject_is_active: bool = False
+    requester_is_you: bool = False                 # the caller's own request: no actions (own_request)
+    status: str
+    requested_at: datetime
+    decided_at: Optional[datetime] = None
+    decided_by_display: Optional[str] = None
+    decline_code: Optional[str] = None
+    erasure_job_id: Optional[uuid.UUID] = None
+
+
+class ErasureRequestList(BaseModel):
+    items: list[ErasureRequestRead]
+    total: int                                     # all matching rows; items ≤ ERASURE_REQUESTS_LIST_LIMIT
+
+
+class ErasureRequestDecline(BaseModel):
+    """The decline's body: ONE ``subject_rights_vocab.DECLINE_CODES`` value. Anything else (or nothing) is the
+    route's coded 422 ``decline_code_invalid`` — the sentence, not FastAPI's validation envelope."""
+    decline_code: Optional[str] = None
+
+    @field_validator("decline_code", mode="before")
+    @classmethod
+    def _the_route_checks_every_value(cls, value: Any) -> Optional[str]:
+        # a non-string reaches the route as "" (not a code) so it, too, answers the coded 422
+        return value if value is None or isinstance(value, str) else ""
 
 
 # ── W30 ADM-05 phase 2: run history in the export / import; the parted upload ─

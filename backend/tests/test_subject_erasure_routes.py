@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 
 from app.core.deps import _bind_api_key_project, get_current_active_user
 from app.db.postgres import get_db
-from app.models.postgres import AccessAuditLog, Base, SubjectRightsJob, User, UserRole
+from app.models.postgres import AccessAuditLog, Base, SubjectErasureRequest, SubjectRightsJob, User, UserRole
 from app.routers import subject_erasure as routes
 from app.services import subject_erasure_service as svc
 from app.services.subject_rights_vocab import ERROR_SENTENCES
@@ -250,13 +250,97 @@ async def test_the_preview_writes_nothing_through_the_route(maker: Any, world: S
     await _seed_sessions_and_keys(maker, world.subject)
     async with _client(maker, world.admin, events) as client:
         response = await client.get(f"{API}/{world.subject.id}/erasure-preview")
-    assert response.status_code == 200
+        # W38: the person's pending erasure request is shown (still read-only); none → null
+        assert response.json()["pending_request"] is None
+        request_id = await _seed_request(maker, world.subject)
+        asked = await client.get(f"{API}/{world.subject.id}/erasure-preview")
+    assert response.status_code == 200 and asked.status_code == 200
+    assert asked.json()["pending_request"]["id"] == str(request_id)
+    assert asked.json()["pending_request"]["requested_at"].startswith("2026-11-01T09:00:00")
     changes = {entry["key"]: entry for entry in response.json()["changes"]}
     assert changes["api_keys.user_id"]["count"] == 1 and changes["refresh_token_records.user_id"]["count"] == 1
     assert events == []
     assert await _count(maker, SubjectRightsJob) == 0 and await _count(maker, AccessAuditLog) == 0
     async with maker.session() as db:
         assert (await db.get(User, world.subject.id)).is_active is True
+        request = await db.get(SubjectErasureRequest, request_id)
+        assert (request.status, request.decided_at, request.erasure_job_id) == ("pending", None, None)
+
+
+# ── W38 D-5: any erasure closes the person's pending request, in the SAME commit ──
+
+async def _seed_request(maker: Any, subject: User, *, status: str = "pending") -> uuid.UUID:
+    async with maker.session() as db:
+        request = SubjectErasureRequest(
+            id=uuid.uuid4(), subject_user_id=subject.id, status=status,
+            requested_at=datetime(2026, 11, 1, 9, 0, tzinfo=timezone.utc),
+            decided_at=None if status == "pending" else datetime(2026, 11, 2, tzinfo=timezone.utc),
+        )
+        db.add(request)
+        await db.commit()
+        return request.id
+
+
+async def test_the_erasure_accepts_the_pending_request_in_its_one_commit(
+    maker: Any, world: SimpleNamespace, events: list[Any],
+) -> None:
+    subject = world.subject
+    request_id = await _seed_request(maker, subject)
+    async with _client(maker, world.admin, events) as client:
+        response = await client.post(f"{API}/{subject.id}/erasure", json={"confirm_username": "zqxwsubj"})
+    assert response.status_code == 202, response.text
+    body = response.json()
+    # still ONE commit, then the cache drop and the enqueue
+    assert events == [("revoke", subject.id, True), ("commit",), ("membership", subject.id), ("dispatch", body["id"])]
+    async with maker.session() as db:
+        request = await db.get(SubjectErasureRequest, request_id)
+        assert request.status == "accepted" and str(request.erasure_job_id) == body["id"]
+        assert request.decided_by_id == world.admin.id and request.decided_at is not None
+        assert request.decline_code is None
+        audit = (await db.execute(select(AccessAuditLog))).scalars().all()
+    # the request's acceptance is the erasure's own audit row (no second row), naming the request (W38 §1.2)
+    assert [row.action for row in audit] == ["subject_erasure_requested"]
+    assert audit[0].after_value == {"job_id": body["id"], "request_id": str(request_id)}
+
+
+async def test_an_erasure_closes_nothing_when_no_request_is_pending(
+    maker: Any, world: SimpleNamespace, events: list[Any],
+) -> None:
+    withdrawn = await _seed_request(maker, world.subject, status="withdrawn")
+    async with _client(maker, world.admin, events) as client:
+        response = await client.post(f"{API}/{world.subject.id}/erasure", json={"confirm_username": "zqxwsubj"})
+    assert response.status_code == 202
+    async with maker.session() as db:
+        request = await db.get(SubjectErasureRequest, withdrawn)
+        assert request.status == "withdrawn" and request.erasure_job_id is None and request.decided_by_id is None
+
+
+async def test_a_refused_erasure_leaves_the_request_pending(maker: Any, world: SimpleNamespace,
+                                                            events: list[Any]) -> None:
+    request_id = await _seed_request(maker, world.subject)
+    async with _client(maker, world.admin, events) as client:
+        wrong = await client.post(f"{API}/{world.subject.id}/erasure", json={"confirm_username": "nope"})
+    assert wrong.status_code == 422 and events == []
+    async with maker.session() as db:
+        assert (await db.get(SubjectErasureRequest, request_id)).status == "pending"
+
+
+async def test_a_resume_closes_nothing_new(maker: Any, world: SimpleNamespace, events: list[Any]) -> None:
+    subject = world.subject
+    async with maker.session() as db:
+        job = _job(subject, world.admin, kind="erasure", status="running", error_code="erasure_incomplete")
+        job.phase = "lockout"
+        db.add(job)
+        row = await db.get(User, subject.id)
+        row.is_active = False
+        await db.commit()
+    request_id = await _seed_request(maker, subject)
+    async with _client(maker, world.admin, events) as client:
+        resumed = await client.post(f"{API}/{subject.id}/erasure", json={"confirm_username": "zqxwsubj"})
+    assert resumed.status_code == 202 and resumed.json()["id"] == str(job.id)
+    async with maker.session() as db:
+        request = await db.get(SubjectErasureRequest, request_id)
+        assert request.status == "pending" and request.erasure_job_id is None
 
 
 # ── the runner: claim, phases each committed, incomplete keeps running, resume ──

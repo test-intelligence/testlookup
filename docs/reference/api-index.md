@@ -235,6 +235,9 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | PUT | `/api/v1/me/assigned-failures/{test_case_id}/triage` | Update Failure Triage Status | [My Failures](api/my-failures.md) |
 | POST | `/api/v1/me/data-export` | Start My Data Export | [Subject rights](api/subject-rights.md) |
 | GET | `/api/v1/me/data-exports` | List My Data Exports | [Subject rights](api/subject-rights.md) |
+| GET | `/api/v1/me/erasure-request` | Get My Erasure Request | [Subject rights](api/subject-rights.md) |
+| POST | `/api/v1/me/erasure-request` | File My Erasure Request | [Subject rights](api/subject-rights.md) |
+| POST | `/api/v1/me/erasure-request/withdraw` | Withdraw My Erasure Request | [Subject rights](api/subject-rights.md) |
 | GET | `/api/v1/memory/projects/{project_id}` | List Project Memories | [Agent Memory](api/agent-memory.md) |
 | POST | `/api/v1/memory/projects/{project_id}/recall` | Recall Similar Memories | [Agent Memory](api/agent-memory.md) |
 | GET | `/api/v1/memory/runs/{run_id}/timeline` | Get Run Memory Timeline | [Agent Memory](api/agent-memory.md) |
@@ -581,6 +584,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/settings/retention-defaults/enable-preview` | Preview Retention Defaults Enable | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/review-gate` | Get Review Gate | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/review-gate` | Update Review Gate | [Settings](api/settings.md) |
+| GET | `/api/v1/settings/scim-delete-action` | Get Scim Delete Action | [Settings](api/settings.md) |
+| PUT | `/api/v1/settings/scim-delete-action` | Update Scim Delete Action | [Settings](api/settings.md) |
 | GET | `/api/v1/settings/secret-providers` | Get Secret Providers | [Secret providers](api/secret-providers.md) |
 | GET | `/api/v1/settings/smtp` | Get Smtp Config | [Settings](api/settings.md) |
 | PUT | `/api/v1/settings/smtp` | Update Smtp Config | [Settings](api/settings.md) |
@@ -706,6 +711,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/training/status` | Get Training Status | [Feedback & Training](api/feedback-training.md) |
 | GET | `/api/v1/users` | List Users | [User Management](api/user-management.md) |
 | POST | `/api/v1/users` | Admin Create User | [User Management](api/user-management.md) |
+| GET | `/api/v1/users/erasure-requests` | List Erasure Requests | [Subject rights](api/subject-rights.md) |
+| POST | `/api/v1/users/erasure-requests/{erasure_request_id}/decline` | Decline Erasure Request | [Subject rights](api/subject-rights.md) |
 | GET | `/api/v1/users/invitations` | List Invitations | [User Management](api/user-management.md) |
 | POST | `/api/v1/users/invitations/{invitation_id}/resend` | Resend Invitation | [User Management](api/user-management.md) |
 | POST | `/api/v1/users/invitations/{invitation_id}/revoke` | Revoke Invitation | [User Management](api/user-management.md) |
@@ -742,4 +749,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **733 HTTP operations**, **622 paths**, **92 domain pages**.
+Total: **740 HTTP operations**, **627 paths**, **92 domain pages**.

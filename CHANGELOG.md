@@ -52,6 +52,28 @@ locally by default.
 
 ### Added
 
+- **Ask for your account to be erased** (wave W38, W31 F-1; branch `feat/df-erasure-requests-20261108`).
+  Settings › Profile › Your data gains "Ask to have your account erased": the request waits for an
+  administrator, the person can withdraw it, and one request can be pending at a time. The only active
+  administrator cannot file (their request could never run). Administrators review requests on the new
+  Settings › Users › **Erasure requests** tab (Pending / Decided / All): Review opens the existing
+  Personal data panel and its typed-confirm erasure, which accepts the request in the same commit as the
+  lock-out; Decline picks one of four fixed reasons the person then reads on their Profile. Other
+  administrators get an in-app bell notification on each request and the person gets one on a decline —
+  never e-mail, and never a name in the notification. Running any erasure (from the queue or the Users
+  list) closes the person's pending request. Migration 0256 adds `subject_erasure_requests`; filings,
+  withdrawals and declines are recorded in `access_audit_logs`. API: `GET` / `POST /api/v1/me/erasure-request`,
+  `POST /api/v1/me/erasure-request/withdraw`, `GET /api/v1/users/erasure-requests`,
+  `POST /api/v1/users/erasure-requests/{id}/decline` (all need a signed-in session; an API key gets 403).
+- **SCIM `DELETE` can erase instead of deactivate** (wave W38, W31 F-2). Settings › SSO › SCIM Tokens gains
+  "When your identity provider deletes a user": Deactivate the account (the default, unchanged) or Erase
+  the person's data. In erase mode an identity provider's `DELETE /api/v1/scim/v2/Users/{id}` runs the W31
+  erasure with the identity provider as requester (job source `scim`, migration 0256), accepts a pending
+  erasure request, and records `SCIM_USER_ERASURE_STARTED`; a retry is a no-op. When the person cannot be
+  erased (a service or synthetic account, a data export still running, the last active administrator) the
+  account is deactivated instead and `SCIM_ERASURE_REFUSED` is recorded, so access always stops. Changing
+  the setting needs a signed-in administrator (an API key gets 403), writes a settings-audit row and the
+  identity event `SCIM_DELETE_ACTION_UPDATED`. API: `GET` / `PUT /api/v1/settings/scim-delete-action`.
 - **Project data: export the runs of one release** (wave W37, F-W30-1; branch
   `feat/df-import-export-20261107`). Settings › Project data › Export › Include run history
   gains "One release": the archive then holds every finished run linked to that release

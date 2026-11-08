@@ -1480,6 +1480,12 @@ GLOBAL_PATH_PARAMS: dict[str, str] = {
         "an instance-wide suite-membership cutover comparison (suite_membership_parity_runs has no "
         "project owner), guarded by require_instance_admin"
     ),
+    # W38 (W31 F-1, 2026-11-07): POST /users/erasure-requests/{erasure_request_id}/decline. A person's request to
+    # be erased (subject_erasure_requests has no project owner; users are instance-wide). Not ``request_id``:
+    # that name sits in the unclassified backlog.
+    "erasure_request_id": (
+        "an instance-wide erasure request, read and decided only by require_role(ADMIN) in a signed-in session"
+    ),
 }
 
 #: Path ids in use when this scan was added that neither list classifies. Their

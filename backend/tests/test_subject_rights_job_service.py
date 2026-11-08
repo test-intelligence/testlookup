@@ -189,6 +189,42 @@ async def test_an_unknown_source_is_a_programming_error(maker, world):
             await svc.create_export_job(db, subject=world.subject, actor=world.subject, source="api")
 
 
+async def test_an_export_never_takes_the_scim_source(maker, world):
+    """W38 D-11: 0256 widened the shared ``ck_srj_source`` to admit "scim"; an identity provider only erases,
+    so an export with that source is still a programming error (nothing staged)."""
+    assert vocab.SOURCE_SCIM in vocab.REQUEST_SOURCES and svc.EXPORT_SOURCES == ("self", "admin")
+    async with maker() as db:
+        with pytest.raises(ValueError):
+            await svc.create_export_job(db, subject=world.subject, actor=world.admin, source="scim")
+        assert (await db.execute(select(SubjectRightsJob))).scalars().all() == []
+
+
+async def test_a_scim_erasure_has_no_requester(maker, world):
+    """W38 D-11: ``source="scim"`` with no actor → ``requested_by_id`` NULL; the default stays "admin"."""
+    async with maker() as db:
+        job = await svc.create_erasure_job(db, subject=world.subject, actor=None, source="scim")
+        await db.commit()
+    assert (job.kind, job.status, job.source, job.requested_by_id) == ("erasure", "queued", "scim", None)
+    async with maker() as db:
+        with pytest.raises(svc.ErasureRunning) as refused:
+            await svc.create_erasure_job(db, subject=world.subject, actor=world.admin)
+    assert refused.value.job_id == job.id
+
+
+@pytest.mark.parametrize("actor_name, source", [
+    ("admin", "scim"),      # a SCIM erasure never names a person as its requester
+    (None, "admin"),        # an admin erasure always does
+    ("admin", "self"),      # an erasure is never self-service
+    (None, "self"),
+])
+async def test_an_erasure_source_and_actor_must_agree(maker, world, actor_name, source):
+    actor = getattr(world, actor_name) if actor_name else None
+    async with maker() as db:
+        with pytest.raises(ValueError):
+            await svc.create_erasure_job(db, subject=world.subject, actor=actor, source=source)
+        assert (await db.execute(select(SubjectRightsJob))).scalars().all() == []
+
+
 # ── the worker's transitions ─────────────────────────────────────────────────
 
 async def test_claim_is_a_no_op_for_the_other_kind_and_a_non_queued_job(maker, world):

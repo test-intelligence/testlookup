@@ -1525,12 +1525,35 @@ export const SCIM_TOKEN = {
   created_at: isoAgo(5),
 }
 
-/** `/settings/sso`: the configs (PATCH, DELETE), the SCIM tokens (DELETE), and the other tabs' reads. */
-export function ssoInPageWorld() {
+/**
+ * `/settings/sso`: the configs (PATCH, DELETE), the SCIM tokens (DELETE), the other tabs' reads, and (W38, W31 F-2)
+ * the SCIM tab's delete-action setting — `deactivate` (never saved) unless `scimDeleteAction` says otherwise; its PUT
+ * is recorded and answered with the new value, or refused with `scimDeletePutRefusal` (e.g. 403
+ * `instance_interactive_only`).
+ */
+export function ssoInPageWorld(
+  options: { scimDeleteAction?: 'deactivate' | 'erase'; scimDeletePutRefusal?: { status: number; code: string; message: string } } = {},
+) {
   const writes: RecordedWrite[] = []
   const configs = [{ ...SSO_ENFORCED }, { ...SSO_OPTIONAL }]
   const tokens = [{ ...SCIM_TOKEN }]
+  const scimDelete = {
+    action: options.scimDeleteAction ?? 'deactivate',
+    updated_at: options.scimDeleteAction ? isoAgo(2) : (null as string | null),
+    updated_by_display: options.scimDeleteAction ? 'Admin' : (null as string | null),
+  }
   const handlers: ApiHandlers = [
+    ['/api/v1/settings/scim-delete-action', () => scimDelete],
+    ['/api/v1/settings/scim-delete-action', (request) => {
+      const body = recordIn(writes, request) as { action?: string } | null
+      const refusal = options.scimDeletePutRefusal
+      if (refusal) return respond(refusal.status, { detail: { code: refusal.code, message: refusal.message } })
+      if (body?.action !== 'deactivate' && body?.action !== 'erase') {
+        return respond(422, { detail: { code: 'scim_delete_action_invalid', message: 'Choose deactivate or erase.' } })
+      }
+      Object.assign(scimDelete, { action: body.action, updated_at: isoAgo(0), updated_by_display: 'Admin' })
+      return scimDelete
+    }, 'PUT'],
     [/^\/api\/v1\/sso\/configs\/[^/]+$/, (request) => {
       const body = recordIn(writes, request) as Record<string, unknown>
       const row = configs.find((c) => request.path.endsWith(`/${c.id}`))

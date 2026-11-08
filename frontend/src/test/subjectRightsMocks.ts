@@ -12,20 +12,28 @@
  * - `subjectErrorBody(code, fmt?, extra?)` / `exportRunningBody(jobId)` / `subjectErrorBlob(code)` /
  *   `subjectRefusal(status, body)`: the `{detail: {code, message}}` refusals as JSON, as a Blob (a blob
  *   download's refusal) and as an AxiosError.
+ * - W38: `myErasureRequestFixture({status})`, `erasureRequestRowFixture({status, …})`, `erasureRequestList(items)`:
+ *   the person's newest erasure request and the administrators' queue rows, each in the shape its status has.
  *
  * Names are non-hex words; timestamps are built at CALL time (never a module constant).
  */
 import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
 
 import {
+  DECLINE_SENTENCES,
   ERASED_DISPLAY,
   ERROR_SENTENCES,
   EXPORT_TTL_HOURS,
   fillSentence,
   PSEUDONYM_PREFIX,
+  type DeclineCode,
   type ErasureBlocker,
   type ErasureLocationCount,
   type ErasurePreview,
+  type ErasureRequestList,
+  type ErasureRequestRead,
+  type ErasureRequestStatus,
+  type MyErasureRequest,
   type SubjectJob,
   type SubjectJobList,
   type SubjectRightsErrorCode,
@@ -194,6 +202,60 @@ export function exportRunningBody(jobId: string) {
 /** A refusal as a blob download receives it. */
 export function subjectErrorBlob(code: SubjectRightsErrorCode, fmt: Record<string, string | number> = {}): Blob {
   return new Blob([JSON.stringify(subjectErrorBody(code, fmt))], { type: 'application/json' })
+}
+
+// ── W38: the person's erasure request and the administrators' queue (contract §2 shapes) ──
+
+export const REQUEST_ID = '00000000-0000-4000-8000-0000000e5a01'
+export const OTHER_PERSON_ID = '00000000-0000-4000-8000-0000000e5b02'
+
+type MyRequestOverrides = Partial<MyErasureRequest> & { status?: ErasureRequestStatus }
+
+/**
+ * My newest erasure request in the server's shape for its status: a pending one has no decision; a declined one
+ * carries a code and the code's sentence; a withdrawn / accepted one has `decided_at` and no code.
+ */
+export function myErasureRequestFixture(overrides: MyRequestOverrides = {}): MyErasureRequest {
+  const status = overrides.status ?? 'pending'
+  const declined = status === 'declined'
+  const code: DeclineCode | null = declined ? ((overrides.decline_code as DeclineCode | undefined) ?? 'legal_obligation') : null
+  return {
+    id: REQUEST_ID,
+    status,
+    requested_at: minutesFromNow(-3 * 24 * 60),
+    decided_at: status === 'pending' ? null : minutesFromNow(-24 * 60),
+    decline_code: code,
+    decline_message: code ? DECLINE_SENTENCES[code] : null,
+    ...overrides,
+  }
+}
+
+type RowOverrides = Partial<ErasureRequestRead> & { status?: ErasureRequestStatus }
+
+/** One queue row in the server's shape for its status (accepted: the erasure job; declined: the code). */
+export function erasureRequestRowFixture(overrides: RowOverrides = {}): ErasureRequestRead {
+  const status = overrides.status ?? 'pending'
+  const decided = status !== 'pending'
+  return {
+    id: REQUEST_ID,
+    subject_user_id: SUBJECT_USER_ID,
+    subject_display: SUBJECT_DISPLAY,
+    subject_username: SUBJECT_USERNAME,
+    subject_is_erased: false,
+    subject_is_active: true,
+    requester_is_you: false,
+    status,
+    requested_at: minutesFromNow(-3 * 24 * 60),
+    decided_at: decided ? minutesFromNow(-24 * 60) : null,
+    decided_by_display: decided && status !== 'withdrawn' ? ADMIN_DISPLAY : null,
+    decline_code: status === 'declined' ? 'other' : null,
+    erasure_job_id: status === 'accepted' ? jobUuid() : null,
+    ...overrides,
+  }
+}
+
+export function erasureRequestList(items: ErasureRequestRead[], total = items.length): ErasureRequestList {
+  return { items, total }
 }
 
 /** An AxiosError carrying `body` with HTTP `status`, as the service's callers receive it. */

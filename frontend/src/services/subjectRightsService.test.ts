@@ -6,6 +6,7 @@
  * - the download is an authenticated blob read saved through `downloadBlob`, with the server's file name;
  * - a JSON refusal that arrived as a Blob reads as its sentence, never "Request failed with status code 410";
  * - a 409 `export_running` hands back the running job's id; the erase POST sends ONLY `confirm_username`.
+ * - W38: the erasure-request reads / POSTs on their full paths (file / withdraw carry no body, decline ONLY the code).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -21,7 +22,11 @@ import { readSourceFile } from '@/test/readSourceFile'
 import { downloadBlob } from '@/utils/download'
 import {
   erasurePreviewFixture,
+  erasureRequestList,
+  erasureRequestRowFixture,
   exportRunningBody,
+  myErasureRequestFixture,
+  REQUEST_ID,
   SUBJECT_USER_ID,
   subjectErrorBlob,
   subjectErrorBody,
@@ -91,9 +96,53 @@ describe('subjectRightsService paths', () => {
       '`/api/v1/subject-data-jobs/${jobId}/download`',
       '`/api/v1/users/${userId}/erasure-preview`',
       '`/api/v1/users/${userId}/erasure`',
+      "'/api/v1/me/erasure-request'",
+      "'/api/v1/me/erasure-request/withdraw'",
+      "'/api/v1/users/erasure-requests'",
+      '`/api/v1/users/erasure-requests/${requestId}/decline`',
     ]) {
       expect(source).toContain(path)
     }
+  })
+})
+
+describe('subjectRightsService erasure requests (W38 §2)', () => {
+  it('reads my newest request (null when I never asked)', async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ data: null })
+    expect(await subjectRightsService.getMyErasureRequest()).toBeNull()
+    expect(api.get).toHaveBeenCalledWith('/api/v1/me/erasure-request', undefined)
+  })
+
+  it('files and withdraws with NO body (no free text, D-2) and no global toast', async () => {
+    vi.mocked(api.post).mockResolvedValueOnce({ data: myErasureRequestFixture() })
+    expect((await subjectRightsService.fileErasureRequest()).status).toBe('pending')
+    expect(api.post).toHaveBeenLastCalledWith('/api/v1/me/erasure-request', undefined, { suppressToast: true })
+    vi.mocked(api.post).mockResolvedValueOnce({ data: myErasureRequestFixture({ status: 'withdrawn' }) })
+    expect((await subjectRightsService.withdrawErasureRequest()).status).toBe('withdrawn')
+    expect(api.post).toHaveBeenLastCalledWith('/api/v1/me/erasure-request/withdraw', undefined, { suppressToast: true })
+  })
+
+  it('lists the queue with the status filter as a query parameter', async () => {
+    vi.mocked(api.get).mockResolvedValueOnce({ data: erasureRequestList([erasureRequestRowFixture()]) })
+    const list = await subjectRightsService.listErasureRequests('pending')
+    expect(api.get).toHaveBeenCalledWith('/api/v1/users/erasure-requests', { params: { status: 'pending' } })
+    expect(list.total).toBe(1)
+  })
+
+  it('declines with ONLY the code, no global toast', async () => {
+    vi.mocked(api.post).mockResolvedValueOnce({ data: erasureRequestRowFixture({ status: 'declined' }) })
+    await subjectRightsService.declineErasureRequest(REQUEST_ID, 'identity_unconfirmed')
+    expect(api.post).toHaveBeenLastCalledWith(
+      `/api/v1/users/erasure-requests/${REQUEST_ID}/decline`,
+      { decline_code: 'identity_unconfirmed' },
+      { suppressToast: true },
+    )
+  })
+
+  it('reads a request refusal as its sentence and code', async () => {
+    const error = subjectRefusal(409, subjectErrorBody('request_pending', {}, { request_id: REQUEST_ID }))
+    expect(await subjectRightsErrorMessage(error)).toBe(ERROR_SENTENCES.request_pending)
+    expect(await subjectRightsErrorCode(error)).toBe('request_pending')
   })
 })
 

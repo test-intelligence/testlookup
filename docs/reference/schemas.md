@@ -16585,6 +16585,32 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## ErasurePendingRequest
+
+```json
+{
+  "description": "W38 (W31 F-1): the person's pending erasure request, shown on the erase panel (\"asked on <date>\").",
+  "properties": {
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "requested_at"
+  ],
+  "title": "ErasurePendingRequest",
+  "type": "object"
+}
+```
+
 ## ErasurePreview
 
 ```json
@@ -16638,6 +16664,16 @@ These are the full generated JSON Schema definitions, including required fields,
       "title": "Open Items",
       "type": "array"
     },
+    "pending_request": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ErasurePendingRequest"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "pseudonym": {
       "title": "Pseudonym",
       "type": "string"
@@ -16687,6 +16723,175 @@ These are the full generated JSON Schema definitions, including required fields,
     "confirm_username"
   ],
   "title": "ErasureRequest",
+  "type": "object"
+}
+```
+
+## ErasureRequestDecline
+
+```json
+{
+  "description": "The decline's body: ONE ``subject_rights_vocab.DECLINE_CODES`` value. Anything else (or nothing) is the\nroute's coded 422 ``decline_code_invalid`` — the sentence, not FastAPI's validation envelope.",
+  "properties": {
+    "decline_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decline Code"
+    }
+  },
+  "title": "ErasureRequestDecline",
+  "type": "object"
+}
+```
+
+## ErasureRequestList
+
+```json
+{
+  "properties": {
+    "items": {
+      "items": {
+        "$ref": "#/components/schemas/ErasureRequestRead"
+      },
+      "title": "Items",
+      "type": "array"
+    },
+    "total": {
+      "title": "Total",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "items",
+    "total"
+  ],
+  "title": "ErasureRequestList",
+  "type": "object"
+}
+```
+
+## ErasureRequestRead
+
+```json
+{
+  "description": "One row of the administrators' queue. Displays follow the job rule: full name, else username;\n\"Erased user\" once erased — never an e-mail address.",
+  "properties": {
+    "decided_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decided At"
+    },
+    "decided_by_display": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decided By Display"
+    },
+    "decline_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decline Code"
+    },
+    "erasure_job_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Erasure Job Id"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "requester_is_you": {
+      "default": false,
+      "title": "Requester Is You",
+      "type": "boolean"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    },
+    "subject_display": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Subject Display"
+    },
+    "subject_is_active": {
+      "default": false,
+      "title": "Subject Is Active",
+      "type": "boolean"
+    },
+    "subject_is_erased": {
+      "default": false,
+      "title": "Subject Is Erased",
+      "type": "boolean"
+    },
+    "subject_user_id": {
+      "format": "uuid",
+      "title": "Subject User Id",
+      "type": "string"
+    },
+    "subject_username": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Subject Username"
+    }
+  },
+  "required": [
+    "id",
+    "subject_user_id",
+    "status",
+    "requested_at"
+  ],
+  "title": "ErasureRequestRead",
   "type": "object"
 }
 ```
@@ -21257,7 +21462,10 @@ These are the full generated JSON Schema definitions, including required fields,
     "MFA_POLICY_UPDATED",
     "ACCOUNT_LOCKED",
     "ACCOUNT_UNLOCKED",
-    "API_KEY_REVOKED"
+    "API_KEY_REVOKED",
+    "SCIM_DELETE_ACTION_UPDATED",
+    "SCIM_ERASURE_REFUSED",
+    "SCIM_USER_ERASURE_STARTED"
   ],
   "title": "IdentityEventType",
   "type": "string"
@@ -29063,6 +29271,71 @@ These are the full generated JSON Schema definitions, including required fields,
   ],
   "title": "MutationClass",
   "type": "string"
+}
+```
+
+## MyErasureRequest
+
+```json
+{
+  "description": "The caller's NEWEST erasure request (``GET /api/v1/me/erasure-request``).",
+  "properties": {
+    "decided_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decided At"
+    },
+    "decline_code": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decline Code"
+    },
+    "decline_message": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Decline Message"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "requested_at": {
+      "format": "date-time",
+      "title": "Requested At",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "status",
+    "requested_at"
+  ],
+  "title": "MyErasureRequest",
+  "type": "object"
 }
 ```
 
@@ -44174,6 +44447,75 @@ These are the full generated JSON Schema definitions, including required fields,
     }
   },
   "title": "SavedViewUpdate",
+  "type": "object"
+}
+```
+
+## ScimDeleteActionRead
+
+```json
+{
+  "description": "``GET`` / ``PUT /api/v1/settings/scim-delete-action``: the effective action (``deactivate`` when never set),\nwhen it was last changed and by whom (a display name; \"Erased user\" once erased).",
+  "properties": {
+    "action": {
+      "enum": [
+        "deactivate",
+        "erase"
+      ],
+      "title": "Action",
+      "type": "string"
+    },
+    "updated_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Updated At"
+    },
+    "updated_by_display": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Updated By Display"
+    }
+  },
+  "required": [
+    "action"
+  ],
+  "title": "ScimDeleteActionRead",
+  "type": "object"
+}
+```
+
+## ScimDeleteActionWrite
+
+```json
+{
+  "description": "The PUT's body: ``deactivate`` or ``erase``. Anything else (or nothing) is the route's coded 422\n``scim_delete_action_invalid`` — the sentence, not FastAPI's validation envelope.",
+  "properties": {
+    "action": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Action"
+    }
+  },
+  "title": "ScimDeleteActionWrite",
   "type": "object"
 }
 ```

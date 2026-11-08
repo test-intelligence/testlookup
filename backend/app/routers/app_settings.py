@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Optional
 
 import aiosmtplib
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.core.deps import CREDENTIAL_KIND_JWT, credential_kind, get_current_active_user, require_role
 from app.db.postgres import get_db
 from app.models.postgres import AppSetting, User, UserRole
-from app.services import retention_instance_service, review_gate_setting
+from app.services import retention_instance_service, review_gate_setting, scim_delete_setting
 from app.services.retention_instance_service import InstancePolicyError
 from app.services.review_gate_vocab import GATED_CHANNELS, REVIEW_GATE_ERRORS
 from app.services.retention_service import RetentionValidationError
@@ -41,6 +41,8 @@ from app.models.schemas import (
     MfaPolicyUpdate,
     ReviewGateRead,
     ReviewGateWrite,
+    ScimDeleteActionRead,
+    ScimDeleteActionWrite,
     SmtpConfigRead,
     SmtpConfigUpdate,
     SmtpTestResult,
@@ -1822,3 +1824,64 @@ async def update_review_gate(
     await db.commit()
     await review_gate_setting.after_commit(after)
     return await _review_gate_read(db)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCIM DELETE action — deactivate (default) or erase (W38, W31 F-2; contract D-8, §3)
+# ═══════════════════════════════════════════════════════════════════════════════
+#
+# ONE ``app_settings`` row (``scim_delete_action``); no row = deactivate. ADMIN only. The GET answers any ADMIN
+# credential and writes nothing; the PUT changes what an identity provider's DELETE does to personal data, so it
+# needs an interactive (JWT) login (403 ``instance_interactive_only``, the retention-defaults rule). A change is
+# audited twice in ONE commit: ``settings_audit_log`` (the service) and an identity event with ``{before, after}``
+# (an auditor of identity provisioning reads identity_events — the MFA-policy precedent). The same value again
+# writes nothing.
+
+
+async def _scim_delete_action_read(db: AsyncSession) -> ScimDeleteActionRead:
+    setting = await scim_delete_setting.read_setting(db)
+    return ScimDeleteActionRead(
+        action=setting.action, updated_at=setting.updated_at, updated_by_display=setting.updated_by_display,
+    )
+
+
+@router.get("/scim-delete-action", response_model=ScimDeleteActionRead)
+async def get_scim_delete_action(
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> ScimDeleteActionRead:
+    """What an identity provider's SCIM ``DELETE /Users/{id}`` does: ``deactivate`` (the default — the account is
+    switched off and kept) or ``erase`` (the person's data is erased, as by an administrator). Reads only."""
+    return await _scim_delete_action_read(db)
+
+
+@router.put("/scim-delete-action", response_model=ScimDeleteActionRead)
+async def update_scim_delete_action(
+    payload: Optional[ScimDeleteActionWrite] = Body(default=None),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+) -> ScimDeleteActionRead:
+    """Set what a SCIM ``DELETE`` does: ``deactivate`` or ``erase`` (anything else is the coded 422
+    ``scim_delete_action_invalid``). Interactive login only; audited once per actual change."""
+    from app.models.postgres import IdentityEventType
+    from app.services.sso_service import log_identity_event
+
+    _require_interactive_admin(current_user)
+    action = payload.action if payload is not None else None
+    if action not in scim_delete_setting.ACTIONS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": scim_delete_setting.INVALID_CODE, "message": scim_delete_setting.INVALID_SENTENCE},
+        )
+    before, after = await scim_delete_setting.set_action(db, str(action), current_user)
+    if before != after:
+        await log_identity_event(
+            db,
+            IdentityEventType.SCIM_DELETE_ACTION_UPDATED,
+            actor_id=current_user.id,
+            actor_name=current_user.username,
+            detail={"before": before, "after": after},
+        )
+        await db.commit()
+        logger.info("SCIM delete action updated by user_id=%s before=%s after=%s", current_user.id, before, after)
+    return await _scim_delete_action_read(db)

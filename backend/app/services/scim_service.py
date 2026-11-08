@@ -21,7 +21,12 @@ from app.models.postgres import (
     User,
     UserRole,
 )
+from app.services import scim_delete_setting
+from app.services import subject_erasure_request_service as erasure_requests
+from app.services import subject_erasure_service as erasure
+from app.services import subject_rights_job_service as jobs
 from app.services.sso_service import log_identity_event, resolve_role_from_groups
+from app.services.subject_rights_vocab import ERROR_SENTENCES, SOURCE_SCIM
 from app.services.user_account_guards import (
     USER_ERASED_DETAIL,
     USERNAME_RESERVED_DETAIL,
@@ -503,6 +508,93 @@ async def scim_update_user(
     )
 
     return user
+
+
+async def scim_delete_user(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    sso_config_id: uuid.UUID | None,
+    scim_token_id: uuid.UUID | None,
+    ip_address: str | None,
+) -> Optional[uuid.UUID]:
+    """SCIM ``DELETE /Users/{id}`` (W38, W31 F-2; contract D-8..D-10). Returns the erasure job's id when this call
+    STARTED an erasure (the route dispatches the worker after its commit), else None. Stages only; the route
+    commits ONE transaction. The token's scope and the 404 are exactly today's.
+
+    * ``deactivate`` (the operator setting's default): today's soft delete, byte-identical —
+      :func:`scim_update_user` with ``active=False`` (``SCIM_USER_DEACTIVATED`` / ``SCIM_USER_UPDATED
+      {"no_changes": true}``).
+    * ``erase``, D-10 (idempotent): a live erasure job → one ``SCIM_USER_UPDATED {"no_changes": true,
+      "erasure_job_id"}``, nothing else; an erased person → today's no-op.
+    * ``erase``, D-9 (never leaves the account active): a refused erasure (``not_a_person``,
+      ``export_blocks_erasure``, ``last_admin``) → today's deactivation + ``SCIM_ERASURE_REFUSED``
+      (``success=False``, ``detail={"code"}``) so an administrator sees it and can erase by hand.
+    * ``erase``: the W31 erasure with no human actor — job ``source="scim"`` (``requested_by_id`` NULL), the person's
+      pending erasure request accepted (``decided_by_id`` NULL), the lock-out (audit row actor NULL, ``after_value``
+      + ``{"via": "scim", "scim_token_id"}`` and the request id), then ``SCIM_USER_ERASURE_STARTED``
+      ``{job_id, scim_token_id}``.
+    """
+    if await scim_delete_setting.get_action(db) != scim_delete_setting.ACTION_ERASE:
+        await scim_update_user(
+            db=db, user_id=user_id, active=False, sso_config_id=sso_config_id, ip_address=ip_address,
+        )
+        return None
+    # The person's row FOR UPDATE first (the erasure route's lock order: user → job / request), in today's scope.
+    query = _scope_user_query(select(User).where(User.id == user_id), sso_config_id)
+    result = await db.execute(query.with_for_update().execution_options(populate_existing=True))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise SCIMUserNotFoundError(f"User {user_id} not found")
+    token = str(scim_token_id) if scim_token_id is not None else None
+    live = await jobs.live_job(db, subject_id=user.id, kind=jobs.KIND_ERASURE)
+    if live is not None:
+        await _erasure_already_started(db, user, live.id, sso_config_id, ip_address)
+        return None
+    if is_erased(user):
+        await scim_update_user(
+            db=db, user_id=user.id, active=False, sso_config_id=sso_config_id, ip_address=ip_address,
+        )
+        return None
+    code = await erasure.refusal(db, subject=user, actor=None)
+    if code is not None:
+        await scim_update_user(
+            db=db, user_id=user.id, active=False, sso_config_id=sso_config_id, ip_address=ip_address,
+        )
+        await log_identity_event(
+            db, IdentityEventType.SCIM_ERASURE_REFUSED, user_id=user.id, sso_config_id=sso_config_id,
+            detail={"code": code}, ip_address=ip_address, success=False, error_message=ERROR_SENTENCES[code],
+        )
+        logger.info("scim_erasure_refused user_id=%s code=%s", user.id, code)
+        return None
+    try:
+        job = await jobs.create_erasure_job(db, subject=user, actor=None, source=SOURCE_SCIM)
+    except jobs.ErasureRunning as running:
+        await _erasure_already_started(db, user, running.job_id, sso_config_id, ip_address)
+        return None
+    closed = await erasure_requests.close_pending_for(db, subject_id=user.id, job_id=job.id, decided_by_id=None)
+    audit_extra: dict[str, Optional[str]] = {"via": "scim", "scim_token_id": token}
+    if closed is not None:
+        audit_extra["request_id"] = str(closed)
+    await erasure.stage_lockout(db, subject=user, actor=None, job=job, audit_extra=audit_extra)
+    await log_identity_event(
+        db, IdentityEventType.SCIM_USER_ERASURE_STARTED, user_id=user.id, sso_config_id=sso_config_id,
+        detail={"job_id": str(job.id), "scim_token_id": token}, ip_address=ip_address,
+    )
+    logger.info("scim_erasure_started user_id=%s job_id=%s", user.id, job.id)
+    return job.id
+
+
+async def _erasure_already_started(
+    db: AsyncSession, user: User, job_id: uuid.UUID | None, sso_config_id: uuid.UUID | None, ip_address: str | None,
+) -> None:
+    """D-10: an IdP's retry while the erasure is queued / running is a no-op success — ONE ``SCIM_USER_UPDATED``
+    row naming the live job, nothing else (no second job, no second lock-out)."""
+    await log_identity_event(
+        db, IdentityEventType.SCIM_USER_UPDATED, user_id=user.id, sso_config_id=sso_config_id,
+        detail={"no_changes": True, "erasure_job_id": str(job_id) if job_id is not None else None},
+        ip_address=ip_address,
+    )
 
 
 def _scope_user_query(query, sso_config_id: uuid.UUID | None):

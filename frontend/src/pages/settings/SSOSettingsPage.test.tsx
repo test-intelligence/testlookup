@@ -31,11 +31,12 @@
  * sentinel here that must never be called.
  */
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SSOSettingsPage from './SSOSettingsPage'
 import { expectTemplateHeader } from '@/test/expectTemplateHeader'
-import { createSSOConfig, revokeSCIMToken, type SSOConfig } from '../../services/ssoService'
+import { createSSOConfig, getScimDeleteAction, revokeSCIMToken, type SSOConfig } from '../../services/ssoService'
 
 const mockUpdateSSOConfig = vi.fn()
 const mockDeleteSSOConfig = vi.fn()
@@ -58,6 +59,9 @@ vi.mock('../../services/ssoService', async () => {
     // W20 ADM-09: the SCIM tab's groups section (none pushed here).
     listSCIMGroups: () => Promise.resolve({ groups: [], roles: ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD'] }),
     putSCIMGroupMappings: vi.fn(),
+    // W38 (W31 F-2): the SCIM tab's delete-action section (never saved: deactivate).
+    getScimDeleteAction: vi.fn(() => Promise.resolve({ action: 'deactivate', updated_at: null, updated_by_display: null })),
+    setScimDeleteAction: vi.fn(),
   }
 })
 vi.mock('@/services/projectsService', () => ({ projectsService: { list: () => Promise.resolve([]) } }))
@@ -306,6 +310,34 @@ describe('the questions are asked in the page, one at a time (W27b S2, S3)', () 
     expect(question()).toBe('Are you sure you want to delete this SSO configuration?')
     expect(mockUpdateSSOConfig).not.toHaveBeenCalled()
     expect(mockDeleteSSOConfig).not.toHaveBeenCalled()
+  })
+})
+
+describe('the SCIM tab\'s delete-action section (W38, W31 F-2)', () => {
+  it('sits between the token list and the SCIM groups section, and is read only on the SCIM tab', async () => {
+    tabData = { configs: [], scimTokens: [], events: [], syncStatus: null }
+    // A fresh SWR cache: the SCIM tests above already read the setting into the global one.
+    render(<SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}><SSOSettingsPage /></SWRConfig>)
+    expect(document.querySelector('[data-scim-delete-action]')).toBeNull()
+    expect(getScimDeleteAction).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'SCIM Tokens' }))
+    const section = await screen.findByRole('region', { name: 'When your identity provider deletes a user' })
+    await waitFor(() => expect(within(section).getByRole('radio', { name: /Deactivate the account \(default\)/ })).toBeChecked())
+    expect(getScimDeleteAction).toHaveBeenCalled()
+    expect(section.nextElementSibling?.textContent).toContain('SCIM groups')
+  })
+
+  it('a non-admin sees "Admin access required" and nothing asks for the setting', () => {
+    permissions.isAdmin = false
+    vi.mocked(getScimDeleteAction).mockClear()
+    try {
+      renderWith([])
+      expect(screen.getByText('Admin access required')).toBeInTheDocument()
+      expect(document.querySelector('[data-scim-delete-action]')).toBeNull()
+      expect(getScimDeleteAction).not.toHaveBeenCalled()
+    } finally {
+      permissions.isAdmin = true
+    }
   })
 })
 

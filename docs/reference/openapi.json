@@ -15525,6 +15525,27 @@
         "title": "ErasureLocationCount",
         "type": "object"
       },
+      "ErasurePendingRequest": {
+        "description": "W38 (W31 F-1): the person's pending erasure request, shown on the erase panel (\"asked on <date>\").",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "requested_at"
+        ],
+        "title": "ErasurePendingRequest",
+        "type": "object"
+      },
       "ErasurePreview": {
         "properties": {
           "blockers": {
@@ -15575,6 +15596,16 @@
             "title": "Open Items",
             "type": "array"
           },
+          "pending_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErasurePendingRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pseudonym": {
             "title": "Pseudonym",
             "type": "string"
@@ -15619,6 +15650,160 @@
           "confirm_username"
         ],
         "title": "ErasureRequest",
+        "type": "object"
+      },
+      "ErasureRequestDecline": {
+        "description": "The decline's body: ONE ``subject_rights_vocab.DECLINE_CODES`` value. Anything else (or nothing) is the\nroute's coded 422 ``decline_code_invalid`` — the sentence, not FastAPI's validation envelope.",
+        "properties": {
+          "decline_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decline Code"
+          }
+        },
+        "title": "ErasureRequestDecline",
+        "type": "object"
+      },
+      "ErasureRequestList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ErasureRequestRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "ErasureRequestList",
+        "type": "object"
+      },
+      "ErasureRequestRead": {
+        "description": "One row of the administrators' queue. Displays follow the job rule: full name, else username;\n\"Erased user\" once erased — never an e-mail address.",
+        "properties": {
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by_display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By Display"
+          },
+          "decline_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decline Code"
+          },
+          "erasure_job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Erasure Job Id"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "requester_is_you": {
+            "default": false,
+            "title": "Requester Is You",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Display"
+          },
+          "subject_is_active": {
+            "default": false,
+            "title": "Subject Is Active",
+            "type": "boolean"
+          },
+          "subject_is_erased": {
+            "default": false,
+            "title": "Subject Is Erased",
+            "type": "boolean"
+          },
+          "subject_user_id": {
+            "format": "uuid",
+            "title": "Subject User Id",
+            "type": "string"
+          },
+          "subject_username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject Username"
+          }
+        },
+        "required": [
+          "id",
+          "subject_user_id",
+          "status",
+          "requested_at"
+        ],
+        "title": "ErasureRequestRead",
         "type": "object"
       },
       "EscalationConfig": {
@@ -19809,7 +19994,10 @@
           "MFA_POLICY_UPDATED",
           "ACCOUNT_LOCKED",
           "ACCOUNT_UNLOCKED",
-          "API_KEY_REVOKED"
+          "API_KEY_REVOKED",
+          "SCIM_DELETE_ACTION_UPDATED",
+          "SCIM_ERASURE_REFUSED",
+          "SCIM_USER_ERASURE_STARTED"
         ],
         "title": "IdentityEventType",
         "type": "string"
@@ -27125,6 +27313,66 @@
         ],
         "title": "MutationClass",
         "type": "string"
+      },
+      "MyErasureRequest": {
+        "description": "The caller's NEWEST erasure request (``GET /api/v1/me/erasure-request``).",
+        "properties": {
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decline_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decline Code"
+          },
+          "decline_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decline Message"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "requested_at": {
+            "format": "date-time",
+            "title": "Requested At",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "requested_at"
+        ],
+        "title": "MyErasureRequest",
+        "type": "object"
       },
       "MyFailureItem": {
         "description": "A single auto-assigned failure surfaced on the calling user's inbox.\n\nCarries enough context to render a triage row without a follow-up fetch:\ntest name + suite + run identity + project label + relative age. The\n``navigation_url`` is the canonical deep link to the run-detail page's\ntest-case drawer.",
@@ -41181,6 +41429,65 @@
           }
         },
         "title": "SavedViewUpdate",
+        "type": "object"
+      },
+      "ScimDeleteActionRead": {
+        "description": "``GET`` / ``PUT /api/v1/settings/scim-delete-action``: the effective action (``deactivate`` when never set),\nwhen it was last changed and by whom (a display name; \"Erased user\" once erased).",
+        "properties": {
+          "action": {
+            "enum": [
+              "deactivate",
+              "erase"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "updated_by_display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated By Display"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "ScimDeleteActionRead",
+        "type": "object"
+      },
+      "ScimDeleteActionWrite": {
+        "description": "The PUT's body: ``deactivate`` or ``erase``. Anything else (or nothing) is the route's coded 422\n``scim_delete_action_invalid`` — the sentence, not FastAPI's validation envelope.",
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          }
+        },
+        "title": "ScimDeleteActionWrite",
         "type": "object"
       },
       "SearchSuggestion": {
@@ -70003,6 +70310,177 @@
         ]
       }
     },
+    "/api/v1/me/erasure-request": {
+      "get": {
+        "description": "The caller's newest erasure request (pending, withdrawn, declined or accepted), or null. Reads only.",
+        "operationId": "get_my_erasure_request_api_v1_me_erasure_request_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/MyErasureRequest"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get My Erasure Request Api V1 Me Erasure Request Get"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get My Erasure Request",
+        "tags": [
+          "Subject rights"
+        ]
+      },
+      "post": {
+        "description": "Ask an administrator to erase the caller's account. One pending request per person: 409\n``request_pending`` names it in ``detail.request_id``. Every other active administrator gets a bell row.",
+        "operationId": "file_my_erasure_request_api_v1_me_erasure_request_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyErasureRequest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "File My Erasure Request",
+        "tags": [
+          "Subject rights"
+        ]
+      }
+    },
+    "/api/v1/me/erasure-request/withdraw": {
+      "post": {
+        "description": "Withdraw the caller's pending erasure request; 409 ``no_pending_request`` when there is none.",
+        "operationId": "withdraw_my_erasure_request_api_v1_me_erasure_request_withdraw_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyErasureRequest"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Withdraw My Erasure Request",
+        "tags": [
+          "Subject rights"
+        ]
+      }
+    },
     "/api/v1/memory/projects/{project_id}": {
       "get": {
         "description": "List memory entries for a project, optionally filtered by entity type.",
@@ -93349,7 +93827,7 @@
     },
     "/api/v1/scim/v2/Users/{user_id}": {
       "delete": {
-        "description": "SCIM 2.0: Deactivate (soft-delete) a user.",
+        "description": "SCIM 2.0: Delete a user — deactivate (soft-delete) by default, or erase the person's data when the\noperator setting ``scim_delete_action`` is ``erase`` (W38).\n\nDeactivate (the default): the account is switched off and kept; a later ``GET`` still answers it with\n``active: false``. Erase: the W31 erasure with the identity provider as the requester — the account is locked\nout at once (sessions, tokens and keys) in this request's one commit, the person's data is pseudonymised by the\nworker afterwards, and a pending erasure request of theirs is accepted. A retry while that erasure runs, or a\n``DELETE`` of an erased account, changes nothing. When the erasure is refused (a service account, an export\nstill running, the last active administrator) the account is deactivated instead and the refusal is recorded\nas a failed identity event. Every case answers 204 with no body.",
         "operationId": "scim_delete_api_v1_scim_v2_Users__user_id__delete",
         "parameters": [
           {
@@ -96175,6 +96653,131 @@
           }
         ],
         "summary": "Update Review Gate",
+        "tags": [
+          "Settings"
+        ]
+      }
+    },
+    "/api/v1/settings/scim-delete-action": {
+      "get": {
+        "description": "What an identity provider's SCIM ``DELETE /Users/{id}`` does: ``deactivate`` (the default — the account is\nswitched off and kept) or ``erase`` (the person's data is erased, as by an administrator). Reads only.",
+        "operationId": "get_scim_delete_action_api_v1_settings_scim_delete_action_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScimDeleteActionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Scim Delete Action",
+        "tags": [
+          "Settings"
+        ]
+      },
+      "put": {
+        "description": "Set what a SCIM ``DELETE`` does: ``deactivate`` or ``erase`` (anything else is the coded 422\n``scim_delete_action_invalid``). Interactive login only; audited once per actual change.",
+        "operationId": "update_scim_delete_action_api_v1_settings_scim_delete_action_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ScimDeleteActionWrite"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScimDeleteActionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Update Scim Delete Action",
         "tags": [
           "Settings"
         ]
@@ -105139,6 +105742,154 @@
         ]
       }
     },
+    "/api/v1/users/erasure-requests": {
+      "get": {
+        "description": "Every erasure request of the instance: pending first (oldest first), then decided (newest decided\nfirst), with how many match in all. Reads only.",
+        "operationId": "list_erasure_requests_api_v1_users_erasure_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "pattern": "^(pending|decided|all)$",
+              "title": "Status",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErasureRequestList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "List Erasure Requests",
+        "tags": [
+          "Subject rights"
+        ]
+      }
+    },
+    "/api/v1/users/erasure-requests/{erasure_request_id}/decline": {
+      "post": {
+        "description": "Decline a pending request with one of ``DECLINE_CODES``; the person gets a bell row and reads the code's\nsentence on their Profile. Never the caller's own request (409 ``own_request``).",
+        "operationId": "decline_erasure_request_api_v1_users_erasure_requests__erasure_request_id__decline_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "erasure_request_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Erasure Request Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ErasureRequestDecline"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErasureRequestRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Decline Erasure Request",
+        "tags": [
+          "Subject rights"
+        ]
+      }
+    },
     "/api/v1/users/invitations": {
       "get": {
         "description": "W17b ADM-01: pending (and expired) invitations, newest first. Never a token. ADMIN.\n\nDeclared before ``/{user_id}`` so ``invitations`` is not parsed as a user id.",
@@ -105842,7 +106593,7 @@
     },
     "/api/v1/users/{user_id}/erasure-preview": {
       "get": {
-        "description": "Counts of what erasing this person would delete / rewrite, keep and leave open, the blockers (listed,\nnot raised), the pseudonym, and an unfinished erasure job to resume. Writes nothing.",
+        "description": "Counts of what erasing this person would delete / rewrite, keep and leave open, the blockers (listed,\nnot raised), the pseudonym, an unfinished erasure job to resume, and the person's pending erasure request\n(W38). Writes nothing.",
         "operationId": "get_erasure_preview_api_v1_users__user_id__erasure_preview_get",
         "parameters": [
           {
