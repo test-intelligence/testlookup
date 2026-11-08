@@ -52,6 +52,16 @@ locally by default.
 
 ### Added
 
+- **Observability evidence on Run › Timing** (wave W39, STRAT-07 first slice; branch
+  `feat/df-evidence-timeline-20261108`). A new card at the bottom of the Timing tab shows the Splunk, OpenShift and
+  Prometheus evidence the AI analysis already fetched for the run on one time axis: the newest deep analysis'
+  Prometheus series and Splunk trace, the pod events stored when the run was ingested, and the per-test analysis'
+  Splunk / OpenShift observations (metric lines, log markers, OpenShift first → last bars, a "Without a time" list).
+  It is read from what is stored — opening it fetches nothing and writes nothing (`GET
+  /api/v1/runs/{run_id}/observability-timeline`). Each of the five lanes names who fetched it and says in words why it
+  is empty; a time that cannot be read is listed without a time, never invented; the dev seed's fabricated rows,
+  tokens, URLs, indexes, nodes and host IPs are never shown; "now" notes say when AI offline mode is on and which
+  integrations are configured.
 - **Ask for your account to be erased** (wave W38, W31 F-1; branch `feat/df-erasure-requests-20261108`).
   Settings › Profile › Your data gains "Ask to have your account erased": the request waits for an
   administrator, the person can withdraw it, and one request can be pending at a time. The only active

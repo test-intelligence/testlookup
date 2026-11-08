@@ -14,12 +14,27 @@
  *
  * New with W02: their baselines come from CI. The same answers drive the
  * hermetic spec `tests/ci-e2e/run-timing-tab.spec.ts`.
+ *
+ * W39 STRAT-07 adds ONE region below them (no existing region changes: the
+ * card is the tab's LAST section, so the three above keep their frames), in
+ * three themes (`THEMES_WITH_PAPER`) at `TALL_VIEWPORT` (1280 x 4000, the rest
+ * of `PINNED` unchanged; the tab is taller than 2400 px with it):
+ *
+ *   run-observability-evidence  the "Observability evidence" card with
+ *                         `fixtures-observability.ts` `OBSERVABILITY_EVIDENCE`:
+ *                         one axis, the run band, a Prometheus series that
+ *                         rose, two Splunk trace dots, an OpenShift bar and an
+ *                         instant, a per-test Splunk dot and an untimed line,
+ *                         a per-test OpenShift check without a time.
+ *
  * Harness and fail-closed rules: `tests/lib/production-pages.ts`.
  */
 import { expect, test } from '@playwright/test'
-import { assertHermetic, openProductionPage, PINNED, THEMES, visualRegion } from '../lib/production-pages'
+import { assertHermetic, openProductionPage, PINNED, TALL_VIEWPORT, THEMES, THEMES_WITH_PAPER, visualRegion } from '../lib/production-pages'
+import { networkQuiet } from '../lib/rollout'
 import { NOW, PROJECT_ID, RUN_ID, USER } from './production/fixtures'
 import { TEST_CASE_ID } from './production/fixtures-pages'
+import { OBSERVABILITY_EVIDENCE } from './production/fixtures-observability'
 import { TIMED, withTiming } from './production/fixtures-timing'
 
 // The tab is three cards tall, then the suites, workers and phases below them.
@@ -53,3 +68,31 @@ for (const theme of THEMES) {
     assertHermetic(api, errors)
   })
 }
+
+test.describe('W39 STRAT-07 — the Observability evidence card', () => {
+  // Only the viewport changes (a describe may not change launch options): `PINNED` with `TALL_VIEWPORT`.
+  test.use({ viewport: { ...TALL_VIEWPORT } })
+
+  for (const theme of THEMES_WITH_PAPER) {
+    test(`run observability evidence region — ${theme}`, async ({ page }) => {
+      const { api, errors } = await openProductionPage(page, `/runs/${RUN_ID}?tab=timing`, {
+        theme,
+        now: NOW,
+        me: USER,
+        user: USER,
+        projectId: PROJECT_ID,
+        handlers: withTiming(TIMED, OBSERVABILITY_EVIDENCE),
+        ready: (p) => p.locator('[data-observability-evidence] [data-observability-state="ready"]'),
+      })
+      const card = page.getByRole('region', { name: 'Observability evidence' })
+      await expect(card).toHaveAttribute('data-axis-state', 'timed')
+      await expect(card.locator('[data-evidence-series-plot]')).toHaveCount(1)
+      await expect(card.locator('[data-evidence-mark="instant"]')).toHaveCount(4)
+      await expect(card.locator('[data-evidence-mark="span"]')).toHaveCount(1)
+      await expect(card.locator('[data-untimed-item]')).toHaveCount(2)
+      await networkQuiet(page, api)
+      await visualRegion(page, 'run-observability-evidence', theme, card)
+      assertHermetic(api, errors)
+    })
+  }
+})

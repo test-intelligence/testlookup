@@ -4,12 +4,12 @@ This page moved into the in-app user guide, which is the single source for using
 
 | Topic | In the app | Source |
 |---|---|---|
-| The run list, a run's tabs (Tests, Analysis, Changes, Evidence, Timing), the run's AI history and "vs previous run", one test result, comparing runs (with both runs' AI analyses), configuration drift, likely affected tests, narrowing a failure to its last pass, bisect from last green, a red-build routine | `/docs/runs` | [runs.md](../frontend/src/content/guide/runs.md) |
+| The run list, a run's tabs (Tests, Analysis, Changes, Evidence, Timing), the run's AI history and "vs previous run", one test result, comparing runs (with both runs' AI analyses), configuration drift, likely affected tests, observability evidence, narrowing a failure to its last pass, bisect from last green, a red-build routine | `/docs/runs` | [runs.md](../frontend/src/content/guide/runs.md) |
 | Watching a run while it streams | `/docs/live` | [live.md](../frontend/src/content/guide/live.md) |
 
 For wiring CI so runs arrive in the first place, see [Connecting CI and test frameworks](getting-results-in.md).
 
-Three features of the run page are summarised here for operators, because they depend on what CI sends and on how the instance is configured.
+Four features of the run page are summarised here for operators, because they depend on what CI sends and on how the instance is configured.
 
 ### Configuration drift
 
@@ -57,3 +57,27 @@ The Changes tab's **Likely affected tests** card ranks the run's own tests by ho
 **How it ranks.** Each test's best path overlap with the changed files (the same matcher as the **Suspects** ranking: the stack trace's file, class and package tokens, the test name) scores it. Words that appear in most of the run's test names, such as your organisation's package name, don't count as a match (a module token shared by half or more of the run's tests is ignored). When the project's commit history is ready (the TIA readiness rule: at least 30 runs with a usable range, spanning 14 days, with 25 distinct changed paths, in the last 90 days), the score is `0.6 × overlap + 0.4 × min(1, co-failure runs / 5)`, where a co-failure run is an earlier run of the **same project** in that window whose range changed at least one of these exact paths and in which the test was `FAILED` or `BROKEN`. A known-flaky test (the attribution engine's flaky rule) keeps its overlap, but its co-failures earn no score; the count is still shown. With the history ready, `co_failure_runs` and `history_runs_considered` are counts even when no earlier run touched these paths (`0`, measured; the card reads `no earlier run changed these files`). Before the history is ready the score is the overlap alone, both are `null` (not measured, never `0`) and the card names the readiness reason. `changed_files_count` is the true de-duplicated count; only the first 2,000 paths are scored, and the history scan is capped like the readiness scan (`scan_capped`).
 
 `GET /api/v1/runs/{run_id}/likely-affected-tests?limit=20` (any role that can open the run; anyone else gets `404` "Test run not found"; `limit` up to 50) returns `available`, `reason`, `advisory`, `caveat`, `changed_files_count`, `file_detail_coverage`, `source`, `base_source`, `base_anchor_is_strong`, `history` (`available`, `insufficient_data_reason`, `usable_runs`, `window_days`, `runs_considered`, `scan_capped`), `tests` (each with `score` and a `reason`: `overlapping_paths`, `overlap_score`, `co_failure_runs`, `history_runs_considered`, `known_flaky`) and `total_candidates`. The pull-request comment does not carry it yet: the comment is posted before a connector range resolves.
+
+### Observability evidence
+
+A run's **Timing** tab ends with an **Observability evidence** card: the Splunk, OpenShift and Prometheus evidence the AI analysis **already fetched** for this run, on one time axis. **Nothing is fetched when you open it.** The card reads what the analyses stored; it never calls Splunk, OpenShift or Prometheus, never starts an analysis and writes nothing. Newer evidence needs a new analysis (a new pipeline, or **Re-analyse** on a test).
+
+Five lanes, always in this order, each naming who fetched its evidence:
+
+| Lane | Fetched by | Read from |
+|---|---|---|
+| **Prometheus metrics** | the deep analysis (its log intelligence stage) | the run's newest stored decision evidence snapshot: each failure cluster's metric series, sample by sample |
+| **Splunk trace (deep analysis)** | the deep analysis | the same snapshot: the trace steps it rebuilt, at Splunk's own `_time` |
+| **OpenShift pod events (at ingest)** | ingest (the OpenShift enrichment of a MinIO-sentinel run) | the run's pod events stored when it arrived, first seen → last seen |
+| **Splunk logs (per-test analysis)** | the per-test AI analysis | each analysed test's stored Splunk excerpt, one item per `[time] [level] message` line |
+| **OpenShift pod checks (per-test analysis)** | the per-test AI analysis | each analysed test's stored pod check (these answers keep no event times) |
+
+**Every lane says why it is empty, in words, never as an empty chart.** `none found`: the source ran and stored an empty answer (`No metric data for checkout in the failure window.`). `unavailable`: it stored a refusal or a failure (`Prometheus lookup disabled: offline mode`); a Splunk trace with no events reads `Splunk returned no trace events for this run — the stored answer does not say whether Splunk was reachable.`, because a failed search stores the same answer. `not recorded`: the analysis ran but this source left nothing (`This run was not enriched with OpenShift pod data when it was ingested.`). `not analysed`: no analysis is stored for the run. When the analysis store (MongoDB) cannot be read, the two deep-analysis lanes say `The analysis store could not be read.`
+
+**Times are never invented.** An item whose stored time cannot be read (redacted to `[REDACTED_PHONE]`, missing, `?`, or cut off by the 500-character excerpt) is listed under **Without a time**, not placed. A time stored without a zone is read as UTC and marked so. The axis spans the run's own start and end and every timed item; with nothing timed there is no axis.
+
+**What it never shows.** Rows that are not tool evidence (such as the demo seed's fabricated `splunk` / `ocp_events` evidence), tokens, URLs, Splunk indexes, OpenShift nodes and host IPs. OpenShift event reasons and messages are redacted when read. The card shows the newest deep analysis and says how many earlier ones it does not show. Two notes are labelled **now**: whether AI offline mode is on now (`AI_OFFLINE_MODE=true`: analyses fetch no observability evidence) and which of Splunk, OpenShift and Prometheus are configured now. Neither says what was true when the analysis ran.
+
+**Why lanes are often empty today.** The deep analysis rarely knows a service name and failure time to search Splunk with, so its trace lane is usually `not recorded`. Prometheus needs the integration under **Settings › Integrations** and failures that carry a service name. The per-test Splunk and OpenShift look-ups run when a test is re-analysed (**Re-analyse**), not in the automatic pipeline.
+
+`GET /api/v1/runs/{run_id}/observability-timeline` (any role that can open the run; anyone else gets `404` "Test run not found") returns `run_id`, `run_window`, `analysis` (`pipeline_run_id`, `analysed_at`, `other_analyses`), `offline_now`, `configured_now` (`splunk`, `ocp`, `prometheus`), `axis` and `lanes` (each with `source`, `label`, `fetched_by`, `state`, `sentence`, `truncated`, `series`, `events`, `untimed`). At most 5 clusters × 4 series × 120 points, 40 trace steps per cluster, the newest 200 pod events and 200 per-test items; a lane that cut anything says `truncated: true`.
