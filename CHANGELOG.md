@@ -1350,7 +1350,10 @@ locally by default.
   Node 26's npm, the same npm that runs `npm ci` inside the build. The JS SDK job stays on Node 20 on purpose (its
   package declares `node >= 18`), and its comment now says why. The notices and the homelab script said
   `node:20-alpine`; they now say `node:26-alpine`. CONTRIBUTING asks for Node 22.13+ (Node 20 reached end of life in
-  April 2026). CI configuration only, so there is no new test: the quality gate and the 474 script tests pass, and the
+  April 2026). Node 26 also turns its own Web Storage on, and its unconfigured global `localStorage` (undefined)
+  shadowed jsdom's: every frontend unit test that touched storage threw on CI's first Node 26 run. vitest's workers now
+  start with `--no-experimental-webstorage`, passed only to a Node that knows the flag. Configuration only, so there is
+  no new test; the PR's frontend job on Node 26 is the proof. The quality gate and the 474 script tests pass, and the
   notices `--check` passes after regeneration.
 
 - **README points at the website** (2026-11-08, search visibility; branch `docs/readme-website-links`). The README
