@@ -1343,6 +1343,13 @@ locally by default.
 
 ### Changed
 
+- **README points at the website** (2026-11-08, search visibility; branch `docs/readme-website-links`). The README
+  header now leads with "open-source software test intelligence" for software development teams. It also has a row of
+  links to https://testlookup.app (website, docs, quick start, features, roadmap) and a website badge. Before this, the
+  README never mentioned the domain, so search engines found no link from the repository to the site. The repository's
+  About box (homepage, description, 20 topics) and the organization profile were set to match. Docs only, so there is
+  no test.
+
 - **Type-scale leftovers: heading roles, shared tables and surfaces, readable status text, the compute graph** (wave
   W40, W29d F-1..F-6 / W29e F-10; branch `feat/df-ingest-typescale-20261108`). The 13 px uppercase card headings in
   settings, account, reports, runs and test management now use the panel-title role (14 px / 600, sentence case); a new
