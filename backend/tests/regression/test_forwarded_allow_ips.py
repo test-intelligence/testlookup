@@ -483,6 +483,7 @@ SELF_CONTAINED_PRODUCTION_COMPOSE = ("docker-compose.release.yml",)
 #: list is fine — a replaced one is not).
 PRODUCTION_COMPOSE_OVERRIDES = {
     "docker-compose.airgap.yml": "docker-compose.release.yml",
+    "docker-compose.demo.yml": "docker-compose.release.yml",
     "docker-compose.gcp-vm.yml": "docker-compose.yml",
 }
 
@@ -599,15 +600,32 @@ def test_the_gcp_vm_override_declares_it_because_it_bypasses_gunicorn():
     assert _is_a_real_trust_boundary(default)
 
 
-def test_an_override_does_not_drop_the_boundary_its_base_declares():
-    """airgap layers on release; redefining the backend env would drop it."""
-    service = _compose_backend("docker-compose.airgap.yml")
+@pytest.mark.parametrize("name", ["docker-compose.airgap.yml", "docker-compose.demo.yml"])
+def test_an_override_does_not_drop_the_boundary_its_base_declares(name):
+    """airgap and demo layer on release; redefining the backend env would drop it."""
+    service = _compose_backend(name)
     keys = _declared_env_keys(service)
     assert not keys or "TRUSTED_PROXY_IPS" in keys, (
-        "docker-compose.airgap.yml now sets backend environment keys without "
+        f"{name} now sets backend environment keys without "
         "FORWARDED_ALLOW_IPS; confirm the merge still leaves the release "
         "value in place, then declare it here too"
     )
+
+
+def test_the_demo_override_trusts_only_its_own_compose_network():
+    """Behind the tunnel every visitor arrives via cloudflared then nginx.
+
+    Both sit on testlookup_net (172.28.0.0/16, pinned in the release file).
+    Trusting exactly that keeps per-IP limits per visitor — the demo-login
+    ceiling would otherwise be shared by every visitor on the internet.
+    """
+    env = _compose_backend("docker-compose.demo.yml")["environment"]
+    value = env["TRUSTED_PROXY_IPS"] if isinstance(env, dict) else None
+    assert value == "172.28.0.0/16"
+    assert _is_a_real_trust_boundary(value)
+    release = yaml.safe_load((ROOT / "docker-compose.release.yml").read_text(encoding="utf-8"))
+    subnets = [c["subnet"] for c in release["networks"]["testlookup_net"]["ipam"]["config"]]
+    assert subnets == [value], "the demo boundary must equal the pinned compose subnet"
 
 
 #: Overlays that may inherit the base value: their callers arrive from public

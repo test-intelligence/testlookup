@@ -1,14 +1,15 @@
 import { Suspense, useEffect, useState } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { Zap, UserPlus, LogIn, Fingerprint, ShieldAlert } from 'lucide-react';
+import { Zap, UserPlus, LogIn, Fingerprint, ShieldAlert, Eye } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/authStore';
 import AppLogo from '@/components/ui/AppLogo';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { type SSOStatus, getSSOStatus } from '../services/ssoService';
 import { isSafeExternalUrl } from '@/utils/safeUrl';
-import { fetchCurrentUser, getAuthOptions, loginWithPassword } from '@/services/authService';
+import { demoLogin, fetchCurrentUser, getAuthOptions, loginWithPassword } from '@/services/authService';
+import { GET_TESTLOOKUP_URL } from '@/components/layout/DemoBanner';
 import { extractErrorMessage } from '@/services/apiErrors';
 import { startMfaEnrollment } from '@/hooks/useMfaStatus';
 import MfaChallengePanel from '@/components/mfa/MfaChallengePanel';
@@ -72,6 +73,9 @@ export default function LoginPage() {
   const [ssoStatus, setSsoStatus] = useState<SSOStatus | null>(null);
   // Self-registration is off unless the server says otherwise (REGISTRATION_ENABLED).
   const [registrationEnabled, setRegistrationEnabled] = useState(false);
+  // The public read-only demo (DEMO_MODE): one-click sign-in replaces the password form.
+  const [demoMode, setDemoMode] = useState(false);
+  const [demoSigningIn, setDemoSigningIn] = useState(false);
 
   const setAuth = useAuthStore((state) => state.setAuth);
   const navigate = useNavigate();
@@ -93,7 +97,10 @@ export default function LoginPage() {
   useEffect(() => {
     getSSOStatus().then(setSsoStatus).catch(() => { /* SSO not available */ });
     getAuthOptions()
-      .then((options) => setRegistrationEnabled(options.registration_enabled === true))
+      .then((options) => {
+        setRegistrationEnabled(options.registration_enabled === true);
+        setDemoMode(options.demo_mode === true);
+      })
       .catch(() => { /* unknown: offer sign-in only */ });
   }, []);
 
@@ -110,10 +117,15 @@ export default function LoginPage() {
       : null;
   const notice = loginNotice ?? ssoErrorNotice ?? linkNotice;
 
-  /** Shared tail of every successful sign-in — normal, post-challenge, or post-enrollment. */
-  const completeSignIn = async (tokens: TokenResponse) => {
+  /** Shared tail of every successful sign-in — normal, post-challenge, post-enrollment, or the public demo. */
+  const completeSignIn = async (tokens: TokenResponse, options?: { demo?: boolean }) => {
     const user = await fetchCurrentUser(tokens.access_token);
-    setAuth(tokens.access_token, tokens.refresh_token, user);
+    if (options?.demo) {
+      // The shell shows the demo banner for this session (authStore.demoSession).
+      setAuth(tokens.access_token, tokens.refresh_token, user, { demo: true });
+    } else {
+      setAuth(tokens.access_token, tokens.refresh_token, user);
+    }
     setChallenge(null);
     setEnrollHandoff(null);
     setEnrollment(null);
@@ -224,6 +236,22 @@ export default function LoginPage() {
     }
   };
 
+  /** Public demo: sign in as the demo account. Failures (reset window, rate limit) say why. */
+  const handleDemoLogin = async () => {
+    setDemoSigningIn(true);
+    setLoginNotice(null);
+    try {
+      await completeSignIn(await demoLogin(), { demo: true });
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
+      const message = extractErrorMessage(detail, 'The demo is unavailable right now. Try again in a few minutes.');
+      setLoginNotice(message);
+      toast.error(message);
+    } finally {
+      setDemoSigningIn(false);
+    }
+  };
+
   /** Dev-only: log in as a seeded role without credentials. */
   const handleDevLogin = async (role: string) => {
     if (!isDev) return;
@@ -257,7 +285,9 @@ export default function LoginPage() {
               ? 'One more step'
               : mode === 'mfa-enroll'
                 ? 'Set up two-factor authentication'
-                : 'Sign in to TestLookup'}
+                : demoMode
+                  ? 'Explore the TestLookup demo'
+                  : 'Sign in to TestLookup'}
         </h2>
         <p className="mt-2 text-center text-sm text-[var(--color-text-muted)]">
           Instant Answers from Your Test Results
@@ -367,8 +397,43 @@ export default function LoginPage() {
             </div>
           )}
 
+          {/* ── Public demo: one click, no password (the server refuses password sign-in there) ── */}
+          {mode === 'login' && demoMode && (
+            <div className="space-y-5" data-testid="demo-sign-in">
+              <p className="text-sm text-[var(--color-text-secondary)]">
+                Look around a working TestLookup with sample projects: failure clusters, flaky tests,
+                release decisions and trends. You sign in as a QA lead.
+              </p>
+              <ul className="space-y-1 text-xs text-[var(--color-text-muted)]">
+                <li>Read-only: saving, uploading and settings are turned off.</li>
+                <li>The sample data is rebuilt every night.</li>
+              </ul>
+              <button
+                type="button"
+                onClick={handleDemoLogin}
+                disabled={demoSigningIn}
+                className="btn-primary w-full flex justify-center shadow-sm focus:ring-offset-[var(--color-bg)]"
+              >
+                {demoSigningIn ? <LoadingSpinner size="sm" /> : (
+                  <span className="flex items-center gap-2"><Eye className="w-4 h-4" />Explore the demo</span>
+                )}
+              </button>
+              <p className="text-center text-xs text-[var(--color-text-muted)]">
+                Want the full product?{' '}
+                <a
+                  href={GET_TESTLOOKUP_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-medium text-[var(--color-accent)] hover:underline"
+                >
+                  Install TestLookup
+                </a>
+              </p>
+            </div>
+          )}
+
           {/* ── Login form ── */}
-          {mode === 'login' && (
+          {mode === 'login' && !demoMode && (
             <form className="space-y-6" onSubmit={handleLogin}>
               <div>
                 <label htmlFor="username" className="block text-sm font-medium text-[var(--color-text-secondary)]">
@@ -573,7 +638,7 @@ export default function LoginPage() {
           {/* ── Mode toggle (hidden mid-MFA, and on sign-in while self-registration is off — there is nothing to switch to) ── */}
           <div
             className={`mt-5 pt-4 border-t border-[var(--color-border)] text-center text-sm text-[var(--color-text-muted)] ${
-              (mode === 'login' && registrationEnabled) || mode === 'register' ? '' : 'hidden'
+              (mode === 'login' && registrationEnabled && !demoMode) || mode === 'register' ? '' : 'hidden'
             }`}
           >
             {mode !== 'register' ? (registrationEnabled && (

@@ -78,11 +78,12 @@ async def test_auth_options_tell_the_sign_in_page_whether_to_offer_register(clie
     resp = await client.get("/api/v1/auth/options")  # public: no token
     assert resp.status_code == 200
     # W17b ADM-02: password_reset_email says whether the login page offers the email form.
-    assert resp.json() == {"registration_enabled": False, "password_reset_email": False}
+    # demo_mode: the public read-only demo (off on every real deployment).
+    assert resp.json() == {"registration_enabled": False, "password_reset_email": False, "demo_mode": False}
 
     monkeypatch.setattr(settings, "REGISTRATION_ENABLED", True)
     assert (await client.get("/api/v1/auth/options")).json() == {
-        "registration_enabled": True, "password_reset_email": False,
+        "registration_enabled": True, "password_reset_email": False, "demo_mode": False,
     }
 
 

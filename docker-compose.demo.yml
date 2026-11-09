@@ -1,0 +1,168 @@
+# ============================================================
+# TestLookup — PUBLIC READ-ONLY DEMO (override of the release stack)
+# ============================================================
+# Runbook: docs/operations/public-demo.md. Driven by scripts/demo/demo.sh,
+# which layers this file on docker-compose.release.yml:
+#
+#   docker compose -f docker-compose.release.yml -f docker-compose.demo.yml \
+#     --profile public up -d
+#
+# What this override changes, and why:
+#   * DEMO_MODE on: every write is refused (403 demo_read_only) and visitors
+#     sign in with one click as DEMO_USERNAME. Writes are also blocked at the
+#     Cloudflare edge, and the data is rebuilt from seed every night.
+#   * Nothing reaches outside: AI_OFFLINE_MODE on, every LLM key blanked, SMTP
+#     off, self-registration off, dev-login off. A paid LLM key on a public
+#     demo is the one way bots could raise a bill, so it is forced empty here
+#     even if .env sets one.
+#   * Nothing is reachable from the internet except through the tunnel: the
+#     setup script binds every published port to 127.0.0.1 (*_PUBLISH_ADDR in
+#     .env), because Docker-published ports bypass host firewalls like ufw.
+#     The only way in is `cloudflared` (profile "public"), which dials OUT to
+#     Cloudflare.
+#   * nginx gets a second per-address limit and the real client address
+#     (deploy/demo/nginx-demo-edge.conf).
+#   * Memory ceilings and log rotation, so one runaway container or a log
+#     flood cannot take the whole VM down.
+#   * The MCP server is not started (profile "mcp").
+#
+# Images: built on the VM from this checkout (scripts/demo/demo.sh build tags
+# them testlookup-demo/*:local, selected by TESTLOOKUP_IMAGE/TESTLOOKUP_VERSION
+# in .env). Once release images are public, point those two variables at
+# ghcr.io/test-intelligence/testlookup and a release tag instead.
+# ============================================================
+
+x-demo-logging: &demo-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+# Forced on every backend-image service. Map form merges with the release
+# file's list-form environment by key, so only these keys change.
+x-demo-env: &demo-env
+  APP_ENV: production
+  DEV_AUTO_LOGIN_ENABLED: "false"
+  REGISTRATION_ENABLED: "false"
+  AI_OFFLINE_MODE: "true"
+  SMTP_ENABLED: "false"
+  OPENAI_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+  GOOGLE_API_KEY: ""
+  OPENROUTER_API_KEY: ""
+
+services:
+  postgres:
+    <<: *demo-logging
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  mongo:
+    <<: *demo-logging
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  redis:
+    <<: *demo-logging
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+  minio:
+    <<: *demo-logging
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  db-migrate:
+    <<: *demo-logging
+    environment:
+      <<: *demo-env
+
+  backend:
+    <<: *demo-logging
+    environment:
+      <<: *demo-env
+      DEMO_MODE: "true"
+      DEMO_USERNAME: ${DEMO_USERNAME:-qa_lead}
+      # The narrowest boundary that is still right: nginx (the only caller) and
+      # cloudflared both sit on testlookup_net, pinned to 172.28.0.0/16 in the
+      # release file. Uvicorn walks X-Forwarded-For from the right past these
+      # hops to the address Cloudflare appended, so per-IP limits stay per visitor.
+      TRUSTED_PROXY_IPS: 172.28.0.0/16
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  worker:
+    <<: *demo-logging
+    environment:
+      <<: *demo-env
+    deploy:
+      resources:
+        limits:
+          memory: 1536m
+
+  worker-children:
+    <<: *demo-logging
+    environment:
+      <<: *demo-env
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  beat:
+    <<: *demo-logging
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+
+  seed-init:
+    <<: *demo-logging
+    environment:
+      <<: *demo-env
+
+  frontend:
+    <<: *demo-logging
+    volumes:
+      - ./deploy/demo/nginx-demo-edge.conf:/etc/nginx/conf.d/demo-edge.conf:ro
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  mcp:
+    # Not part of the demo; `--profile mcp` would start it.
+    profiles: ["mcp"]
+
+  # The only way in from the internet. Dials out to Cloudflare; the public
+  # hostname (demo.testlookup.app -> http://frontend:80) is configured on the
+  # tunnel in the Cloudflare dashboard. Profile "public" so a local trial of
+  # this stack runs without a token.
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.7
+    container_name: testlookup_cloudflared
+    profiles: ["public"]
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - frontend
+    <<: *demo-logging
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    networks:
+      - testlookup_net

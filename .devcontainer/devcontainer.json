@@ -1,0 +1,36 @@
+{
+  // Try TestLookup in your own GitHub Codespace: the full app with demo data.
+  // The codespace is yours and private; its compute comes from YOUR GitHub
+  // Codespaces allowance (free accounts include a monthly quota). Stop or
+  // delete it when you are done. See .devcontainer/README.md.
+  "name": "TestLookup — try it with demo data",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  // The lite stack (PostgreSQL, MongoDB, Valkey, the S3 store, API, workers,
+  // UI) wants a 4-core / 16 GB machine.
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb",
+    "storage": "32gb"
+  },
+  // Random local secrets in .env, development mode: the sign-in page offers
+  // one-click sign-in as any demo role.
+  "postCreateCommand": "bash scripts/gen-dev-env.sh",
+  // Builds on first start (several minutes), then reuses the image cache. The
+  // seed-init service loads three demo projects with 30 days of history.
+  "postStartCommand": "docker compose -f docker-compose.dev-lite.yml -f .devcontainer/docker-compose.codespaces.yml up -d --build",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "TestLookup",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": [".devcontainer/README.md"]
+    }
+  }
+}

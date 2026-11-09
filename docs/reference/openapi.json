@@ -62617,6 +62617,28 @@
         ]
       }
     },
+    "/api/v1/auth/demo-login": {
+      "post": {
+        "description": "Public read-only demo: sign the visitor in as ``DEMO_USERNAME``, no password.\n\nReturns 404 unless ``DEMO_MODE`` is on and ``DEMO_USERNAME`` is set, so the\nroute does not exist on a normal deployment. Refuses (403) an admin, a\nservice account or an account with MFA: the demo account must be an\nordinary user, because everyone on the internet signs in as it. Answers\n503 while the account is missing, which is the nightly reset window.\nRate-limited per IP (``_AUTH_RATE_LIMITS``); the demo-mode middleware keeps\nthe session read-only.",
+        "operationId": "demo_login_api_v1_auth_demo_login_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Demo Login",
+        "tags": [
+          "Authentication"
+        ]
+      }
+    },
     "/api/v1/auth/dev-login": {
       "post": {
         "description": "Development-only: issue a JWT for a seeded user without credentials.\n\nEnabled only when APP_ENV=development AND DEV_AUTO_LOGIN_ENABLED=true.\nReturns 404 in all other environments so it is invisible in staging/prod.\n\nQuery param:\n  role — one of: admin, qa_lead, qa_engineer, tester, viewer (default: admin)\n  username — optional active username to authenticate as directly\n\nIf the requested user does not exist yet (seed not run), a temporary account\nis created on the fly so developers can always access the UI after `make dev`.",
@@ -63470,7 +63492,7 @@
     },
     "/api/v1/auth/options": {
       "get": {
-        "description": "What the sign-in page may offer. Public: it is read before anyone signs in.\n\n``password_reset_email`` (W17b ADM-02) is true when SMTP is configured, so\nthe login page offers the email form; it reveals nothing about any account.",
+        "description": "What the sign-in page may offer. Public: it is read before anyone signs in.\n\n``password_reset_email`` (W17b ADM-02) is true when SMTP is configured, so\nthe login page offers the email form; it reveals nothing about any account.\n``demo_mode`` is true on the public read-only demo: the login page offers\none-click demo sign-in and the app shows the demo banner.",
         "operationId": "auth_options_api_v1_auth_options_get",
         "responses": {
           "200": {

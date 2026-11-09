@@ -27,6 +27,10 @@ TOPOLOGIES = (
         ("docker-compose.release.yml", "docker-compose.airgap.yml"),
         id="release-plus-airgap",
     ),
+    pytest.param(
+        ("docker-compose.release.yml", "docker-compose.demo.yml"),
+        id="release-plus-public-demo",
+    ),
 )
 
 
@@ -73,6 +77,10 @@ def test_supported_compose_topology_aligns_shards_with_effective_environment(
         pytest.param(
             ("docker-compose.release.yml", "docker-compose.airgap.yml"),
             id="release-plus-airgap",
+        ),
+        pytest.param(
+            ("docker-compose.release.yml", "docker-compose.demo.yml"),
+            id="release-plus-public-demo",
         ),
     ),
 )

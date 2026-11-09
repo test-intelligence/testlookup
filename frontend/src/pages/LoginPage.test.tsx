@@ -11,7 +11,7 @@
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import LoginPage from './LoginPage'
 import type {
@@ -25,11 +25,15 @@ import type {
 const mockLogin = vi.fn<(u: string, p: string) => Promise<LoginResponse>>()
 const mockFetchUser = vi.fn()
 // GET /auth/options: self-registration is off unless the server says otherwise.
-const mockAuthOptions = vi.fn(async () => ({ registration_enabled: false }))
+type Options = { registration_enabled: boolean; demo_mode?: boolean }
+const defaultOptions = async (): Promise<Options> => ({ registration_enabled: false })
+const mockAuthOptions = vi.fn(defaultOptions)
+const mockDemoLogin = vi.fn<() => Promise<TokenResponse>>()
 vi.mock('@/services/authService', () => ({
   loginWithPassword: (u: string, p: string) => mockLogin(u, p),
   fetchCurrentUser: (t?: string) => mockFetchUser(t),
   getAuthOptions: () => mockAuthOptions(),
+  demoLogin: () => mockDemoLogin(),
 }))
 
 const mockEnrollStart = vi.fn<(t?: string) => Promise<MfaEnrollStartResponse>>()
@@ -532,5 +536,54 @@ describe('LoginPage — forced enrollment', () => {
 
     await waitFor(() => expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument())
     expect(screen.getByRole('alert')).toHaveTextContent(/expired/i)
+  })
+})
+
+describe('LoginPage — public read-only demo', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFetchUser.mockResolvedValue(USER)
+    mockAuthOptions.mockImplementation(async () => ({ registration_enabled: false, demo_mode: true }))
+  })
+  afterEach(() => {
+    mockAuthOptions.mockImplementation(defaultOptions)
+  })
+
+  it('offers one-click demo sign-in instead of the password form', async () => {
+    renderPage()
+    expect(await screen.findByRole('button', { name: /explore the demo/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /explore the testlookup demo/i })).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^password$/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /log in/i })).not.toBeInTheDocument()
+  })
+
+  it('signs in as the demo account without a password and lands in the app', async () => {
+    mockDemoLogin.mockResolvedValue(TOKENS)
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /explore the demo/i }))
+    // Marked as a demo session: the shell shows the banner from it, with no request.
+    await waitFor(() => expect(mockSetAuth).toHaveBeenCalledWith('acc', 'ref', USER, { demo: true }))
+    expect(mockLogin).not.toHaveBeenCalled()
+    expect(mockNavigate).toHaveBeenCalled()
+  })
+
+  it('says why when the demo is being reset', async () => {
+    mockDemoLogin.mockRejectedValue({
+      response: {
+        status: 503,
+        data: { detail: { code: 'demo_unavailable', message: 'The demo is being refreshed. Try again in a few minutes.' } },
+      },
+    })
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /explore the demo/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/being refreshed/i)
+    expect(mockSetAuth).not.toHaveBeenCalled()
+  })
+
+  it('keeps the ordinary password form off the demo', async () => {
+    mockAuthOptions.mockImplementation(defaultOptions)
+    renderPage()
+    expect(await screen.findByLabelText(/^password$/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /explore the demo/i })).not.toBeInTheDocument()
   })
 })

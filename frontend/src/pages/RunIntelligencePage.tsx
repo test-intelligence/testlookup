@@ -1422,7 +1422,8 @@ export function RunIntelligenceBody({
   useEffect(() => {
     if (!intelligenceViewed) return
     if (!activeProjectId || activeProjectId === ALL_PROJECTS_ID) return
-    void onboardingService.completeStep(activeProjectId, 'view_intelligence').catch(() => {})
+    // Background bookkeeping: a refusal (the read-only demo) must not toast at a reader who did nothing.
+    void onboardingService.completeStep(activeProjectId, 'view_intelligence', { suppressToast: true }).catch(() => {})
   }, [intelligenceViewed, activeProjectId])
 
   // The decision trail: a read-only section under the verdict banner (W27a: it
