@@ -22,6 +22,26 @@ from app.db.mongo import Collections  # noqa: E402
 from app.services import retention_service as rs  # noqa: E402
 
 
+def _source_without_docstring(fn) -> str:
+    """``fn``'s source with its docstring lines removed (comments kept).
+
+    ``source.replace(fn.__doc__, "")`` stopped working on Python 3.13, which
+    strips the indentation from ``__doc__`` at compile time, so the indented
+    docstring in the source no longer matched and was left in (W41, 3.14).
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    src = textwrap.dedent(inspect.getsource(fn))
+    first = ast.parse(src).body[0].body[0]
+    if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
+        lines = src.splitlines(keepends=True)
+        del lines[first.lineno - 1:first.end_lineno]
+        src = "".join(lines)
+    return src
+
+
 def _plan_for(collection: str):
     matches = [p for p in rs._MONGO_PLANS if p[0] == collection]
     assert len(matches) == 1, f"{collection} appears {len(matches)} times in _MONGO_PLANS"
@@ -305,12 +325,10 @@ def test_retiring_early_sets_the_expiry_to_now_rather_than_deleting():
 
 def test_the_lifecycle_service_stages_and_does_not_commit():
     """Transaction-boundary rule: the router owns the commit."""
-    import inspect
-
     from app.services import compliance_pack_lifecycle as lifecycle
 
     for fn in (lifecycle.retire_early,):
-        body = inspect.getsource(fn).replace(fn.__doc__ or "", "")
+        body = _source_without_docstring(fn)
         assert "commit" not in body, f"{fn.__name__} owns a commit"
 
 
@@ -417,13 +435,9 @@ def test_no_hold_check_is_stubbed_before_holds_exist():
     """S9 adds it. A check against a table that does not exist would read as
     a working guard while never firing once — the defect this epic
     catalogues, shipped in the code that catalogues it."""
-    import inspect
-
     from app.services import compliance_pack_lifecycle as lifecycle
 
-    body = inspect.getsource(lifecycle.deletion_blockers).replace(
-        lifecycle.deletion_blockers.__doc__ or "", ""
-    )
+    body = _source_without_docstring(lifecycle.deletion_blockers)
     assert "hold" not in body.lower(), (
         "a hold check exists in code but no hold table does; it can never fire"
     )

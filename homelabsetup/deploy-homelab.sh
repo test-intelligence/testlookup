@@ -368,7 +368,7 @@ EOF
 # ── TLS-interception CA staging ─────────────────────────────
 # An HTTPS-inspecting middlebox on the build host (a corporate proxy or an
 # endpoint-security product's TLS scanning) re-signs traffic with a private root CA. The
-# host trusts it, but the build containers (python:3.11-slim, node:20-alpine)
+# host trusts it, but the build containers (python:3.14-slim, node:20-alpine)
 # do not, so in-container pip/npm die with:
 #   "unable to get local issuer certificate".
 # We export that root CA from the host trust store into each build context's

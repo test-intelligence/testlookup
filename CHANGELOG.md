@@ -1343,6 +1343,20 @@ locally by default.
 
 ### Changed
 
+- **Python 3.14 for the images and CI** (wave W41, OR-10 (9); branch `feat/df-py314-20261109`, after the langchain 1.x
+  wave it depends on). The backend and MCP images build on `python:3.14-slim` (Dependabot #28 and #27). The CI jobs that
+  run the backend, the MCP server, the quality gate and the image-drift guard run Python 3.14, and so does the
+  release-branch gate. mypy checks for 3.14 and ruff targets it. The SDK & CLI job stays on 3.11 on purpose: the
+  published CLI supports `>= 3.11`. Every requirements file resolves on 3.14 from wheels with no pin change. Two tests
+  were fixed for the newer Python:
+  - the tier-comparison answer hash now names both answers, because Python 3.12 made float `sum()` compensated;
+  - the report-lifecycle source checks strip the docstring by its parsed line span, because Python 3.13 dedents
+    `__doc__`.
+
+  The push check stops excusing the tier-comparison test, which the hook's Python 3.12 now passes. Tests: the backend
+  suite on CPython 3.14.3 with every pin (22,345 passed; the 4 failures are local only, from a missing local Redis); mypy
+  at its baseline; ruff, the reference, agent-API and prompt checks, and the quality gate pass.
+
 - **LangChain 1.x** (wave W43, OR-12; branch `feat/df-langchain1-20261109`). The backend leaves the 0.3 line:
   `langchain` 0.3.30 becomes `langchain-classic` 1.0.8, where 1.x keeps the legacy ReAct agent the triage, root-cause,
   server-side lookup and hypothesis paths use (`create_react_agent`, `AgentExecutor`, `ReActSingleInputOutputParser`);

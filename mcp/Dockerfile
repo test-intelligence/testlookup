@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
@@ -18,7 +18,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # apt-get upgrade takes Debian's security fixes for packages the base image
 # already carries. Installing ca-certificates alone never upgrades them, so a
 # fix Debian has published (gzip, pcre2, sqlite, perl-base: 12 HIGH/CRITICAL on
-# PR #56) stays out of the image until python:3.11-slim is rebuilt upstream.
+# PR #56) stays out of the image until python:3.14-slim is rebuilt upstream.
 # The Debian sources are plain http:// with signed Release files, so unlike the
 # frontend's apk step this does not need the staged interception CA first.
 # OS_PATCH_DAY (CI passes the UTC date) rebuilds this layer at least once a day:
@@ -49,16 +49,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # and jaraco.context 5.3.0 vendored inside setuptools, and the msgpack 1.1.2 /
 # setuptools 70.3.0 that pip vendors (pip/_vendor/vendor.txt). Deleted by
 # path (a copied site-packages can hold two pip dist-infos), then proven gone.
-RUN rm -rf /usr/local/lib/python3.11/site-packages/pip \
-        /usr/local/lib/python3.11/site-packages/pip-*.dist-info \
-        /usr/local/lib/python3.11/site-packages/setuptools \
-        /usr/local/lib/python3.11/site-packages/setuptools-*.dist-info \
-        /usr/local/lib/python3.11/site-packages/pkg_resources \
-        /usr/local/lib/python3.11/site-packages/_distutils_hack \
-        /usr/local/lib/python3.11/site-packages/distutils-precedence.pth \
-        /usr/local/lib/python3.11/site-packages/wheel \
-        /usr/local/lib/python3.11/site-packages/wheel-*.dist-info \
-        /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 /usr/local/bin/wheel \
+RUN rm -rf /usr/local/lib/python3.14/site-packages/pip \
+        /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
+        /usr/local/lib/python3.14/site-packages/setuptools \
+        /usr/local/lib/python3.14/site-packages/setuptools-*.dist-info \
+        /usr/local/lib/python3.14/site-packages/pkg_resources \
+        /usr/local/lib/python3.14/site-packages/_distutils_hack \
+        /usr/local/lib/python3.14/site-packages/distutils-precedence.pth \
+        /usr/local/lib/python3.14/site-packages/wheel \
+        /usr/local/lib/python3.14/site-packages/wheel-*.dist-info \
+        /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.14 /usr/local/bin/wheel \
     && python -c "import importlib.util, sys; left = [m for m in ('pip', 'setuptools', 'pkg_resources', 'wheel', '_distutils_hack') if importlib.util.find_spec(m)]; sys.exit('build tooling still importable: %s' % left if left else 0)"
 
 # Copy server source

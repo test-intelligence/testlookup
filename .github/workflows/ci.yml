@@ -125,10 +125,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.14
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Every surface matches deploy/images.manifest.txt
         run: python scripts/release/check_image_drift.py
@@ -168,10 +168,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.14
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Run cross-cutting quality gates
         run: python scripts/quality_gate.py
@@ -442,10 +442,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.14
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
@@ -605,10 +605,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.14
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
@@ -1253,10 +1253,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.14
         uses: actions/setup-python@v7.1.0
         with:
-          python-version: "3.11"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: mcp/requirements.txt
 
@@ -1438,6 +1438,9 @@ jobs:
           # confuse "the repo under test" with "the repo being tested from".
           fetch-depth: 0
 
+      # Stays on 3.11 on purpose (W41): the published CLI declares
+      # requires-python >= 3.11 (the SDK >= 3.9), so this job tests the floor
+      # users install on; the images and every other Python job run 3.14.
       - name: Set up Python 3.11
         uses: actions/setup-python@v7.1.0
         with:

@@ -328,10 +328,18 @@ def test_migration_is_next_head_reversible_and_concurrent_for_existing_table():
 
 import hashlib  # noqa: E402
 import json  # noqa: E402
+import sys  # noqa: E402
 
 #: Today's answer for the full summary corpus, computed on the tree BEFORE ``labelled_pairs`` existed
-#: (sha256 of the canonical JSON of the whole answer, and its manifest checksum).
-_SUMMARY_ANSWER_SHA256 = "f1b39db0cb07aa9d0deca88820a8bd0e6f38caafda6ec83bad8fe71dd87a3485"
+#: (sha256 of the canonical JSON of the whole answer, and its manifest checksum). Python 3.12 made
+#: ``sum()`` of floats compensated, so one mean (cost_delta_usd) reads -0.01 there instead of 3.11's
+#: -0.010000000000000002 and the answer's hash differs; the manifest checksum does not. CI and the images
+#: run 3.14 since W41; the 3.11 answer stays for a 3.11 interpreter.
+_SUMMARY_ANSWER_SHA256 = (
+    "ac5d4913b1b031c3accb841fb11a3355942dd1cd17bc2d49961ce179279a6cdd"
+    if sys.version_info >= (3, 12)
+    else "f1b39db0cb07aa9d0deca88820a8bd0e6f38caafda6ec83bad8fe71dd87a3485"
+)
 _SUMMARY_MANIFEST_CHECKSUM = "1db3469e24abcfc304a2e65ab7bd9a89891e9d87f948c15149831b60d74654c5"
 
 
