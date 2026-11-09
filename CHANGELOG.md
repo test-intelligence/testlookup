@@ -1371,6 +1371,16 @@ locally by default.
 
 ### Changed
 
+- **The frontend's unit tests run on Vitest 5** (wave W45, OR-10 (9); branch `feat/df-vitest5-20261109`; Dependabot
+  #42). `vitest` and `@vitest/coverage-v8` move from 4.1 to 5.1. The lockfile changes only Vitest's own tree; the
+  platform bindings are untouched. Vitest 5's assertion type no longer extends the global `jest.Matchers`, where
+  jest-dom's matchers live, and jest-dom 7.0.1 (the newest) still targets the old type. So the type-check reported
+  7,345 errors, all on matchers like `toBeInTheDocument`. `src/test/jest-dom-vitest.d.ts` merges Vitest 5's `Matchers`
+  with `jest.Matchers`: types only, to delete once jest-dom ships Vitest 5 typings. A misspelled matcher still fails the
+  type-check. The suite: 11,971 of 11,977 pass in one coverage run. The 5 that failed there (page tests waiting for lazy
+  chunks on a loaded machine) pass when their files run alone, with and without coverage. lint, type-check, build and
+  the license, bundle and theme checks pass.
+
 - **The JavaScript SDK builds with TypeScript 7** (wave W44, OR-10 (9); branch `feat/df-ts7-20261109`; Dependabot
   #33). `client/js` moves from TypeScript 5.9.3 to 7.0.2, the native compiler. TypeScript 6 and later no longer load
   every `@types/*` package automatically, so the SDK's tsconfig now lists `"types": ["node", "mocha"]`, the two it
