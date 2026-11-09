@@ -561,7 +561,8 @@ describe('LoginPage — public read-only demo', () => {
     mockDemoLogin.mockResolvedValue(TOKENS)
     renderPage()
     fireEvent.click(await screen.findByRole('button', { name: /explore the demo/i }))
-    await waitFor(() => expect(mockSetAuth).toHaveBeenCalledWith('acc', 'ref', USER))
+    // Marked as a demo session: the shell shows the banner from it, with no request.
+    await waitFor(() => expect(mockSetAuth).toHaveBeenCalledWith('acc', 'ref', USER, { demo: true }))
     expect(mockLogin).not.toHaveBeenCalled()
     expect(mockNavigate).toHaveBeenCalled()
   })

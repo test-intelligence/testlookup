@@ -1,10 +1,8 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
-// The demo banner reads GET /auth/options; off the demo it renders nothing.
-const demoMode = vi.hoisted(() => ({ on: false }))
-vi.mock("@/hooks/useDemoMode", () => ({ useDemoMode: () => demoMode.on }))
 import AppLayout from './AppLayout'
+import { useAuthStore } from '@/store/authStore'
 import { openHelp, useHelpStore } from '@/store/helpStore'
 
 vi.mock('./TopBar', () => ({
@@ -44,8 +42,8 @@ describe('AppLayout', () => {
     expect(screen.queryByTestId('demo-banner')).not.toBeInTheDocument()
   })
 
-  it('loads the demo banner only on the public demo', async () => {
-    demoMode.on = true
+  it('loads the demo banner only for a demo sign-in session', async () => {
+    useAuthStore.setState({ demoSession: true })
     try {
       render(
         <MemoryRouter initialEntries={['/overview']}>
@@ -58,7 +56,7 @@ describe('AppLayout', () => {
       )
       expect(await screen.findByTestId('demo-banner')).toHaveTextContent(/live demo/i)
     } finally {
-      demoMode.on = false
+      useAuthStore.setState({ demoSession: false })
     }
   })
 

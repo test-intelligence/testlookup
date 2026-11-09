@@ -33,10 +33,17 @@ interface AuthState {
    * re-verify while the stamp is fresh.
    */
   lastVerifiedAt: number | null;
+  /**
+   * This session was opened by the public read-only demo's one-click sign-in
+   * (`POST /auth/demo-login`), the only way into that deployment. The shell
+   * shows the demo banner from it, so no deployment pays a request per page to
+   * ask "is this the demo?". False for every ordinary sign-in; cleared by `logout`.
+   */
+  demoSession: boolean;
   retryRefresh: () => Promise<string | null>;
   _hasHydrated: boolean;
   setHasHydrated: (v: boolean) => void;
-  setAuth: (token: string, refreshToken: string, user: User) => void;
+  setAuth: (token: string, refreshToken: string, user: User, options?: { demo?: boolean }) => void;
   clearMustChangePassword: () => void;
   logout: () => void;
   logoutServer: () => Promise<void>;
@@ -79,13 +86,14 @@ export const useAuthStore = create<AuthState>()(
       refreshRetryExhausted: false,
       sessionGeneration: 0,
       lastVerifiedAt: null,
+      demoSession: false,
       retryRefresh: async () => { set({ refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false }); return get().refreshAccessToken(); },
       _hasHydrated: false,
 
       setHasHydrated: (v) => set({ _hasHydrated: v }),
 
-      setAuth: (token, refreshToken, user) =>
-        set((state) => ({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1, lastVerifiedAt: Date.now() })),
+      setAuth: (token, refreshToken, user, options) =>
+        set((state) => ({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1, lastVerifiedAt: Date.now(), demoSession: options?.demo === true })),
 
       clearMustChangePassword: () =>
         set((state) =>
@@ -93,7 +101,7 @@ export const useAuthStore = create<AuthState>()(
         ),
 
       logout: () => {
-        set((state) => ({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1, lastVerifiedAt: null }));
+        set((state) => ({ token: null, refreshToken: null, user: null, isAuthenticated: false, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1, lastVerifiedAt: null, demoSession: false }));
         // Security M1: the saved release filter (`tl.release-filter`, and a
         // `tl.suite-filter` an older build may have left) belongs to THIS
         // user's session — the next sign-in on this browser must not inherit
@@ -209,6 +217,7 @@ export const useAuthStore = create<AuthState>()(
         refreshRetryAt: state.refreshRetryAt,
         refreshFailureCount: state.refreshFailureCount,
         refreshRetryExhausted: state.refreshRetryExhausted,
+        demoSession: state.demoSession,
       }),
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);

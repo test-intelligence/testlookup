@@ -3,7 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import TopBar from './TopBar'
 import DegradedBanner from './DegradedBanner'
-import { useDemoMode } from '@/hooks/useDemoMode'
+import { useAuthStore } from '@/store/authStore'
 import { isSettingsAreaPath } from './settingsRoutes'
 import SectionTabs from './SectionTabs'
 import { ChartAnnouncerProvider } from '@/components/charts/ChartAnnouncer'
@@ -52,7 +52,8 @@ export default function AppLayout() {
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
   const helpOpen = useHelpStore((s) => s.topic !== null)
-  const demoMode = useDemoMode()
+  // Set by the public demo's one-click sign-in; no request on any deployment.
+  const demoMode = useAuthStore((s) => s.demoSession)
   // Every settings and admin page sits in the settings layout, keyed off the
   // route here, never per page (BUG-009: a per-page rule is one 14 of 23
   // pages forgot). It replaced the "Back to Settings" bar.

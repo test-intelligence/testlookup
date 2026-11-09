@@ -8,8 +8,9 @@ export const GET_TESTLOOKUP_URL = 'https://testlookup.app'
  * first refused save: nothing a visitor does is kept, and the data is sample
  * data that is rebuilt every night.
  *
- * AppLayout lazy-loads this only when the server is the demo (`useDemoMode`),
- * so a normal deployment never downloads it (scripts/check-bundle-budget.mjs).
+ * AppLayout lazy-loads this only for a session opened by the demo's one-click
+ * sign-in (`authStore.demoSession`), so a normal deployment never downloads it
+ * and never spends a request asking whether it is the demo.
  */
 export default function DemoBanner() {
   return (

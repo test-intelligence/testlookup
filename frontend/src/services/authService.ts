@@ -41,10 +41,19 @@ export function fetchCurrentUser(accessToken?: string): Promise<User> {
   )
 }
 
-// The sign-in options live in a module of their own so the app shell can read
-// them without pulling this whole service into the eager bundle.
-export { getAuthOptions } from './authOptions'
-export type { AuthOptions } from './authOptions'
+/** What the sign-in page may offer. Public (`GET /api/v1/auth/options`): read before anyone signs in. */
+export interface AuthOptions {
+  registration_enabled: boolean
+  /** W17b ADM-02: SMTP is configured, so "Forgot password?" offers the email form. Older servers omit it. */
+  password_reset_email?: boolean
+  /** The public read-only demo (server `DEMO_MODE`): the sign-in page offers one-click demo sign-in. Older servers omit it. */
+  demo_mode?: boolean
+}
+
+/** Quiet on failure: the page then offers sign-in only, which is the safe default. */
+export function getAuthOptions(): Promise<AuthOptions> {
+  return getData<AuthOptions>('/api/v1/auth/options', { suppressToast: true })
+}
 
 /**
  * Public demo only: sign in as the demo account without a password

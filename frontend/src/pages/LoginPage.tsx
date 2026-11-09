@@ -117,10 +117,15 @@ export default function LoginPage() {
       : null;
   const notice = loginNotice ?? ssoErrorNotice ?? linkNotice;
 
-  /** Shared tail of every successful sign-in — normal, post-challenge, or post-enrollment. */
-  const completeSignIn = async (tokens: TokenResponse) => {
+  /** Shared tail of every successful sign-in — normal, post-challenge, post-enrollment, or the public demo. */
+  const completeSignIn = async (tokens: TokenResponse, options?: { demo?: boolean }) => {
     const user = await fetchCurrentUser(tokens.access_token);
-    setAuth(tokens.access_token, tokens.refresh_token, user);
+    if (options?.demo) {
+      // The shell shows the demo banner for this session (authStore.demoSession).
+      setAuth(tokens.access_token, tokens.refresh_token, user, { demo: true });
+    } else {
+      setAuth(tokens.access_token, tokens.refresh_token, user);
+    }
     setChallenge(null);
     setEnrollHandoff(null);
     setEnrollment(null);
@@ -236,7 +241,7 @@ export default function LoginPage() {
     setDemoSigningIn(true);
     setLoginNotice(null);
     try {
-      await completeSignIn(await demoLogin());
+      await completeSignIn(await demoLogin(), { demo: true });
     } catch (err) {
       const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail;
       const message = extractErrorMessage(detail, 'The demo is unavailable right now. Try again in a few minutes.');

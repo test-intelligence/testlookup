@@ -65,7 +65,8 @@ locally by default.
     demo, refuses admin, service and MFA accounts, locks the user row like every session issuer, and is limited
     to 10 per minute per IP.
   - The sign-in page offers one button, the app shows a "Live demo · read-only" banner, and refused saves show as
-    one reused toast. The banner is lazy-loaded only on the demo, so the eager bundle stays within its budget.
+    one reused toast. The banner shows for sessions opened by demo sign-in (`authStore.demoSession`) and is
+    lazy-loaded, so other deployments make no extra request and the eager bundle stays within its budget.
   - `docker-compose.demo.yml` (an override of the release stack) forces offline AI, blank LLM keys, SMTP,
     registration and dev-login off. It also gives nginx the real client IP and a per-IP limit, sets memory
     ceilings and log rotation, and makes `cloudflared` the only way in.

@@ -9,8 +9,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-// The demo banner reads GET /auth/options; off the demo it renders nothing.
-vi.mock("@/hooks/useDemoMode", () => ({ useDemoMode: () => false }))
 import AppLayout, { NARROW_SHELL_QUERY, SHELL_NAV_ID } from './AppLayout'
 
 vi.mock('@/hooks/usePermissions', () => ({
