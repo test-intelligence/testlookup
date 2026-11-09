@@ -116,6 +116,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/audit-dashboard/export` | Export Audit Events | [Audit Dashboard](api/audit-dashboard.md) |
 | GET | `/api/v1/audit-dashboard/observability/{project_id}` | Get Project Observability | [Audit Dashboard](api/audit-dashboard.md) |
 | POST | `/api/v1/auth/change-password` | Change Password | [Authentication](api/authentication.md) |
+| POST | `/api/v1/auth/demo-login` | Demo Login | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/dev-login` | Dev Login | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/first-time-reset` | First Time Reset | [Authentication](api/authentication.md) |
 | POST | `/api/v1/auth/invitations/accept` | Accept Invitation | [Authentication](api/authentication.md) |
@@ -750,4 +751,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **741 HTTP operations**, **628 paths**, **92 domain pages**.
+Total: **742 HTTP operations**, **629 paths**, **92 domain pages**.

@@ -346,7 +346,8 @@ describe('RunIntelligencePage', () => {
     it('completes the step for the active project when intelligence loads', () => {
       mockHooks({ intelligence: structuredClone(MOCK_INTELLIGENCE) })
       renderPage()
-      expect(mockCompleteStep).toHaveBeenCalledWith('proj-1', 'view_intelligence')
+      // Background bookkeeping: quiet on refusal (the read-only demo answers 403).
+      expect(mockCompleteStep).toHaveBeenCalledWith('proj-1', 'view_intelligence', { suppressToast: true })
       expect(mockCompleteStep).toHaveBeenCalledTimes(1)
     })
 

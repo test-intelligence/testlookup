@@ -1,7 +1,10 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios'
 import toast from 'react-hot-toast'
 import { useAuthStore } from '../store/authStore'
-import { extractErrorMessage, isPasswordChangeRequired, shouldToastError } from './apiErrors'
+import { extractErrorMessage, isDemoReadOnly, isPasswordChangeRequired, shouldToastError } from './apiErrors'
+
+/** Toast id for the public demo's write refusal: a second refusal replaces the first. */
+export const DEMO_READ_ONLY_TOAST_ID = 'demo-read-only'
 
 declare module 'axios' {
   interface AxiosRequestConfig {
@@ -197,6 +200,17 @@ api.interceptors.response.use(
     if (error.response?.status === 403 && isPasswordChangeRequired(error.response?.data?.detail)) {
       if (typeof window !== 'undefined' && window.location.pathname !== '/reset-password') {
         window.location.assign('/reset-password')
+      }
+      return Promise.reject(error)
+    }
+
+    // The public read-only demo refused a write. One toast, reused by id, so a
+    // page that saves several things at once does not stack identical toasts.
+    if (error.response?.status === 403 && isDemoReadOnly(error.response?.data?.detail)) {
+      if (shouldToastError(403, originalRequest)) {
+        toast.error(extractErrorMessage(error.response?.data?.detail, error.message), {
+          id: DEMO_READ_ONLY_TOAST_ID,
+        })
       }
       return Promise.reject(error)
     }

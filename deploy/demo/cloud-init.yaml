@@ -1,0 +1,74 @@
+#cloud-config
+# ============================================================================
+# TestLookup public demo VM: "user data" for a new Ubuntu 24.04 server
+# (Hetzner Cloud console > Create server > Cloud config). Runbook:
+# docs/operations/public-demo.md
+#
+# What it does:
+#   * Docker Engine + the Compose plugin from Docker's own apt repository
+#     (Ubuntu's docker-compose-v2 package can lag the nested-variable support
+#     the demo's port bindings use);
+#   * firewall: deny every inbound connection except SSH. The demo needs NO
+#     inbound port: cloudflared dials out to Cloudflare. (Docker-published
+#     ports bypass ufw, which is why demo.sh also binds them to 127.0.0.1.);
+#   * unattended security upgrades, rebooting at 04:30 when a kernel needs it
+#     (containers restart on their own; the nightly reset runs at 03:00);
+#   * 2 GB swap, a safety margin on the 4 GB plan;
+#   * fail2ban for SSH;
+#   * an unprivileged `demo` user that owns /opt/testlookup and runs Docker.
+#
+# It does NOT start the demo: that needs the Cloudflare tunnel token, which
+# never goes into user data. After the server is up:
+#   ssh root@<server>   then   sudo -iu demo   then   cd /opt/testlookup
+#   scripts/demo/demo.sh setup
+# ============================================================================
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - git
+  - ufw
+  - fail2ban
+  - unattended-upgrades
+
+users:
+  - default
+  - name: demo
+    shell: /bin/bash
+    lock_passwd: true
+
+swap:
+  filename: /swapfile
+  size: 2G
+
+write_files:
+  - path: /etc/apt/apt.conf.d/52testlookup-demo-upgrades
+    content: |
+      Unattended-Upgrade::Automatic-Reboot "true";
+      Unattended-Upgrade::Automatic-Reboot-Time "04:30";
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+runcmd:
+  # Docker Engine + Compose plugin from Docker's apt repository.
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - [sh, -c, 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list']
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable --now docker
+  - usermod -aG docker demo
+  # Firewall: SSH only. Restrict it further to your own address in the Hetzner
+  # Cloud Firewall (it filters before traffic reaches the VM).
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow OpenSSH
+  - ufw --force enable
+  - systemctl enable --now fail2ban
+  # The code. A shallow clone is enough; `demo.sh update` fast-forwards it.
+  - git clone --depth 1 https://github.com/test-intelligence/testlookup.git /opt/testlookup
+  - chown -R demo:demo /opt/testlookup

@@ -78,12 +78,15 @@ async def auth_options() -> dict:
 
     ``password_reset_email`` (W17b ADM-02) is true when SMTP is configured, so
     the login page offers the email form; it reveals nothing about any account.
+    ``demo_mode`` is true on the public read-only demo: the login page offers
+    one-click demo sign-in and the app shows the demo banner.
     """
     from app.services.account_links_service import smtp_enabled
 
     return {
         "registration_enabled": settings.REGISTRATION_ENABLED,
         "password_reset_email": await smtp_enabled(),
+        "demo_mode": settings.DEMO_MODE,
     }
 
 
@@ -683,6 +686,67 @@ async def dev_login(
     refresh_token = await issue_refresh_token(db, user.id)
     await db.commit()
     logger.info("dev-login: issued token for user_id=%s (%s)", user.id, role)
+
+    return TokenResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        expires_in=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+
+#: Why demo sign-in refused a configured account. Each guard keeps a
+#: misconfigured ``DEMO_USERNAME`` from turning the public demo into a
+#: password-free door to something that matters.
+DEMO_ACCOUNT_REFUSED = {
+    "code": "demo_account_refused",
+    "message": "The demo account is misconfigured. Demo sign-in is unavailable.",
+}
+DEMO_UNAVAILABLE = {
+    "code": "demo_unavailable",
+    "message": "The demo is being refreshed. Try again in a few minutes.",
+}
+
+
+@router.post("/demo-login", response_model=TokenResponse)
+async def demo_login(db: AsyncSession = Depends(get_db)):
+    """Public read-only demo: sign the visitor in as ``DEMO_USERNAME``, no password.
+
+    Returns 404 unless ``DEMO_MODE`` is on and ``DEMO_USERNAME`` is set, so the
+    route does not exist on a normal deployment. Refuses (403) an admin, a
+    service account or an account with MFA: the demo account must be an
+    ordinary user, because everyone on the internet signs in as it. Answers
+    503 while the account is missing, which is the nightly reset window.
+    Rate-limited per IP (``_AUTH_RATE_LIMITS``); the demo-mode middleware keeps
+    the session read-only.
+    """
+    username = settings.DEMO_USERNAME.strip()
+    if not settings.DEMO_MODE or not username:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    result = await db.execute(
+        select(User)
+        .where(User.username == username)
+        .where(User.is_active == True)  # noqa: E712
+        .limit(1)
+    )
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=DEMO_UNAVAILABLE)
+
+    # Serialize with password changes and revocation, like every other session
+    # issuer (tests/regression/test_auth_session_serialization.py).
+    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await db.refresh(user)
+
+    role = getattr(user.role, "value", user.role)
+    if role == UserRole.ADMIN.value or user.is_service_account or user.mfa_enabled:
+        logger.warning("demo-login: refused configured account user_id=%s (role=%s)", user.id, role)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=DEMO_ACCOUNT_REFUSED)
+
+    access_token = await issue_access_jwt(db, str(user.id))
+    refresh_token = await issue_refresh_token(db, user.id)
+    await db.commit()
 
     return TokenResponse(
         access_token=access_token,

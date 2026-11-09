@@ -52,6 +52,34 @@ locally by default.
 
 ### Added
 
+- **Public read-only demo** (branch `feat/public-demo-mode`; runbook `docs/operations/public-demo.md`). A
+  fixed-price VM behind a Cloudflare tunnel, with no inbound port and no per-request billing, so an attack can slow
+  the demo but cannot raise the bill. Writes are blocked three times: a Cloudflare rule, the app, and a nightly
+  rebuild from seed.
+  - `DEMO_MODE` (environment-only, off by default) refuses every request that is not GET/HEAD/OPTIONS with 403
+    `demo_read_only` before routing. Exceptions: demo sign-in, token refresh, logout, the release-gate
+    simulation, and the onboarding progress refresh the onboarding page reads through (found by a route sweep of
+    all 77 pages as the demo session). Password login is refused as well. The Run page's background onboarding
+    call no longer toasts on refusal.
+  - `POST /api/v1/auth/demo-login` signs a visitor in as `DEMO_USERNAME` without a password. It is a 404 off the
+    demo, refuses admin, service and MFA accounts, locks the user row like every session issuer, and is limited
+    to 10 per minute per IP.
+  - The sign-in page offers one button, the app shows a "Live demo · read-only" banner, and refused saves show as
+    one reused toast. The banner shows for sessions opened by demo sign-in (`authStore.demoSession`) and is
+    lazy-loaded, so other deployments make no extra request and the eager bundle stays within its budget.
+  - `docker-compose.demo.yml` (an override of the release stack) forces offline AI, blank LLM keys, SMTP,
+    registration and dev-login off. It also gives nginx the real client IP and a per-IP limit, sets memory
+    ceilings and log rotation, and makes `cloudflared` the only way in.
+  - `docker-compose.release.yml` publishes Postgres, the S3 store and the frontend with an optional bind address
+    (`POSTGRES_PUBLISH_ADDR`, `MINIO_PUBLISH_ADDR`, `FRONTEND_PUBLISH_ADDR`). The default is unchanged; the demo
+    binds them to loopback, because Docker-published ports bypass ufw.
+  - `scripts/demo/demo.sh` (setup / build / reset / update / status / install-cron) and
+    `deploy/demo/cloud-init.yaml` handle the VM.
+  - An "Open in GitHub Codespaces" button (`.devcontainer/`) runs the full app with demo data on the visitor's own
+    Codespaces quota.
+  - Pinned by `tests/regression/test_demo_mode.py` (write rule, middleware through the real app, every demo-login
+    branch), `test_demo_compose.py`, the session-serialization, forwarded-IP and worker-topology guards, and
+    frontend tests for the toast, banner and sign-in.
 - **Observability evidence on Run › Timing** (wave W39, STRAT-07 first slice; branch
   `feat/df-evidence-timeline-20261108`). A new card at the bottom of the Timing tab shows the Splunk, OpenShift and
   Prometheus evidence the AI analysis already fetched for the run on one time axis: the newest deep analysis'
