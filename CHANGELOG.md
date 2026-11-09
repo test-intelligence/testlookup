@@ -1371,6 +1371,19 @@ locally by default.
 
 ### Changed
 
+- **CI builds and tests the frontend on Node 26, the image's Node** (wave W42, OR-10 (9); branch
+  `feat/df-node26-20261109`). The frontend image moved to `node:26-alpine` with Dependabot #160, but CI still tested on
+  Node 22 and wrote the image's `package-lock.json` with Node 20. Now every frontend, docs, diagram, visual and
+  dependency-scan job uses Node 26, and so does the release-branch gate. `build-images` writes the lockfile with
+  Node 26's npm, the same npm that runs `npm ci` inside the build. The JS SDK job stays on Node 20 on purpose (its
+  package declares `node >= 18`), and its comment now says why. The notices and the homelab script said
+  `node:20-alpine`; they now say `node:26-alpine`. CONTRIBUTING asks for Node 22.13+ (Node 20 reached end of life in
+  April 2026). Node 26 also turns its own Web Storage on, and its unconfigured global `localStorage` (undefined)
+  shadowed jsdom's: every frontend unit test that touched storage threw on CI's first Node 26 run. vitest's workers now
+  start with `--no-experimental-webstorage`, passed only to a Node that knows the flag. Configuration only, so there is
+  no new test; the PR's frontend job on Node 26 is the proof. The quality gate and the 474 script tests pass, and the
+  notices `--check` passes after regeneration.
+
 - **README points at the website** (2026-11-08, search visibility; branch `docs/readme-website-links`). The README
   header now leads with "open-source software test intelligence" for software development teams. It also has a row of
   links to https://testlookup.app (website, docs, quick start, features, roadmap) and a website badge. Before this, the

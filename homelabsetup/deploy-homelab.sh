@@ -368,7 +368,7 @@ EOF
 # ── TLS-interception CA staging ─────────────────────────────
 # An HTTPS-inspecting middlebox on the build host (a corporate proxy or an
 # endpoint-security product's TLS scanning) re-signs traffic with a private root CA. The
-# host trusts it, but the build containers (python:3.11-slim, node:20-alpine)
+# host trusts it, but the build containers (python:3.11-slim, node:26-alpine)
 # do not, so in-container pip/npm die with:
 #   "unable to get local issuer certificate".
 # We export that root CA from the host trust store into each build context's
@@ -760,7 +760,7 @@ if [ "$SKIP_BUILD" = false ]; then
     --target production -f backend/Dockerfile backend/
 
   log "Building frontend image (${BUILD_TAG}, same-origin relative API URLs)..."
-  # --pull guarantees the base node:20-alpine and nginx:alpine layers are
+  # --pull guarantees the base node:26-alpine and nginx:alpine layers are
   # refreshed. We intentionally do NOT pass --no-cache so the npm install
   # layer (slow) stays cached when only frontend/src changes — Docker
   # invalidates downstream layers automatically when source files change.
