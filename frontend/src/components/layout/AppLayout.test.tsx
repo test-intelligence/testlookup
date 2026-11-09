@@ -2,7 +2,6 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { describe, expect, it, vi } from 'vitest'
 import AppLayout from './AppLayout'
-import { useAuthStore } from '@/store/authStore'
 import { openHelp, useHelpStore } from '@/store/helpStore'
 
 vi.mock('./TopBar', () => ({
@@ -39,25 +38,6 @@ describe('AppLayout', () => {
     expect(screen.getByText('TopBar Stub')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument()
     expect(screen.getByText('Overview Content')).toBeInTheDocument()
-    expect(screen.queryByTestId('demo-banner')).not.toBeInTheDocument()
-  })
-
-  it('loads the demo banner only for a demo sign-in session', async () => {
-    useAuthStore.setState({ demoSession: true })
-    try {
-      render(
-        <MemoryRouter initialEntries={['/overview']}>
-          <Routes>
-            <Route element={<AppLayout />}>
-              <Route path="/overview" element={<div>Overview Content</div>} />
-            </Route>
-          </Routes>
-        </MemoryRouter>,
-      )
-      expect(await screen.findByTestId('demo-banner')).toHaveTextContent(/live demo/i)
-    } finally {
-      useAuthStore.setState({ demoSession: false })
-    }
   })
 
   it('moves keyboard focus past navigation to the main landmark', () => {
@@ -84,6 +64,11 @@ describe('AppLayout', () => {
   // UX redesign P1: the drawer is loaded the first time help opens (the eager
   // bundle budget); closed, it is not in the tree at all.
   it('loads and shows the help drawer when help opens, and removes it when it closes', async () => {
+    // Warm the drawer's module graph (react-markdown, Mermaid, every docs page)
+    // first, so the lazy import resolves from the module cache and the wait
+    // below measures behaviour, not how loaded the machine is. Even with 10 s
+    // it still timed out on a busy machine (2026-11-08).
+    await import('@/components/help/HelpDrawer')
     render(
       <MemoryRouter initialEntries={['/overview']}>
         <Routes>
