@@ -123,8 +123,8 @@ export default function AIEvalDashboardPage() {
                     <span className={clsx(
                       'rounded px-2 py-1 text-xs font-medium',
                       dashboard.eval_provenance.has_unresolvable_checksums
-                        ? 'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]'
-                        : 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]',
+                        ? 'bg-[var(--status-failed-bg)]/40 text-[var(--ui-danger-ink)]'
+                        : 'bg-[var(--status-passed-bg)]/40 text-[var(--ui-success-ink)]',
                     )}>
                       {dashboard.eval_provenance.has_unresolvable_checksums ? 'UNRESOLVED' : 'RESOLVED'}
                     </span>
@@ -165,6 +165,8 @@ export default function AIEvalDashboardPage() {
                     was in the API response and the TypeScript type the whole
                     time; only the tile was absent.
                   */}
+                  {/* W40 F-3: these tiles (and the two grids below) stay hand-made — no shared surface keeps their size:
+                      MetricCard sm is a label-first 18 px stat that grows to 40 px in presentation mode; .card / MetricCard md add p-4 + a border. */}
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                     <div className="bg-[var(--color-bg)]/50 rounded-lg p-3 text-center">
                       <div className="text-2xl font-bold text-[var(--status-passed)]">
@@ -198,8 +200,8 @@ export default function AIEvalDashboardPage() {
                   <div className="flex items-center gap-3 mb-3">
                     <h2 className="text-sm font-semibold text-[var(--color-text)]">Training Label Health</h2>
                     <span className={clsx('px-2 py-0.5 rounded text-2xs font-medium', {
-                      'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': dashboard.label_health.ml_maturity === 'human_calibrated',
-                      'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)]': dashboard.label_health.ml_maturity === 'bootstrap_llm_imitating',
+                      'bg-[var(--status-passed-bg)]/40 text-[var(--ui-success-ink)]': dashboard.label_health.ml_maturity === 'human_calibrated',
+                      'bg-[var(--status-broken-bg)]/40 text-[var(--ui-warning-ink)]': dashboard.label_health.ml_maturity === 'bootstrap_llm_imitating',
                       'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]': dashboard.label_health.ml_maturity === 'not_trained',
                     })}>
                       {dashboard.label_health.ml_maturity === 'human_calibrated' ? 'Human-calibrated'
@@ -265,9 +267,9 @@ export default function AIEvalDashboardPage() {
                   </div>
                   {reportCycles[0] && (
                     <span className={clsx('px-2 py-1 rounded text-xs font-medium', {
-                      'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': reportCycles[0].status === 'pass',
-                      'bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)]': reportCycles[0].status === 'warn',
-                      'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]': reportCycles[0].status === 'fail',
+                      'bg-[var(--status-passed-bg)]/40 text-[var(--ui-success-ink)]': reportCycles[0].status === 'pass',
+                      'bg-[var(--status-broken-bg)]/40 text-[var(--ui-warning-ink)]': reportCycles[0].status === 'warn',
+                      'bg-[var(--status-failed-bg)]/40 text-[var(--ui-danger-ink)]': reportCycles[0].status === 'fail',
                     })}>
                       {reportCycles[0].status.toUpperCase()}
                     </span>
@@ -310,8 +312,8 @@ export default function AIEvalDashboardPage() {
                   <div className={clsx(
                     'mt-4 rounded border p-3 text-xs',
                     reportReadiness.status === 'ready'
-                      ? 'border-[var(--status-passed-bd)]/50 bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]'
-                      : 'border-[var(--status-broken-bd)]/50 bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]',
+                      ? 'border-[var(--status-passed-bd)]/50 bg-[var(--status-passed-bg)]/20 text-[var(--ui-success-ink)]'
+                      : 'border-[var(--status-broken-bd)]/50 bg-[var(--status-broken-bg)]/20 text-[var(--ui-warning-ink)]',
                   )}>
                     <div className="font-semibold">
                       Pilot readiness: {reportReadiness.status === 'ready' ? 'READY' : 'NOT READY'}
@@ -334,8 +336,8 @@ export default function AIEvalDashboardPage() {
                   <h2 className="text-sm font-semibold text-[var(--color-text)] mb-3">Quality Drift</h2>
                   <div className="flex items-center gap-4">
                     <span className={clsx('px-3 py-1 rounded text-sm font-medium', {
-                      'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': dashboard.drift.drift_direction === 'improving',
-                      'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]': dashboard.drift.drift_direction === 'degrading',
+                      'bg-[var(--status-passed-bg)]/40 text-[var(--ui-success-ink)]': dashboard.drift.drift_direction === 'improving',
+                      'bg-[var(--status-failed-bg)]/40 text-[var(--ui-danger-ink)]': dashboard.drift.drift_direction === 'degrading',
                       'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]': dashboard.drift.drift_direction === 'stable',
                     })}>
                       {dashboard.drift.drift_direction === 'improving' ? 'Improving' : dashboard.drift.drift_direction === 'degrading' ? 'Degrading' : 'Stable'}
@@ -394,10 +396,10 @@ export default function AIEvalDashboardPage() {
                           <span className="text-[var(--color-text-secondary)]">{v.model_name}</span>
                           <span className="text-xs text-[var(--color-text-muted)]">{v.track}</span>
                           <span className={clsx('px-2 py-0.5 rounded text-2xs', {
-                            'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': v.status === 'active',
-                            'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]': v.status === 'training' || v.status === 'evaluating',
+                            'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed-ink)]': v.status === 'active',
+                            'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped-ink)]': v.status === 'training' || v.status === 'evaluating',
                             'bg-[var(--color-bg-card)] text-[var(--color-text-muted)]': v.status === 'retired',
-                            'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)]': v.status === 'failed',
+                            'bg-[var(--status-failed-bg)]/40 text-[var(--status-failed-ink)]': v.status === 'failed',
                           })}>{v.status}</span>
                         </div>
                         <span className="text-xs text-[var(--color-text-muted)]">

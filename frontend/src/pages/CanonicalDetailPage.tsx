@@ -6,6 +6,7 @@ import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import PromotionAction from '@/components/testManagement/PromotionAction'
 import TransitionReasonDialog from '@/components/testManagement/TransitionReasonDialog'
 import TestHistoryTimeline from '@/components/suites/TestHistoryTimeline'
@@ -21,9 +22,9 @@ import type { CanonicalRunAI } from '@/types/aiTestHistory'
 // render the same canonical lifecycle states identically. Keep in sync if
 // the canonical state machine grows (deleted / needs_review etc.).
 const STATUS_COLOR: Record<string, string> = {
-  active: 'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)] ring-[var(--status-passed)]/30',
-  deleted: 'bg-[var(--status-failed-bg)]/10 text-[var(--status-failed)] ring-[var(--status-failed)]/30',
-  needs_review: 'bg-[var(--status-broken-bg)]/10 text-[var(--status-broken)] ring-[var(--status-broken)]/30',
+  active: 'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed-ink)] ring-[var(--status-passed)]/30',
+  deleted: 'bg-[var(--status-failed-bg)]/10 text-[var(--status-failed-ink)] ring-[var(--status-failed)]/30',
+  needs_review: 'bg-[var(--status-broken-bg)]/10 text-[var(--status-broken-ink)] ring-[var(--status-broken)]/30',
 }
 
 function StatusPill({ status }: { status: string }) {
@@ -45,10 +46,10 @@ function StatusPill({ status }: { status: string }) {
 // Per-run TestCase status uses the global formatter palette. We wrap it in
 // a pill so the column stays scannable at a glance even with many rows.
 const RUN_STATUS_COLOR: Record<string, string> = {
-  PASSED: 'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed)] ring-[var(--status-passed)]/30',
-  FAILED: 'bg-[var(--status-failed-bg)]/10 text-[var(--status-failed)] ring-[var(--status-failed)]/30',
-  BROKEN: 'bg-[var(--status-broken-bg)]/10 text-[var(--status-broken)] ring-[var(--status-broken)]/30',
-  SKIPPED: 'bg-[var(--status-skipped-bg)]/10 text-[var(--status-skipped)] ring-[var(--status-skipped)]/30',
+  PASSED: 'bg-[var(--status-passed-bg)]/10 text-[var(--status-passed-ink)] ring-[var(--status-passed)]/30',
+  FAILED: 'bg-[var(--status-failed-bg)]/10 text-[var(--status-failed-ink)] ring-[var(--status-failed)]/30',
+  BROKEN: 'bg-[var(--status-broken-bg)]/10 text-[var(--status-broken-ink)] ring-[var(--status-broken)]/30',
+  SKIPPED: 'bg-[var(--status-skipped-bg)]/10 text-[var(--status-skipped-ink)] ring-[var(--status-skipped)]/30',
 }
 
 function RunStatusPill({ status }: { status: string }) {
@@ -230,7 +231,7 @@ export default function CanonicalDetailPage() {
       )}
 
       {unlinkRefreshWarning && (
-        <p role="status" className="mb-4 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-2 text-sm text-[var(--status-broken)]">
+        <p role="status" className="mb-4 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-2 text-sm text-[var(--ui-warning-ink)]">
           {unlinkRefreshWarning}
         </p>
       )}
@@ -275,7 +276,7 @@ export default function CanonicalDetailPage() {
           ``test_suite_service.list_runs_for_canonical``) so we render
           the response order verbatim. */}
       <section>
-        <h2 className="mb-2 text-sm font-semibold uppercase text-[var(--color-text-muted)]">
+        <h2 className={clsx(PANEL_TITLE_CLASS, 'mb-2')}>
           Run history ({runHistory?.total ?? 0})
         </h2>
         {runsLoading ? (

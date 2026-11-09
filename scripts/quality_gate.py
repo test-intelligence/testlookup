@@ -2669,7 +2669,30 @@ def _count_ratchet_update(spec: _CountRatchet) -> None:
 # frontend.type-scale (UIX-04a): an arbitrary Tailwind size, and a numeric
 # inline fontSize outside the chart kit (whose fonts are W29b's UIX-05).
 _TYPE_SCALE_CLASS_RE = re.compile(r"(?<![\w-])text-\[\d+(?:\.\d+)?(?:px|rem|em)\]")
-_TYPE_SCALE_INLINE_RE = re.compile(r"""fontSize\s*:\s*['"]?\d""")
+# The inline form counts ONE per `fontSize` whose value holds a numeric literal
+# outside a `var(...)` read: a style property up to the first `,` `}` or newline
+# (`fontSize: 12`, `'9px'`, `'1.4em'`, and since W40 an expression such as
+# `compact ? 9.5 : 10` or `base * 1.2`) or a JSX / SVG attribute (`fontSize="9.5"`,
+# `fontSize={12}`, `fontSize={dense ? 10 : 11}`) — the two forms W29d's T3 found
+# blind (W29d F-5 = W29e F-10). A literal glued to a word, `.`, `$` or `-` is not a
+# size (`CHART_FONT.h2`, `var(--text-2xs)`; a bare `'.875rem'` is); the types
+# `fontSize?: number` / `fontSize: number`, `fontSize: CHART_FONT.tick` and
+# `fontSize: 'var(--text-…)'` stay uncounted.
+# Two linear passes, never one regex with a `(var(…)|char)*` alternation (CodeQL
+# flagged that as exponential backtracking on repeated `var()`): every `var(…)`
+# read is blanked to `var()` first, then the plain regex counts.
+_TYPE_SCALE_VAR_READ_RE = re.compile(r"var\([^)\n]*\)")
+_TYPE_SCALE_INLINE_RE = re.compile(
+    r"""fontSize\s*(?:"""
+    r""":[^,}\n]*?"""                                       # a style property
+    r"""|=\s*(?:"[^"\n]*?|'[^'\n]*?|\{[^}\n]*?)"""          # a JSX / SVG attribute "…" '…' {…}
+    r""")(?<![\w.$-])\.?\d"""
+)
+
+
+def _type_scale_inline_count(text: str) -> int:
+    """The numeric inline font sizes of ``text`` (one per `fontSize`), `var(…)` reads skipped whole."""
+    return len(_TYPE_SCALE_INLINE_RE.findall(_TYPE_SCALE_VAR_READ_RE.sub("var()", text)))
 
 
 def _type_scale_counts() -> dict[str, int]:
@@ -2678,7 +2701,7 @@ def _type_scale_counts() -> dict[str, int]:
         text = _ui_read(path)
         n = len(_TYPE_SCALE_CLASS_RE.findall(text))
         if not rel.startswith(_UI_CHART_KIT):
-            n += len(_TYPE_SCALE_INLINE_RE.findall(text))
+            n += _type_scale_inline_count(text)
         if n:
             counts[rel] = n
     return counts

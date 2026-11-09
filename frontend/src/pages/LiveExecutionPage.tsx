@@ -36,8 +36,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronDown,
-  ChevronUp,
-  ChevronsUpDown,
   CircleDot,
   Code2,
   Copy,
@@ -68,6 +66,7 @@ import PageHeader from '@/components/ui/PageHeader'
 import Pagination from '@/components/ui/Pagination'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
+import { Table, Th, ThSort } from '@/components/ui/Table'
 import { TimingCell } from '@/components/ui/TimingCell'
 import WindowPicker from '@/components/ui/WindowPicker'
 import { helpTopicParam } from '@/components/help/helpTopics'
@@ -177,6 +176,11 @@ type LiveWindow = (typeof LIVE_WINDOWS)[number]
 
 type SortField = 'pass_rate' | 'total' | 'failed' | 'started_at' | 'build' | 'suite'
 type SortDir   = 'asc' | 'desc'
+
+// The sessions table's header paddings (W40 F-2): the `dense` Table is px-3 py-2; this header was py-2.5 with px-5
+// on the edge columns (over the cells' px-5), and a page utility on a `.th` wins (@layer utilities).
+const LIVE_TH = 'py-2.5'
+const LIVE_TH_EDGE = 'px-5 py-2.5'
 
 function sortSessions(sessions: LiveSessionState[], field: SortField, dir: SortDir) {
   // String sorts (Build, Suite) compare via localeCompare; numeric/date
@@ -474,14 +478,8 @@ export default function LiveExecutionPage() {
     }
   }
 
-  // Render helper (not a component) so it isn't flagged as a component defined
-  // during render (react-hooks/static-components) — it closes over sort state.
-  const sortIcon = (field: SortField) => {
-    if (field !== sortField) return <ChevronsUpDown className="h-3 w-3 opacity-30" />
-    return sortDir === 'asc'
-      ? <ChevronUp className="h-3 w-3 text-[var(--color-text)]" />
-      : <ChevronDown className="h-3 w-3 text-[var(--color-text)]" />
-  }
+  // `ThSort` hands back its `sortKey` as a string; every key it is given is a SortField.
+  const onSortKey = (key: string) => handleSort(key as SortField)
 
   const visibleSessions = useMemo(() => {
     let list = suiteScopedSessions
@@ -681,7 +679,7 @@ export default function LiveExecutionPage() {
               className={clsx(
                 'inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs font-medium border',
                 liveSummary.isLive
-                  ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border-[var(--status-passed-bd)]'
+                  ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed-ink)] border-[var(--status-passed-bd)]'
                   : 'bg-[var(--color-bg-card)] text-[var(--color-text-muted)] border-[var(--color-border)]',
               )}
             >
@@ -809,43 +807,24 @@ export default function LiveExecutionPage() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead className="text-[var(--color-text-muted)] eyebrow uppercase">
+          {/* W40 F-2: the ONE table (`.th` labels on the sunken row; `ThSort` = a real button + aria-sort). The header
+              keeps the paddings it already used (`LIVE_TH` / `LIVE_TH_EDGE`), so no row grows and the edge labels
+              stay over the cells' px-5. */}
+          <Table density="dense" className="text-xs">
+            <thead>
               <tr className="border-b border-[var(--color-border)]">
-                <th
-                  className="px-5 py-2.5 text-left font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
-                  onClick={() => handleSort('build')}
-                >
-                  <span className="flex items-center gap-1">Build {sortIcon('build')}</span>
-                </th>
-                <th
-                  className="px-3 py-2.5 text-left font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
-                  onClick={() => handleSort('suite')}
-                >
-                  <span className="flex items-center gap-1">Suite {sortIcon('suite')}</span>
-                </th>
-                <th className="px-3 py-2.5 text-left font-medium">Status</th>
-                <th
-                  className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
-                  onClick={() => handleSort('total')}
-                >
-                  <span className="flex items-center justify-end gap-1">Tests {sortIcon('total')}</span>
-                </th>
-                <th className="px-3 py-2.5 text-right font-medium">Pass</th>
-                <th
-                  className="px-3 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
-                  onClick={() => handleSort('failed')}
-                >
-                  <span className="flex items-center justify-end gap-1">Failed {sortIcon('failed')}</span>
-                </th>
-                <th className="px-3 py-2.5 text-left font-medium" style={{ width: 140 }}>Outcome</th>
-                <th className="px-3 py-2.5 text-left font-medium">Release</th>
-                <th
-                  className="px-5 py-2.5 text-right font-medium cursor-pointer hover:text-[var(--color-text-secondary)] select-none"
-                  onClick={() => handleSort('started_at')}
-                >
-                  <span className="flex items-center justify-end gap-1">Timing {sortIcon('started_at')}</span>
-                </th>
+                <ThSort label="Build" sortKey="build" currentKey={sortField} dir={sortDir} onSort={onSortKey} className={LIVE_TH_EDGE} />
+                <ThSort label="Suite" sortKey="suite" currentKey={sortField} dir={sortDir} onSort={onSortKey} className={LIVE_TH} />
+                <Th className={LIVE_TH}>Status</Th>
+                <ThSort label="Tests" sortKey="total" currentKey={sortField} dir={sortDir} onSort={onSortKey} numeric className={LIVE_TH} />
+                <Th numeric className={LIVE_TH}>Pass</Th>
+                <ThSort label="Failed" sortKey="failed" currentKey={sortField} dir={sortDir} onSort={onSortKey} numeric className={LIVE_TH} />
+                <Th className={LIVE_TH} style={{ width: 140 }}>Outcome</Th>
+                <Th className={LIVE_TH}>Release</Th>
+                <ThSort
+                  label="Timing" sortKey="started_at" currentKey={sortField} dir={sortDir} onSort={onSortKey}
+                  align="right" className={LIVE_TH_EDGE}
+                />
               </tr>
             </thead>
             <tbody>
@@ -916,7 +895,7 @@ export default function LiveExecutionPage() {
                           <span className={clsx(
                             'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium border',
                             stale
-                              ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border-[var(--status-broken-bd)]'
+                              ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken-ink)] border-[var(--status-broken-bd)]'
                               : s.status === 'running'
                                 ? 'bg-[color-mix(in srgb, var(--color-accent) 10%, transparent)] text-[var(--color-accent)] border-[color-mix(in srgb, var(--color-accent) 30%, transparent)]'
                                 : 'bg-[color-mix(in srgb, var(--status-passed) 10%, transparent)] text-[var(--status-passed)] border-[color-mix(in srgb, var(--status-passed) 30%, transparent)]',
@@ -952,7 +931,7 @@ export default function LiveExecutionPage() {
                     </td>
                     <td className="px-3 py-3">
                       {s.release_name ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium border bg-[var(--status-flaky-bg)]/30 text-[var(--status-flaky)] border-[var(--status-flaky-bd)]/30">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium border bg-[var(--status-flaky-bg)]/30 text-[var(--status-flaky-ink)] border-[var(--status-flaky-bd)]/30">
                           <Package className="w-2.5 h-2.5" />
                           {s.release_name}
                         </span>
@@ -973,7 +952,7 @@ export default function LiveExecutionPage() {
                 )
               })}
             </tbody>
-          </table>
+          </Table>
         </div>
         <Pagination
           page={tablePage}

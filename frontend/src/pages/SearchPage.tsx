@@ -288,14 +288,12 @@ function VerdictRibbon({
 
   const tagPulse = indexStatus?.status === 'healthy'
   return (
+    // The ONE card surface (W40, W29d F-3): `.card` paints the surface, border and 12 px corners; its padding is the
+    // two cells' own (14 / 18 px), so `!p-0`.
     <section
       aria-label="Index verdict"
-      className="relative rounded-xl border overflow-hidden grid gap-0 mb-3.5"
-      style={{
-        gridTemplateColumns: 'minmax(0, 1fr) auto',
-        background: 'var(--color-bg-card)',
-        borderColor: 'var(--color-border)',
-      }}
+      className="card !p-0 relative overflow-hidden grid gap-0 mb-3.5"
+      style={{ gridTemplateColumns: 'minmax(0, 1fr) auto' }}
     >
       <div className="min-w-0" style={{ padding: '14px 18px' }}>
         <span
@@ -797,7 +795,7 @@ export default function SearchPage() {
       {response?.result_status === 'partial' && (
         <div
           role="status"
-          className="mb-3 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] px-3 py-2 text-xs text-[var(--status-broken)]"
+          className="mb-3 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] px-3 py-2 text-xs text-[var(--ui-warning-ink)]"
         >
           {response.failed_entity_types?.length
             ? `Some search sources were unavailable: ${response.failed_entity_types.join(', ')}. `

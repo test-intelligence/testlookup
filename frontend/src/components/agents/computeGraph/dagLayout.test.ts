@@ -91,7 +91,7 @@ describe('layoutDag', () => {
     expect(layout.layers[0]).toEqual(['investigator_plan'])
     expect(layout.layers[2]).toEqual(['investigator_synthesis'])
     expect(new Set(layout.layers[1])).toEqual(new Set(HYPOTHESES))
-    // The canvas size of the contract: 3 × 274 + 48 wide, 5 × 156 + 48 high.
+    // The canvas size of the contract: 3 × 274 + 48 wide, 5 × 192 + 48 high (W40: rows of the 168 px card).
     expect(layout.width).toBe(3 * DAG_COLUMN_PITCH + 2 * DAG_PADDING)
     expect(layout.height).toBe(5 * DAG_ROW_PITCH + 2 * DAG_PADDING)
     expect(layout.positions.investigator_plan).toEqual({ x: DAG_PADDING, y: DAG_PADDING })

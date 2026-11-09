@@ -17,6 +17,7 @@ import AISuggestion from '@/components/ai/AISuggestion'
 import { useFixAttempt, useFixAttempts, useFixerConfig } from '@/hooks/useFixer'
 import { isFixAttemptActive, type FixAttempt, type FixAttemptStatus } from '@/types/fixer'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { Table, Th } from '@/components/ui/Table'
 import { formatDateTime } from '@/utils/formatters'
 
 const PAGE_SIZE = 25
@@ -227,21 +228,21 @@ export default function FixAttemptsSection({ projectId }: { projectId: string })
         )
       ) : (
         <div className="card p-0 overflow-x-auto">
-          <table className="w-full text-sm" style={{ minWidth: 760 }}>
+          <Table density="dense" style={{ minWidth: 760 }}>
             <thead>
-              <tr style={{ background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border)' }}>
-                <th className="px-3 py-2 text-left eyebrow uppercase text-[var(--color-text-muted)]">Test</th>
-                <th className="px-3 py-2 text-left eyebrow uppercase text-[var(--color-text-muted)]">Status</th>
-                <th className="px-3 py-2 text-right eyebrow uppercase text-[var(--color-text-muted)]">Attempt #</th>
-                <th className="px-3 py-2 text-left eyebrow uppercase text-[var(--color-text-muted)]">Validation</th>
-                <th className="px-3 py-2 text-left eyebrow uppercase text-[var(--color-text-muted)]">PR</th>
-                <th className="px-3 py-2 text-right eyebrow uppercase text-[var(--color-text-muted)]">Created</th>
+              <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
+                <Th>Test</Th>
+                <Th>Status</Th>
+                <Th numeric>Attempt #</Th>
+                <Th>Validation</Th>
+                <Th>PR</Th>
+                <Th numeric>Created</Th>
               </tr>
             </thead>
             <tbody>
               {items.map((a) => <AttemptRow key={a.id} attempt={a} />)}
             </tbody>
-          </table>
+          </Table>
           <div className="flex items-center justify-between px-3 py-2.5 text-xs text-[var(--color-text-muted)]">
             <span className="tabular-nums">
               {total === 0 ? '0' : `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)}`} of {total}

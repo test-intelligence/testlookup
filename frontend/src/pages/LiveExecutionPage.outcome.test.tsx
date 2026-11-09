@@ -7,7 +7,7 @@
  * reported a result (the API sent 0 for "no rate"), and "Last completed 2122m
  * ago".
  */
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -70,5 +70,47 @@ describe('LiveExecutionPage — a session outcome', () => {
     renderWith([NO_RESULT])
     expect(screen.getByText(/Last completed 1d ago/)).toBeInTheDocument()
     expect(screen.queryByText(/\d{3,}m ago/)).toBeNull()
+  })
+})
+
+describe('LiveExecutionPage — the sessions table header (W40 F-2)', () => {
+  const header = (name: string) => screen.getByRole('columnheader', { name })
+  const builds = () => screen.getAllByText(/^(build-live-demo|viz-3043)$/, { selector: 'td *' }).map((el) => el.textContent)
+
+  it('is the ONE table: `.th` labels, the number columns numeric, a sort button (aria-sort) only on the five sortable ones', () => {
+    renderWith([NO_RESULT, MEASURED])
+    const table = header('Build').closest('table') as HTMLElement
+    expect(table).toHaveAttribute('data-density', 'dense')
+    const names = ['Build', 'Suite', 'Status', 'Tests', 'Pass', 'Failed', 'Outcome', 'Release', 'Timing']
+    expect(within(table).getAllByRole('columnheader').map((th) => th.textContent)).toEqual(names)
+    for (const name of names) expect(header(name).classList.contains('th')).toBe(true)
+    for (const name of ['Tests', 'Pass', 'Failed']) expect(header(name).classList.contains('th-num')).toBe(true)
+    for (const name of ['Build', 'Suite', 'Tests', 'Failed']) expect(header(name)).toHaveAttribute('aria-sort', 'none')
+    // The default order: newest first.
+    expect(header('Timing')).toHaveAttribute('aria-sort', 'descending')
+    for (const name of ['Status', 'Pass', 'Outcome', 'Release']) {
+      expect(header(name)).not.toHaveAttribute('aria-sort')
+      expect(within(header(name)).queryByRole('button')).toBeNull()
+    }
+    // The header keeps its paddings (py-2.5; px-5 over the edge cells) and Outcome its width.
+    expect(header('Build').className).toMatch(/\bpx-5\b.*\bpy-2\.5\b/)
+    expect(header('Timing').className).toMatch(/\bpx-5\b.*\bpy-2\.5\b/)
+    expect(header('Suite').className).toMatch(/\bpy-2\.5\b/)
+    expect(header('Outcome').style.width).toBe('140px')
+  })
+
+  it('sorts as before: a new column starts descending, a second click flips it', () => {
+    renderWith([MEASURED, NO_RESULT])
+    const sortBy = (name: string) => fireEvent.click(within(header(name)).getByRole('button', { name }))
+    sortBy('Tests')
+    expect(header('Tests')).toHaveAttribute('aria-sort', 'descending')
+    expect(header('Timing')).toHaveAttribute('aria-sort', 'none')
+    expect(builds()).toEqual(['build-live-demo', 'viz-3043'])   // 42 tests, then 11
+    sortBy('Tests')
+    expect(header('Tests')).toHaveAttribute('aria-sort', 'ascending')
+    expect(builds()).toEqual(['viz-3043', 'build-live-demo'])
+    sortBy('Failed')
+    expect(header('Failed')).toHaveAttribute('aria-sort', 'descending')
+    expect(builds()).toEqual(['viz-3043', 'build-live-demo'])   // 1 failed, then 0
   })
 })

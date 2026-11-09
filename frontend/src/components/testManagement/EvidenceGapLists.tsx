@@ -197,13 +197,13 @@ export default function EvidenceGapLists({ projectId }: EvidenceGapListsProps) {
       />
 
       {retirementError && retirementError.id === retiring?.id && (
-        <p role="alert" className="lg:col-span-3 rounded-md border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-2 text-sm text-[var(--status-failed)]">
+        <p role="alert" className="lg:col-span-3 rounded-md border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-2 text-sm text-[var(--ui-danger-ink)]">
           {retirementError.message}
         </p>
       )}
 
       {retirementRefreshWarning && (
-        <div role="status" className="lg:col-span-3 flex items-center justify-between gap-3 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-2 text-sm text-[var(--status-broken)]">
+        <div role="status" className="lg:col-span-3 flex items-center justify-between gap-3 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-2 text-sm text-[var(--ui-warning-ink)]">
           <span>{retirementRefreshWarning}</span>
           <button type="button" className="btn-secondary flex-shrink-0 text-xs" onClick={() => void retryOrphans()}>
             Retry proof list

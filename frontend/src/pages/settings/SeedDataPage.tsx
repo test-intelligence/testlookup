@@ -4,6 +4,7 @@ import { SETTINGS_ROOT } from '@/components/layout/settingsNav'
 import { Database, Loader2, Plus, RefreshCw, Trash2, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { api } from '@/services/api'
 import { useSeedStatus } from '@/hooks/useSeedStatus'
 import { helpTopicParam } from '@/components/help/helpTopics'
@@ -85,7 +86,8 @@ function SeedDataPageBody() {
 
       {/* Status card */}
       <section className="card space-y-4">
-        <h2 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider flex items-center gap-2">
+        {/* W40 F-1: the panel title role; its `m-0` beats `space-y-*`'s zero-specificity margin, so `mb-*` keeps the gap. */}
+        <h2 className={`${PANEL_TITLE_CLASS} mb-4 flex items-center gap-2`}>
           <Database className="h-4 w-4 text-[var(--color-text-muted)]" />
           Seed Data Status
         </h2>
@@ -115,7 +117,7 @@ function SeedDataPageBody() {
 
       {/* Actions card */}
       <section className="card space-y-4">
-        <h2 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider">
+        <h2 className={`${PANEL_TITLE_CLASS} mb-4`}>
           Actions
         </h2>
 
@@ -180,7 +182,7 @@ function SeedDataPageBody() {
       {/* Output log */}
       {lastOutput && (
         <section className="card space-y-3">
-          <h2 className="text-sm font-semibold text-[var(--color-text)] uppercase tracking-wider">
+          <h2 className={`${PANEL_TITLE_CLASS} mb-3`}>
             Output
           </h2>
           <pre className="text-xs text-[var(--color-text-muted)] bg-[var(--color-bg-secondary)] rounded-lg p-4 overflow-x-auto max-h-64 whitespace-pre-wrap">

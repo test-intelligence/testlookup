@@ -14,9 +14,9 @@ import { StatusPill } from './tmUi'
 // ─── Tab: Duplicates (Phase 4; under More ▾ since UX redesign P4) ────────────
 
 const DUP_BAND_COLORS: Record<DuplicateBand, string> = {
-  exact:    'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border border-[var(--status-failed-bd)]',
-  strong:   'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
-  possible: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
+  exact:    'bg-[var(--status-failed-bg)] text-[var(--status-failed-ink)] border border-[var(--status-failed-bd)]',
+  strong:   'bg-[var(--status-broken-bg)] text-[var(--status-broken-ink)] border border-[var(--status-broken-bd)]',
+  possible: 'bg-[var(--status-broken-bg)] text-[var(--status-broken-ink)] border border-[var(--status-broken-bd)]',
 }
 
 const DUP_METHOD_LABEL: Record<string, string> = {
@@ -216,7 +216,7 @@ export function DuplicateCandidateCard({ projectId, candidate, onResolved }: Dup
         </div>
       )}
       {refreshWarning && (
-        <p role="status" className="mt-3 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-2 text-xs text-[var(--status-broken)]">
+        <p role="status" className="mt-3 rounded-md border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-2 text-xs text-[var(--ui-warning-ink)]">
           {refreshWarning}
         </p>
       )}

@@ -258,7 +258,7 @@ export default function CaseEditForm({ caseItem, suiteOptions, slot, onCancel, o
           <p
             role="alert"
             data-edit-conflict=""
-            className="m-0 w-full rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]"
+            className="m-0 w-full rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--ui-danger-ink)]"
           >
             This test case changed since you opened it, and the new version could not be read. Close the form and open the case again.
           </p>
@@ -494,7 +494,7 @@ export default function CaseEditForm({ caseItem, suiteOptions, slot, onCancel, o
         ))}
 
         {error && (
-          <p role="alert" data-edit-error="" className="m-0 rounded-md border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-2 text-sm text-[var(--status-failed)]">
+          <p role="alert" data-edit-error="" className="m-0 rounded-md border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-2 text-sm text-[var(--ui-danger-ink)]">
             {error}
           </p>
         )}

@@ -25,6 +25,7 @@ import { criteriaDeletionService, deletionArchiveErrorMessage } from '@/services
 import { extractErrorMessage } from '@/services/apiErrors'
 import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { Table, Td, Th, Tr } from '@/components/ui/Table'
 import type { DeletionJob } from '@/types/retention'
 import { downloadBlob } from '@/utils/download'
@@ -193,7 +194,7 @@ export default function DeletionJobsCard({ projectId, refreshSignal = 0 }: Delet
           <History aria-hidden="true" className="h-4 w-4 text-[var(--color-accent)]" />
           <h2
             id="deletion-jobs-heading"
-            className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]"
+            className={PANEL_TITLE_CLASS}
           >
             {JOBS_HEADING}
           </h2>

@@ -107,8 +107,8 @@ const PHASE_TYPES = [
 
 const PHASE_STATUS_COLOR: Record<string, string> = {
   pending:     'bg-[var(--color-bg-card)]/20 text-[var(--color-text-muted)]',
-  in_progress: 'bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]',
-  completed:   'bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]',
+  in_progress: 'bg-[var(--status-broken-bg)]/20 text-[var(--status-broken-ink)]',
+  completed:   'bg-[var(--status-passed-bg)]/20 text-[var(--status-passed-ink)]',
   skipped:     'bg-[var(--color-bg-card)]/10 text-[var(--color-text-muted)]',
 }
 

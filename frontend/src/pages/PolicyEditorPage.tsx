@@ -22,6 +22,7 @@ import toast from 'react-hot-toast';
 import { clsx } from 'clsx';
 import { ArrowLeft, Plus } from 'lucide-react';
 import PageHeader from '@/components/ui/PageHeader';
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader';
 import Disclosure from '@/components/ui/Disclosure';
 import InlineConfirm from '@/components/ui/inPage/InlineConfirm';
 import { helpTopicParam } from '@/components/help/helpTopics';
@@ -111,7 +112,8 @@ const LABEL = 'text-xs text-[var(--color-text-muted)]';
 const LABEL_SM = 'text-2xs text-[var(--color-text-muted)]';
 const HINT = 'text-2xs text-[var(--color-text-muted)] mt-0.5';
 const SECTION = 'card space-y-3';
-const SECTION_TITLE = 'text-sm font-semibold text-[var(--color-text)]';
+// W40 F-1: each card's h2 is the panel title role (`PANEL_TITLE_CLASS`, was a local 13 px copy). Its `m-0` beats
+// SECTION's `space-y-3` (a zero-specificity margin), so an h2 that is the card's direct child adds `mb-3`.
 
 const recommendationTone = (recommendation: string) => ({
   'text-[var(--status-passed)]': recommendation === 'GO',
@@ -154,7 +156,7 @@ function PolicySimulator({
       aria-labelledby="policy-simulator-title"
       className={clsx(SECTION, 'xl:sticky xl:top-4')}
     >
-      <h2 id="policy-simulator-title" className={SECTION_TITLE}>Policy Simulator</h2>
+      <h2 id="policy-simulator-title" className={`${PANEL_TITLE_CLASS} mb-3`}>Policy Simulator</h2>
       <p className="text-xs text-[var(--color-text-muted)]">Test this policy against a past test run to see how the decision would change.</p>
       <div>
         <div className="flex items-end gap-2">
@@ -560,7 +562,7 @@ export default function PolicyEditorPage() {
         <div data-primary="" data-policy-form="" className="min-w-0 space-y-4">
           {/* Metadata — a label/field grid: name and project side by side, the description full width. */}
           <section className={SECTION}>
-            <h2 className={SECTION_TITLE}>Metadata</h2>
+            <h2 className={`${PANEL_TITLE_CLASS} mb-3`}>Metadata</h2>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label htmlFor="policy-name" className={LABEL}>Name</label>
@@ -595,7 +597,7 @@ export default function PolicyEditorPage() {
 
           {/* Thresholds */}
           <section className={SECTION}>
-            <h2 className={SECTION_TITLE}>Thresholds</h2>
+            <h2 className={`${PANEL_TITLE_CLASS} mb-3`}>Thresholds</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {/* W11 GATE-02: the labels are the Compare list's too (one table). */}
               {THRESHOLD_KEYS.map((key) => (
@@ -614,7 +616,7 @@ export default function PolicyEditorPage() {
           {/* Pass-Rate Bands (4-colour build verdict) */}
           <section className={SECTION}>
             <div className="flex justify-between items-center">
-              <h2 className={SECTION_TITLE}>Pass-Rate Bands</h2>
+              <h2 className={PANEL_TITLE_CLASS}>Pass-Rate Bands</h2>
               <span className={clsx('text-xs', bandsValid ? 'text-[var(--status-passed)]' : 'text-[var(--status-failed)]')}>
                 {bandsValid ? 'Bands valid' : 'Bands must be strictly increasing (orange < yellow < green)'}
               </span>
@@ -651,7 +653,7 @@ export default function PolicyEditorPage() {
           {/* Rules */}
           <section className={SECTION}>
             <div className="flex justify-between items-center">
-              <h2 className={SECTION_TITLE}>Rules</h2>
+              <h2 className={PANEL_TITLE_CLASS}>Rules</h2>
               {editable && (
                 <select aria-label="Add rule" onChange={e => { if (e.target.value) { addRule(e.target.value); e.target.value = ''; } }}
                   className="input w-auto px-3 py-1.5 text-xs" defaultValue="">

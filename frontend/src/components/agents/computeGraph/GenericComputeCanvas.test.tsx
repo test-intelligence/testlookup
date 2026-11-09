@@ -91,7 +91,7 @@ describe('GenericComputeCanvas', () => {
     const { container } = render(<GenericComputeCanvas run={investigation()} />)
     const node = container.querySelector('[data-stage-id="investigator_plan"]') as HTMLElement
     const label = within(node).getByText('duration')
-    // A fixed 226 x 132 box: the label keeps its desk size in presentation mode,
+    // A fixed 226 x 168 box: the label keeps its desk size in presentation mode,
     // so it is a CHART_FONT number, never `text-2xs` / `eyebrow` (16 px there).
     expect(label).toHaveStyle({ fontSize: `${CHART_FONT.tick}px` })
     expect(label).toHaveClass('uppercase')

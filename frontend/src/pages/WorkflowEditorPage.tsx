@@ -635,7 +635,7 @@ export default function WorkflowEditorPage() {
                       {selected.status === 'published' ? 'Save as new draft' : 'Save draft'}
                     </button>
                     {selected.status === 'draft' && canEdit && (
-                      <button type="button" onClick={handlePublish} disabled={busy !== null || dirty || (acceptRegression && (!regressionReason.trim() || !evaluationManifestChecksum))} className="inline-flex items-center gap-1.5 rounded border border-[var(--status-passed-bd)] bg-[var(--status-passed-bg)] px-3 py-1.5 text-sm text-[var(--status-passed)] disabled:opacity-50">
+                      <button type="button" onClick={handlePublish} disabled={busy !== null || dirty || (acceptRegression && (!regressionReason.trim() || !evaluationManifestChecksum))} className="inline-flex items-center gap-1.5 rounded border border-[var(--status-passed-bd)] bg-[var(--status-passed-bg)] px-3 py-1.5 text-sm text-[var(--ui-success-ink)] disabled:opacity-50">
                         <ShieldCheck className="h-4 w-4" /> Publish
                       </button>
                     )}

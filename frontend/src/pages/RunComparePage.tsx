@@ -727,11 +727,11 @@ function StatusIcon({ status }: { status: string | null }) {
 
 function ClassificationBadge({ c }: { c: RunCompareClassification }) {
   const map: Record<RunCompareClassification, { label: string; tone: string }> = {
-    new_failure: { label: 'new failure', tone: 'border-[var(--status-failed-bd)]/40 text-[var(--status-failed)] bg-[var(--status-failed-bg)]/10' },
+    new_failure: { label: 'new failure', tone: 'border-[var(--status-failed-bd)]/40 text-[var(--status-failed-ink)] bg-[var(--status-failed-bg)]/10' },
     regressed: { label: 'regressed', tone: 'border-[var(--status-failed-bd)]/40 text-[var(--status-failed)]' },
     still_failing: { label: 'still failing', tone: 'border-[var(--status-broken-bd)]/40 text-[var(--status-broken)]' },
     duration_spike: { label: 'duration spike', tone: 'border-[var(--status-broken-bd)]/40 text-[var(--status-broken)]' },
-    fixed: { label: 'fixed', tone: 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)] bg-[var(--status-passed-bg)]/10' },
+    fixed: { label: 'fixed', tone: 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed-ink)] bg-[var(--status-passed-bg)]/10' },
     improved: { label: 'improved', tone: 'border-[var(--status-passed-bd)]/40 text-[var(--status-passed)]' },
     new_test: { label: 'new test', tone: 'border-[var(--color-accent)]/40 text-[var(--color-accent)]' },
     removed_test: { label: 'removed', tone: 'border-[var(--color-border)] text-[var(--color-text-muted)]' },

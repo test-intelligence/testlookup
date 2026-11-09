@@ -3,6 +3,7 @@ import { AlertTriangle, Loader2, Lock, Save, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import EmptyState from '@/components/ui/EmptyState'
 import PageHeader from '@/components/ui/PageHeader'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { usePermissions } from '@/hooks/usePermissions'
 import { updateMfaPolicy, useMfaPolicy } from '@/hooks/useMfaPolicy'
 import { MFA_ROLES, type MfaPolicy, type MfaPolicyUpdate, type MfaRole } from '@/types/mfa'
@@ -157,7 +158,8 @@ export default function MfaPolicyPage() {
           <div data-settings-form-grid="" className="grid grid-cols-1 gap-4 xl:grid-cols-2">
             {/* ── MFA requirement ─────────────────────────────────────────── */}
             <section className="card space-y-4">
-              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]">
+              {/* W40 F-1: the panel title role; its `m-0` beats `space-y-4`'s zero-specificity margin, so `mb-4` keeps the gap. */}
+              <h2 className={`${PANEL_TITLE_CLASS} mb-4 flex items-center gap-2`}>
                 <ShieldCheck className="h-4 w-4 text-[var(--color-text-muted)]" />
                 Require two-factor authentication
               </h2>
@@ -210,7 +212,7 @@ export default function MfaPolicyPage() {
 
             {/* ── Lockout ─────────────────────────────────────────────────── */}
             <section className="card space-y-4">
-              <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]">
+              <h2 className={`${PANEL_TITLE_CLASS} mb-4 flex items-center gap-2`}>
                 <Lock className="h-4 w-4 text-[var(--color-text-muted)]" />
                 Failed sign-in lockout
               </h2>

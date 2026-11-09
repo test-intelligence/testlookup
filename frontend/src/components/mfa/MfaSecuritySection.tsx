@@ -18,6 +18,7 @@ import {
 import type { MfaEnrollStartResponse } from '@/types/mfa'
 import { describeMfaError, type MfaErrorInfo } from '@/utils/mfaErrors'
 import { formatCompactDateTime } from '@/utils/formatters'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import MfaCodeField, { type MfaFactorMode } from './MfaCodeField'
 import MfaEnrollPanel from './MfaEnrollPanel'
 import RecoveryCodesPanel from './RecoveryCodesPanel'
@@ -131,8 +132,10 @@ export default function MfaSecuritySection() {
   }
 
   // ── Shell ─────────────────────────────────────────────────────────────────
-  const heading = (
-    <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]">
+  // W40 F-1: the panel title role. Its `m-0` beats the card's `space-y-3` / `space-y-4` (zero-specificity margins),
+  // so each shell passes its own gap as a bottom margin.
+  const heading = (gap: 'mb-3' | 'mb-4') => (
+    <h2 className={`${PANEL_TITLE_CLASS} ${gap} flex items-center gap-2`}>
       <ShieldCheck className="h-4 w-4 text-[var(--color-text-muted)]" />
       Two-Factor Authentication
     </h2>
@@ -141,7 +144,7 @@ export default function MfaSecuritySection() {
   if (isLoading) {
     return (
       <section className="card space-y-4">
-        {heading}
+        {heading('mb-4')}
         <p className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
           <Loader2 className="h-4 w-4 animate-spin" />
           Checking your security settings…
@@ -154,7 +157,7 @@ export default function MfaSecuritySection() {
     const info = describeMfaError(error)
     return (
       <section className="card space-y-4">
-        {heading}
+        {heading('mb-4')}
         <p role="alert" className="text-sm text-[var(--status-failed)]">
           {info.kind === 'unavailable'
             ? info.message
@@ -168,7 +171,7 @@ export default function MfaSecuritySection() {
   if (status.sso_managed) {
     return (
       <section className="card space-y-3" data-testid="mfa-sso-managed">
-        {heading}
+        {heading('mb-3')}
         <div className="flex items-start gap-2">
           <Building2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--color-text-muted)]" />
           <p className="text-sm text-[var(--color-text-secondary)]">
@@ -188,7 +191,7 @@ export default function MfaSecuritySection() {
         className="card space-y-3 border-[var(--status-failed-bd)]"
         data-testid="mfa-secret-unreadable"
       >
-        {heading}
+        {heading('mb-3')}
         <div className="flex items-start gap-2 rounded-md border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg-soft)] p-3">
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--status-failed)]" />
           <div className="space-y-1.5">
@@ -218,7 +221,7 @@ export default function MfaSecuritySection() {
   if (!status.enabled) {
     return (
       <section className="card space-y-4" data-testid="mfa-not-enrolled">
-        {heading}
+        {heading('mb-4')}
 
         {panel === 'enroll' && enrollment ? (
           <MfaEnrollPanel
@@ -284,7 +287,7 @@ export default function MfaSecuritySection() {
 
   return (
     <section className="card space-y-4" data-testid="mfa-enrolled">
-      {heading}
+      {heading('mb-4')}
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
         <span className="inline-flex items-center gap-1.5 rounded border border-[var(--status-passed-bd)] bg-[var(--status-passed-bg-soft)] px-2 py-0.5 text-xs font-medium text-[var(--status-passed)]">

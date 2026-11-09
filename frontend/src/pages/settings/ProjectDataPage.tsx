@@ -30,6 +30,7 @@ import { Fragment, useMemo, useState } from 'react'
 import { AlertTriangle, Loader2, ShieldAlert, Trash2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import PageHeader from '@/components/ui/PageHeader'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import EmptyState from '@/components/ui/EmptyState'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
 import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
@@ -261,7 +262,8 @@ export default function ProjectDataPage() {
 
       {/* Context card */}
       <section className="card space-y-2">
-        <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]">
+        {/* W40 F-1: the panel title role. Its `m-0` beats `space-y-2`'s zero-specificity margin, so `mb-2` keeps the gap. */}
+        <h2 className={`${PANEL_TITLE_CLASS} mb-2 flex items-center gap-2`}>
           <ShieldAlert className="h-4 w-4 text-[var(--color-text-muted)]" />
           Active project
         </h2>
@@ -281,7 +283,8 @@ export default function ProjectDataPage() {
       {/* Last result */}
       {lastResult && (
         <section className="card border-[var(--status-passed-bd)]/40 bg-[var(--status-passed-bg)]/10">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-[var(--status-passed)]">
+          {/* W40 F-1: the panel title role; the status colour stays (`!` over the role's neutral text). */}
+          <h2 className={`${PANEL_TITLE_CLASS} !text-[var(--status-passed)]`}>
             Reset complete ({lastResult.mode})
           </h2>
           <ul className="mt-2 ml-4 list-disc space-y-0.5 text-xs text-[var(--status-passed)]/90">
@@ -335,9 +338,10 @@ export default function ProjectDataPage() {
           className="card space-y-4 border-[var(--status-failed-bd)]/40"
           aria-labelledby="danger-zone-heading"
         >
-          <header className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--status-failed)]">
+          {/* W40 F-1: the panel title role on the h2; it inherits the header's status colour (the icon's too). */}
+          <header className="flex items-center gap-2 text-[var(--status-failed)]">
             <AlertTriangle className="h-4 w-4" />
-            <h2 id="danger-zone-heading">Danger zone</h2>
+            <h2 id="danger-zone-heading" className={`${PANEL_TITLE_CLASS} !text-inherit`}>Danger zone</h2>
           </header>
           <p className="text-xs text-[var(--color-text-muted)]">
             These actions cannot be undone. A typed-name confirmation guards every reset; the backend

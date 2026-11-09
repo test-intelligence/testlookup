@@ -29,6 +29,7 @@ import { SWRConfig } from 'swr'
 
 import type { RetentionPolicy } from '@/types/retention'
 import { helpTopicParam } from '@/components/help/helpTopics'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { policyWithSources } from '@/test/retentionExportMocks'
 
 // ── mocks ───────────────────────────────────────────────────────────────────
@@ -263,6 +264,21 @@ describe('RetentionPage', () => {
     expect(dayInput('runs_days').value).toBe('365')
     expect(dayInput('artifacts_days').value).toBe('180')
     expect(dayInput('audit_days').value).toBe('2555')
+  })
+
+  it('W40 F-1: each card title is the panel title role (14 px sentence case), never the 13 px uppercase look', async () => {
+    await renderPage()
+    await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
+
+    for (const name of ['Retention policy', 'Purge preview', 'Danger zone']) {
+      const heading = screen.getByRole('heading', { level: 2, name })
+      for (const cls of PANEL_TITLE_CLASS.split(' ')) expect(heading.classList).toContain(cls)
+      expect(heading.className).not.toMatch(/uppercase|tracking-/)
+    }
+    // The Danger zone keeps its status colour: the h2 inherits its header's (the icon reads it too).
+    const danger = screen.getByRole('heading', { level: 2, name: 'Danger zone' })
+    expect(danger.classList).toContain('!text-inherit')
+    expect(danger.parentElement?.className).toContain('text-[var(--status-failed)]')
   })
 
   it('W32 (F-W25d-4, D-5): the Raw events and Audit trail help say what each clock deletes — no provenance rows, no pipeline event log on the raw clock', async () => {

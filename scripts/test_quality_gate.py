@@ -5368,65 +5368,85 @@ def test_type_scale_floor_is_the_named_allow_list() -> None:
     assert not problems, "\n".join(problems)
 
 
-# A style property `fontSize: …` up to the first `,` `}` or newline (so the
-# neighbours `minHeight: 28` / `lineHeight: 1.15` are not read), and a JSX / SVG
-# attribute `fontSize="…"` / `fontSize={…}`. After dropping `var(...)` reads, a
-# numeric literal in either is a size the gate's regex cannot see.
-_FONT_SIZE_PROP_RE = re.compile(r"\bfontSize\s*\??\s*:([^,}\n]*)")
-_FONT_SIZE_ATTR_RE = re.compile(r"""\bfontSize\s*=\s*(\{[^}\n]*\}|"[^"\n]*"|'[^'\n]*')""")
-_CSS_VAR_READ_RE = re.compile(r"var\([^)]*\)")
-_NUMERIC_LITERAL_RE = re.compile(r"(?<![\w.$-])\d+(?:\.\d+)?(?![\w-])")
+# Since W40 (W29d F-5 = W29e F-10) the gate's own `_TYPE_SCALE_INLINE_RE` counts
+# the two forms W29d's T3 found blind — an expression after `fontSize:` (ex
+# `AISuggestion.tsx:236`) and a JSX / SVG `fontSize=` attribute (ex
+# `WorkflowEditorPage.tsx:204-205`) — so test 2 is a self-test of that regex:
+# each numeric form counts exactly ONCE (a ternary is one size site however many
+# literals it holds), each token / type form counts zero, and a planted tree
+# counts them through `_type_scale_counts` outside the chart kit only. The live
+# tree stays at the floor (test 1): neither form is in it.
+_TYPE_SCALE_COUNTED_FORMS = (
+    # the forms counted before W40
+    "const s = { fontSize: 12 }",
+    "const s = { fontSize: '9px', lineHeight: 1 }",
+    "<span style={{ fontWeight: 500, fontSize: '1.4em' }}>[</span>",
+    # an expression after `fontSize:`
+    "const s = { fontSize: compact ? 9.5 : 10, letterSpacing: '0.04em' }",
+    "const s = { fontSize: base * 1.2 }",
+    "const s = { fontSize: compact ? 'var(--text-xs)' : 10 }",
+    "const s = { fontSize: '.875rem' }",
+    # a JSX / SVG attribute
+    '<text x={4} fontSize="9.5">x</text>',
+    "<text fontSize='12'>x</text>",
+    "<text fontSize={12}>x</text>",
+    "<text fontSize={dense ? 10 : 11}>x</text>",
+    "<text fontSize={size === 'sm' ? 10 : 12}>x</text>",
+)
+_TYPE_SCALE_UNCOUNTED_FORMS = (
+    "const s = { fontSize: CHART_FONT.tick, minHeight: 28, lineHeight: 1.4 }",
+    "<text fontSize={CHART_FONT.legend}>x</text>",
+    "<text fontSize={FONT_2XS}>x</text>",  # a digit glued to a name is no size
+    "const s = { fontSize: theme.h1 }",
+    "const s = { fontSize: 'var(--text-display-lg)', lineHeight: 1.15 }",
+    "const s = { fontSize: 'var(--text-2xs)' }",
+    "const s = { fontSize: compact ? 'var(--text-2xs)' : 'var(--text-xs)' }",
+    '<text fontSize="var(--text-2xs)">x</text>',
+    "const s = { fontSize: 'var(--text-xs, 12px)' }",  # a var() read is skipped whole
+    "function label(fontSize: number) { return fontSize }",
+    "interface Props { fontSize?: number }",
+)
 
 
-def _uncounted_font_sizes(text: str) -> list[str]:
-    """``"<line>: <snippet>"`` for each numeric font size in ``text`` that
-    ``frontend.type-scale`` does not count (a ternary, an expression, a JSX
-    attribute). ``fontSize: 12`` / ``'9px'`` are the gate's own: skipped here."""
-    hits: list[tuple[int, str]] = []
-    for m in _FONT_SIZE_PROP_RE.finditer(text):
-        if qg._TYPE_SCALE_INLINE_RE.match(text, m.start()):
-            continue
-        if _NUMERIC_LITERAL_RE.search(_CSS_VAR_READ_RE.sub("", m.group(1))):
-            hits.append((m.start(), m.group(0).strip()))
-    for m in _FONT_SIZE_ATTR_RE.finditer(text):
-        if _NUMERIC_LITERAL_RE.search(_CSS_VAR_READ_RE.sub("", m.group(1))):
-            hits.append((m.start(), m.group(0).strip()))
-    return [f"{text.count(chr(10), 0, pos) + 1}: {snippet}" for pos, snippet in sorted(hits)]
+def test_type_scale_inline_regex_keeps_var_reads_out_of_its_repeat() -> None:
+    """CodeQL (PR #345, code-scanning #72-#75) flagged the first W40 regex — a
+    `(var(…)|(?!var\\()char)*` alternation — as exponential backtracking: its static model ignores
+    the lookahead (Python ran it in ~6 ms on 20,000 `var()`). The fix blanks `var(…)` reads in a
+    separate linear pass, so the counting regex never mentions `var(` — keep it that way — and the
+    count stays 0 on CodeQL's own inputs."""
+    assert "var" not in qg._TYPE_SCALE_INLINE_RE.pattern
+    assert qg._TYPE_SCALE_VAR_READ_RE.pattern == r"var\([^)\n]*\)"
+    for opener in ("fontSize: ", 'fontSize="', "fontSize='", "fontSize={{"):
+        assert qg._type_scale_inline_count(opener + "var()" * 20_000 + "x") == 0
 
 
-def test_type_scale_has_no_uncounted_numeric_font_size() -> None:
-    """No numeric font size the gate's regex misses, over the gate's own sources
-    (non-test pages/ + components/, outside the chart kit)."""
-    flagged = (
-        "const s = { fontSize: compact ? 9.5 : 10, letterSpacing: '0.04em' }",
-        '<text x={4} fontSize="9.5">x</text>',
-        "<text fontSize={12}>x</text>",
-        "<text fontSize={dense ? 10 : 11}>x</text>",
-        "const s = { fontSize: base * 1.2 }",
-    )
-    clean = (
-        "const s = { fontSize: CHART_FONT.tick, minHeight: 28, lineHeight: 1.4 }",
-        "<text fontSize={CHART_FONT.legend}>x</text>",
-        "const s = { fontSize: 'var(--text-display-lg)', lineHeight: 1.15 }",
-        "function label(fontSize: number) { return fontSize }",
-        "interface Props { fontSize?: number }",
-        "const s = { fontSize: 12 }",  # the gate's own form: counted by frontend.type-scale, not here
-    )
-    for planted in flagged:
-        assert _uncounted_font_sizes(planted), f"self-check: not flagged: {planted}"
-    for planted in clean:
-        assert _uncounted_font_sizes(planted) == [], f"self-check: flagged: {planted}"
+def test_type_scale_has_no_uncounted_numeric_font_size(monkeypatch, tmp_path) -> None:
+    """The gate's inline regex counts every numeric font size form once — the
+    expression and attribute forms too (W40) — and no token or type form."""
+    for planted in _TYPE_SCALE_COUNTED_FORMS:
+        assert qg._type_scale_inline_count(planted) == 1, f"not counted once: {planted}"
+    for planted in _TYPE_SCALE_UNCOUNTED_FORMS:
+        assert qg._type_scale_inline_count(planted) == 0, f"counted: {planted}"
 
-    found = [
-        f"{rel}:{hit}"
-        for rel, path in qg._ui_sources(qg._UI_PAGES_COMPONENTS)
-        if not rel.startswith(qg._UI_CHART_KIT)
-        for hit in _uncounted_font_sizes(qg._ui_read(path))
-    ]
-    assert found == [], (
-        "numeric font sizes frontend.type-scale cannot count — use a scale class, or CHART_FONT inside a "
-        "fixed-geometry drawing:\n  " + "\n  ".join(found)
-    )
+    src = _ui_repo(monkeypatch, tmp_path)
+    _write(src / "components" / "ai" / "Badge.tsx", """
+        export const B = ({ compact }) => <span style={{ fontSize: compact ? 9.5 : 10 }}>AI</span>
+    """)
+    _write(src / "pages" / "Editor.tsx", """
+        export const N = () => <svg><text fontSize="12">a</text><text fontSize={dense ? 9 : 10}>b</text></svg>
+    """)
+    _write(src / "pages" / "Tokens.tsx", """
+        export const T = () => <svg><text fontSize={CHART_FONT.tick}>a</text></svg>
+        export const M = () => <span style={{ fontSize: 'var(--text-display-lg)' }}>9</span>
+    """)
+    _write(src / "components" / "charts" / "Axis.tsx", """
+        export const A = () => <text fontSize={11}>t</text>
+    """)
+    _write(src / "pages" / "Editor.test.tsx", "const t = <text fontSize={9}>x</text>\n")
+    assert qg._type_scale_counts() == {
+        "frontend/src/components/ai/Badge.tsx": 1,   # the ternary: one site
+        "frontend/src/pages/Editor.tsx": 2,          # two attributes
+    }
 
 
 # ── backend.activity-registry-emitted (W21 ACT-01) ───────────────────────────

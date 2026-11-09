@@ -123,9 +123,9 @@ const TIER_LABELS: Record<string, string> = {
   rules: 'Rules-Based',
 }
 
-const OK_CLS = 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border-[var(--status-passed-bd)]'
-const BAD_CLS = 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] border-[var(--status-failed-bd)]'
-const WARN_CLS = 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border-[var(--status-broken-bd)]'
+const OK_CLS = 'bg-[var(--status-passed-bg)] text-[var(--ui-success-ink)] border-[var(--status-passed-bd)]'
+const BAD_CLS = 'bg-[var(--status-failed-bg)] text-[var(--ui-danger-ink)] border-[var(--status-failed-bd)]'
+const WARN_CLS = 'bg-[var(--status-broken-bg)] text-[var(--ui-warning-ink)] border-[var(--status-broken-bd)]'
 
 /**
  * Short badge for an unavailable LLM tier.
@@ -503,17 +503,17 @@ export default function AIConfigPage() {
                       </span>
                     )}
                     {mode.value === 'ml' && !mlAvailable && (
-                      <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
+                      <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--ui-warning-ink)]">
                         Not Trained
                       </span>
                     )}
                     {mode.value === 'ml' && mlAvailable && (
-                      <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">
+                      <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--ui-success-ink)]">
                         Ready ({((mlAccuracy ?? 0) * 100).toFixed(0)}% accuracy)
                       </span>
                     )}
                     {mode.value === 'ml' && mlAvailable && mlMaturity !== 'human_calibrated' && (
-                      <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--status-broken)]">
+                      <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-broken-bg)]/20 text-[var(--ui-warning-ink)]">
                         Bootstrap (LLM-imitating)
                       </span>
                     )}
@@ -531,7 +531,7 @@ export default function AIConfigPage() {
                 the LLM's own labels — do not claim it learns from corrections. */}
             {(form.analysis_mode === 'ml' || form.analysis_mode === 'auto') &&
               mlAvailable && mlMaturity !== 'human_calibrated' && (
-              <div className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-[var(--status-broken-bg)]/10 border border-[var(--status-broken-bd)]/20 text-xs text-[var(--status-broken)]">
+              <div className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-[var(--status-broken-bg)]/10 border border-[var(--status-broken-bd)]/20 text-xs text-[var(--ui-warning-ink)]">
                 <span className="font-medium">ML classifier is in bootstrap mode (LLM-imitating).</span>
                 <span className="text-[var(--color-text-muted)]">
                   The current model was trained mostly on the LLM&apos;s own high-confidence
@@ -748,7 +748,7 @@ export default function AIConfigPage() {
               <div>
                 <span className="text-sm font-medium text-[var(--color-text)]">Enable Knowledge RAG</span>
                 {config.knowledge_rag_enabled ? (
-                  <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--status-passed)]">Active</span>
+                  <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--status-passed-bg)]/20 text-[var(--ui-success-ink)]">Active</span>
                 ) : (
                   <span className="ml-2 text-2xs font-medium px-1.5 py-0.5 rounded bg-[var(--color-bg-hover)]/20 text-[var(--color-text-secondary)]">Disabled</span>
                 )}

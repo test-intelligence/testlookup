@@ -1343,6 +1343,17 @@ locally by default.
 
 ### Changed
 
+- **Type-scale leftovers: heading roles, shared tables and surfaces, readable status text, the compute graph** (wave
+  W40, W29d F-1..F-6 / W29e F-10; branch `feat/df-ingest-typescale-20261108`). The 13 px uppercase card headings in
+  settings, account, reports, runs and test management now use the panel-title role (14 px / 600, sentence case); a new
+  `SECTION_TITLE_CLASS` (16 px / 600) is the role for a heading over a section of several cards. The kept hand-made
+  tables (test management's cases, live execution, agent activity, fix attempts) use the shared `Table` / `Th` /
+  `ThSort` with sorting and selection unchanged; three hand-made panels moved onto the shared card surface. Status text
+  on its own tint now reads the `-ink` tokens in 20 files (93 lines). The agents' compute-graph nodes are taller
+  (168 px) and clamp their running / failed description to one line, so no node spills or overlaps in any state. The
+  type-scale guard now also counts a font size set by an expression after `fontSize:` and a JSX / SVG `fontSize=`
+  attribute. The status-text-on-tint, status-hue, table-header and card-surface ratchets were lowered (−93, −61, −18,
+  −3).
 - **All Projects for members of more than one project** (wave W35, STRAT-01 / D28; branch
   `feat/df-all-projects-20261106`). The top bar offers **All Projects** to an administrator
   and to anyone who belongs to two or more projects; a member of one project stays on it.

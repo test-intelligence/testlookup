@@ -3,7 +3,7 @@
  * stage nodes, decision diamond, and SVG edge layer for the /agents compute
  * graph.
  *
- * The inner content is a fixed-size 1750×560 stage; the outer wrapper handles
+ * The inner content is a fixed-size 1750×576 stage; the outer wrapper handles
  * horizontal/vertical scroll when the viewport is narrower. By design the
  * canvas does NOT auto-fit / zoom-to-fit — narrow viewports get a scrollbar.
  */

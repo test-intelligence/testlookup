@@ -1,10 +1,15 @@
 /**
- * ComputeNode — the 226×132 stage card used inside the compute canvas.
+ * ComputeNode — the 226×168 stage card used inside the compute canvas.
  *
  * Each card is absolutely positioned by its parent ``ComputeCanvas`` at the
  * coordinates from ``layout.POS``. The card itself is responsible for
  * status-based chrome (border, background, pill), the description, the 4-cell
- * metric grid, and the running/failed suffix rows.
+ * metric grid, and the running/failed suffix row.
+ *
+ * W40 (W29d F-4): nothing is drawn past the card in any state. A running /
+ * failed card adds a one-line suffix (the progress bar sits inside the running
+ * row, between its duration and ETA), so its description clamps to ONE line
+ * with the full text as the line's ``title``; the other states keep two lines.
  */
 import { clsx } from 'clsx'
 import { useNow } from '@/hooks/useNow'
@@ -203,6 +208,9 @@ export default function ComputeNode({ stage, selected, onSelect, position }: Com
   const etaSeconds = stage.startMs != null && stage.etaMs != null
     ? Math.max(0, Math.round(stage.etaMs - stage.startMs))
     : null
+  // W40 F-4: a suffix row below the grid leaves room for ONE description line.
+  const hasSuffix = stage.status === 'running' || stage.status === 'failed'
+  const fullDesc = note ? `${stage.desc} · ${note}` : stage.desc
 
   return (
     <button
@@ -255,10 +263,11 @@ export default function ComputeNode({ stage, selected, onSelect, position }: Com
         </span>
       </div>
 
-      {/* Description — reserved height so cards align across rows */}
+      {/* Description — reserved height so cards align across rows; one line (full text as its title) beside a suffix */}
       <div
-        className="mt-2 text-[var(--color-text-muted)] line-clamp-2"
-        style={{ fontSize: CHART_FONT.tick, minHeight: 28, lineHeight: 1.4 }}
+        className={clsx('mt-2 text-[var(--color-text-muted)]', hasSuffix ? 'line-clamp-1' : 'line-clamp-2')}
+        style={{ fontSize: CHART_FONT.tick, minHeight: hasSuffix ? undefined : 28, lineHeight: 1.4 }}
+        title={hasSuffix ? fullDesc : undefined}
       >
         {stage.desc}
         {note && <span data-stage-note=""> · {note}</span>}
@@ -278,23 +287,23 @@ export default function ComputeNode({ stage, selected, onSelect, position }: Com
 
       {/* Failed-state retry suffix */}
       {stage.status === 'failed' && (
-        <div className="mt-1.5 flex items-center gap-1.5 leading-tight" style={{ fontSize: CHART_FONT.tick, color: 'var(--status-failed)' }}>
+        <div className="mt-0.5 flex items-center gap-1.5 leading-tight" style={{ fontSize: CHART_FONT.tick, color: 'var(--status-failed)' }}>
           <CircleAlert className="w-3 h-3" />
           retry 1/3 queued
         </div>
       )}
 
-      {/* Running-state progress + ETA */}
+      {/* Running-state progress + ETA: one row, the bar between the duration and the ETA */}
       {stage.status === 'running' && (
-        <div className="mt-1.5">
-          <ProgressBar pct={runningPct} />
-          <div
-            className="mt-1 flex justify-between font-mono leading-tight text-[var(--color-text-muted)]"
-            style={{ fontSize: CHART_FONT.tick }}
-          >
-            <span>{stage.dur ?? '—'}</span>
-            {etaSeconds != null && <span>ETA {etaSeconds}s total</span>}
+        <div
+          className="mt-0.5 flex items-center gap-2 whitespace-nowrap font-mono leading-tight text-[var(--color-text-muted)]"
+          style={{ fontSize: CHART_FONT.tick }}
+        >
+          <span>{stage.dur ?? '—'}</span>
+          <div className="min-w-0 flex-1">
+            <ProgressBar pct={runningPct} />
           </div>
+          {etaSeconds != null && <span>ETA {etaSeconds}s total</span>}
         </div>
       )}
     </button>

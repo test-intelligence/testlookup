@@ -20,6 +20,7 @@ import { RefreshCw, ShieldAlert } from 'lucide-react'
 import toast from 'react-hot-toast'
 import ChipFilter from '@/pages/inbox/ChipFilter'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { refreshRetentionHolds, useRetentionHolds } from '@/hooks/useRetentionHolds'
 import { placeRetentionHold, releaseRetentionHold } from '@/services/retentionHoldService'
@@ -304,7 +305,7 @@ export default function HoldsCard({ projectId, projectName }: HoldsCardProps) {
           <ShieldAlert aria-hidden="true" className="h-4 w-4 text-[var(--color-accent)]" />
           <h2
             id="retention-holds-heading"
-            className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]"
+            className={PANEL_TITLE_CLASS}
           >
             Retention holds
           </h2>

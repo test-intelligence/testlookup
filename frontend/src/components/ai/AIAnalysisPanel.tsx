@@ -162,7 +162,7 @@ function InvestigationTrail({
         {steps.map((step, index) => (
           <div key={step.id} className="min-w-0 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-card)]/60 p-3" data-trail-step>
             <div className="flex items-center gap-2">
-              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--status-passed-bg)]/30 text-[var(--status-passed)]">
+              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--status-passed-bg)]/30 text-[var(--status-passed-ink)]">
                 <CheckCircle className="h-3 w-3" />
               </div>
               <p className="min-w-0 text-sm text-[var(--color-text)] [overflow-wrap:anywhere]">{step.label}</p>
@@ -405,17 +405,17 @@ export default function AIAnalysisPanel({
           {result.failure_category.replace('_', ' ')}
         </span>
         {result.is_flaky && (
-          <span className="badge bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)] border border-[var(--status-flaky-bd)]/50">
+          <span className="badge bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky-ink)] border border-[var(--status-flaky-bd)]/50">
             ⚠ High Flakiness
           </span>
         )}
         {result.backend_error_found && (
-          <span className="badge bg-[var(--status-broken-bg)]/40 text-[var(--status-broken)] border border-[var(--status-broken-bd)]/50">
+          <span className="badge bg-[var(--status-broken-bg)]/40 text-[var(--ui-warning-ink)] border border-[var(--status-broken-bd)]/50">
             Backend Error Found
           </span>
         )}
         {result.pod_issue_found && (
-          <span className="badge bg-[var(--status-failed-bg)]/40 text-[var(--status-failed)] border border-[var(--status-failed-bd)]/50">
+          <span className="badge bg-[var(--status-failed-bg)]/40 text-[var(--ui-danger-ink)] border border-[var(--status-failed-bd)]/50">
             OCP Pod Issue
           </span>
         )}

@@ -415,4 +415,17 @@ describe('InvestigatorCockpit — the type scale', () => {
     expect(loop).toHaveClass('eyebrow')
     expect(loop.style.letterSpacing).toBe('')
   })
+
+  it('W40 F-3: the cockpit is a .card section region (no hand-made surface), keeping its test id and label', async () => {
+    await mockHooks({ detail: DETAIL })
+    renderCockpit()
+
+    const cockpit = screen.getByRole('region', { name: 'Agent investigation' })
+    expect(cockpit.tagName).toBe('SECTION')
+    expect(cockpit).toHaveAttribute('data-testid', 'investigator-cockpit')
+    expect(cockpit).toHaveClass('card')
+    expect(cockpit).not.toHaveClass('rounded-xl')
+    expect(cockpit.style.background).toBe('')
+    expect(cockpit.style.border).toBe('')
+  })
 })

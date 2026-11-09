@@ -35,6 +35,7 @@ import { isAxiosError } from 'axios'
 import { ArrowRight, Upload } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { useProjectDataJob } from '@/hooks/useProjectDataJobs'
 import { projectDataErrorMessage, projectDataService, type ImportArchiveProgress } from '@/services/projectDataService'
 import { useProjectStore } from '@/store/projectStore'
@@ -375,7 +376,7 @@ export default function ProjectImportCard({ loadError, latest, onChanged }: Prop
     >
       <h2
         id="project-import-heading"
-        className="m-0 flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]"
+        className={`${PANEL_TITLE_CLASS} flex items-center gap-2`}
       >
         <Upload className="h-4 w-4 text-[var(--color-text-muted)]" aria-hidden="true" />
         {UI_SENTENCES.import_heading}

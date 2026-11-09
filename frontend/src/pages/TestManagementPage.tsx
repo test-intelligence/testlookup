@@ -18,6 +18,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import Pagination from '@/components/ui/Pagination'
 import StatusBanner from '@/components/ui/StatusBanner'
+import { Table, Th } from '@/components/ui/Table'
 import { avatarColorForName } from '@/components/ui/avatarColors'
 import { SEVERITY_STYLE, severityLevel } from '@/components/ui/severity'
 import { useTabParam } from '@/components/ui/useTabParam'
@@ -135,8 +136,8 @@ const HELP_TOPIC = helpTopicParam('/test-management')
 const PLAN_STATUS_COLORS: Record<string, string> = {
   draft:       'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] border border-[var(--color-border-light)]',
   active:      'bg-[var(--color-bg-secondary)]/80 text-[var(--color-text-secondary)] border border-[var(--color-border-light)]',
-  in_progress: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)] border border-[var(--status-broken-bd)]',
-  completed:   'bg-[var(--status-passed-bg)] text-[var(--status-passed)] border border-[var(--status-passed-bd)]',
+  in_progress: 'bg-[var(--status-broken-bg)] text-[var(--status-broken-ink)] border border-[var(--status-broken-bd)]',
+  completed:   'bg-[var(--status-passed-bg)] text-[var(--status-passed-ink)] border border-[var(--status-passed-bd)]',
   archived:    'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)] border border-[var(--color-border)]',
 }
 
@@ -1560,7 +1561,7 @@ export function TestCasesTab({ projectId, lifecycleV2, requirementTraceability =
       {casesError && (
         <div
           role="alert"
-          className="flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]"
+          className="flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--ui-danger-ink)]"
         >
           <span>
             {hasPreviouslyLoadedCases
@@ -1581,7 +1582,7 @@ export function TestCasesTab({ projectId, lifecycleV2, requirementTraceability =
       {caseRefreshWarning && (
         <p
           role="status"
-          className="rounded-lg border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-3 text-sm text-[var(--status-broken)]"
+          className="rounded-lg border border-[var(--status-broken-bd)] bg-[var(--status-broken-bg)] p-3 text-sm text-[var(--ui-warning-ink)]"
         >
           {caseRefreshWarning}
         </p>
@@ -1986,24 +1987,26 @@ export function CasesTableBody({
 }) {
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-sm" role="table">
+      {/* W40 F-2: the ONE table at `dense` density (px-3 py-2 = the 8 px / 12 px this header already used). */}
+      <Table density="dense" role="table">
         <thead>
-          <tr style={{ background: 'var(--color-bg-secondary)', borderBottom: '1px solid var(--color-border)' }}>
+          {/* The header cells paint the sunken row themselves (`.th`); the row keeps its rule under them. */}
+          <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
             {/* ID, Priority and Automation lost their fixed columns — they now
                 ride the meta line under the title. Seven fixed widths (660px)
                 plus Title's minWidth:280 demanded ~940px, so Title collapsed to
                 a few characters and Last run + actions scrolled out of view. */}
-            <Th
+            <CasesTh
               label="Test case"
               flex
               leading={selection && cases.some(selection.canSelect)
                 ? <PageSelectBox state={selection.pageState} onToggle={selection.onTogglePage} />
                 : undefined}
             />
-            <Th label="Status"     width={100} />
-            {!compact && <Th label="Owner" width={122} />}
-            <Th label="Last run"   width={110} align="right" />
-            <Th label="" align="right" width={40} />
+            <CasesTh label="Status"     width={100} />
+            {!compact && <CasesTh label="Owner" width={122} />}
+            <CasesTh label="Last run"   width={110} align="right" />
+            <CasesTh label="" align="right" width={40} />
           </tr>
         </thead>
         <tbody>
@@ -2025,12 +2028,13 @@ export function CasesTableBody({
             />
           ))}
         </tbody>
-      </table>
+      </Table>
     </div>
   )
 }
 
-function Th({ label, width, align, flex, leading }: {
+/** A cases-table header: the ONE `Th` (`.th`: 11 px / 600 uppercase label on the sunken row) plus this table's widths. */
+function CasesTh({ label, width, align, flex, leading }: {
   label: string
   width?: number
   align?: 'right'
@@ -2046,21 +2050,13 @@ function Th({ label, width, align, flex, leading }: {
   leading?: ReactNode
 }) {
   return (
-    <th
-      className="eyebrow"
-      style={{
-        padding: '8px 12px',
-        textAlign: align ?? 'left',
-        color: 'var(--color-text-muted)',
-        textTransform: 'uppercase',
-        width: flex ? '100%' : width,
-        maxWidth: flex ? 0 : undefined,
-        whiteSpace: 'nowrap',
-      }}
+    <Th
+      className={clsx('whitespace-nowrap', align === 'right' && 'text-right')}
+      style={{ width: flex ? '100%' : width, maxWidth: flex ? 0 : undefined }}
     >
       {/* A block flex row, not an inline one: an inline box around the checkbox grew the header's line box (+4 px). */}
       {leading ? <div className="flex items-center gap-2">{leading}{label}</div> : label}
-    </th>
+    </Th>
   )
 }
 
@@ -2494,9 +2490,9 @@ function PlanItemsView({ planId, onMutate, projectId = null }: PlanItemsViewProp
                       onClick={() => handleExecute(item.id, s)}
                       className={clsx(
                         'text-xs px-2 py-0.5 rounded transition-colors',
-                        s === 'passed'  ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)] hover:bg-[var(--status-passed-bd)]' :
-                        s === 'failed'  ? 'bg-[var(--status-failed-bg)] text-[var(--status-failed)] hover:bg-[var(--status-failed-bd)]' :
-                                          'bg-[var(--status-broken-bg)] text-[var(--status-broken)] hover:bg-[var(--status-broken-bd)]'
+                        s === 'passed'  ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed-ink)] hover:bg-[var(--status-passed-bd)]' :
+                        s === 'failed'  ? 'bg-[var(--status-failed-bg)] text-[var(--status-failed-ink)] hover:bg-[var(--status-failed-bd)]' :
+                                          'bg-[var(--status-broken-bg)] text-[var(--status-broken-ink)] hover:bg-[var(--status-broken-bd)]'
                       )}
                     >
                       {s}
@@ -2900,10 +2896,10 @@ interface SuiteCase {
 interface TestSuitesTabProps { projectId: string | null }
 
 const REVIEW_STATE_STYLES: Record<SuiteReviewState, { label: string; cls: string }> = {
-  pending:       { label: 'Pending review',  cls: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' },
-  confirmed:     { label: 'Confirmed',        cls: 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' },
+  pending:       { label: 'Pending review',  cls: 'bg-[var(--status-broken-bg)] text-[var(--status-broken-ink)]' },
+  confirmed:     { label: 'Confirmed',        cls: 'bg-[var(--status-passed-bg)] text-[var(--status-passed-ink)]' },
   acknowledged:  { label: 'Acknowledged',     cls: 'bg-[var(--color-accent-bg-soft)] text-[var(--color-accent)]' },
-  review_later:  { label: 'Review later',     cls: 'bg-[var(--status-flaky-bg)]/30 text-[var(--status-flaky)]' },
+  review_later:  { label: 'Review later',     cls: 'bg-[var(--status-flaky-bg)]/30 text-[var(--status-flaky-ink)]' },
 }
 
 function TestSuitesTab({ projectId }: TestSuitesTabProps) {
@@ -3562,9 +3558,9 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                     {(suiteChanges[suite.suite_name] ?? []).slice(0, 5).map((evt, i) => (
                       <div key={i} className="flex items-center gap-2 text-xs">
                         <span className={clsx('px-1.5 py-0.5 rounded font-medium',
-                          evt.event_type === 'added' ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' :
-                          evt.event_type === 'deleted' ? 'bg-[var(--status-failed-bg)] text-[var(--status-failed)]' :
-                          evt.event_type === 'modified' ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' :
+                          evt.event_type === 'added' ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed-ink)]' :
+                          evt.event_type === 'deleted' ? 'bg-[var(--status-failed-bg)] text-[var(--status-failed-ink)]' :
+                          evt.event_type === 'modified' ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken-ink)]' :
                           'bg-[var(--color-accent-bg-soft)] text-[var(--color-accent)]'
                         )}>{evt.event_type}</span>
                         <span className="text-[var(--color-text-secondary)] truncate">{evt.test_name}</span>
@@ -3586,7 +3582,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                         <span className="text-[var(--status-failed)]">✕</span>
                         <span className="text-[var(--color-text-secondary)]">{d.test_name}</span>
                         {d.review_tag && (
-                          <span className="bg-[var(--status-broken-bg)] text-[var(--status-broken)] px-1.5 py-0.5 rounded text-2xs font-medium">{d.review_tag}</span>
+                          <span className="bg-[var(--status-broken-bg)] text-[var(--status-broken-ink)] px-1.5 py-0.5 rounded text-2xs font-medium">{d.review_tag}</span>
                         )}
                         {d.class_name && <span className="text-[var(--color-text-faint)] ml-auto">{d.class_name}</span>}
                       </div>
@@ -3721,7 +3717,7 @@ function AddTestSuiteModal({
           <div>
             <label htmlFor="tm-suite-owner" className="block text-xs text-[var(--color-text-muted)] mb-1">Owner</label>
             {ownerCandidates.length === 0 ? (
-              <p className="text-2xs text-[var(--status-broken)] bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)] rounded px-2 py-1.5">
+              <p className="text-2xs text-[var(--ui-warning-ink)] bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)] rounded px-2 py-1.5">
                 No project members have the QA_LEAD role yet. Leave unset to inherit the project's default QA lead, or add a QA_LEAD member first.
               </p>
             ) : (

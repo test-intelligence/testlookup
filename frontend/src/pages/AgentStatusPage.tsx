@@ -265,15 +265,15 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
             </span>
           )}
           {showLLMMetrics && stage.cost_usd != null && stage.cost_usd > 0 && (
-            <span className="text-2xs bg-[var(--status-broken-bg)] text-[var(--status-broken)] px-1.5 py-0.5 rounded">
+            <span className="text-2xs bg-[var(--status-broken-bg)] text-[var(--ui-warning-ink)] px-1.5 py-0.5 rounded">
               ${stage.cost_usd.toFixed(4)}
             </span>
           )}
           {stage.confidence_score != null && (
             <span className={`text-2xs px-1.5 py-0.5 rounded ${
-              stage.confidence_score >= 80 ? 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' :
-              stage.confidence_score >= 50 ? 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' :
-              'bg-[var(--status-failed-bg)] text-[var(--status-failed)]'
+              stage.confidence_score >= 80 ? 'bg-[var(--status-passed-bg)] text-[var(--ui-success-ink)]' :
+              stage.confidence_score >= 50 ? 'bg-[var(--status-broken-bg)] text-[var(--ui-warning-ink)]' :
+              'bg-[var(--status-failed-bg)] text-[var(--ui-danger-ink)]'
             }`}>
               {stage.confidence_score}%
             </span>
@@ -346,7 +346,7 @@ function StageCard({ stage, showLLMMetrics = true }: { stage: AgentStageResult; 
             </div>
           )}
           {stage.error && (
-            <div className="bg-[var(--status-failed-bg)] border border-[var(--status-failed-bd)] rounded p-2 text-xs text-[var(--status-failed)]">
+            <div className="bg-[var(--status-failed-bg)] border border-[var(--status-failed-bd)] rounded p-2 text-xs text-[var(--ui-danger-ink)]">
               {stage.error}
             </div>
           )}
@@ -725,7 +725,7 @@ function ObservabilityPanel({ timeline }: { timeline?: PipelineTimeline }) {
         <Activity className="h-4 w-4 text-[var(--color-text)]" />
         <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Pipeline Observability</h3>
         {alerts.length > 0 && (
-          <span className="ml-auto text-2xs px-2 py-0.5 rounded bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
+          <span className="ml-auto text-2xs px-2 py-0.5 rounded bg-[var(--status-failed-bg)] text-[var(--ui-danger-ink)]">
             {alerts.length} alert{alerts.length === 1 ? '' : 's'}
           </span>
         )}
@@ -1158,8 +1158,8 @@ export function PipelineDetail({
 const MODE_BADGE: Record<string, { label: string; colour: string }> = {
   llm:   { label: 'LLM Mode',   colour: 'bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)]' },
   ml:    { label: 'ML Mode',    colour: 'bg-[var(--color-accent-muted)]/30 text-[var(--color-accent)]' },
-  rules: { label: 'Rules Mode', colour: 'bg-[var(--status-broken-bg)] text-[var(--status-broken)]' },
-  auto:  { label: 'Auto Mode',  colour: 'bg-[var(--status-passed-bg)] text-[var(--status-passed)]' },
+  rules: { label: 'Rules Mode', colour: 'bg-[var(--status-broken-bg)] text-[var(--ui-warning-ink)]' },
+  auto:  { label: 'Auto Mode',  colour: 'bg-[var(--status-passed-bg)] text-[var(--ui-success-ink)]' },
 }
 
 /**

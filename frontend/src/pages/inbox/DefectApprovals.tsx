@@ -135,7 +135,7 @@ export default function DefectApprovals({ projectId }: { projectId: string }) {
       {Boolean(error) && (
         <div
           role="alert"
-          className="flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]"
+          className="flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--ui-danger-ink)]"
         >
           <span>The defects awaiting approval could not be loaded.</span>
           <button type="button" className="btn-secondary flex-shrink-0 text-xs" onClick={() => void mutate()}>

@@ -6,6 +6,7 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { refreshSuites } from '@/hooks/useSuites'
 import { suitesService } from '@/services/suitesService'
 import CanonicalDetailPage from './CanonicalDetailPage'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 
 // We mock the hooks rather than the SWR layer so tests don't need to
 // stand up an SWR cache or a fake fetcher. Same pattern as
@@ -131,6 +132,15 @@ describe('CanonicalDetailPage', () => {
     // have both ids.
     const cta = screen.getByRole('link', { name: /Open latest run/i })
     expect(cta).toHaveAttribute('href', '/runs/run-aaaa1111/tests/tc-9')
+
+    // W40 F-1: "Run history" titles ONE table, so it reads the panel-title role (14 px / 600, sentence case), and the
+    // timeline card's heading above it does too — no 13 px uppercase muted kicker left.
+    for (const name of [/^Run history/, /^History \(/]) {
+      const classes = screen.getByRole('heading', { level: 2, name }).className.split(/\s+/)
+      for (const token of PANEL_TITLE_CLASS.split(' ')) expect(classes).toContain(token)
+      expect(classes).not.toContain('uppercase')
+      expect(classes).not.toContain('text-sm')
+    }
   })
 
   it('shows an empty state when the canonical has no run history yet', async () => {

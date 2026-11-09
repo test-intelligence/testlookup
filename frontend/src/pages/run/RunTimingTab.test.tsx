@@ -39,6 +39,7 @@ vi.mock('@/pages/testCase/TestCaseBody', () => ({
 }))
 
 import RunTimingTab from './RunTimingTab'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { NOT_REPORTED, msText, ratioText, reasonSentence, runSourceText } from './runTimingText'
 
 const T0 = Date.parse('2026-10-14T10:00:00.000Z')
@@ -231,6 +232,17 @@ describe('RunTimingTab — a timed run', () => {
     show({ data: { ...TIMED, slowest: { ...TIMED.slowest, total: 240 } } })
     const slow = screen.getByRole('region', { name: 'Slowest tests' })
     expect(within(slow).getByRole('heading', { level: 2 })).toHaveTextContent(/^20 slowest tests$/)
+  })
+
+  it('W40 F-1: each block heading titles ONE card, so it reads the shared panel-title role (no local 13 px copy)', () => {
+    show({ data: TIMED })
+    for (const name of ['Setup, test and teardown', 'Timeline', 'Worker lanes', 'Suites', 'Slowest tests']) {
+      const heading = within(screen.getByRole('region', { name })).getByRole('heading', { level: 2 })
+      expect(heading.className).toBe(PANEL_TITLE_CLASS)
+    }
+    // The headline's heading carries its export button in a flex row on top of the same role.
+    const headline = within(screen.getByRole('region', { name: 'Execution time' })).getByRole('heading', { level: 2 })
+    expect(headline.className.split(/\s+/)).toEqual([...PANEL_TITLE_CLASS.split(' '), 'flex', 'items-center', 'gap-2'])
   })
 
   it('shows suites, workers and phases, and hands the findings to the regressions card (no second read)', () => {

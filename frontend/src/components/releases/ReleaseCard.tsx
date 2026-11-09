@@ -57,6 +57,7 @@ interface GateCellProps {
   /** Drives the value colour — defaults to neutral. */
   tone?: 'good' | 'bad' | 'neutral'
 }
+// W40 F-3 kept (D-3): not `MetricCard sm` — its value grows to 40 px in presentation mode in this one-third tile (rejected in W29d D-3).
 function GateCell({ label, value, sub, tone = 'neutral' }: GateCellProps) {
   const color =
     tone === 'good' ? 'var(--status-passed)'

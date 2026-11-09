@@ -29,6 +29,7 @@ import { AlertTriangle, Loader2, Search, Trash2 } from 'lucide-react'
 import { isAxiosError } from 'axios'
 import toast from 'react-hot-toast'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { criteriaDeletionService } from '@/services/retentionService'
 import { extractErrorMessage } from '@/services/apiErrors'
 import { ReferenceWarnings } from './PreviewKeptLines'
@@ -123,7 +124,7 @@ export default function CriteriaDeletionPanel({ projectId, projectName, onExecut
       <header>
         <h2
           id="criteria-deletion-heading"
-          className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text)]"
+          className={PANEL_TITLE_CLASS}
         >
           Delete by criteria
         </h2>

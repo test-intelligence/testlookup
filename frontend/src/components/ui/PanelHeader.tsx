@@ -17,6 +17,13 @@ import { clsx } from 'clsx'
 /** The ONE panel title look (UIX-09): 14 px / 600, sentence case, a tight line. ChartFrame's title reads it too. */
 export const PANEL_TITLE_CLASS = 'm-0 text-base font-semibold leading-tight text-[var(--color-text)]'
 
+/**
+ * The ONE section title look (W40, W29d F-1; `architecture/FRONTEND.md` "text-md 16 — section and verdict titles"):
+ * 16 px / 600, sentence case, a tight line — for a heading that titles a page SECTION holding several cards. A heading
+ * that titles one card / panel uses `PANEL_TITLE_CLASS`; a small uppercase label stays `.eyebrow` (11 px).
+ */
+export const SECTION_TITLE_CLASS = 'm-0 text-md font-semibold leading-tight text-[var(--color-text)]'
+
 export interface PanelHeaderProps {
   title: ReactNode
   /** Default 3: every CardShell copy was an h3. */

@@ -21,6 +21,7 @@ import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SummaryReportPage from './SummaryReportPage'
+import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import type { SummaryReport, SummaryReportMode } from '@/types/summaryReport'
 import { DEFAULT_TIME_WINDOW_DAYS, useTimeWindowStore } from '@/store/timeWindowStore'
 import { useReleaseStore } from '@/store/releaseStore'
@@ -821,6 +822,20 @@ describe('SummaryReportPage — the page template (P3)', () => {
     // Nothing tabbed or collapsed comes before it.
     for (const later of document.querySelectorAll('[role="tablist"], [data-disclosure]')) {
       expect(follows(primary, later)).toBe(true)
+    }
+  })
+
+  it('W40 F-1: each table heading titles ONE card, so it reads the panel-title role (14 px / 600, sentence case)', async () => {
+    mockGet.mockResolvedValue(makeReport())
+    renderPage()
+    await screen.findByText('test_pay')
+    for (const name of [/^Per-suite breakdown/, /^Top failing tests/]) {
+      const classes = screen.getByRole('heading', { level: 2, name }).className.split(/\s+/)
+      for (const token of PANEL_TITLE_CLASS.split(' ')) expect(classes).toContain(token)
+      // The old 13 px uppercase muted kicker is gone (the DOM text was always mixed case).
+      expect(classes).not.toContain('uppercase')
+      expect(classes).not.toContain('text-sm')
+      expect(classes.filter((c) => c.startsWith('tracking-'))).toEqual([])
     }
   })
 

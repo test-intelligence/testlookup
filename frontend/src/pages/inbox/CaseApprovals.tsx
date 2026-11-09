@@ -100,7 +100,7 @@ export default function CaseApprovals() {
       {error && (
         <div
           role="alert"
-          className="flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--status-failed)]"
+          className="flex items-center justify-between gap-3 rounded-lg border border-[var(--status-failed-bd)] bg-[var(--status-failed-bg)] p-3 text-sm text-[var(--ui-danger-ink)]"
         >
           <span>The test-case review queue could not be loaded completely. Any available cases are shown below.</span>
           <button type="button" className="btn-secondary flex-shrink-0 text-xs" onClick={() => void refreshQueues()}>

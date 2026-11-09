@@ -20,7 +20,8 @@ import type { GenericComputeStage, StageStatus } from './types'
 export const DAG_NODE_W = NODE_W
 export const DAG_NODE_H = NODE_H
 export const DAG_COLUMN_PITCH = 274
-export const DAG_ROW_PITCH = 156
+/** `NODE_H` 168 + a 24 px gap (W40 F-4; was 156 for the 132 px node). */
+export const DAG_ROW_PITCH = 192
 export const DAG_PADDING = 24
 
 /** The fields of one `AgentTaskV1` the graph reads (structural: G-A's `AgenticTask` fits). */
