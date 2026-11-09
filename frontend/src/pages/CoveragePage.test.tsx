@@ -96,6 +96,27 @@ afterEach(() => {
 // suite's load, and more than 5 s with coverage on (seen twice), so 10 s here.
 const LAZY_TIMEOUT = 10_000
 
+// EVERY test in this file: an observer that never reports the Wave 3 sections near, so the lazy coverage map never
+// mounts. jsdom has no IntersectionObserver, so without this stub the section mounts as soon as its chunk loads and
+// asks `/analytics/coverage-map` + `/releases`. The W08 harness fix stubbed it only in the describe blocks that had
+// failed; under CI load the chunk also finished inside "suite breakdown fit" (PR #349: the network guard failed
+// "keeps the runs column from 400 px up"). No test here needs the sections mounted — the lazy-mount test asserts the
+// placeholder. A test that stubs IntersectionObserver itself still wins (it stubs after this runs).
+class FarAwayObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+  takeRecords() {
+    return []
+  }
+}
+beforeEach(() => {
+  vi.stubGlobal('IntersectionObserver', FarAwayObserver)
+})
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
+
 /** P3: the verdict, its score, its dimensions and the gaps are in a collapsed disclosure below the table. */
 function openScore() {
   fireEvent.click(screen.getByRole('button', { name: /How this score is computed/ }))

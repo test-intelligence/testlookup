@@ -1916,6 +1916,14 @@ locally by default.
 
 ### Fixed
 
+- **A CoveragePage unit test no longer reaches the network under CI load** (found by W43's CI, PR #349; branch
+  `fix/coverage-test-lazy-sections-20261109`). jsdom has no IntersectionObserver, so the page's lazy coverage map
+  mounted as soon as its chunk loaded and asked `/analytics/coverage-map` and `/releases`. The network guard then failed
+  "keeps the runs column from 400 px up". The W08 harness fix had stubbed the observer only in the blocks that had
+  failed before. `CoveragePage.test.tsx` now stubs it for every test. Proven with a probe: with the stub the map never
+  mounts; without it the section mounts and the guard blocks exactly those 2 requests, the CI failure. Test-only; the
+  file's 69 tests pass three runs in a row.
+
 - **The CI image scan no longer replays a stale OS-upgrade layer** (found by W37's CI, PR #342).
   The scan builds from the GitHub Actions layer cache, so the mcp image's `apt-get upgrade`
   layer came from before Debian shipped a zlib fix and Trivy failed on CVE-2026-85091 although
