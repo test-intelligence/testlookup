@@ -56,18 +56,21 @@ pyotp==2.10.0
 aiosmtplib==5.1.3
 
 # ── LangChain & AI ───────────────────────────────────────────
-# Held on 0.3.x pending the langchain 1.x migration. The open advisories
-# against these pins (GHSA-gr75-jv2w-4656 file loaders/middleware,
-# GHSA-r7w7-9xr2-qq2r image token counting, GHSA-g48c-2wqr-h844 checkpoint
-# msgpack) are in features the app does not use; see CHANGELOG 0.1.0 Security.
-langchain==0.3.30        # CVE-2026-45134
-langchain-ollama==0.2.1
-langchain-openai==0.2.12
-langchain-google-genai==2.0.7
+# langchain 1.x (W43, OR-12). The app's only uses of the `langchain` package were
+# the legacy ReAct agent (create_react_agent / AgentExecutor /
+# ReActSingleInputOutputParser) and `tool`; 1.x moved the legacy agents to
+# langchain-classic and `tool` lives in langchain-core, so `langchain` itself is
+# not installed. langchain 0.3.30 could not import its agents on Python 3.14.
+langchain-classic==1.0.8
+langchain-ollama==1.1.0
+langchain-openai==1.7.4
+# 4.x runs on the google-genai SDK (the legacy google-generativeai SDK and its
+# protobuf 5 hold are gone).
+langchain-google-genai==4.4.3
 # LLM_PROVIDER=anthropic (llm_factory imports it lazily, so a missing pin only
-# shows on the first AI call). 0.3.22 is the last release on langchain-core 0.3.
-langchain-anthropic==0.3.22
-langgraph==0.6.11
+# shows on the first AI call).
+langchain-anthropic==1.7.10
+langgraph==1.2.20
 
 # ── Vector Store ─────────────────────────────────────────────
 # Client only: HttpClient to the chromadb/chroma server image (a Rust binary)
@@ -143,7 +146,8 @@ prometheus-fastapi-instrumentator==7.0.0
 python-dateutil==2.9.0.post0
 pytz==2026.6
 structlog==26.1.0
-tenacity==9.2.1
+# google-genai (langchain-google-genai 4) requires tenacity <9.2.
+tenacity==9.1.4
 click==8.5.0
 
 # ── Export: Excel / Word / PDF ───────────────────────────────

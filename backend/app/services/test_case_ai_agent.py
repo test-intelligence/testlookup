@@ -15,8 +15,8 @@ import json
 import logging
 from typing import Any, cast
 
-from langchain.tools import tool
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import tool
 
 from app.services.llm_cost_reservation import cost_budget_scope
 from app.services.llm_factory import get_llm

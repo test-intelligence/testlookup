@@ -99,10 +99,6 @@ GATE_SELF_TESTS = (
     "test_push_check.py",
 )
 
-_LANGCHAIN = (
-    "local langchain is newer than CI's pin: 'langchain.agents has no "
-    "attribute create_react_agent'"
-)
 _LLM_TIMEOUT = (
     "the hypothesis LLM call times out on this machine (TimeoutError); "
     "flagged as local-only before any change in the session that found it"
@@ -145,15 +141,11 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
         )
     },
     # The entries below are individual TESTS, not files -- each file also holds
-    # tests that pass locally and must stay covered. Each was confirmed failing
-    # on a PRISTINE origin/main checkout with no local change and no mutation
-    # harness running, and each passed in CI run 35549887616 on the same code.
-    "tests/test_root_cause_tier_routing.py::"
-    "test_react_explanation_uses_endpoint_and_bypasses_classifier_and_caches": _LANGCHAIN,
-    # W16 AGT-09: the candidate runner's LLM tier replays an item through the
-    # real classify_test -> create_react_agent path behind BudgetedLLM with a
-    # fake chat model; it passes under the repo-root .venv311 (CI's pin).
-    "tests/test_ai_eval_runner.py::test_llm_tier_replays_through_the_budgeted_wrapper": _LANGCHAIN,
+    # tests that pass locally and must stay covered.
+    # W43 (langchain 1.x) removed the "local langchain is newer than CI's pin"
+    # entries: the ReAct tests (root-cause routing, eval runner, confidence
+    # threshold, triage x5, server-side lookups x8) import langchain_classic
+    # now, and all 19 pass under the hook's Python 3.12.
     # W16 AGT-13: the byte-for-byte pin of the summary tier comparison (no live
     # pairs) was hashed under Python 3.11 (CI, the images, .venv311 — it passes
     # there). The hook's Python 3.12 sums floats with compensation, so the
@@ -164,41 +156,6 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
         "Python 3.12's compensated float sum() changes the last digit of a mean; "
         "the pin is CI's Python 3.11 answer"
     ),
-    # The ReAct triage regression tests (2026-10-09) drive create_react_agent
-    # for real; they pass under the repo-root .venv311 (langchain 0.3.30, CI's
-    # pin). The file's adapter and Runnable tests need no agent and stay
-    # covered locally.
-    **{
-        f"tests/regression/test_triage_react_runs_through_the_budget_wrapper.py::{name}": _LANGCHAIN
-        for name in (
-            "test_the_react_slow_path_runs_through_the_budgeted_wrapper",
-            "test_a_tool_name_in_backticks_still_runs_the_tool",
-            "test_a_construction_failure_is_a_recorded_fallback_not_an_exception",
-            "test_a_missing_model_falls_back_to_the_rules_engine",
-            "test_a_tool_with_several_arguments_takes_the_json_the_model_writes",
-        )
-    },
-    # W04 (2026-10-15): the LLM-mode threshold case runs the real analysis
-    # agent, whose ReAct path needs create_react_agent; 22/22 of its file pass
-    # under .venv311 (CI's pin). The rules-mode cases in the file stay covered.
-    "tests/test_confidence_threshold_freeze.py::"
-    "test_an_llm_analysis_records_the_frozen_threshold_check": _LANGCHAIN,
-    # W10 (2026-10-23): the server-side lookups (D-4) are proven by driving the
-    # real ReAct slow path, which needs create_react_agent; 8/8 pass under
-    # .venv311 (langchain 0.3.x, CI's pin) and fail here only on the AttributeError.
-    **{
-        f"tests/test_server_side_lookups.py::{name}": _LANGCHAIN
-        for name in (
-            "test_a_model_that_calls_no_tool_still_gets_the_splunk_evidence",
-            "test_the_resolver_session_is_closed_before_any_http_and_before_the_model",
-            "test_a_repeated_tool_call_answers_from_the_memo",
-            "test_a_failed_model_call_still_carries_the_server_side_evidence",
-            "test_a_get_llm_failure_propagates_and_no_lookup_is_made",
-            "test_offline_mode_makes_no_request_and_no_server_step",
-            "test_without_a_run_nothing_is_resolved_or_looked_up",
-            "test_a_tool_grant_without_splunk_skips_the_lookup",
-        )
-    },
     "tests/test_rag_services.py::TestDocumentConnectorInternals::"
     "test_extract_docx_preserves_mixed_block_order_and_formatting": (
         "docx extraction differs under the local python-docx build"

@@ -186,7 +186,8 @@ def _react_output_parser() -> Any:
     executor's exact lookup answered "not a valid tool" until the iteration
     cap. The input is cleaned by ``_single_input``; this cleans the name.
     """
-    from langchain.agents.output_parsers import ReActSingleInputOutputParser
+    # langchain 1.x moved the legacy ReAct agents to langchain-classic (W43).
+    from langchain_classic.agents.output_parsers import ReActSingleInputOutputParser
     from langchain_core.agents import AgentAction
 
     class _DecoratedNames(ReActSingleInputOutputParser):
@@ -381,7 +382,7 @@ async def run_triage_agent(
     # ── Slow path: full ReAct agent ───────────────────────────────────────────
     from langchain_core.prompts import PromptTemplate
 
-    langchain_agents = importlib.import_module("langchain.agents")
+    langchain_agents = importlib.import_module("langchain_classic.agents")
     create_react_agent = cast(Any, langchain_agents.create_react_agent)
     AgentExecutor = cast(Any, langchain_agents.AgentExecutor)
 
