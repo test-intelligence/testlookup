@@ -1379,7 +1379,9 @@ locally by default.
   were fixed for the newer Python:
   - the tier-comparison answer hash now names both answers, because Python 3.12 made float `sum()` compensated;
   - the report-lifecycle source checks strip the docstring by its parsed line span, because Python 3.13 dedents
-    `__doc__`.
+    `__doc__`;
+  - the MCP tool-contract snapshots compare each `description` (a tool's docstring) after `inspect.cleandoc`, for the
+    same reason. On 3.14 the six snapshots differed only in indentation; a changed word still fails them.
 
   The push check stops excusing the tier-comparison test, which the hook's Python 3.12 now passes. Tests: the backend
   suite on CPython 3.14.3 with every pin (22,345 passed; the 4 failures are local only, from a missing local Redis); mypy
