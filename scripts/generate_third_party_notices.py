@@ -85,7 +85,7 @@ STATIC_TAIL = """
 
 The TestLookup images are built on `python:3.11-slim` (Debian; backend,
 workers, MCP server) and `nginx:alpine` (Alpine Linux; web UI), with a
-`node:20-alpine` stage used only to build the web UI. These base layers contain
+`node:26-alpine` stage used only to build the web UI. These base layers contain
 operating-system packages under their own licenses, including GPL and LGPL
 packages (for example bash, coreutils, glibc and BusyBox) that are distributed
 as separate programs alongside TestLookup, unmodified.

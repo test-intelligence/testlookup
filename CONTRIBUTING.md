@@ -25,7 +25,7 @@ fixes and new sample result files under `samples/` are also good starts.
 
 - Docker + Docker Compose v2
 - Python 3.11 (backend and CLI)
-- Node 20+ (frontend)
+- Node 22.13+ (frontend; CI and the image build use Node 26 — Node 20 reached end of life in April 2026)
 - `make` (the Makefile targets are the supported entry points; on Windows use
   Git Bash or WSL)
 - 8 GB RAM for the core stack; 16 GB with the local LLM

@@ -210,11 +210,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Node.js 22
+      - name: Set up Node.js 26
         uses: actions/setup-node@v7
         with:
           # jsdom 30 needs Node ^22.22.2 || ^24.15 || >=26; mermaid 12 needs >=22.12.
-          node-version: "22"
+          node-version: "26"
           cache: npm
           cache-dependency-path: scripts/mermaid-check/package-lock.json
 
@@ -257,10 +257,10 @@ jobs:
 
       # Node 22 to match the frontend job: jsdom 30 pulls undici 8, which
       # needs >= 22.19.
-      - name: Set up Node.js 22
+      - name: Set up Node.js 26
         uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
           cache: npm
           cache-dependency-path: frontend/package.json
 
@@ -305,10 +305,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Node.js 22
+      - name: Set up Node.js 26
         uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
           cache: npm
           cache-dependency-path: frontend/package.json
 
@@ -354,10 +354,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Node.js 22
+      - name: Set up Node.js 26
         uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
           cache: npm
           cache-dependency-path: frontend/package.json
 
@@ -1185,10 +1185,10 @@ jobs:
       # jsdom 30 (the test DOM, pulled in by #629) requires Node >= 22.19 via
       # its undici 8 dependency; on Node 20 vitest workers crash at startup with
       # "webidl.util.markAsUncloneable is not a function". Run this job on 22.
-      - name: Set up Node.js 22
+      - name: Set up Node.js 26
         uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
           cache: npm
           cache-dependency-path: frontend/package.json
 
@@ -1558,8 +1558,9 @@ jobs:
       - name: Set up Node.js 20
         uses: actions/setup-node@v7
         with:
-          # package.json declares engines node >= 18; 20 is the current LTS and
-          # matches the repo's other Node jobs.
+          # package.json declares engines node >= 18. This job deliberately tests an
+          # old Node, the nearest to that floor that setup-node and npm still serve
+          # well; every other Node job uses 26, the frontend image's node:26-alpine.
           node-version: "20"
           cache: npm
           cache-dependency-path: client/js/package-lock.json
@@ -1598,10 +1599,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Node.js 22
+      - name: Set up Node.js 26
         uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
 
       - name: Resolve the frontend lockfile (none is committed)
         # Trivy reads npm dependencies from a lockfile. build-images generates
@@ -1836,10 +1837,12 @@ jobs:
 
       # Generate package-lock.json before Docker build so npm ci works inside the image.
       # This avoids needing to commit a lockfile while still getting reproducible installs.
-      - name: Set up Node.js 20
+      # Node 26 = the frontend image's node:26-alpine, so the lockfile is written by the
+      # same npm that runs `npm ci` inside the build.
+      - name: Set up Node.js 26
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "26"
 
       - name: Generate frontend package-lock.json
         working-directory: ./frontend
