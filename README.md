@@ -3,16 +3,25 @@
 </p>
 
 <p align="center">
-  <b>Self-hosted test-result intelligence: collect results from every CI, explain failures, decide releases.</b>
+  <b>Open-source software test intelligence: manage test reports and software test releases, find the issues behind failing tests, and decide each release with evidence.</b>
+</p>
+
+<p align="center">
+  <a href="https://testlookup.app"><b>Website</b></a> ·
+  <a href="https://testlookup.app/docs/">Docs</a> ·
+  <a href="https://testlookup.app/docs/next/quickstart/">Quick start</a> ·
+  <a href="https://testlookup.app/features/">Features</a> ·
+  <a href="https://testlookup.app/roadmap/">Roadmap</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/test-intelligence/testlookup/actions/workflows/ci.yml"><img src="https://github.com/test-intelligence/testlookup/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+  <a href="https://testlookup.app"><img src="https://img.shields.io/badge/website-testlookup.app-7C3AED.svg" alt="Website: testlookup.app"></a>
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-index-informational.svg" alt="Documentation"></a>
 </p>
 
-TestLookup collects test results from your test frameworks and CI systems, keeps their history per project, classifies why tests fail, and turns that evidence into a release recommendation you can audit. It runs on your own infrastructure: a web app, a REST API, a CLI, client SDKs and an MCP server for AI assistants, backed by databases you control. AI analysis defaults to a local model, and hosted model providers stay blocked unless you turn them on.
+TestLookup is open-source software test intelligence for software development teams. It collects test results from your test frameworks and CI systems, keeps their history per project, classifies why tests fail, and turns that evidence into a release recommendation you can audit. It runs on your own infrastructure: a web app, a REST API, a CLI, client SDKs and an MCP server for AI assistants, backed by databases you control. AI analysis defaults to a local model, and hosted model providers stay blocked unless you turn them on.
 
 ## Why TestLookup
 
