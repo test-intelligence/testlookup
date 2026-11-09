@@ -1343,6 +1343,22 @@ locally by default.
 
 ### Changed
 
+- **LangChain 1.x** (wave W43, OR-12; branch `feat/df-langchain1-20261109`). The backend leaves the 0.3 line:
+  `langchain` 0.3.30 becomes `langchain-classic` 1.0.8, where 1.x keeps the legacy ReAct agent the triage, root-cause,
+  server-side lookup and hypothesis paths use (`create_react_agent`, `AgentExecutor`, `ReActSingleInputOutputParser`);
+  `tool` now comes from `langchain-core`, so `langchain` itself is no longer installed. langchain-openai 1.7.4,
+  langchain-anthropic 1.7.10, langchain-ollama 1.1.0, langchain-google-genai 4.4.3 (the `google-genai` SDK; the legacy
+  `google-generativeai` SDK and its protobuf 5 hold are gone) and langgraph 1.2.20. tenacity goes to 9.1.4 (google-genai
+  needs <9.2; the app never imports it). The optional Ragas variant takes langchain-community 0.4.2 and instructor
+  1.17.0, and resolves openai 3.3.0 there (requirements-ragas.txt says why). `llm_factory.py` needed no change: every
+  provider model builds from the same arguments. Why now: langchain 0.3.30, its last 0.3 release, cannot import its
+  agents on Python 3.14, which blocked that upgrade (W41). The two image-scan acceptances the 0.3 pins needed are
+  removed (Security), and so is the test that guarded one of them. The push check no longer tolerates the 19 ReAct
+  tests that only failed because a developer machine had a newer langchain than CI. Tests: the backend suite under
+  CI's Python 3.11 with the new pins (8 failures, all local-only: the known Redis-timeout, slow-spawn and lease-timing
+  cases, plus 3 fixed in this change); the ReAct tests pass on Python 3.11, 3.12 and 3.14; mypy is at its baseline,
+  and ruff and the reference, agent-API and prompt checks pass.
+
 - **README points at the website** (2026-11-08, search visibility; branch `docs/readme-website-links`). The README
   header now leads with "open-source software test intelligence" for software development teams. It also has a row of
   links to https://testlookup.app (website, docs, quick start, features, roadmap) and a website badge. Before this, the
@@ -2399,10 +2415,13 @@ locally by default.
   Compose and Kubernetes now let only the backend and workers connect to it
   (see Changed). Before this, both Compose stacks published it on every host
   interface.
-- **langchain 0.3.30, langchain-openai 0.2.12 and langgraph 0.6.11** stay
-  pinned until the langchain 1.x migration: the advisories against them
+- **The langchain 1.x migration (W43)** replaces langchain 0.3.30,
+  langchain-openai 0.2.12, langchain-core 0.3.86 and langgraph 0.6.11. The new
+  pins include the fixes for the two image-scan acceptances those pins needed,
+  CVE-2026-34070 (langchain-core, fixed in 1.2.22; now 1.7.6) and
+  CVE-2026-104873 (langgraph-sdk, fixed in 0.4.4; now 0.4.14), so both are
+  removed from `.trivyignore.yaml`. The advisories noted against the 0.3 pins
   (GHSA-gr75-jv2w-4656 file-search middleware and prompt/chain loaders,
   GHSA-r7w7-9xr2-qq2r image token counting, GHSA-g48c-2wqr-h844 checkpoint
-  msgpack loading) are in features TestLookup does not call; it loads no
-  prompt or chain files, counts no image tokens and compiles its graphs without
-  a checkpointer.
+  msgpack loading) were in features TestLookup does not call; CI's dependency
+  scan now judges the 1.x pins.

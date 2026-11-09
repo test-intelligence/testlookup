@@ -25,7 +25,9 @@ APP = BACKEND / "app"
 REQUIREMENTS = BACKEND / "requirements.txt"
 
 # Imported directly but installed by a declared distribution, not declared itself.
-PROVIDED_BY = {"langchain-core": "langchain"}
+# Since the langchain 1.x migration (W43) the app installs langchain-classic, not
+# langchain; langchain-core comes with it (and with every provider package).
+PROVIDED_BY = {"langchain-core": "langchain-classic"}
 
 
 def _canonical(name: str) -> str:
@@ -70,7 +72,7 @@ def test_the_import_scan_finds_the_provider_packages():
 
 def test_every_imported_langchain_package_is_declared():
     declared = _declared()
-    assert "fastapi" in declared and "langchain" in declared, "requirements parse looks wrong"
+    assert "fastapi" in declared and "langchain-classic" in declared, "requirements parse looks wrong"
     missing = {
         dist: sites
         for dist, sites in _langchain_imports().items()

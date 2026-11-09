@@ -141,7 +141,7 @@ async def test_a_tool_name_in_backticks_still_runs_the_tool(monkeypatch, gates):
 
 @pytest.mark.asyncio
 async def test_a_construction_failure_is_a_recorded_fallback_not_an_exception(monkeypatch, gates):
-    import langchain.agents as agents
+    import langchain_classic.agents as agents
 
     def broken(**_k):
         raise TypeError("Expected a Runnable, callable or dict")

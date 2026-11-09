@@ -132,8 +132,8 @@ Apache-2.0, MIT or MPL-2.0 and is used under Apache-2.0.
 | `httpx` | BSD-3-Clause | backend, cli, client, mcp |
 | `joblib` | BSD-3-Clause | backend |
 | `kombu` | BSD-3-Clause | backend |
-| `langchain` | MIT | backend |
 | `langchain-anthropic` | MIT | backend |
+| `langchain-classic` | MIT | backend |
 | `langchain-google-genai` | MIT | backend |
 | `langchain-ollama` | MIT | backend |
 | `langchain-openai` | MIT | backend |

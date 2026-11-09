@@ -12,7 +12,7 @@
 # so the air-gapped bundle does not need it.
 #
 # Includes requirements.txt with `-r`, so every package it pins keeps that
-# version (langchain-core stays on 0.3.x). Not `-c`: pip refuses a constraints
+# version (langchain-core stays on requirements.txt's 1.x). Not `-c`: pip refuses a constraints
 # file that has extras, such as celery[redis]. The app uses the per-sample
 # metric API from ragas 0.2; `ragas.metrics.Faithfulness` is deprecated in 0.4
 # and goes in 1.0, hence the pin.
@@ -24,32 +24,28 @@
 #                              only ragas's DiskCacheBackend imports it, and
 #                              the app gives ragas no cache.
 #
-# Three packages requirements.txt does not pin resolve LOWER here than in the
+# Four packages requirements.txt does not pin resolve LOWER here than in the
 # default image. Ragas 0.4.3's own requirements force it (uv and the image's
 # pip agree), and holding them back is worse:
 #   fsspec 2026.9.0 -> 2026.7.0  ragas needs datasets>=4.0; every release caps
 #                                fsspec, 5.1.0 at <=2026.7.0.
-#   jiter  0.18.0   -> 0.10.0    instructor 1.12 caps it (<0.11); holding 0.18
-#   rich   15.0.0   -> 14.3.4    or rich 15 drags instructor back to 0.4.x,
-#                                older than the API ragas 0.4 calls.
+#   jiter  0.18.0   -> 0.14.0    instructor 1.17 caps it (<0.15).
+#   openai 3.46.0   -> 3.3.0     openai >=3.4 needs jiter>=0.16 (above), and
+#                                langchain-openai 1.7.4 needs only >=2.45.
+#   rich   15.0.0   -> 14.3.4    instructor caps it (<15).
 # Held at the base versions, the resolver instead falls back to ragas 0.3.2
 # with datasets 2.14 and moves huggingface-hub (2.4 -> 0.36) and typer
 # (0.27 -> 0.9).
 #
-# Two pins stay below their newest release because of the langchain 0.3 line
-# requirements.txt holds (its 1.x is a wave of its own):
-#   instructor 1.12.0  every release from 1.13 needs openai>=2, and
-#                      langchain-openai 0.2.12 caps openai <2. 1.12 is also
-#                      what keeps jiter <0.11 and brings pre-commit along.
-#   langchain-community 0.3.31  the newest 0.3.x; 0.4 needs langchain-core>=1.4.
-# Pinned here so the variant is reproducible; the backend suite was run
-# against it when this file was written (langchain-community then 0.3.27; the
-# 0.3.31 patch was taken in W33 on a resolver dry run).
+# W43 (langchain 1.x): langchain-community 0.3.31 -> 0.4.2 (0.4 needs
+# langchain-core>=1.4) and instructor 1.12.0 -> 1.17.0 (the newest; it held at
+# 1.12 only because langchain-openai 0.2.12 capped openai <2). Resolved with uv
+# for Python 3.11 and 3.14, wheels only.
 -r requirements.txt
 ragas==0.4.3
 datasets==5.1.0
-langchain-community==0.3.31
-instructor==1.12.0
+langchain-community==0.4.2
+instructor==1.17.0
 fsspec==2026.7.0
-jiter==0.10.0
+jiter==0.14.0
 rich==14.3.4

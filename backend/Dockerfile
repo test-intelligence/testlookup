@@ -47,7 +47,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 # Optional: the Ragas RAG-faithfulness evaluator (Settings > AI Configuration).
 # Off by default: it adds 26 packages (pandas, pyarrow, datasets; ~360 MB) and
-# moves fsspec, jiter and rich to lower versions (requirements-ragas.txt says
+# moves fsspec, jiter, openai and rich to lower versions (requirements-ragas.txt says
 # why). --build-arg INSTALL_RAGAS=1 adds it. Without it, choosing Ragas runs
 # the single-prompt judge and the settings page says why. Copied after the
 # main install so editing it keeps that layer.
