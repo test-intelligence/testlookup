@@ -179,11 +179,13 @@ def test_the_tool_contract_matches_its_snapshot(module, name):
     mcp = FastMCP("t")
     module.register(mcp)
     listed = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
-    actual = listed[name].model_dump(mode="json", exclude_none=True)
+    from _contract_snapshot import canonical
+
+    actual = canonical(listed[name].model_dump(mode="json", exclude_none=True))
     snapshot = SNAPSHOTS / f"{name}.tool.json"
     if os.environ.get("UPDATE_SNAPSHOTS") == "1":
         snapshot.write_bytes((json.dumps(actual, indent=2, sort_keys=True) + "\n").encode("utf-8"))
-    assert actual == json.loads(snapshot.read_text(encoding="utf-8")), (
+    assert actual == canonical(json.loads(snapshot.read_text(encoding="utf-8"))), (
         f"{name}'s published contract changed. If intended, rerun with UPDATE_SNAPSHOTS=1 and review the diff."
     )
 

@@ -3,7 +3,7 @@
 # ============================================================
 
 # ── Base stage ───────────────────────────────────────────────
-FROM python:3.11-slim AS base
+FROM python:3.14-slim AS base
 
 WORKDIR /app
 
@@ -106,7 +106,7 @@ RUN mkdir -p /app/__client_sdks_staged && \
 RUN python -m compileall -q app/
 
 # ── Production stage ─────────────────────────────────────────
-FROM python:3.11-slim AS production
+FROM python:3.14-slim AS production
 
 WORKDIR /app
 
@@ -138,7 +138,7 @@ ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Copy only production dependencies
-COPY --from=base /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=base /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=base /usr/local/bin /usr/local/bin
 COPY --from=builder /app/app ./app
 COPY --from=builder /app/migrations ./migrations
@@ -166,16 +166,16 @@ COPY --from=builder /app/__client_sdks_staged ./client_sdks
 # and jaraco.context 5.3.0 vendored inside setuptools, and the msgpack 1.1.2 /
 # setuptools 70.3.0 that pip vendors (pip/_vendor/vendor.txt). Deleted by
 # path (a copied site-packages can hold two pip dist-infos), then proven gone.
-RUN rm -rf /usr/local/lib/python3.11/site-packages/pip \
-        /usr/local/lib/python3.11/site-packages/pip-*.dist-info \
-        /usr/local/lib/python3.11/site-packages/setuptools \
-        /usr/local/lib/python3.11/site-packages/setuptools-*.dist-info \
-        /usr/local/lib/python3.11/site-packages/pkg_resources \
-        /usr/local/lib/python3.11/site-packages/_distutils_hack \
-        /usr/local/lib/python3.11/site-packages/distutils-precedence.pth \
-        /usr/local/lib/python3.11/site-packages/wheel \
-        /usr/local/lib/python3.11/site-packages/wheel-*.dist-info \
-        /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 /usr/local/bin/wheel \
+RUN rm -rf /usr/local/lib/python3.14/site-packages/pip \
+        /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
+        /usr/local/lib/python3.14/site-packages/setuptools \
+        /usr/local/lib/python3.14/site-packages/setuptools-*.dist-info \
+        /usr/local/lib/python3.14/site-packages/pkg_resources \
+        /usr/local/lib/python3.14/site-packages/_distutils_hack \
+        /usr/local/lib/python3.14/site-packages/distutils-precedence.pth \
+        /usr/local/lib/python3.14/site-packages/wheel \
+        /usr/local/lib/python3.14/site-packages/wheel-*.dist-info \
+        /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.14 /usr/local/bin/wheel \
     && python -c "import importlib.util, sys; left = [m for m in ('pip', 'setuptools', 'pkg_resources', 'wheel', '_distutils_hack') if importlib.util.find_spec(m)]; sys.exit('build tooling still importable: %s' % left if left else 0)"
 
 # Build provenance — the commit SHA + build timestamp this image was built

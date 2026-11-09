@@ -83,7 +83,7 @@ copyright notice and license text of every JavaScript package in the bundle
 STATIC_TAIL = """
 ## Container base images
 
-The TestLookup images are built on `python:3.11-slim` (Debian; backend,
+The TestLookup images are built on `python:3.14-slim` (Debian; backend,
 workers, MCP server) and `nginx:alpine` (Alpine Linux; web UI), with a
 `node:26-alpine` stage used only to build the web UI. These base layers contain
 operating-system packages under their own licenses, including GPL and LGPL

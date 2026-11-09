@@ -106,11 +106,13 @@ def test_the_tool_contract_matches_its_snapshot():
     mcp = FastMCP("t")
     analytics.register(mcp)
     listed = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
-    actual = listed["get_chart_data"].model_dump(mode="json", exclude_none=True)
+    from _contract_snapshot import canonical
+
+    actual = canonical(listed["get_chart_data"].model_dump(mode="json", exclude_none=True))
     if os.environ.get("UPDATE_SNAPSHOTS") == "1":
         SNAPSHOT.parent.mkdir(exist_ok=True)
         SNAPSHOT.write_bytes((json.dumps(actual, indent=2, sort_keys=True) + "\n").encode("utf-8"))
-    expected = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+    expected = canonical(json.loads(SNAPSHOT.read_text(encoding="utf-8")))
     assert actual == expected, (
         "get_chart_data's published contract changed. If that is intended, "
         "rerun with UPDATE_SNAPSHOTS=1 and review the diff."

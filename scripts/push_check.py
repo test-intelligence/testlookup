@@ -146,16 +146,9 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     # entries: the ReAct tests (root-cause routing, eval runner, confidence
     # threshold, triage x5, server-side lookups x8) import langchain_classic
     # now, and all 19 pass under the hook's Python 3.12.
-    # W16 AGT-13: the byte-for-byte pin of the summary tier comparison (no live
-    # pairs) was hashed under Python 3.11 (CI, the images, .venv311 — it passes
-    # there). The hook's Python 3.12 sums floats with compensation, so the
-    # unchanged cost_delta_usd mean reads -0.01 instead of
-    # -0.010000000000000002 and the hash differs; the manifest checksum agrees.
-    "tests/services/test_tier_comparison_service.py::"
-    "test_no_labelled_pairs_reproduces_todays_answer_byte_for_byte": (
-        "Python 3.12's compensated float sum() changes the last digit of a mean; "
-        "the pin is CI's Python 3.11 answer"
-    ),
+    # W41 (Python 3.14) removed the tier-comparison byte-for-byte entry: the test
+    # now pins the >=3.12 float-sum answer next to 3.11's and passes under the
+    # hook's 3.12.
     "tests/test_rag_services.py::TestDocumentConnectorInternals::"
     "test_extract_docx_preserves_mixed_block_order_and_formatting": (
         "docx extraction differs under the local python-docx build"

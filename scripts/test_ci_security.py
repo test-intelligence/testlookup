@@ -192,7 +192,7 @@ def test_python_runtime_images_carry_no_packaging_toolchain() -> None:
 
 
 def test_the_debian_runtime_images_take_security_updates() -> None:
-    """The backend and MCP images are python:3.11-slim (Debian). Installing a
+    """The backend and MCP images are python:3.14-slim (Debian). Installing a
     few packages does not upgrade the ones the base already carries, so a fix
     Debian publishes for gzip / pcre2 / sqlite / perl-base never reaches the
     image until the base tag is rebuilt upstream -- and Trivy fails every PR
@@ -201,7 +201,7 @@ def test_the_debian_runtime_images_take_security_updates() -> None:
     the same rule for Debian."""
     for dockerfile in ("backend/Dockerfile", "mcp/Dockerfile"):
         steps = _joined(_final_stage(dockerfile))
-        assert steps[0].startswith("FROM python:3.11-slim"), dockerfile
+        assert steps[0].startswith("FROM python:3.14-slim"), dockerfile
         runs = [s for s in steps if s.startswith("RUN ") and "apt-get upgrade -y" in s]
         assert len(runs) == 1, f"{dockerfile}: the runtime stage must run apt-get upgrade once"
         run = runs[0]
