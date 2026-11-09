@@ -57,6 +57,15 @@ def test_self_registration_defaults_to_off():
     assert Settings.model_fields["REGISTRATION_ENABLED"].default is False
 
 
+def test_demo_mode_defaults_to_off():
+    """Demo mode signs visitors in without a password; only the demo stack sets it."""
+    from app.core.config import Settings
+
+    assert _env()["DEMO_MODE"] == "false"
+    assert _env()["DEMO_USERNAME"] == ""
+    assert Settings.model_fields["DEMO_MODE"].default is False
+
+
 def test_app_debug_defaults_to_false():
     assert _env()["APP_DEBUG"] == "false"
 

@@ -217,7 +217,8 @@ def test_compose_object_store_is_versitygw_under_the_minio_name(name):
     assert env["VGW_PORT"] == ":9000" and env["VGW_HEALTH"] == "/health"
     assert "MINIO_ACCESS_KEY" in env["ROOT_ACCESS_KEY"] and "MINIO_SECRET_KEY" in env["ROOT_SECRET_KEY"]
     assert 'mkdir -p "$$VGW_BACKEND_ARG"' in minio["entrypoint"][-1]
-    assert minio["ports"] == ["9000:9000"], "no console port any more"
+    # One port, the S3 API (an optional bind address may prefix it: MINIO_PUBLISH_ADDR).
+    assert len(minio["ports"]) == 1 and str(minio["ports"][0]).endswith("9000:9000"), "no console port any more"
     assert any(str(v).endswith(":/data") for v in minio["volumes"])
     assert "http://127.0.0.1:9000/health" in minio["healthcheck"]["test"]
 

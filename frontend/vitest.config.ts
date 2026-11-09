@@ -20,6 +20,20 @@ import path from 'path'
 export const TEST_TIME_ZONE = 'America/Chicago'
 process.env.TZ = TEST_TIME_ZONE
 
+/**
+ * Node 25+ turns its own Web Storage on by default. Without `--localstorage-file`,
+ * Node's global `localStorage` is `undefined` ("localStorage is not available
+ * because --localstorage-file was not provided"), and that global shadows jsdom's
+ * `localStorage`: on Node 26 (the frontend image's and CI's Node, W42) every test
+ * that touched storage threw "Cannot read properties of undefined (reading
+ * 'setItem')". The workers start with Node's storage off so jsdom's is the one
+ * tests see. Node 20, which has no such flag, would refuse it, so it is passed
+ * only to a Node that knows it.
+ */
+const NODE_WEBSTORAGE_OFF = process.allowedNodeEnvironmentFlags.has('--experimental-webstorage')
+  ? ['--no-experimental-webstorage']
+  : []
+
 export default defineConfig({
   plugins: [react()],
   test: {
@@ -27,6 +41,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     env: { TZ: TEST_TIME_ZONE },
+    execArgv: NODE_WEBSTORAGE_OFF,
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     /**
      * Vitest defaults to roughly (CPU count - 1) workers — 23 on a 24-core dev

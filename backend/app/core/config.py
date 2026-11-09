@@ -617,6 +617,18 @@ class Settings(BaseSettings):
     # Settings > Users instead. When on, a new account is a VIEWER with no
     # project access until an admin adds it to a project.
     REGISTRATION_ENABLED: bool = False
+    # Public read-only demo (``docker-compose.demo.yml``). Never turn this on
+    # for a real deployment. When true, ``app.core.demo_mode`` refuses every
+    # request that is not GET/HEAD/OPTIONS with 403 ``demo_read_only``, apart
+    # from a short allowlist (demo sign-in, token refresh, logout, read-only
+    # simulations, the onboarding progress refresh), and
+    # ``POST /api/v1/auth/demo-login`` signs a visitor in as
+    # ``DEMO_USERNAME`` without a password. Environment-only on purpose: a
+    # database-backed flag could be switched off through the API it guards.
+    DEMO_MODE: bool = False
+    # The account demo sign-in uses. Must be an active, non-admin account
+    # without MFA; blank keeps demo sign-in unavailable even with DEMO_MODE on.
+    DEMO_USERNAME: str = ""
 
     # ── Multi-factor authentication (TOTP) ────────────────────
     # Label shown in the authenticator app next to the account name.

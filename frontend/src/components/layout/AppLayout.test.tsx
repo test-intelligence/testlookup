@@ -64,6 +64,11 @@ describe('AppLayout', () => {
   // UX redesign P1: the drawer is loaded the first time help opens (the eager
   // bundle budget); closed, it is not in the tree at all.
   it('loads and shows the help drawer when help opens, and removes it when it closes', async () => {
+    // Warm the drawer's module graph (react-markdown, Mermaid, every docs page)
+    // first, so the lazy import resolves from the module cache and the wait
+    // below measures behaviour, not how loaded the machine is. Even with 10 s
+    // it still timed out on a busy machine (2026-11-08).
+    await import('@/components/help/HelpDrawer')
     render(
       <MemoryRouter initialEntries={['/overview']}>
         <Routes>

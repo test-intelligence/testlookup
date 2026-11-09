@@ -19,6 +19,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
   <a href="https://testlookup.app"><img src="https://img.shields.io/badge/website-testlookup.app-7C3AED.svg" alt="Website: testlookup.app"></a>
   <a href="docs/README.md"><img src="https://img.shields.io/badge/docs-index-informational.svg" alt="Documentation"></a>
+  <a href="https://codespaces.new/test-intelligence/testlookup?quickstart=1"><img src="https://github.com/codespaces/badge.svg" alt="Open in GitHub Codespaces" height="20"></a>
 </p>
 
 TestLookup is open-source software test intelligence for software development teams. It collects test results from your test frameworks and CI systems, keeps their history per project, classifies why tests fail, and turns that evidence into a release recommendation you can audit. It runs on your own infrastructure: a web app, a REST API, a CLI, client SDKs and an MCP server for AI assistants, backed by databases you control. AI analysis defaults to a local model, and hosted model providers stay blocked unless you turn them on.
@@ -81,6 +82,11 @@ TestLookup ingests Allure results and JUnit-style output from those tools; it co
 - **Access control**: five roles (`VIEWER`, `TESTER`, `QA_ENGINEER`, `QA_LEAD`, `ADMIN`) plus project membership, API keys, MFA, SAML single sign-on and SCIM provisioning.
 
 Some features ship turned off and are enabled per installation or project with feature flags; the in-app guide (`/docs` on your instance) describes each one.
+
+## Try it without installing
+
+- **Guided tours** (nothing to run): [first run](https://testlookup.app/demo/first-run/), [failure triage](https://testlookup.app/demo/failure-triage/) and [release review](https://testlookup.app/demo/release-review/) replay real screens in your browser.
+- **Your own copy in a GitHub Codespace**: [open in Codespaces](https://codespaces.new/test-intelligence/testlookup?quickstart=1) starts the full app with demo data on a 4-core machine. It runs on your GitHub account's Codespaces allowance (free accounts include a monthly quota); stop it when you are done. See [.devcontainer/README.md](.devcontainer/README.md).
 
 ## Quick start
 

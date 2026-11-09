@@ -52,6 +52,34 @@ locally by default.
 
 ### Added
 
+- **Public read-only demo** (branch `feat/public-demo-mode`; runbook `docs/operations/public-demo.md`). A
+  fixed-price VM behind a Cloudflare tunnel, with no inbound port and no per-request billing, so an attack can slow
+  the demo but cannot raise the bill. Writes are blocked three times: a Cloudflare rule, the app, and a nightly
+  rebuild from seed.
+  - `DEMO_MODE` (environment-only, off by default) refuses every request that is not GET/HEAD/OPTIONS with 403
+    `demo_read_only` before routing. Exceptions: demo sign-in, token refresh, logout, the release-gate
+    simulation, and the onboarding progress refresh the onboarding page reads through (found by a route sweep of
+    all 77 pages as the demo session). Password login is refused as well. The Run page's background onboarding
+    call no longer toasts on refusal.
+  - `POST /api/v1/auth/demo-login` signs a visitor in as `DEMO_USERNAME` without a password. It is a 404 off the
+    demo, refuses admin, service and MFA accounts, locks the user row like every session issuer, and is limited
+    to 10 per minute per IP.
+  - The sign-in page offers one button, the app shows a "Live demo · read-only" banner, and refused saves show as
+    one reused toast. The banner shows for sessions opened by demo sign-in (`authStore.demoSession`) and is
+    lazy-loaded, so other deployments make no extra request and the eager bundle stays within its budget.
+  - `docker-compose.demo.yml` (an override of the release stack) forces offline AI, blank LLM keys, SMTP,
+    registration and dev-login off. It also gives nginx the real client IP and a per-IP limit, sets memory
+    ceilings and log rotation, and makes `cloudflared` the only way in.
+  - `docker-compose.release.yml` publishes Postgres, the S3 store and the frontend with an optional bind address
+    (`POSTGRES_PUBLISH_ADDR`, `MINIO_PUBLISH_ADDR`, `FRONTEND_PUBLISH_ADDR`). The default is unchanged; the demo
+    binds them to loopback, because Docker-published ports bypass ufw.
+  - `scripts/demo/demo.sh` (setup / build / reset / update / status / install-cron) and
+    `deploy/demo/cloud-init.yaml` handle the VM.
+  - An "Open in GitHub Codespaces" button (`.devcontainer/`) runs the full app with demo data on the visitor's own
+    Codespaces quota.
+  - Pinned by `tests/regression/test_demo_mode.py` (write rule, middleware through the real app, every demo-login
+    branch), `test_demo_compose.py`, the session-serialization, forwarded-IP and worker-topology guards, and
+    frontend tests for the toast, banner and sign-in.
 - **Observability evidence on Run › Timing** (wave W39, STRAT-07 first slice; branch
   `feat/df-evidence-timeline-20261108`). A new card at the bottom of the Timing tab shows the Splunk, OpenShift and
   Prometheus evidence the AI analysis already fetched for the run on one time axis: the newest deep analysis'
@@ -1372,6 +1400,18 @@ locally by default.
   CI's Python 3.11 with the new pins (8 failures, all local-only: the known Redis-timeout, slow-spawn and lease-timing
   cases, plus 3 fixed in this change); the ReAct tests pass on Python 3.11, 3.12 and 3.14; mypy is at its baseline,
   and ruff and the reference, agent-API and prompt checks pass.
+- **CI builds and tests the frontend on Node 26, the image's Node** (wave W42, OR-10 (9); branch
+  `feat/df-node26-20261109`). The frontend image moved to `node:26-alpine` with Dependabot #160, but CI still tested on
+  Node 22 and wrote the image's `package-lock.json` with Node 20. Now every frontend, docs, diagram, visual and
+  dependency-scan job uses Node 26, and so does the release-branch gate. `build-images` writes the lockfile with
+  Node 26's npm, the same npm that runs `npm ci` inside the build. The JS SDK job stays on Node 20 on purpose (its
+  package declares `node >= 18`), and its comment now says why. The notices and the homelab script said
+  `node:20-alpine`; they now say `node:26-alpine`. CONTRIBUTING asks for Node 22.13+ (Node 20 reached end of life in
+  April 2026). Node 26 also turns its own Web Storage on, and its unconfigured global `localStorage` (undefined)
+  shadowed jsdom's: every frontend unit test that touched storage threw on CI's first Node 26 run. vitest's workers now
+  start with `--no-experimental-webstorage`, passed only to a Node that knows the flag. Configuration only, so there is
+  no new test; the PR's frontend job on Node 26 is the proof. The quality gate and the 474 script tests pass, and the
+  notices `--check` passes after regeneration.
 
 - **README points at the website** (2026-11-08, search visibility; branch `docs/readme-website-links`). The README
   header now leads with "open-source software test intelligence" for software development teams. It also has a row of

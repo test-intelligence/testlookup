@@ -57,7 +57,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-testlookup_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set — generate a .env with scripts/gen-dev-env.sh}
     ports:
-      - "5433:5432"
+      # Every interface by default (unchanged). Set POSTGRES_PUBLISH_ADDR=127.0.0.1
+      # to keep it on the host only; the public demo (docker-compose.demo.yml)
+      # does, because Docker-published ports bypass host firewalls such as ufw.
+      - "${POSTGRES_PUBLISH_ADDR:+${POSTGRES_PUBLISH_ADDR}:}5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # init-db.sql is fetched alongside this file by install.sh; it only enables
@@ -163,7 +166,9 @@ services:
       ROOT_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set — generate a .env with scripts/gen-dev-env.sh}
       ROOT_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set — generate a .env with scripts/gen-dev-env.sh}
     ports:
-      - "9000:9000"
+      # Every interface by default (unchanged); MINIO_PUBLISH_ADDR=127.0.0.1
+      # keeps it on the host (see POSTGRES_PUBLISH_ADDR above).
+      - "${MINIO_PUBLISH_ADDR:+${MINIO_PUBLISH_ADDR}:}9000:9000"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -444,7 +449,9 @@ services:
     # Production image is nginx serving the built SPA on :80 and proxying /api
     # to BACKEND_UPSTREAM (default backend:8000).
     ports:
-      - "3000:80"
+      # Every interface by default (unchanged); FRONTEND_PUBLISH_ADDR=127.0.0.1
+      # when something on the host (a tunnel, a reverse proxy) is the only way in.
+      - "${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:80"
     environment:
       - BACKEND_UPSTREAM=backend:8000
     depends_on:
