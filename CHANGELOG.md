@@ -1371,6 +1371,16 @@ locally by default.
 
 ### Changed
 
+- **The JavaScript SDK builds with TypeScript 7** (wave W44, OR-10 (9); branch `feat/df-ts7-20261109`; Dependabot
+  #33). `client/js` moves from TypeScript 5.9.3 to 7.0.2, the native compiler. TypeScript 6 and later no longer load
+  every `@types/*` package automatically, so the SDK's tsconfig now lists `"types": ["node", "mocha"]`, the two it
+  already declared. Compared with 5.9, the emitted JavaScript is byte-identical. The declarations differ in one place
+  that means the same thing: the Cypress plugin's self-referencing `default`. A consumer using both `p()` and
+  `p.default()` type-checks against the new declarations under TypeScript 7 and 5.9. The SDK's 41 tests pass.
+  **The frontend stays on TypeScript 6** (Dependabot #48): it lints with typescript-eslint, whose newest release
+  (8.72.2) supports `typescript >=4.8.4 <6.1.0`. TypeScript 7 ships only a native `tsc` and `unstable/*` exports, not
+  the compiler API that typescript-eslint loads. The frontend moves when typescript-eslint supports TypeScript 7.
+
 - **Python 3.14 for the images and CI** (wave W41, OR-10 (9); branch `feat/df-py314-20261109`, after the langchain 1.x
   wave it depends on). The backend and MCP images build on `python:3.14-slim` (Dependabot #28 and #27). The CI jobs that
   run the backend, the MCP server, the quality gate and the image-drift guard run Python 3.14, and so does the
