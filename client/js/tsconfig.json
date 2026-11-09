@@ -4,6 +4,7 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "lib": ["ES2020", "DOM"],
+    "types": ["node", "mocha"],
     "outDir": "./dist",
     "rootDir": "./src",
     "declaration": true,
