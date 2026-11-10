@@ -2,7 +2,7 @@
 Tests for the MCP write-path tools (PMF US-14.1).
 
 Follows the established pattern in this suite: static file-content checks
-(no FastMCP / backend import needed) plus functional coverage of the pure
+(no MCPServer / backend import needed) plus functional coverage of the pure
 module-level helpers that own request-building and dry-run branching.
 """
 import sys

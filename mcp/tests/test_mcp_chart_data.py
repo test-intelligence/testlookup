@@ -99,16 +99,16 @@ def test_the_tool_contract_matches_its_snapshot():
     """Name, description and schemas are the agent's whole view of the tool.
 
     A changed argument name breaks every agent prompt written against it, and
-    the REST parity test can only see the source, not what FastMCP publishes.
+    the REST parity test can only see the source, not what MCPServer publishes.
     """
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     analytics.register(mcp)
     listed = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
     from _contract_snapshot import canonical
 
-    actual = canonical(listed["get_chart_data"].model_dump(mode="json", exclude_none=True))
+    actual = canonical(listed["get_chart_data"].model_dump(mode="json", by_alias=True, exclude_none=True))
     if os.environ.get("UPDATE_SNAPSHOTS") == "1":
         SNAPSHOT.parent.mkdir(exist_ok=True)
         SNAPSHOT.write_bytes((json.dumps(actual, indent=2, sort_keys=True) + "\n").encode("utf-8"))

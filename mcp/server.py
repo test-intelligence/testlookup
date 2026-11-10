@@ -64,11 +64,12 @@ from __future__ import annotations
 
 import sys
 import os
+from importlib.metadata import version as package_version
 
 # Ensure mcp/ directory is on the path when run directly
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from mcp.server.fastmcp import FastMCP  # type: ignore[import]
+from mcp.server.mcpserver import MCPServer  # mcp 2 (W46): FastMCP was renamed MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.responses import JSONResponse
 
@@ -92,25 +93,31 @@ from tools import test_management
 from resources import registry
 from prompts import templates
 
-mcp = FastMCP(
+# mcp 2 (W46) takes the SSE transport's security settings per run / per app, not at construction, and a call that
+# omits them gets NO DNS-rebinding protection and no host / origin allowlist. Every SSE path in this server goes
+# through ``sse_app()`` or ``run_sse()`` below, which always pass TRANSPORT_SECURITY.
+SSE_HOST = "0.0.0.0"
+TRANSPORT_SECURITY = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=[
+        value.strip()
+        for value in settings.mcp_allowed_hosts.split(",")
+        if value.strip()
+    ],
+    allowed_origins=[
+        value.strip()
+        for value in settings.mcp_allowed_origins.split(",")
+        if value.strip()
+    ],
+)
+
+mcp = MCPServer(
     name="TestLookup",
-    host="0.0.0.0",
-    port=8002,
+    # The initialize reply's serverInfo.version is required by the protocol. mcp 1 filled it with the SDK's version
+    # when none was given; mcp 2 sends "" instead, so pass the same value explicitly (W46).
+    version=package_version("mcp"),
     token_verifier=TestLookupTokenVerifier(),
     auth=build_auth_settings(),
-    transport_security=TransportSecuritySettings(
-        enable_dns_rebinding_protection=True,
-        allowed_hosts=[
-            value.strip()
-            for value in settings.mcp_allowed_hosts.split(",")
-            if value.strip()
-        ],
-        allowed_origins=[
-            value.strip()
-            for value in settings.mcp_allowed_origins.split(",")
-            if value.strip()
-        ],
-    ),
     instructions=(
         "You are connected to TestLookup, a 360° software testing intelligence platform. "
         "You can query test quality metrics, investigate failures, check release readiness, "
@@ -229,6 +236,16 @@ registry.register(mcp)
 templates.register(mcp)
 
 
+def sse_app():
+    """The SSE ASGI app WITH this server's transport security (the tests and any embedding use this)."""
+    return mcp.sse_app(transport_security=TRANSPORT_SECURITY, host=SSE_HOST)
+
+
+def run_sse(port: int) -> None:
+    """Serve SSE on ``SSE_HOST:port`` WITH this server's transport security (the image's CMD)."""
+    mcp.run(transport="sse", host=SSE_HOST, port=port, transport_security=TRANSPORT_SECURITY)
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -248,10 +265,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.transport == "sse":
-        # Configure host/port on the instance before running.
-        # FastMCP.run() no longer accepts port directly — it reads from settings.
-        mcp.settings.host = "0.0.0.0"
-        mcp.settings.port = args.port
-        mcp.run(transport="sse")
+        run_sse(args.port)
     else:
         mcp.run(transport="stdio")

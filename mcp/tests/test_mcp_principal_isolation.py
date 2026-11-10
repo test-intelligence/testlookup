@@ -7,7 +7,9 @@ identity through the interactive ``login`` tool.
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import importlib.metadata
 import os
 import socket
 import sys
@@ -189,7 +191,7 @@ def test_sse_and_message_endpoints_require_bearer_authentication():
     import server
 
     async def exercise() -> None:
-        transport = httpx.ASGITransport(app=server.mcp.sse_app())
+        transport = httpx.ASGITransport(app=server.sse_app())
         async with httpx.AsyncClient(transport=transport, base_url="http://mcp") as http:
             sse = await http.get("/sse")
             message = await http.post("/messages/?session_id=missing", json={})
@@ -204,7 +206,7 @@ def test_readiness_tracks_backend_auth_authority(monkeypatch):
     import server
 
     async def exercise() -> None:
-        transport = httpx.ASGITransport(app=server.mcp.sse_app())
+        transport = httpx.ASGITransport(app=server.sse_app())
         async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as http:
             monkeypatch.setattr(client, "backend_ready", AsyncMock(return_value=False))
             unavailable = await http.get("/health/ready")
@@ -278,7 +280,7 @@ def test_two_real_sse_clients_remain_bound_to_their_presenting_tokens(monkeypatc
         listener.bind(("127.0.0.1", 0))
         listener.listen()
         port = listener.getsockname()[1]
-        app = mcp_server.mcp.sse_app()
+        app = mcp_server.sse_app()
         runtime = uvicorn.Server(
             uvicorn.Config(app, log_level="error", lifespan="on")
         )
@@ -302,13 +304,16 @@ def test_two_real_sse_clients_remain_bound_to_their_presenting_tokens(monkeypatc
                 async with ClientSession(*alice_streams) as alice_session, ClientSession(
                     *bob_streams
                 ) as bob_session:
-                    await asyncio.gather(alice_session.initialize(), bob_session.initialize())
+                    alice_init, _ = await asyncio.gather(alice_session.initialize(), bob_session.initialize())
+                    # serverInfo.version is required; mcp 2 sends "" unless the server names one (W46).
+                    assert alice_init.server_info.name == "TestLookup"
+                    assert alice_init.server_info.version == importlib.metadata.version("mcp") != ""
                     alice_result, bob_result = await asyncio.gather(
                         alice_session.call_tool("list_projects"),
                         bob_session.call_tool("list_projects"),
                     )
-                    assert alice_result.isError is not True
-                    assert bob_result.isError is not True
+                    assert alice_result.is_error is not True
+                    assert bob_result.is_error is not True
 
                     # Even a valid Bob token cannot submit into Alice's session.
                     assert alice_session_ids
@@ -390,7 +395,7 @@ def test_real_stdio_process_keeps_configured_login_compatibility():
                 async with ClientSession(*streams) as session:
                     await session.initialize()
                     result = await session.call_tool("list_projects")
-                    assert result.isError is not True
+                    assert result.is_error is not True
             assert forwarded == ["Bearer stdio-access-token"]
         finally:
             runtime.should_exit = True
@@ -430,15 +435,15 @@ def test_configured_external_host_is_allowed_and_unknown_host_is_rejected(monkey
         "verify_token",
         AsyncMock(return_value=verified),
     )
-    allowed = server.mcp.settings.transport_security.allowed_hosts
+    allowed = server.TRANSPORT_SECURITY.allowed_hosts
     monkeypatch.setattr(
-        server.mcp.settings.transport_security,
+        server.TRANSPORT_SECURITY,
         "allowed_hosts",
         [*allowed, "mcp.example.test"],
     )
 
     async def exercise() -> None:
-        transport = httpx.ASGITransport(app=server.mcp.sse_app())
+        transport = httpx.ASGITransport(app=server.sse_app())
         headers = {"Authorization": "Bearer caller-token"}
         async with httpx.AsyncClient(transport=transport, base_url="https://ignored") as http:
             accepted = await http.post(
@@ -455,6 +460,51 @@ def test_configured_external_host_is_allowed_and_unknown_host_is_rejected(monkey
         assert rejected.status_code == 421
 
     asyncio.run(exercise())
+
+
+def test_run_sse_serves_with_this_servers_transport_security(monkeypatch):
+    """mcp 2 takes transport security per run: the image's ``--transport sse`` path must pass it, or the served app
+    has no DNS-rebinding protection and no host / origin allowlist (W46)."""
+    import server
+
+    calls: list[dict] = []
+    monkeypatch.setattr(server.mcp, "run", lambda **kwargs: calls.append(kwargs))
+
+    server.run_sse(8123)
+
+    assert calls == [
+        {
+            "transport": "sse",
+            "host": server.SSE_HOST,
+            "port": 8123,
+            "transport_security": server.TRANSPORT_SECURITY,
+        }
+    ]
+    assert server.TRANSPORT_SECURITY.enable_dns_rebinding_protection is True
+
+
+def test_every_sse_entry_point_in_server_passes_transport_security():
+    """No call in server.py may start or build the SSE transport without TRANSPORT_SECURITY: an mcp 2 call that omits
+    it silently serves without the allowlist. stdio needs none."""
+    tree = ast.parse((MCP_DIR / "server.py").read_text(encoding="utf-8"))
+    sse_calls = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+            continue
+        if not (isinstance(node.func.value, ast.Name) and node.func.value.id == "mcp"):
+            continue
+        name = node.func.attr
+        transport = next((kw.value for kw in node.keywords if kw.arg == "transport"), None)
+        is_stdio_run = name == "run" and isinstance(transport, ast.Constant) and transport.value == "stdio"
+        if name in {"run", "sse_app", "run_sse_async", "streamable_http_app", "run_streamable_http_async"} and not is_stdio_run:
+            sse_calls.append(node)
+
+    assert sse_calls, "server.py no longer builds an SSE transport; update this guard"
+    for call in sse_calls:
+        passed = {kw.arg: kw.value for kw in call.keywords}
+        assert "transport_security" in passed, f"mcp.{call.func.attr}() at line {call.lineno} omits transport_security"
+        value = passed["transport_security"]
+        assert isinstance(value, ast.Name) and value.id == "TRANSPORT_SECURITY", call.lineno
 
 
 def test_packaged_network_endpoints_use_safe_exposure_defaults():
@@ -504,5 +554,24 @@ def test_packaged_network_endpoints_use_safe_exposure_defaults():
 
 
 def test_mcp_sdk_is_pinned_to_principal_binding_release():
+    # 1.29.1 was the first release that binds an SSE session to the token that opened it; W46 moved to mcp 2.3.0,
+    # a later release, and test_two_real_sse_clients_remain_bound_to_their_presenting_tokens proves the binding on it.
     requirements = (MCP_DIR / "requirements.txt").read_text(encoding="utf-8")
-    assert "mcp==1.29.1" in requirements
+    assert "mcp==2.3.0" in requirements
+
+
+def test_offline_bundle_smoke_imports_every_mcp_symbol_the_server_imports():
+    """The offline-bundle job proves the image can import the SDK symbols the server needs. ``import mcp`` alone
+    passes on any release, and a stale symbol list once let an SDK major crash-loop the pod, so each module-level
+    ``from mcp.… import …`` in the server must appear in that smoke line."""
+    needed = set()
+    for name in ("server.py", "token_verifier.py"):
+        tree = ast.parse((MCP_DIR / name).read_text(encoding="utf-8"))
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "mcp":
+                needed.update(f"from {node.module} import {alias.name}" for alias in node.names)
+    workflow = (REPO_ROOT / ".github" / "workflows" / "offline-bundle.yml").read_text(encoding="utf-8")
+    smoke = next(line for line in workflow.splitlines() if "mcp runtime present offline OK" in line)
+
+    assert needed, "the server no longer imports from mcp; update this guard"
+    assert sorted(symbol for symbol in needed if symbol not in smoke) == []
