@@ -1192,16 +1192,12 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package.json
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Save lockfile to workspace (for caching future runs)
-        run: |
-          if [ -f package-lock.json ]; then
-            echo "✓ package-lock.json present"
-          else
-            echo "⚠ package-lock.json not found — run 'npm install' locally and commit it"
-          fi
+      # `npm ci` on the committed lockfile, as the frontend image build does. `npm install`
+      # quietly repaired a lockfile that `npm ci` rejects (W45: vitest 5 depends on picomatch 4
+      # while the overrides pinned picomatch 2.3.2 globally), so CI was green and the first
+      # failure was the homelab image build. A missing or out-of-sync lockfile now fails here.
+      - name: Install dependencies (the committed lockfile, as the image does)
+        run: npm ci
 
       - name: Lint
         run: npm run lint
