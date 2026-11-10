@@ -218,13 +218,14 @@ jobs:
       - name: MCP image imports with the network switched off
         run: |
           set -euo pipefail
-          # Import the exact symbol server.py depends on, not just `mcp`:
-          # `import mcp` also succeeds on mcp 2.x, which DROPPED
-          # mcp.server.fastmcp and crash-looped the pod in production.
-          # (requirements pin <2.0.0; this asserts the pin held in the image.)
+          # Import the exact symbols server.py depends on, not just `mcp`:
+          # `import mcp` succeeds on any release, but an SDK major can move a
+          # symbol (mcp 2.x dropped mcp.server.fastmcp, which once crash-looped
+          # the pod in production). Since W46 the server is on mcp 2 (MCPServer);
+          # mcp/tests keeps this line in step with the server's mcp imports.
           docker run --rm --network none --pull=never \
             "ci.invalid/testlookup/mcp:${BUNDLE_VERSION}" \
-            python -c "from mcp.server.fastmcp import FastMCP; import mcp; print('mcp runtime present offline OK')"
+            python -c "from mcp.server.mcpserver import MCPServer; from mcp.server.transport_security import TransportSecuritySettings; from mcp.server.auth.provider import AccessToken; from mcp.server.auth.settings import AuthSettings; import mcp; print('mcp runtime present offline OK')"
 
       - name: MANIFEST.json is internally consistent and honest about SBOMs
         run: |

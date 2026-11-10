@@ -3,8 +3,8 @@ Regression: MCP tool names must be globally unique across all tool modules.
 
 Bug (2026-06-09): two tool *names* were each defined in two different modules
 with different signatures, and both modules are registered in ``server.py``.
-Because FastMCP registers tools by function name, the later registration
-silently shadowed the earlier one — so two implementations were dead code and
+Because FastMCP (mcp 1) registered tools by function name, one registration
+silently shadowed the other — so two implementations were dead code and
 only 46 of the 48 declared tools were actually reachable:
 
   * ``check_release_readiness`` — ``release.py`` (project-level, ``project_id``)
@@ -16,7 +16,7 @@ Fix renamed the two shadowed-by duplicates to distinct names
 (``check_run_release_readiness`` and ``search_test_cases``) so all 48 tools are
 distinct and reachable.
 
-These tests parse the tool modules statically (AST) — no FastMCP / backend
+These tests parse the tool modules statically (AST) — no MCPServer / backend
 import required, matching the rest of ``test_mcp_server.py``.
 """
 import ast
@@ -66,8 +66,8 @@ def test_no_duplicate_tool_names_across_modules():
     dupes = {name: count for name, count in Counter(names).items() if count > 1}
     assert not dupes, (
         f"Duplicate @mcp.tool() names registered in more than one module: {dupes}. "
-        "FastMCP registers by function name, so duplicates silently shadow each "
-        "other. Rename one to a distinct name (see test docstring)."
+        "MCPServer registers by function name and keeps the first, dropping the "
+        "duplicate with only a log warning. Rename one to a distinct name (see test docstring)."
     )
 
 

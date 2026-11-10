@@ -3,7 +3,7 @@ Tests for the AI-5 MCP surface: Investigator tools, the run-investigation
 resource, the record_fix_outcome learning-loop tool, and the packaged
 fix_this_flaky_test prompt.
 
-Follows the suite's conventions: static file-content checks (no FastMCP /
+Follows the suite's conventions: static file-content checks (no MCPServer /
 backend import needed) plus functional coverage of the pure module-level
 helpers that own request-building, validation, and compact rendering.
 """

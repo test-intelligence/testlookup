@@ -1371,6 +1371,22 @@ locally by default.
 
 ### Changed
 
+- **The MCP server runs on the MCP Python SDK 2** (wave W46, OR-10 (9); branch `feat/df-mcp2-20261110`; Dependabot
+  #36). `mcp` moves from 1.29.1 to 2.3.0, the newest release. mcp 2 renamed `FastMCP` to `MCPServer` and moved the host,
+  port and transport security from the constructor to the run call. A run or app build that leaves them out gets no
+  DNS-rebinding protection and no host or origin allowlist. So `server.py` builds `TRANSPORT_SECURITY` once, and every
+  SSE path goes through `sse_app()` or `run_sse()`, the image's `--transport sse` start, which always pass it. mcp 2
+  also sends an empty `serverInfo.version` unless the server names one. The server now names the SDK version, the value
+  mcp 1 sent. The published tool contracts are unchanged: all 78 snapshot tests pass, after the test serializer adds
+  `by_alias=True`, since mcp 2's models keep snake_case attributes. Every principal-isolation test passes unchanged in
+  intent: two real SSE clients stay bound to their own tokens. New guards check that `run_sse()` passes the transport
+  security, that no SSE call in `server.py` omits it, and that the offline-bundle job's import smoke names every SDK
+  symbol the server imports. That smoke still imported `mcp.server.fastmcp` and would have failed on the new image.
+  The MCP suite passes 316 of 316 on Python 3.14. In a local demo, a real mcp 2 client checked the server
+  (`server.py --transport sse`) against the API: 80 tools; each token's session lists only its own projects; and four
+  attempts are refused: another token posting into a session (404), no bearer (401), a bad bearer (401) and an
+  unknown Host (421).
+
 - **The frontend's unit tests run on Vitest 5** (wave W45, OR-10 (9); branch `feat/df-vitest5-20261109`; Dependabot
   #42). `vitest` and `@vitest/coverage-v8` move from 4.1 to 5.1. The lockfile changes only Vitest's own tree; the
   platform bindings are untouched. Vitest 5's assertion type no longer extends the global `jest.Matchers`, where
