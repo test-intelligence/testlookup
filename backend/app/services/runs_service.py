@@ -905,7 +905,10 @@ async def _live_buffer_test_cases(
         except Exception:
             stream_entries = []
 
-        def _stream_field(fields: dict, name: str, default=None):
+        def _stream_field(fields: Mapping | None, name: str, default=None):
+            # redis-py 8 types a stream entry's fields as Optional (XCLAIM-style replies); XRANGE never sends None.
+            if fields is None:
+                return default
             return fields.get(name, fields.get(name.encode(), default))
 
         def _text(value):

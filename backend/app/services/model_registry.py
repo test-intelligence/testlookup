@@ -26,6 +26,16 @@ _PREFIX = "testlookup:model"
 _TTL = 86_400 * 30  # 30-day TTL — refreshed on every write
 
 
+def _text(value: bytes | str) -> str:
+    """The shared client decodes responses (``decode_responses=True``), so a stored model name comes back as ``str``.
+
+    The old ``value.decode()`` raised ``AttributeError`` on that ``str`` the moment a model was promoted: llm_factory
+    swallowed it (the promoted model was silently never used) and analysis_router raised. redis-py 8's typing
+    surfaced it (W47); bytes still decode for a client built without decoding.
+    """
+    return value.decode() if isinstance(value, bytes) else value
+
+
 class ModelRegistry:
     """Redis-backed registry for active model versions per track."""
 
@@ -36,7 +46,7 @@ class ModelRegistry:
         """Return the active fine-tuned model name for `track`, or None if none promoted."""
         redis = get_redis()
         value = await redis.get(f"{_PREFIX}:active:{track}")
-        return value.decode() if value else None
+        return _text(value) if value else None
 
     @classmethod
     async def promote(cls, track: str, model_name: str, metrics: dict) -> None:
@@ -69,7 +79,7 @@ class ModelRegistry:
             model = await redis.get(f"{_PREFIX}:active:{track}")
             metrics_raw = await redis.get(f"{_PREFIX}:metrics:{track}")
             result[track] = {
-                "active_model": model.decode() if model else None,
+                "active_model": _text(model) if model else None,
                 "metrics": json.loads(metrics_raw) if metrics_raw else None,
             }
         return result

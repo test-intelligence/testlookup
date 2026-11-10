@@ -13,7 +13,6 @@
 6 app/agents/release_risk_agent.py
 1 app/agents/summary_agent.py
 7 app/agents/workflow.py
-1 app/bootstrap.py
 1 app/core/deps.py
 1 app/core/scim_errors.py
 1 app/db/mongo.py
@@ -25,7 +24,7 @@
 5 app/routers/duplicates.py
 1 app/routers/flaky_quarantine.py
 2 app/routers/gitlab_integration.py
-4 app/routers/health.py
+3 app/routers/health.py
 1 app/routers/ingest.py
 1 app/routers/integration_health.py
 1 app/routers/my_failures.py
@@ -64,14 +63,12 @@
 1 app/services/flaky_step_analysis.py
 1 app/services/flaky_step_flip.py
 34 app/services/gitlab_integration_service.py
-2 app/services/ingestion_dlq.py
+1 app/services/ingestion_dlq.py
 3 app/services/ingestion_pipeline.py
 2 app/services/intelligence_snapshot_service.py
 1 app/services/knowledge_chunking_service.py
 2 app/services/knowledge_source_service.py
 1 app/services/knowledge_sync_service.py
-1 app/services/live_run_recovery_service.py
-4 app/services/live_session_drainer.py
 2 app/services/llm_cost_budget.py
 2 app/services/llm_factory.py
 1 app/services/local_embedder_guard.py
@@ -95,7 +92,7 @@
 2 app/services/run_deletion_service.py
 7 app/services/run_evidence_bundle.py
 1 app/services/run_tombstone_service.py
-15 app/services/runs_service.py
+14 app/services/runs_service.py
 1 app/services/scim_discovery.py
 1 app/services/scim_service.py
 7 app/services/search_service.py
@@ -104,6 +101,6 @@
 10 app/services/suite_sync_service.py
 1 app/services/value_metrics_service.py
 6 app/services/ws_event_ingest.py
-6 app/streams/live_consumer.py
+3 app/streams/live_consumer.py
 4 app/streams/live_fanout.py
-30 app/worker/tasks.py
+29 app/worker/tasks.py

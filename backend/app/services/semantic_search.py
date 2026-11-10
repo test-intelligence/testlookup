@@ -286,8 +286,8 @@ def _cursor_keys(project_id: Optional[str] = None) -> tuple[str, str]:
 
 def _get_redis():
     """Get a Redis client for cursor management."""
-    import redis as _redis
-    return _redis.Redis.from_url(settings.CELERY_BROKER_URL)
+    from app.db.redis_client import sync_redis_from_url  # the app's timeouts + one attempt (W47, redis-py 8)
+    return sync_redis_from_url(settings.CELERY_BROKER_URL)
 
 
 def _after_incremental_cursor(last_id):
@@ -1097,9 +1097,9 @@ async def get_index_status(
         status["status"] = "not_configured" if unreachable else "unavailable"
 
     try:
-        import redis as _redis
         from app.core.config import settings as _settings
-        r = _redis.Redis.from_url(_settings.CELERY_BROKER_URL)
+        from app.db.redis_client import sync_redis_from_url
+        r = sync_redis_from_url(_settings.CELERY_BROKER_URL)
         _, timestamp_key = _cursor_keys(project_id)
         ts = r.get(timestamp_key)
         # Global incremental indexing also covers an explicitly selected

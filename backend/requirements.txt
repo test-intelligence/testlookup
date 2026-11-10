@@ -80,9 +80,12 @@ langgraph==1.2.20
 chromadb==1.5.9
 
 # ── Background Tasks ─────────────────────────────────────────
-celery[redis]==5.6.3
-redis==5.2.1
-kombu==5.6.2
+celery[redis]==5.7.0
+# redis-py 8 (W47) changed defaults: RESP3 on the wire (reply shapes kept), a 5 s socket timeout, and up to 10
+# retries for a client built with Redis(host=...). Every client the app builds names its timeouts and retry policy
+# (app/db/redis_client.py), so the slot-lease floor (2 x the socket timeout + 5 s) still bounds one Redis call.
+redis==8.1.0
+kombu==5.7.0
 flower==2.2.0
 
 # ── ML tier: trainer + flaky-confidence model ────────────────

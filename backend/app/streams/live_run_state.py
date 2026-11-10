@@ -12,6 +12,7 @@ Benefits:
 """
 import logging
 from datetime import datetime, timezone
+from collections.abc import Mapping
 from typing import Any, Optional
 
 from app.db.redis_client import get_redis
@@ -127,7 +128,7 @@ class RedisLiveRunState:
         pairs: list[Any] = []
         for field, value in mapping.items():
             pairs.extend((field, str(value)))
-        outcome = await redis.eval(  # type: ignore[misc]
+        outcome = await redis.eval(
             _START_LUA,
             2,
             key,
@@ -185,12 +186,13 @@ class RedisLiveRunState:
 
         # Build the metadata update.
         now = datetime.now(timezone.utc).isoformat()
-        updates: dict[str, str | int] = {"last_event_at": now}
+        # Keys typed Any: redis-py 8 types hset's mapping as Mapping[<any encodable>, ...], invariant in the key.
+        updates: dict[Any, str | int] = {"last_event_at": now}
         if test_name:
             updates["current_test"] = test_name
         if total_tests > 0:
             # Use the max seen so we don't regress (events can arrive slightly out of order)
-            current_total = int(await redis.hget(key, "total") or 0)  # type: ignore[misc]
+            current_total = int(await redis.hget(key, "total") or 0)
             if total_tests > current_total:
                 updates["total"] = total_tests
 
@@ -215,7 +217,7 @@ class RedisLiveRunState:
     async def get(cls, run_id: str) -> Optional[dict]:
         """Return the current state as a plain dict, or None if not found."""
         redis = get_redis()
-        raw = await redis.hgetall(_STATE_KEY(run_id))  # type: ignore[misc]
+        raw = await redis.hgetall(_STATE_KEY(run_id))
         if not raw:
             return None
         return cls._deserialise(raw)
@@ -224,18 +226,18 @@ class RedisLiveRunState:
     async def get_all_active(cls) -> list[dict]:
         """Return state dicts for all currently active runs."""
         redis = get_redis()
-        run_ids = await redis.smembers(LIVE_ACTIVE_SET)  # type: ignore[misc]
+        run_ids = await redis.smembers(LIVE_ACTIVE_SET)
         states = []
         dead = []
         for run_id in run_ids:
-            state = await cls.get(run_id)
+            state = await cls.get(run_id.decode() if isinstance(run_id, bytes) else run_id)
             if state:
                 states.append(state)
             else:
                 dead.append(run_id)
         # Prune expired run IDs from the active set
         if dead:
-            await redis.srem(LIVE_ACTIVE_SET, *dead)  # type: ignore[misc]
+            await redis.srem(LIVE_ACTIVE_SET, *dead)
         return states
 
     @classmethod
@@ -289,7 +291,7 @@ class RedisLiveRunState:
         return pass_rate < _WARN_PASS_RATE
 
     @staticmethod
-    def _deserialise(raw: dict[str, Any]) -> dict[str, Any]:
+    def _deserialise(raw: Mapping[Any, Any]) -> dict[str, Any]:
         """Convert Redis string values back to typed Python values."""
         int_fields = {
             "total", "passed", "failed", "skipped", "broken", "unknown",
