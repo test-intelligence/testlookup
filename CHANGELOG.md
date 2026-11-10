@@ -1393,6 +1393,9 @@ locally by default.
     `value.decode()` raised `AttributeError` as soon as a model was promoted. `llm_factory` swallowed the error, so
     the promoted model was silently never used, and `analysis_router` raised it. redis-py 8's type hints made mypy
     report it. The registry now decodes only bytes, with a regression test.
+  - **tzdata is pinned.** kombu 5.6 brought in the `tzdata` wheel on every platform; kombu 5.7 only on Windows. The
+    images have no OS time-zone database, so run-cadence schedules would have lost every IANA zone. CI's tzdata test
+    caught it; local Windows runs could not. `tzdata==2026.6` is now a direct dependency and on the licence allowlist.
   - redis-py 8's type hints also cleared 13 old mypy errors; the ratchet baseline is tightened to match.
   - Celery 5.7's `send_task` defaults `ignore_result` to `None` instead of `False`. Both are falsy, so the beat
     workaround (every schedule entry ignores results) still applies, and its comments now say so.

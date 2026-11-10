@@ -86,6 +86,9 @@ celery[redis]==5.7.0
 # (app/db/redis_client.py), so the slot-lease floor (2 x the socket timeout + 5 s) still bounds one Redis call.
 redis==8.1.0
 kombu==5.7.0
+# The IANA zone database for run-cadence schedules (app/services/run_cadence_schedule.py): the images have no OS tz
+# database. kombu 5.6 brought tzdata in everywhere; kombu 5.7 only on Windows, so it is pinned here (W47).
+tzdata==2026.6
 flower==2.2.0
 
 # ── ML tier: trainer + flaky-confidence model ────────────────
