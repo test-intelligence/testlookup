@@ -118,6 +118,7 @@
     "threadpoolctl": "BSD-3-Clause",
     "typer": "MIT",
     "types-python-dateutil": "Apache-2.0",
+    "tzdata": "Apache-2.0",
     "uvicorn": "BSD-3-Clause"
   }
 }

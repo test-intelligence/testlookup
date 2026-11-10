@@ -356,9 +356,12 @@ async def test_a_crashed_holder_frees_its_slot_when_the_lease_lapses(slots_redis
             context = multiprocessing.get_context("spawn")
             ready = context.Queue()
             holder = context.Process(target=_crashing_holder, args=(url, prefix, "vllm", ready))
-            holder.start()
+            # Off the event loop: the live holder's heartbeat renews a 1 s lease on this loop, and a spawn start /
+            # join that blocks it for longer (seconds on a slow Windows machine) lost the LIVE slot -- a harness
+            # artefact, not the behaviour under test (W47: 5 of 8 local runs failed on the old pins too).
+            await asyncio.to_thread(holder.start)
             await asyncio.to_thread(ready.get, True, 30)
-            holder.join(timeout=10)
+            await asyncio.to_thread(holder.join, 10)
             assert holder.exitcode == 0
 
             waiter = slots.ClusterSemaphore("vllm", 2, lease_seconds=1.0, redis=client)

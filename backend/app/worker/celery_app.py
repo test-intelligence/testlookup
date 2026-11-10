@@ -2,7 +2,7 @@
 from datetime import timedelta
 from pathlib import Path
 
-from celery import Celery
+from celery import Celery, Task
 from celery.signals import (
     celeryd_init,
     setup_logging,
@@ -18,11 +18,33 @@ from kombu import Exchange, Queue
 
 from app.core.config import settings
 
+
+class TimeLimitedTask(Task):
+    """A task's inherited soft time limit never exceeds its own hard limit.
+
+    Celery 5.7 refuses ``apply_async`` (beat's dispatch included) when ``soft_time_limit > time_limit``. A task that
+    declares only ``time_limit=120`` inherits ``task_soft_time_limit`` (1740 s, below) at bind time, so 34 tasks --
+    every outbox relay, run_ai_analysis, execute_agent_action -- could no longer be sent at all (W47; found by the
+    local beat run). Celery 5.6 accepted the pair and the hard limit fired first, so those tasks never saw a soft
+    limit; capping the inherited soft limit at the hard one keeps that while passing 5.7's check. A soft limit the
+    task declares itself is left alone, so a real author error still fails loudly.
+    """
+
+    @classmethod
+    def bind(cls, app):
+        declared_soft = cls.__dict__.get("soft_time_limit") is not None
+        bound = super().bind(app)
+        if not declared_soft and cls.time_limit and cls.soft_time_limit and cls.soft_time_limit > cls.time_limit:
+            cls.soft_time_limit = cls.time_limit
+        return bound
+
+
 celery_app = Celery(
     "testlookup",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
     include=["app.worker.tasks", "app.worker.training_tasks"],
+    task_cls=TimeLimitedTask,
 )
 
 
@@ -636,10 +658,10 @@ celery_app.conf.update(
 # ── Beat must not subscribe to task results ──────────────────────────────────
 #
 # Celery beat is fire-and-forget: it dispatches periodic tasks and never reads
-# what they return. But ``Celery.send_task`` does this (celery 5.6.3,
-# ``app/base.py``):
+# what they return. But ``Celery.send_task`` does this (``app/base.py``; celery
+# 5.7.0 defaults to None where 5.6.3 had False -- both falsy, so nothing changed):
 #
-#     ignore_result = options.pop('ignore_result', False)
+#     ignore_result = options.pop('ignore_result', None)
 #     ...
 #     if not ignore_result:
 #         self.backend.on_task_call(P, task_id)

@@ -1,9 +1,10 @@
 """Celery beat must never subscribe to task results.
 
 JR-03 / TL-2026-09-19-01-004. Beat is fire-and-forget, but
-``Celery.send_task`` (celery 5.6.3, ``app/base.py``) does::
+``Celery.send_task`` (``app/base.py``; 5.6.3 defaulted to False, 5.7.0 to None,
+both falsy) does::
 
-    ignore_result = options.pop('ignore_result', False)
+    ignore_result = options.pop('ignore_result', None)
     ...
     if not ignore_result:
         self.backend.on_task_call(P, task_id)

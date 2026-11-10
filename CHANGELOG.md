@@ -1371,6 +1371,46 @@ locally by default.
 
 ### Changed
 
+- **Background work runs on Celery 5.7 and redis-py 8** (wave W47, OR-10 (9); branch `feat/df-redis8-20261110`;
+  Dependabot #5). `redis` moves from 5.2.1 to 8.1.0, `celery[redis]` from 5.6.3 to 5.7.0 and `kombu` from 5.6.2 to
+  5.7.0. kombu 5.6 capped redis below 6.5, so the three move together.
+  - **Celery 5.7 refused to queue 34 tasks.** Its `apply_async` now raises when a task's soft time limit is above its
+    hard limit. A task that sets only `time_limit` inherits the global 1,740 s soft limit, so every outbox relay,
+    `run_ai_analysis` and `execute_agent_action` could no longer be sent. On the local stack, beat logged "Couldn't
+    apply scheduled task relay-…" for each relay. Celery 5.6 accepted the pair and the hard limit fired first, so
+    those tasks never saw a soft limit. A base task class (`TimeLimitedTask`) now caps an inherited soft limit at the
+    task's own hard limit. A soft limit a task declares itself is left alone, so a real mistake still fails. The
+    unit tests mock `apply_async` and never reached the check, so the new tests call the real one.
+  - **One Redis call is still one attempt.** redis-py 8 gives a client built with `Redis(host=…)` up to 10 retries
+    with backoff, and every connection a 5 s timeout by default. The LLM slot lease assumes one call of at most 5 s
+    (its floor is 2 × the timeout + 5 s). Every client the app builds now states its timeouts and a no-retry policy
+    in one place (`app/db/redis_client.py`). That includes semantic search's index cursor, which had no timeout
+    before. A test drives the real command path against a hung server and counts one reply read.
+  - **RESP3.** redis-py 8 speaks RESP3 by default but keeps RESP2-shaped Python replies. A probe against a real
+    server found every reply shape the app relies on unchanged, including each Lua script's `false`, `nil` and table
+    replies. Every deployment runs Valkey 8.1, which supports RESP3.
+  - **A promoted fine-tuned model was unreadable.** The shared Redis client decodes responses, so `ModelRegistry`'s
+    `value.decode()` raised `AttributeError` as soon as a model was promoted. `llm_factory` swallowed the error, so
+    the promoted model was silently never used, and `analysis_router` raised it. redis-py 8's type hints made mypy
+    report it. The registry now decodes only bytes, with a regression test.
+  - **tzdata is pinned.** kombu 5.6 brought in the `tzdata` wheel on every platform; kombu 5.7 only on Windows. The
+    images have no OS time-zone database, so run-cadence schedules would have lost every IANA zone. CI's tzdata test
+    caught it; local Windows runs could not. `tzdata==2026.6` is now a direct dependency and on the licence allowlist.
+  - redis-py 8's type hints also cleared 13 old mypy errors; the ratchet baseline is tightened to match.
+  - Celery 5.7's `send_task` defaults `ignore_result` to `None` instead of `False`. Both are falsy, so the beat
+    workaround (every schedule entry ignores results) still applies, and its comments now say so.
+  - A real-Redis slot test called a process `start()` and `join()` on the event loop, which blocked the heartbeat
+    that has to renew a 1 s lease. Those calls now run in a thread.
+
+  Evidence: the Redis- and Celery-related unit tests pass: 5,482 in 319 files, and the Celery-related 2,531 again on
+  the final code. The exceptions are shell-script tests that time out on the dev machine's slow process start. The
+  real-Redis integration tests pass locally except the two LLM-slot tests that depend on process-spawn timing; they
+  fail on the old pins locally too (5 of 8 runs). In a local demo:
+  - a JUnit report uploaded in the browser is processed by the worker ("Processed 3 tests, 2 passed · 1 failed") and
+    opens for a viewer;
+  - beat sent 36 due tasks with none refused, and the worker ran 56 tasks with none failed;
+  - all 24 app connections are redis-py 8.1.0 on RESP3, and beat opened no result subscriptions.
+
 - **The MCP server runs on the MCP Python SDK 2** (wave W46, OR-10 (9); branch `feat/df-mcp2-20261110`; Dependabot
   #36). `mcp` moves from 1.29.1 to 2.3.0, the newest release. mcp 2 renamed `FastMCP` to `MCPServer` and moved the host,
   port and transport security from the constructor to the run call. A run or app build that leaves them out gets no

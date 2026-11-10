@@ -186,6 +186,7 @@ Apache-2.0, MIT or MPL-2.0 and is used under Apache-2.0.
 | `threadpoolctl` | BSD-3-Clause | backend |
 | `typer` | MIT | cli |
 | `types-python-dateutil` | Apache-2.0 | backend |
+| `tzdata` | Apache-2.0 | backend |
 | `uvicorn` | BSD-3-Clause | backend |
 
 

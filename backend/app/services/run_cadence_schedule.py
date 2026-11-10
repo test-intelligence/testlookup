@@ -14,7 +14,8 @@ deadline only ever moves LATER, so DST never produces a false "missed".
 Cron is parsed with ``celery.schedules.crontab.from_string`` (no new
 dependency) and only its expanded minute / hour / day-of-week sets are read;
 day-of-month and month must be ``*``. IANA zones come from the ``tzdata``
-wheel (a kombu dependency), so no OS tz database is needed.
+wheel (pinned in requirements.txt; kombu 5.7 requires it only on Windows),
+so no OS tz database is needed.
 
 Nothing here touches the database, the network or ``datetime.now()``: every
 instant is passed in (tz-aware), so the tests pin DST with fixed instants.
