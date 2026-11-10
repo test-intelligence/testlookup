@@ -1952,6 +1952,15 @@ locally by default.
 
 ### Fixed
 
+- **The frontend image builds again after the Vitest 5 upgrade** (found by the homelab deploy of W45 / #354; branch
+  `fix/vitest5-picomatch-override-20261110`). Vitest 5 depends on picomatch 4, but the frontend's npm `overrides` pin
+  picomatch 2.3.2 everywhere except `vite` and `tinyglobby`. `npm install` quietly installed picomatch 4 for Vitest
+  anyway. `npm ci`, which the image build runs on the committed lockfile, refused: "Missing: picomatch@2.3.2 from lock
+  file". A `vitest` → picomatch 4.0.4 carve-out, like the existing two, makes the tree consistent; the lockfile itself
+  needed no change. CI's frontend job now installs with `npm ci` too, so an out-of-sync lockfile fails there and not
+  first in the image build. Evidence: `npm ls picomatch` shows no invalid copy; a clean `npm ci` installs 576 packages;
+  the type-check is clean and a 496-test sample passes.
+
 - **A CoveragePage unit test no longer reaches the network under CI load** (found by W43's CI, PR #349; branch
   `fix/coverage-test-lazy-sections-20261109`). jsdom has no IntersectionObserver, so the page's lazy coverage map
   mounted as soon as its chunk loaded and asked `/analytics/coverage-map` and `/releases`. The network guard then failed
