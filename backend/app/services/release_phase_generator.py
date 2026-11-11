@@ -203,12 +203,18 @@ def extract_prd_text(*, text: Optional[str], filename: Optional[str], data: Opti
 
 # ── The rules draft ──────────────────────────────────────────────────────────
 
-_ATX = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
+# The line patterns are linear on purpose (CodeQL py/polynomial-redos): no two
+# neighbouring unbounded quantifiers accept the same character, so a line of
+# tabs cannot make a match backtrack quadratically, and a PRD may be 200,000
+# characters on one line (MAX_PRD_CHARS). The trimming the old patterns did
+# with overlapping [ \t]* runs happens in Python (_atx_title, _exit_rest), and
+# _clean_inline strips the extra blanks a list item's text now keeps.
+_ATX = re.compile(r"^ {0,3}(#{1,6})[ \t](.*)$")
 _SETEXT_1 = re.compile(r"^ {0,3}=+[ \t]*$")
 _SETEXT_2 = re.compile(r"^ {0,3}-+[ \t]*$")
 _FENCE = re.compile(r"^ {0,3}(```|~~~)")
 _NUMBERED = re.compile(r"^(\d{1,2})[.)][ \t]+(\S.*)$")
-_LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+]|\d{1,3}[.)])[ \t]+(.*)$")
+_LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+]|\d{1,3}[.)])[ \t](.*)$")
 
 #: Sections a PRD has that are never a test phase (whole words, any case): the
 #: contract's list, plus three found on real PRDs ("Acceptance criteria" would
@@ -242,13 +248,41 @@ _DURATION_PAREN = re.compile(
     r"\s*\(\s*\d{1,2}\s*(?:business\s+|working\s+)?(?:days?|weeks?)\s*\)", re.IGNORECASE
 )
 _EXIT_START = re.compile(
-    r"^(?:exit criteria|done when|definition of done|acceptance criteria)\b[ \t]*[:\-–—]?[ \t]*(.*)$",
+    r"^(?:exit criteria|done when|definition of done|acceptance criteria)\b(.*)$",
     re.IGNORECASE,
 )
-_LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
-_EMPHASIS_STAR = re.compile(r"(\*\*|\*|~~)(?=\S)(.+?)(?<=\S)\1")
+_EXIT_SEPARATORS = ":-–—"
+# Inline markup. The text inside a link or an emphasis span cannot contain its
+# own delimiter, so an attempt stops at the next delimiter instead of scanning
+# the rest of the line from every start (CodeQL py/polynomial-redos). Nested
+# emphasis is removed one layer per pass (the loop in _clean_inline).
+_LINK = re.compile(r"\[([^\[\]]*)\]\([^()]*\)")
+_EMPHASIS_STAR = re.compile(r"(\*\*|\*)(?=\S)([^*]+?)(?<=\S)\1")
+_STRIKETHROUGH = re.compile(r"~~(?=\S)([^~]+?)(?<=\S)~~")
 #: Underscore emphasis only at word edges, so ``test_pay_flow`` keeps its underscores.
-_EMPHASIS_UNDERSCORE = re.compile(r"(?<!\w)(__|_)(?=\S)(.+?)(?<=\S)\1(?!\w)")
+_EMPHASIS_UNDERSCORE = re.compile(r"(?<!\w)(__|_)(?=\S)([^_]+?)(?<=\S)\1(?!\w)")
+
+
+def _atx_title(rest: str) -> str:
+    """An ATX heading's text; ``rest`` is everything after the opening ``#`` run and one blank.
+
+    Drops an optional closing ``#`` run and the blanks around it. A heading of
+    nothing but ``#`` keeps the first one, as the earlier single pattern
+    ``[ \\t]+(.+?)[ \\t]*#*[ \\t]*$`` did.
+    """
+    body = rest.lstrip(" \t")
+    if not body:
+        return ""
+    title = body.rstrip(" \t").rstrip("#").rstrip(" \t")
+    return title.strip() if title else body[0]
+
+
+def _exit_rest(rest: str) -> str:
+    """The text after an exit-criteria label, without one leading separator (``:``, ``-``, dashes)."""
+    rest = rest.lstrip(" \t")
+    if rest[:1] and rest[0] in _EXIT_SEPARATORS:
+        rest = rest[1:]
+    return rest.strip()
 
 
 def _clean_inline(text: str) -> str:
@@ -256,6 +290,7 @@ def _clean_inline(text: str) -> str:
     out = _LINK.sub(r"\1", text)
     for _ in range(3):  # nested emphasis
         out = _EMPHASIS_STAR.sub(r"\2", out)
+        out = _STRIKETHROUGH.sub(r"\1", out)
         out = _EMPHASIS_UNDERSCORE.sub(r"\2", out)
     out = out.replace("`", "")
     return re.sub(r"\s+", " ", out).strip()
@@ -311,7 +346,7 @@ def _headings(lines: list[str]) -> list[_Heading]:
             continue
         atx = _ATX.match(line)
         if atx:
-            found.append(_Heading(i, len(atx.group(1)), atx.group(2).strip(), 1))
+            found.append(_Heading(i, len(atx.group(1)), _atx_title(atx.group(2)), 1))
             previous_is_text = False
             continue
         if previous_is_text and (_SETEXT_1.match(line) or _SETEXT_2.match(line)):
@@ -351,8 +386,9 @@ def _body_parts(body: list[str]) -> tuple[Optional[str], Optional[str]]:
         if not match:
             continue
         exit_at = i
-        if match.group(1).strip():
-            exit_items.append(match.group(1).strip())
+        rest = _exit_rest(match.group(1))
+        if rest:
+            exit_items.append(rest)
         started = False
         for follow in body[i + 1:]:
             if not follow.strip():

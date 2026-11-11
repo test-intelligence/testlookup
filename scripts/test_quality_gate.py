@@ -5495,3 +5495,34 @@ def test_activity_registry_emitted_ignores_the_registry_itself(
     _redirect_repo_root(monkeypatch, tmp_path)
     _activity_registry(tmp_path, "run.deleted")
     assert len(qg._backend_activity_registry_emitted()) == 1
+
+
+# ── Test-runner detection (CodeQL py/redos #65) ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("pytest tests/", True),
+        ("python -m pytest backend/tests", True),
+        ("CI=true PYTHONPATH=. python3.14 -m pytest -q", True),
+        ("NODE_OPTIONS=--max-old-space-size=4096 npx vitest run", True),
+        ("go test ./...", True),
+        ("mvn -B -q test", True),
+        ("pip install pytest", False),          # names pytest, runs pip
+        ("echo pytest", False),
+        ("FOO=bar", False),
+        ("lowercase=1 pytest", False),          # not an env assignment the gate skips
+    ],
+)
+def test_invokes_test_runner(command: str, expected: bool) -> None:
+    assert qg._invokes_test_runner(command) is expected
+
+
+def test_invokes_test_runner_is_fast_on_a_long_assignment_chain() -> None:
+    import time
+
+    command = "A=" + "\x7fA=" * 20_000 + " pytest"
+    started = time.perf_counter()
+    qg._invokes_test_runner(command)
+    assert time.perf_counter() - started < 2.0

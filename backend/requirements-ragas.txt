@@ -23,6 +23,17 @@
 #   diskcache  CVE-2025-69872  pickle load from a writable cache directory;
 #                              only ragas's DiskCacheBackend imports it, and
 #                              the app gives ragas no cache.
+#   chromadb   GHSA-f4j7-r4q5-qw2c, GHSA-36p7-vc44-83pf (critical),
+#              GHSA-2wm9-hf6c-p5cr, GHSA-xph7-9rjv-w5fr (high). It reaches this
+#              file only through `-r requirements.txt`, which pins 1.5.9: the
+#              newest release, and every release up to it is affected. Ragas
+#              and its pins here add no chromadb of their own. The flaws are in
+#              chromadb's Python HTTP server and its auth providers; the app
+#              uses only the client (HttpClient to the Rust chromadb/chroma
+#              image, and an in-process EphemeralClient with no server or
+#              auth), so none of them runs. The same advisories on
+#              requirements.txt were dismissed as "vulnerable code not used";
+#              re-pin when chromadb ships a fixed release.
 #
 # Four packages requirements.txt does not pin resolve LOWER here than in the
 # default image. Ragas 0.4.3's own requirements force it (uv and the image's

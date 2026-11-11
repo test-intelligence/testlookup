@@ -5909,12 +5909,23 @@ _TEST_FILE_NAME = re.compile(
 _TEST_DIR_NAMES = {"tests", "test", "__tests__"}
 # Anchored at the INVOKED program: `pip install pytest` names pytest too, and
 # with no path argument it would read as "run every suite under the root".
+# Leading `VAR=value ` assignments are skipped one at a time in
+# _invokes_test_runner, not by a repeated group in front of the program
+# pattern, which CodeQL flagged as exponential backtracking (py/redos).
+_ENV_ASSIGNMENT = re.compile(r"[A-Z_][A-Z0-9_]*=\S*\s+")
 _TEST_RUNNER = re.compile(
-    r"^(?:[A-Z_][A-Z0-9_]*=\S*\s+)*"
     r"(?:python3?(?:\.\d+)?\s+-m\s+pytest\b|pytest\b|go\s+test\b"
     r"|mvn\b.*\stest\b|npm\s+(?:run\s+)?test\b|node\s+--test\b"
     r"|npx\s+(?:vitest|playwright\s+test)\b|vitest\b|gradle\b.*\stest\b)"
 )
+
+
+def _invokes_test_runner(command: str) -> bool:
+    """Does ``command`` run a test runner, after any leading ``VAR=value`` assignments?"""
+    position = 0
+    while assignment := _ENV_ASSIGNMENT.match(command, position):
+        position = assignment.end()
+    return _TEST_RUNNER.match(command, position) is not None
 _PATHLIKE_TOKEN = re.compile(r"(/|\.(py|mjs|cjs|js|ts|tsx)$)")
 
 # Suites CI deliberately does not run, with the reason. Prefix match on the
@@ -6150,7 +6161,7 @@ def _swallows_failure(command: str) -> bool:
         return True
     for rhs in command.split("||")[1:]:
         rhs = rhs.strip()
-        if not (_KEEPS_FAILURE.search(rhs) or _TEST_RUNNER.search(rhs)):
+        if not (_KEEPS_FAILURE.search(rhs) or _invokes_test_runner(rhs)):
             return True
     return False
 
@@ -6416,7 +6427,7 @@ def _workflow_test_commands(text: str) -> list[tuple[str, str]]:
                     target = norm(cd.group(1))
                     cwd = f"{cwd}/{target}".strip("/") if cwd else target
                     continue
-                if _TEST_RUNNER.search(command) and not (
+                if _invokes_test_runner(command) and not (
                     # Without errexit a runner's failure is dropped unless it
                     # is the script's LAST command, whose status is the
                     # step's (QA-B45-R3-2).
