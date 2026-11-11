@@ -28,8 +28,9 @@ python e2e-runner/upgrade_baseline.py \
 ```
 
 The new output directory receives exactly the filenames `release-manifest.json`,
-`verified-images.zip` and `provenance.json` needed below. The resolver enumerates
-all artifact pages and ranks eligible ancestors by the fewest candidate-reachable
+`verified-images.zip` and `provenance.json` needed below. The resolver walks the
+immutable Git ancestor graph and queries exact verified-manifest names in order,
+paginating only each matching name. It ranks eligible ancestors by the fewest candidate-reachable
 commits absent from the prior build, then first-parent position and source SHA.
 It retains original bytes and verifies CI, expiration and digests again. Its one
 stdout JSON result is `RESOLVED` or `BLOCKED`; absent provenance remains blocked.

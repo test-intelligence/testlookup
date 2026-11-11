@@ -6,6 +6,9 @@ Candidate first-parent position breaks ties, followed by the full source SHA.
 Only local ancestors with exactly one successful push-to-main ci.yml run and
 an unexpired verified-images artifact are eligible. Within that run, the newest
 artifact ID is used. Tags and synthesized manifests are never used.
+Ranking comes from the immutable local parent graph. Discovery queries only
+the exact verified-images-<SHA> name for each ancestor in that order, so unrelated
+CI artifact uploads cannot change the population being paginated.
 
 The output directory must be new. It receives release-manifest.json (original
 bytes), verified-images.zip (original download), and provenance.json. Stdout is
@@ -96,25 +99,29 @@ class GitHubAPI:
             raise BaselineBlocked("invalidMetadata", "GitHub returned invalid artifact metadata.") from None
 
     def artifacts(self, repository, name=None):
-        query = {"per_page": 100}
-        if name is not None:
-            query["name"] = name
-        pages = self.json(f"repos/{repository}/actions/artifacts?{urlencode(query)}", paginate=True)
-        if not isinstance(pages, list) or not pages:
-            raise BaselineBlocked("incompleteArtifacts", "The complete artifact listing could not be verified.")
-        items = []
-        totals = set()
-        for page in pages:
-            if not isinstance(page, dict) or not isinstance(page.get("artifacts"), list):
-                raise BaselineBlocked("invalidMetadata", "GitHub returned invalid artifact metadata.")
-            totals.add(page.get("total_count"))
-            items.extend(page["artifacts"])
-        identifiers = [item.get("id") for item in items]
-        if (len(totals) != 1 or next(iter(totals)) != len(items)
-                or any(type(identifier) is not int for identifier in identifiers)
-                or len(set(identifiers)) != len(identifiers)):
-            raise BaselineBlocked("incompleteArtifacts", "Artifact pagination was incomplete or changed during enumeration.")
-        return items
+        if not isinstance(name, str) or _NAME.fullmatch(name) is None:
+            raise BaselineBlocked("incompleteArtifacts", "Artifact pagination was incomplete; an exact verified-image artifact name is required.")
+        endpoint = f"repos/{repository}/actions/artifacts?{urlencode({'per_page': 100, 'name': name})}"
+        # An upload for this exact SHA can race its own listing. Retry the
+        # complete exact-name population a bounded number of times; never
+        # accept a partial or deduplicated view as proof of run uniqueness.
+        for _ in range(3):
+            pages = self.json(endpoint, paginate=True)
+            if not isinstance(pages, list) or not pages:
+                raise BaselineBlocked("incompleteArtifacts", "The complete exact-name artifact listing could not be verified.")
+            items, totals = [], set()
+            for page in pages:
+                if (not isinstance(page, dict) or not isinstance(page.get("artifacts"), list)
+                        or type(page.get("total_count")) is not int or page["total_count"] < 0):
+                    raise BaselineBlocked("invalidMetadata", "GitHub returned invalid exact-name artifact metadata.")
+                totals.add(page["total_count"])
+                items.extend(page["artifacts"])
+            if any(not isinstance(item, dict) or type(item.get("id")) is not int or item.get("name") != name for item in items):
+                raise BaselineBlocked("invalidMetadata", "GitHub returned an invalid or unrelated exact-name artifact.")
+            identifiers = [item["id"] for item in items]
+            if len(totals) == 1 and next(iter(totals)) == len(items) and len(set(identifiers)) == len(identifiers):
+                return items
+        raise BaselineBlocked("incompleteArtifacts", "Exact-name artifact pagination was incomplete or changed during bounded retries.")
 
     def download(self, repository, artifact):
         size = artifact.get("size_in_bytes")
@@ -179,6 +186,44 @@ def _projection(value, keys):
     return {key: value[key] for key in keys if key in value}
 
 
+def _rank_ancestor_graph(graph, candidate_sha):
+    """Compute exact Git reachability distances from one complete topo graph.
+
+    Parents precede children when processing the reversed rev-list output.
+    Each integer bitset represents a commit's complete ancestor set, including
+    itself. The candidate population minus its size is exactly the count from
+    ``git rev-list --count PRIOR..CANDIDATE``, including merge-side commits.
+    """
+    rows = [line.split() for line in graph.splitlines() if line.strip()]
+    if (not rows or rows[0][0] != candidate_sha
+            or any(not re.fullmatch(r"[0-9a-f]{40}", value) for row in rows for value in row)
+            or len({row[0] for row in rows}) != len(rows)):
+        raise BaselineBlocked("historyUnavailable", "The candidate parent graph is invalid or incomplete.")
+    parents = {row[0]: row[1:] for row in rows}
+    masks = {}
+    for index, row in enumerate(reversed(rows)):
+        source, *source_parents = row
+        mask = 1 << index
+        for parent in source_parents:
+            if parent not in masks:
+                raise BaselineBlocked("incompleteHistory", "The candidate parent graph has missing or out-of-order ancestors.")
+            mask |= masks[parent]
+        masks[source] = mask
+    total = len(rows)
+    if masks[candidate_sha].bit_count() != total:
+        raise BaselineBlocked("incompleteHistory", "The candidate parent graph contains unrelated commits.")
+    mainline = {}
+    source = candidate_sha
+    while True:
+        mainline[source] = len(mainline)
+        if not parents[source]:
+            break
+        source = parents[source][0]
+    ranks = sorted((total - mask.bit_count(), mainline.get(source, total), source)
+                   for source, mask in masks.items() if source != candidate_sha)
+    return ranks, mainline
+
+
 def resolve(candidate_file, repository, out, api=None):
     """Write a fully verified nearest baseline or raise a public BLOCKED reason."""
     from upgrade import PreconditionError, qualifying_run, verify_baseline
@@ -193,43 +238,32 @@ def resolve(candidate_file, repository, out, api=None):
     if _git("rev-parse", "--is-shallow-repository") != "false":
         raise BaselineBlocked("incompleteHistory", "Complete local Git history is required to rank previous main ancestors.")
     candidate_sha = candidate["source_sha"]
-    ancestors = set(_git("rev-list", candidate_sha).splitlines())
-    mainline = {source: index for index, source in enumerate(_git("rev-list", "--first-parent", candidate_sha).splitlines())}
-    if candidate_sha not in ancestors:
-        raise BaselineBlocked("historyUnavailable", "The candidate revision is unavailable in local Git history.")
+    ranks, mainline = _rank_ancestor_graph(_git("rev-list", "--parents", "--topo-order", candidate_sha), candidate_sha)
     out = Path(out).resolve()
     try:
         out.mkdir(mode=0o700, parents=True, exist_ok=False)
     except OSError:
         raise BaselineBlocked("outputUnavailable", "The output directory must be new and writable.") from None
     api = api or GitHubAPI()
-    artifacts = api.artifacts(repository)
-    grouped = {}
-    for artifact in artifacts:
-        match = _NAME.fullmatch(str(artifact.get("name", "")))
-        if match is None or not _unexpired(artifact):
-            continue
-        source = match[1]
-        workflow = artifact.get("workflow_run", {})
-        if (source == candidate_sha or source not in ancestors or workflow.get("head_sha") != source
-                or workflow.get("head_branch") != "main"):
-            continue
-        grouped.setdefault(source, []).append(artifact)
-    ranks = []
-    for source in grouped:
-        # Also exercise the same explicit ancestry command as the consumer.
-        _git("merge-base", "--is-ancestor", source, candidate_sha)
-        distance = int(_git("rev-list", "--count", source + ".." + candidate_sha))
-        if distance > 0:
-            ranks.append((distance, mainline.get(source, len(ancestors)), source))
-    ranks.sort()
-    rejected = {"nonqualifying_ci": 0, "nonunique_ci": 0, "digest_identical": 0, "expired_during_resolution": 0}
+    rejected = {"no_unexpired_artifact": 0, "nonqualifying_ci": 0, "nonunique_ci": 0,
+                "digest_identical": 0, "expired_during_resolution": 0}
+    queried_sources, enumerated_artifacts = 0, 0
     run_cache = {}
     with tempfile.TemporaryDirectory(prefix=".baseline-", dir=out) as staging_name:
         staging = Path(staging_name)
         for distance, first_parent_position, source in ranks:
+            artifacts = api.artifacts(repository, name="verified-images-" + source)
+            queried_sources += 1
+            enumerated_artifacts += len(artifacts)
+            eligible = [artifact for artifact in artifacts if _unexpired(artifact)]
+            if not eligible:
+                rejected["no_unexpired_artifact"] += 1
+                continue
             qualified = {}
-            for artifact in grouped[source]:
+            for artifact in eligible:
+                workflow = artifact.get("workflow_run", {})
+                if workflow.get("head_sha") != source or workflow.get("head_branch") != "main":
+                    continue
                 run_id = artifact["workflow_run"]["id"]
                 if type(run_id) is not int:
                     raise BaselineBlocked("invalidMetadata", "An artifact has no verifiable workflow run identity.")
@@ -245,7 +279,7 @@ def resolve(candidate_file, repository, out, api=None):
                 rejected["nonunique_ci"] += 1
                 continue
             run_id, run = next(iter(qualified.items()))
-            selected = max((item for item in grouped[source] if item["workflow_run"]["id"] == run_id), key=lambda item: item["id"])
+            selected = max((item for item in eligible if item["workflow_run"]["id"] == run_id), key=lambda item: item["id"])
             artifact = api.json(f"repos/{repository}/actions/artifacts/{selected['id']}")
             if (artifact.get("name") != "verified-images-" + source or artifact.get("id") != selected["id"]
                     or artifact.get("workflow_run", {}).get("id") != run_id
@@ -260,10 +294,12 @@ def resolve(candidate_file, repository, out, api=None):
                 rejected["digest_identical"] += 1
                 continue
             selection = {"algorithm": "candidate_reachable_commit_count_then_first_parent_then_sha",
+                         "discovery": "exact_name_queries_in_immutable_ancestor_order",
                          "candidate_reachable_commit_distance": distance,
                          "first_parent_position": first_parent_position if source in mainline else None,
                          "artifact_choice": "newest_id_within_unique_qualifying_run",
-                         "enumerated_artifacts": len(artifacts), "ranked_ancestor_sources": len(ranks),
+                         "enumerated_artifacts": enumerated_artifacts, "ranked_ancestor_sources": len(ranks),
+                         "queried_ancestor_sources": queried_sources,
                          "rejected_nearer_sources": dict(rejected)}
             provenance = {"schema_version": 1, "repository": repository, "resolved_at": timestamp(),
                 "prior_source_sha": source, "candidate_source_sha": candidate_sha, "ancestor_check_passed": True,

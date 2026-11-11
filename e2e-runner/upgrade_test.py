@@ -190,9 +190,10 @@ def test_baseline_resolver_rejects_archive_path_traversal():
 
 def test_baseline_resolver_rejects_incomplete_paginated_metadata(monkeypatch):
     api = upgrade_baseline.GitHubAPI()
-    monkeypatch.setattr(api, "json", lambda *args, **kwargs: [{"total_count": 2, "artifacts": [{"id": 1}]}])
+    name = "verified-images-" + "a" * 40
+    monkeypatch.setattr(api, "json", lambda *args, **kwargs: [{"total_count": 2, "artifacts": [{"id": 1, "name": name}]}])
     with pytest.raises(upgrade_baseline.BaselineBlocked, match="pagination was incomplete"):
-        api.artifacts("example/project")
+        api.artifacts("example/project", name=name)
 
 
 @pytest.mark.parametrize("target", ["podman", "kubernetes"])
@@ -231,3 +232,103 @@ def test_uncertain_namespace_creation_cannot_delete_an_unowned_namespace(monkeyp
     with pytest.raises(RuntimeError, match="ownership"):
         adapter.cleanup()
     assert not any("delete" in args for args in calls)
+
+
+def test_baseline_graph_distance_matches_git_for_merge_side_ancestors(tmp_path):
+    import subprocess
+
+    repository = tmp_path / "graph"
+    subprocess.run(["git", "init", "--quiet", str(repository)], check=True, capture_output=True)
+    def git(*args, stdin=None):
+        return subprocess.run(["git", "-C", str(repository), "-c", "user.name=Fixture",
+            "-c", "user.email=fixture@example.test", *args], input=stdin, text=True,
+            capture_output=True, check=True).stdout.strip()
+    tree = git("mktree", stdin="")
+    def commit(label, *parents):
+        return git("commit-tree", tree, *[part for parent in parents for part in ("-p", parent)], "-m", label)
+    root = commit("root")
+    main = commit("main", root)
+    side = commit("side", root)
+    candidate = commit("merge", main, side)
+    ranks, mainline = upgrade_baseline._rank_ancestor_graph(
+        git("rev-list", "--parents", "--topo-order", candidate), candidate)
+    assert {source for _, _, source in ranks} == {root, main, side}
+    assert ranks[0][2] == main  # Equal graph distance uses first-parent order.
+    assert side not in mainline
+    for distance, _, source in ranks:
+        assert distance == int(git("rev-list", "--count", source + ".." + candidate))
+
+
+def test_baseline_discovery_ignores_unrelated_ci_artifact_churn(tmp_path, monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+
+    files, artifact, run, _ = baseline_files(tmp_path)
+    previous, candidate = "a" * 40, "b" * 40
+    nearer_side = "c" * 40
+    graph = f"{candidate} {nearer_side}\n{nearer_side} {previous}\n{previous}"
+    artifact["workflow_run"]["head_branch"] = "main"
+    artifact["size_in_bytes"] = len(files[3].read_bytes())
+    archive_raw = files[3].read_bytes()
+    queries = []
+    def local_git(*args):
+        if args == ("rev-parse", "--is-shallow-repository"):
+            return "false"
+        assert args == ("rev-list", "--parents", "--topo-order", candidate)
+        return graph
+    monkeypatch.setattr(upgrade_baseline, "_git", local_git)
+    monkeypatch.setattr(upgrade.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(returncode=0))
+    class ExactAPI(upgrade_baseline.GitHubAPI):
+        def _request(self, endpoint, *, paginate=False):
+            parsed = urlsplit(endpoint)
+            if parsed.path == "repos/example/project/actions/artifacts":
+                name = parse_qs(parsed.query).get("name", [])
+                assert len(name) == 1  # No repository-wide population exists in this simulation.
+                queries.append(name[0])
+                assert name[0] in {"verified-images-" + previous, "verified-images-" + nearer_side}
+                # Unrelated uploads may change on every request; only the
+                # exact-name total and population determine completeness.
+                items = [artifact] if name[0].endswith(previous) else []
+                return json.dumps([{"total_count": len(items), "artifacts": items}]).encode()
+            if parsed.path.endswith("/artifacts/7/zip"):
+                return archive_raw
+            if parsed.path.endswith("/artifacts/7"):
+                return json.dumps(artifact).encode()
+            assert parsed.path.endswith("/runs/8")
+            return json.dumps(run).encode()
+    output = tmp_path / "resolved"
+    result = upgrade_baseline.resolve(files[1], "example/project", output, api=ExactAPI())
+    assert result["status"] == "RESOLVED" and result["previous_source_sha"] == previous
+    assert result["selection"]["queried_ancestor_sources"] == 2
+    assert queries == ["verified-images-" + nearer_side, "verified-images-" + previous, "verified-images-" + previous]
+    assert (output / "release-manifest.json").read_bytes() == files[0].read_bytes()
+    assert (output / "verified-images.zip").read_bytes() == archive_raw
+
+
+def test_exact_name_artifact_upload_race_retries_complete_population(monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+
+    api = upgrade_baseline.GitHubAPI()
+    name = "verified-images-" + "a" * 40
+    calls = []
+    def metadata(endpoint, **kwargs):
+        assert parse_qs(urlsplit(endpoint).query)["name"] == [name]
+        calls.append(endpoint)
+        if len(calls) == 1:
+            return [{"total_count": 2, "artifacts": [{"id": 1, "name": name}]}]
+        return [{"total_count": 2, "artifacts": [{"id": 1, "name": name}, {"id": 2, "name": name}]}]
+    monkeypatch.setattr(api, "json", metadata)
+    assert [item["id"] for item in api.artifacts("example/project", name=name)] == [1, 2]
+    assert len(calls) == 2
+
+
+def test_malformed_exact_name_artifact_pagination_remains_blocked(monkeypatch):
+    api = upgrade_baseline.GitHubAPI()
+    name = "verified-images-" + "a" * 40
+    calls = []
+    def duplicated(endpoint, **kwargs):
+        calls.append(endpoint)
+        return [{"total_count": 2, "artifacts": [{"id": 1, "name": name}, {"id": 1, "name": name}]}]
+    monkeypatch.setattr(api, "json", duplicated)
+    with pytest.raises(upgrade_baseline.BaselineBlocked, match="bounded retries"):
+        api.artifacts("example/project", name=name)
+    assert len(calls) == 3
