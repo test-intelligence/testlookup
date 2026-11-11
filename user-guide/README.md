@@ -54,4 +54,4 @@ Several workflows are switched by feature flags (**Settings → System → Featu
 
 ## Legal notice
 
-TestLookup is provided "as is", without warranty, under the [Apache License 2.0](../LICENSE). The [legal notice](../frontend/src/content/guide/legal.md), at `/docs/legal` on your instance, restates the license's no-warranty and limitation-of-liability terms. It also lists what the operator of an instance is responsible for: security, the data in it, backups, updates, the integrations you connect, and the law that applies to your data. It is not legal advice.
+TestLookup is provided "as is", without warranty, under the [Apache License 2.0](../LICENSE). The [legal notice](../frontend/src/content/guide/legal.md), at `/docs/legal` on your instance, quotes the license's no-warranty and limitation-of-liability terms (sections 7 and 8). It is not legal advice.

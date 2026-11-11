@@ -7,7 +7,7 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ## [Unreleased] — 0.1.0
 
-- Added a legal notice to the in-app guide (`/docs/legal`), a Disclaimer section in the README and a pointer in the operator guide. It restates the Apache-2.0 no-warranty and limitation-of-liability terms (sections 7 and 8, quoted word for word and checked against `LICENSE` by a regression test), the operator's responsibility for a self-hosted instance, the public demo's sample-data rule, trademarks and the security-report route.
+- Added a legal notice to the in-app guide (`/docs/legal`), a Disclaimer section in the README and a pointer in the operator guide. It quotes the Apache-2.0 no-warranty and limitation-of-liability terms (sections 7 and 8, word for word, checked against `LICENSE` by a regression test). It also gives project facts, the public demo's sample-data rule and the security-report route. It holds no terms that need a lawyer's review.
 - Added a release-test foundation with a disposable Podman candidate stack, Chromium and Python client checks, and independent HTML, Markdown and JSON reports for incomplete or failing runs.
 
 The first public release. TestLookup is a self-hosted test-intelligence

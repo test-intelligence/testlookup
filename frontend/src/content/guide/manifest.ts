@@ -302,8 +302,8 @@ export const DOC_PAGES: DocPage[] = [
     group: 'Reference',
     icon: ScrollText,
     summary:
-      'The Apache-2.0 license in plain words: provided as is, no warranty, no liability, and who is responsible for a self-hosted instance.',
-    keywords: ['legal', 'license', 'licence', 'apache', 'warranty', 'liability', 'disclaimer', 'terms', 'trademark', 'notice', 'copyright'],
+      'The Apache-2.0 license: provided as is, no warranty, no liability. Plus the public demo rule and how to report a security problem.',
+    keywords: ['legal', 'license', 'licence', 'apache', 'warranty', 'liability', 'disclaimer', 'notice', 'copyright'],
   },
 ]
 
