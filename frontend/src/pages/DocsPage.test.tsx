@@ -75,7 +75,7 @@ describe('documentation registry', () => {
       'ai-agents', 'failure-analysis', 'flaky', 'search', 'dashboards', 'charts',
       'reports', 'decisions', 'releases', 'test-management',
       'integrations', 'administration', 'architecture', 'workflows',
-      'security', 'troubleshooting',
+      'security', 'troubleshooting', 'legal',
     ]
     const have = new Set(DOC_PAGES.map((p) => p.id))
     expect(required.filter((id) => !have.has(id))).toEqual([])

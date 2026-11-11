@@ -204,3 +204,7 @@ TestLookup is an independent open-source project led by [@anandtopu](https://git
 ## License
 
 TestLookup is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for attribution. Third-party services it runs alongside, such as MongoDB (SSPL-1.0), keep their own licenses. [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) lists the software TestLookup uses; every TestLookup image carries it with LICENSE and NOTICE under `/licenses`, and the web UI serves the license texts of its bundled JavaScript at `/THIRD_PARTY_LICENSES.txt`. The software is provided "AS IS", without warranties or conditions of any kind (Apache-2.0, sections 7 and 8).
+
+## Disclaimer
+
+TestLookup is free, open-source software, provided "as is" and without warranty of any kind. The maintainer and contributors are not liable for damages of any kind arising from its use, including failures, wrong results, data loss, data leaks or misuse, unless applicable law requires otherwise. You run your own instance, and you are responsible for its security, its data and the decisions you make with it. The binding terms are sections 7 and 8 of the [Apache License 2.0](LICENSE). The [legal notice](frontend/src/content/guide/legal.md), also at `/docs/legal` on every instance, explains them in plain words. It is not legal advice.
