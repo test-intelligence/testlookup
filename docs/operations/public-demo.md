@@ -117,8 +117,11 @@ cd /opt/testlookup
 DEMO_IMAGES=pull scripts/demo/demo.sh setup   # .env, images, seed, start
 scripts/demo/demo.sh token                    # paste the tunnel token; starts the tunnel
 exit
-sudo /opt/testlookup/scripts/demo/demo.sh install-cron   # nightly reset at 03:00
+sudo /opt/testlookup/scripts/demo/demo.sh install-cron   # nightly reset at 03:00, watchdog
 ```
+
+A VM created before the cloud config ran the host hardening needs
+`sudo /opt/testlookup/scripts/demo/harden-host.sh` once (see Security).
 
 `setup` generates a production-mode `.env` with random secrets
 (`scripts/gen-dev-env.sh --release`) and binds every published port to
@@ -220,11 +223,118 @@ cached.
   means rule 3 is on.
 - `scripts/demo/demo.sh status` on the VM: every container is up and healthy,
   with memory well under its ceiling.
+- No container but cloudflared reaches the internet: on the VM,
+  `docker exec testlookup_backend python -c "import urllib.request; urllib.request.urlopen('https://example.com', timeout=5)"`
+  fails with a name-resolution error.
+- `sudo WATCHDOG_DRY_RUN=1 /opt/testlookup/scripts/demo/watchdog.sh` prints
+  nothing.
 - The next morning, `/var/log/testlookup-demo-reset.log` ends with
   `reset: done`.
 - Optional: set `DEMO_HEARTBEAT_URL` in `.env` to a free heartbeat monitor's
   ping URL. Each successful reset pings it, so a failed night alerts you.
   Point a free uptime monitor at `https://demo.testlookup.app/api/v1/auth/options`.
+
+## Security
+
+The demo is public, so it is built on the assumption that someone will try to
+break in, mine cryptocurrency on it, or run up the bill. Every threat below has
+at least two independent controls.
+
+| Threat | What stops it |
+|---|---|
+| Changing or deleting data | Cloudflare rule 1; `DEMO_MODE` in the app; the nightly rebuild from seed |
+| Bots, scrapers, floods | Cloudflare DDoS mitigation and rate limits A and B; nginx's per-address limit; the app's sign-in limit. Rule 3 and Under Attack mode are held in reserve |
+| A bill spike | A fixed-price VM; nothing billed per request or per GB; no LLM key, AI offline |
+| A crypto miner, through a bug in the app | The app's containers run as a non-root user with no capabilities and no-new-privileges. **No container but cloudflared has a route out** (`testlookup_net` is internal), so a miner can neither be downloaded nor reach a pool. CPU and process ceilings on every container. The watchdog kills miners and rebuilds the containers. Every container is rebuilt from its image every night |
+| Escaping a container | No Docker socket in any container, nothing privileged, AppArmor and seccomp defaults, automatic security updates for the kernel and Docker CE, reboot at 04:30 when a kernel needs it |
+| Guessing or stealing SSH access | Keys only, root only, passwords locked. The Hetzner Cloud Firewall admits SSH from the administrator's address only. ufw rate-limits SSH; fail2ban bans after 3 failures and bans repeat offenders for a week |
+| An exposed database or admin port | Docker publishes no port from an internal network; published ports are also bound to `127.0.0.1`; ufw denies inbound; the Hetzner firewall allows port 22 only |
+| A stolen tunnel token | The token lives only in the VM's `.env` (mode 600). Rotate it in Cloudflare (tunnel → Refresh token), then `demo.sh token` |
+| A tampered image or repository | Images come from the project's own GHCR. Pin `DEMO_PULL_TAG` to a release once releases exist |
+| A taken-over account | Owner: two-factor authentication on Hetzner, Cloudflare and GitHub |
+
+### Host hardening
+
+`deploy/demo/cloud-init.yaml` runs [`scripts/demo/harden-host.sh`](../../scripts/demo/harden-host.sh)
+on a new VM. On an existing VM, run it once (it is idempotent):
+
+```bash
+sudo /opt/testlookup/scripts/demo/harden-host.sh
+```
+
+It sets SSH to keys only with no forwarding, rate-limits SSH in ufw, adds the
+fail2ban jails, kernel settings (no redirects or source routing, kernel
+pointers hidden), Docker defaults (`no-new-privileges`, `live-restore`, log
+rotation) and Docker CE security updates. It restarts Docker once, so the demo
+restarts with it.
+
+SSH is reachable only from the address in the Hetzner firewall rule. If your
+address changes, edit the rule in the Hetzner console (Firewalls →
+`testlookup-demo-ssh-only`). If the SSH key is lost, use Hetzner's rescue
+system; passwords are locked and the web console cannot log in.
+
+### Container lockdown
+
+`docker-compose.demo.yml` makes `testlookup_net` internal and gives
+cloudflared alone a second network, `demo_egress`, to dial Cloudflare. The
+one-shot `db-budget-check` runs with no network. Every container gets
+`no-new-privileges` and ceilings on memory, CPU (at most 1.5 vCPU each) and
+process count. The containers that run as a non-root user from the start (the
+backend image's services and cloudflared) drop every Linux capability.
+
+### Watchdog
+
+`sudo scripts/demo/demo.sh install-cron` also runs
+[`scripts/demo/watchdog.sh`](../../scripts/demo/watchdog.sh) as root every 5
+minutes. It:
+
+- kills miner processes (xmrig, kinsing, stratum URLs and the like); a miner
+  inside a container also triggers a rebuild of every container
+  (`demo.sh reset`);
+- resets the demo when the host has been at least 85 % busy for 15 minutes;
+- reports a container other than cloudflared that has a route out, an
+  unexpected listening port, and connections to mining-pool ports (it kills
+  the process behind a pool connection).
+
+It resets the demo at most once an hour, and repeats an alert at most once an
+hour. Alerts go to `/var/log/testlookup-demo-watchdog.log`. To get them on
+your phone, set `DEMO_ALERT_URL` in `.env`: an [ntfy.sh](https://ntfy.sh)
+topic URL with a long random topic name (subscribe to it in the ntfy app), or
+a healthchecks.io "/fail" URL. Try it with
+`sudo WATCHDOG_DRY_RUN=1 /opt/testlookup/scripts/demo/watchdog.sh`, which
+reports without acting.
+
+### If something got in
+
+1. Remove the tunnel's route in Cloudflare. The demo goes dark at once.
+2. Refresh the tunnel token in Cloudflare, so a copy taken from the VM is
+   useless.
+3. Delete the VM in Hetzner. Take a snapshot first only if you want to
+   investigate; snapshots are billed.
+4. Rebuild from step 1. Use a new SSH key if the old one may have leaked, and
+   store the new tunnel token with `demo.sh token`.
+
+There is nothing to recover: the data is sample data, and the `.env` secrets
+are random per VM and shared with nothing else.
+
+### Owner checklist
+
+- Two-factor authentication on the Hetzner, Cloudflare and GitHub accounts.
+- No Hetzner API tokens in the demo project; Cloudflare API tokens scoped to
+  what they deploy.
+- The demo's SSH private key stays on the administrator's machine. Consider a
+  passphrase (`ssh-keygen -p -f ~/.ssh/<key>`) with an SSH agent.
+
+### Not done, on purpose
+
+- **User-namespace remapping:** it changes volume ownership for the data-store
+  images, and the app images already run unprivileged.
+- **Read-only root filesystems:** the app writes caches. With no route out,
+  little is gained.
+- **Image signature checks:** add a `cosign verify` before tagging once release
+  images are signed.
+- **An intrusion-detection system:** the watchdog and the nightly rebuild cover
+  the realistic threat to a disposable demo.
 
 ## Incidents
 
@@ -249,7 +359,8 @@ Fastest first:
 | Nightly, automatic | `demo.sh reset` (cron, 03:00): wipe and re-seed, about a minute offline |
 | Automatic | OS security updates; reboots at 04:30 when a kernel needs it |
 | Each release | `scripts/demo/demo.sh update`: pull the code, new images (`DEMO_IMAGES`), reset |
-| Monthly, 5 minutes | Glance at Cloudflare Security → Events and the reset log |
+| Automatic, every 5 minutes | The watchdog (miners, sustained CPU, egress drift, unexpected ports) |
+| Monthly, 5 minutes | Glance at Cloudflare Security → Events, the reset and watchdog logs, and `sudo fail2ban-client status sshd` |
 
 To retire the demo, delete the tunnel and the VM. Nothing else depends on
 them.

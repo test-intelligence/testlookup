@@ -15,7 +15,10 @@
 #     (containers restart on their own; the nightly reset runs at 03:00);
 #   * 2 GB swap, a safety margin on the 4 GB plan;
 #   * fail2ban for SSH;
-#   * an unprivileged `demo` user that owns /opt/testlookup and runs Docker.
+#   * an unprivileged `demo` user that owns /opt/testlookup and runs Docker;
+#   * scripts/demo/harden-host.sh from the clone: SSH keys only, no
+#     forwarding, fail2ban jails, kernel settings, Docker no-new-privileges and
+#     live-restore, Docker CE in unattended upgrades.
 #
 # It does NOT start the demo: that needs the Cloudflare tunnel token, which
 # never goes into user data. After the server is up:
@@ -73,3 +76,7 @@ runcmd:
   # The code. A shallow clone is enough; `demo.sh update` fast-forwards it.
   - git clone --depth 1 https://github.com/test-intelligence/testlookup.git /opt/testlookup
   - chown -R demo:demo /opt/testlookup
+  # Host hardening: SSH keys only and no forwarding, fail2ban, kernel
+  # settings, Docker defaults (no-new-privileges, live-restore). Idempotent;
+  # rerun it by hand after an upgrade: sudo /opt/testlookup/scripts/demo/harden-host.sh
+  - bash /opt/testlookup/scripts/demo/harden-host.sh

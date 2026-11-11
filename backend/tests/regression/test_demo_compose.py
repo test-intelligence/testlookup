@@ -301,3 +301,278 @@ def test_an_unknown_demo_images_value_is_refused(tmp_path):
     result = _run(tmp_path, stubs + _function("env_value") + _function("cmd_images") + "cmd_images\n")
     assert result.returncode != 0
     assert "PULLED" not in result.stdout and "BUILT" not in result.stdout
+
+
+# ── Lockdown: no route out, no privilege, ceilings ──────────────────────────
+#
+# Applied to the live demo 2026-11-11 after a security review: before it, the
+# backend container fetched https://example.com, so anything that got in could
+# download a payload and reach a mining pool, with no CPU or process ceiling.
+
+DEMO_PROFILES = {"public", "demo"}
+EGRESS_SERVICE = "cloudflared"
+APP_IMAGE_SERVICES = (
+    "backend", "worker", "worker-children", "beat", "seed-init", "db-migrate", "db-budget-check", "minio-setup",
+)
+LONG_RUNNING = ("postgres", "mongo", "redis", "minio", "backend", "worker", "worker-children", "beat", "frontend", "cloudflared")
+
+
+def _demo_stack() -> tuple[dict, dict]:
+    """The services the demo starts (default, demo and public profiles) and the networks, release + demo merged."""
+    release, demo = _load(RELEASE), _load(DEMO)
+    networks = dict(release.get("networks", {}))
+    for name, override in demo.get("networks", {}).items():
+        networks[name] = {**networks.get(name, {}), **(override or {})}
+    services = {}
+    for name in set(release["services"]) | set(demo["services"]):
+        merged = {**release["services"].get(name, {}), **demo["services"].get(name, {})}
+        profiles = set(merged.get("profiles", []))
+        if profiles and not profiles & DEMO_PROFILES:
+            continue
+        services[name] = merged
+    return services, networks
+
+
+def test_no_container_but_the_tunnel_has_a_route_out():
+    services, networks = _demo_stack()
+    assert EGRESS_SERVICE in services
+    for name, service in services.items():
+        if service.get("network_mode") == "none":
+            continue
+        attached = service.get("networks") or ["default"]
+        attached = list(attached.keys()) if isinstance(attached, dict) else list(attached)
+        routable = [network for network in attached if not networks.get(network, {}).get("internal")]
+        if name == EGRESS_SERVICE:
+            assert routable == ["demo_egress"], f"cloudflared must dial out through demo_egress only, not {routable}"
+            assert "testlookup_net" in attached, "cloudflared must still reach the frontend"
+        else:
+            assert not routable, f"{name} is on {routable}, which has a route out"
+
+
+def test_every_demo_service_has_ceilings_and_cannot_gain_privileges():
+    services, _ = _demo_stack()
+    for name in LONG_RUNNING + APP_IMAGE_SERVICES:
+        limits = services[name].get("deploy", {}).get("resources", {}).get("limits", {})
+        assert limits.get("cpus"), f"{name}: no CPU ceiling (a miner could take the whole VM)"
+        assert limits.get("pids"), f"{name}: no process ceiling (a fork bomb could stall the VM)"
+        assert "no-new-privileges:true" in services[name].get("security_opt", []), name
+    for name in LONG_RUNNING:
+        assert services[name]["deploy"]["resources"]["limits"].get("memory"), f"{name}: no memory ceiling"
+
+
+@pytest.mark.parametrize("service", (*APP_IMAGE_SERVICES, EGRESS_SERVICE))
+def test_containers_that_run_unprivileged_drop_every_capability(service):
+    services, _ = _demo_stack()
+    assert services[service].get("cap_drop") == ["ALL"], f"{service}: runs as a non-root user and needs no capability"
+
+
+def test_no_single_container_can_take_the_smallest_vm():
+    """CPX22 and CX23 have 2 vCPU: no one container may take all of it."""
+    services, _ = _demo_stack()
+    for name in LONG_RUNNING:
+        assert float(services[name]["deploy"]["resources"]["limits"]["cpus"]) <= 1.5, name
+
+
+# ── scripts/demo/harden-host.sh ─────────────────────────────────────────────
+
+HARDEN = ROOT / "scripts" / "demo" / "harden-host.sh"
+
+
+def test_host_hardening_allows_keys_only_and_no_forwarding():
+    text = HARDEN.read_text(encoding="utf-8")
+    # sshd keeps the first value it reads and Include sorts the drop-ins: the
+    # file must sort before cloud images' 50-cloud-init.conf.
+    assert "/etc/ssh/sshd_config.d/00-" in text
+    for setting in (
+        "PasswordAuthentication no",
+        "KbdInteractiveAuthentication no",
+        "PermitRootLogin prohibit-password",
+        "X11Forwarding no",
+        "AllowTcpForwarding no",
+        "AllowAgentForwarding no",
+        "PermitTunnel no",
+    ):
+        assert re.search(rf"^{setting}$", text, re.MULTILINE), setting
+    assert "sshd -t" in text, "the config must be validated before sshd reads it"
+
+
+def test_host_hardening_sets_docker_defaults():
+    text = HARDEN.read_text(encoding="utf-8")
+    assert '"no-new-privileges": true' in text
+    assert '"live-restore": true' in text
+    assert "origin=Docker,label=Docker CE" in text
+
+
+def test_new_vms_run_the_host_hardening():
+    cloud_init = (ROOT / "deploy" / "demo" / "cloud-init.yaml").read_text(encoding="utf-8")
+    assert "bash /opt/testlookup/scripts/demo/harden-host.sh" in cloud_init
+
+
+def test_install_cron_schedules_the_watchdog_as_root():
+    text = _function("cmd_install_cron")
+    assert re.search(r"^\*/5 \* \* \* \* root \$\{REPO\}/scripts/demo/watchdog\.sh ", text, re.MULTILINE)
+
+
+# ── scripts/demo/watchdog.sh ────────────────────────────────────────────────
+
+WATCHDOG = ROOT / "scripts" / "demo" / "watchdog.sh"
+
+INNOCENT_PROCESSES = [
+    "1 /sbin/init",
+    "812 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock",
+    "2201 gunicorn: worker [app.main:app]",
+    "2301 /usr/local/bin/python /usr/local/bin/celery -A app.worker.celery_app worker --loglevel=info",
+    "2401 postgres: checkpointer",
+    "2501 cloudflared tunnel --no-autoupdate run",
+]
+
+DOCKER_STUB = (
+    'case "$1 $2" in\n'
+    '  "ps --format") printf "testlookup_frontend\\ntestlookup_cloudflared\\n" ;;\n'
+    '  "inspect -f") echo "testlookup_testlookup_net testlookup_demo_egress " ;;\n'
+    '  "network inspect") case "$5" in testlookup_demo_egress) echo false ;; *) echo true ;; esac ;;\n'
+    "esac\n"
+)
+
+
+def _watchdog(tmp_path: Path, processes: list[str], *, containers: tuple[str, ...] = (), env: dict | None = None,
+              listen: list[str] | None = None, established: list[str] | None = None, docker: str = "",
+              stat: str | None = None, env_file: str = "") -> subprocess.CompletedProcess[str]:
+    """Run the watchdog against stub ps/ss/docker/runuser/curl and a fake /proc."""
+    def write(path: Path, text: str) -> None:
+        with path.open("w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+
+    scripts = tmp_path / "repo" / "scripts" / "demo"
+    scripts.mkdir(parents=True, exist_ok=True)
+    shutil.copy(WATCHDOG, scripts / "watchdog.sh")
+    write(tmp_path / "repo" / ".env", env_file)
+    proc = tmp_path / "proc"
+    proc.mkdir(exist_ok=True)
+    write(proc / "stat", stat or "cpu  100 0 100 800 0 0 0 0 0 0\n")
+    for line in processes:
+        pid = line.split()[0]
+        (proc / pid).mkdir(exist_ok=True)
+        write(proc / pid / "cgroup", "0::/system.slice/docker-abc.scope\n" if pid in containers else "0::/user.slice\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    stubs = {
+        "ps": 'cat "$STUB/ps.txt"\n',
+        "ss": 'case "$*" in *state*) cat "$STUB/est.txt" ;; *) cat "$STUB/listen.txt" ;; esac\n',
+        "docker": docker or "exit 0\n",
+        "runuser": 'echo "runuser $*" >> "$STUB/calls.txt"\n',
+        "curl": 'echo "curl $*" >> "$STUB/calls.txt"\n',
+    }
+    for name, body in stubs.items():
+        write(bin_dir / name, "#!/usr/bin/env bash\n" + body)
+        (bin_dir / name).chmod(0o755)
+    write(tmp_path / "ps.txt", "\n".join(processes) + "\n")
+    write(tmp_path / "listen.txt", "\n".join(listen or ["LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*"]) + "\n")
+    write(tmp_path / "est.txt", "\n".join(established or []) + "\n")
+    write(
+        tmp_path / "watch.sh",
+        'export STUB="$PWD" PATH="$PWD/bin:$PATH" WATCHDOG_STATE_DIR="$PWD/state" WATCHDOG_PROC_ROOT="$PWD/proc"\n'
+        'exec bash "$PWD/repo/scripts/demo/watchdog.sh"\n',
+    )
+    return subprocess.run(
+        [BASH, str(tmp_path / "watch.sh")], cwd=tmp_path, env={**os.environ, **(env or {})},
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+
+
+def _calls(tmp_path: Path) -> list[str]:
+    calls = tmp_path / "calls.txt"
+    return calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+
+
+@needs_bash
+def test_the_watchdog_leaves_ordinary_processes_alone(tmp_path):
+    result = _watchdog(tmp_path, INNOCENT_PROCESSES, containers=("2201", "2301", "2401", "2501"))
+    assert result.returncode == 0, result.stderr
+    assert "ALERT" not in result.stdout
+    assert _calls(tmp_path) == []
+
+
+@needs_bash
+def test_a_miner_in_a_container_is_reported_and_the_demo_rebuilt(tmp_path):
+    processes = [*INNOCENT_PROCESSES, "4242 /tmp/.x/xmrig -o stratum+tcp://pool.example:3333 --donate-level 1"]
+    result = _watchdog(tmp_path, processes, containers=("4242",))
+    assert result.returncode == 0, result.stderr
+    assert "ALERT [miner] miner-like process in a container: pid 4242" in result.stdout
+    assert any(call.startswith("runuser -u ") and call.endswith("/scripts/demo/demo.sh reset") for call in _calls(tmp_path))
+
+
+@needs_bash
+def test_the_watchdog_resets_at_most_once_an_hour(tmp_path):
+    processes = [*INNOCENT_PROCESSES, "4242 xmrig 600"]
+    _watchdog(tmp_path, processes, containers=("4242",))
+    again = _watchdog(tmp_path, processes, containers=("4242",))
+    assert "ALERT [reset-suppressed]" in again.stdout
+    assert sum("demo.sh reset" in call for call in _calls(tmp_path)) == 1
+
+
+@needs_bash
+def test_a_miner_on_the_host_is_a_compromise_not_a_reset(tmp_path):
+    result = _watchdog(tmp_path, [*INNOCENT_PROCESSES, "5151 ./kdevtmpfsi"])
+    assert "ALERT [host-compromise]" in result.stdout
+    assert not any("demo.sh reset" in call for call in _calls(tmp_path)), "a reset cannot clean a compromised host"
+
+
+@needs_bash
+def test_a_dry_run_reports_without_acting(tmp_path):
+    result = _watchdog(tmp_path, [*INNOCENT_PROCESSES, "4242 xmrig 600"], containers=("4242",), env={"WATCHDOG_DRY_RUN": "1"})
+    assert "ALERT [miner]" in result.stdout
+    assert _calls(tmp_path) == []
+
+
+@needs_bash
+def test_sustained_cpu_resets_after_three_busy_runs(tmp_path):
+    # Each step adds 1000 jiffies, 50 of them idle: 95 % busy.
+    for step, expected in ((0, None), (1, "strike 1 of 3"), (2, "strike 2 of 3"), (3, "ALERT [cpu]")):
+        stat = f"cpu  {100 + step * 950} 0 100 {800 + step * 50} 0 0 0 0 0 0\n"
+        result = _watchdog(tmp_path, INNOCENT_PROCESSES, stat=stat)
+        assert result.returncode == 0, result.stderr
+        if expected:
+            assert expected in result.stdout, (step, result.stdout)
+    assert any("demo.sh reset" in call for call in _calls(tmp_path))
+
+
+@needs_bash
+def test_a_quiet_cpu_never_accumulates_strikes(tmp_path):
+    for step in range(5):
+        stat = f"cpu  {100 + step * 100} 0 100 {800 + step * 900} 0 0 0 0 0 0\n"  # 10 % busy
+        result = _watchdog(tmp_path, INNOCENT_PROCESSES, stat=stat)
+        assert "strike" not in result.stdout
+    assert _calls(tmp_path) == []
+
+
+@needs_bash
+def test_a_container_that_regains_a_route_out_is_reported(tmp_path):
+    result = _watchdog(tmp_path, INNOCENT_PROCESSES, docker=DOCKER_STUB)
+    assert "ALERT [egress] container testlookup_frontend is on network testlookup_demo_egress" in result.stdout
+    assert "container testlookup_cloudflared" not in result.stdout, "cloudflared is the one container allowed out"
+
+
+@needs_bash
+def test_unexpected_listeners_and_pool_connections_are_reported(tmp_path):
+    result = _watchdog(
+        tmp_path,
+        INNOCENT_PROCESSES,
+        listen=["LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*", "LISTEN 0 5 0.0.0.0:8999 0.0.0.0:*", "LISTEN 0 4096 127.0.0.53%lo:53 0.0.0.0:*"],
+        established=['0 0 10.0.0.2:51234 203.0.113.9:3333 users:(("xmrig",pid=4343,fd=7))', "0 0 10.0.0.2:51300 198.51.100.1:443"],
+    )
+    listeners = [line for line in result.stdout.splitlines() if "ALERT [listener]" in line]
+    assert listeners == [line for line in listeners if line.endswith("0.0.0.0:8999")] and len(listeners) == 1, listeners
+    assert "ALERT [pool] outbound connection to mining-pool port 203.0.113.9:3333" in result.stdout
+    assert "198.51.100.1:443" not in result.stdout
+
+
+@needs_bash
+def test_an_alert_reaches_the_alert_url_once_an_hour(tmp_path):
+    env_file = "DEMO_ALERT_URL=https://ntfy.example.invalid/topic\n"
+    listen = ["LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*", "LISTEN 0 5 0.0.0.0:8999 0.0.0.0:*"]
+    _watchdog(tmp_path, INNOCENT_PROCESSES, listen=listen, env_file=env_file)
+    _watchdog(tmp_path, INNOCENT_PROCESSES, listen=listen, env_file=env_file)
+    sent = [call for call in _calls(tmp_path) if call.startswith("curl ")]
+    assert len(sent) == 1, sent
+    assert sent[0].endswith("https://ntfy.example.invalid/topic")

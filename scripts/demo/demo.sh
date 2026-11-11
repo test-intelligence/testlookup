@@ -10,7 +10,8 @@
 #   scripts/demo/demo.sh reset         wipe all data and re-seed (nightly cron)
 #   scripts/demo/demo.sh update        git pull, new images, reset
 #   scripts/demo/demo.sh status        containers and memory
-#   sudo scripts/demo/demo.sh install-cron   nightly reset at 03:00 (VM time)
+#   sudo scripts/demo/demo.sh install-cron   nightly reset at 03:00 (VM time) + watchdog
+#   sudo scripts/demo/harden-host.sh         SSH, firewall, fail2ban, kernel, Docker
 #
 # DEMO_IMAGES in .env picks how setup and update get the app images: `build`
 # (the default) or `pull`. On a 4 GB VM, pull: DEMO_IMAGES=pull demo.sh setup
@@ -143,7 +144,8 @@ wait_for_backend() {
 start_tunnel() {
   if [ -z "$(env_value CLOUDFLARE_TUNNEL_TOKEN)" ]; then
     log "CLOUDFLARE_TUNNEL_TOKEN is empty: not starting the tunnel (local trial)."
-    log "the demo is reachable on this VM only: http://127.0.0.1:3000"
+    log "the demo answers inside Docker only; check it with:"
+    log "  docker exec testlookup_frontend wget -qO- http://127.0.0.1/api/v1/auth/options"
     return 0
   fi
   log "starting cloudflared (public)"
@@ -232,16 +234,20 @@ cmd_install_cron() {
   [ "$(id -u)" -eq 0 ] || die "install-cron writes /etc/cron.d: run it with sudo"
   local owner; owner="$(stat -c %U "$REPO")"
   cat >/etc/cron.d/testlookup-demo <<CRON
-# TestLookup public demo: rebuild all data from seed every night.
+# TestLookup public demo: rebuild all data from seed every night, and watch
+# for miners, runaway CPU and egress drift every 5 minutes (as root: it kills
+# processes and reads every socket).
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 0 3 * * * ${owner} ${REPO}/scripts/demo/demo.sh reset >> /var/log/testlookup-demo-reset.log 2>&1
+*/5 * * * * root ${REPO}/scripts/demo/watchdog.sh >> /var/log/testlookup-demo-watchdog.log 2>&1
 CRON
   chmod 644 /etc/cron.d/testlookup-demo
-  touch /var/log/testlookup-demo-reset.log
+  touch /var/log/testlookup-demo-reset.log /var/log/testlookup-demo-watchdog.log
   chown "$owner" /var/log/testlookup-demo-reset.log
+  chmod 600 /var/log/testlookup-demo-watchdog.log
   cat >/etc/logrotate.d/testlookup-demo <<ROTATE
-/var/log/testlookup-demo-reset.log {
+/var/log/testlookup-demo-reset.log /var/log/testlookup-demo-watchdog.log {
   weekly
   rotate 4
   compress
@@ -249,7 +255,7 @@ CRON
   notifempty
 }
 ROTATE
-  log "installed /etc/cron.d/testlookup-demo (03:00 daily, as ${owner})"
+  log "installed /etc/cron.d/testlookup-demo (reset 03:00 daily as ${owner}; watchdog every 5 min)"
 }
 
 main() {

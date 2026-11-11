@@ -89,8 +89,24 @@ locally by default.
   - Pinned by `tests/regression/test_demo_mode.py` (write rule, middleware through the real app, every demo-login
     branch), `test_demo_compose.py`, the session-serialization, forwarded-IP and worker-topology guards, and
     frontend tests for the toast, banner and sign-in.
-- **Public demo: fixes from the first deployment** (branch `fix/demo-deploy-followups`). The demo went live on a
-  4 GB Hetzner VM on 2026-11-11 and hit these:
+- **Public demo: fixes from the first deployment, and security hardening** (branch `fix/demo-deploy-followups`).
+  The demo went live on a 4 GB Hetzner VM on 2026-11-11. A security review of the live VM found that the app
+  containers could reach the internet, with no CPU or process ceiling, and that SSH still accepted passwords:
+  - **No route out:** `docker-compose.demo.yml` makes `testlookup_net` internal. Only cloudflared joins
+    `demo_egress`, to dial Cloudflare; `db-budget-check` runs with no network. A payload cannot be downloaded and
+    a mining pool cannot be reached. Every container gets `no-new-privileges` and memory, CPU (at most 1.5 vCPU)
+    and process ceilings; the containers that run unprivileged drop every capability.
+  - **`scripts/demo/harden-host.sh`** (run by the cloud config on new VMs): SSH keys only with no forwarding,
+    ufw rate limit, fail2ban jails including repeat offenders, kernel settings, Docker `no-new-privileges` and
+    `live-restore`, Docker CE in unattended upgrades.
+  - **`scripts/demo/watchdog.sh`** (cron, every 5 minutes, from `demo.sh install-cron`): kills miner processes and
+    rebuilds the containers, resets after 15 minutes of saturated CPU, and reports egress drift, unexpected
+    listening ports and mining-pool connections. Optional phone alerts through `DEMO_ALERT_URL` (ntfy.sh or
+    healthchecks.io). It resets at most once an hour.
+  - Runbook: a Security section with the threat table, the incident steps for a compromise and the owner's
+    account checklist.
+
+  The first deployment also hit these:
   - `scripts/demo/demo.sh` lowered the worker concurrency to 2 without lowering the declared PostgreSQL connection
     total, so `db-budget-check` exited 1 ("Compose fleet requires 19 connections but declares 23") and nothing
     else started. `setup` now writes `PG_COMPOSE_REQUIRED_CONNECTIONS=19` beside the concurrencies.
@@ -109,8 +125,10 @@ locally by default.
     without Cloudflare's clearance cookie failed with 403; rate limits block for one minute; the tunnel token is
     copied in the owner's own browser, never by running the install command.
   - Pinned by `tests/regression/test_demo_compose.py` (the demo settings through the budget validator and the
-    startup gate; the missing-key read, token, pull and image-mode paths of `demo.sh` under bash),
-    `test_worker_readiness_sentinel.py` (the Compose health checks) and `errorReporting.test.ts`.
+    startup gate; the missing-key read, token, pull and image-mode paths of `demo.sh` under bash; no route out
+    for any service but cloudflared, ceilings, capabilities; the host-hardening settings; every watchdog check
+    against stub `ps`/`ss`/`docker` and a fake `/proc`), `test_worker_readiness_sentinel.py` (the Compose health
+    checks) and `errorReporting.test.ts`.
 - **Observability evidence on Run › Timing** (wave W39, STRAT-07 first slice; branch
   `feat/df-evidence-timeline-20261108`). A new card at the bottom of the Timing tab shows the Splunk, OpenShift and
   Prometheus evidence the AI analysis already fetched for the run on one time axis: the newest deep analysis'

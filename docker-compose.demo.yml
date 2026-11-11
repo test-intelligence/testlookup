@@ -15,21 +15,30 @@
 #     off, self-registration off, dev-login off. A paid LLM key on a public
 #     demo is the one way bots could raise a bill, so it is forced empty here
 #     even if .env sets one.
-#   * Nothing is reachable from the internet except through the tunnel: the
-#     setup script binds every published port to 127.0.0.1 (*_PUBLISH_ADDR in
-#     .env), because Docker-published ports bypass host firewalls like ufw.
-#     The only way in is `cloudflared` (profile "public"), which dials OUT to
-#     Cloudflare.
+#   * No container but cloudflared has a route out: testlookup_net is
+#     internal, so a payload cannot be downloaded and a mining pool cannot be
+#     reached even if something got in. cloudflared alone also joins
+#     demo_egress, to dial out to Cloudflare. Docker's DNS still resolves the
+#     service names.
+#   * Nothing is reachable from the internet except through the tunnel. Docker
+#     publishes no port from an internal network, and the setup script also
+#     binds every published port to 127.0.0.1 (*_PUBLISH_ADDR in .env), in case
+#     the network is ever made routable again: Docker-published ports bypass
+#     host firewalls like ufw.
+#   * No privilege to gain: no-new-privileges everywhere. The containers that
+#     run as a non-root user from the start (the backend image's services and
+#     cloudflared) also drop every Linux capability; the data stores and nginx
+#     start as root and drop to their own user, so they keep Docker's default,
+#     already reduced, set.
+#   * Ceilings on memory, CPU and process count, and log rotation, so one
+#     runaway container, a miner or a fork bomb cannot take the whole VM down.
 #   * nginx gets a second per-address limit and the real client address
 #     (deploy/demo/nginx-demo-edge.conf).
-#   * Memory ceilings and log rotation, so one runaway container or a log
-#     flood cannot take the whole VM down.
 #   * The MCP server is not started (profile "mcp").
 #
-# Images: built on the VM from this checkout (scripts/demo/demo.sh build tags
-# them testlookup-demo/*:local, selected by TESTLOOKUP_IMAGE/TESTLOOKUP_VERSION
-# in .env). Once release images are public, point those two variables at
-# ghcr.io/test-intelligence/testlookup and a release tag instead.
+# Images: built on the VM (scripts/demo/demo.sh build) or pulled from GHCR
+# (demo.sh pull), tagged testlookup-demo/*:local and selected by
+# TESTLOOKUP_IMAGE/TESTLOOKUP_VERSION in .env.
 # ============================================================
 
 x-demo-logging: &demo-logging
@@ -52,42 +61,83 @@ x-demo-env: &demo-env
   GOOGLE_API_KEY: ""
   OPENROUTER_API_KEY: ""
 
+# Containers that run as a non-root user from the start.
+x-app-lockdown: &app-lockdown
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+# Containers that start as root and drop to their own user.
+x-store-lockdown: &store-lockdown
+  security_opt: ["no-new-privileges:true"]
+
 services:
   postgres:
-    <<: *demo-logging
+    <<: [*demo-logging, *store-lockdown]
     deploy:
       resources:
         limits:
           memory: 1g
+          cpus: "1.00"
+          pids: 512
 
   mongo:
-    <<: *demo-logging
+    <<: [*demo-logging, *store-lockdown]
     deploy:
       resources:
         limits:
           memory: 1g
+          cpus: "0.75"
+          pids: 512
 
   redis:
-    <<: *demo-logging
+    <<: [*demo-logging, *store-lockdown]
     deploy:
       resources:
         limits:
           memory: 768m
+          cpus: "0.50"
+          pids: 256
 
   minio:
-    <<: *demo-logging
+    <<: [*demo-logging, *store-lockdown]
     deploy:
       resources:
         limits:
           memory: 512m
+          cpus: "0.50"
+          pids: 256
+
+  minio-setup:
+    <<: [*demo-logging, *app-lockdown]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          pids: 64
+
+  db-budget-check:
+    <<: [*demo-logging, *app-lockdown]
+    # Arithmetic on its environment only. The release file leaves it on the
+    # default network, which has a route out; it needs no network at all.
+    network_mode: none
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          pids: 64
 
   db-migrate:
-    <<: *demo-logging
+    <<: [*demo-logging, *app-lockdown]
     environment:
       <<: *demo-env
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          pids: 128
 
   backend:
-    <<: *demo-logging
+    <<: [*demo-logging, *app-lockdown]
     environment:
       <<: *demo-env
       DEMO_MODE: "true"
@@ -101,54 +151,70 @@ services:
       resources:
         limits:
           memory: 2g
+          cpus: "1.50"
+          pids: 512
 
   worker:
-    <<: *demo-logging
+    <<: [*demo-logging, *app-lockdown]
     environment:
       <<: *demo-env
     deploy:
       resources:
         limits:
           memory: 1536m
+          cpus: "1.00"
+          pids: 512
 
   worker-children:
-    <<: *demo-logging
+    <<: [*demo-logging, *app-lockdown]
     environment:
       <<: *demo-env
     deploy:
       resources:
         limits:
           memory: 1g
+          cpus: "0.50"
+          pids: 256
 
   beat:
-    <<: *demo-logging
+    <<: [*demo-logging, *app-lockdown]
     deploy:
       resources:
         limits:
           memory: 384m
+          cpus: "0.25"
+          pids: 64
 
   seed-init:
-    <<: *demo-logging
+    <<: [*demo-logging, *app-lockdown]
     environment:
       <<: *demo-env
+    deploy:
+      resources:
+        limits:
+          cpus: "1.50"
+          pids: 256
 
   frontend:
-    <<: *demo-logging
+    <<: [*demo-logging, *store-lockdown]
     volumes:
       - ./deploy/demo/nginx-demo-edge.conf:/etc/nginx/conf.d/demo-edge.conf:ro
     deploy:
       resources:
         limits:
           memory: 256m
+          cpus: "0.50"
+          pids: 256
 
   mcp:
     # Not part of the demo; `--profile mcp` would start it.
     profiles: ["mcp"]
 
-  # The only way in from the internet. Dials out to Cloudflare; the public
-  # hostname (demo.testlookup.app -> http://frontend:80) is configured on the
-  # tunnel in the Cloudflare dashboard. Profile "public" so a local trial of
-  # this stack runs without a token.
+  # The only way in from the internet, and the only container with a route
+  # out: it dials out to Cloudflare. The public hostname
+  # (demo.testlookup.app -> http://frontend:80) is configured on the tunnel in
+  # the Cloudflare dashboard. Profile "public" so a local trial of this stack
+  # runs without a token.
   cloudflared:
     image: cloudflare/cloudflared:2026.10.7
     container_name: testlookup_cloudflared
@@ -159,10 +225,21 @@ services:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:
       - frontend
-    <<: *demo-logging
+    <<: [*demo-logging, *app-lockdown]
     deploy:
       resources:
         limits:
           memory: 256m
+          cpus: "0.50"
+          pids: 128
     networks:
       - testlookup_net
+      - demo_egress
+
+networks:
+  # Internal: no route out for any app or data container.
+  testlookup_net:
+    internal: true
+  # cloudflared's route out to Cloudflare; nothing else joins it.
+  demo_egress:
+    driver: bridge
