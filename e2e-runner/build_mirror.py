@@ -9,7 +9,7 @@ import sys
 def select_mirror():
     # APT independently verifies Ubuntu's archive signature on every pocket.
     # kernel.org operates a public Ubuntu package mirror at /ubuntu.
-    hosts = ("archive.ubuntu.com", "azure.archive.ubuntu.com", "mirrors.kernel.org")
+    hosts = ("archive.ubuntu.com", "azure.archive.ubuntu.com", "mirrors.edge.kernel.org")
     context = ssl.create_default_context()
     for host in hosts:
         try:
