@@ -5,46 +5,15 @@ import json
 import os
 from pathlib import Path
 import time
-import uuid
 import xml.etree.ElementTree as ET
 import asyncio
 import subprocess
 import sys
 
-import httpx
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 pytestmark = [pytest.mark.live, pytest.mark.ephemeral]
-
-
-@pytest.fixture
-def project():
-    if os.environ.get("TL_TARGET") != "ephemeral":
-        pytest.fail("BLOCKED: disposable target required", pytrace=False)
-    with httpx.Client(base_url=os.environ["TL_API"] + "/api/v1/", timeout=30) as client:
-        auth = client.post("auth/dev-login", params={"role": "qa_lead"})
-        assert auth.status_code == 200
-        client.headers["Authorization"] = "Bearer " + auth.json()["access_token"]
-        me = client.get("auth/me")
-        assert me.status_code == 200
-        assert (me.json()["username"], me.json()["role"]) == (
-            os.environ["TL_USER_QA_LEAD"],
-            "QA_LEAD",
-        )
-        name = "e2e-" + uuid.uuid4().hex
-        create = client.post("projects", json={"name": name, "slug": name})
-        assert create.status_code == 201, (
-            f"Create project {create.status_code}, request {create.headers.get('x-request-id')}"
-        )
-        owned = create.json()["id"]
-        try:
-            yield client, owned, name
-        finally:
-            response = client.delete("projects/" + owned)
-            assert response.status_code == 204, (
-                f"Cleanup {response.status_code}, request {response.headers.get('x-request-id')}"
-            )
 
 
 def test_gate_empty_evidence(project):
@@ -141,6 +110,30 @@ def test_sdk_pytest_reporter(project, tmp_path):
     assert matches[0]["skipped_tests"] == sum(
         c.find("skipped") is not None for c in leaves
     )
+    run = matches[0]
+    assert run["project_id"] == owned
+    persisted = client.get(f"runs/{run['id']}/tests")
+    assert persisted.status_code == 200
+    observed = persisted.json()
+    assert observed["total"] == len(leaves)
+    for leaf in leaves:
+        expected = (
+            "FAILED"
+            if leaf.find("failure") is not None
+            else "SKIPPED"
+            if leaf.find("skipped") is not None
+            else "PASSED"
+        )
+        rows = [
+            row
+            for row in observed["items"]
+            if row["test_name"].split("::")[-1] == leaf.attrib["name"]
+        ]
+        assert len(rows) == 1
+        assert (rows[0]["test_run_id"], rows[0]["status"].upper()) == (
+            run["id"],
+            expected,
+        )
 
 
 def walk_suites(suites):

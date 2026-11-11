@@ -1,0 +1,86 @@
+[
+  {
+    "description": "",
+    "elements": [
+      {
+        "description": "",
+        "id": "release-report;passes",
+        "keyword": "Scenario",
+        "line": 2,
+        "name": "Passes",
+        "steps": [
+          {
+            "arguments": [],
+            "keyword": "Given ",
+            "line": 3,
+            "name": "a passing check",
+            "match": {
+              "location": "features\\steps.cjs:2"
+            },
+            "result": {
+              "status": "passed",
+              "duration": 197999
+            }
+          }
+        ],
+        "tags": [],
+        "type": "scenario"
+      },
+      {
+        "description": "",
+        "id": "release-report;fails",
+        "keyword": "Scenario",
+        "line": 4,
+        "name": "Fails",
+        "steps": [
+          {
+            "arguments": [],
+            "keyword": "Given ",
+            "line": 5,
+            "name": "a failing check",
+            "match": {
+              "location": "features\\steps.cjs:3"
+            },
+            "result": {
+              "status": "failed",
+              "duration": 51600,
+              "error_message": "Error: release fixture expected failure\n    at World.<anonymous> (/release\\docs\\release-e2e\\producer-work\\cucumber\\features\\steps.cjs:3:46)"
+            }
+          }
+        ],
+        "tags": [],
+        "type": "scenario"
+      },
+      {
+        "description": "",
+        "id": "release-report;skips",
+        "keyword": "Scenario",
+        "line": 6,
+        "name": "Skips",
+        "steps": [
+          {
+            "arguments": [],
+            "keyword": "Given ",
+            "line": 7,
+            "name": "a skipped check",
+            "match": {
+              "location": "features\\steps.cjs:4"
+            },
+            "result": {
+              "status": "skipped",
+              "duration": 48699
+            }
+          }
+        ],
+        "tags": [],
+        "type": "scenario"
+      }
+    ],
+    "id": "release-report",
+    "line": 1,
+    "keyword": "Feature",
+    "name": "Release report",
+    "tags": [],
+    "uri": "features\\reports.feature"
+  }
+]

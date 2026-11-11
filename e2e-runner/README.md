@@ -1,6 +1,21 @@
 # TestLookup release checks
 
-The runner reports the candidate build, dependency readiness, Chromium sign-in screen, five distinct role identities, and CLI and MCP stdio health. On the disposable stack it also exercises first sign-in, ingestion, and release evaluation. The regression report includes the planned journey denominator. A missing required P0 keeps the release decision at NO_GO.
+The regression inventory contains six P0 and seven P1 journeys. The disposable suite exercises onboarding, ingestion, triage, AI review, failure investigation, release decisions, quarantine, membership, test management, administration, search and streaming. A separate installation and rollback drill supplies the thirteenth journey. Each case has a stable ID in `catalogue.yaml`. An unexecuted required check remains visible in the release decision.
+
+## Report ingestion coverage
+
+| Path through TestLookup | Inputs exercised | What the check observes |
+| --- | --- | --- |
+| Browser upload form | JUnit XML, TestNG, NUnit 3, TRX, xUnit v2, pytest JSON, Robot XML, Playwright JSON, Cypress/Mochawesome, Allure and Cucumber JSON | Each native producer file goes through explicit format selection and automatic detection. The receipt, run, selected project, persisted names and status counts must agree. |
+| Browser archive upload | ZIP of native Allure results and a multi-file selection of JUnit and Robot | The form and worker unpack the reports and materialize the expected tests. |
+| Python SDK | pytest plugin and Robot Framework listener | Real framework execution and completed build readback. |
+| Java SDK | JUnit Jupiter 5, JUnit Jupiter 6 and TestNG | The release fixture loads the repository's reporter JAR in each framework. |
+| JavaScript/TypeScript SDK | Jest, Mocha, Playwright, Vitest, Cypress and Cucumber.js | Each runner loads its own adapter from the locally built SDK and reports a deliberately passing and failing case. |
+| Go SDK | Go testing package | A compiled test binary reports through the SDK's testing helper. |
+
+The .NET producers generate native NUnit, TRX and xUnit files for the browser path. Producer versions, inputs and regeneration instructions are in [native report fixtures](fixtures/native/README.md). The SDK producer sources are in [reporters](reporters).
+
+The container image prepares native dependencies during the build. To run the disposable checks from an external test host, use Node, npm, Go, JDK 17 and Maven with the Python and Playwright dependencies below, then run `python e2e-runner/reporters/prepare.py`. Keep the prepared fixtures and Cypress binary cache available to that runner. Each execution creates its own named project for readback.
 
 ## Run a disposable candidate with Podman
 
@@ -14,7 +29,7 @@ python e2e-runner/launch.py --env ephemeral --tier regression --manifest /path/t
 
 Use a new output directory each time. The launcher builds the runner, provisions a randomly named project, waits for migrations and services, completes the generated local admin's forced first sign-in, runs on the private network, and removes the project and volumes in a finally block. On Windows the engine's reported forwarded port can be unreachable for an internal network. Running the browser in the same network also tests the deployed nginx route. The checked-in Compose template is the source of the stack layout. Environment credentials are generated in a temporary directory and isolated from the user's existing deployment.
 
-The equivalent Make command is `make e2e-release ENV=ephemeral TIER=regression TL_MANIFEST=/path/to/release-manifest.json E2E_OUT=/path/to/new-results`. To use a Docker host with the same candidate and runner, pass `--engine docker` to launch.py. Podman is the default. `--tier full` selects implemented full-eligible tests and reports outstanding design obligations.
+The equivalent Make command is `make e2e-release ENV=ephemeral TIER=regression TL_MANIFEST=/path/to/release-manifest.json E2E_OUT=/path/to/new-results`. Podman is the default. The deployment drill uses a second disposable stack with an independently verified previous main build. See the [upgrade drill instructions](upgrade_README.md) for baseline selection and snapshot verification.
 
 ## Run a shared target
 
@@ -48,6 +63,20 @@ kubectl --context "$HOMELAB_KUBE_CONTEXT" -n "$HOMELAB_NAMESPACE" create -f /tmp
 ```
 
 Template inputs are RUNNER_DIGEST_REF (repository@sha256:digest), TL_WEB, TL_API, MANIFEST_CONFIGMAP (contains release-manifest.json and the observed deployment-images.json), TEST_SECRET_NAME, RESULTS_PVC and a fresh RUN_ID. This template targets the persistent deployment's read-only lane.
+
+For write journeys, deploy the candidate and its own datastores in a disposable namespace. Configure the five test principals and allow `testlookup-mcp:8002` in the MCP service's host settings. Install the integration fixtures before starting the Job. Use the same namespace and UID that the deployment created.
+
+```sh
+python e2e-runner/fakes_k8s.py --context "$HOMELAB_KUBE_CONTEXT" --namespace "$HOMELAB_NAMESPACE" \
+  --namespace-uid "$HOMELAB_NAMESPACE_UID" --manifest "$VERIFIED_MANIFEST"
+test "$(kubectl --context "$HOMELAB_KUBE_CONTEXT" get ns "$HOMELAB_NAMESPACE" -o jsonpath='{.metadata.uid}')" = "$HOMELAB_NAMESPACE_UID" || exit 1
+export TL_WEB=http://testlookup-frontend TL_API=http://testlookup-backend:8000
+envsubst < e2e-runner/job.yaml | kubectl set env --local -f - TL_TARGET=ephemeral \
+  TL_MCP=http://testlookup-mcp:8002 TL_FAKE_URL=http://release-fixture:8080 -o yaml | \
+  kubectl --context "$HOMELAB_KUBE_CONTEXT" -n "$HOMELAB_NAMESPACE" create -f -
+```
+
+The Job writes its results to the named PVC. Run the Kubernetes upgrade drill in its own disposable namespace and use `merge_upgrade.py` with `--platform kubernetes` to combine both results for the same candidate.
 
 ## Read the report
 

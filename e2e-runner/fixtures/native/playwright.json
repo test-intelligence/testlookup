@@ -1,0 +1,253 @@
+{
+  "config": {
+    "argv": [
+      "node",
+      "/release\\frontend\\node_modules\\@playwright\\test\\cli.js",
+      "test",
+      "--reporter=json",
+      "--workers=1",
+      "--config",
+      "docs/release-e2e/producer-work/playwright"
+    ],
+    "rootDir": "/release/docs/release-e2e/producer-work/playwright",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/release/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "",
+        "name": "",
+        "testDir": "/release/docs/release-e2e/producer-work/playwright",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 30000
+      }
+    ],
+    "filteredProjects": [
+      {
+        "grep": {},
+        "grepInvert": null,
+        "outputDir": "/release\\test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "name": "",
+        "testDir": "/release\\docs\\release-e2e\\producer-work\\playwright",
+        "snapshotDir": "/release\\docs\\release-e2e\\producer-work\\playwright",
+        "testIgnore": [],
+        "testMatch": "**/*.@(spec|test).?(c|m)[jt]s?(x)",
+        "timeout": 30000,
+        "use": {},
+        "dependencies": [],
+        "ignoreSnapshots": false,
+        "__projectId": ""
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "default",
+    "updateSourceMethod": "patch",
+    "version": "1.64.1",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "reports.spec.cjs",
+      "file": "reports.spec.cjs",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "passes",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 4,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-11T14:02:26.201Z",
+                  "annotations": [],
+                  "attachments": []
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "30546987765a49560f3f-c5360d2be07e8ada20d0",
+          "file": "reports.spec.cjs",
+          "line": 2,
+          "column": 1
+        },
+        {
+          "title": "fails",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 1,
+                  "error": {
+                    "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m2\u001b[39m\nReceived: \u001b[31m1\u001b[39m",
+                    "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m2\u001b[39m\nReceived: \u001b[31m1\u001b[39m\n    at /release\\docs\\release-e2e\\producer-work\\playwright\\reports.spec.cjs:3:31",
+                    "location": {
+                      "file": "/release\\docs\\release-e2e\\producer-work\\playwright\\reports.spec.cjs",
+                      "column": 31,
+                      "line": 3
+                    },
+                    "snippet": "  1 | const { test, expect } = require('@playwright/test')\n  2 | test('passes', () => expect(2 + 2).toBe(4))\n> 3 | test('fails', () => expect(1).toBe(2))\n    |                               ^\n  4 | test.skip('skips', () => {})\n  5 |"
+                  },
+                  "errors": [
+                    {
+                      "location": {
+                        "file": "/release\\docs\\release-e2e\\producer-work\\playwright\\reports.spec.cjs",
+                        "column": 31,
+                        "line": 3
+                      },
+                      "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32m2\u001b[39m\nReceived: \u001b[31m1\u001b[39m\n\n  1 | const { test, expect } = require('@playwright/test')\n  2 | test('passes', () => expect(2 + 2).toBe(4))\n> 3 | test('fails', () => expect(1).toBe(2))\n    |                               ^\n  4 | test.skip('skips', () => {})\n  5 |\n    at /release\\docs\\release-e2e\\producer-work\\playwright\\reports.spec.cjs:3:31"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-11T14:02:26.233Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/release\\test-results\\reports-fails\\error-context.md"
+                    }
+                  ],
+                  "errorLocation": {
+                    "file": "/release\\docs\\release-e2e\\producer-work\\playwright\\reports.spec.cjs",
+                    "column": 31,
+                    "line": 3
+                  }
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "30546987765a49560f3f-e624e017fcfa34218e8e",
+          "file": "reports.spec.cjs",
+          "line": 3,
+          "column": 1
+        },
+        {
+          "title": "skips",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 30000,
+              "annotations": [
+                {
+                  "type": "skip",
+                  "location": {
+                    "file": "/release\\docs\\release-e2e\\producer-work\\playwright\\reports.spec.cjs",
+                    "line": 4,
+                    "column": 6
+                  }
+                }
+              ],
+              "expectedStatus": "skipped",
+              "projectId": "",
+              "projectName": "",
+              "results": [
+                {
+                  "workerIndex": -1,
+                  "parallelIndex": -1,
+                  "status": "skipped",
+                  "duration": 0,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-11-11T14:02:26.243Z",
+                  "annotations": [
+                    {
+                      "type": "skip",
+                      "location": {
+                        "file": "/release\\docs\\release-e2e\\producer-work\\playwright\\reports.spec.cjs",
+                        "line": 4,
+                        "column": 6
+                      }
+                    }
+                  ],
+                  "attachments": []
+                }
+              ],
+              "status": "skipped"
+            }
+          ],
+          "id": "30546987765a49560f3f-d7922bcb9813db5b8713",
+          "file": "reports.spec.cjs",
+          "line": 4,
+          "column": 6
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-11-11T14:02:25.140Z",
+    "duration": 1119.3000000000002,
+    "expected": 1,
+    "skipped": 1,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

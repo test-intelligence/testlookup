@@ -1,0 +1,40 @@
+{
+  "name": "test_report_pass",
+  "status": "passed",
+  "start": 1794405744218,
+  "stop": 1794405744218,
+  "uuid": "c606f930-95e1-4921-8dca-e6c2312e691a",
+  "historyId": "2843707261fc45b83285d26743b7f5ef",
+  "testCaseId": "2843707261fc45b83285d26743b7f5ef",
+  "fullName": "e2e-runner.fixtures.producer#test_report_pass",
+  "labels": [
+    {
+      "name": "parentSuite",
+      "value": "e2e-runner.fixtures"
+    },
+    {
+      "name": "suite",
+      "value": "producer"
+    },
+    {
+      "name": "host",
+      "value": "fixture-host"
+    },
+    {
+      "name": "thread",
+      "value": "1-MainThread"
+    },
+    {
+      "name": "framework",
+      "value": "pytest"
+    },
+    {
+      "name": "language",
+      "value": "cpython3"
+    },
+    {
+      "name": "package",
+      "value": "e2e-runner.fixtures.producer"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><TargetFramework>net8.0</TargetFramework><GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles></PropertyGroup>
+<ItemGroup><PackageReference Include="xunit" Version="2.9.3" /><PackageReference Include="xunit.runner.console" Version="2.9.3" /></ItemGroup>
+</Project>

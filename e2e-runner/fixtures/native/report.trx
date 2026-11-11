@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="3f812aa7-4e33-4750-979c-b887f3497c97" name="@fixture-host 2026-11-11 14:04:36" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-11T14:04:36.8554498+00:00" queuing="2026-11-11T14:04:36.8554498+00:00" start="2026-11-11T14:04:36.3735806+00:00" finish="2026-11-11T14:04:36.8596142+00:00" />
+  <TestSettings name="default" id="f0212081-0b65-4c3f-9281-d3538d056027">
+    <Deployment runDeploymentRoot="_fixture-host_2026-11-11_14_04_36" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="d5feb732-8644-42f6-8d63-e4120018c3c3" testId="585f21cd-59fb-3629-c75e-2a3bf31f4c28" testName="Skips" computerName="fixture-host" duration="00:00:00.0001979" startTime="2026-11-11T14:04:36.7715549+00:00" endTime="2026-11-11T14:04:36.7717530+00:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="NotExecuted" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d5feb732-8644-42f6-8d63-e4120018c3c3">
+      <Output>
+        <StdOut>release fixture skip</StdOut>
+        <ErrorInfo>
+          <Message>release fixture skip</Message>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="2ba1bfd6-2288-4990-8c07-1ee9fe1e5e68" testId="0a579ec4-24b0-8e61-d41b-22c5fb9ec34d" testName="Passes" computerName="fixture-host" duration="00:00:00.0028610" startTime="2026-11-11T14:04:36.7686787+00:00" endTime="2026-11-11T14:04:36.7715396+00:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="2ba1bfd6-2288-4990-8c07-1ee9fe1e5e68" />
+    <UnitTestResult executionId="52b7667d-6d42-4d0d-a8fe-b2dd64b0be87" testId="361d7f27-0b5e-a3d5-8a17-88c8a46a917d" testName="Fails" computerName="fixture-host" duration="00:00:00.0168560" startTime="2026-11-11T14:04:36.7511983+00:00" endTime="2026-11-11T14:04:36.7680258+00:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="52b7667d-6d42-4d0d-a8fe-b2dd64b0be87">
+      <Output>
+        <ErrorInfo>
+          <Message>release fixture expected failure</Message>
+          <StackTrace>   at Reports.Fails() in /work/nunit/Reports.cs:line 4
+
+1)    at Reports.Fails() in /work/nunit/Reports.cs:line 4
+
+</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="Skips" storage="/work/nunit/bin/debug/net8.0/producer.dll" id="585f21cd-59fb-3629-c75e-2a3bf31f4c28">
+      <Execution id="d5feb732-8644-42f6-8d63-e4120018c3c3" />
+      <TestMethod codeBase="/work/nunit/bin/Debug/net8.0/Producer.dll" adapterTypeName="executor://nunit3testexecutor/" className="Reports" name="Skips" />
+    </UnitTest>
+    <UnitTest name="Fails" storage="/work/nunit/bin/debug/net8.0/producer.dll" id="361d7f27-0b5e-a3d5-8a17-88c8a46a917d">
+      <Execution id="52b7667d-6d42-4d0d-a8fe-b2dd64b0be87" />
+      <TestMethod codeBase="/work/nunit/bin/Debug/net8.0/Producer.dll" adapterTypeName="executor://nunit3testexecutor/" className="Reports" name="Fails" />
+    </UnitTest>
+    <UnitTest name="Passes" storage="/work/nunit/bin/debug/net8.0/producer.dll" id="0a579ec4-24b0-8e61-d41b-22c5fb9ec34d">
+      <Execution id="2ba1bfd6-2288-4990-8c07-1ee9fe1e5e68" />
+      <TestMethod codeBase="/work/nunit/bin/Debug/net8.0/Producer.dll" adapterTypeName="executor://nunit3testexecutor/" className="Reports" name="Passes" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="585f21cd-59fb-3629-c75e-2a3bf31f4c28" executionId="d5feb732-8644-42f6-8d63-e4120018c3c3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0a579ec4-24b0-8e61-d41b-22c5fb9ec34d" executionId="2ba1bfd6-2288-4990-8c07-1ee9fe1e5e68" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="361d7f27-0b5e-a3d5-8a17-88c8a46a917d" executionId="52b7667d-6d42-4d0d-a8fe-b2dd64b0be87" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Results Not in a List" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="All Loaded Results" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="3" executed="2" passed="1" failed="1" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>NUnit Adapter 4.6.0.0: Test execution started
+Running all tests in /work/nunit/bin/Debug/net8.0/Producer.dll
+  Test Output folder checked/created : /work/output
+   NUnit3TestExecutor discovered 3 of 3 NUnit test cases using Current Discovery mode, Non-Explicit run
+Skips: release fixture skip
+   Test results written to /work/output/Producer.xml
+NUnit Adapter 4.6.0.0: Test execution complete
+Test 'Skips' was skipped in the test run.
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

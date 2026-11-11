@@ -1,0 +1,44 @@
+{
+  "name": "test_report_broken",
+  "status": "broken",
+  "statusDetails": {
+    "message": "RuntimeError: intentional producer exception",
+    "trace": "def test_report_broken():\n>       raise RuntimeError(\"intentional producer exception\")\nE       RuntimeError: intentional producer exception\n\ndocs\\release-e2e\\producer-work\\test_allure_errors.py:2: RuntimeError"
+  },
+  "start": 1794406015037,
+  "stop": 1794406015037,
+  "uuid": "49041d2e-86ce-4cff-923c-0ba58ee36d4b",
+  "historyId": "0c0e105c3fde50655a7ba8bc203399b2",
+  "testCaseId": "0c0e105c3fde50655a7ba8bc203399b2",
+  "fullName": "docs.release-e2e.producer-work.test_allure_errors#test_report_broken",
+  "labels": [
+    {
+      "name": "parentSuite",
+      "value": "docs.release-e2e.producer-work"
+    },
+    {
+      "name": "suite",
+      "value": "test_allure_errors"
+    },
+    {
+      "name": "host",
+      "value": "fixture-host"
+    },
+    {
+      "name": "thread",
+      "value": "1-MainThread"
+    },
+    {
+      "name": "framework",
+      "value": "pytest"
+    },
+    {
+      "name": "language",
+      "value": "cpython3"
+    },
+    {
+      "name": "package",
+      "value": "docs.release-e2e.producer-work.test_allure_errors"
+    }
+  ]
+}

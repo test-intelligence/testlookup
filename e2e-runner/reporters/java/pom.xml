@@ -1,0 +1,13 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>local.release.fixture</groupId>
+  <artifactId>reporter-fixture</artifactId>
+  <version>1</version>
+  <dependencies>
+    <dependency>
+      <groupId>org.testng</groupId>
+      <artifactId>testng</artifactId>
+      <version>7.12.0</version>
+    </dependency>
+  </dependencies>
+</project>

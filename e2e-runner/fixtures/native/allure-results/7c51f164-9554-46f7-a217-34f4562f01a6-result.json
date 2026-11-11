@@ -1,0 +1,44 @@
+{
+  "name": "test_report_failure",
+  "status": "failed",
+  "statusDetails": {
+    "message": "AssertionError: assert 'observed' == 'expected'\n  \n  - expected\n  + observed",
+    "trace": "def test_report_failure():\n>       assert \"observed\" == \"expected\"\nE       AssertionError: assert 'observed' == 'expected'\nE         \nE         - expected\nE         + observed\n\ne2e-runner\\fixtures\\producer.py:11: AssertionError"
+  },
+  "start": 1794405744219,
+  "stop": 1794405744220,
+  "uuid": "928b652a-1858-4406-aec7-46c0d3468f2a",
+  "historyId": "521401b6f3fff9fb6fb44a2068836ad0",
+  "testCaseId": "521401b6f3fff9fb6fb44a2068836ad0",
+  "fullName": "e2e-runner.fixtures.producer#test_report_failure",
+  "labels": [
+    {
+      "name": "parentSuite",
+      "value": "e2e-runner.fixtures"
+    },
+    {
+      "name": "suite",
+      "value": "producer"
+    },
+    {
+      "name": "host",
+      "value": "fixture-host"
+    },
+    {
+      "name": "thread",
+      "value": "1-MainThread"
+    },
+    {
+      "name": "framework",
+      "value": "pytest"
+    },
+    {
+      "name": "language",
+      "value": "cpython3"
+    },
+    {
+      "name": "package",
+      "value": "e2e-runner.fixtures.producer"
+    }
+  ]
+}

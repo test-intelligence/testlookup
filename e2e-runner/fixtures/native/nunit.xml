@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<test-run id="0" name="Producer.dll" fullname="/work/nunit/bin/Debug/net8.0/Producer.dll" runstate="Runnable" testcasecount="3" result="Failed" total="3" passed="1" failed="1" warnings="0" inconclusive="0" skipped="1" asserts="1" engine-version="3.18.1.0" clr-version="8.0.34" start-time="2026-11-11 14:04:36Z" end-time="2026-11-11 14:04:36Z" duration="0.037196">
+  <command-line><![CDATA[/work/nunit/bin/Debug/net8.0/testhost.dll --port 35255 --endpoint 127.0.0.1:035255 --role client --parentprocessid 91 --telemetryoptedin false]]></command-line>
+  <test-suite type="Assembly" id="0-1004" name="Producer.dll" fullname="/work/nunit/bin/Debug/net8.0/Producer.dll" runstate="Runnable" testcasecount="3" result="Failed" site="Child" start-time="2026-11-11T14:04:36.7478560Z" end-time="2026-11-11T14:04:36.7723049Z" duration="0.024439" total="3" passed="1" failed="1" warnings="0" inconclusive="0" skipped="1" asserts="1">
+    <environment framework-version="3.14.0.0" clr-version="8.0.34" os-version="Debian GNU/Linux 12 (bookworm)" platform="Unix" cwd="/work/nunit/bin/Debug/net8.0" machine-name="fixture-host" user="root" user-domain="fixture-host" culture="" uiculture="" os-architecture="x64" />
+    <settings>
+      <setting name="SynchronousEvents" value="False" />
+      <setting name="InternalTraceLevel" value="Off" />
+      <setting name="RandomSeed" value="1713592964" />
+      <setting name="SkipNonTestAssemblies" value="True" />
+      <setting name="ProcessModel" value="InProcess" />
+      <setting name="DomainUsage" value="Single" />
+      <setting name="DefaultTestNamePattern" value="{m}{a}" />
+      <setting name="WorkDirectory" value="/work/nunit/bin/Debug/net8.0" />
+      <setting name="NumberOfTestWorkers" value="24" />
+    </settings>
+    <properties>
+      <property name="_PID" value="104" />
+      <property name="_APPDOMAIN" value="testhost" />
+    </properties>
+    <failure>
+      <message><![CDATA[One or more child tests had errors]]></message>
+    </failure>
+    <test-suite type="TestFixture" id="0-1000" name="Reports" fullname="Reports" classname="Reports" runstate="Runnable" testcasecount="3" result="Failed" site="Child" start-time="2026-11-11T14:04:36.7501551Z" end-time="2026-11-11T14:04:36.7721758Z" duration="0.022021" total="3" passed="1" failed="1" warnings="0" inconclusive="0" skipped="1" asserts="1">
+      <failure>
+        <message><![CDATA[One or more child tests had errors]]></message>
+      </failure>
+      <test-case id="0-1002" name="Fails" fullname="Reports.Fails" methodname="Fails" classname="Reports" runstate="Runnable" seed="358331538" result="Failed" start-time="2026-11-11T14:04:36.7511983Z" end-time="2026-11-11T14:04:36.7680258Z" duration="0.016856" asserts="0">
+        <failure>
+          <message><![CDATA[release fixture expected failure]]></message>
+          <stack-trace><![CDATA[   at Reports.Fails() in /work/nunit/Reports.cs:line 4
+]]></stack-trace>
+        </failure>
+        <assertions>
+          <assertion result="Failed">
+            <message><![CDATA[release fixture expected failure]]></message>
+            <stack-trace><![CDATA[   at Reports.Fails() in /work/nunit/Reports.cs:line 4
+]]></stack-trace>
+          </assertion>
+        </assertions>
+      </test-case>
+      <test-case id="0-1001" name="Passes" fullname="Reports.Passes" methodname="Passes" classname="Reports" runstate="Runnable" seed="1742584741" result="Passed" start-time="2026-11-11T14:04:36.7686787Z" end-time="2026-11-11T14:04:36.7715396Z" duration="0.002861" asserts="1" />
+      <test-case id="0-1003" name="Skips" fullname="Reports.Skips" methodname="Skips" classname="Reports" runstate="Ignored" seed="905240709" result="Skipped" label="Ignored" start-time="2026-11-11T14:04:36.7715549Z" end-time="2026-11-11T14:04:36.7717530Z" duration="0.000198" asserts="0">
+        <properties>
+          <property name="_SKIPREASON" value="release fixture skip" />
+        </properties>
+        <reason>
+          <message><![CDATA[release fixture skip]]></message>
+        </reason>
+      </test-case>
+    </test-suite>
+  </test-suite>
+</test-run>

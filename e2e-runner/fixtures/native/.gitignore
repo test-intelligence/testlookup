@@ -1,0 +1,2 @@
+# The individual native Allure result files are the input to two release tests.
+!allure-results/
