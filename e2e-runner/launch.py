@@ -32,8 +32,11 @@ def main():
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--engine", choices=("podman", "docker"), default="podman")
-    parser.add_argument("--defer-upgrade", action="store_true",
-                        help="Run the ordinary suite before the separate upgrade-proof merge")
+    parser.add_argument(
+        "--defer-upgrade",
+        action="store_true",
+        help="Run the ordinary suite before the separate upgrade-proof merge",
+    )
     opts = parser.parse_args()
     manifest = opts.manifest.resolve(strict=True)
     out = opts.out.resolve()
@@ -70,6 +73,17 @@ def main():
             ["--network", "host", "--ignorefile", "e2e-runner/Dockerfile.dockerignore"]
         )
     try:
+        from build_mirror import select_mirror
+
+        mirror, address = select_mirror()
+        build.extend(
+            [
+                "--build-arg",
+                "UBUNTU_ARCHIVE_HOST=" + mirror,
+                "--add-host",
+                f"{mirror}:{address}",
+            ]
+        )
         subprocess.run([*build, "."], cwd=ROOT, check=True)
         digest = subprocess.check_output(
             [engine, "image", "inspect", "--format", "{{.Id}}", tag], text=True

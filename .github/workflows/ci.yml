@@ -1789,6 +1789,11 @@ jobs:
         id: day
         run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
+      - name: Verify Ubuntu archive access from the hosted runner
+        if: steps.scope.outputs.run == 'true' && matrix.name == 'e2e-runner'
+        id: mirror
+        run: python3 e2e-runner/build_mirror.py >> "$GITHUB_OUTPUT"
+
       - name: Build the image (not pushed)
         if: steps.scope.outputs.run == 'true'
         uses: docker/build-push-action@v7
@@ -1804,6 +1809,8 @@ jobs:
           # zlib CVE-2026-85091 in the mcp image although Debian had shipped the fix).
           build-args: |
             OS_PATCH_DAY=${{ steps.day.outputs.day }}
+            ${{ steps.mirror.outputs.build_arg }}
+          add-hosts: ${{ steps.mirror.outputs.host_mapping }}
           cache-from: |
             type=gha,scope=scan-${{ matrix.name }}
             type=gha

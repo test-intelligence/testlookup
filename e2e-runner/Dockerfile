@@ -1,8 +1,9 @@
 FROM mcr.microsoft.com/playwright:v1.64.1-noble@sha256:ee15712262f017b8157421b212b12099146645f44b1bc5c0514cbbe6a229b1d0 AS ubuntu-packages
 ARG OS_PATCH_DAY=unset
+ARG UBUNTU_ARCHIVE_HOST=archive.ubuntu.com
 # The hosted build must receive complete signed indexes, including security updates.
-RUN sed -i -e 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
-           -e 's|http://security.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+RUN sed -i -e "s|http://azure.archive.ubuntu.com/ubuntu|https://${UBUNTU_ARCHIVE_HOST}/ubuntu|g" \
+           -e "s|http://security.ubuntu.com/ubuntu|https://${UBUNTU_ARCHIVE_HOST}/ubuntu|g" \
            /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::Retries=3 -o APT::Update::Error-Mode=any update
 

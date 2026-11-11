@@ -1,13 +1,14 @@
 """Run the ordinary Podman suite and the independently provisioned upgrade rehearsal."""
 
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 
-from merge_upgrade import merge
+from merge_upgrade import STAGES, merge
 
 HERE = Path(__file__).resolve().parent
 
@@ -69,6 +70,24 @@ def campaign(manifest, tier, out, repository):
                 rehearsal,
                 env=os.environ,
             )
+            if operator_exit:
+                proof_file = rehearsal / "upgrade-proof.json"
+                try:
+                    summary = json.loads(proof_file.read_bytes())
+                    stages = [
+                        s["name"] for s in summary["stages"] if s["name"] in STAGES
+                    ]
+                    stage = stages[-1] if stages else "preflight"
+                    print(
+                        f"Upgrade rehearsal stopped at {stage}. Verified cleanup: "
+                        f"{summary.get('cleanup_verified') is True}.",
+                        flush=True,
+                    )
+                except (OSError, ValueError, TypeError, KeyError):
+                    print(
+                        "Upgrade rehearsal did not produce a readable stage record.",
+                        flush=True,
+                    )
         suite_exit = run_tool("launch.py", *common, "--defer-upgrade", env=ordinary_env)
         return merge(
             out,
