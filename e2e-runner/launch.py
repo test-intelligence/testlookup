@@ -32,6 +32,8 @@ def main():
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--engine", choices=("podman", "docker"), default="podman")
+    parser.add_argument("--defer-upgrade", action="store_true",
+                        help="Run the ordinary suite before the separate upgrade-proof merge")
     opts = parser.parse_args()
     manifest = opts.manifest.resolve(strict=True)
     out = opts.out.resolve()
@@ -88,6 +90,7 @@ def main():
                 str(out),
                 "--repeat",
                 str(opts.repeat),
+                *(["--defer-upgrade"] if opts.defer_upgrade else []),
             ],
             cwd=ROOT,
         ).returncode

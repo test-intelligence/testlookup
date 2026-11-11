@@ -1,6 +1,6 @@
 pipeline {
   agent { label 'podman' }
-  options { timestamps(); timeout(time: 240, unit: 'MINUTES') }
+  options { timestamps(); timeout(time: 300, unit: 'MINUTES') }
   parameters {
     string(name: 'VERIFIED_MANIFEST', description: 'Path to the upstream verified release-manifest.json on this agent')
     string(name: 'SOURCE_SHA', description: 'Full upstream source commit from the verified image build')
@@ -14,16 +14,25 @@ pipeline {
     }
     stage('Run on disposable Podman stack') {
       steps {
-        sh 'python3 e2e-runner/launch.py --manifest "$VERIFIED_MANIFEST" --tier "$TIER" --out "release-results/$BUILD_NUMBER"'
+        script {
+          def campaign = 'python3 e2e-runner/release_campaign.py --manifest "$VERIFIED_MANIFEST" --tier "$TIER" --out "release-results/$BUILD_NUMBER"'
+          if (params.TIER == 'smoke') {
+            sh campaign
+          } else {
+            withCredentials([string(credentialsId: 'testlookup-release-actions-read', variable: 'GH_TOKEN')]) {
+              sh campaign
+            }
+          }
+        }
       }
     }
   }
   post {
     always {
-      archiveArtifacts artifacts: "release-results/${env.BUILD_NUMBER}/index.html,release-results/${env.BUILD_NUMBER}/summary.md,release-results/${env.BUILD_NUMBER}/results.json", allowEmptyArchive: false
+      archiveArtifacts artifacts: "release-results/${env.BUILD_NUMBER}/index.html,release-results/${env.BUILD_NUMBER}/summary.md,release-results/${env.BUILD_NUMBER}/results.json,release-results/${env.BUILD_NUMBER}/release-junit.xml", allowEmptyArchive: false
       junit testResults: "release-results/${env.BUILD_NUMBER}/release-junit.xml", allowEmptyResults: false
       publishHTML(target: [allowMissing: false, alwaysLinkToLastBuild: false, keepAll: true,
-        reportDir: "release-results/${env.BUILD_NUMBER}", reportFiles: 'index.html', reportName: 'Release quality'])
+        reportDir: "release-results/${env.BUILD_NUMBER}", reportFiles: 'index.html', includes: 'index.html', reportName: 'Release quality'])
     }
   }
 }
