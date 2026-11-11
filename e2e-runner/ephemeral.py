@@ -41,6 +41,14 @@ def prepare(directory, manifest, project, engine="podman", *, host_runner=False)
         service["restart"] = "no"
         component = name if name in ("frontend", "mcp") else "backend"
         service["image"] = infrastructure.get(name, images[component]["source_ref"])
+    # Fresh database volumes initialize before serving the final daemon. Under
+    # Podman this can exceed the ordinary retry window on a busy host.
+    for store in ("postgres", "mongo"):
+        services[store]["healthcheck"]["start_period"] = "180s"
+    services["postgres"]["healthcheck"]["test"] = [
+        "CMD-SHELL",
+        "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-testlookup_user} -d ${POSTGRES_DB:-testlookup}",
+    ]
     # Ask Compose for free host ports. All database and worker ports remain internal.
     for name, port in (("backend", 8000), ("frontend", 80), ("mcp", 8002)):
         services[name]["ports"] = [f"127.0.0.1::{port}"]
@@ -92,10 +100,14 @@ def main():
     p.add_argument("--out", type=Path)
     p.add_argument("--tier", choices=["smoke", "regression", "full"], default="smoke")
     p.add_argument("--repeat", type=int, default=1)
+    p.add_argument("--startup-timeout", type=int, default=300,
+                   help="Seconds to wait for the disposable services to become ready")
     p.add_argument("--defer-upgrade", action="store_true",
                    help="Allow an intermediate result pending only the separate upgrade operator")
     p.add_argument("command", nargs=argparse.REMAINDER)
     args = p.parse_args()
+    if args.startup_timeout < 1:
+        p.error("--startup-timeout must be positive")
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if args.runner_image:
         if command or args.out is None or args.out.exists():
@@ -135,7 +147,7 @@ def main():
                 "-d",
                 "--wait",
                 "--wait-timeout",
-                "300",
+                str(args.startup_timeout),
                 "frontend",
                 "worker",
                 "worker-children",

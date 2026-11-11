@@ -90,6 +90,7 @@ def inputs(tmp_path, monkeypatch):
                     "membership_and_viewer_access",
                     "policy",
                     "baseline_object_checksum",
+                    "baseline_object_metadata_and_acl_hash",
                     "baseline_mongo_document",
                     "candidate_sentinels_removed",
                     "candidate_project_present",
@@ -116,8 +117,10 @@ def inputs(tmp_path, monkeypatch):
         "status": "PASSED",
         "steps": steps,
         "provenance": provenance,
-        "owned_environment": {"namespace": "private-namespace"},
+        "owned_environment": {"project": "tl-upgrade-" + "a" * 12},
         "cleanup": {
+            "project": "tl-upgrade-" + "a" * 12,
+            "down_exit_code": 0,
             "clean": True,
             "verified": True,
             "containers": [],
@@ -156,12 +159,12 @@ def inputs(tmp_path, monkeypatch):
     return tmp_path, candidate_file, results, raw
 
 
-def execute(inputs, **kwargs):
+def execute(inputs, platform="podman", **kwargs):
     directory, candidate, report, raw = inputs
     save(directory / "results.json", report)
     save(directory / "operator.json", raw)
     code = merger.merge(
-        directory, directory / "operator.json", candidate, directory, "podman", **kwargs
+        directory, directory / "operator.json", candidate, directory, platform, **kwargs
     )
     return code, json.loads((directory / "results.json").read_bytes())
 
@@ -172,10 +175,37 @@ def test_verified_rehearsal_renders_public_reports(inputs):
     code, report = execute(inputs)
     assert code == 0 and report["verdict"] == "GO"
     assert report["upgrade_proof"] == upgrade.public_proof(raw)
-    assert "private-namespace" not in json.dumps(report)
+    assert raw["owned_environment"]["project"] not in json.dumps(report)
     assert ET.parse(directory / "release-junit.xml").getroot().get("errors") == "0"
     assert "GO" in (directory / "summary.md").read_text(encoding="utf-8")
     assert (directory / "index.html").is_file()
+    assert (
+        merger.merge(
+            directory, directory / "operator.json", candidate, directory, "podman"
+        )
+        == 0
+    )
+
+
+def test_kubernetes_namespace_and_registry_child_image(inputs):
+    _, _, report, raw = inputs
+    raw["target"] = report["execution_backend"] = "kubernetes"
+    namespace = "testlookup-e2e-upgrade-" + "f" * 12
+    raw["owned_environment"] = {
+        "project": namespace,
+        "namespace": namespace,
+        "namespace_uid": "owned-uid",
+        "context": "isolated",
+    }
+    raw["cleanup"].update(
+        project=namespace, namespace_uid="owned-uid", namespace_deleted=True
+    )
+    image = raw["steps"][11]["evidence"]["images"][0]
+    image["running"] = "sha256:" + "f" * 64
+    image["children"] = [image["running"]]
+    assert execute(inputs, platform="kubernetes")[0] == 0
+    raw["cleanup"]["namespace_uid"] = "different-uid"
+    assert execute(inputs, platform="kubernetes")[0] != 0
 
 
 @pytest.mark.parametrize(
@@ -186,6 +216,7 @@ def test_verified_rehearsal_renders_public_reports(inputs):
         "baseline",
         "missing_stage",
         "wrong_image",
+        "different_project",
         "dirty",
         "missing_marker",
         "missing_case",
@@ -207,6 +238,8 @@ def test_bad_evidence_or_other_failed_case_cannot_promote(inputs, fault):
         del raw["steps"][9]
     elif fault == "wrong_image":
         raw["steps"][11]["evidence"]["images"][0]["running"] = "sha256:" + "0" * 64
+    elif fault == "different_project":
+        raw["cleanup"]["project"] = "tl-upgrade-" + "f" * 12
     elif fault == "dirty":
         raw["cleanup"]["volumes"].append("remaining")
     elif fault == "missing_marker":

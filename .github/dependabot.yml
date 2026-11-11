@@ -128,6 +128,21 @@ updates:
     schedule:
       interval: "weekly"
 
+  - package-ecosystem: "maven"
+    directory: "/e2e-runner/fixtures/native/producers/testng"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "npm"
+    directory: "/e2e-runner/fixtures/native/producers/cypress"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "npm"
+    directory: "/e2e-runner/fixtures/native/producers/cucumber"
+    schedule:
+      interval: "weekly"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

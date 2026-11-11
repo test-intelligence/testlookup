@@ -7,7 +7,7 @@ import threading
 import time
 
 import uvicorn
-from fake_integrations import _HOOK_ANSWERS, app as integrations
+from fake_integrations import app as integrations
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -88,21 +88,11 @@ async def ollama(request: Request):
     return JSONResponse(event)
 
 
-async def add_receiver(request: Request):
-    label = request.path_params["label"]
-    if not re.fullmatch(r"journey_[a-f0-9]{14}", label):
-        return Response(status_code=400)
-    path = f"/hooks/{label}"
-    _HOOK_ANSWERS[path] = (200, "ok")
-    return JSONResponse({"path": path})
-
-
 application = Starlette(
     routes=[
         Route(
             "/_release/model-probe-delay", delay_model_probe, methods=["POST", "DELETE"]
         ),
-        Route("/_release/hooks/{label}", add_receiver, methods=["POST"]),
         Route("/api/{path:path}", ollama, methods=["GET", "POST"]),
     ]
 )

@@ -100,7 +100,7 @@ def configure(config, directory, engine, image):
                 "CMD",
                 "python",
                 "-c",
-                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/tags',timeout=2)",
+                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/version',timeout=2)",
             ],
             "interval": "2s",
             "timeout": "5s",

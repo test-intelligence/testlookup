@@ -144,7 +144,7 @@ def main():
                                     "limits": {"memory": "192Mi"},
                                 },
                                 "readinessProbe": {
-                                    "httpGet": {"path": "/api/tags", "port": 8080}
+                                    "httpGet": {"path": "/api/version", "port": 8080}
                                 },
                                 "volumeMounts": mounts,
                             }

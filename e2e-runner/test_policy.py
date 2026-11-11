@@ -1,8 +1,22 @@
 from policy import evaluate
+from run import client_evidence
+import xml.etree.ElementTree as ET
 
 
 def case(priority, status, test_id):
     return {"priority": priority, "status": status, "id": test_id}
+
+
+def test_client_failure_report_keeps_only_safe_location_and_counts():
+    failure = ET.Element("failure")
+    failure.text = (
+        "e2e-runner/live/test_data_journeys.py:162: in test_managed_case_lifecycle\n"
+        "E   assert (1, 0, 0) == (1, 1, 1)\nAuthorization: Bearer synthetic-private-token"
+    )
+    assert client_evidence("test_managed_case_lifecycle", failure) == (
+        "clients.xml · test_managed_case_lifecycle · e2e-runner/live/test_data_journeys.py:162"
+        " · observed vs expected (1, 0, 0) / (1, 1, 1)"
+    )
 
 
 def test_missing_or_retried_p0_blocks():

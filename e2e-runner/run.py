@@ -9,6 +9,7 @@ from html import escape
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from urllib.parse import urlparse
@@ -81,6 +82,24 @@ def specs(suites):
     for suite in suites:
         yield from suite.get("specs", [])
         yield from specs(suite.get("suites", []))
+
+
+def client_evidence(name, problem):
+    evidence = "clients.xml · " + name
+    if problem is None:
+        return evidence
+    traceback = (problem.text or "").replace("\\", "/")
+    locations = re.findall(r"(e2e-runner/live/[\w-]+\.py:[0-9]+): in ", traceback)
+    if locations:
+        evidence += " · " + locations[-1]
+    # Numeric count comparisons are safe to display. Request headers, response
+    # payloads and arbitrary exception text remain in the private diagnostics.
+    comparison = re.search(
+        r"(?m)^E\s+assert (\([0-9, ]+\) == \([0-9, ]+\))\s*$", traceback
+    )
+    if comparison:
+        evidence += " · observed vs expected " + comparison[1].replace(" == ", " / ")
+    return evidence
 
 
 def render(directory, report):
@@ -541,8 +560,9 @@ def main():
             reason = outcome.get("message", "") if outcome is not None else ""
             if "BLOCKED:" in reason:
                 status = "BLOCKED"
+            problem = outcome if outcome is not None else test_case.find("error")
             cases[key].update(
-                status=status, evidence="clients.xml · " + test_case.get("name")
+                status=status, evidence=client_evidence(test_case.get("name"), problem)
             )
         if client_process.returncode and all(
             cases[k]["status"] == "PASSED" for k in clients.values()

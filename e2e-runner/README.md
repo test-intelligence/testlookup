@@ -68,7 +68,7 @@ kubectl --context "$HOMELAB_KUBE_CONTEXT" -n "$HOMELAB_NAMESPACE" create -f /tmp
 
 Template inputs are RUNNER_DIGEST_REF (repository@sha256:digest), TL_WEB, TL_API, MANIFEST_CONFIGMAP (contains release-manifest.json and the observed deployment-images.json), TEST_SECRET_NAME, RESULTS_PVC and a fresh RUN_ID. This template targets the persistent deployment's read-only lane.
 
-For write journeys, deploy the candidate and its own datastores in a disposable namespace. Configure the five test principals and allow `testlookup-mcp:8002` in the MCP service's host settings. Install the integration fixtures before starting the Job. Use the same namespace and UID that the deployment created.
+For write journeys, give each concurrent release campaign its own disposable namespace and datastores. The AI test temporarily changes deployment-wide offline mode, and the private receiver exercises a one-shot Jira timeout. Configure the five test principals and allow `testlookup-mcp:8002` in the MCP service's host settings. Install fixtures once before starting the Job. Use the same namespace and UID that the deployment created. If a write Job is interrupted, recreate its disposable environment for the next run.
 
 ```sh
 python e2e-runner/fakes_k8s.py --context "$HOMELAB_KUBE_CONTEXT" --namespace "$HOMELAB_NAMESPACE" \

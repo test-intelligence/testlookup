@@ -1,1 +1,16 @@
-module.exports = {video:false, screenshotOnRunFailure:false, reporter:'mochawesome', reporterOptions:{reportDir:'output',reportFilename:'release',html:false,json:true,overwrite:true}, e2e:{supportFile:false,specPattern:'reports.cy.js'}}
+module.exports = {
+  video: false,
+  screenshotOnRunFailure: false,
+  reporter: 'mochawesome',
+  reporterOptions: {
+    reportDir: 'output',
+    reportFilename: 'release',
+    html: false,
+    json: true,
+    overwrite: true,
+  },
+  e2e: {
+    supportFile: false,
+    specPattern: 'reports.cy.js',
+  },
+}

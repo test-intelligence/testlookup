@@ -312,9 +312,9 @@ def test_ai_review_pipeline(project, role_client, receiver):
                     panel["metrics"]["total_tests"] == 3
                     and panel["metrics"]["failed"] == 2
                 )
-                accepted = panel["headline"]
-            else:
-                accepted = report["executive_summary"]
+            # The downloadable report publishes the export-safe executive
+            # summary; the interactive panel is a separate representation.
+            accepted = report["executive_summary"]
             assert isinstance(accepted, str) and accepted.strip()
             link = data(
                 client.post(
@@ -401,19 +401,18 @@ def test_admin_delivery_retention(project, role_client, receiver):
     _, pid, project_name = project
     label = fixture_label(project)
     path = "/hooks/" + label
-    assert data(receiver.post("/_release/hooks/" + label))["path"] == path
+    subscription = {
+        "name": label,
+        "target_url": "http://release-fixture:8080" + path,
+        "events": ["run.completed"],
+        "max_retries": 0,
+        "breaker_threshold": 2,
+    }
     hook = data(
         client.post(
             "webhooks",
             params={"project_id": pid},
-            json={
-                "name": label,
-                "target_url": "http://release-fixture:8080" + path,
-                "events": ["run.completed"],
-                "max_retries": 0,
-                "breaker_threshold": 2,
-                "secret": label,
-            },
+            json={**subscription, "secret": label},
         ),
         201,
     )
@@ -425,6 +424,19 @@ def test_admin_delivery_retention(project, role_client, receiver):
                 row for row in data(receiver.get("/_fake/hooks")) if row["path"] == path
             ]
 
+        # Contract responses apply only to this project's unique recipient.
+        for status, times in ((200, 1), (503, 2), (200, 1)):
+            data(
+                receiver.post(
+                    "/_fake/faults",
+                    json={
+                        "method": "POST",
+                        "path": path,
+                        "status": status,
+                        "times": times,
+                    },
+                )
+            )
         result = data(client.post(endpoint + "/test"))
         assert result["success"]
         until(received, bool, "receiver ping")
@@ -433,12 +445,6 @@ def test_admin_delivery_retention(project, role_client, receiver):
         assert rows[0]["delivery_id"]
         deliveries = data(client.get(endpoint + "/deliveries"))
         assert any(row["id"] == rows[0]["delivery_id"] for row in deliveries)
-        data(
-            receiver.post(
-                "/_fake/faults",
-                json={"method": "POST", "path": path, "status": 503, "times": 2},
-            )
-        )
         for failures in (1, 2):
             assert data(client.post(endpoint + "/test"))["success"]
             until(
@@ -450,7 +456,7 @@ def test_admin_delivery_retention(project, role_client, receiver):
         assert not circuit["enabled"] and circuit["disabled_reason"] == "circuit_open"
         assert not data(client.post(endpoint + "/test"))["success"]
         assert [row["status"] for row in received()] == [200, 503, 503]
-        data(client.patch(endpoint, json={"enabled": True}))
+        data(client.patch(endpoint, json={**subscription, "enabled": True}))
         assert data(client.post(endpoint + "/test"))["success"]
         final = until(received, lambda rows: len(rows) == 4, "recovery delivery")
         assert [row["status"] for row in final] == [200, 503, 503, 200]
@@ -483,10 +489,27 @@ def test_admin_delivery_retention(project, role_client, receiver):
     finally:
         assert client.delete(endpoint).status_code == 204
     run, _ = upload(project, label)
+    release_id = data(client.get("runs/" + run))["release_id"]
+    if release_id:
+        # Ingest can attribute a run to the disposable project's default
+        # release. Verify protection and remove only this owned run's link.
+        release = data(client.get("releases/" + release_id))
+        assert release["project_id"] == pid
+        protected = data(
+            client.post(f"projects/{pid}/deletion/preview", json={"run_ids": [run]})
+        )
+        assert protected["run_count"] == 0 and protected["blocked"][0]["run_id"] == run
+        assert any(
+            reason.startswith("linked to 1 release")
+            for reason in protected["blocked"][0]["reasons"]
+        )
+        assert (
+            client.delete(f"releases/{release_id}/test-runs/{run}").status_code == 204
+        )
     preview = data(
         client.post(f"projects/{pid}/deletion/preview", json={"run_ids": [run]})
     )
-    assert preview["run_ids"] == [run] and preview["run_count"] == 1
+    assert preview["run_ids"] == [run] and preview["run_count"] == 1, preview["blocked"]
     job = data(
         client.post(
             f"projects/{pid}/deletion/execute",

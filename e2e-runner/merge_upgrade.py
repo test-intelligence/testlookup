@@ -126,6 +126,28 @@ def bind_baseline(folder, candidate, candidate_hash, raw):
 
 def verify_stages(raw, previous, candidate):
     steps = raw["steps"]
+    owner = raw["owned_environment"]
+    cleanup = raw["cleanup"]
+    require(
+        owner["project"] == cleanup["project"],
+        "Cleanup was measured for a different environment.",
+    )
+    if raw["target"] == "kubernetes":
+        require(
+            owner["project"] == owner["namespace"]
+            and owner["context"]
+            and re.fullmatch("testlookup-e2e-upgrade-[0-9a-f]{12}", owner["namespace"])
+            and owner["namespace_uid"] == cleanup["namespace_uid"]
+            and bool(owner["namespace_uid"])
+            and cleanup["namespace_deleted"] is True,
+            "Kubernetes namespace ownership and deletion were not verified.",
+        )
+    else:
+        require(
+            re.fullmatch("tl-upgrade-[0-9a-f]{12}", owner["project"])
+            and cleanup["down_exit_code"] == 0,
+            "Podman Compose project ownership and teardown were not verified.",
+        )
     require(
         tuple(s["name"] for s in steps) == STAGES
         and all(
@@ -189,6 +211,7 @@ def verify_stages(raw, previous, candidate):
                 "membership_and_viewer_access",
                 "policy",
                 "baseline_object_checksum",
+                "baseline_object_metadata_and_acl_hash",
                 "baseline_mongo_document",
             )
         )
@@ -300,11 +323,16 @@ def merge(
                 raw["status"] == "PASSED" and operator_exit == 0,
                 f"Upgrade operator did not complete successfully. Last recorded stage was {last_stage}.",
             )
+            proof = verify_stages(raw, previous, candidate)
             require(
-                rows[0]["status"] == "BLOCKED" and "upgrade_proof" not in report,
+                (rows[0]["status"] == "BLOCKED" and "upgrade_proof" not in report)
+                or (
+                    rows[0]["status"] == "PASSED"
+                    and report.get("upgrade_proof") == proof
+                ),
                 "A completed deployment outcome cannot be replaced.",
             )
-            report["upgrade_proof"] = verify_stages(raw, previous, candidate)
+            report["upgrade_proof"] = proof
             rows[0].update(
                 status="PASSED",
                 evidence=f"19 ordered upgrade stages, four observed builds, three restored stores and verified cleanup on {platform}.",

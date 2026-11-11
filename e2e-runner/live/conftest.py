@@ -52,5 +52,16 @@ def project(role_client):
     try:
         yield client, owned, name
     finally:
-        response = client.delete("projects/" + owned)
-        assert response.status_code == 204, f"Cleanup {response.status_code}"
+        path = "projects/" + owned
+        try:
+            response = client.delete(path)
+        except httpx.TransportError:
+            # The request may have reached the API before the connection broke.
+            # Reconnect as the same test principal and reconcile only its own ID.
+            fresh, _ = role_client("QA_LEAD")
+            response = fresh.delete(path)
+            assert response.status_code in (204, 404), (
+                f"Cleanup recovery {response.status_code}"
+            )
+        else:
+            assert response.status_code == 204, f"Cleanup {response.status_code}"
