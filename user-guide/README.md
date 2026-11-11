@@ -51,3 +51,7 @@ Several workflows are switched by feature flags (**Settings → System → Featu
 - API examples use `curl` with an API key sent in the `X-API-Key` header. Create keys under **Settings → Project → Streaming API keys** (for CI) or **Settings → Account → My API keys** (your own). Examples use the placeholder `qai_your_api_key_here`.
 - `AI_OFFLINE_MODE=true` is the default. In that mode no outbound integration (Jira, Slack, Teams, webhooks, GitHub, GitLab, a hosted LLM) is called, whatever its own setting says. Guides that depend on outbound calls say so.
 - Roles, from least to most: `VIEWER`, `TESTER`, `QA_ENGINEER`, `QA_LEAD`, `ADMIN`. Each includes the abilities of the ones below it. "QA lead or above" means `QA_LEAD` and `ADMIN`.
+
+## Legal notice
+
+TestLookup is provided "as is", without warranty, under the [Apache License 2.0](../LICENSE). The [legal notice](../frontend/src/content/guide/legal.md), at `/docs/legal` on your instance, quotes the license's no-warranty and limitation-of-liability terms (sections 7 and 8). It is not legal advice.

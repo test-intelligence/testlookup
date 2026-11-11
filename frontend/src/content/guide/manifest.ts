@@ -41,6 +41,7 @@ import {
   Radio,
   Inbox,
   MessageSquare,
+  ScrollText,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -294,6 +295,15 @@ export const DOC_PAGES: DocPage[] = [
     icon: LifeBuoy,
     summary: 'Symptoms, likely causes and the check to run for each common problem.',
     keywords: ['troubleshoot', 'error', 'problem', 'empty', 'missing', 'failed', 'faq'],
+  },
+  {
+    id: 'legal',
+    label: 'Legal notice',
+    group: 'Reference',
+    icon: ScrollText,
+    summary:
+      'The Apache-2.0 license: provided as is, no warranty, no liability. Plus the public demo rule and how to report a security problem.',
+    keywords: ['legal', 'license', 'licence', 'apache', 'warranty', 'liability', 'disclaimer', 'notice', 'copyright'],
   },
 ]
 
