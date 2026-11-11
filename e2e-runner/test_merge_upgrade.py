@@ -236,6 +236,21 @@ def test_stack_startup_failure_reports_the_unobserved_candidate(inputs):
     assert "upgrade_proof" not in report
 
 
+def test_blocked_startup_retains_an_independently_verified_upgrade(inputs):
+    _, _, ordinary, raw = inputs
+    ordinary["observed_build"] = {}
+    ordinary.pop("images")
+    ordinary["errors"].append("Provisioning failed.")
+    for row in ordinary["cases"]:
+        row["status"] = "BLOCKED"
+    code, report = execute(inputs, suite_exit=1)
+    assert code == 1 and report["verdict"] == "NO_GO"
+    assert report["upgrade_proof"] == upgrade.public_proof(raw)
+    assert [
+        (c["id"], c["status"]) for c in report["cases"] if c["status"] != "BLOCKED"
+    ] == [(merger.CASE, "PASSED")]
+
+
 @pytest.mark.parametrize(
     "fault",
     (

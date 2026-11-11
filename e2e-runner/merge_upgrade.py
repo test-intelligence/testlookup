@@ -300,15 +300,26 @@ def merge(
         candidate = validate_manifest(json.loads(candidate_bytes))
         digest = sha(candidate_bytes)
         require(
-            bool(report["observed_build"].get("revision")),
-            "The ordinary suite did not reach a running candidate to verify its revision.",
-        )
-        require(
-            report["manifest_hash"] == digest
-            and report["observed_build"].get("revision") == candidate["source_sha"]
-            and report.get("images") == candidate["images"],
+            report["manifest_hash"] == digest,
             "Suite and candidate manifest identities differ.",
         )
+        revision = report["observed_build"].get("revision")
+        if not revision:
+            message = "The ordinary suite did not reach a running candidate to verify its revision."
+            # A failed launcher emits only blocked ordinary rows. Its independent
+            # upgrade can still have a verified result for these manifest bytes.
+            require(
+                suite_exit != 0 and all(c["status"] == "BLOCKED" for c in ordinary),
+                message,
+            )
+            if message not in report["errors"]:
+                report["errors"].append(message)
+        else:
+            require(
+                revision == candidate["source_sha"]
+                and report.get("images") == candidate["images"],
+                "Suite and candidate manifest identities differ.",
+            )
         raw = json.loads(upgrade_file.read_bytes())
         require(
             raw["id"] == CASE and raw["target"] == platform,
