@@ -29,7 +29,7 @@ Some pages show a button to a QA lead that the API then refuses (for example **S
 
 ## Single sign-on (SAML) and SCIM
 
-TestLookup supports **SAML 2.0** single sign-on (no OIDC or LDAP) and **SCIM 2.0** provisioning. Both are off until the deployment enables them:
+TestLookup supports **SAML 2.0** and **OpenID Connect** single sign-on (no LDAP) and **SCIM 2.0** provisioning. Both are off until the deployment enables them:
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -53,7 +53,7 @@ Then, in **Settings → Security & access → SSO & identity** (administrators):
 3. **Activate**. Activating an **SSO Required** configuration asks for confirmation, because password sign-in then works only for administrators (and only while `SSO_ADMIN_FALLBACK_ENABLED` is on).
 4. For provisioning, **SCIM Tokens → Generate Token** (shown once) and give it to the identity provider with the SCIM base URL `<your API URL>/api/v1/scim/v2`.
 
-Sign-in is started by TestLookup: **Sign in with SSO** sends a SAML request to the identity provider and returns the user to the page they started from. TestLookup's requests are unsigned, so an identity provider that insists on signed requests will refuse them. There is no single logout: signing out of TestLookup does not sign the user out of the identity provider.
+Sign-in is started by TestLookup: **Sign in with SSO** sends a SAML request to the identity provider and returns the user to the page they started from. TestLookup's requests are unsigned, so an identity provider that insists on signed requests will refuse them. Single logout works in one direction. When the identity provider ends a session and the configuration has an **IdP SLO URL**, the provider's signed logout request ends that user's TestLookup sessions as well (IdP-initiated SAML single logout). Signing out of TestLookup does not sign the user out of the identity provider. Details: [Single logout](../docs/operations/integrations.md#single-logout-idp-initiated).
 
 **Identity Events** shows sign-ins, provisioning and role changes for the last 30 days; **Sync Status** shows federated users, the last SSO sign-in and SCIM sync, and recent failures. SSO-managed accounts are exempt from the MFA requirement below.
 

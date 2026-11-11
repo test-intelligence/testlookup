@@ -79,7 +79,7 @@ spec:
               securityContext: *hardened
           containers:
             - name: minio
-              image: testlookup/backend:0.0.1
+              image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
               command: ["python", "/scripts/minio_sync.py", "restore", "/staging/minio_data.tar.gz"]
               env:
                 - name: HOME

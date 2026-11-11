@@ -54,6 +54,17 @@ OPENSHIFT_SCRIPTS = (
 IMAGE_LINE = re.compile(r"^\s*image:\s*(?P<ref>\S.*?)\s*$")
 INTERPOLATION = re.compile(r"\$\{[^}]*\}")
 APP_TAG_TOKEN = "@APP_TAG"
+# k8s/base names the published release images (ghcr.io/test-intelligence/
+# testlookup/<component>), and the overlays key their `images:` entries by that
+# name. Only this one registry prefix maps onto a manifest app image: any other
+# registry in front of testlookup/<component> is still reported.
+PUBLISHED_APP_PREFIX = "ghcr.io/test-intelligence/"
+
+
+def app_image_name(name: str, app_names: set[str]) -> str | None:
+    """The manifest app-image name for a k8s image name, or None for any other image."""
+    bare = name.removeprefix(PUBLISHED_APP_PREFIX)
+    return bare if bare in app_names else None
 
 
 class Row:
@@ -220,7 +231,7 @@ def check(repo_root: Path) -> list[str]:
         rel = path.relative_to(repo_root).as_posix()
         for lineno, ref in compose_image_refs(path):
             name = ref.rsplit(":", 1)[0]
-            if name in app_names:
+            if app_image_name(name, app_names):
                 continue  # app tags are set per-overlay (BUILD_TAG_PLACEHOLDER etc.)
             seen_k8s.add(ref)
             if ref not in infra_k8s:
@@ -260,7 +271,7 @@ def check(repo_root: Path) -> list[str]:
                 current_name = None
         mapped_infra = set()
         for lineno, name, tag in entries:
-            if name in app_names:
+            if app_image_name(name, app_names):
                 if tag != "APP_TAG_PLACEHOLDER":
                     errors.append(
                         f"{OPENSHIFT_KUSTOMIZATION}:{lineno}: app image {name!r} must keep "
@@ -280,7 +291,8 @@ def check(repo_root: Path) -> list[str]:
                 f"{OPENSHIFT_KUSTOMIZATION}: does NOT remap {ref!r} — an air-gapped cluster "
                 "would try to pull it from its upstream registry"
             )
-        for name in sorted(app_names - {n for _, n, _ in entries}):
+        remapped_apps = {app_image_name(n, app_names) for _, n, _ in entries}
+        for name in sorted(app_names - remapped_apps):
             errors.append(f"{OPENSHIFT_KUSTOMIZATION}: does NOT remap app image {name!r}")
 
     # ── 5. The OpenShift shell scripts must derive from the manifest ────────

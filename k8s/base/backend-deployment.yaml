@@ -40,7 +40,7 @@ spec:
       terminationGracePeriodSeconds: 45
       containers:
         - name: backend
-          image: testlookup/backend:0.0.1
+          image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           lifecycle:
             preStop:

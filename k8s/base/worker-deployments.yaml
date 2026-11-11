@@ -70,7 +70,7 @@ spec:
               echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
-          image: testlookup/backend:0.0.1
+          image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           command:
             - celery
@@ -248,7 +248,7 @@ spec:
               echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
-          image: testlookup/backend:0.0.1
+          image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           command:
             - celery
@@ -456,7 +456,7 @@ spec:
               echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
-          image: testlookup/backend:0.0.1
+          image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           command:
             - celery
@@ -632,7 +632,7 @@ spec:
               echo "wait-for-redis: Redis is reachable, starting worker"
       containers:
         - name: worker
-          image: testlookup/backend:0.0.1
+          image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           command:
             - celery
@@ -806,7 +806,7 @@ spec:
               echo "wait-for-redis: Redis is reachable, starting beat"
       containers:
         - name: beat
-          image: testlookup/backend:0.0.1
+          image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           command:
             - celery

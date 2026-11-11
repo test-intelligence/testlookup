@@ -29,7 +29,7 @@ spec:
       terminationGracePeriodSeconds: 45
       containers:
         - name: frontend
-          image: testlookup/frontend:0.0.1
+          image: ghcr.io/test-intelligence/testlookup/frontend:v0.1.0
           imagePullPolicy: IfNotPresent
           lifecycle:
             preStop:

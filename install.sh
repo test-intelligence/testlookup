@@ -11,7 +11,8 @@
 #   TL_DIR=<path>            install directory          (default ./testlookup)
 #   TL_REF=<branch|sha|tag>  raw-file ref to download   (default main)
 #   TESTLOOKUP_VERSION=<tag> image tag to run           (default latest)
-#   TL_PROFILE=demo          add a compose profile       (e.g. demo / local-llm)
+#   TL_PROFILE=demo          add a compose profile       (demo = demo projects, the
+#                            documented default for an evaluation; or local-llm)
 #   TL_NO_UP=1               download + gen .env only, don't `up`
 set -euo pipefail
 
@@ -100,5 +101,10 @@ Useful commands (run from ./$DIR):
   $DC -f $COMPOSE_FILE logs -f      # follow logs
   $DC -f $COMPOSE_FILE down         # stop (keeps data)
 
-Want demo data? Re-run with: curl -fsSL <install.sh URL> | TL_PROFILE=demo bash
 EOF
+if [ "${TL_PROFILE:-}" = "demo" ]; then
+  echo "Demo projects load in the background once the database is ready:"
+  echo "  $DC -f $COMPOSE_FILE logs -f seed-init"
+else
+  echo "Want demo data? Re-run with: curl -fsSL <install.sh URL> | TL_PROFILE=demo bash"
+fi

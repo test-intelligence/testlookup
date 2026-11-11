@@ -303,12 +303,12 @@ images:
   # ``/etc/rancher/k3s/registries.yaml`` on every K3s node). The registry's
   # pod-internal port (5000) is not covered by the containerd mirror config, so
   # pulls would fail with "connection refused" while pushes kept succeeding.
-  - name: testlookup/backend
+  - name: ghcr.io/test-intelligence/testlookup/backend
     newName: registry.local:30500/testlookup/backend
     newTag: BUILD_TAG_PLACEHOLDER
-  - name: testlookup/frontend
+  - name: ghcr.io/test-intelligence/testlookup/frontend
     newName: registry.local:30500/testlookup/frontend
     newTag: BUILD_TAG_PLACEHOLDER
-  - name: testlookup/mcp
+  - name: ghcr.io/test-intelligence/testlookup/mcp
     newName: registry.local:30500/testlookup/mcp
     newTag: BUILD_TAG_PLACEHOLDER

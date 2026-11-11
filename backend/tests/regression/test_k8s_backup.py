@@ -425,7 +425,7 @@ def test_every_image_is_one_the_release_manifest_pins() -> None:
         pod = _pod(_docs(name)[0])
         for container in pod["initContainers"] + pod["containers"]:
             image = container["image"]
-            if image.startswith("testlookup/backend:"):
+            if image.startswith("ghcr.io/test-intelligence/testlookup/backend:"):
                 continue                       # the app image; overlays set its tag
             assert image in pinned, image
 

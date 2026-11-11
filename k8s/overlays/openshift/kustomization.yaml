@@ -136,9 +136,9 @@ patches:
       name: testlookup-mcp
 
 images:
-  - name: testlookup/backend
-    newTag: "0.0.1"
-  - name: testlookup/frontend
-    newTag: "0.0.1"
-  - name: testlookup/mcp
-    newTag: "0.0.1"
+  - name: ghcr.io/test-intelligence/testlookup/backend
+    newTag: "v0.1.0"
+  - name: ghcr.io/test-intelligence/testlookup/frontend
+    newTag: "v0.1.0"
+  - name: ghcr.io/test-intelligence/testlookup/mcp
+    newTag: "v0.1.0"

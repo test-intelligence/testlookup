@@ -66,14 +66,14 @@ patches:
 
 images:
   # Replace REGISTRY with your Azure Container Registry (ACR) login server.
-  # Example: docker tag testlookup/backend:0.0.1 \
-  #   mycorp.azurecr.io/testlookup/backend:0.0.1
-  - name: testlookup/backend
+  # Example: docker tag ghcr.io/test-intelligence/testlookup/backend:v0.1.0 \
+  #   mycorp.azurecr.io/testlookup/backend:v0.1.0
+  - name: ghcr.io/test-intelligence/testlookup/backend
     newName: REGISTRY.azurecr.io/testlookup/backend
-    newTag: "0.0.1"
-  - name: testlookup/frontend
+    newTag: "v0.1.0"
+  - name: ghcr.io/test-intelligence/testlookup/frontend
     newName: REGISTRY.azurecr.io/testlookup/frontend
-    newTag: "0.0.1"
-  - name: testlookup/mcp
+    newTag: "v0.1.0"
+  - name: ghcr.io/test-intelligence/testlookup/mcp
     newName: REGISTRY.azurecr.io/testlookup/mcp
-    newTag: "0.0.1"
+    newTag: "v0.1.0"

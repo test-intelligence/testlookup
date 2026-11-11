@@ -45,7 +45,7 @@ spec:
               done
       containers:
         - name: worker
-          image: testlookup/backend:0.0.1
+          image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           command:
             - celery

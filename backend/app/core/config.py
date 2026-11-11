@@ -127,7 +127,7 @@ class Settings(BaseSettings):
     # current key. Rotate, re-encrypt on next write, then drop this.
     APP_SECRET_KEY_PREVIOUS: Optional[str] = None
     APP_DEBUG: bool = False
-    APP_VERSION: str = "0.0.1"
+    APP_VERSION: str = "0.1.0"
     # ── Build provenance ────────────────────────────────────
     # Injected at image-build time (backend/Dockerfile ARGs, wired from
     # release.yml) so a running container can self-report exactly which

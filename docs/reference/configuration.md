@@ -13,7 +13,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `APP_SECRET_KEY` | `str` | `'change-me-in-production'` |
 | `APP_SECRET_KEY_PREVIOUS` | `Optional[str]` | `None` |
 | `APP_DEBUG` | `bool` | `False` |
-| `APP_VERSION` | `str` | `'0.0.1'` |
+| `APP_VERSION` | `str` | `'0.1.0'` |
 | `BUILD_REVISION` | `str` | `''` |
 | `BUILD_DATE` | `str` | `''` |
 | `CORS_ORIGINS_RAW` | `str` | `Field(default='http://localhost:3000,http://localhost:5173', validation_alias=AliasChoices('CORS_ORIGINS_RAW', 'CORS_ORIGINS'))` |

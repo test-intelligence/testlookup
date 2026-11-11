@@ -232,13 +232,13 @@ images:
   # ARTIFACTORY_REGISTRY_PLACEHOLDER = the single registry base, e.g.
   #   artifactory.example.com/testlookup-docker
   # APP_TAG_PLACEHOLDER = the immutable build tag (build-YYYYMMDD-HHMMSS).
-  - name: testlookup/backend
+  - name: ghcr.io/test-intelligence/testlookup/backend
     newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/testlookup/backend
     newTag: APP_TAG_PLACEHOLDER
-  - name: testlookup/frontend
+  - name: ghcr.io/test-intelligence/testlookup/frontend
     newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/testlookup/frontend
     newTag: APP_TAG_PLACEHOLDER
-  - name: testlookup/mcp
+  - name: ghcr.io/test-intelligence/testlookup/mcp
     newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/testlookup/mcp
     newTag: APP_TAG_PLACEHOLDER
 

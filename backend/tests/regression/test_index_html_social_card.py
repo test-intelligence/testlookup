@@ -43,7 +43,7 @@ pytestmark = pytest.mark.regression
 
 REPO = Path(__file__).resolve().parents[3]
 INDEX_HTML = REPO / "frontend" / "index.html"
-OG_CARD = REPO / "frontend" / "public" / "og-card.png"
+OG_CARD = REPO / "frontend" / "public" / "og-card-2.png"
 
 TITLE = "TestLookup — Instant Answers from Your Test Results"
 EXPECTED_TAGS = {
@@ -52,7 +52,7 @@ EXPECTED_TAGS = {
         "Test results, failures, flaky tests and release readiness for your projects, in one place."
     ),
     ("property", "og:type"): "website",
-    ("property", "og:image"): f"{OG_PLACEHOLDER}/og-card.png",
+    ("property", "og:image"): f"{OG_PLACEHOLDER}/og-card-2.png",
     ("property", "og:image:width"): "1200",
     ("property", "og:image:height"): "630",
     ("name", "twitter:card"): "summary_large_image",
@@ -163,7 +163,7 @@ def first_row(png: bytes) -> bytes:
 
 def test_the_card_is_a_1200_by_630_png_on_the_brand_background():
     png = OG_CARD.read_bytes()
-    assert png[:8] == PNG_SIGNATURE, "og-card.png is not a PNG"
+    assert png[:8] == PNG_SIGNATURE, "og-card-2.png is not a PNG"
     assert png[12:16] == b"IHDR"
     assert struct.unpack(">II", png[16:24]) == CARD_SIZE, "og:image:width/height say 1200 x 630"
     assert len(png) < CARD_MAX_BYTES, f"{len(png)} bytes: unfurlers drop large cards"
@@ -209,4 +209,4 @@ def test_every_nginx_config_replaces_the_placeholder_index_html_uses(name):
         assert index is not None, name
         needles = [args[0] for n, args, _ in index if n == "sub_filter"]
         assert needles == [OG_PLACEHOLDER], (name, needles)
-    assert f'content="{OG_PLACEHOLDER}/og-card.png"' in INDEX_HTML.read_text(encoding="utf-8")
+    assert f'content="{OG_PLACEHOLDER}/og-card-2.png"' in INDEX_HTML.read_text(encoding="utf-8")

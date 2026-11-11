@@ -1,17 +1,27 @@
 # Getting started with TestLookup
 
-This walkthrough takes you from nothing to your own test results in TestLookup on one machine. It uses a disposable local stack with demo data. To run TestLookup for a team, pick a mode in the [deployment guide](docs/operations/deployment.md) afterwards.
+This walkthrough takes you from nothing to your own test results in TestLookup on one machine, with demo projects so the first dashboard is not empty. It uses the same two options as the README and the website's [quick start](https://testlookup.app/docs/next/quickstart/). To run TestLookup for a team afterwards, pick a mode in the [deployment guide](docs/operations/deployment.md).
 
 ## 1. Check the prerequisites
 
-- Docker Engine or Docker Desktop with Compose v2 (`docker compose version`).
-- Git, GNU Make and Bash. On Windows, run the commands from Git Bash or WSL.
-- About 8 GB of free RAM for the core stack; local models need more ([sizing](user-guide/sizing.md)).
-- Free ports 3000, 8000, 5433, 6379 and 9000. The Compose services use fixed container names, so run one stack per machine; see [local development](docs/operations/development.md) if another checkout already runs one.
+- Docker Engine or Docker Desktop with Compose v2 (`docker compose version`), and Bash. On Windows, run every command from Git Bash or WSL.
+- About 8 GB of free memory for the core services; local models need more ([sizing](user-guide/sizing.md)).
+- Free ports 3000, 8000, 8002, 5433, 6379, 9000 and 27017. The Compose services use fixed container names, so only one copy of TestLookup runs on a machine; see [local development](docs/operations/development.md) if another checkout already runs one.
+- Option A also needs `curl` or `wget`. Option B also needs Git and GNU Make, and its sample-upload step runs `curl` and `python3` on your machine.
 
-No Git or Make? Use the no-clone installer instead: `curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | bash` ([details](docs/operations/deploy-compose.md#release-images-without-a-clone)), then continue at step 3.
+## 2. Start TestLookup
 
-## 2. Start the demo stack
+Choose one option, not both.
+
+**Option A: one-command install (recommended for evaluation).** It runs the published images, builds nothing, and adds the demo projects:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | TL_PROFILE=demo bash
+```
+
+The installer downloads `docker-compose.release.yml` into `./testlookup`, writes a production-mode `.env` with random secrets, pulls the images from `ghcr.io/test-intelligence/testlookup` and starts them. The images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026); on a 100 Mbit/s connection, expect about 5 minutes until the dashboard answers. The demo projects (three projects with history) load in the background once the database is ready: `docker compose -f docker-compose.release.yml logs -f seed-init`, run from `./testlookup`, shows progress. Leave out `TL_PROFILE=demo` for an empty instance. Other options are in the [Compose guide](docs/operations/deploy-compose.md#release-images-without-a-clone).
+
+**Option B: build from a clone (development).**
 
 ```bash
 git clone https://github.com/test-intelligence/testlookup.git
@@ -21,16 +31,23 @@ make quickstart
 
 `make quickstart`:
 
-1. creates `.env` from `.env.example` with random local secrets (an existing `.env` is kept);
+1. creates `.env` from `.env.example` with random local secrets in development mode (an existing `.env` is kept);
 2. builds and starts PostgreSQL, MongoDB, Valkey, the S3-compatible store, the backend, workers, scheduler, frontend and MCP server;
 3. waits until `http://localhost:8000/health/ready` answers, while the seeder loads three demo projects with history;
 4. uploads the sample JUnit reports from `samples/junit/`.
 
-The first build downloads images and dependencies, so allow several minutes. To include local models (Ollama and ChromaDB) use `make dev-llm`, which also pulls the pinned models; to start without demo uploads use `make dev`.
+It builds every image from source, so allow 10 minutes or more the first time (CI's own build of the three app images takes about 9 minutes). To include local models (Ollama and ChromaDB) use `make dev-llm`, which also pulls the pinned models; to start without the demo uploads use `make dev`.
 
 ## 3. Sign in and look around
 
-Open [localhost:3000](http://localhost:3000). The local `.env` runs in development mode, so the login page offers Quick Login buttons that need no password. The no-clone installer runs in production mode instead: sign in as `admin` with the password it printed (also stored in `.env` as `INITIAL_ADMIN_PASSWORD`) and choose a new one.
+Open [localhost:3000](http://localhost:3000).
+
+| You started with | Sign in |
+|---|---|
+| Option A | User `admin` and the password the installer printed (also in `testlookup/.env` as `INITIAL_ADMIN_PASSWORD`). You choose a new password at the first sign-in. |
+| Option B | The login page shows **Quick Login** buttons, because the clone runs in development mode. Choose **Admin**; no password is needed. Production builds never show these buttons. |
+
+Pick a demo project in the project selector in the header.
 
 Worth a look first:
 
@@ -48,15 +65,15 @@ Any of these formats work: JUnit XML, TestNG, NUnit, xUnit.net, TRX, pytest, Rob
 
 **From the UI.** On **Runs**, choose **Upload**, pick the project, the file and a build label. If there is no Upload button, an admin can turn on the `manual_upload` feature flag under **Settings → Feature flags**.
 
-**From the CLI.** The CLI is not on PyPI. A deployment serves its wheel (the Overview's getting-started guide shows
-the exact command; `GET /api/v1/sdk/cli/info` names the file), or install it from a clone of this repository:
+**From the CLI.** The CLI is not on PyPI. A deployment serves its wheel: the Overview's getting-started guide shows
+the exact command, and `GET /api/v1/sdk/cli/info` returns the file name and its `download_url`. Or install it from a clone of this repository:
 
 ```bash
-pip install http://<your-deployment>/api/v1/sdk/cli/testlookup_cli-0.1.0-py3-none-any.whl
+pip install "http://<your-deployment>/api/v1/sdk/cli/<filename from /api/v1/sdk/cli/info>"
 # or, from a clone:
 pip install -e cli/
 export TESTLOOKUP_URL=http://localhost:8000
-export TESTLOOKUP_API_KEY=qai_your_api_key_here   # Settings → API Keys
+export TESTLOOKUP_API_KEY=qai_your_api_key_here   # Settings › Account › My API keys
 testlookup projects list
 testlookup upload file results.xml -p <project-id> -b <build>
 ```
@@ -87,6 +104,8 @@ docker compose ps
 docker compose logs --tail=100 backend worker beat
 make stop                                     # stops everything; data is kept
 ```
+
+These commands are for Option B. With Option A, run `docker compose -f docker-compose.release.yml ps`, `... logs` and `... down` from `./testlookup` instead; the `make` targets need a clone.
 
 A green smoke check proves the services answer, not that every queue and model works; an upload that reaches a finished run is the stronger check. `make clean CONFIRM=yes` deletes all data volumes and is not a routine shutdown.
 

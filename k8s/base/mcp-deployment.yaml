@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
         - name: mcp
-          image: testlookup/mcp:0.0.1
+          image: ghcr.io/test-intelligence/testlookup/mcp:v0.1.0
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8002

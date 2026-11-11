@@ -102,9 +102,9 @@ patches:
       name: testlookup-config
 
 images:
-  - name: testlookup/backend
+  - name: ghcr.io/test-intelligence/testlookup/backend
     newTag: dev-latest
-  - name: testlookup/frontend
+  - name: ghcr.io/test-intelligence/testlookup/frontend
     newTag: dev-latest
-  - name: testlookup/mcp
+  - name: ghcr.io/test-intelligence/testlookup/mcp
     newTag: dev-latest

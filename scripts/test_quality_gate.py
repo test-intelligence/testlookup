@@ -555,9 +555,9 @@ def test_homelab_build_tag_placeholder_passes_when_all_placeholders(
 ) -> None:
     _redirect_repo_root(monkeypatch, tmp_path)
     _write_homelab_overlay(tmp_path, {
-        "testlookup/backend": "BUILD_TAG_PLACEHOLDER",
-        "testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
-        "testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
+        "ghcr.io/test-intelligence/testlookup/backend": "BUILD_TAG_PLACEHOLDER",
+        "ghcr.io/test-intelligence/testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
+        "ghcr.io/test-intelligence/testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
     })
     assert qg._homelab_build_tag_placeholder() == []
 
@@ -570,13 +570,13 @@ def test_homelab_build_tag_placeholder_fails_on_substituted_tag(
     committed by accident."""
     _redirect_repo_root(monkeypatch, tmp_path)
     _write_homelab_overlay(tmp_path, {
-        "testlookup/backend": "build-20260518-013421",
-        "testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
-        "testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
+        "ghcr.io/test-intelligence/testlookup/backend": "build-20260518-013421",
+        "ghcr.io/test-intelligence/testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
+        "ghcr.io/test-intelligence/testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
     })
     violations = qg._homelab_build_tag_placeholder()
     assert len(violations) == 1
-    assert "testlookup/backend" in violations[0].message
+    assert "ghcr.io/test-intelligence/testlookup/backend" in violations[0].message
     assert "build-20260518-013421" in violations[0].message
     assert violations[0].line > 0  # points at the offending line
 
@@ -587,14 +587,18 @@ def test_homelab_build_tag_placeholder_fails_when_all_substituted(
     """All three images substituted = three violations (one per image)."""
     _redirect_repo_root(monkeypatch, tmp_path)
     _write_homelab_overlay(tmp_path, {
-        "testlookup/backend": "build-20260518-013421",
-        "testlookup/frontend": "build-20260518-013421",
-        "testlookup/mcp": "build-20260518-013421",
+        "ghcr.io/test-intelligence/testlookup/backend": "build-20260518-013421",
+        "ghcr.io/test-intelligence/testlookup/frontend": "build-20260518-013421",
+        "ghcr.io/test-intelligence/testlookup/mcp": "build-20260518-013421",
     })
     violations = qg._homelab_build_tag_placeholder()
     assert len(violations) == 3
     names = {v.message.split("'")[1] for v in violations}
-    assert names == {"testlookup/backend", "testlookup/frontend", "testlookup/mcp"}
+    assert names == {
+        "ghcr.io/test-intelligence/testlookup/backend",
+        "ghcr.io/test-intelligence/testlookup/frontend",
+        "ghcr.io/test-intelligence/testlookup/mcp",
+    }
 
 
 def test_homelab_build_tag_placeholder_flags_missing_image_entry(
@@ -606,13 +610,13 @@ def test_homelab_build_tag_placeholder_flags_missing_image_entry(
     be a floating tag."""
     _redirect_repo_root(monkeypatch, tmp_path)
     _write_homelab_overlay(tmp_path, {
-        "testlookup/backend": "BUILD_TAG_PLACEHOLDER",
+        "ghcr.io/test-intelligence/testlookup/backend": "BUILD_TAG_PLACEHOLDER",
         # testlookup/frontend omitted entirely
-        "testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
+        "ghcr.io/test-intelligence/testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
     })
     violations = qg._homelab_build_tag_placeholder()
     assert len(violations) == 1
-    assert "testlookup/frontend" in violations[0].message
+    assert "ghcr.io/test-intelligence/testlookup/frontend" in violations[0].message
     assert "missing 'images:' entry" in violations[0].message
 
 
@@ -623,9 +627,9 @@ def test_homelab_build_tag_placeholder_flags_missing_new_tag(
     inherit the base's tag, which is a regression we want to catch."""
     _redirect_repo_root(monkeypatch, tmp_path)
     _write_homelab_overlay(tmp_path, {
-        "testlookup/backend": None,  # no newTag line
-        "testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
-        "testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
+        "ghcr.io/test-intelligence/testlookup/backend": None,  # no newTag line
+        "ghcr.io/test-intelligence/testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
+        "ghcr.io/test-intelligence/testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
     })
     violations = qg._homelab_build_tag_placeholder()
     assert len(violations) == 1
@@ -5491,3 +5495,34 @@ def test_activity_registry_emitted_ignores_the_registry_itself(
     _redirect_repo_root(monkeypatch, tmp_path)
     _activity_registry(tmp_path, "run.deleted")
     assert len(qg._backend_activity_registry_emitted()) == 1
+
+
+# ── Test-runner detection (CodeQL py/redos #65) ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("pytest tests/", True),
+        ("python -m pytest backend/tests", True),
+        ("CI=true PYTHONPATH=. python3.14 -m pytest -q", True),
+        ("NODE_OPTIONS=--max-old-space-size=4096 npx vitest run", True),
+        ("go test ./...", True),
+        ("mvn -B -q test", True),
+        ("pip install pytest", False),          # names pytest, runs pip
+        ("echo pytest", False),
+        ("FOO=bar", False),
+        ("lowercase=1 pytest", False),          # not an env assignment the gate skips
+    ],
+)
+def test_invokes_test_runner(command: str, expected: bool) -> None:
+    assert qg._invokes_test_runner(command) is expected
+
+
+def test_invokes_test_runner_is_fast_on_a_long_assignment_chain() -> None:
+    import time
+
+    command = "A=" + "\x7fA=" * 20_000 + " pytest"
+    started = time.perf_counter()
+    qg._invokes_test_runner(command)
+    assert time.perf_counter() - started < 2.0

@@ -2050,9 +2050,9 @@ jobs:
         run: |
           cd k8s/overlays/dev
           kustomize edit set image \
-            testlookup/backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@${{ needs.build-images.outputs.backend_digest }} \
-            testlookup/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ github.sha }} \
-            testlookup/mcp=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp:${{ github.sha }}
+            ghcr.io/test-intelligence/testlookup/backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@${{ needs.build-images.outputs.backend_digest }} \
+            ghcr.io/test-intelligence/testlookup/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ github.sha }} \
+            ghcr.io/test-intelligence/testlookup/mcp=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp:${{ github.sha }}
 
       - name: Migrate, then apply manifests
         if: steps.check-secret.outputs.skip != 'true'
