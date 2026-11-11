@@ -16,6 +16,31 @@ from ephemeral import ROOT, prepare
 class PodmanUpgradeError(RuntimeError):
     """An adapter operation failed; private diagnostics stay in its evidence folder."""
 
+    def __init__(self, message, *, diagnostic="operation failed"):
+        super().__init__(message)
+        self.diagnostic = diagnostic
+
+
+def process_diagnostic(result, project):
+    """Return only fixed categories, known service names and numeric exit/HTTP codes."""
+    output = (result.stdout + result.stderr)[-32768:]
+    for service in ("postgres", "mongo", "redis", "minio", "release-fixture", "db-migrate",
+                    "minio-setup", "db-budget-check", "backend", "frontend", "worker",
+                    "worker-children", "mcp"):
+        if re.search(rf"{re.escape(project)}-{service}-\d+[^\n]{{0,40}}unhealthy\b",
+                     output, re.IGNORECASE):
+            return f"{service} unhealthy"
+        if re.search(rf'service ["\']{service}["\'] didn.t complete successfully', output):
+            return f"{service} initialization failed"
+    status = re.search(r"httpx\.HTTPStatusError:[^\n]*?['\"]([1-5]\d\d) ", output)
+    if status:
+        return f"HTTP {status[1]}"
+    for error in ("httpx.ReadTimeout", "httpx.ConnectTimeout", "httpx.ConnectError",
+                  "httpx.ReadError", "TimeoutError", "ConnectionRefusedError", "AssertionError"):
+        if re.search(rf"(?:^|\n){re.escape(error)}\b", output):
+            return error
+    return f"process exit {result.returncode}"
+
 
 class PodmanUpgrade:
     APP_SERVICES = ("backend", "frontend", "mcp", "worker", "worker-children")
@@ -86,7 +111,9 @@ class PodmanUpgrade:
             )
         except (OSError, subprocess.SubprocessError) as exc:
             raise PodmanUpgradeError(
-                f"Container operation could not complete ({type(exc).__name__})."
+                f"Container operation could not complete ({type(exc).__name__}).",
+                diagnostic="command timed out" if isinstance(exc, subprocess.TimeoutExpired)
+                else "command unavailable",
             ) from None
         with (self.out / "podman-private.log").open("a", encoding="utf-8") as log:
             log.write(self._redact(json.dumps(command)) + "\n")
@@ -96,7 +123,8 @@ class PodmanUpgrade:
         if check and result.returncode:
             raise PodmanUpgradeError(
                 f"Container operation failed with exit {result.returncode}; "
-                "inspect private adapter diagnostics."
+                "inspect private adapter diagnostics.",
+                diagnostic=process_diagnostic(result, self.project),
             )
         return result
 
@@ -113,11 +141,19 @@ class PodmanUpgrade:
             raise PodmanUpgradeError("Application must be quiesced for this operation.")
 
     def install(self):
-        self._run(["up", "-d", "--wait", "--wait-timeout", "300",
-                   "frontend", "worker", "worker-children", "mcp"])
-        self.exec_python((ROOT / "e2e-runner/bootstrap_admin.py").read_text(
-            encoding="utf-8"))
-        self.observe(self.prior)
+        phase = "fresh service startup"
+        try:
+            self._run(["up", "-d", "--wait", "--wait-timeout", "300",
+                       "frontend", "worker", "worker-children", "mcp"])
+            phase = "admin first sign-in"
+            self.exec_python((ROOT / "e2e-runner/bootstrap_admin.py").read_text(
+                encoding="utf-8"))
+            phase = "previous build identity and readiness"
+            self.observe(self.prior)
+        except Exception as error:
+            detail = error.diagnostic if isinstance(error, PodmanUpgradeError) else "invalid observation"
+            print(f"Previous-build install failed during {phase} ({detail}).", flush=True)
+            raise
 
     def exec_python(self, source):
         # Helper stdout is deliberately not copied into diagnostics: callers
@@ -128,7 +164,8 @@ class PodmanUpgrade:
                           if line.startswith("UPGRADE_JSON=")]
         if result.returncode and len(evidence_lines) != 1:
             raise PodmanUpgradeError(
-                "Backend Python transport failed without a single fixture evidence record."
+                "Backend Python transport failed without a single fixture evidence record.",
+                diagnostic=process_diagnostic(result, self.project),
             )
         return result.stdout
 
@@ -144,7 +181,8 @@ class PodmanUpgrade:
         for service in self.APP_SERVICES:
             identifier = self._run(["ps", "-q", service]).stdout.strip()
             if not re.fullmatch(r"[0-9a-f]{12,64}", identifier):
-                raise PodmanUpgradeError("Application container identity unavailable.")
+                raise PodmanUpgradeError("Application container identity unavailable.",
+                                         diagnostic=f"{service} container identity unavailable")
             # Read a narrow projection; a full inspect would expose env secrets.
             format_string = (
                 '{{json .Image}}|{{json .ImageDigest}}|{{json .Config.Image}}'
@@ -170,18 +208,21 @@ class PodmanUpgrade:
                 "running": running, "image_id": image_id,
                 "matched": configured == expected and running == expected.rsplit("@", 1)[1],
             })
-        matched = (
-            health["build"].get("build", {}).get("revision") == manifest["source_sha"]
-            and health["ready"].get("status") == "ready"
-            and all(health["ready"].get("checks", {}).get(store, {}).get("status") == "ok"
-                    for store in ("postgres", "mongo", "redis"))
-            and all(image["matched"] for image in images)
-        )
+        mismatches = []
+        if health["build"].get("build", {}).get("revision") != manifest["source_sha"]:
+            mismatches.append("revision mismatch")
+        if health["ready"].get("status") != "ready":
+            mismatches.append("backend unready")
+        mismatches.extend(f"{store} unready" for store in ("postgres", "mongo", "redis")
+                          if health["ready"].get("checks", {}).get(store, {}).get("status") != "ok")
+        mismatches.extend(f"{image['service']} image mismatch" for image in images if not image["matched"])
+        matched = not mismatches
         observation = {"source_sha": manifest["source_sha"], **health,
                        "images": images, "matched": matched}
         self._write("observation-" + uuid.uuid4().hex[:8] + ".json", observation)
         if not matched:
-            raise PodmanUpgradeError("Running build, images or readiness did not match.")
+            raise PodmanUpgradeError("Running build, images or readiness did not match.",
+                                     diagnostic=", ".join(mismatches))
         return observation
 
     def quiesce(self):

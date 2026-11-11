@@ -14,6 +14,39 @@ PRIOR = {"source_sha": "a" * 40}
 CANDIDATE = {"source_sha": "b" * 40}
 
 
+@pytest.mark.parametrize(("private_text", "safe"), [
+    ("container tl-upgrade-owned-release-fixture-1 is unhealthy", "release-fixture unhealthy"),
+    ('service "db-migrate" didn\'t complete successfully', "db-migrate initialization failed"),
+    ("httpx.ReadTimeout: private response", "httpx.ReadTimeout"),
+    ("httpx.HTTPStatusError: Client error '403 Forbidden' for url 'private'", "HTTP 403"),
+    ("unexpected private service and arbitrary response", "process exit 1"),
+])
+def test_install_diagnostic_does_not_expose_command_or_response(private_text, safe):
+    from upgrade_podman import process_diagnostic
+    result = SimpleNamespace(returncode=1, stdout="private credential", stderr="\n" + private_text)
+    assert process_diagnostic(result, "tl-upgrade-owned") == safe
+
+
+@pytest.mark.parametrize(("failed", "phase"), [
+    ("_run", "fresh service startup"),
+    ("exec_python", "admin first sign-in"),
+    ("observe", "previous build identity and readiness"),
+])
+def test_failed_install_reports_its_substep_without_private_output(monkeypatch, capsys, failed, phase):
+    from upgrade_podman import PodmanUpgrade, PodmanUpgradeError
+    adapter = object.__new__(PodmanUpgrade)
+    adapter.prior = PRIOR
+
+    def simulate_failure(*args):
+        raise PodmanUpgradeError("private response", diagnostic="process exit 7")
+
+    for operation in ("_run", "exec_python", "observe"):
+        monkeypatch.setattr(adapter, operation, simulate_failure if operation == failed else lambda *args: None)
+    with pytest.raises(PodmanUpgradeError):
+        adapter.install()
+    assert capsys.readouterr().out == f"Previous-build install failed during {phase} (process exit 7).\n"
+
+
 class Environment:
     def __init__(self, negative_success=False, positive_success=True, broken_restore=False):
         self.current = PRIOR["source_sha"]
