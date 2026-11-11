@@ -119,7 +119,12 @@ locally by default.
     install, because they inherited the backend image's health check, which probes the API on :8000. The workers
     now check the ready file the app writes once connected to the broker (as the Kubernetes probe does), and beat
     checks its own process.
-  - A demo session no longer sends frontend telemetry, which the demo refuses (403) like every other write.
+  - A demo session no longer sends frontend telemetry, which the demo refuses (403) like every other write. The
+    auth store registers that check with the reporter (`setTelemetrySuppressed`), so the reporter, which error
+    boundaries import lazily, does not pull in the API client.
+  - Demo sign-in starts on All projects. The nightly rebuild gives the projects new ids, so a project picked on an
+    earlier visit no longer existed: the first page's requests were scoped to it and each answered 403 "You do
+    not have access to this project" before the project list corrected the selection.
   - Runbook: rule 1 answers with the app's `demo_read_only` JSON (the default HTML block page made the app show
     "Request failed with status code 403"); the browser-check rule stays off, because every API call from a tab
     without Cloudflare's clearance cookie failed with 403; rate limits block for one minute; the tunnel token is
