@@ -1,6 +1,7 @@
 """One launcher for local Podman, Jenkins and GitHub Actions."""
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -51,10 +52,20 @@ def main():
         ).returncode
     engine = opts.engine
     tag = "localhost/testlookup-release-e2e:" + uuid.uuid4().hex
-    build = [engine, "build", "-f", "e2e-runner/Dockerfile", "-t", tag]
+    patch_day = datetime.now(timezone.utc).date().isoformat()
+    build = [
+        engine,
+        "build",
+        "--build-arg",
+        f"OS_PATCH_DAY={patch_day}",
+        "-f",
+        "e2e-runner/Dockerfile",
+        "-t",
+        tag,
+    ]
     if engine == "podman":
         build.extend(
-            ["--network", "host", "--ignorefile", "e2e-runner/containerignore"]
+            ["--network", "host", "--ignorefile", "e2e-runner/Dockerfile.dockerignore"]
         )
     try:
         subprocess.run([*build, "."], cwd=ROOT, check=True)
