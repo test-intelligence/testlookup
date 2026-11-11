@@ -83,7 +83,7 @@ jobs:
           retention-days: 90
 
   functional-verification:
-    needs: [resolve-tag, verify, scan-verified-images]
+    needs: [resolve-tag, verify]
     permissions:
       actions: read
       contents: read

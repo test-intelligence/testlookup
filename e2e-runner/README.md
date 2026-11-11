@@ -34,6 +34,8 @@ In PowerShell activate with `.\.venv\Scripts\Activate.ps1` and assign environmen
 
 ## CI and K3s
 
+Every new stable release tag (`vMAJOR.MINOR.PATCH`) starts the repository's `Promote verified release` workflow. After tag and CI manifest validation, the image scan and functional regression jobs run independently. Regression creates a disposable Podman deployment, exercises its five test roles, uploads HTML, Markdown, JSON and JUnit results, and removes the stack. Open the workflow run's summary for the decision. Promotion requires both jobs and checks the tested manifest hash. The trigger takes effect for tags pointing to commits that contain these workflows.
+
 Jenkinsfile.release-e2e expects a Linux agent labeled podman with Python, PyYAML, a Compose provider, the verified manifest, HTML Publisher and JUnit. The release-e2e.yml workflow accepts a full verified source SHA through dispatch or workflow_call. The release workflow requires a passing functional decision for the same manifest hash before promotion. The nightly workflow runs the same verification. GitHub publishes the summary, HTML and JSON. Remote CI commissioning is pending.
 
 For a shared target, set TL_DEPLOYMENT_IMAGES to a read-only JSON file containing one observation per component. Each entry includes component, candidate (the full manifest reference), running (the observed image ID), and children (verified platform digests from that candidate's registry index). Missing evidence or a digest mismatch blocks promotion.
@@ -45,7 +47,7 @@ envsubst < e2e-runner/job.yaml > /tmp/testlookup-release-job.yaml
 kubectl --context "$HOMELAB_KUBE_CONTEXT" -n "$HOMELAB_NAMESPACE" create -f /tmp/testlookup-release-job.yaml
 ```
 
-Template inputs are RUNNER_DIGEST_REF (repository@sha256:digest), TL_WEB, TL_API, MANIFEST_CONFIGMAP (contains release-manifest.json), TEST_SECRET_NAME, RESULTS_PVC and a fresh RUN_ID. This template targets the persistent deployment's read-only lane. A disposable K3s stack and its quotas still need commissioning.
+Template inputs are RUNNER_DIGEST_REF (repository@sha256:digest), TL_WEB, TL_API, MANIFEST_CONFIGMAP (contains release-manifest.json and the observed deployment-images.json), TEST_SECRET_NAME, RESULTS_PVC and a fresh RUN_ID. This template targets the persistent deployment's read-only lane.
 
 ## Read the report
 

@@ -18,6 +18,7 @@ spec:
             - {name: TL_WEB, value: "${TL_WEB}"}
             - {name: TL_API, value: "${TL_API}"}
             - {name: TL_MANIFEST, value: /candidate/release-manifest.json}
+            - {name: TL_DEPLOYMENT_IMAGES, value: /candidate/deployment-images.json}
           envFrom:
             - secretRef: {name: "${TEST_SECRET_NAME}"}
           resources:

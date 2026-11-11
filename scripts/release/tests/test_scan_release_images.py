@@ -117,6 +117,12 @@ def test_release_workflow_gates_promotion_without_adding_pr_scan():
     ci = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "  scan-verified-images:" in release
+    # A failed image scan must still leave functional evidence for the release.
+    functional = release.split("\n  functional-verification:", 1)[1].split("\n  promote:", 1)[0]
+    assert 'tags: ["v*.*.*"]' in release
+    assert "needs: [resolve-tag, verify]" in functional
+    assert "uses: ./.github/workflows/release-e2e.yml" in functional
+    assert "source_sha: ${{ needs.resolve-tag.outputs.source_sha }}" in functional
     promote = release.split("\n  promote:", 1)[1]
     assert "needs: [resolve-tag, verify, scan-verified-images, functional-verification]" in promote
     assert "needs.functional-verification.outputs.manifest_sha256" in promote
