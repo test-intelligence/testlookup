@@ -344,7 +344,7 @@ QA leads can read every tab and label live pairs (signed in, not with an API key
 - **Identity Events** — sign-ins, provisioning and role changes from the last 30 days.
 - **Sync Status** — federated users, last SSO sign-in, last SCIM sync and recent failures.
 
-SSO also has to be enabled in the deployment's configuration; the operator guide covers it. **Sign in with SSO** sends people to the identity provider and brings them back to the page they started from. There is no single logout: signing out of TestLookup leaves the identity-provider session alone.
+SSO also has to be enabled in the deployment's configuration; the operator guide covers it. **Sign in with SSO** sends people to the identity provider and brings them back to the page they started from. Single logout works one way: when the identity provider ends someone's session and the configuration has an IdP SLO URL, their TestLookup sessions end too. Signing out of TestLookup leaves the identity-provider session alone.
 
 ### MFA and lockout
 
