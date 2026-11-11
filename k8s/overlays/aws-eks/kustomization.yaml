@@ -96,14 +96,14 @@ patches:
 
 images:
   # Replace ACCOUNT/REGION below with your ECR registry path before applying.
-  # Example: docker tag testlookup/backend:0.0.1 \
-  #   123456789012.dkr.ecr.us-east-1.amazonaws.com/testlookup/backend:0.0.1
-  - name: testlookup/backend
+  # Example: docker tag ghcr.io/test-intelligence/testlookup/backend:v0.1.0 \
+  #   123456789012.dkr.ecr.us-east-1.amazonaws.com/testlookup/backend:v0.1.0
+  - name: ghcr.io/test-intelligence/testlookup/backend
     newName: ACCOUNT.dkr.ecr.REGION.amazonaws.com/testlookup/backend
-    newTag: "0.0.1"
-  - name: testlookup/frontend
+    newTag: "v0.1.0"
+  - name: ghcr.io/test-intelligence/testlookup/frontend
     newName: ACCOUNT.dkr.ecr.REGION.amazonaws.com/testlookup/frontend
-    newTag: "0.0.1"
-  - name: testlookup/mcp
+    newTag: "v0.1.0"
+  - name: ghcr.io/test-intelligence/testlookup/mcp
     newName: ACCOUNT.dkr.ecr.REGION.amazonaws.com/testlookup/mcp
-    newTag: "0.0.1"
+    newTag: "v0.1.0"

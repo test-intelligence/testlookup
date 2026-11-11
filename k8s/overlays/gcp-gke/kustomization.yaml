@@ -162,14 +162,14 @@ patches:
 
 images:
   # Replace PROJECT/REGION with your Artifact Registry path.
-  # Example: docker tag testlookup/backend:0.0.1 \
-  #   us-docker.pkg.dev/my-project/testlookup/backend:0.0.1
-  - name: testlookup/backend
+  # Example: docker tag ghcr.io/test-intelligence/testlookup/backend:v0.1.0 \
+  #   us-docker.pkg.dev/my-project/testlookup/backend:v0.1.0
+  - name: ghcr.io/test-intelligence/testlookup/backend
     newName: REGION-docker.pkg.dev/PROJECT/testlookup/backend
-    newTag: "0.0.1"
-  - name: testlookup/frontend
+    newTag: "v0.1.0"
+  - name: ghcr.io/test-intelligence/testlookup/frontend
     newName: REGION-docker.pkg.dev/PROJECT/testlookup/frontend
-    newTag: "0.0.1"
-  - name: testlookup/mcp
+    newTag: "v0.1.0"
+  - name: ghcr.io/test-intelligence/testlookup/mcp
     newName: REGION-docker.pkg.dev/PROJECT/testlookup/mcp
-    newTag: "0.0.1"
+    newTag: "v0.1.0"

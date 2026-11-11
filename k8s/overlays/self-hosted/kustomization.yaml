@@ -74,15 +74,16 @@ patches:
   #   target:
   #     kind: PersistentVolumeClaim
 
-# Image pull from your private/internal registry. The deploy-k8s.sh script
-# can override these via `kustomize edit set image` for one-off deployments.
+# The published release images on GitHub Container Registry. To pull from a
+# private/internal mirror instead, change newName (scripts/deploy-k8s.sh
+# --registry does it for one deployment through `kustomize edit set image`).
 images:
-  - name: testlookup/backend
-    newName: testlookup/backend
-    newTag: "0.0.1"
-  - name: testlookup/frontend
-    newName: testlookup/frontend
-    newTag: "0.0.1"
-  - name: testlookup/mcp
-    newName: testlookup/mcp
-    newTag: "0.0.1"
+  - name: ghcr.io/test-intelligence/testlookup/backend
+    newName: ghcr.io/test-intelligence/testlookup/backend
+    newTag: "v0.1.0"
+  - name: ghcr.io/test-intelligence/testlookup/frontend
+    newName: ghcr.io/test-intelligence/testlookup/frontend
+    newTag: "v0.1.0"
+  - name: ghcr.io/test-intelligence/testlookup/mcp
+    newName: ghcr.io/test-intelligence/testlookup/mcp
+    newTag: "v0.1.0"

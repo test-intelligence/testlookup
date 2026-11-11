@@ -8,7 +8,7 @@ data:
   # The settings default is true for local development; production refuses to
   # start with it on, so every overlay inherits an explicit off.
   DEV_AUTO_LOGIN_ENABLED: "false"
-  APP_VERSION: "0.0.1"
+  APP_VERSION: "0.1.0"
   LOG_LEVEL: "INFO"
   LOG_FORMAT: "json"
   POSTGRES_HOST: "testlookup-postgres"

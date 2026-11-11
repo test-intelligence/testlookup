@@ -7,7 +7,7 @@
 #
 # Options:
 #   --cloud=<name>         Required. Selects the kustomize overlay.
-#   --image-tag=<tag>      Override image tag (default: 0.0.1)
+#   --image-tag=<tag>      Override image tag (default: the overlay's, v0.1.0)
 #   --registry=<url>       Override container registry prefix (e.g.
 #   --release-manifest=<path> Deploy only the validated digest manifest.
 #                          123.dkr.ecr.us-east-1.amazonaws.com).
@@ -133,6 +133,9 @@ if [[ $DRY_RUN -eq 0 ]]; then
 fi
 
 # ── Optional: override image registry on the fly ─────────────────────────────
+# The image name every manifest under k8s/base uses (the published release
+# images); overlays key their `images:` entries by it.
+BASE_IMAGE_PREFIX="ghcr.io/test-intelligence/testlookup"
 TMP_ROOT=""
 TMP_OVERLAY=""
 
@@ -154,26 +157,22 @@ if [[ -n "$RELEASE_MANIFEST" ]]; then
   pushd "$TMP_OVERLAY" >/dev/null
   for img in backend frontend mcp; do
     ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destination_refs"][sys.argv[2]])' "$OLDPWD/$RELEASE_MANIFEST" "$img")"
-    kubectl kustomize edit set image "testlookup/$img=$ref" 2>/dev/null || kustomize edit set image "testlookup/$img=$ref"
+    kubectl kustomize edit set image "${BASE_IMAGE_PREFIX}/$img=$ref" 2>/dev/null || kustomize edit set image "${BASE_IMAGE_PREFIX}/$img=$ref"
   done
   popd >/dev/null
   OVERLAY="$TMP_OVERLAY"
 elif [[ -n "$REGISTRY" || -n "$IMAGE_TAG" ]]; then
   prepare_temp_overlay
   pushd "$TMP_OVERLAY" >/dev/null
-  for img in testlookup/backend testlookup/frontend testlookup/mcp; do
-    new_args=()
-    if [[ -n "$REGISTRY" ]]; then
-      new_args+=("${img}=${REGISTRY%/}/${img}")
-    fi
-    if [[ -n "$IMAGE_TAG" ]]; then
-      new_args+=(":${IMAGE_TAG}")
-    fi
+  for component in backend frontend mcp; do
+    # The overlay entry is keyed by the base image name; the new name keeps the
+    # <registry>/testlookup/<component> layout the published images use.
+    img="${BASE_IMAGE_PREFIX}/${component}"
     if [[ -n "$REGISTRY" && -n "$IMAGE_TAG" ]]; then
-      kubectl kustomize edit set image "${img}=${REGISTRY%/}/${img}:${IMAGE_TAG}" 2>/dev/null \
-        || kustomize edit set image "${img}=${REGISTRY%/}/${img}:${IMAGE_TAG}"
+      kubectl kustomize edit set image "${img}=${REGISTRY%/}/testlookup/${component}:${IMAGE_TAG}" 2>/dev/null \
+        || kustomize edit set image "${img}=${REGISTRY%/}/testlookup/${component}:${IMAGE_TAG}"
     elif [[ -n "$REGISTRY" ]]; then
-      kustomize edit set image "${img}=${REGISTRY%/}/${img}"
+      kustomize edit set image "${img}=${REGISTRY%/}/testlookup/${component}"
     elif [[ -n "$IMAGE_TAG" ]]; then
       kustomize edit set image "${img}:${IMAGE_TAG}"
     fi

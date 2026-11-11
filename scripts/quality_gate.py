@@ -4728,14 +4728,14 @@ _HOMELAB_OVERLAY_REL = "k8s/overlays/homelab/kustomization.yaml"
 # the ``images:`` block at the bottom of the homelab overlay; if a new
 # locally-built image is added there, append it here too.
 _HOMELAB_PINNED_IMAGES = (
-    "testlookup/backend",
-    "testlookup/frontend",
-    "testlookup/mcp",
+    "ghcr.io/test-intelligence/testlookup/backend",
+    "ghcr.io/test-intelligence/testlookup/frontend",
+    "ghcr.io/test-intelligence/testlookup/mcp",
 )
 _HOMELAB_PLACEHOLDER = "BUILD_TAG_PLACEHOLDER"
 
 # Match a kustomize ``images:`` entry block:
-#   - name: testlookup/backend
+#   - name: ghcr.io/test-intelligence/testlookup/backend
 #     newName: registry.local:30500/testlookup/backend
 #     newTag: BUILD_TAG_PLACEHOLDER
 # Captures the image name and the newTag value on the line that follows

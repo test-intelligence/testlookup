@@ -80,12 +80,12 @@ Every setting the backend reads, with its default, is in the generated [configur
 
 | Overlay | Namespace | Images | What it changes |
 |---|---|---|---|
-| `dev` | `testlookup-dev` | `testlookup/*:dev-latest`, `imagePullPolicy: Always` | One replica each, beat scaled to 0, HPAs pinned to 1, `APP_ENV=development`, `LOG_LEVEL=DEBUG` |
-| `staging` | `testlookup-staging` | `testlookup/*:staging-latest`, `imagePullPolicy: Always` | Two API and UI replicas, one per worker, HPA ceilings of 2, `APP_ENV=staging`, `AI_OFFLINE_MODE=false` (hosted providers allowed) |
-| `prod` | `testlookup` | `testlookup/*:0.0.1` | `APP_ENV=production`, `AI_OFFLINE_MODE=true`, TLS on the ingress, worker replica floors and wider HPA ranges |
-| `self-hosted` | `testlookup` | `testlookup/*:0.0.1` | Builds on `prod` for kubeadm, K3s, RKE2, Rancher, OpenStack/VMware clusters and kind/minikube: NGINX ingress class, `TRUSTED_PROXY_IPS` set to common on-premise pod CIDRs, optional StorageClass patch |
+| `dev` | `testlookup-dev` | `ghcr.io/test-intelligence/testlookup/*:dev-latest`, `imagePullPolicy: Always` | One replica each, beat scaled to 0, HPAs pinned to 1, `APP_ENV=development`, `LOG_LEVEL=DEBUG` |
+| `staging` | `testlookup-staging` | `ghcr.io/test-intelligence/testlookup/*:staging-latest`, `imagePullPolicy: Always` | Two API and UI replicas, one per worker, HPA ceilings of 2, `APP_ENV=staging`, `AI_OFFLINE_MODE=false` (hosted providers allowed) |
+| `prod` | `testlookup` | `ghcr.io/test-intelligence/testlookup/*:v0.1.0` | `APP_ENV=production`, `AI_OFFLINE_MODE=true`, TLS on the ingress, worker replica floors and wider HPA ranges |
+| `self-hosted` | `testlookup` | `ghcr.io/test-intelligence/testlookup/*:v0.1.0` | Builds on `prod` for kubeadm, K3s, RKE2, Rancher, OpenStack/VMware clusters and kind/minikube: NGINX ingress class, `TRUSTED_PROXY_IPS` set to common on-premise pod CIDRs, optional StorageClass patch |
 
-Before applying any overlay, replace the example host names and `CORS_ORIGINS` (`*.yourdomain.com`, `testlookup.example.com`) with yours, and make the images resolvable: the overlays reference `testlookup/backend`, `testlookup/frontend` and `testlookup/mcp`. Either push your builds under those names (`make build-push REGISTRY=<registry> VERSION=<tag>`), set them with `kustomize edit set image`, or let `scripts/deploy-k8s.sh` rewrite them (`--registry`, `--image-tag`, `--release-manifest`). Published images are `ghcr.io/test-intelligence/testlookup/{backend,frontend,mcp}` with tags `latest`, the commit SHA, and `vX.Y.Z` for releases.
+Before applying any overlay, replace the example host names and `CORS_ORIGINS` (`*.yourdomain.com`, `testlookup.example.com`) with yours, and check the images. The base pulls the published images, `ghcr.io/test-intelligence/testlookup/{backend,frontend,mcp}`, and `prod` and `self-hosted` pin the release tag `v0.1.0`. CI publishes `latest` and the full commit SHA for every build of `main`; a release adds `vX.Y.Z` to the digests CI verified. Until `v0.1.0` is tagged, pass a commit SHA with `scripts/deploy-k8s.sh --image-tag=<sha>`. The overlays key their `images:` entries by the base name `ghcr.io/test-intelligence/testlookup/<image>`, so a `kustomize edit set image` must use that name too. To run your own builds, push them (`make build-push REGISTRY=<registry> VERSION=<tag>`) and let `scripts/deploy-k8s.sh` re-point the overlay (`--registry`, `--image-tag`, `--release-manifest`).
 
 ### Deploy with Make (dev, staging, prod)
 
@@ -115,7 +115,7 @@ scripts/deploy-k8s.sh --cloud=self-hosted --registry=registry.example.com --imag
 | Flag | Meaning |
 |---|---|
 | `--cloud=<aws\|gcp\|azure\|self-hosted>` | Required. Selects `k8s/overlays/aws-eks`, `gcp-gke`, `azure-aks` or `self-hosted` (aliases: `aws-eks`; `gcp-gke`, `gke`; `azure-aks`, `aks`; `on-prem`, `k3s`, `generic`) |
-| `--image-tag=<tag>` | Image tag for all three images (default: the overlay's `0.0.1`) |
+| `--image-tag=<tag>` | Image tag for all three images (default: the overlay's `v0.1.0`) |
 | `--registry=<url>` | Registry prefix, producing `<url>/testlookup/<image>` |
 | `--release-manifest=<path>` | Deploy exactly the digests in a materialized release manifest ([deploy from CI](deploy-cloud.md#deploy-from-ci)) |
 | `--namespace=<ns>` | Target namespace (default `testlookup`; keep it equal to the overlay's namespace) |

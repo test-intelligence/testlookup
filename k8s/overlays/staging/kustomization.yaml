@@ -146,9 +146,9 @@ patches:
       name: testlookup-config
 
 images:
-  - name: testlookup/backend
+  - name: ghcr.io/test-intelligence/testlookup/backend
     newTag: staging-latest
-  - name: testlookup/frontend
+  - name: ghcr.io/test-intelligence/testlookup/frontend
     newTag: staging-latest
-  - name: testlookup/mcp
+  - name: ghcr.io/test-intelligence/testlookup/mcp
     newTag: staging-latest

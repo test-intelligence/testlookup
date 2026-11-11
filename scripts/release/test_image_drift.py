@@ -117,6 +117,31 @@ def test_compose_tag_bump_without_manifest_update_fails(repo: Path):
     assert "images.manifest.txt" in errors
 
 
+def test_k8s_base_names_the_published_ghcr_images():
+    """F-03 / R4 gap 3: the base pulls the images CI publishes, never the
+    unclaimed Docker Hub name ``testlookup/<component>``."""
+    base = REPO_ROOT / "k8s" / "base"
+    refs = [
+        line.split("image:", 1)[1].strip()
+        for path in sorted(base.glob("*.yaml"))
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if "/backend:" in line or "/frontend:" in line or "/mcp:" in line
+    ]
+    assert refs, "no app image lines found under k8s/base"
+    for ref in refs:
+        assert ref.startswith("ghcr.io/test-intelligence/testlookup/"), ref
+
+
+def test_app_image_under_another_registry_in_k8s_fails(repo: Path):
+    _sub(
+        repo / "k8s" / "base" / "mcp-deployment.yaml",
+        "ghcr.io/test-intelligence/testlookup/mcp:",
+        "docker.io/testlookup/mcp:",
+    )
+    errors = _joined(check(repo))
+    assert "docker.io/testlookup/mcp" in errors
+
+
 def test_k8s_tag_bump_without_manifest_update_fails(repo: Path):
     _sub(
         repo / "k8s/overlays/openshift-artifactory/infra-postgres.yaml",

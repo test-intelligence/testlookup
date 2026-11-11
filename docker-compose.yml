@@ -539,7 +539,7 @@ services:
       # (localhost from inside the container is the container itself, not the host).
       - VITE_PROXY_TARGET=http://backend:8000
       - VITE_APP_NAME=TestLookup
-      - VITE_APP_VERSION=0.0.1
+      - VITE_APP_VERSION=0.1.0
     depends_on:
       - backend
     networks:
