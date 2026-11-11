@@ -17,7 +17,8 @@ COPY e2e-runner/reporters/js/package*.json ./e2e-runner/reporters/js/
 RUN python3 e2e-runner/reporters/prepare.py javascript
 COPY client/go ./client/go
 COPY e2e-runner/reporters/go ./e2e-runner/reporters/go
-RUN python3 e2e-runner/reporters/prepare.py go
+# The reporter embeds its compiler's standard library in the runtime binary.
+RUN GOTOOLCHAIN=go1.27.4 python3 e2e-runner/reporters/prepare.py go
 COPY client/java ./client/java
 COPY e2e-runner/reporters/java ./e2e-runner/reporters/java
 RUN python3 e2e-runner/reporters/prepare.py java

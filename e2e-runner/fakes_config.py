@@ -29,6 +29,7 @@ def prepare_material(directory, engine, image, *, openssl=None):
     for origin in (
         ROOT / "backend/tests/fakes/fake_integrations.py",
         ROOT / "e2e-runner/fakes/server.py",
+        ROOT / "e2e-runner/fakes/probe.py",
     ):
         shutil.copyfile(origin, directory / origin.name)
     if openssl is not None:
@@ -96,12 +97,7 @@ def configure(config, directory, engine, image):
             "./release-fixture:/fixture-tls:ro",
         ],
         "healthcheck": {
-            "test": [
-                "CMD",
-                "python",
-                "-c",
-                "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/version',timeout=2)",
-            ],
+            "test": ["CMD", "python", "/fixture/probe.py"],
             "interval": "2s",
             "timeout": "5s",
             "retries": 30,

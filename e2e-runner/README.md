@@ -8,6 +8,7 @@ The regression inventory contains six P0 and seven P1 journeys. The disposable s
 | --- | --- | --- |
 | Browser upload form | JUnit XML, TestNG, NUnit 3, TRX, xUnit v2, pytest JSON, Robot XML, Playwright JSON, Cypress/Mochawesome, Allure and Cucumber JSON | Each native producer file goes through explicit format selection and automatic detection. The receipt, run, selected project, persisted names and status counts must agree. |
 | Browser archive upload | ZIP of native Allure results and a multi-file selection of JUnit and Robot | The form and worker unpack the reports and materialize the expected tests. |
+| CLI file upload | All 11 native formats listed above, one required result per format | The installed `testlookup upload file --wait` command returns a successful receipt. The stored build, project, leaf names and status counts must match the producer. |
 | Python SDK | pytest plugin and Robot Framework listener | Real framework execution and completed build readback. |
 | Java SDK | JUnit Jupiter 5, JUnit Jupiter 6 and TestNG | The release fixture loads the repository's reporter JAR in each framework. |
 | JavaScript/TypeScript SDK | Jest, Mocha, Playwright, Vitest, Cypress and Cucumber.js | Each runner loads its own adapter from the locally built SDK and reports a deliberately passing and failing case. |

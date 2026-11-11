@@ -218,11 +218,11 @@ jobs:
           cache: maven
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.21"
+          go-version: "1.27.4"
           cache: false
       - run: python -m pip install pytest PyYAML
       - name: Verify release job and upgrade decision
-        run: python -m pytest e2e-runner/test_policy.py e2e-runner/test_merge_upgrade.py e2e-runner/upgrade_test.py e2e-runner/test_release_campaign.py
+        run: python -m pytest e2e-runner/test_policy.py e2e-runner/test_merge_upgrade.py e2e-runner/upgrade_test.py e2e-runner/test_release_campaign.py e2e-runner/test_fixture_probe.py
       - name: Build the reporter loaded by the Playwright fixture config
         working-directory: client/js
         run: |

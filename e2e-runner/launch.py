@@ -121,6 +121,7 @@ def main():
 
             report = {
                 "target": opts.env,
+                "execution_backend": engine,
                 "tier": opts.tier,
                 "tag": json.loads(manifest.read_bytes()).get("version", "unknown"),
                 "manifest_hash": hashlib.sha256(manifest.read_bytes()).hexdigest(),

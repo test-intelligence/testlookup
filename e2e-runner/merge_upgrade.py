@@ -300,6 +300,10 @@ def merge(
         candidate = validate_manifest(json.loads(candidate_bytes))
         digest = sha(candidate_bytes)
         require(
+            bool(report["observed_build"].get("revision")),
+            "The ordinary suite did not reach a running candidate to verify its revision.",
+        )
+        require(
             report["manifest_hash"] == digest
             and report["observed_build"].get("revision") == candidate["source_sha"]
             and report.get("images") == candidate["images"],

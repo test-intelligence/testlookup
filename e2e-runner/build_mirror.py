@@ -11,6 +11,7 @@ def select_mirror():
     # kernel.org operates a public Ubuntu package mirror at /ubuntu.
     hosts = ("archive.ubuntu.com", "azure.archive.ubuntu.com", "mirrors.edge.kernel.org")
     context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     for host in hosts:
         try:
             addresses = socket.getaddrinfo(
@@ -23,7 +24,7 @@ def select_mirror():
             try:
                 with socket.create_connection((address, 443), timeout=5) as stream:
                     with context.wrap_socket(stream, server_hostname=host) as tls:
-                        conn = http.client.HTTPSConnection(host)
+                        conn = http.client.HTTPSConnection(host, context=context)
                         conn.sock = tls
                         conn.request("GET", "/ubuntu/dists/noble-security/InRelease")
                         with conn.getresponse() as response:

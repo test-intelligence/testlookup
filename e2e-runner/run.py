@@ -34,7 +34,7 @@ JOURNEYS = {
     for key, entry in CATALOGUE.items()
     if entry["layer"] == "live journey"
 }
-UPLOAD_FORMATS = (
+NATIVE_UPLOAD_FORMATS = (
     "junit",
     "testng",
     "nunit",
@@ -46,8 +46,8 @@ UPLOAD_FORMATS = (
     "cypress",
     "allure",
     "cucumber",
-    "zip",
 )
+UPLOAD_FORMATS = (*NATIVE_UPLOAD_FORMATS, "zip")
 REPORTERS = (
     "robot",
     "junit5",
@@ -315,6 +315,12 @@ def main():
     }
     if target == "ephemeral" and args.tier != "smoke":
         clients.update(LIVE_CLIENT_JOURNEYS)
+        clients.update(
+            {
+                f"test_cli_upload_native[{fmt}]": "TL-CLI-003 " + fmt
+                for fmt in NATIVE_UPLOAD_FORMATS
+            }
+        )
         clients.update(
             {
                 f"test_framework_reporter[{framework}]": "TL-SDK-002 " + framework

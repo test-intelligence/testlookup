@@ -281,6 +281,19 @@
     "status": "implemented"
   },
   {
+    "id": "TL-CLI-003",
+    "title": "CLI file upload waits for ingestion and preserves native results",
+    "journey": "J02",
+    "priority": "P0",
+    "role": "QA_LEAD",
+    "area": "ingestion",
+    "layer": "CLI",
+    "use_case": "UC-002",
+    "eligibility": "ephemeral-only",
+    "status": "implemented",
+    "oracle": "Each advertised native format has its own required result. The waited receipt resolves to the owned project and build with exact leaf names and statuses."
+  },
+  {
     "id": "TL-MCP-002",
     "title": "Candidate stdio health tool agrees with backend",
     "journey": "J13",

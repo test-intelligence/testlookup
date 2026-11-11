@@ -227,6 +227,15 @@ def test_unexplained_ordinary_exit_blocks_an_otherwise_passing_release(inputs):
     assert "launcher exited" in report["errors"][0]
 
 
+def test_stack_startup_failure_reports_the_unobserved_candidate(inputs):
+    _, _, ordinary, _ = inputs
+    ordinary["observed_build"] = {}
+    code, report = execute(inputs, suite_exit=1)
+    assert code == 1 and report["verdict"] == "NO_GO"
+    assert "did not reach a running candidate" in report["errors"][0]
+    assert "upgrade_proof" not in report
+
+
 @pytest.mark.parametrize(
     "fault",
     (

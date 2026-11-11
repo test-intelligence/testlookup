@@ -1,5 +1,7 @@
 from policy import evaluate
-from run import client_evidence
+from run import client_evidence, main
+import json
+import sys
 import xml.etree.ElementTree as ET
 
 
@@ -22,6 +24,32 @@ def test_client_failure_report_keeps_only_safe_location_and_counts():
 def test_missing_or_retried_p0_blocks():
     for state in ("BLOCKED", "SKIPPED", "FLAKY", "FAILED"):
         assert evaluate([case("P0", state, "a")], [], "regression")[0] == "NO_GO"
+
+
+def test_unexecuted_native_cli_formats_are_independent_required_cases(
+    monkeypatch, tmp_path
+):
+    directory = tmp_path / "report"
+    monkeypatch.setattr(
+        sys, "argv", ["run.py", "--tier", "regression", "--out", str(directory)]
+    )
+    monkeypatch.setenv("TL_TARGET", "ephemeral")
+    monkeypatch.delenv("TL_MANIFEST", raising=False)
+    assert main() == 1
+    report = json.loads((directory / "results.json").read_bytes())
+    formats = "junit testng nunit trx xunit pytest robot playwright cypress allure cucumber".split()
+    entries = {row["id"]: row for row in report["cases"]}
+    assert {key for key in entries if key.startswith("TL-CLI-003 ")} == {
+        "TL-CLI-003 " + fmt for fmt in formats
+    }
+    for fmt in formats:
+        row = entries["TL-CLI-003 " + fmt]
+        assert (row["priority"], row["status"], row["layer"]) == (
+            "P0",
+            "BLOCKED",
+            "CLI",
+        )
+        assert "TL-INGEST-001 " + fmt in entries
 
 
 def test_infra_and_empty_evidence_block():
