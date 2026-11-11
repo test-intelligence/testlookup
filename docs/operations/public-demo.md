@@ -356,7 +356,7 @@ Fastest first:
 
 | When | What |
 |---|---|
-| Nightly, automatic | `demo.sh reset` (cron, 03:00): wipe and re-seed, about a minute offline |
+| Nightly, automatic | `demo.sh reset` (cron, 03:00): wipe and re-seed, about a minute offline. An open demo tab shows "The live demo is refreshing" meanwhile, and its visitor signs in again afterwards (the demo account is re-created) |
 | Automatic | OS security updates; reboots at 04:30 when a kernel needs it |
 | Each release | `scripts/demo/demo.sh update`: pull the code, new images (`DEMO_IMAGES`), reset |
 | Automatic, every 5 minutes | The watchdog (miners, sustained CPU, egress drift, unexpected ports) |

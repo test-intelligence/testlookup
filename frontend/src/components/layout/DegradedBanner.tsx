@@ -1,5 +1,6 @@
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, RefreshCw } from 'lucide-react'
 import { useSystemHealth } from '@/hooks/useSystemHealth'
+import { useAuthStore } from '@/store/authStore'
 
 // Friendly labels per dependency so the banner reads as "ChromaDB" rather
 // than the raw key "chromadb". Unknown keys fall through to a Title-Cased
@@ -19,6 +20,30 @@ function label(key: string): string {
 
 export default function DegradedBanner() {
   const { unavailable, criticalUnavailable, isDegraded, isUnreachable } = useSystemHealth()
+  const demoSession = useAuthStore((s) => s.demoSession)
+
+  // On the public demo, an unreachable backend is almost always the nightly
+  // rebuild (or maintenance): every container is recreated and the sample
+  // data re-seeded, for a minute or two. Say that, calmly, instead of an
+  // outage alarm. The rebuild also replaces the demo account, so the visitor
+  // may land on the sign-in page afterwards.
+  if (isUnreachable && demoSession) {
+    return (
+      <div
+        role="status"
+        data-testid="health-demo-refreshing-banner"
+        className="flex items-start gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-2 text-sm text-[var(--color-text-secondary)]"
+      >
+        <RefreshCw className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--color-accent)]" aria-hidden="true" />
+        <div>
+          <strong className="font-semibold text-[var(--color-text)]">The live demo is refreshing.</strong>{' '}
+          Its sample data is rebuilt every night at 03:00 UTC and after maintenance, which takes a few
+          minutes. Retrying automatically; if you are signed out when it is back, choose Explore the demo
+          again.
+        </div>
+      </div>
+    )
+  }
 
   // Checked BEFORE isDegraded: when the health poll itself fails we have no
   // check results, so `unavailable` is empty and the dependency banner below

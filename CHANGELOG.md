@@ -122,6 +122,9 @@ locally by default.
   - A demo session no longer sends frontend telemetry, which the demo refuses (403) like every other write. The
     auth store registers that check with the reporter (`setTelemetrySuppressed`), so the reporter, which error
     boundaries import lazily, does not pull in the API client.
+  - In a demo session, an unreachable backend shows "The live demo is refreshing" (nightly at 03:00 UTC and
+    after maintenance; sign in again with Explore the demo if signed out) instead of the outage alarm "Can't
+    reach the TestLookup backend". Every other deployment keeps the alarm.
   - Demo sign-in starts on All projects. The nightly rebuild gives the projects new ids, so a project picked on an
     earlier visit no longer existed: the first page's requests were scoped to it and each answered 403 "You do
     not have access to this project" before the project list corrected the selection.
