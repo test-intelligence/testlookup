@@ -1,0 +1,29 @@
+pipeline {
+  agent { label 'podman' }
+  options { timestamps(); timeout(time: 240, unit: 'MINUTES') }
+  parameters {
+    string(name: 'VERIFIED_MANIFEST', description: 'Path to the upstream verified release-manifest.json on this agent')
+    string(name: 'SOURCE_SHA', description: 'Full upstream source commit from the verified image build')
+    choice(name: 'TIER', choices: ['regression', 'smoke', 'full'])
+  }
+  stages {
+    stage('Verify candidate') {
+      steps {
+        sh 'test -n "$SOURCE_SHA" && python3 scripts/release/release_manifest.py validate --manifest "$VERIFIED_MANIFEST" --expected-source-sha "$SOURCE_SHA"'
+      }
+    }
+    stage('Run on disposable Podman stack') {
+      steps {
+        sh 'python3 e2e-runner/launch.py --manifest "$VERIFIED_MANIFEST" --tier "$TIER" --out "release-results/$BUILD_NUMBER"'
+      }
+    }
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: "release-results/${env.BUILD_NUMBER}/index.html,release-results/${env.BUILD_NUMBER}/summary.md,release-results/${env.BUILD_NUMBER}/results.json", allowEmptyArchive: false
+      junit testResults: "release-results/${env.BUILD_NUMBER}/release-junit.xml", allowEmptyResults: false
+      publishHTML(target: [allowMissing: false, alwaysLinkToLastBuild: false, keepAll: true,
+        reportDir: "release-results/${env.BUILD_NUMBER}", reportFiles: 'index.html', reportName: 'Release quality'])
+    }
+  }
+}

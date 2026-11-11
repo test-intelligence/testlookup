@@ -82,10 +82,20 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+  functional-verification:
+    needs: [resolve-tag, verify]
+    permissions:
+      actions: read
+      contents: read
+      packages: read
+    uses: ./.github/workflows/release-e2e.yml
+    with:
+      source_sha: ${{ needs.resolve-tag.outputs.source_sha }}
+
   promote:
     name: Promote verified digest set to release aliases
     runs-on: ubuntu-latest
-    needs: [resolve-tag, verify, scan-verified-images]
+    needs: [resolve-tag, verify, scan-verified-images, functional-verification]
     permissions:
       actions: read
       contents: read
@@ -100,6 +110,11 @@ jobs:
           set -euo pipefail
           gh run download "${{ needs.verify.outputs.ci_run_id }}" --name "${{ needs.verify.outputs.artifact_name }}" --dir verified-images
           python3 scripts/release/release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "${{ needs.verify.outputs.source_sha }}"
+      - name: Match promoted bytes to the functional gate
+        env:
+          TESTED_MANIFEST_SHA256: ${{ needs.functional-verification.outputs.manifest_sha256 }}
+        run: |
+          test "$(sha256sum verified-images/release-manifest.json | cut -d' ' -f1)" = "$TESTED_MANIFEST_SHA256"
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4.7.0
         with:

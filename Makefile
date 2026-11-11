@@ -200,6 +200,14 @@ lint: ## Lint all code (ruff + eslint)
 	$(DOCKER_COMPOSE) exec backend ruff check app/ tests/
 	$(DOCKER_COMPOSE) exec frontend npm run lint
 
+.PHONY: e2e-release
+ENV ?= ephemeral
+TIER ?= smoke
+E2E_PYTHON ?= python
+E2E_OUT ?= release-results
+e2e-release: ## Run the candidate release suite (Podman by default)
+	$(E2E_PYTHON) e2e-runner/launch.py --env "$(ENV)" --tier "$(TIER)" --manifest "$(TL_MANIFEST)" --out "$(E2E_OUT)"
+
 format: ## Auto-format all code (ruff + prettier)
 	$(DOCKER_COMPOSE) exec backend ruff format app/ tests/
 	$(DOCKER_COMPOSE) exec frontend npm run format

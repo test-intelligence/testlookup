@@ -1672,6 +1672,10 @@ jobs:
             context: mcp
             dockerfile: mcp/Dockerfile
             target: ""
+          - name: e2e-runner
+            context: .
+            dockerfile: e2e-runner/Dockerfile
+            target: ""
     steps:
       - uses: actions/checkout@v7
 
@@ -1680,6 +1684,7 @@ jobs:
         env:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           CONTEXT: ${{ matrix.context }}
+          IMAGE_NAME: ${{ matrix.name }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" != "pull_request" ]]; then
@@ -1687,7 +1692,11 @@ jobs:
             exit 0
           fi
           git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
-          if git diff --quiet "$PR_BASE_SHA" HEAD -- \
+          extra_inputs=()
+          if [[ "$IMAGE_NAME" == "e2e-runner" ]]; then
+            extra_inputs=(e2e-runner/ frontend/package.json frontend/package-lock.json cli/ mcp/ frontend/tests/release/ frontend/playwright.release.config.ts samples/ scripts/release/release_manifest.py)
+          fi
+          if git diff --quiet "$PR_BASE_SHA" HEAD -- "${extra_inputs[@]}" \
             "$CONTEXT/Dockerfile" "$CONTEXT/requirements*.txt" \
             "$CONTEXT/package.json" "$CONTEXT/package-lock.json" \
             client/ .trivyignore.yaml .github/workflows/ci.yml; then
