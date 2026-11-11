@@ -9,7 +9,6 @@ import re
 import subprocess
 import tempfile
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 
 from ephemeral import ROOT, prepare
 
@@ -62,6 +61,11 @@ class PodmanUpgrade:
         self._snapshot = None
         self._failed_migration = False
         self._cleaned = False
+        self.object_helper = self.project + "-object-snapshot"
+        self.object_volume = self.project + "_minio_data"
+        self._object_helper_attempted = False
+        self._object_helper_created = False
+        self._object_store_id = None
 
     def _redact(self, text):
         for key, value in self.settings.items():
@@ -187,62 +191,54 @@ class PodmanUpgrade:
     def _store_exec(self, service, source):
         return self._run(["exec", "-T", service, "sh", "-eu", "-c", source]).stdout
 
-    def _object_archive(self, restore=False):
-        """Stream GNU tar with xattrs to/from the owned object's remote /tmp.
-
-        VersityGW keeps ETags, content type, ownership and ACLs in user xattrs.
-        Its BusyBox tar drops those attributes. A private backend-image helper
-        mounts only this project's object volume; archive bytes pass directly
-        between pipes and are never captured or written on the host.
-        """
+    def _ensure_object_helper(self):
+        """Keep the raw archive independently of the object-server lifecycle."""
+        if self._object_helper_created:
+            return
         identifier = self._run(["ps", "-q", "minio"]).stdout.strip()
         if not re.fullmatch(r"[0-9a-f]{12,64}", identifier):
             raise PodmanUpgradeError("Owned object-store container is unavailable.")
-        path = self.STORES["minio"]
-        helper = [self.engine, "run", "--rm", "--network", "none", "--user", "0:0",
-                  "--volumes-from", identifier + (":rw" if restore else ":ro"),
-                  "--entrypoint", "tar", self.prior["images"]["backend"]["source_ref"],
-                  "--xattrs", "--xattrs-include=*", "--numeric-owner", "-C", "/data"]
-        if restore:
-            source = [self.engine, "exec", identifier, "cat", path]
-            destination = [*helper, "-xpf", "-"]
-        else:
-            source = [*helper, "-cpf", "-", "."]
-            destination = [self.engine, "exec", "-i", identifier, "sh", "-eu", "-c",
-                           "cat > " + path]
-        producer = consumer = None
-        try:
-            producer = subprocess.Popen(source, cwd=self.directory, env=self.env,
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            consumer = subprocess.Popen(destination, cwd=self.directory, env=self.env,
-                stdin=producer.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            producer.stdout.close()
-            producer.stdout = None
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                producer_done = pool.submit(producer.communicate, timeout=600)
-                consumer_output, consumer_error = consumer.communicate(timeout=600)
-                _, producer_error = producer_done.result()
-            with (self.out / "podman-private.log").open("a", encoding="utf-8") as log:
-                log.write(self._redact(json.dumps({"binary_stream_source": source,
-                                                  "binary_stream_destination": destination})) + "\n")
-                log.write(f"producer_exit={producer.returncode}, consumer_exit={consumer.returncode}\n")
-                log.write(self._redact((producer_error + consumer_error).decode("utf-8", errors="replace")) + "\n")
-            if producer.returncode or consumer.returncode or consumer_output:
-                raise PodmanUpgradeError("Object archive metadata-preserving stream failed.")
-        except (OSError, subprocess.SubprocessError) as error:
-            for process in (producer, consumer):
-                if process is not None and process.poll() is None:
-                    process.kill()
-                    process.wait()
-            raise PodmanUpgradeError(
-                f"Object archive transport could not complete ({type(error).__name__})."
-            ) from None
+        labels = json.loads(self._run(
+            ["volume", "inspect", "--format", "{{json .Labels}}", self.object_volume],
+            compose=False).stdout)
+        owners = {(labels or {})[key] for key in
+                  ("com.docker.compose.project", "io.podman.compose.project")
+                  if key in (labels or {})}
+        if owners != {self.project}:
+            raise PodmanUpgradeError("Object volume does not have this project's ownership label.")
+        self._object_store_id = identifier
+        self._object_helper_attempted = True
+        result = self._run(
+            ["run", "-d", "--name", self.object_helper, "--network", "none", "--user", "0:0",
+             "--label", "io.testlookup.upgrade.project=" + self.project,
+             "--volume", self.object_volume + ":/data", "--entrypoint", "python",
+             self.prior["images"]["backend"]["source_ref"],
+             "-c", "import signal; signal.pause()"], compose=False)
+        if not re.fullmatch(r"[0-9a-f]{12,64}", result.stdout.strip()):
+            raise PodmanUpgradeError("Snapshot helper identity is unavailable.")
+        self._object_helper_created = True
+        self._write("object-helper.json", {
+            "container": self.object_helper, "volume": self.object_volume,
+            "network": "none", "image": self.prior["images"]["backend"]["source_ref"],
+            "raw_archive_host_files": False,
+        })
+
+    def _object_exec(self, arguments, **kwargs):
+        if not self._object_helper_created:
+            raise PodmanUpgradeError("An owned persistent snapshot helper is required.")
+        return self._run(["exec", self.object_helper, *arguments], compose=False, **kwargs)
+
+    def _object_archive(self, restore=False):
+        # The helper owns /tmp; stopping or recreating VersityGW cannot erase
+        # this archive. GNU PAX retains nanosecond times and all user xattrs.
+        self._object_exec([
+            "tar", "--format=pax", "--xattrs", "--xattrs-include=*", "--numeric-owner",
+            "-C", "/data", "-xpf" if restore else "-cpf", self.STORES["minio"],
+            *([] if restore else ["."]),
+        ])
 
     def _object_tree(self):
         """Independently hash the entire owned volume, including all xattrs."""
-        identifier = self._run(["ps", "-q", "minio"]).stdout.strip()
-        if not re.fullmatch(r"[0-9a-f]{12,64}", identifier):
-            raise PodmanUpgradeError("Owned object-store container is unavailable.")
         source = r'''
 import hashlib,json,os,stat
 paths=['/data']
@@ -265,22 +261,21 @@ for path in sorted(set(paths)):
     elif stat.S_ISLNK(info.st_mode):body=hashlib.sha256(os.readlink(path).encode()).hexdigest()
     else:raise RuntimeError('Unsupported object-volume filesystem entry')
     records.append([os.path.relpath(path,'/data'),info.st_uid,info.st_gid,info.st_mode,
-                    info.st_mtime_ns//1000000000,body,attributes])
+                    info.st_mtime_ns,body,attributes])
 payload=json.dumps(records,sort_keys=True,separators=(',',':')).encode()
 print(json.dumps({'sha256':hashlib.sha256(payload).hexdigest(),'entries':len(records),
                   'extended_attributes':attribute_count,
-                  'covers':['relative_paths','uid','gid','mode','mtime_seconds','body','all_xattrs']}))
+                  'covers':['relative_paths','uid','gid','mode','mtime_ns','body','all_xattrs']}))
 '''
-        result = self._run(
-            ["run", "--rm", "--network", "none", "--user", "0:0", "--volumes-from",
-             identifier + ":ro", "--entrypoint", "python",
-             self.prior["images"]["backend"]["source_ref"], "-c", source],
-            compose=False, log_output=False)
+        result = self._object_exec(["python", "-c", source], log_output=False)
         return json.loads(result.stdout)
 
     def _archive_metadata(self, service, path):
-        result = self._store_exec(service,
-            f'test -f {path}; sha256sum {path}; wc -c < {path}')
+        command = f'test -f {path}; sha256sum {path}; wc -c < {path}'
+        result = (
+            self._object_exec(["sh", "-eu", "-c", command]).stdout
+            if service == "minio" else self._store_exec(service, command)
+        )
         lines = result.strip().splitlines()
         checksum = lines[-2].split()[0]
         if not re.fullmatch(r"[0-9a-f]{64}", checksum):
@@ -288,13 +283,17 @@ print(json.dumps({'sha256':hashlib.sha256(payload).hexdigest(),'entries':len(rec
         size = int(lines[-1].strip())
         if size <= 0:
             raise PodmanUpgradeError("Snapshot archive is empty.")
-        return {"path": path, "size": size, "sha256": checksum}
+        metadata = {"path": path, "size": size, "sha256": checksum}
+        if service == "minio":
+            metadata["container"] = self.object_helper
+        return metadata
 
     def snapshot(self):
         self._require_quiesced()
-        self._store_exec("minio", "command -v cat; command -v sha256sum; "
-                         "command -v find; command -v realpath; "
-                         'test "$(realpath /data)" = /data')
+        self._ensure_object_helper()
+        self._object_exec(["sh", "-eu", "-c",
+            "command -v tar; command -v sha256sum; command -v find; command -v realpath; "
+            'test "$(realpath /data)" = /data'])
         self._store_exec("postgres",
             'export PGPASSWORD="$POSTGRES_PASSWORD"; '
             'pg_dump --format=custom --username "$POSTGRES_USER" '
@@ -309,7 +308,7 @@ print(json.dumps({'sha256':hashlib.sha256(payload).hexdigest(),'entries':len(rec
             for key, path in self.STORES.items()
         }
         self._snapshot["redis"] = "Not snapshotted; flushed during restore."
-        self._snapshot["object_archive_format"] = "GNU tar with all extended attributes and numeric owners."
+        self._snapshot["object_archive_format"] = "GNU PAX tar with all extended attributes and numeric owners."
         self._snapshot["object_tree"] = self._object_tree()
         self._write("snapshot-metadata.json", self._snapshot)
         return self._snapshot
@@ -360,6 +359,14 @@ print(json.dumps({'sha256':hashlib.sha256(payload).hexdigest(),'entries':len(rec
             current = self._archive_metadata(key, path)
             if current != self._snapshot[key]:
                 raise PodmanUpgradeError("Snapshot archive checksum or size changed.")
+        # Restore the filesystem with VersityGW offline, as the operator restore
+        # path requires. The helper and archive have a separate writable layer.
+        self._run(["stop", "--timeout", "10", "minio"], timeout=60)
+        running = self._run(
+            ["container", "inspect", "--format", "{{json .State.Running}}", self._object_store_id],
+            compose=False, timeout=30).stdout.strip()
+        if running != "false":
+            raise PodmanUpgradeError("Object server must be stopped before filesystem restoration.")
         self._store_exec("postgres",
             'test "$POSTGRES_DB" = testlookup; '
             'test "$POSTGRES_USER" = testlookup_user; '
@@ -377,18 +384,21 @@ print(json.dumps({'sha256':hashlib.sha256(payload).hexdigest(),'entries':len(rec
             'mongorestore --host 127.0.0.1 --username "$MONGO_INITDB_ROOT_USERNAME" '
             '--password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin '
             f'--nsInclude="testlookup_logs.*" --drop --gzip --archive={self.STORES["mongo"]}')
-        self._store_exec("minio",
-            'test "$(realpath /data)" = /data; '
-            'find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +')
+        self._object_exec(["sh", "-eu", "-c", 'test "$(realpath /data)" = /data; '
+            'find /data -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +'])
         self._object_archive(restore=True)
         restored_tree = self._object_tree()
         if restored_tree != self._snapshot["object_tree"]:
             raise PodmanUpgradeError("Restored object tree, ownership or extended attributes differ.")
+        self._run(["up", "-d", "--no-deps", "--wait", "--wait-timeout", "60", "minio"],
+                  timeout=120)
         self._store_exec("redis", 'export VALKEYCLI_AUTH="$REDIS_PASSWORD"; valkey-cli FLUSHALL')
         self._failed_migration = False
         self._write("restore.json", {"restored": True, "checksums_validated": True,
                                      "redis_flushed": True, "downgrade_used": False,
-                                     "whole_object_tree_matched": True})
+                                     "whole_object_tree_matched": True,
+                                     "object_server_restored_offline": True,
+                                     "object_server_ready_before_app_activation": True})
 
     def cleanup(self):
         if self._cleaned:
@@ -398,6 +408,21 @@ print(json.dumps({'sha256':hashlib.sha256(payload).hexdigest(),'entries':len(rec
             raise PodmanUpgradeError("Invalid owned project identity.")
         errors = []
         down_exit = None
+        helper_removed = not self._object_helper_attempted
+        if self._object_helper_attempted:
+            try:
+                helper_labels = self._run(
+                    ["container", "inspect", "--format", "{{json .Config.Labels}}", self.object_helper],
+                    compose=False, timeout=30)
+                labels = json.loads(helper_labels.stdout)
+                if (labels or {}).get("io.testlookup.upgrade.project") != self.project:
+                    raise PodmanUpgradeError("Snapshot helper ownership did not match.")
+                self._run(["rm", "--force", *(["--time", "0"] if self.engine == "podman" else []),
+                           self.object_helper],
+                          compose=False, timeout=30)
+                helper_removed = True
+            except (PodmanUpgradeError, ValueError):
+                errors.append("Owned snapshot helper removal is unverified.")
         try:
             down = self._run(["down", "--volumes", "--remove-orphans", "--timeout", "10"],
                              check=False, timeout=60)
@@ -420,7 +445,8 @@ print(json.dumps({'sha256':hashlib.sha256(payload).hexdigest(),'entries':len(rec
         result = {"project": self.project, "containers": containers,
                   "volumes": [name for name in volumes if name.startswith(self.project + "_")],
                   "networks": [name for name in networks if name.startswith(self.project + "_")],
-                  "down_exit_code": down_exit, "errors": errors}
+                  "down_exit_code": down_exit, "errors": errors,
+                  "snapshot_helper_removed": helper_removed}
         result["verified"] = not errors and not any(
             result[key] for key in ("containers", "volumes", "networks"))
         result["clean"] = result["verified"]

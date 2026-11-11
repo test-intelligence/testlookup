@@ -60,7 +60,9 @@ adds post-snapshot markers in all three stores. Rollback must remove those marke
 while preserving the original oracle, which rejects a restore that merely merges
 old data into the candidate's stores. All app writers stop before snapshot or
 restore. Checksummed PostgreSQL, MongoDB and complete object-volume archives stay
-inside the disposable infrastructure containers. Redis is flushed on restore;
+inside the disposable infrastructure containers. The object-store service stops
+before its files are replaced; a separate owned archive helper keeps the backup
+available, and the service restarts before application verification. Redis is flushed on restore;
 rebuildable vector/model stores are outside this case. No schema downgrade is
 attempted. This follows the documented quiesce/backup/restore procedure rather
 than assuming every migration has a safe downgrade.

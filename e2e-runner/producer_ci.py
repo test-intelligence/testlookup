@@ -28,11 +28,17 @@ FILES = {
 }
 
 
-def expected_failure(command, cwd, env):
+def expected_failure(command, cwd, env, report=None):
     result = subprocess.run(command, cwd=cwd, env=env, capture_output=True, timeout=240)
     assert result.returncode == 1, (
         f"Producer returned {result.returncode}, expected the deliberate failure."
     )
+    if report is not None and not report.is_file():
+        diagnostic = (result.stderr or result.stdout).decode(errors="replace")
+        pytest.fail(
+            f"Native report {report.name} was not created.\n{diagnostic[:1600]}",
+            pytrace=False,
+        )
     return result.stdout
 
 
@@ -97,8 +103,11 @@ def verify_file(source, work):
         shutil.copytree(
             NATIVE / "testng", project, ignore=shutil.ignore_patterns("target")
         )
-        expected_failure([shutil.which("mvn"), "-B", "-ntp", "test"], project, env)
-        junit = ET.parse(project / "target/surefire-reports/TEST-ReportsTest.xml")
+        report = project / "target/surefire-reports/TEST-ReportsTest.xml"
+        expected_failure(
+            [shutil.which("mvn"), "-B", "-ntp", "test"], project, env, report
+        )
+        junit = ET.parse(report)
         outcomes = [
             (
                 case.get("name"),
@@ -126,6 +135,7 @@ def verify_file(source, work):
             ],
             source.parent,
             env,
+            report,
         )
         data = json.loads(report.read_bytes())
         outcomes = [
@@ -159,7 +169,7 @@ def verify_file(source, work):
                 "--reporter=json",
                 f"--outputFile={report}",
             ]
-        expected_failure(["node", *args], source.parent, env)
+        expected_failure(["node", *args], source.parent, env, report)
         data = json.loads(report.read_bytes())
         outcomes = [
             (case["title"], case["status"])

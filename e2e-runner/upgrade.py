@@ -133,7 +133,7 @@ def fixture(environment, action, state=None, revision=None):
         raise ProofFailure("Fixture did not return exactly one sanitized evidence record")
     result = json.loads(lines[0])
     if result.get("ok") is not True:
-        evidence = {key: result.get(key) for key in ("stage", "error_code", "error_type", "requests")}
+        evidence = {key: result.get(key) for key in ("stage", "error_code", "error_type", "requests", "diagnostic")}
         raise ProofFailure("Fixture oracle failed: " + str(result.get("stage", action))
                            + " (" + str(result.get("error_code", "oracleMismatch"))
                            + "; " + str(result.get("error_type", "unknown")) + ")", evidence)
@@ -278,7 +278,8 @@ def main():
               "target": args.target, "started": timestamp(), "status": "RUNNING", "steps": []}
     environment = None
     stage = "preflight"
-    persist = lambda: write_report(out, report)
+    def persist():
+        write_report(out, report)
     persist()
     try:
         prior, candidate, evidence = verify_baseline(args.previous, args.candidate,

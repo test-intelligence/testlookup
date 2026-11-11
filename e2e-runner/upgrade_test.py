@@ -193,3 +193,41 @@ def test_baseline_resolver_rejects_incomplete_paginated_metadata(monkeypatch):
     monkeypatch.setattr(api, "json", lambda *args, **kwargs: [{"total_count": 2, "artifacts": [{"id": 1}]}])
     with pytest.raises(upgrade_baseline.BaselineBlocked, match="pagination was incomplete"):
         api.artifacts("example/project")
+
+
+@pytest.mark.parametrize("target", ["podman", "kubernetes"])
+def test_changed_snapshot_aborts_before_any_destructive_store_command(target, monkeypatch):
+    if target == "podman":
+        from upgrade_podman import PodmanUpgrade as Adapter
+        guard = "_require_quiesced"
+    else:
+        from upgrade_kubernetes import KubernetesUpgrade as Adapter
+        guard = "_guard_stores"
+    adapter = object.__new__(Adapter)
+    adapter._snapshot = {name: {"path": path, "size": 10, "sha256": "a" * 64}
+                         for name, path in Adapter.STORES.items()}
+    mutations = []
+    monkeypatch.setattr(adapter, guard, lambda: None)
+    monkeypatch.setattr(adapter, "_archive_metadata", lambda name, path: {"path": path, "size": 10, "sha256": "b" * 64})
+    monkeypatch.setattr(adapter, "_store_exec", lambda *args: mutations.append(args))
+    with pytest.raises(RuntimeError, match="checksum"):
+        adapter.restore()
+    assert mutations == []
+
+
+def test_uncertain_namespace_creation_cannot_delete_an_unowned_namespace(monkeypatch):
+    from upgrade_kubernetes import KubernetesUpgrade
+    adapter = object.__new__(KubernetesUpgrade)
+    adapter._cleaned = False
+    adapter.uid = None
+    adapter.namespace = "testlookup-e2e-upgrade-" + "a" * 12
+    adapter._namespace_create_attempted = False
+    calls = []
+    def observed(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"metadata": {
+            "uid": "someone-else", "labels": {"testlookup.io/e2e-run": "someone-else"}}}))
+    monkeypatch.setattr(adapter, "_k", observed)
+    with pytest.raises(RuntimeError, match="ownership"):
+        adapter.cleanup()
+    assert not any("delete" in args for args in calls)

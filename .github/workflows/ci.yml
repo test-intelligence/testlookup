@@ -223,6 +223,11 @@ jobs:
       - run: python -m pip install pytest PyYAML
       - name: Verify release job and upgrade decision
         run: python -m pytest e2e-runner/test_policy.py e2e-runner/test_merge_upgrade.py e2e-runner/upgrade_test.py e2e-runner/test_release_campaign.py
+      - name: Build the reporter loaded by the Playwright fixture config
+        working-directory: client/js
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
       - name: Install native producer frameworks
         working-directory: e2e-runner/reporters/js
         env:
@@ -1737,7 +1742,7 @@ jobs:
           git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
           extra_inputs=()
           if [[ "$IMAGE_NAME" == "e2e-runner" ]]; then
-            extra_inputs=(e2e-runner/ frontend/package.json frontend/package-lock.json cli/ mcp/ frontend/tests/release/ frontend/playwright.release.config.ts samples/ scripts/release/release_manifest.py)
+            extra_inputs=(e2e-runner/ frontend/package.json frontend/package-lock.json cli/ mcp/ client/ frontend/tests/release/ frontend/playwright.release.config.ts samples/ scripts/release/release_manifest.py)
           fi
           if git diff --quiet "$PR_BASE_SHA" HEAD -- "${extra_inputs[@]}" \
             "$CONTEXT/Dockerfile" "$CONTEXT/requirements*.txt" \

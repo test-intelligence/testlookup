@@ -274,6 +274,12 @@ def merge(
     report = json.loads((directory / "results.json").read_bytes())
     cases = report["cases"]
     rows = [c for c in cases if c["id"] == CASE]
+    ordinary = [c for c in cases if c["id"] != CASE]
+    reported_failure = bool(report["errors"]) or (
+        any(c["status"] != "PASSED" for c in ordinary)
+        and evaluate(ordinary, report["errors"], report["tier"])[0] != "GO"
+    )
+    report["suite_exit"] = suite_exit
     try:
         require(
             len(rows) == 1 and rows[0]["priority"] == "P0",
@@ -354,7 +360,7 @@ def merge(
         if rows and rows[0]["status"] == "BLOCKED":
             rows[0]["evidence"] = reason
         report["errors"].append(reason)
-    if suite_exit:
+    if suite_exit and not (suite_exit == 1 and reported_failure):
         report["errors"].append(
             "The ordinary suite or its launcher exited unsuccessfully."
         )

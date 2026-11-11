@@ -62,6 +62,34 @@ class PolicyUnsupported(AssertionError):
     """The required baseline policy oracle cannot be exercised."""
 
 
+class ObjectOracleMismatch(AssertionError):
+    """An object mismatch with one-way, field-allowlisted diagnostics."""
+
+    def __init__(self, code, expected, observed, names, expected_digest=None, observed_digest=None):
+        allowed_codes = {"objectReadFailure", "objectUnexpectedPresent", "objectBodyMismatch",
+                         "objectAttributeMismatch", "objectAclCapabilityMismatch", "bucketAclMismatch"}
+        allowed_fields = {"ReadStatus", "Present", "BodySHA256", "Size", "ObjectACLSupported", "BucketACL",
+                          "ContentType", "ETag", "Metadata", "CacheControl", "ChecksumCRC32", "ChecksumCRC32C",
+                          "ChecksumCRC64NVME", "ChecksumSHA1", "ChecksumSHA256", "ChecksumType"}
+        assert code in allowed_codes and set(names) <= allowed_fields
+        super().__init__(code)
+        self.code = code
+        self.diagnostic = {
+            "mismatch_fields": sorted(names),
+            "expected_sha256": expected_digest or sha(canonical(expected)),
+            "observed_sha256": observed_digest or sha(canonical(observed)),
+            "field_sha256": {name: {
+                "expected_sha256": sha(canonical({"present": name in expected, "value": expected.get(name)})),
+                "observed_sha256": sha(canonical({"present": name in observed, "value": observed.get(name)})),
+            } for name in sorted(names)},
+        }
+        # Callers may provide an already-computed body/ACL digest, but no raw
+        # value can accidentally become a diagnostic through that shortcut.
+        for key in ("expected_sha256", "observed_sha256"):
+            value = self.diagnostic[key]
+            assert isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
 def stage(value):
     global _stage
     _stage = value
@@ -276,7 +304,7 @@ def seed(client):
 
 def verify_object(value, absent=False):
     from botocore.exceptions import ClientError
-    stage("object.absent" if absent else "object.preserved")
+    stage("object.absent.lookup" if absent else "object.lookup")
     try:
         client = s3_client()
         response = client.get_object(Bucket=value["bucket"], Key=value["key"])
@@ -284,13 +312,38 @@ def verify_object(value, absent=False):
         code = str(error.response.get("Error", {}).get("Code", ""))
         if absent and code in {"NoSuchKey", "404", "NotFound"}:
             return
-        raise AssertionError("object_missing_or_unreadable") from None
-    assert not absent
+        raise ObjectOracleMismatch("objectReadFailure", {"ReadStatus": "readable"},
+                                   {"ReadStatus": code}, ["ReadStatus"]) from None
+    if absent:
+        stage("object.absent")
+        raise ObjectOracleMismatch("objectUnexpectedPresent", {"Present": False},
+                                   {"Present": True}, ["Present"])
+    stage("object.body")
     content = response["Body"].read()
-    assert len(content) == value["size"] and sha(content) == value["sha256"]
-    assert object_attributes(response) == value["attributes"]
-    assert value["object_acl_supported"] is False
-    assert bucket_acl_hash(client, value["bucket"]) == value["bucket_acl_sha256"]
+    expected_body = {"Size": value["size"], "BodySHA256": value["sha256"]}
+    observed_body = {"Size": len(content), "BodySHA256": sha(content)}
+    changed = [name for name in expected_body if expected_body[name] != observed_body[name]]
+    if changed:
+        raise ObjectOracleMismatch("objectBodyMismatch", expected_body, observed_body, changed,
+                                   expected_digest=value["sha256"], observed_digest=observed_body["BodySHA256"])
+    stage("object.attributes")
+    expected_attributes = value["attributes"]
+    observed_attributes = object_attributes(response)
+    changed = [name for name in set(expected_attributes) | set(observed_attributes)
+               if (name in expected_attributes) != (name in observed_attributes)
+               or expected_attributes.get(name) != observed_attributes.get(name)]
+    if changed:
+        raise ObjectOracleMismatch("objectAttributeMismatch", expected_attributes, observed_attributes, changed)
+    stage("object.object_acl_capability")
+    if value["object_acl_supported"] is not False:
+        raise ObjectOracleMismatch("objectAclCapabilityMismatch", {"ObjectACLSupported": False},
+                                   {"ObjectACLSupported": value["object_acl_supported"]}, ["ObjectACLSupported"])
+    stage("object.bucket_acl")
+    observed_acl = bucket_acl_hash(client, value["bucket"])
+    if observed_acl != value["bucket_acl_sha256"]:
+        raise ObjectOracleMismatch("bucketAclMismatch", {"BucketACL": value["bucket_acl_sha256"]},
+                                   {"BucketACL": observed_acl}, ["BucketACL"],
+                                   expected_digest=value["bucket_acl_sha256"], observed_digest=observed_acl)
 
 
 def verify_mongo(value, absent=False):
@@ -386,8 +439,11 @@ try:
 except Exception as _error:
     _result = {"ok": False, "action": _REQUEST["action"], "stage": _stage,
                "error_type": type(_error).__name__,
-               "error_code": "policyUnsupported" if isinstance(_error, PolicyUnsupported) else "oracleMismatch",
+               "error_code": ("policyUnsupported" if isinstance(_error, PolicyUnsupported)
+                              else _error.code if isinstance(_error, ObjectOracleMismatch) else "oracleMismatch"),
                "requests": _requests}
+    if isinstance(_error, ObjectOracleMismatch):
+        _result["diagnostic"] = _error.diagnostic
 print("UPGRADE_JSON=" + json.dumps(_result, separators=(",", ":")))
 sys.exit(0 if _result["ok"] else 1)
 '''

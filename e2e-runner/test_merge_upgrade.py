@@ -208,6 +208,25 @@ def test_kubernetes_namespace_and_registry_child_image(inputs):
     assert execute(inputs, platform="kubernetes")[0] != 0
 
 
+def test_nonzero_ordinary_exit_preserves_the_measured_p1_defect(inputs):
+    _, _, ordinary, _ = inputs
+    row = next(c for c in ordinary["cases"] if c["id"] == "TL-TCM-001")
+    row.update(status="FAILED", evidence="Measured recurrence mismatch.")
+    code, report = execute(inputs, suite_exit=1)
+    assert code == 1 and report["verdict"] == "NO_GO" and report["suite_exit"] == 1
+    assert report["errors"] == [] and "P1" in report["reason"]
+    assert next(c for c in report["cases"] if c["id"] == "TL-TCM-001") == row
+    assert (
+        next(c for c in report["cases"] if c["id"] == merger.CASE)["status"] == "PASSED"
+    )
+
+
+def test_unexplained_ordinary_exit_blocks_an_otherwise_passing_release(inputs):
+    code, report = execute(inputs, suite_exit=1)
+    assert code == 1 and report["verdict"] == "NO_GO" and report["suite_exit"] == 1
+    assert "launcher exited" in report["errors"][0]
+
+
 @pytest.mark.parametrize(
     "fault",
     (

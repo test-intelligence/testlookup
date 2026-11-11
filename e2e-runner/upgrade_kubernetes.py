@@ -5,7 +5,6 @@ projections and image identities leave the namespace; credentials never do.
 """
 from __future__ import annotations
 
-import datetime as dt
 import json
 from pathlib import Path
 import re
@@ -62,6 +61,9 @@ class KubernetesUpgrade:
         self._indexes = {}
         self._migration_number = 0
         self._last_job = None
+        self._archive_uid = None
+        self._archive_node = None
+        self._archive_claim_uid = None
         self.settings = {key: secrets.token_hex(32) for key in (
             "POSTGRES_PASSWORD MONGO_PASSWORD REDIS_PASSWORD APP_SECRET_KEY "
             "JWT_SECRET_KEY MINIO_ACCESS_KEY MINIO_SECRET_KEY WEBHOOK_SECRET "
@@ -126,7 +128,7 @@ class KubernetesUpgrade:
             if (item["metadata"].get("namespace") != self.namespace or
                     item["kind"] not in {"Secret", "ServiceAccount", "ConfigMap", "Service",
                                          "Deployment", "PersistentVolumeClaim", "ResourceQuota",
-                                         "LimitRange", "NetworkPolicy", "Job"}):
+                                         "LimitRange", "NetworkPolicy", "Job", "Pod"}):
                 raise KubernetesUpgradeError("Manifest escapes the owned namespace")
         self._k("apply", "-f", "-", input=yaml.safe_dump_all(items, sort_keys=False))
 
@@ -198,24 +200,6 @@ class KubernetesUpgrade:
                         container["command"] = ["sh", "-eu", "-c", 'exec valkey-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy volatile-lru --requirepass "$REDIS_PASSWORD"']
                         for probe in ("readinessProbe", "livenessProbe"):
                             container[probe]["exec"]["command"] = ["sh", "-c", 'VALKEYCLI_AUTH="$REDIS_PASSWORD" REDISCLI_AUTH="$REDIS_PASSWORD" valkey-cli ping']
-                if service == "minio":
-                    # VersityGW's BusyBox tar omits the user.* attributes that
-                    # hold S3 ACLs, checksums and response metadata. GNU tar in
-                    # the already verified prior backend preserves them. The
-                    # helper shares only this owned PVC and a pod-local /tmp.
-                    pod.setdefault("volumes", []).append({"name": "upgrade-snapshots", "emptyDir": {}})
-                    pod["containers"][0].setdefault("volumeMounts", []).append(
-                        {"name": "upgrade-snapshots", "mountPath": "/tmp/upgrade"})
-                    pod["containers"].append({
-                        "name": "archive", "image": self.prior["images"]["backend"]["source_ref"],
-                        "command": ["sh", "-eu", "-c", "mkdir -p /tmp/upgrade; exec sleep infinity"],
-                        "volumeMounts": [{"name": "data", "mountPath": "/data"},
-                                         {"name": "upgrade-snapshots", "mountPath": "/tmp/upgrade"}],
-                        "securityContext": {"runAsUser": 0, "runAsGroup": 0, "runAsNonRoot": False,
-                                            "allowPrivilegeEscalation": False,
-                                            "capabilities": {"drop": ["ALL"], "add": ["CHOWN", "FOWNER", "DAC_OVERRIDE"]}},
-                        "resources": {"requests": {"cpu": "50m", "memory": "64Mi"},
-                                      "limits": {"cpu": "1", "memory": "1Gi"}}})
                 (applications if service in self.APP_SERVICES else infrastructure).append(item)
             else:
                 infrastructure.append(item)
@@ -273,6 +257,7 @@ class KubernetesUpgrade:
         infrastructure, _ = self._render(self.prior)
         self._apply(infrastructure)
         self._wait_ready(self.DATA_SERVICES)
+        self._create_archive_helper()
         self._quiesced = True
         if not self.migrate(self.prior):
             raise KubernetesUpgradeError("Prior-release database initialization failed")
@@ -293,6 +278,46 @@ class KubernetesUpgrade:
         if result.returncode and len(classified) != 1:
             raise KubernetesUpgradeError("Upgrade helper failed; credential-bearing diagnostics suppressed")
         return result.stdout
+
+    def _create_archive_helper(self):
+        minio = [pod for pod in self._get("pods")["items"]
+                 if pod["metadata"].get("labels", {}).get("app") == "testlookup-minio"
+                 and not pod["metadata"].get("deletionTimestamp")]
+        if len(minio) != 1:
+            raise KubernetesUpgradeError("Object-store node identity is ambiguous")
+        self._archive_node = minio[0]["spec"]["nodeName"]
+        self._archive_claim_uid = self._get("pvc", "minio-data")["metadata"]["uid"]
+        helper = {"apiVersion": "v1", "kind": "Pod", "metadata": {
+            "name": "upgrade-archive", "namespace": self.namespace,
+            "labels": {"app": "testlookup-upgrade-archive", "testlookup.io/e2e-run": self.namespace}},
+            "spec": {"nodeName": self._archive_node, "automountServiceAccountToken": False,
+                     "restartPolicy": "Always", "containers": [{
+                         "name": "archive", "image": self.prior["images"]["backend"]["source_ref"],
+                         "command": ["sh", "-eu", "-c", "mkdir -p /tmp/upgrade; exec sleep infinity"],
+                         "volumeMounts": [{"name": "data", "mountPath": "/data"},
+                                          {"name": "upgrade-snapshots", "mountPath": "/tmp/upgrade"}],
+                         "securityContext": {"runAsUser": 0, "runAsGroup": 0, "runAsNonRoot": False,
+                                             "allowPrivilegeEscalation": False,
+                                             "capabilities": {"drop": ["ALL"], "add": ["CHOWN", "FOWNER", "DAC_OVERRIDE"]}},
+                         "resources": {"requests": {"cpu": "50m", "memory": "64Mi"},
+                                       "limits": {"cpu": "1", "memory": "1Gi"}}}],
+                     "volumes": [{"name": "data", "persistentVolumeClaim": {"claimName": "minio-data"}},
+                                 {"name": "upgrade-snapshots", "emptyDir": {}}]}}
+        self._apply([helper])
+        current = self._get("pod", "upgrade-archive")
+        self._archive_uid = current["metadata"]["uid"]
+        deadline = time.monotonic() + 180
+        while time.monotonic() < deadline:
+            current = self._get("pod", "upgrade-archive")
+            statuses = current.get("status", {}).get("containerStatuses", [])
+            if len(statuses) == 1 and statuses[0].get("ready"):
+                self._write("archive-helper.json", {"namespace": self.namespace, "uid": self._archive_uid,
+                            "node": self._archive_node, "claim": "minio-data",
+                            "claim_uid": self._archive_claim_uid,
+                            "image": self.prior["images"]["backend"]["source_ref"]})
+                return
+            time.sleep(2)
+        raise KubernetesUpgradeError("Owned archive helper did not become ready")
 
     def _registry(self, reference):
         if reference not in self._indexes:
@@ -400,22 +425,36 @@ class KubernetesUpgrade:
             claim = self._get("pvc", service + "-data")
             if claim["metadata"].get("labels", {}).get("testlookup.io/e2e-run") != self.namespace:
                 raise KubernetesUpgradeError("Datastore claim ownership changed")
-            if service == "minio":
-                archive = next((c for c in pod["containers"] if c["name"] == "archive"), None)
-                expected = self.prior["images"]["backend"]["source_ref"]
-                if (not archive or archive["image"] != expected or
-                        not any(m["name"] == "data" and m["mountPath"] == "/data" for m in archive["volumeMounts"]) or
-                        volumes.get("upgrade-snapshots", {}).get("emptyDir") != {}):
-                    raise KubernetesUpgradeError("Owned GNU archive helper binding changed")
-                statuses = [c for p in self._get("pods")["items"]
-                            if p["metadata"].get("labels", {}).get("app") == "testlookup-minio"
-                            for c in p.get("status", {}).get("containerStatuses", []) if c["name"] == "archive"]
-                if len(statuses) != 1 or statuses[0].get("imageID", "").rsplit("@", 1)[-1] not in [expected.rsplit("@", 1)[-1], *self._registry(expected)]:
-                    raise KubernetesUpgradeError("GNU archive helper running digest mismatch")
+        self._guard_archive()
+
+    def _guard_archive(self):
+        self._guard()
+        helper = self._get("pod", "upgrade-archive")
+        pod = helper["spec"]
+        archive = pod["containers"][0]
+        volumes = {v["name"]: v for v in pod.get("volumes", [])}
+        expected = self.prior["images"]["backend"]["source_ref"]
+        claim = self._get("pvc", "minio-data")
+        if (helper["metadata"]["uid"] != self._archive_uid or
+                helper["metadata"].get("labels", {}).get("testlookup.io/e2e-run") != self.namespace or
+                pod.get("nodeName") != self._archive_node or pod.get("automountServiceAccountToken") is not False or
+                archive["name"] != "archive" or archive["image"] != expected or
+                any("hostPath" in volume for volume in volumes.values()) or
+                volumes.get("data", {}).get("persistentVolumeClaim", {}).get("claimName") != "minio-data" or
+                claim["metadata"]["uid"] != self._archive_claim_uid or
+                claim["metadata"].get("labels", {}).get("testlookup.io/e2e-run") != self.namespace or
+                not any(m["name"] == "data" and m["mountPath"] == "/data" for m in archive["volumeMounts"]) or
+                volumes.get("upgrade-snapshots", {}).get("emptyDir") != {}):
+            raise KubernetesUpgradeError("Owned GNU archive helper identity or storage binding changed")
+        statuses = helper.get("status", {}).get("containerStatuses", [])
+        if len(statuses) != 1 or statuses[0].get("imageID", "").rsplit("@", 1)[-1] not in [expected.rsplit("@", 1)[-1], *self._registry(expected)]:
+            raise KubernetesUpgradeError("GNU archive helper running digest mismatch")
 
     def _store_exec(self, service, source):
         self._guard()
-        return self._k("-n", self.namespace, "exec", "deployment/testlookup-" + service,
+        if service == "minio":
+            self._guard_archive()
+        return self._k("-n", self.namespace, "exec", "pod/upgrade-archive" if service == "minio" else "deployment/testlookup-" + service,
                        "-c", "archive" if service == "minio" else service,
                        "--", "sh", "-eu", "-c", source, timeout=180).stdout
 
@@ -462,8 +501,8 @@ raw=json.dumps(sorted(rows,key=lambda row:row['path']),sort_keys=True,separators
 print(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'entries':len(rows),'files':files,'xattrs':xattrs,
                   'fields':'relative paths, types, modes, uid/gid, nanosecond mtimes, file bodies, link targets and all xattrs'}))
 '''
-        self._guard()
-        result = self._k("-n", self.namespace, "exec", "-i", "deployment/testlookup-minio",
+        self._guard_archive()
+        result = self._k("-n", self.namespace, "exec", "-i", "pod/upgrade-archive",
                          "-c", "archive", "--", "python", "-", input=source, timeout=180)
         return json.loads(result.stdout)
 
@@ -480,7 +519,7 @@ print(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'entries':len(rows),'
         self._store_exec("minio", f'tar --format=pax --xattrs --xattrs-include="*" --acls --numeric-owner -C /data -cpf {self.STORES["minio"]} .')
         self._snapshot = {key: self._archive_metadata(key, path) for key, path in self.STORES.items()}
         self._snapshot["redis"] = "Not snapshotted; flushed during restore."
-        self._snapshot["object_metadata"] = "GNU tar preserves xattrs, POSIX ACLs, numeric ownership and modes; archive stays in the owned object-store pod /tmp."
+        self._snapshot["object_metadata"] = "GNU tar preserves xattrs, POSIX ACLs, numeric ownership and modes; archive stays in the pinned owned helper pod /tmp."
         if self._object_tree_metadata() != object_tree:
             raise KubernetesUpgradeError("Object filesystem changed while quiesced snapshot was captured")
         self._snapshot["object_tree"] = object_tree
@@ -500,10 +539,40 @@ print(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'entries':len(rows),'
                      "resources": {"requests": {"cpu": "100m", "memory": "256Mi"}, "limits": {"cpu": "1", "memory": "1Gi"}}}
         if args is not None:
             container["args"] = args
+        # A newly scheduled Pod can start before its Service/CNI path settles,
+        # even when the datastore Deployment was ready for an earlier Pod.
+        # Probe only an authenticated SELECT here; never retry migrations or
+        # application mutations after they have started.
+        wait_source = '''import asyncio,os,time
+import asyncpg
+from sqlalchemy.engine import make_url
+url=make_url(os.environ['DATABASE_URL'])
+assert (url.host,url.database,url.username)==('testlookup-postgres','testlookup','testlookup_user')
+async def main():
+    deadline=time.monotonic()+120
+    while time.monotonic()<deadline:
+        connection=None
+        try:
+            connection=await asyncpg.connect(host=url.host,port=url.port or 5432,user=url.username,
+                password=url.password,database=url.database,timeout=5,ssl=False)
+            assert await connection.fetchval('SELECT 1')==1
+            print('Owned database authenticated readiness verified')
+            return
+        except (OSError,asyncpg.PostgresError,TimeoutError):
+            await asyncio.sleep(2)
+        finally:
+            if connection is not None: await connection.close()
+    raise RuntimeError('Owned database authenticated readiness timed out')
+asyncio.run(main())
+'''
+        wait_container = {"name": "wait-for-postgres", "image": container["image"],
+                          "command": ["python", "-c", wait_source],
+                          "envFrom": container["envFrom"], "resources": container["resources"]}
         job = {"apiVersion": "batch/v1", "kind": "Job", "metadata": {"name": name, "namespace": self.namespace,
                "labels": {"testlookup.io/e2e-run": self.namespace}}, "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 600,
                "template": {"metadata": {"labels": {"app": "testlookup-backend", "testlookup.io/e2e-run": self.namespace}},
                "spec": {"automountServiceAccountToken": False, "restartPolicy": "Never", "containers": [container],
+                        "initContainers": [wait_container],
                         "securityContext": {"runAsUser": 1000, "runAsGroup": 1000, "runAsNonRoot": True}}}}}
         self._apply([job])
         deadline = time.monotonic() + 630
@@ -518,10 +587,13 @@ print(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'entries':len(rows),'
                                  "reason": c.get("state", {}).get("terminated", {}).get("reason")}
                                 for p in pods for c in p.get("status", {}).get("containerStatuses", [])]
                 if not succeeded:
-                    diagnostic = self._k("-n", self.namespace, "logs", "job/" + name,
-                                         "-c", "migrate", check=False)
+                    diagnostics = []
+                    for name_of_container in ("wait-for-postgres", "migrate"):
+                        diagnostic = self._k("-n", self.namespace, "logs", "job/" + name,
+                                             "-c", name_of_container, check=False)
+                        diagnostics.append(name_of_container + "\n" + diagnostic.stdout + diagnostic.stderr)
                     (self.out / (name + "-private.log")).write_text(
-                        self._redact(diagnostic.stdout + diagnostic.stderr), encoding="utf-8")
+                        self._redact("\n".join(diagnostics)), encoding="utf-8")
                 self._write(name + ".json", {"job": name, "source_sha": manifest["source_sha"],
                             "backend_image": container["image"], "command": command, "succeeded": succeeded,
                             "conditions": current.get("status", {}).get("conditions", []),
@@ -583,6 +655,18 @@ print(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'entries':len(rows),'
         for key, path in self.STORES.items():
             if self._archive_metadata(key, path) != self._snapshot[key]:
                 raise KubernetesUpgradeError("Snapshot checksum or size changed; nothing restored")
+        # POSIX gateways retain their backend working-directory inode. Stop
+        # the server before replacing its tree and start it against the new
+        # tree only after the independent filesystem oracle matches.
+        self._k("-n", self.namespace, "scale", "deployment/testlookup-minio", "--replicas=0")
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            if not [pod for pod in self._get("pods")["items"]
+                    if pod["metadata"].get("labels", {}).get("app") == "testlookup-minio"]:
+                break
+            time.sleep(2)
+        else:
+            raise KubernetesUpgradeError("Owned object server did not stop before offline restore")
         self._store_exec("postgres", 'test "$POSTGRES_DB" = testlookup; test "$POSTGRES_USER" = testlookup_user; '
                          'export PGPASSWORD="$POSTGRES_PASSWORD"; '
                          'dropdb --if-exists --force --username "$POSTGRES_USER" "$POSTGRES_DB"; '
@@ -604,10 +688,13 @@ print(json.dumps({'sha256':hashlib.sha256(raw).hexdigest(),'entries':len(rows),'
         self._write("restored-object-tree.json", observed_tree)
         if observed_tree != self._snapshot["object_tree"]:
             raise KubernetesUpgradeError("Restored object filesystem bodies or metadata differ from snapshot baseline")
+        self._k("-n", self.namespace, "scale", "deployment/testlookup-minio", "--replicas=1")
+        self._wait_ready(("minio",))
         self._migrated_ref = self.prior["images"]["backend"]["source_ref"]
         self._failed_migration = False
         self._write("restore.json", {"restored": True, "checksums_validated": True, "redis_flushed": True,
-                                     "downgrade_used": False, "namespace": self.namespace})
+                                     "downgrade_used": False, "offline_object_restore": True,
+                                     "object_gateway_restarted": True, "namespace": self.namespace})
 
     def cleanup(self):
         if self._cleaned:
