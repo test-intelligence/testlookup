@@ -13,7 +13,7 @@ import SuiteDetailAdvanced from './SuiteDetailAdvanced'
 import QuietSectionBoundary from './QuietSectionBoundary'
 
 const reportBoundaryError = vi.hoisted(() => vi.fn())
-vi.mock('@/utils/errorReporting', () => ({ reportBoundaryError }))
+vi.mock('@/utils/errorReporting', () => ({ reportBoundaryError, setTelemetrySuppressed: () => {} }))
 const gone = vi.hoisted(() => () => ({
   default: () => {
     throw new Error('chunk gone')

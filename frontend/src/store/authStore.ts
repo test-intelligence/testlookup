@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { api } from '../services/api';
+import { setTelemetrySuppressed } from '../utils/errorReporting';
 import { resetReportScopeOnLogout } from './logoutReset';
 
 export interface User {
@@ -225,3 +226,7 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
+
+// The public read-only demo refuses telemetry like every other write, so a
+// demo session sends none (utils/errorReporting.ts explains the direction).
+setTelemetrySuppressed(() => useAuthStore.getState().demoSession);

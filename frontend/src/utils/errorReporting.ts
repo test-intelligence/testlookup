@@ -13,7 +13,19 @@
 
 import type { Metric } from 'web-vitals'
 
-import { useAuthStore } from '../store/authStore'
+/**
+ * Whether this session sends no telemetry. The public read-only demo refuses
+ * every write, this report included, so the auth store registers its demo
+ * check here (`store/authStore.ts`). The dependency runs that way on purpose:
+ * importing the store would pull in the API client, which reads `window` as it
+ * loads, and error boundaries import this module lazily, sometimes after a
+ * test's environment is gone.
+ */
+let _telemetrySuppressed: () => boolean = () => false
+
+export function setTelemetrySuppressed(check: () => boolean): void {
+  _telemetrySuppressed = check
+}
 
 // When VITE_API_BASE_URL is unset, use a same-origin relative URL so the
 // reporter follows the page through any ingress (k8s, gcp, aws, homelab).
@@ -178,7 +190,7 @@ export function flush(): void {
   // at the Cloudflare edge and in the app), so a send from a demo session can
   // only fail and print a refusal in the console. Drop the batch rather than
   // hold it for a retry that is refused the same way.
-  if (useAuthStore.getState().demoSession) {
+  if (_telemetrySuppressed()) {
     _batch.errors.length = 0
     _batch.vitals.length = 0
     _droppedEvents = 0

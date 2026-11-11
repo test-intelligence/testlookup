@@ -16,7 +16,7 @@ const onTTFB = vi.fn()
 const onINP = vi.fn()
 
 vi.mock('web-vitals', () => ({ onCLS, onLCP, onFCP, onTTFB, onINP }))
-vi.mock('../utils/errorReporting', () => ({ reportWebVital: vi.fn() }))
+vi.mock('../utils/errorReporting', () => ({ reportWebVital: vi.fn(), setTelemetrySuppressed: vi.fn() }))
 
 describe('useWebVitals', () => {
   it('registers the v5 Core Web Vitals (no FID)', async () => {
