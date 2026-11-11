@@ -52,6 +52,13 @@ locally by default.
 
 ### Added
 
+- **OpenSSF Scorecard and launch drafts** (R4 GitHub adoption track; branch `feat/r4-github-adoption`).
+  `.github/workflows/scorecard.yml` scores the repository on `main`, weekly and on branch-protection changes,
+  publishes the result for the README badge and uploads SARIF to code scanning (actions pinned by SHA; a pull
+  request that edits it runs it without publishing). `docs/maintainers/launch/` holds drafts for the owner to
+  publish by hand: 11 starter issues, the 0.1.0 release notes, a 1280 × 640 social preview, the organisation
+  profile README, and the list of settings only the owner can change.
+
 - **Public read-only demo** (branch `feat/public-demo-mode`; runbook `docs/operations/public-demo.md`). A
   fixed-price VM behind a Cloudflare tunnel, with no inbound port and no per-request billing, so an attack can slow
   the demo but cannot raise the bill. Writes are blocked three times: a Cloudflare rule, the app, and a nightly
@@ -1371,6 +1378,22 @@ locally by default.
 
 ### Changed
 
+- **README and first run, reordered for evaluators; Kubernetes pulls the published images; one version**
+  (R4 GitHub adoption track; branch `feat/r4-github-adoption`).
+  - The README shows the current bracketed wordmark, a hero image and the run command in its first two screens,
+    with a Demo link and the evaluation default `install.sh` with `TL_PROFILE=demo` (a measured 0.95 GB of
+    linux/amd64 images). Install options are Option A (published images) and Option B (clone), as on the website.
+    GETTING_STARTED.md tells the same story with one sign-in table. "Built by" is a placeholder for the
+    maintainer card.
+  - The README screenshots are the six gap-free captures of 11 November 2026 (`docs/product/screenshots/README.md`);
+    the retired black-pill logo and three older crops are removed, and the app's link-unfurl card moves to
+    `og-card-2.png` with the current wordmark.
+  - `k8s/base` pulled `testlookup/*:0.0.1` from Docker Hub, a name nobody had claimed and a tag never published.
+    It now names `ghcr.io/test-intelligence/testlookup/*:v0.1.0`, and every overlay, `scripts/deploy-k8s.sh`, the
+    CI dev deploy, the image-drift guard and the homelab tag guard key images by that name.
+  - `APP_VERSION`, the k8s version label and ConfigMap, the OpenAPI version, `VITE_APP_VERSION` and the frontend
+    package version now equal `VERSION` (0.1.0). Test: `tests/regression/test_version_lockstep.py`.
+
 - **Background work runs on Celery 5.7 and redis-py 8** (wave W47, OR-10 (9); branch `feat/df-redis8-20261110`;
   Dependabot #5). `redis` moves from 5.2.1 to 8.1.0, `celery[redis]` from 5.6.3 to 5.7.0 and `kombu` from 5.6.2 to
   5.7.0. kombu 5.6 capped redis below 6.5, so the three move together.
@@ -2008,6 +2031,13 @@ locally by default.
 
 ### Fixed
 
+- **Docs said there was no SAML single logout and no Kubernetes backup** (R4 gap 9). IdP-initiated SLO has
+  existed since W20 (`/api/v1/sso/slo`); `docs/operations/integrations.md` documents it, and the administration
+  guide and the in-app guide say it works one way. The same paragraphs said OIDC was not supported; it is.
+  `user-guide/compliance.md` said three times that backups are Compose-only, while `k8s/components/backup` runs a
+  daily CronJob with retention, a restore Job and alerts. GETTING_STARTED.md named a CLI wheel version that does
+  not exist (the CLI is 0.4.0); it now reads the name from `/api/v1/sdk/cli/info`.
+
 - **The frontend image builds again after the Vitest 5 upgrade** (found by the homelab deploy of W45 / #354; branch
   `fix/vitest5-picomatch-override-20261110`). Vitest 5 depends on picomatch 4, but the frontend's npm `overrides` pin
   picomatch 2.3.2 everywhere except `vite` and `tinyglobby`. `npm install` quietly installed picomatch 4 for Vitest
@@ -2464,6 +2494,15 @@ locally by default.
   `retention_activation_nudge`.
 
 ### Security
+
+- **The PRD heading parser could be stalled for minutes by one long line** (CodeQL py/polynomial-redos
+  #57-#64). A PRD may be 200,000 characters on one line, and a heading line of 20,000 tabs ran for more than ten
+  minutes. The heading, list-item, exit-criteria, link and emphasis patterns in
+  `release_phase_generator.py` are now linear; the trimming they did moves into Python. Full-size adversarial
+  lines parse in under 0.3 s, and the PRD fixtures draft identically. Test:
+  `tests/regression/test_release_phase_parser_is_linear.py`. The quality gate's test-runner pattern (py/redos
+  #65) skips `VAR=value` prefixes in a loop instead of a repeated group. `backend/requirements-ragas.txt`
+  records the four chromadb advisories it inherits from `requirements.txt` (no fixed release; client-only use).
 
 - **pypdf 6.21.4 and follow-redirects 1.16.2.** The backend's PDF text
   extraction (CVE-2026-119203..119209, high: denial of service through

@@ -4,6 +4,8 @@
 
 This section is for people who maintain TestLookup or take over an area of it: an onboarding order, an acceptance checklist for a new environment, where changes belong, and how the documentation itself is kept correct. Contribution mechanics (branches, tests, DCO sign-off, review) are in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
+Drafts for the public launch (starter issues, the 0.1.0 release notes, the social preview and the organisation profile), with the settings only the owner can change, are in [launch/](launch/README.md).
+
 ## Onboarding order
 
 1. Read the [product overview](../product/overview.md), [user journeys](../product/workflows.md) and [state behavior](../product/behavior.md).
