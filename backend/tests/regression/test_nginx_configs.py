@@ -282,11 +282,11 @@ def test_the_parser_sees_add_header_inheritance() -> None:
 
 # ── og:image origin (W25b HYG-09) ───────────────────────────────────────────
 #
-# index.html's og:image is "__TESTLOOKUP_ORIGIN__/og-card.png"; unfurlers need
+# index.html's og:image is "__TESTLOOKUP_ORIGIN__/og-card-2.png"; unfurlers need
 # an absolute URL, so `location = /index.html` replaces the placeholder with
 # $og_origin. $host comes from the client's Host header, so the origin is
 # reflected only when it is a plain host name; anything else becomes "" and
-# the tag degrades to a relative /og-card.png, never to an injected string.
+# the tag degrades to a relative /og-card-2.png, never to an injected string.
 
 OG_PLACEHOLDER = "__TESTLOOKUP_ORIGIN__"
 OG_HOST_PATTERN = "~^https?://[a-z0-9.-]+$"

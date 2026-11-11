@@ -97,7 +97,7 @@ The installer prints the admin login once at the end; the password is stored in 
 | `TL_PROFILE` | none | Adds a Compose profile: `demo` (seed data) or `local-llm` (Ollama and ChromaDB) |
 | `TL_NO_UP` | `0` | `1` downloads and generates `.env` but does not start anything |
 
-Pass them before `bash`, for example `curl -fsSL .../install.sh | TL_PROFILE=demo bash`.
+Pass them before `bash`, for example `curl -fsSL .../install.sh | TL_PROFILE=demo bash`. For an evaluation, `TL_PROFILE=demo` is the documented default (README, [GETTING_STARTED.md](../../GETTING_STARTED.md)): without it the first dashboard is empty until you send a report. For a team instance, leave it out. The images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026).
 
 ### Image tags
 
