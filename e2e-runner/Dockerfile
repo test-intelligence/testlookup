@@ -7,7 +7,9 @@ RUN test "$(node --version)" = v26.13.0 && test "$(python3 --version)" = "Python
     && rm -rf /var/lib/apt/lists/* && python3 -m venv /opt/release-venv
 ENV PATH="/opt/release-venv/bin:$PATH" PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
 COPY frontend/package.json frontend/package-lock.json ./frontend/
-RUN cd frontend && npm ci --no-audit --no-fund
+# The suite invokes the locked Playwright CLI with node. npm is build-only.
+RUN cd frontend && npm ci --no-audit --no-fund && npm cache clean --force \
+    && rm -rf /usr/lib/node_modules/npm && rm -f /usr/bin/npm /usr/bin/npx
 COPY cli ./cli
 COPY mcp ./mcp
 COPY e2e-runner/requirements.txt e2e-runner/constraints.txt ./e2e-runner/
