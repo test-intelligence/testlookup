@@ -13,6 +13,8 @@
 
 import type { Metric } from 'web-vitals'
 
+import { useAuthStore } from '../store/authStore'
+
 // When VITE_API_BASE_URL is unset, use a same-origin relative URL so the
 // reporter follows the page through any ingress (k8s, gcp, aws, homelab).
 // VITE_API_URL is also accepted as a legacy alias.
@@ -171,6 +173,17 @@ function _transmit(payload: string): boolean {
  */
 export function flush(): void {
   if (_batch.errors.length === 0 && _batch.vitals.length === 0 && _droppedEvents === 0) return
+
+  // The public read-only demo refuses every write, this report included (403
+  // at the Cloudflare edge and in the app), so a send from a demo session can
+  // only fail and print a refusal in the console. Drop the batch rather than
+  // hold it for a retry that is refused the same way.
+  if (useAuthStore.getState().demoSession) {
+    _batch.errors.length = 0
+    _batch.vitals.length = 0
+    _droppedEvents = 0
+    return
+  }
 
   const errors = [..._batch.errors]
   const vitals = [..._batch.vitals]

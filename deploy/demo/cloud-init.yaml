@@ -20,7 +20,8 @@
 # It does NOT start the demo: that needs the Cloudflare tunnel token, which
 # never goes into user data. After the server is up:
 #   ssh root@<server>   then   sudo -iu demo   then   cd /opt/testlookup
-#   scripts/demo/demo.sh setup
+#   DEMO_IMAGES=pull scripts/demo/demo.sh setup   (or build: see the runbook)
+#   scripts/demo/demo.sh token                    (stores the tunnel token)
 # ============================================================================
 package_update: true
 package_upgrade: true

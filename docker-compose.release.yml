@@ -380,6 +380,17 @@ services:
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc
       - WORKER_METRICS_PORT=9100
+    # The backend image's own HEALTHCHECK probes the API on :8000, which a
+    # worker does not serve, so without this every worker read "unhealthy".
+    # The worker_ready signal writes this file once the worker is connected to
+    # the broker and consuming (the sentinel the Kubernetes readiness probe
+    # uses too); worker_shutdown removes it.
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/celery-worker-ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       backend:
         condition: service_healthy
@@ -420,6 +431,13 @@ services:
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc
       - WORKER_METRICS_PORT=9100
+    # See the worker's healthcheck: the image's default probes the API port.
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/celery-worker-ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     depends_on:
       backend:
         condition: service_healthy
@@ -437,6 +455,16 @@ services:
     environment:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+    # Not the image's API probe (beat serves no port): the scheduler process
+    # is alive. Beat writes no ready file; the Kubernetes liveness probe makes
+    # the same check. Exec form on purpose: under CMD-SHELL the `sh -c` line
+    # itself contains the pattern, so pgrep would always find a match.
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "celery -A app.worker.celery_app beat"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       - redis
     networks:

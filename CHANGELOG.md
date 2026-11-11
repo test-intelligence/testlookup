@@ -89,6 +89,28 @@ locally by default.
   - Pinned by `tests/regression/test_demo_mode.py` (write rule, middleware through the real app, every demo-login
     branch), `test_demo_compose.py`, the session-serialization, forwarded-IP and worker-topology guards, and
     frontend tests for the toast, banner and sign-in.
+- **Public demo: fixes from the first deployment** (branch `fix/demo-deploy-followups`). The demo went live on a
+  4 GB Hetzner VM on 2026-11-11 and hit these:
+  - `scripts/demo/demo.sh` lowered the worker concurrency to 2 without lowering the declared PostgreSQL connection
+    total, so `db-budget-check` exited 1 ("Compose fleet requires 19 connections but declares 23") and nothing
+    else started. `setup` now writes `PG_COMPOSE_REQUIRED_CONNECTIONS=19` beside the concurrencies.
+  - Reading a key absent from `.env` failed under `pipefail`, which ended the nightly reset just before it logged
+    `reset: done` (the heartbeat lookup). A missing key now reads as empty.
+  - New `demo.sh pull` and `DEMO_IMAGES=pull`: use the published GHCR images instead of building on the VM, which
+    a 4 GB, 2-vCPU server does slowly if at all. New `demo.sh token` reads the Cloudflare tunnel token from a
+    hidden prompt into `.env` only and starts the tunnel.
+  - `docker-compose.release.yml`: `worker`, `worker-children` and `beat` read "unhealthy" on every release-image
+    install, because they inherited the backend image's health check, which probes the API on :8000. The workers
+    now check the ready file the app writes once connected to the broker (as the Kubernetes probe does), and beat
+    checks its own process.
+  - A demo session no longer sends frontend telemetry, which the demo refuses (403) like every other write.
+  - Runbook: rule 1 answers with the app's `demo_read_only` JSON (the default HTML block page made the app show
+    "Request failed with status code 403"); the browser-check rule stays off, because every API call from a tab
+    without Cloudflare's clearance cookie failed with 403; rate limits block for one minute; the tunnel token is
+    copied in the owner's own browser, never by running the install command.
+  - Pinned by `tests/regression/test_demo_compose.py` (the demo settings through the budget validator and the
+    startup gate; the missing-key read, token, pull and image-mode paths of `demo.sh` under bash),
+    `test_worker_readiness_sentinel.py` (the Compose health checks) and `errorReporting.test.ts`.
 - **Observability evidence on Run › Timing** (wave W39, STRAT-07 first slice; branch
   `feat/df-evidence-timeline-20261108`). A new card at the bottom of the Timing tab shows the Splunk, OpenShift and
   Prometheus evidence the AI analysis already fetched for the run on one time axis: the newest deep analysis'

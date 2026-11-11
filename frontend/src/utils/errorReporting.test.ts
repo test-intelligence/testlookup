@@ -36,6 +36,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
+import { useAuthStore } from '../store/authStore'
+
 import { flush, reportBoundaryError, reportWebVital } from './errorReporting'
 
 /** Chromium's per-origin beacon quota. Bodies at or above this get refused. */
@@ -198,5 +200,37 @@ describe('vitals still work', () => {
   it('flush is a no-op when nothing is buffered', () => {
     flush()
     expect(sent.length).toBe(0)
+  })
+})
+
+describe('the public read-only demo', () => {
+  // The demo refuses every write (403 at the edge and in the app), this
+  // report included, so a demo session's sends could only fail.
+  afterEach(() => {
+    useAuthStore.setState({ demoSession: false })
+  })
+
+  it('sends nothing from a demo session', () => {
+    useAuthStore.setState({ demoSession: true })
+    pushBoundaryError(1)
+    reportWebVital({ name: 'LCP', value: 1234.5, rating: 'good', delta: 1234.5 } as never)
+    flush()
+    expect(sent.length, 'a demo session sent telemetry the demo refuses').toBe(0)
+  })
+
+  it('drops the demo batch instead of holding it for later', () => {
+    useAuthStore.setState({ demoSession: true })
+    pushBoundaryError(1)
+    flush()
+    useAuthStore.setState({ demoSession: false })
+    flush()
+    expect(sent.length, 'events captured during the demo session were sent afterwards').toBe(0)
+  })
+
+  it('still sends from an ordinary session', () => {
+    useAuthStore.setState({ demoSession: false })
+    pushBoundaryError(1)
+    flush()
+    expect(deliveredErrorCount()).toBe(1)
   })
 })
