@@ -7,6 +7,8 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ## [Unreleased] — 0.1.0
 
+- Added a release-test foundation with a disposable Podman candidate stack, Chromium and Python client checks, and independent HTML, Markdown and JSON reports for incomplete or failing runs.
+
 The first public release. TestLookup is a self-hosted test-intelligence
 platform: it ingests test results from CI and live test runs, explains
 failures, tracks flakiness and decides release readiness, with AI that runs

@@ -1,0 +1,86 @@
+name: Release functional verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full upstream main commit with a verified image manifest
+        required: true
+        type: string
+      tier:
+        description: Test tier
+        required: true
+        default: regression
+        type: choice
+        options: [smoke, regression, full]
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+      tier:
+        type: string
+        default: regression
+    outputs:
+      manifest_sha256:
+        value: ${{ jobs.regression.outputs.manifest_sha256 }}
+
+permissions:
+  actions: read
+  contents: read
+  packages: read
+
+jobs:
+  verified:
+    uses: ./.github/workflows/require-verified-sha.yml
+    with:
+      source_sha: ${{ inputs.source_sha }}
+  regression:
+    needs: verified
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ inputs.tier == 'full' && 240 || 100 }}
+    outputs:
+      manifest_sha256: ${{ steps.attest.outputs.manifest_sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Retrieve verified manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RUN: ${{ needs.verified.outputs.ci_run_id }}
+          ARTIFACT: ${{ needs.verified.outputs.artifact_name }}
+          SOURCE_SHA: ${{ needs.verified.outputs.source_sha }}
+        run: |
+          gh run download "$CI_RUN" --name "$ARTIFACT" --dir verified
+          python3 scripts/release/release_manifest.py validate --manifest verified/release-manifest.json --expected-source-sha "$SOURCE_SHA"
+      - name: Verify candidate on Podman
+        env:
+          TIER: ${{ inputs.tier }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/tl-e2e"
+          "$RUNNER_TEMP/tl-e2e/bin/pip" install PyYAML==6.0.3
+          "$RUNNER_TEMP/tl-e2e/bin/python" e2e-runner/launch.py --manifest verified/release-manifest.json --tier "$TIER" --out release-results
+      - name: Bind the passing decision to the tested artifact
+        id: attest
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          digest = hashlib.sha256(Path("verified/release-manifest.json").read_bytes()).hexdigest()
+          result = json.loads(Path("release-results/results.json").read_bytes())
+          manifest = json.loads(Path("verified/release-manifest.json").read_bytes())
+          if (result["verdict"] != "GO" or result["manifest_hash"] != digest
+                  or result["observed_build"]["revision"] != manifest["source_sha"]):
+              raise SystemExit("Candidate and functional decision do not match")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              print("manifest_sha256=" + digest, file=output)
+          PY
+      - name: Retain public release report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-functional-evidence
+          if-no-files-found: error
+          path: |
+            release-results/index.html
+            release-results/summary.md
+            release-results/results.json

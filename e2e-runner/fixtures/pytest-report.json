@@ -1,0 +1,96 @@
+{
+  "created": 1794382717.0892045,
+  "duration": 0.19167184829711914,
+  "exitcode": 1,
+  "root": ".",
+  "environment": {},
+  "summary": {
+    "passed": 1,
+    "failed": 1,
+    "skipped": 1,
+    "total": 3,
+    "collected": 3
+  },
+  "tests": [
+    {
+      "nodeid": "e2e-runner/fixtures/producer.py::test_report_pass",
+      "lineno": 4,
+      "outcome": "passed",
+      "keywords": [
+        "test_report_pass",
+        "producer.py",
+        "fixtures",
+        "e2e-runner",
+        "testlookup_end_to_end_tests",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00030180002795532346,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.00028879998717457056,
+        "outcome": "passed"
+      },
+      "teardown": {
+        "duration": 0.0001303000026382506,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "e2e-runner/fixtures/producer.py::test_report_failure",
+      "lineno": 8,
+      "outcome": "failed",
+      "keywords": [
+        "test_report_failure",
+        "producer.py",
+        "fixtures",
+        "e2e-runner",
+        "testlookup_end_to_end_tests",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00024309998843818903,
+        "outcome": "passed"
+      },
+      "call": {
+        "duration": 0.000987500010523945,
+        "outcome": "failed",
+        "crash": {
+          "path": "e2e-runner/fixtures/producer.py",
+          "lineno": 10,
+          "message": "AssertionError: assert 'observed' == 'expected'\n  \n  - expected\n  + observed"
+        },
+        "longrepr": "def test_report_failure():\n>       assert \"observed\" == \"expected\"\nE       AssertionError: assert 'observed' == 'expected'\nE         \nE         - expected\nE         + observed\n\ne2e-runner\\fixtures\\producer.py:10: AssertionError"
+      },
+      "teardown": {
+        "duration": 0.00016769999638199806,
+        "outcome": "passed"
+      }
+    },
+    {
+      "nodeid": "e2e-runner/fixtures/producer.py::test_report_skipped",
+      "lineno": 12,
+      "outcome": "skipped",
+      "keywords": [
+        "test_report_skipped",
+        "skip",
+        "pytestmark",
+        "producer.py",
+        "fixtures",
+        "e2e-runner",
+        "testlookup_end_to_end_tests",
+        ""
+      ],
+      "setup": {
+        "duration": 0.00010639999527484179,
+        "outcome": "skipped",
+        "longrepr": "('e2e-runner/fixtures/producer.py', 13, 'Skipped: Fixture includes a deliberately skipped upstream test')"
+      },
+      "teardown": {
+        "duration": 9.029998909682035e-05,
+        "outcome": "passed"
+      }
+    }
+  ]
+}

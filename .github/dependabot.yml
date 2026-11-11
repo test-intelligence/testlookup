@@ -103,6 +103,16 @@ updates:
       interval: "weekly"
 
   # ── Workflows ─────────────────────────────────────────────────────────────
+  - package-ecosystem: "docker"
+    directory: "/e2e-runner"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "pip"
+    directory: "/e2e-runner"
+    schedule:
+      interval: "weekly"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

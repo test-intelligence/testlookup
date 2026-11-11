@@ -117,7 +117,9 @@ def test_release_workflow_gates_promotion_without_adding_pr_scan():
     ci = (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "  scan-verified-images:" in release
-    assert "needs: [resolve-tag, verify, scan-verified-images]" in release
+    promote = release.split("\n  promote:", 1)[1]
+    assert "needs: [resolve-tag, verify, scan-verified-images, functional-verification]" in promote
+    assert "needs.functional-verification.outputs.manifest_sha256" in promote
     assert "python3 scripts/release/scan_release_images.py" in release
     assert "if: always()" in release
     assert "if-no-files-found: error" in release

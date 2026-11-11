@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: tl-e2e-
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 5400
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: release-tests
+          image: ${RUNNER_DIGEST_REF}
+          args: ["--out", "/reports/${RUN_ID}", "--tier", "regression"]
+          env:
+            - {name: TL_TARGET, value: homelab}
+            - {name: TL_WEB, value: "${TL_WEB}"}
+            - {name: TL_API, value: "${TL_API}"}
+            - {name: TL_MANIFEST, value: /candidate/release-manifest.json}
+          envFrom:
+            - secretRef: {name: "${TEST_SECRET_NAME}"}
+          resources:
+            requests: {cpu: "1", memory: 2Gi}
+            limits: {cpu: "2", memory: 4Gi}
+          volumeMounts:
+            - {name: reports, mountPath: /reports}
+            - {name: manifest, mountPath: /candidate, readOnly: true}
+            - {name: shm, mountPath: /dev/shm}
+      volumes:
+        - {name: reports, persistentVolumeClaim: {claimName: "${RESULTS_PVC}"}}
+        - {name: manifest, configMap: {name: "${MANIFEST_CONFIGMAP}"}}
+        - {name: shm, emptyDir: {medium: Memory, sizeLimit: 1Gi}}

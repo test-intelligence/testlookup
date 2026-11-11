@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<robot generator="Robot 7.3.2 (Python 3.12.10 on win32)" generated="2026-11-11T01:38:32.963880" rpa="false" schemaversion="5">
+<suite id="s1" name="Cases" source="cases.robot">
+<test id="s1-t1" name="Producer observed pass" line="2">
+<kw name="Should Be Equal" owner="BuiltIn">
+<arg>same</arg>
+<arg>same</arg>
+<doc>Fails if the given objects are unequal.</doc>
+<status status="PASS" start="2026-11-11T01:38:32.998109" elapsed="0.001050"/>
+</kw>
+<status status="PASS" start="2026-11-11T01:38:32.998109" elapsed="0.001050"/>
+</test>
+<test id="s1-t2" name="Producer observed failure" line="5">
+<kw name="Should Be Equal" owner="BuiltIn">
+<msg time="2026-11-11T01:38:32.999159" level="FAIL">observed != expected</msg>
+<arg>observed</arg>
+<arg>expected</arg>
+<doc>Fails if the given objects are unequal.</doc>
+<status status="FAIL" start="2026-11-11T01:38:32.999159" elapsed="0.000515">observed != expected</status>
+</kw>
+<status status="FAIL" start="2026-11-11T01:38:32.999159" elapsed="0.000515">observed != expected</status>
+</test>
+<test id="s1-t3" name="Producer observed skip" line="8">
+<kw name="Skip" owner="BuiltIn">
+<msg time="2026-11-11T01:38:32.999674" level="SKIP">Deliberately skipped input leaf</msg>
+<arg>Deliberately skipped input leaf</arg>
+<doc>Skips the rest of the current test.</doc>
+<status status="SKIP" start="2026-11-11T01:38:32.999674" elapsed="0.000000">Deliberately skipped input leaf</status>
+</kw>
+<status status="SKIP" start="2026-11-11T01:38:32.999674" elapsed="0.000000">Deliberately skipped input leaf</status>
+</test>
+<status status="FAIL" start="2026-11-11T01:38:32.965454" elapsed="0.034742"/>
+</suite>
+<statistics>
+<total>
+<stat pass="1" fail="1" skip="1">All Tests</stat>
+</total>
+<tag>
+</tag>
+<suite>
+<stat name="Cases" id="s1" pass="1" fail="1" skip="1">Cases</stat>
+</suite>
+</statistics>
+<errors>
+</errors>
+</robot>
