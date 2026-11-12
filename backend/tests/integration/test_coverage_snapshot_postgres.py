@@ -24,6 +24,16 @@ Proved:
    ``unknown`` labels), the catalogue suite, ``canonical_id: null`` without a
    catalogue row, ``total`` beyond the page.
 
+**One day for the whole module.** "Today" is read once, when :func:`world`
+builds the world, and ``coverage_snapshot_service.utc_today`` answers that day
+to every caller (the seed, the task, the history route and the assertions)
+until the module ends. It used to be a module constant, read at import: CI run
+43122547657 collected this module at 23:53:25 UTC and ran the task at
+00:00:40, so the task backfilled the 30 days ending 11-11 while the assertions
+expected those ending 11-10. :func:`test_a_run_that_crosses_midnight_utc_answers_the_module_s_day`
+crosses midnight on purpose; ``-p tests.integration.midnight_replay`` replays
+the CI run (collect before midnight, run after it) on demand.
+
 Requires ``TESTLOOKUP_POSTGRES_TEST_DSN`` migrated to head (a throwaway
 database). Redis is ``REDIS_URL`` when set, else ``fakeredis``.
 """
@@ -75,14 +85,11 @@ def _at(day: date, hours: float = 0) -> datetime:
     return datetime.combine(day, time.min, tzinfo=UTC) + timedelta(hours=hours)
 
 
-TODAY = datetime.now(UTC).date()
-D = TODAY - timedelta(days=1)
-
-
 # ── the world ──────────────────────────────────────────────────────────────
 
 
-async def _seed(tag: str) -> SimpleNamespace:
+async def _seed(tag: str, today: date) -> SimpleNamespace:
+    """The world around the module's day: ``today`` and D, the day before it."""
     from app.core.security import create_access_token
     from app.models.postgres import (
         CanonicalTestCase,
@@ -96,10 +103,12 @@ async def _seed(tag: str) -> SimpleNamespace:
         UserRole,
     )
 
+    TODAY, D = today, today - timedelta(days=1)  # the docstring's names
     engine, sessions = _sessions()
     ids = SimpleNamespace(
         p=uuid.uuid4(), r=uuid.uuid4(), q=uuid.uuid4(),
         member=uuid.uuid4(), outsider=uuid.uuid4(), canon={}, runs={},
+        today=TODAY, day=D,
     )
     async with sessions() as db:
         for pid, label in ((ids.p, "p"), (ids.r, "r"), (ids.q, "q")):
@@ -198,12 +207,24 @@ async def _teardown(ids) -> None:
 
 @pytest.fixture(scope="module")
 def world():
+    """The seeded world, and the module's ONE "today": read once here from the
+    product's own clock, and pinned there so that the task and the routes
+    answer the same day as the assertions however late the module runs."""
     _dsn()
-    ids = _run(_seed(uuid.uuid4().hex[:10]))
+    from app.services import coverage_snapshot_service as svc
+
+    real_utc_today = svc.utc_today
+    today = real_utc_today()
+    pin = pytest.MonkeyPatch()
+    pin.setattr(svc, "utc_today", lambda now=None: today if now is None else real_utc_today(now))
     try:
-        yield ids
+        ids = _run(_seed(uuid.uuid4().hex[:10], today))
+        try:
+            yield ids
+        finally:
+            _run(_teardown(ids))
     finally:
-        _run(_teardown(ids))
+        pin.undo()
 
 
 async def _rows(pid: uuid.UUID) -> list[Any]:
@@ -286,7 +307,7 @@ def test_a_snapshot_counts_the_catalogue_and_the_30_days_ending_its_day(world):
     async def case():
         engine, sessions = _sessions()
         async with sessions() as db:
-            values = await svc.snapshot_values(db, world.p, D)
+            values = await svc.snapshot_values(db, world.p, world.day)
         await engine.dispose()
         return values
 
@@ -308,6 +329,7 @@ def test_a_snapshot_counts_the_catalogue_and_the_30_days_ending_its_day(world):
 
 
 def test_the_first_night_backfills_30_days_and_a_second_run_rewrites_yesterday(world, monkeypatch):
+    TODAY = world.today
     first = _task(monkeypatch)
     assert first["failed"] == 0 and first["rows"] >= 30
     rows = _run(_rows(world.r))
@@ -354,6 +376,7 @@ def test_the_first_night_backfills_30_days_and_a_second_run_rewrites_yesterday(w
 def test_the_stored_columns_carry_the_snapshot_s_values(world, monkeypatch):
     from app.services import coverage_snapshot_service as svc
 
+    D = world.day
     rows = {row.snapshot_day: row for row in _run(_rows(world.p))}
     if D not in rows:
         _task(monkeypatch)
@@ -388,7 +411,7 @@ def test_the_unique_index_refuses_a_second_row_for_a_day(world, monkeypatch):
                 await db.execute(text(
                     "INSERT INTO coverage_snapshots (id, project_id, snapshot_day, total_suites, total_tests, "
                     "automated_count) VALUES (:id, :pid, :day, 0, 0, 0)"
-                ), {"id": uuid.uuid4(), "pid": world.p, "day": D})
+                ), {"id": uuid.uuid4(), "pid": world.p, "day": world.day})
                 await db.commit()
         finally:
             await engine.dispose()
@@ -401,6 +424,7 @@ def test_the_unique_index_refuses_a_second_row_for_a_day(world, monkeypatch):
 
 
 def test_history_answers_the_contract_s_keys_for_the_stored_days(world, monkeypatch):
+    TODAY = world.today
     if len(_run(_rows(world.r))) < 30:
         _task(monkeypatch)
     resp = _run(_get(HISTORY, [("project_id", str(world.r)), ("days", "30")], world.headers["member"]))
@@ -419,6 +443,37 @@ def test_history_answers_the_contract_s_keys_for_the_stored_days(world, monkeypa
     assert body["meta"]["definitions"]["scope"].startswith("A snapshot is project-wide")
     short = _run(_get(HISTORY, [("project_id", str(world.r)), ("days", "7")], world.headers["member"])).json()
     assert len(short["points"]) == 7
+
+
+def test_a_run_that_crosses_midnight_utc_answers_the_module_s_day(world, monkeypatch):
+    """CI run 43122547657: collected at 23:53:25 UTC, this module ran its task
+    at 00:00:40, and ``TODAY`` (then read at import) was a day behind the
+    task's. Cross the next midnight UTC on purpose: with the Python clock 40
+    seconds into the next day, the task and the history route still answer the
+    module's day, because each takes "today" from ``utc_today`` alone -- the
+    one clock :func:`world` pins. A second clock read on either path would
+    leak the new day in, and this test would fail."""
+    from app.core.security import create_access_token
+    from tests.integration.midnight_replay import ticking_clock
+
+    today = world.today
+    after_midnight = datetime.combine(today + timedelta(days=1), time(0, 0, 40), tzinfo=UTC)
+    with ticking_clock(after_midnight):
+        assert datetime.now(UTC).date() == today + timedelta(days=1), "the clock crossed midnight"
+        result = _task(monkeypatch)
+        # A token minted on the moved clock: the seed's may be past its 12 hours there.
+        headers = {"Authorization": f"Bearer {create_access_token(str(world.member))}"}
+        # days=29: a cache key no earlier request in this module filled.
+        resp = _run(_get(HISTORY, [("project_id", str(world.r)), ("days", "29")], headers))
+    assert result["failed"] == 0
+    days = [row.snapshot_day for row in _run(_rows(world.r))]
+    assert days == [today - timedelta(days=n) for n in range(30, 0, -1)], "no row for the module's today"
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["first_snapshot_day"] == (today - timedelta(days=30)).isoformat()
+    assert [p["day"] for p in body["points"]] == [
+        (today - timedelta(days=n)).isoformat() for n in range(29, 0, -1)
+    ]
 
 
 def test_history_before_the_first_snapshot_is_not_measured(world):
