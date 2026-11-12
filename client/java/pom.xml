@@ -32,7 +32,7 @@
              2.18.10: CVE-2026-68497 (databind; Trivy fs HIGH, 2026-09-29).
              2.18.11: CVE-2026-89407/89425 (core), CVE-2026-91776/91777 (databind; Trivy fs HIGH, 2026-10-01).
              2.22.4: Dependabot #30 (minor / patch group, W33). -->
-        <jackson.version>2.22.4</jackson.version>
+        <jackson.version>2.23.0</jackson.version>
         <!-- One property drives Jupiter AND the platform through junit-bom
              (dependencyManagement below): 5.x pairs Jupiter 5.N with platform
              1.N, 6.x versions both alike, and the BOM knows either pairing.
