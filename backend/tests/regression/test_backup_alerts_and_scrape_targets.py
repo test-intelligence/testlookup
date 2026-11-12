@@ -371,7 +371,7 @@ def test_every_overlay_with_the_backup_renders_the_restricted_egress(overlay: Pa
 
 
 def test_the_backup_component_is_included_by_the_in_cluster_store_overlays() -> None:
-    assert {p.name for p in _overlays_with_backup()} >= {"homelab", "openshift-artifactory"}
+    assert {p.name for p in _overlays_with_backup()} >= {"k3s", "openshift-artifactory"}
 
 
 # ── QA-B45-P5 ────────────────────────────────────────────────────────────────

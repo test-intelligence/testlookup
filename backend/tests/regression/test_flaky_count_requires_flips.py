@@ -1,6 +1,6 @@
 """A persistent regression must not be counted as "flaky".
 
-Found by exploratory testing against the live homelab (2026-08-07). The seeded
+Found by exploratory testing against a live reference K3s install (2026-08-07). The seeded
 project has exactly ONE genuinely alternating test, yet
 ``GET /api/v1/metrics/summary`` reported ``flaky_test_count: 5``.
 
@@ -77,7 +77,7 @@ DDL = [
        )""",
 ]
 
-# The homelab seed, verbatim. p=PASSED f=FAILED e=BROKEN s=SKIPPED.
+# The reference K3s install seed, verbatim. p=PASSED f=FAILED e=BROKEN s=SKIPPED.
 STATUS = {"p": "PASSED", "f": "FAILED", "e": "BROKEN", "s": "SKIPPED"}
 
 SEEDED = {
@@ -157,7 +157,7 @@ async def session():
     await engine.dispose()
 
 
-class TestSeededHomelabShapes:
+class TestSeededReferenceInstallShapes:
     @pytest.mark.asyncio
     async def test_only_genuinely_alternating_tests_are_counted(self, session):
         """The bug, end to end: 5 reported, 2 real."""
@@ -239,7 +239,7 @@ class TestPreexistingBehaviourPreserved:
 class TestDeletedProjectsDoNotVote:
     """DELETE /projects/{id} flips is_active and leaves the history in place.
 
-    Measured on the live homelab 2026-08-16: the unscoped count reported 27
+    Measured on a live reference K3s install 2026-08-16: the unscoped count reported 27
     against a truth of 24, the extra three coming from projects the user had
     already deleted. Same class as the 24h failure counter beside it and as
     _period_stats before them both.

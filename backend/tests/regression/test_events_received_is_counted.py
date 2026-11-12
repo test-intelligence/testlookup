@@ -1,6 +1,6 @@
 """A field published to consumers must be written by something.
 
-Found by driving a controlled live-stream session against the homelab: eight
+Found by driving a controlled live-stream session against the reference K3s install: eight
 test_result events plus run_start/run_complete, all accepted::
 
     POST /api/v1/stream/events/batch -> 202 {"accepted": 10, ...}

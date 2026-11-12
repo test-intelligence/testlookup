@@ -2,7 +2,7 @@
 
 Found by sweeping for the class F-075 exposed: a shared helper with hand-rolled
 inline copies that no longer agree with it. Both defects below were reproduced
-against the live homelab on real data (Checkout Service runs 101 and 102).
+against a live reference K3s install on real data (Checkout Service runs 101 and 102).
 
 **1. Suite scoping over-matched.**
 

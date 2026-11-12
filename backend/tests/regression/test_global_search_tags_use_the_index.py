@@ -2,7 +2,7 @@
 
 Re-audit H9. Keyword search over test cases was one OR across five
 predicates, and two of them each defeated the three trigram indexes on
-``test_cases`` -- measured on the homelab against 50,510 rows (plans in
+``test_cases`` -- measured on the reference K3s install against 50,510 rows (plans in
 migration 0166):
 
 * ``TestRun.primary_suite_name`` sat inside the same OR. A bitmap OR only

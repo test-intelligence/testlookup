@@ -12,7 +12,7 @@ authoritative per-row ``suite_name`` AND a run-level ``primary_suite_name``
 naming just *one* of those suites, so filtering to that suite matched every row
 in the run via the second arm.
 
-Measured on the live homelab, project 2aefa4fa (Checkout Service), runs
+Measured on a live reference K3s install, project 2aefa4fa (Checkout Service), runs
 101+102 — ``trigger_source=api``, ``primary_suite_name='api'``, 12 cases each
 across suites api/regression/smoke::
 

@@ -7,7 +7,7 @@ dated the minute the seed ran. Every analytics window on
 all thirty days as "the last 7 days", while the flaky list, windowed on
 ``test_case_history.created_at`` (the run's start), did not. One /failures row
 read "7" failures over "failed 3 of 7 executions" (the UX redesign's browser
-E2E pass, 2026-10-08; every seeded install, the homelab demo included). The
+E2E pass, 2026-10-08; every seeded install, the reference K3s install demo included). The
 seed now dates each test case at its run's start; this repairs the rows it
 already wrote.
 

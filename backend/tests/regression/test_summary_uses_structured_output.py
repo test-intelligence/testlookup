@@ -2,7 +2,7 @@
 
 The measurement
 ---------------
-Homelab, 2026-08-22, over 1,557 LLM calls:
+Reference K3s install, 2026-08-22, over 1,557 LLM calls:
 
     summary              796 calls   57 schema failures   7.16%
     root_cause_analysis  294 calls    0

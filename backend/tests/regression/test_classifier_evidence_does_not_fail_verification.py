@@ -18,7 +18,7 @@ errors, and reported ``evidence_reference_invalid``. The critic's
 ``metric_data_quality`` check failed, verification failed closed, and the
 decision report never published.
 
-Measured on the homelab: 31 of 31 recorded attempts failed on this single
+Measured on the reference K3s install: 31 of 31 recorded attempts failed on this single
 check, every one of them beginning ~20 minutes after the F-17 image rolled out.
 The run inspected carried 4 references, all ``classifier_input``, and zero
 ``tool_observation``.
@@ -126,7 +126,7 @@ def _flag_codes(state: dict) -> list[str]:
 
 
 def test_classifier_only_evidence_does_not_report_invalid_references():
-    """The exact shape that failed 31 of 31 attempts on the homelab."""
+    """The exact shape that failed 31 of 31 attempts on the reference K3s install."""
     codes = _flag_codes(_state([_classifier_ref(), _classifier_ref("db timeout")]))
 
     assert "evidence_reference_invalid" not in codes, (

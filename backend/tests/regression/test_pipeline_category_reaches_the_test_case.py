@@ -5,7 +5,7 @@
 ``ai_analysis``. Failure Analysis, the chart rows, digests, failure groups and
 My Failures read ``test_cases.failure_category``, so a pipeline-analysed run
 read "100% Unknown" there while Run Intelligence showed INFRASTRUCTURE for the
-same six failures. Homelab: 69 pipeline analyses, 0 categories on their test
+same six failures. Reference K3s install: 69 pipeline analyses, 0 categories on their test
 cases. Human corrections had the same gap.
 """
 from __future__ import annotations

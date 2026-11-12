@@ -5,7 +5,7 @@
 Analysis, the trend/chart rows, digests, failure groups and My Failures read
 ``test_cases.failure_category``, so every pipeline-analysed failure read
 "Unknown" there while Run Intelligence showed its real category (E2E
-2026-10-10: 69 such analyses on the homelab, none on their test cases). The
+2026-10-10: 69 such analyses on the reference K3s install, none on their test cases). The
 pipeline now mirrors it (``services/failure_category_sync``); this repairs the
 rows it already wrote.
 

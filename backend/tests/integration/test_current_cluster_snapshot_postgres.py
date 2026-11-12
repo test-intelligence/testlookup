@@ -4,7 +4,7 @@
 pipeline run (investigations reference those rows), so a run analysed twice
 holds every cluster id twice. Readers that selected by ``test_run_id`` alone
 listed each cluster twice, double-counted project metrics, and a lookup by
-``cluster_id`` raised ``MultipleResultsFound`` (homelab, 2026-10-14: three
+``cluster_id`` raised ``MultipleResultsFound`` (reference K3s install, 2026-10-14: three
 runs). ``cluster_snapshot.is_current_snapshot()`` keeps each run's newest set
 and leaves the older one in the table.
 """

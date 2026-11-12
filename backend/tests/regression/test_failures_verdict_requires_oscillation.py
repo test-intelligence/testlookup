@@ -1,6 +1,6 @@
 """The /failures headline must not call a stable regression an oscillating flake.
 
-Found by exploratory testing against the live homelab (2026-08-07), driving the
+Found by exploratory testing against a live reference K3s install (2026-08-07), driving the
 real SPA. The FAILURE VERDICT card on ``/failures`` rendered:
 
     FAILURE VERDICT   Flaky - 5 tests intermittent
@@ -71,7 +71,7 @@ DDL = [
 
 STATUS = {"p": "PASSED", "f": "FAILED", "e": "BROKEN"}
 
-# The seeded homelab project, verbatim.
+# The seeded reference K3s install project, verbatim.
 SEEDED = {
     "test_payment_timeout": "pffpp",    # 2 flips - genuinely intermittent
     "test_currency_rounding": "ppeep",  # 2 flips - infra blip that recovered
@@ -155,7 +155,7 @@ async def _auto_names(session) -> set[str]:
     return {i["test_name"] for i in items if i.get("source") == "auto"}
 
 
-class TestTheHomelabCase:
+class TestTheReferenceInstallCase:
     @pytest.mark.asyncio
     async def test_only_oscillating_tests_are_reported(self, session):
         await _seed(session, SEEDED)

@@ -1,6 +1,6 @@
 """A test result the server cannot interpret must not vanish into a green run.
 
-Reproduced end-to-end against the live homelab before this fix, on a throwaway
+Reproduced end-to-end against a live reference K3s install before this fix, on a throwaway
 project. Four events were streamed to ``POST /api/v1/stream/ingest``; three
 ``PASSED`` and one ``"FAIL"`` — a plausible typo for ``FAILED``, and the exact
 spelling several frameworks use natively. ``LiveEvent.status`` is a free-form

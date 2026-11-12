@@ -14,7 +14,7 @@ spec:
           image: ${RUNNER_DIGEST_REF}
           args: ["--out", "/reports/${RUN_ID}", "--tier", "regression"]
           env:
-            - {name: TL_TARGET, value: homelab}
+            - {name: TL_TARGET, value: k3s}
             - {name: TL_PLATFORM, value: kubernetes}
             - {name: TL_WEB, value: "${TL_WEB}"}
             - {name: TL_API, value: "${TL_API}"}

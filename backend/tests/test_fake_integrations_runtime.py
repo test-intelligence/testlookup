@@ -6,7 +6,7 @@ answer the documented shape to an accepted call and refuse what the real
 service refuses (a bad or missing credential, an unknown repo / sha /
 namespace / pod / project, an empty search). Every W10 backend test drives the
 real code against it through ``httpx.ASGITransport``, and the local demo and
-the homelab mock pod run this same file, so its contract is pinned here.
+the reference K3s install mock pod run this same file, so its contract is pinned here.
 
 The request log records which service a call was for, whether its credential
 was right (``auth``) -- never the credential itself -- and, for GitHub, which

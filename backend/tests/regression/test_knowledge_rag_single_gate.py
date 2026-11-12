@@ -1,6 +1,6 @@
 """Regression: Knowledge RAG had three gates reading three different stores.
 
-Measured on the live homelab (2026-08-16)::
+Measured on a live reference K3s install (2026-08-16)::
 
     GET /feature-flags/knowledge_rag/status  ->  {"enabled": false}
     GET /settings/ai                          ->  knowledge_rag_enabled: true
@@ -29,7 +29,7 @@ that flag instead of a private copy. The flag service is the survivor because
 successor — the AppSetting was the hand-rolled flag being retired.
 
 **Behaviour change:** a workspace whose AppSetting said true while the flag said
-false (this homelab) will now show the switch OFF, which is what was actually in
+false (this reference K3s install) will now show the switch OFF, which is what was actually in
 force. Re-enabling it there now takes effect.
 """
 from __future__ import annotations

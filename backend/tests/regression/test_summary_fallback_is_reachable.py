@@ -1,6 +1,6 @@
 """The deterministic summary fallback must be REACHABLE when the LLM is dead.
 
-Found on the homelab. `/runs/{id}/intelligence` rendered a run whose stored
+Found on the reference K3s install. `/runs/{id}/intelligence` rendered a run whose stored
 summary read:
 
 ```

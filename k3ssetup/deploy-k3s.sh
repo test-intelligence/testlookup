@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================
-# deploy-homelab.sh — Deploy TestLookup to a K3s cluster (single node or more)
+# deploy-k3s.sh — Deploy TestLookup to a K3s cluster (single node or more)
 # ============================================================
 # The public "single-node K3s" path: build the three TestLookup images, push
-# them to an in-cluster registry, and apply k8s/overlays/homelab. Works on one
+# them to an in-cluster registry, and apply k8s/overlays/k3s. Works on one
 # K3s node (the default) and on a multi-node K3s cluster. Guide:
 # docs/operations/deploy-k3s.md.
 #
 # Prerequisites:
 #   - A K3s cluster with the built-in local-path StorageClass and Traefik
-#     (homelabsetup/bootstrap-homelab.sh can create one over SSH)
+#     (k3ssetup/bootstrap-k3s.sh can create one over SSH)
 #   - kubectl configured and pointing at the cluster
 #   - Docker or Podman on the build machine, trusting the registry below as an
 #     insecure (plain-HTTP) registry
@@ -17,14 +17,14 @@
 # Site configuration (NOT part of the repository):
 #   Every site-specific value — the host name, the registry address, extra
 #   kustomize patches — comes from a local env file. Point
-#   TESTLOOKUP_HOMELAB_ENV at it, or keep it at
-#   ${XDG_CONFIG_HOME:-$HOME/.config}/testlookup/homelab.env. Variables already
-#   set in the environment win over the file. homelabsetup/homelab.env.example
+#   TESTLOOKUP_K3S_ENV at it, or keep it at
+#   ${XDG_CONFIG_HOME:-$HOME/.config}/testlookup/k3s.env. Variables already
+#   set in the environment win over the file. k3ssetup/k3s.env.example
 #   lists every variable; with no file at all the defaults below apply
 #   (host testlookup.localhost, registry registry.local:30500).
 #
 # Usage:
-#   ./homelabsetup/deploy-homelab.sh [--skip-registry] [--skip-build] [--skip-models]
+#   ./k3ssetup/deploy-k3s.sh [--skip-registry] [--skip-build] [--skip-models]
 #
 # Flags:
 #   --skip-registry  Skip registry deployment (already running)
@@ -34,7 +34,7 @@
 #   --skip-registry-prune  Keep every old TestLookup image in the registry
 #   --keep-builds=N  After a successful deploy, keep the newest N builds of each
 #                    TestLookup image in the registry (default 3); older ones
-#                    are pruned by homelabsetup/prune-registry.sh
+#                    are pruned by k3ssetup/prune-registry.sh
 #   --teardown       Delete the entire deployment (keeps PVCs)
 #   --teardown-all   Delete namespace + all data (DESTRUCTIVE)
 #
@@ -50,8 +50,8 @@ set -euo pipefail
 # ── Configuration ───────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SITE_CONFIG_FILE=""
-# shellcheck source=homelabsetup/lib-site-config.sh
-. "$REPO_ROOT/homelabsetup/lib-site-config.sh"
+# shellcheck source=k3ssetup/lib-site-config.sh
+. "$REPO_ROOT/k3ssetup/lib-site-config.sh"
 load_site_config
 # The public host the ingress answers on (plain HTTP). *.localhost resolves to
 # the loopback address on most systems; any other name needs a DNS or hosts
@@ -63,16 +63,23 @@ REGISTRY="${K3S_REGISTRY:-registry.local:30500}"
 # Optional second address for the same registry (e.g. <node-ip>:30500), tried
 # when the registry host name does not resolve on the build machine.
 REGISTRY_FALLBACK="${K3S_REGISTRY_FALLBACK:-}"
-# Fixed: k8s/overlays/homelab places every resource in this namespace.
+# Fixed: k8s/overlays/k3s places every resource in this namespace.
 NAMESPACE="testlookup"
 # A directory of extra kustomize patches (*.yaml, applied in name order) for
 # site-specific settings: an AI provider, resource limits, pinned images. Each
 # file is a strategic-merge patch that names the kind, metadata.name and
 # metadata.namespace (testlookup) of the resource it changes.
 K3S_PATCHES_DIR="${K3S_PATCHES_DIR:-}"
-CREDS_FILE="${K3S_CREDENTIALS_FILE:-$REPO_ROOT/homelabsetup/.homelab-credentials}"
+CREDS_FILE="${K3S_CREDENTIALS_FILE:-$REPO_ROOT/k3ssetup/.k3s-credentials}"
+# An install from before the K3s rename keeps its file at the old path (git
+# leaves the ignored file there). Use it rather than writing a second file
+# with a freshly generated admin password the existing admin never got.
+LEGACY_CREDS_FILE="$REPO_ROOT/homelabsetup/.homelab-credentials"
+if [ -z "${K3S_CREDENTIALS_FILE:-}" ] && [ ! -f "$CREDS_FILE" ] && [ -f "$LEGACY_CREDS_FILE" ]; then
+  CREDS_FILE="$LEGACY_CREDS_FILE"
+fi
 # The per-deploy overlay rendered from the site configuration (gitignored).
-RENDER_DIR="$REPO_ROOT/homelabsetup/.render"
+RENDER_DIR="$REPO_ROOT/k3ssetup/.render"
 # Image names the tracked overlay rewrites the app images to; the rendered
 # overlay maps them onto ${REGISTRY} and this run's build tag.
 OVERLAY_IMAGE_PREFIX="registry.local:30500/testlookup"
@@ -296,13 +303,13 @@ check_existing_host() {
      && [ "${ALLOW_HOST_CHANGE:-false}" != true ]; then
     echo "[x] This cluster already serves TestLookup on host '${existing}', but this run" >&2
     echo "    would move it to '${wanted}'. Load your site configuration" >&2
-    echo "    (TESTLOOKUP_HOMELAB_ENV=<file> with K3S_HOST=${existing}), or set" >&2
+    echo "    (TESTLOOKUP_K3S_ENV=<file> with K3S_HOST=${existing}), or set" >&2
     echo "    ALLOW_HOST_CHANGE=true to move the ingress deliberately." >&2
     return 1
   fi
 }
 
-# Write the per-deploy overlay: the tracked k8s/overlays/homelab plus this
+# Write the per-deploy overlay: the tracked k8s/overlays/k3s plus this
 # run's images, the site host, and any site patches. Nothing tracked is edited.
 render_overlay() {
   local render_dir=$1 build_tag=$2 patch name patches_yaml=""
@@ -339,12 +346,12 @@ EOF
     done
   fi
   cat > "$render_dir/kustomization.yaml" <<EOF
-# Generated by homelabsetup/deploy-homelab.sh for one deploy. Do not edit:
-# change the site configuration (TESTLOOKUP_HOMELAB_ENV) instead.
+# Generated by k3ssetup/deploy-k3s.sh for one deploy. Do not edit:
+# change the site configuration (TESTLOOKUP_K3S_ENV) instead.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../../k8s/overlays/homelab
+  - ../../k8s/overlays/k3s
 images:
   - name: ${OVERLAY_IMAGE_PREFIX}/backend
     newName: ${REGISTRY}/testlookup/backend
@@ -434,7 +441,7 @@ stage_tls_ca() {
 # ── Teardown mode ───────────────────────────────────────────
 check_command kubectl
 
-# Homelabs commonly use a private/self-signed Kubernetes API certificate.
+# Small K3s installs commonly use a private/self-signed Kubernetes API certificate.
 # Keep the bypass explicit and process-local; never rewrite the user's
 # kubeconfig or copy its credentials into the repository. Define this before
 # teardown handling so every kubectl path honors the same explicit setting.
@@ -457,7 +464,7 @@ fi
 
 if [ "$TEARDOWN" = true ]; then
   header "TEARDOWN — Deleting application (PVCs preserved)"
-  kubectl delete -k "$REPO_ROOT/k8s/overlays/homelab" --ignore-not-found || true
+  kubectl delete -k "$REPO_ROOT/k8s/overlays/k3s" --ignore-not-found || true
   log "Application deleted. PVCs and data preserved."
   exit 0
 fi
@@ -868,7 +875,7 @@ else
     Fix: re-run WITHOUT --skip-build so the script builds + pushes fresh
     images:
 
-        ./homelabsetup/deploy-homelab.sh --skip-registry --skip-models
+        ./k3ssetup/deploy-k3s.sh --skip-registry --skip-models
 EOF
     exit 1
   fi
@@ -980,7 +987,7 @@ log "Skipping TLS cert generation (ingress is HTTP-only)."
 # ── Step 5: Deploy with Kustomize ──────────────────────────
 header "Step 5 — Deploy with Kustomize"
 
-# Render the per-deploy overlay: the tracked k8s/overlays/homelab (whose
+# Render the per-deploy overlay: the tracked k8s/overlays/k3s (whose
 # image tags stay BUILD_TAG_PLACEHOLDER at rest), this run's immutable build
 # tag on ${REGISTRY}, the site host and the site patches. The cluster pulls an
 # exact image and never a floating :latest, and no tracked file is edited.
@@ -1054,7 +1061,7 @@ $(printf "       - %s\n" "${mirror_missing_nodes[@]}")
               - "http://<a-node-ip>:${REGISTRY##*:}"
 
     then restart k3s (server) or k3s-agent (agents). Or re-run
-    ./homelabsetup/bootstrap-homelab.sh (idempotent), which automates it.
+    ./k3ssetup/bootstrap-k3s.sh (idempotent), which automates it.
 
     Pass --skip-mirror-check to bypass this guard (NOT recommended).
 ══════════════════════════════════════════════════════════════════════
@@ -1568,7 +1575,7 @@ fi
 if [ "$SKIP_BUILD" = false ] && [ "$SKIP_REGISTRY_PRUNE" = false ]; then
   header "Step 12 — Prune old TestLookup images (keep ${KEEP_BUILDS} builds)"
   prune_rc=0
-  bash "$REPO_ROOT/homelabsetup/prune-registry.sh" \
+  bash "$REPO_ROOT/k3ssetup/prune-registry.sh" \
     --registry="$REGISTRY" --keep="$KEEP_BUILDS" || prune_rc=$?
   case "$prune_rc" in
     0) log "Registry pruned." ;;

@@ -1,6 +1,6 @@
 """A malformed ``project_id`` must never reach a UUID column comparison.
 
-Found by exploratory testing against the live homelab (2026-08-07):
+Found by exploratory testing against a live reference K3s install (2026-08-07):
 ``GET /api/v1/metrics/summary?project_id=all`` returned **500** for an ADMIN,
 reproducibly, while the sibling ``/api/v1/runs?project_id=all`` correctly
 answered 400. ``/metrics/trends`` had the same fault.

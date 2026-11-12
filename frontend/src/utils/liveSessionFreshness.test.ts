@@ -103,7 +103,7 @@ describe('isStaleRunning', () => {
 
 describe('exact 5-active-runs-but-only-2-running repro', () => {
   /**
-   * Models the homelab observation: API returns 5 sessions with
+   * Models the reference K3s install observation: API returns 5 sessions with
    * status='running' but only 2 are still emitting telemetry. The
    * predicate must split them into active=2 / stale=3.
    */

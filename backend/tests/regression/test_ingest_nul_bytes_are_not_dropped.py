@@ -1,4 +1,4 @@
-"""E2E pass 2026-10-10 (homelab): a result with a NUL byte was dropped.
+"""E2E pass 2026-10-10 (reference K3s install): a result with a NUL byte was dropped.
 
 PostgreSQL text and JSONB cannot hold U+0000 (SQLSTATE 22021). A JSON batch of
 one FAILED test whose message carried ``\\x00`` plus two PASSED tests landed as

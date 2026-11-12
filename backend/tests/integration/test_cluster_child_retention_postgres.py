@@ -66,7 +66,7 @@ async def test_retention_purges_old_run_and_all_child_runtime_rows():
                 )
             ).scalar_one_or_none()
             if authority is None:
-                pytest.skip("homelab database has no active project fixture")
+                pytest.skip("reference K3s install database has no active project fixture")
             project_id = authority
             # W22a: the keep-last floor (default 10 runs) would keep this aged
             # run in a sparse project; keep_last_runs = 0 for THIS transaction

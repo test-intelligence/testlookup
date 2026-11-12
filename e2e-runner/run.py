@@ -358,7 +358,7 @@ def main():
         "errors": [],
     }
     try:
-        if target not in {"ephemeral", "homelab", "external"}:
+        if target not in {"ephemeral", "k3s", "homelab", "external"}:  # homelab: the old name of k3s
             raise ValueError("Unknown TL_TARGET")
         raw = Path(os.environ["TL_MANIFEST"]).read_bytes()
         manifest = validate_manifest(

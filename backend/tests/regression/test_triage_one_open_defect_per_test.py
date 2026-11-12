@@ -2,7 +2,7 @@
 
 The triage stage inserted a Defect per failed ``test_case_id`` and deduplicated
 on that column. A test case row belongs to ONE run, so the guard only caught a
-re-run of the same run's pipeline: on the homelab a test red in 12 runs held 12
+re-run of the same run's pipeline: on the reference K3s install a test red in 12 runs held 12
 OPEN defects, the release-readiness verdict counted "41 open defects" for a
 small test project, and with Jira on each run would have filed its own ticket.
 The one-click Jira path already deduplicated on the test fingerprint with a

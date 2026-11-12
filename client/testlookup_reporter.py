@@ -259,7 +259,7 @@ class ConfigLoader:
         # TESTLOOKUP_CAPTURE_HTTP is read by http_capture.capture_enabled, NOT ENV_MAP: every ENV_MAP
         # variable must act on all three paths, and only the pytest plugin captures.
         "testlookup.capture_http":      ("reporting", "capture_http"),
-        # TLS — homelab / dev convenience. Either point at a custom CA bundle
+        # TLS — reference K3s install / dev convenience. Either point at a custom CA bundle
         # (preferred — preserves verification) or disable verification entirely.
         "testlookup.ca_cert_path": ("auth", "ca_cert_path"),
         "testlookup.insecure":     ("auth", "insecure"),

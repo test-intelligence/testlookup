@@ -184,7 +184,7 @@ One related quirk worth knowing: `/health/details` only reports on Ollama when `
 
 ## Automating it
 
-Deployment scripts pull the default models (`qwen2.5:7b-instruct` and `nomic-embed-text:v1.5`) when the host has egress — `homelabsetup/deploy-homelab.sh` (skippable with `--skip-models`) and `openshiftsetup/deploy-openshift-artifactory.sh` when `PULL_OLLAMA_MODELS=true` (list in `OLLAMA_MODELS`), which warns `Could not pull <model> (air-gapped Ollama?)` and carries on. **That warning is the signal to run this procedure.** The deploy is not broken; it simply couldn't fetch weights, and the install will run on rules until a pack is restored.
+Deployment scripts pull the default models (`qwen2.5:7b-instruct` and `nomic-embed-text:v1.5`) when the host has egress — `k3ssetup/deploy-k3s.sh` (skippable with `--skip-models`) and `openshiftsetup/deploy-openshift-artifactory.sh` when `PULL_OLLAMA_MODELS=true` (list in `OLLAMA_MODELS`), which warns `Could not pull <model> (air-gapped Ollama?)` and carries on. **That warning is the signal to run this procedure.** The deploy is not broken; it simply couldn't fetch weights, and the install will run on rules until a pack is restored.
 
 If you image environments repeatedly, keep the pack and its `.sha256` in your artifact repository next to the release bundle, and make restoring it a step in the environment build — the same way you'd stage base container images.
 

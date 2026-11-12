@@ -177,7 +177,7 @@ describe('ChatPage', () => {
     expect(state.conversation.send).not.toHaveBeenCalled()
   })
 
-  it("asks the run's own project when the link names it (homelab, 2026-10-10)", () => {
+  it("asks the run's own project when the link names it (reference K3s install, 2026-10-10)", () => {
     // "Ask AI about this run" on an E-Commerce run, with Checkout Service
     // active, was answered in Checkout's scope: "I can't find build viz-3043".
     renderPage('/chat?prompt=What%20failed%20in%20build%20viz-3043%3F&project=p-2')

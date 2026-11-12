@@ -7,7 +7,7 @@ data:
   default.conf: |
     # og:image must be an absolute URL (W25b HYG-09). Only http/https from the proxy is trusted, and the
     # origin is reflected only when it is a plain host name: $host comes from the client's Host header.
-    # (conf.d/default.conf is included inside nginx's http {} block, where map belongs.) The homelab
+    # (conf.d/default.conf is included inside nginx's http {} block, where map belongs.) The reference K3s install
     # ingress is HTTP-only, so Traefik sends X-Forwarded-Proto: http -> http://<host>/og-card-2.png.
     map $http_x_forwarded_proto $og_scheme {
         default $scheme;
@@ -37,7 +37,7 @@ data:
         add_header X-Content-Type-Options "nosniff" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
         # NO Strict-Transport-Security here, deliberately (re-audit L1): the
-        # homelab ingress is HTTP-only (ingress-traefik.yaml, entrypoint
+        # reference K3s install ingress is HTTP-only (ingress-traefik.yaml, entrypoint
         # `web`, no tls). If HTTPS ever comes back, add HSTS with it; the
         # nginx config test fails until both change together.
 

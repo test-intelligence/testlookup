@@ -12,10 +12,10 @@ Files involved:
 
 | File | Purpose |
 |---|---|
-| [`homelabsetup/deploy-homelab.sh`](../../homelabsetup/deploy-homelab.sh) | Builds the three images, pushes them to an in-cluster registry, generates secrets, applies the overlay, migrates, creates the first admin |
-| [`homelabsetup/bootstrap-homelab.sh`](../../homelabsetup/bootstrap-homelab.sh) | Optional: creates the K3s cluster over SSH (server + agents, MetalLB, cert-manager, registry mirrors) |
-| [`homelabsetup/homelab.env.example`](../../homelabsetup/homelab.env.example) | Every site setting, documented |
-| [`k8s/overlays/homelab/`](../../k8s/overlays/homelab/kustomization.yaml) | The overlay: in-cluster datastores on `local-path` storage, Traefik ingress on plain HTTP, single replicas |
+| [`k3ssetup/deploy-k3s.sh`](../../k3ssetup/deploy-k3s.sh) | Builds the three images, pushes them to an in-cluster registry, generates secrets, applies the overlay, migrates, creates the first admin |
+| [`k3ssetup/bootstrap-k3s.sh`](../../k3ssetup/bootstrap-k3s.sh) | Optional: creates the K3s cluster over SSH (server + agents, MetalLB, cert-manager, registry mirrors) |
+| [`k3ssetup/k3s.env.example`](../../k3ssetup/k3s.env.example) | Every site setting, documented |
+| [`k8s/overlays/k3s/`](../../k8s/overlays/k3s/kustomization.yaml) | The overlay: in-cluster datastores on `local-path` storage, Traefik ingress on plain HTTP, single replicas |
 
 ## Requirements
 
@@ -34,14 +34,17 @@ outside the repository and edit it:
 
 ```bash
 mkdir -p ~/.config/testlookup
-cp homelabsetup/homelab.env.example ~/.config/testlookup/homelab.env
+cp k3ssetup/k3s.env.example ~/.config/testlookup/k3s.env
 ```
 
-The scripts read `~/.config/testlookup/homelab.env` (or
-`$XDG_CONFIG_HOME/testlookup/homelab.env`) when it exists, or the file named by
-`TESTLOOKUP_HOMELAB_ENV`. The file is parsed as `KEY=VALUE` lines, never
+The scripts read `~/.config/testlookup/k3s.env` (or
+`$XDG_CONFIG_HOME/testlookup/k3s.env`) when it exists, or the file named by
+`TESTLOOKUP_K3S_ENV`. The file is parsed as `KEY=VALUE` lines, never
 executed, and a variable already set in your environment wins over it. With no
-file at all the defaults apply:
+file at all the defaults apply. (Installs from before the path was renamed
+from `homelabsetup/` keep working: `TESTLOOKUP_HOMELAB_ENV`,
+`~/.config/testlookup/homelab.env` and `homelabsetup/.homelab-credentials` are
+still read when the new names are absent.)
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -49,11 +52,11 @@ file at all the defaults apply:
 | `K3S_REGISTRY` | `registry.local:30500` | Registry the nodes pull TestLookup images from |
 | `K3S_REGISTRY_FALLBACK` | (none) | Second address of the same registry, tried when the name does not resolve on the build machine |
 | `K3S_PATCHES_DIR` | (none) | Directory of extra kustomize patches applied on every deploy |
-| `K3S_CREDENTIALS_FILE` | `homelabsetup/.homelab-credentials` | Where a first install writes generated secrets and the admin login (mode 600, gitignored) |
+| `K3S_CREDENTIALS_FILE` | `k3ssetup/.k3s-credentials` | Where a first install writes generated secrets and the admin login (mode 600, gitignored) |
 | `K3S_LLM_MODEL` / `K3S_EMBEDDING_MODEL` | `qwen2.5:7b-instruct` / `nomic-embed-text:v1.5` | Models pulled into Ollama |
 | `ADMIN_USERNAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | `admin` / `admin@example.com` / generated | First admin account, created on a fresh install only |
 
-`bootstrap-homelab.sh` additionally needs `K3S_NODES` (`name=ip` pairs, the
+`bootstrap-k3s.sh` additionally needs `K3S_NODES` (`name=ip` pairs, the
 first one runs the K3s server), `K3S_NODE_USER` and, unless you pass
 `--skip-prereqs`, `K3S_LB_RANGE` for MetalLB. See the template for all keys.
 
@@ -85,8 +88,8 @@ insecure registry (Docker: `insecure-registries` in `daemon.json`; Podman:
 `K3S_LB_RANGE`, then
 
 ```bash
-./homelabsetup/bootstrap-homelab.sh            # cluster only
-./homelabsetup/bootstrap-homelab.sh --deploy   # cluster + TestLookup
+./k3ssetup/bootstrap-k3s.sh            # cluster only
+./k3ssetup/bootstrap-k3s.sh --deploy   # cluster + TestLookup
 ```
 
 It installs a pinned K3s release (`K3S_VERSION` overrides it), joins the
@@ -97,8 +100,8 @@ after adding a node.
 ## 3. Deploy
 
 ```bash
-./homelabsetup/deploy-homelab.sh                              # first install
-./homelabsetup/deploy-homelab.sh --skip-registry --skip-models   # every update
+./k3ssetup/deploy-k3s.sh                              # first install
+./k3ssetup/deploy-k3s.sh --skip-registry --skip-models   # every update
 ```
 
 | Step | What happens |
@@ -107,7 +110,7 @@ after adding a node.
 | 1 | In-cluster registry (`registry:2` on NodePort 30500, data on one node). Skipped with `--skip-registry` |
 | 2 | Build the backend, frontend and MCP images from a clean checkout (the script refuses untracked or modified build inputs), tag them `build-<UTC time>`, push. `--skip-build` reuses the newest tag present for all three |
 | 3-4 | Namespace and secrets. On a first install every secret is random (`openssl rand`), printed once and saved to `K3S_CREDENTIALS_FILE`; an existing `testlookup-secrets` is never regenerated |
-| 5 | Render a per-deploy overlay in `homelabsetup/.render/` (the tracked overlay plus your host, registry, image tag and `K3S_PATCHES_DIR` patches), run database migrations with the new image, apply, wait for every pod and check that each one runs the digest just pushed and that `/health/version` reports this commit |
+| 5 | Render a per-deploy overlay in `k3ssetup/.render/` (the tracked overlay plus your host, registry, image tag and `K3S_PATCHES_DIR` patches), run database migrations with the new image, apply, wait for every pod and check that each one runs the digest just pushed and that `/health/version` reports this commit |
 | 6-7 | Wait for the datastores; create the object-store buckets from inside the backend pod (`python /app/scripts/s3_setup.py`) |
 | 8 | Pull the models into Ollama. Skipped with `--skip-models` |
 | 9 | Print the Traefik address and the hosts-file line, if your host name needs one |
@@ -116,7 +119,7 @@ after adding a node.
 
 Open `http://<K3S_HOST>` and sign in with the admin login from step 10. The
 ingress is plain HTTP; terminate TLS in front of Traefik, or add a certificate
-and the HTTPS redirect middleware in `k8s/overlays/homelab/` with a site patch,
+and the HTTPS redirect middleware in `k8s/overlays/k3s/` with a site patch,
 if the cluster is reachable from an untrusted network.
 
 ## Site patches
@@ -152,11 +155,11 @@ changes.
 |---|---|
 | Every TestLookup pod is `ImagePullBackOff` | The node's `/etc/rancher/k3s/registries.yaml` has no mirror for `K3S_REGISTRY` (the deploy checks this before applying and prints the fix), or the name does not resolve on the node |
 | `docker push` fails with "server gave HTTP response to HTTPS client" | The build machine's engine does not trust the registry as insecure, or it resolved a different name than the one it trusts |
-| The deploy stops with "already serves TestLookup on host ..." | Your site config did not load, or names another host. Fix `TESTLOOKUP_HOMELAB_ENV`, or set `ALLOW_HOST_CHANGE=true` |
+| The deploy stops with "already serves TestLookup on host ..." | Your site config did not load, or names another host. Fix `TESTLOOKUP_K3S_ENV`, or set `ALLOW_HOST_CHANGE=true` |
 | New backend pods crash with `InvalidPasswordError` | The deploy converges the Postgres role password to the Secret on every run; if the password contains characters that need SQL quoting, run `ALTER USER` by hand |
 | "Deployment DEGRADED" and exit 1 | A new pod failed while the previous ReplicaSet kept serving; read the named pod's logs |
 | The browser keeps redirecting to `https://` | Clear the site's HSTS entry; the ingress is HTTP-only |
 
 Teardown: `--teardown` deletes the application and keeps the PersistentVolumeClaims;
 `--teardown-all` deletes the namespace and all data after a typed confirmation.
-`bootstrap-homelab.sh --teardown` uninstalls K3s from every configured node.
+`bootstrap-k3s.sh --teardown` uninstalls K3s from every configured node.

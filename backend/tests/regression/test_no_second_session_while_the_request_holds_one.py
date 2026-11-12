@@ -14,7 +14,7 @@ The cache writes now hand the request session's connection back first
 (``app.db.postgres.release_read_connection``) and the override works on the
 request's own session. Every test here runs on a pool of ONE connection with a
 bounded checkout: a path that needs a second connection while it holds the
-first waits for one that never frees, as on the homelab (2026-10-13/14).
+first waits for one that never frees, as on the reference K3s install (2026-10-13/14).
 """
 from __future__ import annotations
 

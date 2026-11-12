@@ -77,7 +77,7 @@ public final class ConfigLoader {
         {"TESTLOOKUP_SUITE",       "reporting.suite_name"},
         {"TESTLOOKUP_RELEASE",     "reporting.release_name"},
         {"TESTLOOKUP_FRAMEWORK",   "reporting.framework"},
-        // TLS for self-signed / homelab servers (same names as the Python SDK).
+        // TLS for self-signed / reference K3s install servers (same names as the Python SDK).
         {"TESTLOOKUP_CA_CERT",     "auth.ca_cert_path"},
         {"TESTLOOKUP_INSECURE",    "auth.insecure"},
     };

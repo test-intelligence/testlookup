@@ -109,7 +109,7 @@ test.describe('heatmaps, everything on screen (1280 x 4000)', () => {
     const [q] = queryOf(api, CHART_ROWS_PATH)
     expect(q.get('metric'), 'every execution in the cell (reconciles with its n)').toBe('executions')
     // The time dimension first: /chart-data/rows answers 422
-    // time_dimension_position for suite,day (found on the homelab, PR #177).
+    // time_dimension_position for suite,day (found on the reference K3s install, PR #177).
     expect(q.getAll('group_by')).toEqual(['day', 'suite'])
     // Selectors are KEYS (lower-cased suite, UTC day), never labels.
     expect(q.get('bucket_suite')).toMatch(/^[^A-Z]+$/)

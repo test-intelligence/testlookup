@@ -19,7 +19,7 @@ The manifests in this repository describe supported topologies. They are not evi
 | Public read-only demo | `docker-compose.release.yml` + `docker-compose.demo.yml` via `scripts/demo/demo.sh` | In Compose on the VM, rebuilt nightly | A public demo anyone can explore, behind a Cloudflare tunnel | [Public demo](public-demo.md) |
 | Cloud Run templates | `infra/cloudrun/*` | Managed services you provide | Serverless API/UI/MCP with managed data | [Single VM and Cloud Run](deploy-single-vm.md#cloud-run-templates) |
 | Kubernetes: generic overlays | `k8s/base` + `k8s/overlays/{dev,staging,prod,self-hosted}` | Provided by you (managed or in-cluster) | Any conformant cluster | [Kubernetes](deploy-kubernetes.md) |
-| Kubernetes: single-node K3s | `k8s/overlays/homelab` + `homelabsetup/deploy-homelab.sh` | In-cluster | One machine, plain HTTP on a private network | [Single-node K3s](deploy-k3s.md) |
+| Kubernetes: single-node K3s | `k8s/overlays/k3s` + `k3ssetup/deploy-k3s.sh` | In-cluster | One machine, plain HTTP on a private network | [Single-node K3s](deploy-k3s.md) |
 | OpenShift | `k8s/overlays/openshift` | Provided by you (Valkey/Redis must be durable) | OpenShift with Routes | [OpenShift](deploy-openshift.md#standard-openshift-overlay) |
 | OpenShift + Artifactory | `k8s/overlays/openshift-artifactory` + `openshiftsetup/` | In-cluster | Air-gapped OpenShift that pulls from one registry | [OpenShift](deploy-openshift.md#air-gapped-openshift-with-one-artifactory) |
 | Offline bundle | `make offline-bundle`, `scripts/release/import-bundle.sh` | Compose, Kubernetes or OpenShift | Sites with no egress at all | [Air-gapped install](../../user-guide/air-gapped-install.md) |

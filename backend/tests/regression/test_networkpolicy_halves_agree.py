@@ -1,6 +1,6 @@
 """A NetworkPolicy egress grant with no matching ingress grant does nothing.
 
-Found on the homelab. Every MCP tool call failed with::
+Found on the reference K3s install. Every MCP tool call failed with::
 
     Error executing tool list_projects: All connection attempts failed
 

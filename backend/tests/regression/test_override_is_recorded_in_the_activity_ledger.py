@@ -4,7 +4,7 @@ TL-2026-09-19-01-009, measured live. The override itself was always correct and
 its in-row audit is good — an immutable ``original_recommendation`` plus an
 append-only entry carrying actor, timestamp, before/after and reason.
 
-But it was audited ONLY there. A real override on the homelab wrote zero rows to
+But it was audited ONLY there. A real override on the reference K3s install wrote zero rows to
 ``project_activity_events`` and zero to ``access_audit_logs``, while the catalog
 had declared an event for exactly this all along::
 

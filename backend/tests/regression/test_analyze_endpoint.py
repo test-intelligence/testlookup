@@ -116,7 +116,7 @@ async def test_get_analysis_coerces_legacy_string_category_without_500():
 
 @pytest.mark.asyncio
 async def test_get_analysis_reads_evidence_without_a_reference_id():
-    """Homelab 2026-10-10: 372 of 406 stored analyses carried evidence entries
+    """Reference K3s install 2026-10-10: 372 of 406 stored analyses carried evidence entries
     with only ``source`` + ``excerpt`` (the model's JSON, and seeded rows).
     ``EvidenceReference.reference_id`` was required, so GET /analyze/{id} 500'd
     and the test page offered "Analyse Root Cause" over a root cause on file."""

@@ -23,7 +23,7 @@
 #      user — with a generated password unless ADMIN_PASSWORD is set; a
 #      generated one is printed ONCE in the final summary.
 #
-# This is the OpenShift/Artifactory sibling of homelabsetup/deploy-homelab.sh.
+# This is the OpenShift/Artifactory sibling of k3ssetup/deploy-k3s.sh.
 #
 # Prereqs on the BUILD host (which DOES have internet + Artifactory access):
 #   - docker, oc (or kubectl), curl, openssl
@@ -208,7 +208,7 @@ if [ "$SKIP_BUILD" = false ]; then
   cd "$REPO_ROOT"
 
   # Stage client SDKs into the backend build context (same contract as the
-  # homelab deploy). Trap cleans the staging dir on any exit.
+  # reference K3s install deploy). Trap cleans the staging dir on any exit.
   STAGED_SDK="$REPO_ROOT/backend/__client_sdks_staged"
   rm -rf "$STAGED_SDK"; mkdir -p "$STAGED_SDK"
   trap 'rm -rf "$STAGED_SDK"' EXIT INT TERM

@@ -1,6 +1,6 @@
 """Regression: no pipeline node may be reachable at two different depths.
 
-Bug (homelab, 2026-08-16, AI-010): the deep pipeline ran `summary` — and every
+Bug (reference K3s install, 2026-08-16, AI-010): the deep pipeline ran `summary` — and every
 stage after it — **twice**, because three branches fanned into `summary` at
 unequal path lengths::
 

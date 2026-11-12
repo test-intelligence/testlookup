@@ -1,6 +1,6 @@
 """Regression: the health-check status vocabulary is shared across two languages.
 
-Bug (homelab, 2026-08-16): ``/health/details`` reported
+Bug (reference K3s install, 2026-08-16): ``/health/details`` reported
 
     "ollama": {"status": "skipped", "detail": "AI_OFFLINE_MODE=false — using cloud LLM"}
 

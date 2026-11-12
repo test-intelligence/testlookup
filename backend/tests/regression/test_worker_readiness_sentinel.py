@@ -1,6 +1,6 @@
 """Regression: the readiness probe deadlocked a rollout under load.
 
-Observed on the homelab (2026-08-17) while deploying the worker memory fix.
+Observed on the reference K3s install (2026-08-17) while deploying the worker memory fix.
 The probe ran ``celery -A app.worker.celery_app inspect ping --timeout=10``
 inside a 15 s exec. That is a control-channel round-trip, so it measures how
 *responsive* the worker is, not whether it is healthy — and with four prefork

@@ -1,6 +1,6 @@
 """W10 D-4: the server runs the Splunk / OpenShift lookups before the triage model is called.
 
-Small models skip tools (mistral-nemo, the homelab's analysis class) and a
+Small models skip tools (mistral-nemo, the reference K3s install's analysis class) and a
 stack without a reachable model never calls one, so the evidence the
 investigation context authorizes is fetched by the server, attached to the
 question, memoised for the tools and kept on every exit of the agent run.

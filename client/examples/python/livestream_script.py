@@ -106,7 +106,7 @@ async def main(args: argparse.Namespace) -> None:
     # omitted the SDK resolves TLS preferences from testlookup.properties
     # (testlookup.ca_cert_path / testlookup.insecure) or env vars
     # (TESTLOOKUP_CA_CERT / TESTLOOKUP_INSECURE), so users don't have to
-    # remember the flag every time they run against a homelab.
+    # remember the flag every time they run against a self-hosted install.
     livestream_kwargs: dict = dict(
         base_url=args.base_url,
         api_key=args.api_key,
@@ -138,7 +138,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--branch",    default=None, help="Git branch")
     p.add_argument(
         "--insecure", "-k", action="store_true",
-        help="Skip TLS certificate verification. Use this against homelab / dev "
+        help="Skip TLS certificate verification. Use this against reference K3s install / dev "
              "instances that serve a self-signed cert. Never in production.",
     )
     return p.parse_args()

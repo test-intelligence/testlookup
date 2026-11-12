@@ -2,15 +2,15 @@
 
 The openshift-artifactory overlay runs Postgres, MongoDB, Redis and the object
 store inside the testlookup namespace (its infra-*.yaml, copied from the
-homelab overlay), on top of the base default-deny-all, but it never shipped the
-ingress allow the homelab carried in netpol-homelab.yaml. Nothing could connect
+K3s overlay), on top of the base default-deny-all, but it never shipped the
+ingress allow the reference K3s install carried in netpol-k3s.yaml. Nothing could connect
 to the stores: the workers' and beat's wait-for-redis init containers waited
 forever, and the migration Job and the API could not reach Postgres.
 
 Both overlays now include k8s/components/colocated-data-stores. The expected
 callers were measured from the pods' live sockets on the K3s install
 (2026-10-13): the backend and the workers use all four stores, beat only Redis,
-and the MCP server none. The homelab's earlier allow also admitted the MCP
+and the MCP server none. The reference K3s install's earlier allow also admitted the MCP
 server and beat to every store on every port; the component narrows that.
 """
 from __future__ import annotations
@@ -77,7 +77,7 @@ def _migration_job_pod_labels() -> dict[str, str]:
 
 def test_the_discovery_finds_both_overlays_and_all_four_stores():
     """Everything below is parametrized over this; an empty scan passes vacuously."""
-    assert {"homelab", "openshift-artifactory"} <= set(OVERLAYS_WITH_STORES), OVERLAYS_WITH_STORES
+    assert {"k3s", "openshift-artifactory"} <= set(OVERLAYS_WITH_STORES), OVERLAYS_WITH_STORES
     for overlay in OVERLAYS_WITH_STORES:
         assert set(_colocated_stores(overlay)) == set(STORE_PORTS), overlay
 

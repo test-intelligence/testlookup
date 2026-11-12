@@ -25,7 +25,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 INGEST = REPO_ROOT / "backend" / "app" / "routers" / "ingest.py"
-HOMELAB_INGRESS = REPO_ROOT / "k8s" / "overlays" / "homelab" / "ingress-traefik.yaml"
+K3S_INGRESS = REPO_ROOT / "k8s" / "overlays" / "k3s" / "ingress-traefik.yaml"
 ONE_YEAR = 31_536_000
 SECURITY_HEADERS = {
     "Content-Security-Policy", "X-Frame-Options",
@@ -151,14 +151,14 @@ def nginx_configs() -> dict[str, str]:
 CONFIGS = nginx_configs()
 
 
-def _is_homelab(name: str) -> bool:
-    return name.startswith("k8s/overlays/homelab/")
+def _is_k3s(name: str) -> bool:
+    return name.startswith("k8s/overlays/k3s/")
 
 
 def test_every_nginx_config_is_found() -> None:
     assert {
         "frontend/nginx.conf.template",
-        "k8s/overlays/homelab/frontend-nginx-configmap.yaml:default.conf",
+        "k8s/overlays/k3s/frontend-nginx-configmap.yaml:default.conf",
         "k8s/overlays/openshift-artifactory/frontend-nginx-configmap.yaml:default.conf",
     } <= set(CONFIGS)
 
@@ -214,7 +214,7 @@ def _hsts_max_age(value: str) -> int:
     return int(match.group(1))
 
 
-@pytest.mark.parametrize("name", sorted(n for n in CONFIGS if not _is_homelab(n)))
+@pytest.mark.parametrize("name", sorted(n for n in CONFIGS if not _is_k3s(n)))
 def test_hsts_on_every_location_where_tls_terminates_in_front(name: str) -> None:
     for server in _servers(parse(CONFIGS[name])):
         scopes = {"server": server, **_locations(server)}
@@ -226,19 +226,19 @@ def test_hsts_on_every_location_where_tls_terminates_in_front(name: str) -> None
             assert "includesubdomains" not in value.lower(), (name, scope, value)
 
 
-def test_the_http_only_homelab_sends_no_hsts_and_really_is_http_only() -> None:
-    """HSTS is ignored over http://, but pin the premise: if the homelab ever
+def test_the_http_only_k3s_sends_no_hsts_and_really_is_http_only() -> None:
+    """HSTS is ignored over http://, but pin the premise: if the reference K3s install ever
     serves HTTPS, this fails until HSTS is added with it."""
-    homelab = [n for n in CONFIGS if _is_homelab(n)]
-    assert homelab
-    for name in homelab:
+    k3s_overlay = [n for n in CONFIGS if _is_k3s(n)]
+    assert k3s_overlay
+    for name in k3s_overlay:
         for server in _servers(parse(CONFIGS[name])):
             for children in [server, *_locations(server).values()]:
                 assert "Strict-Transport-Security" not in _headers(children), name
-    docs = [d for d in yaml.safe_load_all(HOMELAB_INGRESS.read_text(encoding="utf-8")) if d]
+    docs = [d for d in yaml.safe_load_all(K3S_INGRESS.read_text(encoding="utf-8")) if d]
     for doc in docs:
         if doc.get("kind") == "Ingress":
-            assert not doc["spec"].get("tls"), "homelab ingress now has TLS: add HSTS"
+            assert not doc["spec"].get("tls"), "reference K3s install ingress now has TLS: add HSTS"
             entry = doc["metadata"]["annotations"]["traefik.ingress.kubernetes.io/router.entrypoints"]
             assert entry == "web", entry
 
@@ -383,7 +383,7 @@ TICKET_DOWNLOAD = "/api/v1/project-data-downloads/"
 TICKET_DOWNLOAD_SAMPLE = TICKET_DOWNLOAD + "0b9f3c1e-6a5d-4f7e-9a51-2f3c4d5e6f70"
 TICKET_DOWNLOAD_CONFIGS = (
     "frontend/nginx.conf.template",
-    "k8s/overlays/homelab/frontend-nginx-configmap.yaml:default.conf",
+    "k8s/overlays/k3s/frontend-nginx-configmap.yaml:default.conf",
     "k8s/overlays/openshift-artifactory/frontend-nginx-configmap.yaml:default.conf",
 )
 

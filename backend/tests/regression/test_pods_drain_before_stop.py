@@ -1,6 +1,6 @@
 """The API and frontend pods drain before they stop, so a deploy does not answer 504.
 
-2026-10-17: /chat showed "Request failed with status code 504" on the homelab while a deploy replaced the backend
+2026-10-17: /chat showed "Request failed with status code 504" on the reference K3s install while a deploy replaced the backend
 pod (events: "Killing pod/testlookup-backend-... Stopping container backend" at the minute of the report; every
 chat call on the new pod answered 200). The rollout itself was safe (maxUnavailable 0, maxSurge 1: the new pod is
 Ready before the old one goes), but a deleted pod keeps receiving requests until the ingress drops it from its

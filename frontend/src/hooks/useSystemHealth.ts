@@ -57,7 +57,7 @@ async function fetchSystemHealth(): Promise<HealthDetails> {
 // it when AI_OFFLINE_MODE=false, because a cloud-LLM deployment has no local
 // Ollama worth probing. Treating anything !== 'ok' as broken made a healthy
 // OpenRouter deployment show "Degraded: ollama unreachable" permanently
-// (homelab, 2026-08-16) — the backend's own top-level status said "healthy"
+// (reference K3s install, 2026-08-16) — the backend's own top-level status said "healthy"
 // at the same moment.
 //
 // Unknown statuses still count as unavailable, deliberately: a false alarm is

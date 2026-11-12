@@ -371,7 +371,7 @@ async def test_which_tests_are_flaky_gets_the_list_up_front_but_the_first_one_do
     assert h.model.calls[0]["kwargs"].get("tool_choice") == "required"
 
 
-# The two answers the homelab measurement (2026-10-09) followed up on. Their
+# The two answers the reference K3s install measurement (2026-10-09) followed up on. Their
 # first rows are NOT the first failure the snapshot lists (Case02, by AI
 # confidence), which is the test the model answered about both times.
 FAILED_TABLE = (
@@ -575,7 +575,7 @@ async def test_stop_keeps_the_text_already_shown_marked_stopped(monkeypatch, gat
     assert len(answers) == 1
     assert answers[0]["content"].startswith("one")
     assert conv._is_stopped(answers[0]["sources"])
-    # The footer names the model for a stopped answer too (homelab, 2026-10-10:
+    # The footer names the model for a stopped answer too (reference K3s install, 2026-10-10:
     # "first words in 5.5 s · stopped after 6.2 s", no model).
     meta = next(s for s in answers[0]["sources"] if s.get("type") == "meta")
     assert (meta["provider"], meta["model"]) == ("openrouter", "scripted-model")

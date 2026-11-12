@@ -1,4 +1,4 @@
-# S3-compatible object storage for homelab: versitygw (Apache-2.0), posix
+# S3-compatible object storage for reference K3s install: versitygw (Apache-2.0), posix
 # backend — buckets are directories and objects plain files on the PVC.
 #
 # The testlookup-minio names, the minio-data PVC, the /data mount, port 9000

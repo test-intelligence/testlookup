@@ -1,7 +1,7 @@
 """F-OR07-2 (owner: "fix F-OR07-2 in W31's PR", 2026-11-04): no data-block marker reaches a reader, and the inline
 data line says the supplied failures carry no release signal.
 
-On the homelab's live model (invocation f86f192d, 2026-11-04) the inline summary read "the <<data>>or07a walk
+On the reference K3s install's live model (invocation f86f192d, 2026-11-04) the inline summary read "the <<data>>or07a walk
 sample<</data>> test in the <<data>>walk<</data>> suite" -- the model copied the markers ``untrusted_input`` wraps
 caller values in -- and closed "This indicates a potential release readiness issue" about failures the caller
 supplied. The markers are now removed from the structured report at the one point both the model path and the

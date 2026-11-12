@@ -1,7 +1,7 @@
 /**
  * Ask AI: a conversation about one project's test results.
  *
- * Rebuilt 2026-10-09 after an evaluation on the homelab. The page used to wait
+ * Rebuilt 2026-10-09 after an evaluation on the reference K3s install. The page used to wait
  * 7–10 s on a blank "…" for each answer, render tables as raw `|` text, mix
  * every project's conversations into one list, and save provider failures as
  * if they were answers. Now: the question shows at once, the assistant says
@@ -88,7 +88,7 @@ export default function ChatPage() {
 
   // `&project=<id>` names the project the prompt is about. "Ask AI about this
   // run" on an E-Commerce run, with Checkout Service active, asked Checkout
-  // Service and got "I can't find build viz-3043" (homelab, 2026-10-10). The
+  // Service and got "I can't find build viz-3043" (reference K3s install, 2026-10-10). The
   // chat switches to that project when it is one of the user's; the prompt
   // is local state, so it survives the switch.
   const linkedProjectId = searchParams.get('project')

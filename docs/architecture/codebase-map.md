@@ -28,7 +28,7 @@ The generated [endpoint index](../reference/api-index.md), [data dictionary](../
 | `mcp` | FastMCP adapter, API client, auth verifier, tools/resources/prompts and tests |
 | `scripts` | Setup, seed, release/backup operations, quality ratchets and documentation generators |
 | `docker-compose*.yml`, `Makefile`, `install.sh` | Local/release/VM/air-gap startup and common operator tasks |
-| `k8s`, `homelabsetup`, `openshiftsetup` | Kubernetes base/overlays, K3s and OpenShift deployment workflows |
+| `k8s`, `k3ssetup`, `openshiftsetup` | Kubernetes base/overlays, K3s and OpenShift deployment workflows |
 | `infra`, `deploy` | Cloud/monitoring assets and the image manifest |
 | `.github/workflows` | CI, release, infrastructure and deployment automation |
 | `benchmarks`, `samples` | Performance/evaluation fixtures and report examples |

@@ -3,7 +3,7 @@
 The column it replaces asked ``GET /runs/{id}/intelligence`` per run, and a
 cache miss there COMPUTES the run's intelligence and writes a snapshot on a
 second session. Twenty-five of those at once on a worker's 2 + 1 pool is the
-homelab outage of 2026-10-13/14 again. The batch read must never compute and
+reference K3s install outage of 2026-10-13/14 again. The batch read must never compute and
 never open a second session.
 
 The route runs on a pool of ONE connection with a 1 s checkout (the pattern of

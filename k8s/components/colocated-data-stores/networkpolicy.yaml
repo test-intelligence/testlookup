@@ -12,7 +12,7 @@
 # only the backend and the workers, and NetworkPolicy allows are a union, so
 # listing it would widen that (tests/regression/test_chroma_network_isolation.py).
 #
-# One policy, so an install that ran the homelab's earlier, wider
+# One policy, so an install that ran the reference K3s install's earlier, wider
 # allow-data-stores (MCP and beat to every store, on every port) is narrowed in
 # place by `kubectl apply`, which does not delete a renamed policy. A store
 # never listens on another store's port, so the port list confines the backend

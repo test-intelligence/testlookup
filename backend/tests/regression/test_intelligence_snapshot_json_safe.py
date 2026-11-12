@@ -1,7 +1,7 @@
 """The intelligence snapshot must be JSON-encodable, and a failed cache write
 must never fail the request.
 
-Found live on the homelab. ``POST /api/v1/runs/{run_id}/intelligence/refresh``
+Found live on the reference K3s install. ``POST /api/v1/runs/{run_id}/intelligence/refresh``
 returned **500**:
 
 ```

@@ -33,7 +33,7 @@ export interface TriggerPipelineResponse {
 /** A bulk request's idempotency token: 16 random bytes as 32 lower-case hex
  *  characters (the server's `^[A-Za-z0-9_-]+$`, 8..64). `crypto.getRandomValues`,
  *  not `crypto.randomUUID`: the latter exists only in secure contexts and the
- *  homelab is served over plain HTTP. */
+ *  reference K3s install is served over plain HTTP. */
 export function newClientToken(): string {
   const bytes = new Uint8Array(16)
   crypto.getRandomValues(bytes)

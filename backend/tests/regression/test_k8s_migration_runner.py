@@ -58,14 +58,14 @@ def test_deploy_entrypoints_block_on_migration_before_rollout_success() -> None:
     assert '["destination_refs"]["backend"]' in deploy
     assert '["source_sha"]' in deploy
 
-    homelab = _text("homelabsetup/deploy-homelab.sh")
-    assert "Migrating with the candidate image before the application rollout" in homelab
-    # The deploy applies its per-deploy render of k8s/overlays/homelab.
-    assert homelab.index("Migrating with the candidate image") < homelab.index(
+    k3s_overlay = _text("k3ssetup/deploy-k3s.sh")
+    assert "Migrating with the candidate image before the application rollout" in k3s_overlay
+    # The deploy applies its per-deploy render of k8s/overlays/k3s.
+    assert k3s_overlay.index("Migrating with the candidate image") < k3s_overlay.index(
         'kubectl apply -k "$RENDER_DIR"'
     )
-    assert "../../k8s/overlays/homelab" in homelab
-    assert "Fresh install detected" in homelab
+    assert "../../k8s/overlays/k3s" in k3s_overlay
+    assert "Fresh install detected" in k3s_overlay
 
     ci =_text(".github/workflows/ci.yml")
     assert ci.index("run-k8s-migrations.sh testlookup-dev") < ci.index(

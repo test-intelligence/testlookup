@@ -1,6 +1,6 @@
 """The deploy must not report success when the new image never started.
 
-On 2026-08-15 a homelab deploy printed **"Health check passed"** and
+On 2026-08-15 a reference K3s install deploy printed **"Health check passed"** and
 **"Deployment Complete"**, and exited 0, while the backend it had just built
 was in CrashLoopBackOff for its entire life:
 
@@ -45,10 +45,10 @@ import re
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
-DEPLOY = REPO / "homelabsetup" / "deploy-homelab.sh"
+DEPLOY = REPO / "k3ssetup" / "deploy-k3s.sh"
 
 pytestmark = pytest.mark.skipif(
-    not DEPLOY.exists(), reason="homelab deploy script not present in this checkout"
+    not DEPLOY.exists(), reason="reference K3s install deploy script not present in this checkout"
 )
 
 

@@ -14,7 +14,7 @@ kind: Kustomization
 # pushes the app images, mirrors the infra images, then sed-substitutes the
 # *_PLACEHOLDER tokens in a working copy of this file before ``oc apply -k``
 # and restores the committed placeholders afterwards (same trap-restore trick
-# as homelabsetup/deploy-homelab.sh). Running ``oc apply -k`` directly without
+# as k3ssetup/deploy-k3s.sh). Running ``oc apply -k`` directly without
 # the script is expected to fail at ImagePull — the placeholders intentionally
 # don't resolve, which prevents an accidental mis-registry deploy.
 # ============================================================================
@@ -25,7 +25,7 @@ resources:
   # files outside this overlay dir, and an air-gapped overlay should be
   # self-describing anyway). The PVCs carry STORAGE_CLASS_PLACEHOLDER, which
   # the deploy script substitutes. Image registries are re-pointed by the
-  # images: block below. Shapes mirror k8s/overlays/homelab/infra-*.yaml.
+  # images: block below. Shapes mirror k8s/overlays/k3s/infra-*.yaml.
   - infra-postgres.yaml
   - infra-mongo.yaml
   - infra-redis.yaml
@@ -42,7 +42,7 @@ components:
   - ../../components/backup
   # Ingress allows for the in-cluster Postgres / MongoDB / Redis / object store
   # above. Without them the base default-deny-all leaves the stores
-  # unreachable (shared with the homelab overlay).
+  # unreachable (shared with the K3s overlay).
   - ../../components/colocated-data-stores
 
 namespace: testlookup
@@ -113,7 +113,7 @@ patches:
       name: testlookup-backups
 
   # ── Frontend nginx: mount the pre-rendered config + run as root ───────────
-  # Identical to the homelab patch. nginx:alpine forks workers as uid 101 and
+  # Identical to the reference K3s install patch. nginx:alpine forks workers as uid 101 and
   # needs CHOWN/SETUID/SETGID to write /var/cache/nginx; the deploy script
   # grants the ``anyuid`` SCC to the namespace default ServiceAccount so this
   # is permitted (a stock OpenShift image would otherwise need rebuilding to
@@ -243,7 +243,7 @@ images:
     newTag: APP_TAG_PLACEHOLDER
 
   # ── Third-party infra images (mirrored into the SAME Artifactory) ─────────
-  # Tags are pinned to the exact versions the homelab/base manifests use, so a
+  # Tags are pinned to the exact versions the reference K3s install/base manifests use, so a
   # ``docker pull <upstream>; docker tag …; docker push <artifactory>`` mirror
   # round (see deploy script / mirror-images.sh) lands them at these paths.
   - name: postgres

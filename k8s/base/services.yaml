@@ -39,7 +39,7 @@ metadata:
   namespace: testlookup
   annotations:
     # publishNotReadyAddresses alone is NOT enough under Traefik, which is what
-    # the homelab runs. Measured on Traefik 3.6.10 with Redis scaled to zero:
+    # the reference K3s install runs. Measured on Traefik 3.6.10 with Redis scaled to zero:
     # the flag makes the EndpointSlice report ready=true, kube-proxy routes the
     # ClusterIP correctly (verified from inside the cluster), and the ingress
     # rule matched -- but Traefik still answered "no available server", because

@@ -1,6 +1,6 @@
 """Regression: every classify_test caller must supply the failure text.
 
-Bug (homelab, 2026-08-16): `POST /api/v1/analyze` — the user-facing "Analyze"
+Bug (reference K3s install, 2026-08-16): `POST /api/v1/analyze` — the user-facing "Analyze"
 action — returned `UNKNOWN`, confidence 30, *"Could not determine failure cause
 from available data. Manual review required."* for every test, always.
 

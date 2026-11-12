@@ -2,7 +2,7 @@
  * Settings › Performance › Latency Budgets at 1280 and 1440 px. The table had a Description column beside the
  * operation and five number columns; the descriptions name endpoints ("GET /analytics/execution/suite-history, …")
  * that cannot wrap, so the table could not get narrower than ~800 px and `#main-content` scrolled sideways at
- * 1280 (the W29e homelab walk, F-W29e-1). The description now sits under the operation and wraps anywhere.
+ * 1280 (the W29e reference K3s install walk, F-W29e-1). The description now sits under the operation and wraps anywhere.
  *
  * The rows are the codified budgets (`backend/app/services/performance_budgets.py`) that set the widths: the
  * longest operation name, the largest budget, the longest handler, the descriptions with the longest endpoint

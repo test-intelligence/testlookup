@@ -26,7 +26,7 @@ W30 items (§6.3 G-B 1-7):
 Then (LAST) the janitor expires the export and fails a stale job.
 
 Fixture rules (§6.3): ``dispose_engine_for_loop()`` and ``reset_mongo_client()`` before the engines are built
-and after they are disposed; the runner gets a 1 + 1 pool (the homelab worker's); object storage =
+and after they are disposed; the runner gets a 1 + 1 pool (the reference K3s install worker's); object storage =
 ``LocalStorageProvider`` in a temp dir; Redis is never bound (``get_redis`` is a no-op double for the router's
 membership read); everything the seed created is removed by ``cleanup_transfer_seed`` (CI shares ONE Postgres
 AND one Mongo database). Runs ONLY through ``pg_pytest_w30.sh b …`` on ``df_w30_b`` (Mongo ``df_w30_b``) at 0252.
@@ -146,7 +146,7 @@ async def env() -> Any:
 
 
 def _worker_pool() -> Any:
-    """The homelab worker's pool: 1 + overflow 1 (a fixture with a bigger pool hides a third connection)."""
+    """The reference K3s install worker's pool: 1 + overflow 1 (a fixture with a bigger pool hides a third connection)."""
     engine = create_async_engine(_dsn(), pool_size=1, max_overflow=1, pool_timeout=10)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     sessions.engine = engine  # type: ignore[attr-defined]
@@ -224,7 +224,7 @@ async def exported(env: Any, world: Any) -> Any:
 
 @pytest_asyncio.fixture(loop_scope="module", scope="module")
 async def history_export(env: Any, world: Any) -> Any:
-    """The export WITH history (30 days) through the REAL runner on the homelab worker's 1 + 1 pool."""
+    """The export WITH history (30 days) through the REAL runner on the reference K3s install worker's 1 + 1 pool."""
     from app.models.schemas import ProjectDataOptions
 
     small = _worker_pool()
@@ -632,7 +632,7 @@ async def test_the_janitor_expires_the_export_and_fails_a_stale_job(env: Any, ex
 
 
 async def test_the_export_runs_inside_a_two_connection_worker_pool(exported: Any) -> None:
-    """The homelab's Celery worker pool is size 1 + overflow 1. Its first live export held the snapshot AND the
+    """The reference K3s install's Celery worker pool is size 1 + overflow 1. Its first live export held the snapshot AND the
     signing session through the write, needed a third connection to record the storage key, and failed
     ``export_write`` (TimeoutError) after two 30 s pool timeouts. The same export through a 1 + 1 pool succeeds."""
     from app.models.postgres import Project, User

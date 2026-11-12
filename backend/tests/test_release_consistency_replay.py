@@ -1,11 +1,11 @@
 """Re-audit N34: the release consistency check replays the gate's own mapping.
 
-On the homelab, 76 of 215 release decisions carried
+On the reference K3s install, 76 of 215 release decisions carried
 ``consistency_check_failed:recommendation_vs_score``. Replaying the gate's
 real mapping over the 56 of them that have a stored release decision explained
 every one: 50 were NO_GO from the pass-rate hard floor, 6 were CONDITIONAL_GO
 from a pass rate under the minimum. The check compared the recommendation with
-a score-only band -- two modules, one rule. The ROWS below are real homelab
+a score-only band -- two modules, one rule. The ROWS below are real reference K3s install
 values (score, pass rate, thresholds, recommendation).
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ DEFAULT_THRESHOLDS = {
     "pass_rate_minimum": 90.0, "pass_rate_hard_floor_factor": 0.7,
 }
 
-#: (recommendation, composite, pass_rate) from the homelab export; every one
+#: (recommendation, composite, pass_rate) from the reference K3s install export; every one
 #: was flagged by the old check.
 ROWS = [
     ("NO_GO", 41.8, 44.44),           # hard floor: 44.44 < 63
@@ -62,7 +62,7 @@ def _check(report):
 
 
 @pytest.mark.parametrize("recommendation,composite,pass_rate", ROWS)
-def test_real_homelab_decisions_are_consistent(recommendation, composite, pass_rate):
+def test_real_k3s_decisions_are_consistent(recommendation, composite, pass_rate):
     report = check_release_consistency(_decision(recommendation, composite, pass_rate))
     check = _check(report)
     assert check.passed is True, check.details

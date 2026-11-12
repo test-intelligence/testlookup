@@ -49,7 +49,7 @@ A value counts as a **placeholder** when it is empty, when it contains `change-m
 Two more production-only behaviours:
 
 - With `APP_ENV=production` the API also queries PostgreSQL at startup (`SHOW max_connections`, reserved connections, the role's connection limit) and refuses to start when the server's `max_connections` is below `PG_FLEET_MAX_CONNECTIONS` or when `PG_FLEET_REQUIRED_CONNECTIONS` exceeds the usable capacity. See [PostgreSQL connection budget](database-connection-budget.md).
-- `DEV_AUTO_LOGIN_ENABLED` defaults to **true in code**. The Compose files, the Kubernetes base (`k8s/base/configmap.yaml`) and the `homelab` and `openshift-artifactory` overlays set it to `false`. A deployment that writes its own ConfigMap or environment must set `DEV_AUTO_LOGIN_ENABLED=false` too, or the API refuses to start in production.
+- `DEV_AUTO_LOGIN_ENABLED` defaults to **true in code**. The Compose files, the Kubernetes base (`k8s/base/configmap.yaml`) and the `reference K3s install` and `openshift-artifactory` overlays set it to `false`. A deployment that writes its own ConfigMap or environment must set `DEV_AUTO_LOGIN_ENABLED=false` too, or the API refuses to start in production.
 
 ## Core application and HTTP edge
 

@@ -39,7 +39,7 @@ def test_network_deploys_do_not_publish_or_provision_shared_mcp_credentials():
 
     for path in (
         REPO / "scripts" / "deploy-k8s.sh",
-        REPO / "homelabsetup" / "deploy-homelab.sh",
+        REPO / "k3ssetup" / "deploy-k3s.sh",
         REPO / "openshiftsetup" / "deploy-openshift-artifactory.sh",
     ):
         source = path.read_text(encoding="utf-8")
@@ -99,7 +99,7 @@ def test_upgrade_retires_only_the_secret_named_machine_account():
 
     for path in (
         REPO / "scripts" / "deploy-k8s.sh",
-        REPO / "homelabsetup" / "deploy-homelab.sh",
+        REPO / "k3ssetup" / "deploy-k3s.sh",
         REPO / "openshiftsetup" / "deploy-openshift-artifactory.sh",
     ):
         deploy = path.read_text(encoding="utf-8")

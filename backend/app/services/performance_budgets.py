@@ -110,7 +110,7 @@ LATENCY_BUDGETS: list[LatencyBudget] = [
         "Generic chart-data read, cache miss. Route-level ceiling = the "
         "percentile-metric budget (duration_p95 et al.): the HTTP histogram "
         "cannot tell metric classes apart, so count/rate reads are held to "
-        "the tighter harness-only chart_data_rate. Homelab 90 d duration_p95, "
+        "the tighter harness-only chart_data_rate. Reference K3s install 90 d duration_p95, "
         "1 user: server p95 242.5 ms.",
         http_handler="/api/v1/analytics/chart-data",
     ),
@@ -118,18 +118,18 @@ LATENCY_BUDGETS: list[LatencyBudget] = [
         "chart_data_rate", 100, 500, 1000,
         "Count/rate chart-data read (pass_rate, failures, executions), cache "
         "miss, up to 90 d. Harness-only: shares chart_data's route, so no "
-        "alert can isolate it. Homelab 1 user: server p95 40-242.5 ms; holds "
+        "alert can isolate it. Reference K3s install 1 user: server p95 40-242.5 ms; holds "
         "to ~4 concurrent cold heavy readers per pod.",
     ),
     LatencyBudget(
         "analytics_heatmap", 200, 800, 1600,
         "Heatmap read (suite_day / suite_environment / suite_release / "
-        "test_run), cache miss. Homelab 1 user: server p95 75-242.5 ms.",
+        "test_run), cache miss. Reference K3s install 1 user: server p95 75-242.5 ms.",
         http_handler="/api/v1/analytics/heatmap",
     ),
     LatencyBudget(
         "chart_rows", 50, 300, 600,
-        "Chart drill-down rows, page 1 (size 50). Homelab 1 user: server "
+        "Chart drill-down rows, page 1 (size 50). Reference K3s install 1 user: server "
         "p95 9.5 ms.",
         http_handler="/api/v1/analytics/chart-data/rows",
     ),

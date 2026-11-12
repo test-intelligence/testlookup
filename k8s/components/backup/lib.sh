@@ -31,7 +31,7 @@ mongo_uri() {
 }
 
 # Wait until a store accepts connections before touching it (re-audit M25,
-# found live on the homelab). k3s enforces NetworkPolicy with kube-router,
+# found live on the reference K3s install). k3s enforces NetworkPolicy with kube-router,
 # which programs a NEW pod's label-matched allow rules asynchronously after the
 # pod starts; until then base default-deny REJECTs its traffic and pg_dump
 # failed in its first second with "Connection refused" (twice, backoffLimit 1).

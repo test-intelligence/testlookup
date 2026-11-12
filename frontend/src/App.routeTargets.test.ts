@@ -15,7 +15,7 @@
  * sidebar links to `/failures`, so the sweep's Failure Analysis entry resolved
  * to `/overview`. `probe-exploratory.spec.ts` did the same with `/tests`
  * (labelled "Test management") and `/flaky` (labelled "Flaky coach").
- * Confirmed live against the homelab on 2026-09-18 — the final pathname after
+ * Confirmed live against the reference K3s install on 2026-09-18 — the final pathname after
  * navigating to `/failure-analysis` was `/overview`.
  *
  * This test is the class fix. The instance fix (spelling the routes correctly)

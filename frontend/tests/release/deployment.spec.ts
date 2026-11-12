@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { checkStatus } from './http'
 
-const tags = ['@P0', '@smoke', '@regression', '@full', '@homelab-safe']
+const tags = ['@P0', '@smoke', '@regression', '@full', '@k3s-safe']
 
 test('TL-DEPLOY-002 candidate identity and dependency readiness', {
   tag: [...tags, '@journey:J13', '@area:deploy', '@role:public'],

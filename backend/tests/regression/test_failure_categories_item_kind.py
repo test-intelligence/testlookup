@@ -84,7 +84,7 @@ class TestCountsRemainExact:
             grouped[key] = grouped.get(key, 0) + r["count"]
         assert sum(grouped.values()) == 11, "total changed while splitting"
 
-    def test_the_homelab_case_splits_into_two_kinds(self):
+    def test_the_k3s_case_splits_into_two_kinds(self):
         """9 FAILED + 2 BROKEN under one category must not collapse to one kind."""
         rows = [
             {"category": "UNKNOWN", "status": "FAILED", "count": 9},

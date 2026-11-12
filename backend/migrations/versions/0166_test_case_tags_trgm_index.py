@@ -4,7 +4,7 @@ Re-audit finding H9 said global search "casts ``tags`` JSON->text, defeating the
 trigram indexes". Measured, that was half right, and the missing half is what
 decides the fix.
 
-Keyword search over test cases ORed five predicates. EXPLAIN against the homelab
+Keyword search over test cases ORed five predicates. EXPLAIN against the reference K3s install
 deployment (50,510 test_cases / 1,810 test_runs), term ``%zqxjneedle%``:
 
     A  current query, all five branches .......... no trigram index used

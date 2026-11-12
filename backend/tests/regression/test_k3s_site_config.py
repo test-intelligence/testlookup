@@ -1,10 +1,10 @@
-"""The single-node K3s path (homelabsetup/) carries no site of its own.
+"""The single-node K3s path (k3ssetup/) carries no site of its own.
 
-Until the OSS release the deploy scripts and k8s/overlays/homelab hard-coded
+Until the OSS release the deploy scripts and k8s/overlays/k3s hard-coded
 one owner's network: node IPs, an SSH user, a MetalLB range, the host name
 the ingress answered on, a hosted-LLM posture and a well-known default admin
 password. Every one of those now comes from a local site file
-(``TESTLOOKUP_HOMELAB_ENV``) that is never committed, and a first install
+(``TESTLOOKUP_K3S_ENV``) that is never committed, and a first install
 generates the admin password instead of shipping one.
 
 These tests pin that contract, and the two promises an existing install
@@ -25,10 +25,10 @@ import pytest
 from tests.shell_utils import bash_environment
 
 REPO = Path(__file__).resolve().parents[3]
-DEPLOY = REPO / "homelabsetup" / "deploy-homelab.sh"
-BOOTSTRAP = REPO / "homelabsetup" / "bootstrap-homelab.sh"
-LIB = REPO / "homelabsetup" / "lib-site-config.sh"
-OVERLAY = REPO / "k8s" / "overlays" / "homelab"
+DEPLOY = REPO / "k3ssetup" / "deploy-k3s.sh"
+BOOTSTRAP = REPO / "k3ssetup" / "bootstrap-k3s.sh"
+LIB = REPO / "k3ssetup" / "lib-site-config.sh"
+OVERLAY = REPO / "k8s" / "overlays" / "k3s"
 
 
 def _find_bash() -> str | None:
@@ -63,7 +63,8 @@ def _bash(tmp_path: Path, body: str, env: dict[str, str] | None = None) -> subpr
     runner.write_text("set -euo pipefail\n" + body, encoding="utf-8", newline="\n")
     assert BASH is not None
     environment = bash_environment(BASH)
-    for key in [k for k in environment if k.startswith("K3S_") or k == "TESTLOOKUP_HOMELAB_ENV"]:
+    for key in [k for k in environment if k.startswith(("K3S_", "HOMELAB_"))
+                or k in ("TESTLOOKUP_K3S_ENV", "TESTLOOKUP_HOMELAB_ENV")]:
         environment.pop(key)
     environment["HOME"] = str(tmp_path / "home")
     environment.pop("XDG_CONFIG_HOME", None)
@@ -87,8 +88,8 @@ _PRIVATE = re.compile(
 
 @pytest.mark.parametrize(
     "path",
-    [DEPLOY, BOOTSTRAP, LIB, REPO / "homelabsetup" / "DEPLOY_TESTLOOKUP.md",
-     REPO / "homelabsetup" / "homelab.env.example",
+    [DEPLOY, BOOTSTRAP, LIB, REPO / "k3ssetup" / "DEPLOY_TESTLOOKUP.md",
+     REPO / "k3ssetup" / "k3s.env.example",
      *sorted(OVERLAY.glob("*.yaml"))],
     ids=lambda p: p.name,
 )
@@ -153,7 +154,7 @@ def test_site_file_values_load_and_the_environment_wins(tmp_path: Path):
         + 'printf "%s|%s|%s|%s|%s\\n" "$K3S_HOST" "$K3S_REGISTRY" "$K3S_NAMESPACE" '
         + '"$K3S_PATCHES_DIR" "$SITE_CONFIG_FILE"\n'
     )
-    result = _bash(tmp_path, body, {"TESTLOOKUP_HOMELAB_ENV": str(site), "K3S_NAMESPACE": "from-env"})
+    result = _bash(tmp_path, body, {"TESTLOOKUP_K3S_ENV": str(site), "K3S_NAMESPACE": "from-env"})
     assert result.returncode == 0, result.stderr
     host, registry, namespace, patches, loaded = result.stdout.strip().split("|")
     assert (host, registry, namespace) == ("ci.example.test", "reg.example.test:30500", "from-env")
@@ -165,9 +166,83 @@ def test_site_file_values_load_and_the_environment_wins(tmp_path: Path):
 @needs_bash
 def test_a_named_site_file_that_is_missing_stops_the_run(tmp_path: Path):
     body = LIB.read_text(encoding="utf-8") + "\nload_site_config\necho REACHED\n"
-    result = _bash(tmp_path, body, {"TESTLOOKUP_HOMELAB_ENV": str(tmp_path / "absent.env")})
+    result = _bash(tmp_path, body, {"TESTLOOKUP_K3S_ENV": str(tmp_path / "absent.env")})
     assert result.returncode != 0
     assert "REACHED" not in result.stdout
+
+
+# ── installs from before the rename (homelabsetup/ -> k3ssetup/) keep working ──
+
+@needs_bash
+def test_the_old_variable_name_still_names_the_site_file(tmp_path: Path):
+    site = tmp_path / "site.env"
+    site.write_text("K3S_HOST=old.example.test\n", encoding="utf-8", newline="\n")
+    body = LIB.read_text(encoding="utf-8") + '\nload_site_config\nprintf "%s\\n" "$K3S_HOST"\n'
+    result = _bash(tmp_path, body, {"TESTLOOKUP_HOMELAB_ENV": str(site)})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "old.example.test"
+
+
+@needs_bash
+@pytest.mark.parametrize(("files", "expected"), [
+    ({"homelab.env": "legacy.example.test"}, "legacy.example.test"),
+    ({"homelab.env": "legacy.example.test", "k3s.env": "new.example.test"}, "new.example.test"),
+])
+def test_the_old_default_site_file_is_read_when_the_new_one_is_absent(tmp_path: Path, files, expected):
+    config = tmp_path / "home" / ".config" / "testlookup"
+    config.mkdir(parents=True)
+    for name, host in files.items():
+        (config / name).write_text(f"K3S_HOST={host}\n", encoding="utf-8", newline="\n")
+    body = LIB.read_text(encoding="utf-8") + '\nload_site_config\nprintf "%s\\n" "$K3S_HOST"\n'
+    result = _bash(tmp_path, body)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == expected
+
+
+def _credentials_file(tmp_path: Path, env: dict[str, str] | None = None) -> str:
+    source = DEPLOY.read_text(encoding="utf-8")
+    start = source.index("# ── Configuration ───")
+    end = source.index('MINIO_ACCESS="${K3S_S3_ACCESS_KEY:-testlookup_minio}"')
+    root = tmp_path / "repo"
+    (root / "k3ssetup").mkdir(parents=True, exist_ok=True)
+    shutil.copy(LIB, root / "k3ssetup" / LIB.name)
+    block = source[start:end].replace(
+        'REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"', f'REPO_ROOT="{_posix(root)}"'
+    )
+    if 'REPO_ROOT="' + _posix(root) not in block:
+        block = f'REPO_ROOT="{_posix(root)}"\n' + block
+    result = _bash(tmp_path, block + '\nprintf "%s\\n" "$CREDS_FILE"\n', env)
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
+@needs_bash
+def test_an_install_from_before_the_rename_keeps_its_credentials_file(tmp_path: Path):
+    """Writing a new file would record a fresh admin password the admin never got."""
+    root = tmp_path / "repo"
+    assert _credentials_file(tmp_path).endswith("k3ssetup/.k3s-credentials")
+    legacy = root / "homelabsetup" / ".homelab-credentials"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("ADMIN_USERNAME=admin\n", encoding="utf-8")
+    assert _credentials_file(tmp_path).endswith("homelabsetup/.homelab-credentials")
+    current = root / "k3ssetup" / ".k3s-credentials"
+    current.write_text("ADMIN_USERNAME=admin\n", encoding="utf-8")
+    assert _credentials_file(tmp_path).endswith("k3ssetup/.k3s-credentials")
+    named = _posix(tmp_path / "elsewhere.creds")
+    assert _credentials_file(tmp_path, {"K3S_CREDENTIALS_FILE": named}) == named
+
+
+@needs_bash
+def test_the_old_node_password_variable_still_works(tmp_path: Path):
+    body = (
+        _function(BOOTSTRAP, "get_password")
+        + '\nNODE_USER=ops; NODES_IP=(10.0.0.5)\nget_password 0\n'
+    )
+    result = _bash(tmp_path, body, {"HOMELAB_NODE1_PASS": "legacy-secret"})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "legacy-secret"
+    result = _bash(tmp_path, body, {"HOMELAB_NODE1_PASS": "legacy-secret", "K3S_NODE1_PASS": "new-secret"})
+    assert result.stdout == "new-secret"
 
 
 @needs_bash
@@ -221,7 +296,7 @@ def test_the_rendered_overlay_carries_the_site(tmp_path: Path):
         "  namespace: testlookup\ndata:\n  LLM_PROVIDER: openrouter\n",
         encoding="utf-8",
     )
-    render_dir = REPO / "homelabsetup" / ".render"
+    render_dir = REPO / "k3ssetup" / ".render"
     body = (
         f'REPO_ROOT="{_posix(REPO)}"\nNAMESPACE=testlookup\n'
         'K3S_HOST=site.example.test\nREGISTRY=reg.example.test:30500\n'
@@ -234,7 +309,7 @@ def test_the_rendered_overlay_carries_the_site(tmp_path: Path):
         result = _bash(tmp_path, body)
         assert result.returncode == 0, result.stderr
         kustomization = (render_dir / "kustomization.yaml").read_text(encoding="utf-8")
-        assert "  - ../../k8s/overlays/homelab" in kustomization
+        assert "  - ../../k8s/overlays/k3s" in kustomization
         for image in ("backend", "frontend", "mcp"):
             assert f"newName: reg.example.test:30500/testlookup/{image}" in kustomization
         assert kustomization.count("newTag: build-20260101-000000") == 3

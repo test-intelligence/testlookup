@@ -6,7 +6,7 @@
  * - `narrowing(overrides)`: one `narrowed` answer on the same branch (good "build-sentinel-805" at
  *   "goodsentinel01", bad "build-sentinel-812" at "badsentinel002", streak 2, two untested runs in
  *   between) for the test "checkout_sentinel_test" / fingerprint "fp-sentinel-checkout"; the compare is
- *   `unavailable` / `offline_mode` (the homelab's answer).
+ *   `unavailable` / `offline_mode` (the reference K3s install's answer).
  * - `bisectCommit(overrides)` / `fetchedCompare(commits?)`: a ranked commit; a `fetched` compare
  *   (GitHub, three commits by default, the run-level range 17).
  * - `drift(overrides)`: a `recorded` drift with the acceptance pair (`poetry.lock changed`, then

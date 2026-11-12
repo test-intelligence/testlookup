@@ -1,5 +1,5 @@
 # Valkey 8.1 (BSD-3-Clause, protocol-compatible with Redis) — deployed inside
-# the K3s cluster for homelab, under the original testlookup-redis names.
+# the K3s cluster for reference K3s install, under the original testlookup-redis names.
 #
 # It is the Celery broker, live-evidence authority, and cache. AOF plus a
 # local-path PVC keeps queued work and accepted evidence recoverable across a

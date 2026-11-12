@@ -1,7 +1,7 @@
 /**
  * Regression: /agents must render DEGRADED pipelines visibly.
  *
- * History (BUG-004, S2 — live homelab run 493d5c1f, 2026-06-06): a pipeline
+ * History (BUG-004, S2 — live reference K3s install run 493d5c1f, 2026-06-06): a pipeline
  * that finished with an errored stage was stored as status='partial', and the
  * page's status maps and StatusIcon had no case for it, so the row rendered
  * with blank styling and no icon and looked "missing".

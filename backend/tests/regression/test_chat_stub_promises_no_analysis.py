@@ -1,6 +1,6 @@
 """Regression: the chat run card promised an AI analysis nobody had queued.
 
-Measured on the live homelab (2026-08-16). Six runs were ingested, one of them
+Measured on a live reference K3s install (2026-08-16). Six runs were ingested, one of them
 with ``run_ai=true``. The /chat sidebar showed the analysed run, and beside the
 other five::
 

@@ -1,4 +1,4 @@
-"""E2E pass 2026-10-10 (homelab): two permission leaks found by calling the API
+"""E2E pass 2026-10-10 (reference K3s install): two permission leaks found by calling the API
 as every role, not as admin.
 
 1. ``POST /api/v1/projects/{id}/default-qa-lead/reset-password`` had only

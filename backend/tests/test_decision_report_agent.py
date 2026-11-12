@@ -335,7 +335,7 @@ def test_typed_claims_bind_to_authorized_artifact_and_metric_references():
     #
     # What changed (F-16): they no longer land on the SAME claim. Every claim
     # used to carry one identical evidence array, so this assertion passed while
-    # no claim cited evidence chosen for it — 10 of 10 published homelab reports
+    # no claim cited evidence chosen for it — 10 of 10 published reference K3s install reports
     # had byte-identical evidence on every claim. Artifacts now support the
     # claim that is about them; the metric supports the metric claim.
     artifact_evidence = claims["fact.evidence.captured"]["evidence"]

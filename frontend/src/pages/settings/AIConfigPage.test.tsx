@@ -305,7 +305,7 @@ describe('AIConfigPage — live model status', () => {
   })
 
   it('reports a missing cloud API key as a key problem, not a missing model', async () => {
-    // Regression (homelab, 2026-08-16): the badge was derived from
+    // Regression (reference K3s install, 2026-08-16): the badge was derived from
     // `ollama_reachable`, so every non-Ollama failure read "Model Missing".
     // An operator with an unset OpenRouter key was told to install a model.
     mockGetModelStatus.mockResolvedValue(

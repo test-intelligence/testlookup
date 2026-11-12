@@ -3,7 +3,7 @@
 The defect
 ----------
 ``rules_engine._build_result`` hardcoded ``"evidence_references": []``, and the
-rules engine produces the large majority of analyses. Measured on the homelab
+rules engine produces the large majority of analyses. Measured on the reference K3s install
 2026-08-22, after F-3's citation contract shipped:
 
     4,693 analyses, 3 carrying any evidence  (0.06%)

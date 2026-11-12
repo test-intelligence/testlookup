@@ -2,7 +2,7 @@
 
 ``scripts/seed_dev_data.py`` wrote every project membership as
 ``str(UserRole.X)``, which is ``'UserRole.QA_LEAD'`` on Python 3.11+, so every
-seeded install (local, homelab demo) had memberships no role check matches: a
+seeded install (local, reference K3s install demo) had memberships no role check matches: a
 seeded QA lead got 403 updating the triage status of a failure in their own
 Inbox ("Only the assigned user or a QA_LEAD/ADMIN on the project ...", the UX
 redesign's browser E2E pass, 2026-10-07). The seed now writes ``.value``; this

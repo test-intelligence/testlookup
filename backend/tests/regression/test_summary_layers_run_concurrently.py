@@ -6,7 +6,7 @@ F-6 read: *"four sequential calls over one identical ~2.6k-token context.
 Roughly 4x the necessary input tokens and 4x the latency."* Half of that
 survives measurement.
 
-Homelab telemetry, 30 days, 1,191 ``summary`` stages:
+Reference K3s install telemetry, 30 days, 1,191 ``summary`` stages:
 
     stages that made all four LLM calls      308  (25.9%)   p50  41.2s
     stages that made NONE                    880  (73.9%)   p50   0.22s

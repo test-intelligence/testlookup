@@ -24,7 +24,7 @@ spec:
       secretName: testlookup-tls-cert
   rules:
     # IMPORTANT: replace "testlookup.example.com" with your real hostname
-    # via a kustomize overlay patch (see k8s/overlays/homelab for an example).
+    # via a kustomize overlay patch (see k8s/overlays/k3s for an example).
     - host: testlookup.example.com
       http:
         paths:

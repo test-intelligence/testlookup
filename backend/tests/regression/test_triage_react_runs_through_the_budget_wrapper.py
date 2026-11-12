@@ -3,7 +3,7 @@
 ``run_triage_agent`` handed ``get_llm()``'s result -- a ``BudgetedLLM``, which
 is not a LangChain ``Runnable`` -- to ``create_react_agent``, which raised
 "Expected a Runnable, callable or dict" every time the slow path was reached.
-The router caught it and fell back to rules; the homelab's ``ai_analysis``
+The router caught it and fell back to rules; the reference K3s install's ``ai_analysis``
 holds one such analysis (2026-09-11, fallback_reason "llm_error: TypeError:
 Expected a Runnable ..."), and building the agent in the backend pod
 reproduced it on 2026-10-09. The Ask-AI chat had the same crash. No test saw
@@ -176,7 +176,7 @@ async def query_logs(service_name: str, timestamp_utc: str) -> str:
 
 @pytest.mark.asyncio
 async def test_a_tool_with_several_arguments_takes_the_json_the_model_writes(monkeypatch, gates):
-    """The first real run of the slow path (homelab pod, 2026-10-09) ended on
+    """The first real run of the slow path (reference K3s install pod, 2026-10-09) ended on
     "timestamp_utc: Field required": the ReAct agent sends ONE string, and the
     model's JSON object went to the first argument only."""
     monkeypatch.setattr(triage, "_get_tools", lambda: [triage._single_input(query_logs)])

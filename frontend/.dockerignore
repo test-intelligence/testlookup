@@ -1,6 +1,6 @@
 # Build-context exclusions for the frontend image.
 #
-# Build context is ``frontend/`` (see homelabsetup/deploy-homelab.sh:357).
+# Build context is ``frontend/`` (see k3ssetup/deploy-k3s.sh:357).
 # The biggest exclusions here are ``node_modules`` (rebuilt inside the
 # image via ``npm ci``) and ``dist`` (rebuilt by ``npm run build``);
 # leaving them in the context pushes hundreds of MB across the docker
@@ -51,7 +51,7 @@ README.md
 # image build reading their extended attributes:
 #   copier: get: getting extended attributes for "/.pytest-cache-m10":
 #   permission denied
-# That failure cost a homelab deploy from backend/, whose ignore covered
+# That failure cost a reference K3s install deploy from backend/, whose ignore covered
 # the underscore spelling but not the hyphenated one. Both separators are
 # matched here so this context cannot repeat it.
 # Every pytest scratch root, whatever the session named it. The three

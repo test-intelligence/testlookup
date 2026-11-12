@@ -3,7 +3,7 @@
 A run analysed twice holds one immutable cluster set per pipeline run, so a
 query on ``FailureCluster.test_run_id`` alone sees every cluster twice: the
 Analysis tab listed duplicates, project metrics double-counted them, and a
-lookup by ``cluster_id`` raised ``MultipleResultsFound`` (homelab,
+lookup by ``cluster_id`` raised ``MultipleResultsFound`` (reference K3s install,
 2026-10-14). ``cluster_snapshot.is_current_snapshot()`` (and
 ``current_snapshot_sql`` for raw SQL) is the fix; the real-SQL behaviour is
 pinned in ``tests/integration/test_current_cluster_snapshot_postgres.py``.

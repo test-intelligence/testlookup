@@ -27,13 +27,13 @@ happened to return last — a `GROUP BY` has no defined row order — rather tha
 average over its probes. The ``if row.avg_ms:`` guard also silently skipped any
 group whose average was exactly ``0.0``.
 
-On the live homelab the two defects cancelled: ollama's only non-healthy group is
+On a live reference K3s install the two defects cancelled: ollama's only non-healthy group is
 ``down``, which records ``response_ms=0`` as a sentinel, so the falsy guard
 skipped it and the healthy group's 47ms survived. Correct by accident, from a
 value that would have flipped to the ``down`` group's had the row order or the
 sentinel differed.
 
-**Limit stated honestly**: this is *not* reproducible against the homelab, where
+**Limit stated honestly**: this is *not* reproducible against the reference K3s install, where
 every optional integration is disabled and only ``healthy``/``down`` rows exist.
 It is proven here from the persisted status vocabulary and the handler's own
 aggregation, which is why the first test below reads the prober's source rather

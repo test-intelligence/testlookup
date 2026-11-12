@@ -1,6 +1,6 @@
 """The deploy's node checks read the command's real exit code and remove their own debug pods.
 
-``homelabsetup/deploy-homelab.sh`` checks each node's
+``k3ssetup/deploy-k3s.sh`` checks each node's
 ``/etc/rancher/k3s/registries.yaml`` through ``kubectl debug node/<node>``.
 Two defects lived there until 2026-10-18:
 
@@ -14,7 +14,7 @@ Two defects lived there until 2026-10-18:
 
 ``node_debug_run`` now finds the pod its own call created, waits for it to
 finish, returns the container's exit code (125 when the check could not run)
-and deletes exactly that pod. Verified live on the homelab 2026-10-18: the real
+and deletes exactly that pod. Verified live on the reference K3s install 2026-10-18: the real
 grep returned 0, a grep for an absent entry 1, a test for an absent file 1, and
 no debug pod was left.
 """
@@ -26,10 +26,10 @@ import re
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
-DEPLOY = REPO / "homelabsetup" / "deploy-homelab.sh"
+DEPLOY = REPO / "k3ssetup" / "deploy-k3s.sh"
 
 pytestmark = pytest.mark.skipif(
-    not DEPLOY.exists(), reason="homelab deploy script not present in this checkout"
+    not DEPLOY.exists(), reason="reference K3s install deploy script not present in this checkout"
 )
 
 

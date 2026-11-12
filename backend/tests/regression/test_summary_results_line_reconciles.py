@@ -1,6 +1,6 @@
 """Regression: the results figures the summary states must add up.
 
-Bug (homelab, 2026-08-16): the summary agent described a run as
+Bug (reference K3s install, 2026-08-16): the summary agent described a run as
 
     Results: 6 tests, 2 failures, 60.0% pass rate
 
@@ -21,7 +21,7 @@ Both call sites are pinned, because fixing only the prompt would have left the
 fallback — the path that runs precisely when the LLM is unavailable — still
 printing the contradiction.
 
-Ground truth used throughout is the real homelab fixture:
+Ground truth used throughout is the real reference K3s install fixture:
     6 tests, 3 passed, 1 failure + 1 error = 2 failed, 1 skipped, 60.0%.
 """
 from __future__ import annotations

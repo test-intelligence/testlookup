@@ -1,6 +1,6 @@
 """The AI-degradation flag must report what actually happened.
 
-Found on the homelab immediately after the deterministic summary fallback was
+Found on the reference K3s install immediately after the deterministic summary fallback was
 made reachable. The very first run to use it stored:
 
 ```

@@ -24,7 +24,7 @@ patches:
       name: testlookup-config
 
   # ── Production TLS (cert-manager + Let's Encrypt) ─────────────────────────
-  # Enabled only in prod; base stays HTTP-friendly for dev/staging/homelab.
+  # Enabled only in prod; base stays HTTP-friendly for dev/staging/k3s.
   # Change the host below (and CORS_ORIGINS above) to the real production domain.
   - patch: |-
       apiVersion: networking.k8s.io/v1

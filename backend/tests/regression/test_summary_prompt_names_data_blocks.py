@@ -2,7 +2,7 @@
 
 An inline invocation of ``agent.summary.v1`` wraps every caller string in a data block
 (``services/untrusted_input.wrap_untrusted``) and seeds counts that are true of the SUPPLIED failures only
-(``inline_invocation.seed_state``: n tests, n failed, 0.0 %). On the homelab walk the live model restated them
+(``inline_invocation.seed_state``: n tests, n failed, 0.0 %). On the reference K3s install walk the live model restated them
 as the anchor run's own result ("Test run w23c-walk-1 had a 0.0% pass rate") although that run passed. W23c
 kept the prompt text unchanged (owner rule then); ``summary_system`` v2 now carries two rules, and every
 summary prompt includes it as ``{system}``.

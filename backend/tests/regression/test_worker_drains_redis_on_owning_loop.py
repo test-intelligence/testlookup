@@ -1,6 +1,6 @@
 """Redis is drained on the loop that owns it -- once, not per task.
 
-The defect (homelab, 2026-08-22). Each Celery task ran on a fresh loop and, in
+The defect (reference K3s install, 2026-08-22). Each Celery task ran on a fresh loop and, in
 teardown, drained the engine and the httpx client on it -- but not Redis.
 ``reset_loop_bound_clients()`` only NULLED ``_pool``/``_client``, at the start
 of the NEXT task, abandoning a pool still holding sockets bound to a loop that
@@ -142,7 +142,7 @@ def test_a_failing_drain_does_not_escape_teardown(monkeypatch):
 async def test_summary_error_names_the_failing_operation(monkeypatch):
     """"Summary agent error: Event loop is closed" told an operator nothing.
 
-    765 rows carrying that sentence accumulated on the homelab with no way to
+    765 rows carrying that sentence accumulated on the reference K3s install with no way to
     tell which await raised, because one handler wrapped the entire method.
     """
     from unittest.mock import AsyncMock

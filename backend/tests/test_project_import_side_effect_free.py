@@ -2,7 +2,7 @@
 
 An import writes rows, documents and objects — and calls NO ingest, finalize,
 notification, digest, webhook, Git / Jira, defect, flaky, release-gate, agent,
-LLM or search code (the homelab's SMTP is a live mailbox, its LLM a live model).
+LLM or search code (the reference K3s install's SMTP is a live mailbox, its LLM a live model).
 This guard walks the REAL source (pure AST, nothing imported, nothing run) from
 the import path outward and fails naming any forbidden module it can reach.
 

@@ -77,7 +77,7 @@ def test_pseudonym_is_derived_from_the_id_only() -> None:
         ("@@alice is not a token", "@@alice is not a token"),
         ("no mention of alice at all", "no mention of alice at all"),
         ("line one\n@alice\nline three", "line one\n@erased-1\nline three"),
-        # A sentence-ending dot ends the token, as the product's mention parser reads it (homelab walk, 2026-11-05).
+        # A sentence-ending dot ends the token, as the product's mention parser reads it (reference K3s install walk, 2026-11-05).
         ("please confirm @alice.", "please confirm @erased-1."),
         ("ask @alice. Then merge.", "ask @erased-1. Then merge."),
         ("done, @alice...", "done, @erased-1..."),

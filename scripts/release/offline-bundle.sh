@@ -151,7 +151,7 @@ if [ "$SKIP_BUILD" = false ]; then
   header "Step 1 — Build app images ($VERSION)"
   # Stage the client SDKs into the backend build context — backend/Dockerfile
   # does `COPY --from=builder /app/__client_sdks_staged ./client_sdks` and the
-  # build fails without it (same contract as the homelab/OpenShift deploys).
+  # build fails without it (same contract as the reference K3s install/OpenShift deploys).
   STAGED_SDK="$REPO_ROOT/backend/__client_sdks_staged"
   rm -rf "$STAGED_SDK"; mkdir -p "$STAGED_SDK"
   trap 'rm -rf "$STAGED_SDK"' EXIT INT TERM

@@ -4,7 +4,7 @@ Same rule and same harness as
 ``test_no_second_session_while_the_request_holds_one.py`` (#258): a worker's
 pool is three connections (2 + 1), so a request that opens a second session,
 or makes an external call, while its own still holds a connection stalls the
-worker on the homelab. Every test here runs on a pool of ONE connection with
+worker on the reference K3s install. Every test here runs on a pool of ONE connection with
 a 1 s checkout, with sessions that take the connection on their first query
 and give it back on ``commit`` / ``rollback`` / ``close`` (what an
 ``AsyncSession`` does):

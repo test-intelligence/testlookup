@@ -87,7 +87,7 @@ spec:
         #   (testlookup), cannot verify user is non-root
         #
         # The pod then sits in Init:CreateContainerConfigError until the
-        # migration times out, which is what it did on the homelab deploy.
+        # migration times out, which is what it did on the reference K3s install deploy.
         # backend-deployment.yaml already sets both, and the Dockerfile creates
         # the user at UID 1000 with the comment "to match the k8s
         # securityContext (runAsUser: 1000)" — this Job was the one place that

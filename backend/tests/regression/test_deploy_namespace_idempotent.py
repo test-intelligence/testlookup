@@ -1,6 +1,6 @@
 """Regression: a transient ``kubectl`` blip aborted the whole deploy.
 
-Step 3 of ``deploy-homelab.sh`` was::
+Step 3 of ``deploy-k3s.sh`` was::
 
     if kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
       log "Namespace $NAMESPACE already exists."
@@ -45,7 +45,7 @@ import pytest
 from tests.shell_utils import bash_environment
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEPLOY_SCRIPT = REPO_ROOT / "homelabsetup" / "deploy-homelab.sh"
+DEPLOY_SCRIPT = REPO_ROOT / "k3ssetup" / "deploy-k3s.sh"
 
 
 def _find_bash() -> str | None:
@@ -66,7 +66,7 @@ BASH = _find_bash()
 
 pytestmark = pytest.mark.skipif(
     BASH is None or not DEPLOY_SCRIPT.is_file(),
-    reason="needs a POSIX bash and homelabsetup/deploy-homelab.sh",
+    reason="needs a POSIX bash and k3ssetup/deploy-k3s.sh",
 )
 
 

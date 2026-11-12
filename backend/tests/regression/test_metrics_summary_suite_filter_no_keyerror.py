@@ -1,7 +1,7 @@
 """Every suite-filtered dashboard request returned HTTP 500.
 
 ``GET /api/v1/metrics/summary?project_id=…&suite_name=api`` -> **500**. Measured
-live on the homelab; ``suite_name`` is a documented query param on the endpoint
+live on the reference K3s install; ``suite_name`` is a documented query param on the endpoint
 and the Overview page's suite filter goes through it, so picking a suite took
 the whole dashboard down.
 

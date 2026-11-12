@@ -1,6 +1,6 @@
 """A revocation-check 503 says what actually failed.
 
-On the homelab (2026-10-13) users saw "Token revocation status cannot be
+On the reference K3s install (2026-10-13) users saw "Token revocation status cannot be
 verified right now (revocation store unavailable)" and the log said "Restore
 Redis". Redis and PostgreSQL were both healthy: the worker had no free
 database connection (QueuePool timeout) for the durable revocation lookup.

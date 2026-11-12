@@ -18,7 +18,7 @@ def main():
     started = timestamp()
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--env", choices=("ephemeral", "homelab", "external"), default="ephemeral"
+        "--env", choices=("ephemeral", "k3s", "homelab", "external"), default="ephemeral"
     )
     parser.add_argument(
         "--tier", choices=("smoke", "regression", "full"), default="smoke"
@@ -38,6 +38,8 @@ def main():
         help="Run the ordinary suite before the separate upgrade-proof merge",
     )
     opts = parser.parse_args()
+    if opts.env == "homelab":  # the old name of the k3s target
+        opts.env = "k3s"
     manifest = opts.manifest.resolve(strict=True)
     out = opts.out.resolve()
     if out.exists():

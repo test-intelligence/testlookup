@@ -30,7 +30,7 @@ because a multi-``<testsuite>`` upload has an authoritative per-row value that
 must win — the shape #559 gave ``run_compare_service._load_test_rows`` after it
 was found returning other suites' tests.
 
-**Stated honestly**: the live-stream half is NOT reproducible on the homelab.
+**Stated honestly**: the live-stream half is NOT reproducible on the reference K3s install.
 No live_stream run there has both a NULL per-row suite and a
 ``primary_suite_name``, so the fallback has nothing to recover. It is fixed
 because it is the documented rule and the query already joins ``TestRun``, not

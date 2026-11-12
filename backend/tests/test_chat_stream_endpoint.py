@@ -1,6 +1,6 @@
 """Ask-AI chat HTTP surface: the streamed turn, the message window, the session list.
 
-Regressions pinned here (homelab evaluation, 2026-10-09):
+Regressions pinned here (reference K3s install evaluation, 2026-10-09):
   * ``GET .../messages`` returned the OLDEST 50 messages, so a long
     conversation stopped showing its new turns, and it returned the history
     compression's ``summary`` row, which the page rendered as an answer;

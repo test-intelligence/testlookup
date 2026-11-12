@@ -780,7 +780,7 @@ def _backend_stdlib_logger_kwargs() -> list[Violation]:
     threw, so the diagnostic was never written, the scrubbed re-raise never
     ran, and the original exception's full chained traceback escaped — which
     is precisely what ``from None`` was there to prevent. Four such handlers
-    in ``worker/tasks.py`` were failing on the live homelab.
+    in ``worker/tasks.py`` were failing on a live reference K3s install.
 
     A previous fix had already hit this trap, left a comment naming it, and
     still missed four sibling call sites in the same file. That is what this
@@ -2113,7 +2113,7 @@ _CLIPBOARD_OWNER = "frontend/src/utils/clipboard.ts"
 
 def _frontend_clipboard_util() -> list[Violation]:
     """``navigator.clipboard.writeText`` is gated to secure contexts and
-    silently throws on HTTP origins like the homelab. Every copy must
+    silently throws on HTTP origins like a plain-HTTP K3s install. Every copy must
     route through ``utils/clipboard.copyTextToClipboard`` which has a
     ``document.execCommand`` fallback."""
     violations: list[Violation] = []
@@ -4721,18 +4721,18 @@ def _deps_no_python_jose() -> list[Violation]:
     return violations
 
 
-# ── Homelab guards ───────────────────────────────────────────────────────────
+# ── K3s overlay guards ───────────────────────────────────────────────────────────
 
-_HOMELAB_OVERLAY_REL = "k8s/overlays/homelab/kustomization.yaml"
+_K3S_OVERLAY_REL = "k8s/overlays/k3s/kustomization.yaml"
 # Images whose ``newTag:`` must remain the placeholder at rest. Mirrors
-# the ``images:`` block at the bottom of the homelab overlay; if a new
+# the ``images:`` block at the bottom of the K3s overlay; if a new
 # locally-built image is added there, append it here too.
-_HOMELAB_PINNED_IMAGES = (
+_K3S_PINNED_IMAGES = (
     "ghcr.io/test-intelligence/testlookup/backend",
     "ghcr.io/test-intelligence/testlookup/frontend",
     "ghcr.io/test-intelligence/testlookup/mcp",
 )
-_HOMELAB_PLACEHOLDER = "BUILD_TAG_PLACEHOLDER"
+_K3S_PLACEHOLDER = "BUILD_TAG_PLACEHOLDER"
 
 # Match a kustomize ``images:`` entry block:
 #   - name: ghcr.io/test-intelligence/testlookup/backend
@@ -4745,23 +4745,23 @@ _HOMELAB_PLACEHOLDER = "BUILD_TAG_PLACEHOLDER"
 # next ``- name:`` or end-of-string via a positive lookahead — we want
 # only the ``newTag:`` belonging to *this* image, not the one for the
 # next image in the list.
-_HOMELAB_IMAGE_BLOCK_RE = re.compile(
+_K3S_IMAGE_BLOCK_RE = re.compile(
     r"-\s*name:\s*(?P<name>\S+)"
     r"(?P<body>.*?)"
     r"(?=^\s*-\s*name:|\Z)",
     re.DOTALL | re.MULTILINE,
 )
-_HOMELAB_NEW_TAG_RE = re.compile(
+_K3S_NEW_TAG_RE = re.compile(
     r"^\s*newTag:\s*(?P<tag>\S+)\s*$",
     re.MULTILINE,
 )
 
 
-def _homelab_build_tag_placeholder() -> list[Violation]:
-    """The homelab overlay's ``newTag:`` for every locally-built image
-    must equal ``BUILD_TAG_PLACEHOLDER`` at rest. ``deploy-homelab.sh``
+def _k3s_build_tag_placeholder() -> list[Violation]:
+    """The K3s overlay's ``newTag:`` for every locally-built image
+    must equal ``BUILD_TAG_PLACEHOLDER`` at rest. ``deploy-k3s.sh``
     maps the images onto a real tag in its own per-deploy render
-    (homelabsetup/.render), and older versions substituted the tag
+    (k3ssetup/.render), and older versions substituted the tag
     in-place, so a hand edit or an interrupted old deploy could still
     leave a real timestamp committed by mistake.
 
@@ -4769,7 +4769,7 @@ def _homelab_build_tag_placeholder() -> list[Violation]:
     word ``latest``; this guard closes the matching hole for any other
     accidentally-committed substituted tag (e.g. ``build-20260518-013421``).
     """
-    path = REPO_ROOT / _HOMELAB_OVERLAY_REL
+    path = REPO_ROOT / _K3S_OVERLAY_REL
     if not path.exists():
         return []
     text = path.read_text(encoding="utf-8")
@@ -4795,11 +4795,11 @@ def _homelab_build_tag_placeholder() -> list[Violation]:
 
     violations: list[Violation] = []
     seen: dict[str, tuple[str, int]] = {}
-    for block in _HOMELAB_IMAGE_BLOCK_RE.finditer(text):
+    for block in _K3S_IMAGE_BLOCK_RE.finditer(text):
         name = block.group("name").strip()
-        if name not in _HOMELAB_PINNED_IMAGES:
+        if name not in _K3S_PINNED_IMAGES:
             continue
-        tag_match = _HOMELAB_NEW_TAG_RE.search(block.group("body"))
+        tag_match = _K3S_NEW_TAG_RE.search(block.group("body"))
         if not tag_match:
             # Missing newTag is a bug in the overlay shape — flag it so
             # nobody silently regresses to a floating tag.
@@ -4810,32 +4810,32 @@ def _homelab_build_tag_placeholder() -> list[Violation]:
         abs_offset = block.start("body") + tag_match.start("tag")
         seen[name] = (tag_match.group("tag").strip(), char_to_line(abs_offset))
 
-    for name in _HOMELAB_PINNED_IMAGES:
+    for name in _K3S_PINNED_IMAGES:
         entry = seen.get(name)
         if entry is None:
             violations.append(Violation(
                 path, 0,
-                f"homelab overlay missing 'images:' entry for {name!r} — "
+                f"K3s overlay missing 'images:' entry for {name!r} — "
                 "every locally-built image must be pinned to "
-                f"{_HOMELAB_PLACEHOLDER}",
+                f"{_K3S_PLACEHOLDER}",
             ))
             continue
         tag, line = entry
         if not tag:
             violations.append(Violation(
                 path, line,
-                f"{name!r} has no newTag — pin it to {_HOMELAB_PLACEHOLDER} "
-                "so deploy-homelab.sh substitutes it per-deploy",
+                f"{name!r} has no newTag — pin it to {_K3S_PLACEHOLDER} "
+                "so deploy-k3s.sh substitutes it per-deploy",
             ))
             continue
-        if tag != _HOMELAB_PLACEHOLDER:
+        if tag != _K3S_PLACEHOLDER:
             violations.append(Violation(
                 path, line,
                 f"{name!r} newTag is {tag!r} — must be "
-                f"{_HOMELAB_PLACEHOLDER}. A previous deploy-homelab.sh "
+                f"{_K3S_PLACEHOLDER}. A previous deploy-k3s.sh "
                 "run was likely killed mid-deploy before its trap "
                 "could restore the placeholder. Reset with: "
-                f"git checkout -- {_HOMELAB_OVERLAY_REL}",
+                f"git checkout -- {_K3S_OVERLAY_REL}",
             ))
     return violations
 
@@ -5774,7 +5774,7 @@ def _excludes_dir(patterns: list[str], name: str) -> bool:
 # to the last three runs. Overriding that with a repo-relative ``--basetemp``
 # buys nothing and costs a directory per run that nothing ever deletes: on
 # 2026-09-20 the working tree held 186 ``.pytest*`` roots at the repo root
-# alone, and homelabsetup/deploy-homelab.sh refused to build from it because
+# alone, and k3ssetup/deploy-k3s.sh refused to build from it because
 # ignored files still enter the Docker build context. Worse, pytest creates
 # those roots owner-only on Windows, so they are unreadable to git — they hide
 # from ``git status`` entirely — and to the image build's context walk.
@@ -5789,7 +5789,7 @@ def _excludes_dir(patterns: list[str], name: str) -> bool:
 # exist.
 _BASETEMP_FLAG = re.compile(r"--basetemp(?:=|\b)")
 _BASETEMP_SCOPES = ("scripts/", "architecture/", ".github/", "backend/", "cli/",
-                    "mcp/", "client/", "frontend/", "homelabsetup/")
+                    "mcp/", "client/", "frontend/", "k3ssetup/")
 _BASETEMP_SUFFIXES = {".py", ".sh", ".md", ".yml", ".yaml"}
 # The ignore machinery and the guard's own tests NAME the flag, they do not run
 # it, so they are exempt. The other evidence archives need no entry here and
@@ -7832,7 +7832,7 @@ GUARDS: list[Guard] = [
             "Use testlookup.localhost / localhost / testlookup.example.com, "
             "repo-relative paths, a documented placeholder (qai_your_api_key_here), "
             "and put site addresses in local site configuration "
-            "(TESTLOOKUP_HOMELAB_ENV)."
+            "(TESTLOOKUP_K3S_ENV)."
         ),
     ),
     Guard(
@@ -7865,15 +7865,15 @@ GUARDS: list[Guard] = [
         ),
     ),
     Guard(
-        name="homelab.build-tag-placeholder",
+        name="k3s.build-tag-placeholder",
         description=(
-            "k8s/overlays/homelab/kustomization.yaml must keep newTag: "
+            "k8s/overlays/k3s/kustomization.yaml must keep newTag: "
             "BUILD_TAG_PLACEHOLDER for every locally-built image at rest."
         ),
-        check=_homelab_build_tag_placeholder,
+        check=_k3s_build_tag_placeholder,
         fix_hint=(
-            "Run `git checkout -- k8s/overlays/homelab/kustomization.yaml` "
-            "to restore the placeholder. A previous deploy-homelab.sh run "
+            "Run `git checkout -- k8s/overlays/k3s/kustomization.yaml` "
+            "to restore the placeholder. A previous deploy-k3s.sh run "
             "was likely killed before its EXIT trap could fire."
         ),
     ),

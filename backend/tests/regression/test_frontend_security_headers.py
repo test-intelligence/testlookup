@@ -1,6 +1,6 @@
 """Clickjacking protection must be a RESPONSE HEADER, not a <meta> tag.
 
-Found by exploratory testing against the live homelab (2026-08-07). Chromium
+Found by exploratory testing against a live reference K3s install (2026-08-07). Chromium
 logged on every page load:
 
     The Content Security Policy directive 'frame-ancestors' is ignored when
@@ -40,7 +40,7 @@ def _configmap_conf(overlay: str) -> str:
 
 ALL_CONFIGS = {
     "image template": _template_conf,
-    "homelab overlay": lambda: _configmap_conf("homelab"),
+    "k3s overlay": lambda: _configmap_conf("k3s"),
     "openshift overlay": lambda: _configmap_conf("openshift-artifactory"),
 }
 

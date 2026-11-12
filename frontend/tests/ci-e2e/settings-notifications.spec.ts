@@ -213,7 +213,7 @@ test('/settings/my-notifications holds the personal preferences, two columns, an
   expect(requestsTo(api, '/api/v1/settings/smtp')).toEqual([])
   expect(requestsTo(api, '/api/v1/settings/integrations')).toEqual([])
   // W23a TRND-03 (DELIBERATE): the e-mail card offers the opt-in "An expected run was missed", unchecked by
-  // default (no default preference subscribes to run.missed; the homelab's SMTP is live).
+  // default (no default preference subscribes to run.missed; the reference K3s install's SMTP is live).
   const email = page.locator('[data-channel-card="email"]')
   await email.locator('button').first().click()
   const missed = email.getByRole('checkbox', { name: 'An expected run was missed', exact: true })

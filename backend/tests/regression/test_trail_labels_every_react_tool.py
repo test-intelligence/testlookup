@@ -1,6 +1,6 @@
 """Every ReAct triage tool has a friendly Investigation Trail label.
 
-Found on the homelab (2026-11-03, Mobile Banking App run 742d41b1): the AI
+Found on the reference K3s install (2026-11-03, Mobile Banking App run 742d41b1): the AI
 analysis trail showed a lower-case step "recall similar failures" between
 "Analysed OpenShift pod events" and "2 evidence items". The panel labels each
 ``tools_used`` entry with ``TOOL_LABELS[tool] ?? tool.replace(/_/g, ' ')``, and

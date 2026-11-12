@@ -1,6 +1,6 @@
 """A cached async client must not outlive the event loop it was built on.
 
-Found on the homelab, in two places at once::
+Found on the reference K3s install, in two places at once::
 
     worker-ai       RuntimeError: Event loop is closed
                       at app/agents/summary_agent.py:892 in _store_summary

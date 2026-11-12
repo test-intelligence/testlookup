@@ -468,7 +468,7 @@ def test_compose_redis_is_durable_and_does_not_evict_evidence(compose_path):
 @pytest.mark.parametrize(
     ("manifest", "storage_class"),
     [
-        (ROOT / "k8s/overlays/homelab/infra-redis.yaml", "local-path"),
+        (ROOT / "k8s/overlays/k3s/infra-redis.yaml", "local-path"),
         (
             ROOT / "k8s/overlays/openshift-artifactory/infra-redis.yaml",
             "STORAGE_CLASS_PLACEHOLDER",

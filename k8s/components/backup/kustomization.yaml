@@ -5,7 +5,7 @@
 #   components:
 #     - ../../components/backup
 #
-# homelab and openshift-artifactory include it (their Postgres, MongoDB and
+# reference K3s install and openshift-artifactory include it (their Postgres, MongoDB and
 # MinIO run in-cluster and are the system of record). Overlays on managed
 # data stores can include it too: the CronJob reaches the stores through the
 # same DATABASE_URL / MONGO_URI / MINIO_* the backend uses.

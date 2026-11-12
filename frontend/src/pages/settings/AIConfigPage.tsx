@@ -134,7 +134,7 @@ const WARN_CLS = 'bg-[var(--status-broken-bg)] text-[var(--ui-warning-ink)] bord
  * determined the cause — instead of re-deriving it here. This badge used to
  * show 'Unreachable' when Ollama was down and 'Model Missing' otherwise, so
  * every cloud-provider failure was reported as a missing model: an unset
- * OpenRouter API key told the operator to go install one (homelab 2026-08-16).
+ * OpenRouter API key told the operator to go install one (reference K3s install 2026-08-16).
  *
  * Falls back to the old Ollama-derived guess only when talking to a backend too
  * old to send a code, and to a neutral 'Unavailable' for a code this build does

@@ -6,7 +6,7 @@ made up to five LLM calls, each taking a third for its cost-cap check. With
 the production pool of three connections per worker, three runs opened at once
 held them all; every other request waited out the 30 s pool timeout, and the
 token revocation check -- the first thing to need a connection -- answered 503
-"revocation store unavailable" (homelab, 2026-10-13).
+"revocation store unavailable" (reference K3s install, 2026-10-13).
 
 Now the read answers with the heuristic candidates, marks them pending, and
 the build runs in the background: once per run, one at a time per worker, and

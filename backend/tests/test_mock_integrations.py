@@ -4,7 +4,7 @@ Owner request 2026-10-10: the real Jira and Slack are not available, so test
 the integrations with mock services. ``tests/fakes/fake_integrations.py`` is a
 fake Jira Cloud and a fake Slack that refuse what the real services refuse; the
 real TestLookup code sends to it through ``httpx.ASGITransport``. The same fake
-runs on the homelab for the end-to-end pass.
+runs on the reference K3s install for the end-to-end pass.
 
 What these pin, beyond "a request was made":
 
@@ -391,7 +391,7 @@ def test_the_private_allow_list_does_not_widen_offline_mode(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_smtp_probe_checks_the_relay_configured_in_settings(monkeypatch):
-    """Found on the homelab: SMTP configured under Settings -> Notifications was
+    """Found on the reference K3s install: SMTP configured under Settings -> Notifications was
     delivering mail while integration health said "SMTP_ENABLED=false"."""
     import aiosmtplib
 
@@ -436,7 +436,7 @@ async def test_the_smtp_probe_checks_the_relay_configured_in_settings(monkeypatc
 
 @pytest.mark.asyncio
 async def test_send_test_reaches_the_shared_slack_channel_when_the_preference_has_none(fake, monkeypatch):
-    """Found on the homelab: the form says "leave blank to use the shared Slack
+    """Found on the reference K3s install: the form says "leave blank to use the shared Slack
     channel", and Send test then failed "No Slack webhook URL configured"."""
     from unittest.mock import AsyncMock, MagicMock
 
