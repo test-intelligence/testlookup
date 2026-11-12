@@ -3,7 +3,9 @@
 # ============================================================
 
 # ── Base stage ───────────────────────────────────────────────
-FROM python:3.14-slim AS base
+# Pinned by digest, here and in the production stage, so every build starts
+# from the same base; Dependabot's docker updates for /backend move both.
+FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS base
 
 WORKDIR /app
 
@@ -40,10 +42,14 @@ ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
-# Install Python dependencies
-COPY requirements.txt .
+# Install Python dependencies from the hashed lock (`make lock-python` writes
+# it from requirements.txt): all ~220 packages, transitive ones included, at
+# one reviewed version and sha256. A package the lock does not list, or a
+# release file whose hash changed, fails the build instead of installing.
+# requirements.txt is copied too: requirements-ragas.txt includes it.
+COPY requirements.txt requirements-lock.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir --require-hashes -r requirements-lock.txt
 
 # Optional: the Ragas RAG-faithfulness evaluator (Settings > AI Configuration).
 # Off by default: it adds 26 packages (pandas, pyarrow, datasets; ~360 MB) and
@@ -106,7 +112,7 @@ RUN mkdir -p /app/__client_sdks_staged && \
 RUN python -m compileall -q app/
 
 # ── Production stage ─────────────────────────────────────────
-FROM python:3.14-slim AS production
+FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS production
 
 WORKDIR /app
 

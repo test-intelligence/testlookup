@@ -1,4 +1,5 @@
-FROM node:26-alpine AS base
+# Pinned by digest; Dependabot's docker updates for /frontend move it.
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS base
 WORKDIR /app
 
 # ── TLS-interception CA support (homelab builds behind an HTTPS-inspecting
@@ -41,12 +42,15 @@ COPY . .
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine AS production
-# Take Alpine's security updates at build time (Trivy on PR #26). The
-# util-linux fixes (CVE-2026-53612/78409 2.42.3-r0, CVE-2026-78408 2.42.3-r1)
-# were not on the Alpine mirror yet at the c9fe5d71 homelab build, so those
-# three are accepted in .trivyignore.yaml alongside the four with no fix; this
-# step picks the fixes up when they land.
+# Pinned by version and digest (it was the floating nginx:alpine, so every
+# build could start from a different nginx). This is the image nginx:alpine
+# pointed at on 2026-11-12 (mainline 1.31.8 on Alpine 3.24). Dependabot's
+# docker updates for /frontend move the tag and digest.
+FROM nginx:1.31.8-alpine3.24@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11 AS production
+# Take Alpine's security updates at build time (Trivy on PR #26). Alpine 3.24
+# ships util-linux 2.42.3-r1, which fixes the seven util-linux CVEs that
+# .trivyignore.yaml used to accept (secdb: CVE-2026-53612/53613/53614/76642/
+# 78409/78410 in 2.42.3-r0, CVE-2026-78408 in 2.42.3-r1).
 #
 # apk reaches the mirror over HTTPS, so behind a TLS-intercepting middlebox it
 # needs the staged interception CA exactly like the node stage above

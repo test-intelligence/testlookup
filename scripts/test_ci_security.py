@@ -142,14 +142,11 @@ def test_every_accepted_finding_says_why_and_expires() -> None:
 # ── remediation of the first PR scans (PR #26) ───────────────────────────────
 
 
-ACCEPTED = {
-    "CVE-2026-54283", "CVE-2025-62727", "CVE-2026-48818",
-    "CVE-2026-53613", "CVE-2026-53614", "CVE-2026-76642", "CVE-2026-78410",
-    # util-linux fixes not yet on the Alpine mirror (c9fe5d71 homelab build)
-    "CVE-2026-53612", "CVE-2026-78408", "CVE-2026-78409",
-    # W43 (langchain 1.x) removed CVE-2026-34070 (langchain-core 0.3.86 -> 1.7.6, fix
-    # 1.2.22) and CVE-2026-104873 (langgraph-sdk 0.2.15 -> 0.4.14, fix 0.4.4).
-}
+ACCEPTED: set[str] = set()
+# W43 (langchain 1.x) removed CVE-2026-34070 (langchain-core 0.3.86 -> 1.7.6, fix 1.2.22) and
+# CVE-2026-104873 (langgraph-sdk 0.2.15 -> 0.4.14, fix 0.4.4). PR-2 (2026-11-12 supply chain) removed
+# the last ten: starlette CVE-2026-54283 / CVE-2026-48818 / CVE-2025-62727 (starlette 1.10.0) and the
+# seven util-linux CVEs (Alpine 3.24 ships util-linux 2.42.3-r1; the nginx stage runs apk upgrade).
 
 # PR #375: the HIGH findings Trivy reported inside the Cypress 16.3.0 binary of the e2e-runner image
 # (CI run 43053849052). Every one is scoped to that binary's directory, never accepted repo-wide.
@@ -251,7 +248,9 @@ def test_the_debian_runtime_images_take_security_updates() -> None:
 
 def test_the_nginx_image_takes_alpine_security_updates() -> None:
     steps = _joined(_final_stage("frontend/Dockerfile"))
-    assert steps[0].startswith("FROM nginx:alpine")
+    assert re.fullmatch(r"FROM nginx:\d+\.\d+\.\d+-alpine[\d.]*@sha256:[0-9a-f]{64} AS production", steps[0]), (
+        "pin the nginx stage by version and digest; the floating nginx:alpine changed under every build"
+    )
     upgrade = [i for i, s in enumerate(steps) if s.startswith("RUN ") and "apk upgrade --no-cache" in s]
     assert upgrade and upgrade[0] < next(i for i, s in enumerate(steps) if s.startswith("CMD"))
 
@@ -332,3 +331,133 @@ def test_the_frontend_lockfile_matches_package_json() -> None:
     # The musl binding the node:alpine build stage needs is recorded.
     if "node_modules/rolldown" in lock["packages"]:
         assert "node_modules/@rolldown/binding-linux-x64-musl" in lock["packages"]
+
+
+# ── 2026-11-12 open-source review, PR-2 (supply chain) ───────────────────────
+
+WORKFLOWS = ROOT / ".github" / "workflows"
+SECRET_SCAN = WORKFLOWS / "secret-scan.yml"
+_USES = re.compile(r"^\s*(?:-\s+)?uses:\s*(\S+)(.*)$", re.MULTILINE)
+
+
+def _workflow(path: Path) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def test_every_action_is_pinned_to_a_full_commit_sha() -> None:
+    """M-4: a moved or hijacked tag (the tj-actions incident) ran with the job's
+    token. The build-images job pushes the public images with packages: write
+    and read the Docker Hub secret, yet ran docker/* actions by tag. A SHA pin
+    also lets the owner turn on "require actions to be pinned to a full-length
+    commit SHA", which fails every unpinned workflow. Dependabot's
+    github-actions updates move the SHA and the version comment together."""
+    seen = 0
+    for path in sorted(WORKFLOWS.glob("*.y*ml")):
+        for ref, rest in _USES.findall(path.read_text(encoding="utf-8")):
+            if ref.startswith("./"):
+                continue                       # a reusable workflow in this repo
+            seen += 1
+            assert re.fullmatch(r"[\w.-]+/[\w.-]+(/[\w./-]+)?@[0-9a-f]{40}", ref), (
+                f"{path.name}: {ref} is not pinned to a commit SHA"
+            )
+            assert re.fullmatch(r"\s*#\s*v\d+(\.\d+){0,2}\s*", rest), (
+                f"{path.name}: {ref} needs a `# vX.Y.Z` comment naming the release it pins"
+            )
+    assert seen >= 80, f"only {seen} action references found; the scan cannot have looked"
+
+
+def test_crane_is_checksum_verified_before_it_runs_with_packages_write() -> None:
+    promote = _workflow(RELEASE)["jobs"]["promote"]
+    assert promote["permissions"].get("packages") == "write"
+    [step] = [s for s in promote["steps"] if "crane" in s.get("name", "").lower() and "run" in s]
+    assert re.fullmatch(r"[0-9a-f]{64}", step["env"]["CRANE_ARCHIVE_SHA256"])
+    script = step["run"]
+    assert 'sha256sum --check --strict' in script
+    assert script.index("sha256sum") < script.index("tar ")
+    assert "| tar" not in script, "piping the download into tar skips the checksum"
+
+
+def test_ci_scans_and_builds_the_committed_frontend_lockfile() -> None:
+    """A-06: CI ran `npm install --package-lock-only` before the dependency scan
+    and before building the published frontend image, so both could see a tree
+    that no PR reviewed. `npm ci` in the frontend job and in the Dockerfile
+    already refuses a lockfile that disagrees with package.json."""
+    for path in sorted(WORKFLOWS.glob("*.y*ml")):
+        for job in (_workflow(path).get("jobs") or {}).values():
+            for step in job.get("steps") or []:
+                assert "--package-lock-only" not in step.get("run", ""), (
+                    f"{path.name}: {step.get('name')!r} rewrites a committed lockfile"
+                )
+
+
+def test_python_jobs_install_the_hashed_locks() -> None:
+    jobs = _jobs()
+    for name, directory in (("backend-test", "backend"), ("mcp-test", "mcp")):
+        installs = [r for r in _runs(jobs[name]) if "pip install" in r and "-r " in r]
+        assert installs, name
+        assert all("--require-hashes -r requirements-lock.txt" in r for r in installs), (
+            f"{name} must test the packages the {directory} image ships: {installs}"
+        )
+        setup = next(s for s in jobs[name]["steps"] if "setup-python" in s.get("uses", ""))
+        assert setup["with"]["cache-dependency-path"] == f"{directory}/requirements-lock.txt"
+
+
+def test_published_images_carry_signed_build_provenance() -> None:
+    job = _jobs()["build-images"]
+    assert job["permissions"] == {
+        "contents": "read", "packages": "write",
+        "id-token": "write", "attestations": "write", "artifact-metadata": "write",
+    }
+    steps = job["steps"]
+    attests = [s for s in steps if "attest-build-provenance" in s.get("uses", "")]
+    subjects = {s["with"]["subject-digest"] for s in attests}
+    assert subjects == {
+        "${{ steps.build-backend.outputs.digest }}",
+        "${{ steps.build-frontend.outputs.digest }}",
+        "${{ steps.build-mcp.outputs.digest }}",
+    }
+    for step in attests:
+        assert str(step["with"]["push-to-registry"]).lower() == "true"
+        assert step["with"]["subject-name"].startswith("${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/")
+    # After the manifest upload, so an attestation outage cannot cost the manifest.
+    upload = max(i for i, s in enumerate(steps) if "upload-artifact" in s.get("uses", ""))
+    assert all(steps.index(s) > upload for s in attests)
+
+
+def test_the_secret_scan_runs_on_every_change_and_blocks() -> None:
+    """M-9: no general secret scanner guarded the repo. ci.yml skips Markdown-only
+    changes, so the scan is its own workflow with no path filter."""
+    doc = _workflow(SECRET_SCAN)
+    triggers = doc.get("on") or doc.get(True)       # YAML 1.1 reads a bare `on` as True
+    for event in ("pull_request", "push"):
+        assert event in triggers
+        assert not {"paths", "paths-ignore"} & set(triggers[event] or {}), f"{event} must see every path"
+    assert doc["permissions"] == {"contents": "read"}
+    steps = doc["jobs"]["gitleaks"]["steps"]
+    checkout = steps[0]
+    assert checkout["with"]["fetch-depth"] == 0
+    install = next(s for s in steps if "gitleaks" in s.get("name", "").lower() and "curl" in s.get("run", ""))
+    assert re.fullmatch(r"[0-9a-f]{64}", install["env"]["GITLEAKS_ARCHIVE_SHA256"])
+    assert install["run"].index("sha256sum --check --strict") < install["run"].index("tar ")
+    scan = steps[-1]
+    assert "gitleaks git --config .gitleaks.toml" in scan["run"]
+    assert "--exit-code 1" in scan["run"]
+    assert "${{" not in scan["run"], "pass event values through env:, never into the script"
+    version = re.search(r"/download/v([\d.]+)/", install["run"]).group(1)
+    push_check = (ROOT / "scripts" / "push_check.py").read_text(encoding="utf-8")
+    assert f"gitleaks/v8@v{version}" in push_check, "push_check.py installs a different gitleaks"
+
+
+def test_the_gitleaks_rules_add_the_tokens_the_defaults_missed() -> None:
+    import tomllib
+
+    config = tomllib.loads((ROOT / ".gitleaks.toml").read_text(encoding="utf-8"))
+    assert config["extend"]["useDefault"] is True
+    rules = {rule["id"]: re.compile(rule["regex"]) for rule in config["rules"]}
+    assert set(rules) == {"testlookup-ingest-key", "k3s-node-token", "cloudflare-tunnel-token"}
+    # Built here so no token-shaped literal sits in the tree.
+    assert rules["testlookup-ingest-key"].search("qai_" + "Z" * 32)
+    assert rules["k3s-node-token"].search("K10" + "0f" * 21 + "::server:" + "Abc123")
+    assert rules["cloudflare-tunnel-token"].search("eyJhIjoi" + "Q" * 48)
+    for allow in config["allowlists"]:
+        assert len(allow["description"]) >= 20, "say why the allowlist entry is safe"

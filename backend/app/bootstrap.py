@@ -313,8 +313,8 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
 
 
 def _add_request_hardening(app: FastAPI) -> None:
-    """starlette CVE-2026-54283 / CVE-2025-62727 until the FastAPI/Starlette
-    upgrade: see middleware/request_hardening.py.
+    """starlette CVE-2026-54283 / CVE-2025-62727 guards, kept as defence in
+    depth now that starlette (1.10) fixes both: see middleware/request_hardening.py.
 
     Registered FIRST in configure_middlewares on purpose (R-B45-T-3):
     ``add_middleware`` makes each new middleware the outermost, so these sit

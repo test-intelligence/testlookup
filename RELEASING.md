@@ -47,6 +47,10 @@ How a maintainer cuts a release. Users upgrading an install want
    (`require-verified-sha.yml`), scans the exact image digests with Trivy,
    keeps SBOM evidence for 90 days, and tags the digests `:vX.Y.Z`. An existing
    tag pointing at different digests fails the run instead of being moved.
+   The digests carry the signed build provenance CI attached when it built them;
+   check each image with
+   `gh attestation verify oci://ghcr.io/test-intelligence/testlookup/backend:vX.Y.Z --owner test-intelligence`
+   (and `frontend`, `mcp`).
 6. **Build the offline bundle** for air-gapped users: run the "Offline bundle"
    workflow (`.github/workflows/offline-bundle.yml`) with the release version,
    or `make offline-bundle` locally; attach the archive and its checksum file to

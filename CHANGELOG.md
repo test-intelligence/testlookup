@@ -2564,6 +2564,53 @@ locally by default.
 
 ### Security
 
+- **Supply chain: hashed Python locks, starlette 1.10, pinned images and actions, a secret scan, signed
+  provenance** (2026-11-12 open-source repository review, PR-2; branch `fix/supply-chain-20261112`).
+  - starlette moves from 0.52.1 to 1.10.0, now pinned directly. prometheus-fastapi-instrumentator 7.0.0
+    capped it below 1.0; 8.1.0 does not. This fixes CVE-2026-54283 (urlencoded form limits ignored),
+    CVE-2026-48710 (the Host header rewrote `request.url.path`), CVE-2026-48818, CVE-2026-48817 and
+    CVE-2026-54282. FastAPI stays on 0.136.3. The routed-path gates and the form and Range middleware stay as
+    defence in depth. One visible change: starlette 1.x's CORS middleware adds `Origin` to the `Vary` header
+    of every response, not only those to a request that sent `Origin`.
+  - The backend and MCP images install `requirements-lock.txt` with `--require-hashes`: every package,
+    transitive ones included (218 for the backend, 35 for MCP), at one version and sha256. Before, about 140
+    backend packages and the whole MCP set floated at build time, and Dependabot could not see them.
+    `make lock-python` regenerates both locks, and CI's backend and MCP jobs test the locked set.
+  - Floors that admitted releases with advisories are raised: MCP `PyJWT>=2.14.0`, CLI `cryptography>=49`
+    and `pydantic>=2.4`.
+  - Monitoring add-on: Grafana moves from 11.3.0 to 13.3.1, pinned by digest (GHSA-3w66-95m3-8jxg,
+    GHSA-9g84-39mm-q4p3 and GHSA-f74p-cwhp-x2wx, all high). It now downloads no plugins at start. The old
+    `GF_INSTALL_PLUGINS` line installed a plugin id that is not in the catalog, unpinned, on every start. The
+    provisioned Prometheus and Jaeger data sources ship inside the image.
+  - Base images are pinned by digest: `python:3.14-slim` (backend, MCP) and `node:26-alpine`. The frontend's
+    floating `nginx:alpine` is now `nginx:1.31.8-alpine3.24`. Dependabot's docker updates move them. A new
+    docker-compose entry covers the service images in the compose files (postgres, mongo, valkey,
+    versitygw, chroma, ollama, grafana, prometheus, jaeger), and the quality gate fails a compose file that
+    no entry covers.
+  - Every GitHub Action is pinned to a commit SHA with its release in a comment (89 references). Before,
+    the docker/* actions in the job that pushes the public images ran by tag. The release job that promotes
+    images checks crane's sha256 before running it. CI no longer regenerates `frontend/package-lock.json`
+    before the dependency scan and the image build.
+  - The published images get signed SLSA build provenance (`actions/attest-build-provenance`). Check one with
+    `gh attestation verify oci://ghcr.io/test-intelligence/testlookup/backend:<tag> --owner test-intelligence`.
+  - A gitleaks secret scan reads the commits each pull request or push to `main` adds: a new `Secret scan`
+    workflow that runs on every path, Markdown included, and a push-check step. `.gitleaks.toml` adds rules
+    for the TestLookup `qai_` key, K3s node tokens and Cloudflare tunnel tokens to gitleaks' defaults.
+  - `.trivyignore.yaml` drops 10 acceptances, all now fixed: 3 for starlette and 7 for util-linux (Alpine
+    3.24 ships 2.42.3-r1). The 64 entries for packages inside the Cypress 16.3.0 binary stay, due for
+    re-review by 2026-12-11.
+  - The frontend lockfile moves zod from 4.4.3 to 4.6.7 (GHSA-mrhx-c7xc-m3w5). It is a lint dependency, but
+    it shipped in the e2e-runner image.
+  - `make build` tags `ghcr.io/test-intelligence/testlookup/<image>:local` instead of the Docker Hub short
+    name `testlookup/<image>:latest`.
+  - No release fixes these, so the open Dependabot alerts for them stay for the maintainer to dismiss:
+    chromadb 1.5.9 (two critical and two high advisories; the app never runs chromadb's Python server or its
+    auth providers, which hold the flaws) and ragas 0.4.3 (opt-in image only). minimatch and glob are fixed
+    only in major versions that eslint, jest and mocha do not accept; they are lint and test-fixture
+    dependencies. deepmerge has no fix.
+  Tests: `tests/regression/test_supply_chain_pins.py`, `scripts/test_ci_security.py`,
+  `scripts/test_push_check.py`, `scripts/test_quality_gate.py`.
+
 - **Secure defaults for the development stacks, the default install and the monitoring add-on** (2026-11-12
   open-source repository review; branch `fix/secure-defaults-20261112`).
   - `make quickstart`, `make dev` and `make dev-lite` run with dev-login on (passwordless admin) and published

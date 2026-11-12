@@ -1,0 +1,43 @@
+# gitleaks configuration: the CI job "Security — Secret scan (gitleaks)" and
+# the push-check step read it (gitleaks also picks it up on its own from the
+# repo root).
+#
+# GitHub push protection blocks known provider tokens, but a K3s node token, a
+# Cloudflare tunnel token, a TestLookup ingestion key or a plain password went
+# through: the 2026-11-12 review found a K3s token in history that both
+# scanners' default rules missed. The three rules below are the ones that
+# review used, on top of gitleaks' default set.
+#
+# A finding in a test fixture or a doc example is a fake value. Make it
+# obviously fake rather than widening the allowlist; when that is not
+# possible, add the narrowest path below with the reason.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "testlookup-ingest-key"
+description = "TestLookup qai_ ingestion API key"
+regex = '''qai_[A-Za-z0-9_\-]{30,}'''
+keywords = ["qai_"]
+
+[[rules]]
+id = "k3s-node-token"
+description = "K3s server node token"
+regex = '''K10[0-9a-f]{40,}::[a-z]+:[A-Za-z0-9]+'''
+keywords = ["k10"]
+
+[[rules]]
+id = "cloudflare-tunnel-token"
+description = "Cloudflare tunnel token (base64 JSON with a/t/s keys)"
+regex = '''eyJhIjoi[A-Za-z0-9+/=_\-]{40,}'''
+keywords = ["eyjhijoi"]
+
+[[allowlists]]
+description = "Cross-SDK redaction vectors: they hold token-shaped fake values on purpose, to prove every SDK masks them"
+paths = ['''^sdk-vectors/''']
+
+[[allowlists]]
+description = "Chart axis keys such as p95_duration_ms read as high-entropy generic keys"
+targetRules = ["generic-api-key"]
+stopwords = ["_duration_ms"]

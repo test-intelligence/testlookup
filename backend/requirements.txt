@@ -3,11 +3,19 @@
 # ============================================================
 
 # ── Web Framework ────────────────────────────────────────────
-# Held at 0.136.3, the last release before FastAPI 0.137.0 stopped copying an
-# included router's routes into app.routes (fastapi#15745): the metrics
-# middleware below (prometheus-fastapi-instrumentator 7.0.0) then raises
-# AttributeError on every request, and its fix (8.0.1) needs Starlette 1.x.
+# 0.136.3 was held because FastAPI 0.137.0 stopped copying an included
+# router's routes into app.routes (fastapi#15745) and the metrics middleware
+# (prometheus-fastapi-instrumentator 7.0.0) then raised AttributeError on every
+# request. Instrumentator 8.1.0 (below) fixes that, so the hold is lifted; a
+# FastAPI move is its own change (it regenerates the API references).
 fastapi==0.136.3
+# Pinned directly, not left to FastAPI's open "starlette>=0.46.0": it is the
+# HTTP layer every security gate sits on. 1.10.0 fixes the five advisories
+# 0.52.1 carried: CVE-2026-54283 (urlencoded form limits, fixed 1.3.1),
+# CVE-2026-48710 (Host header rewrites request.url.path, 1.0.1),
+# CVE-2026-48818, CVE-2026-48817 (1.1.0) and CVE-2026-54282 (1.3.0).
+# tests/regression/test_supply_chain_pins.py holds the 1.3.1 floor.
+starlette==1.10.0
 uvicorn[standard]==0.54.0
 gunicorn==26.2.0
 python-multipart==0.0.33
@@ -145,8 +153,9 @@ opentelemetry-instrumentation-redis==0.66b2
 
 # ── Observability: Prometheus metrics ────────────────────────
 prometheus-client==0.26.0
-# Zero-config HTTP metrics for FastAPI (exposes /metrics endpoint)
-prometheus-fastapi-instrumentator==7.0.0
+# Zero-config HTTP metrics for FastAPI (exposes /metrics endpoint). 8.x needs
+# starlette>=1.0 (7.0.0 capped it <1.0 and so held starlette on 0.52.1).
+prometheus-fastapi-instrumentator==8.1.0
 
 # ── Utilities ────────────────────────────────────────────────
 python-dateutil==2.9.0.post0

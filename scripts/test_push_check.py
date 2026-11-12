@@ -17,6 +17,7 @@ matters most.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -773,3 +774,105 @@ class TestTheGeneratorNameFollowsTheCheckout:
 
     def test_this_checkout_has_the_renamed_generator(self):
         assert push_check._generator_in(push_check.REPO) == push_check.REFERENCE_GENERATOR
+
+
+class TestTheSecretScan:
+    """2026-11-12 review M-9: gitleaks over the commits being pushed, with the
+    same rules as the Secret scan workflow, before they become public."""
+
+    #: Built at run time so no token-shaped literal sits in the tree.
+    VALUE = "SENTINEL-" + "q7" * 12
+
+    def _finding(self, **over):
+        finding = {
+            "RuleID": "k3s-node-token", "File": "deploy/notes.md", "StartLine": 12,
+            "Commit": "0123456789abcdef0123456789abcdef01234567",
+            "Secret": self.VALUE, "Match": "token=" + self.VALUE, "Line": "token=" + self.VALUE,
+            "Fingerprint": "abc:deploy/notes.md:k3s-node-token:12:" + self.VALUE,
+            "Author": "Someone", "Email": "someone@example.test", "Message": "add " + self.VALUE,
+        }
+        finding.update(over)
+        return finding
+
+    def _scan(self, monkeypatch, *, code, findings):
+        calls = []
+        monkeypatch.setattr(push_check.shutil, "which", lambda name: "/usr/bin/gitleaks")
+        monkeypatch.setattr(push_check, "_git_stdout", lambda *a: (0, "abc1234def\n"))
+
+        def fake_run(cmd, cwd, extra_env=None):
+            calls.append(cmd)
+            if findings is not None:
+                report = Path(cmd[cmd.index("--report-path") + 1])
+                report.write_text(json.dumps(findings), encoding="utf-8")
+            return code, "gitleaks stdout: " + self.VALUE     # must never reach the summary
+
+        monkeypatch.setattr(push_check, "run", fake_run)
+        ok, summary = push_check.check_gitleaks()
+        return ok, summary, calls
+
+    def test_it_is_registered_cheap_and_before_the_slow_suites(self):
+        checks = push_check.build_checks()
+        names = [c.name for c in checks]
+        check = checks[names.index("repo: secret scan (gitleaks)")]
+        assert check.fn is push_check.check_gitleaks
+        assert not check.slow and check.always
+        assert names.index("repo: secret scan (gitleaks)") < names.index("backend: full test suite")
+
+    def test_without_gitleaks_it_says_nothing_was_scanned(self, monkeypatch):
+        monkeypatch.setattr(push_check.shutil, "which", lambda name: None)
+        ok, summary = push_check.check_gitleaks()
+        assert ok is True
+        assert "NOT scanned" in summary and push_check.GITLEAKS_INSTALL in summary
+
+    def test_a_finding_fails_and_names_only_rule_path_line_and_commit(self, monkeypatch):
+        """CodeQL py/clear-text-logging-sensitive-data on #388: the summary used
+        to carry gitleaks' own output. Even redacted, nothing derived from the
+        matched value (or the author) may be printed."""
+        ok, summary, calls = self._scan(monkeypatch, code=1, findings=[self._finding()])
+        assert ok is False
+        assert "k3s-node-token  deploy/notes.md:12  (commit 0123456789)" in summary
+        assert "rotate" in summary
+        for leaked in (self.VALUE, "token=", "someone@example.test", "Someone", "REDACTED", "stdout"):
+            assert leaked not in summary, leaked
+        [cmd] = calls
+        assert cmd[1] == "git" and "--log-opts=abc1234def..HEAD" in cmd
+        assert str(push_check.REPO / ".gitleaks.toml") in cmd and "--redact" in cmd
+        assert cmd[cmd.index("--report-format") + 1] == "json"
+
+    def test_the_report_is_deleted_after_reading(self, monkeypatch):
+        _, _, calls = self._scan(monkeypatch, code=1, findings=[self._finding()])
+        [cmd] = calls
+        assert not Path(cmd[cmd.index("--report-path") + 1]).exists()
+
+    def test_odd_report_fields_print_as_question_marks(self):
+        located = push_check.gitleaks_locations
+        tmp = Path(push_check.tempfile.mkdtemp())
+        try:
+            report = tmp / "r.json"
+            report.write_text(json.dumps([{"RuleID": "generic-api-key", "StartLine": "12"}]), encoding="utf-8")
+            assert located(report) == ["generic-api-key  ?:?  (commit ?)"]
+            report.write_text("not json", encoding="utf-8")
+            assert located(report) == []
+            assert located(tmp / "missing.json") == []
+        finally:
+            for f in tmp.iterdir():
+                f.unlink()
+            tmp.rmdir()
+
+    def test_a_clean_scan_passes(self, monkeypatch):
+        ok, summary, _ = self._scan(monkeypatch, code=0, findings=[])
+        assert ok is True and "no findings" in summary and self.VALUE not in summary
+
+    def test_a_gitleaks_error_without_a_report_fails_without_its_output(self, monkeypatch):
+        ok, summary, _ = self._scan(monkeypatch, code=2, findings=None)
+        assert ok is False
+        assert "exited 2 without a report" in summary
+        assert self.VALUE not in summary and "stdout" not in summary
+
+    def test_a_docs_only_push_still_runs_it(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["push_check.py"])
+        monkeypatch.setattr(push_check, "docs_only_change", lambda: (True, ["README.md"]))
+        monkeypatch.setattr(push_check, "check_gitleaks", lambda: (False, "k3s-node-token  README.md:3"))
+        assert push_check._main() == 1
+        monkeypatch.setattr(push_check, "check_gitleaks", lambda: (True, "clean"))
+        assert push_check._main() == 0

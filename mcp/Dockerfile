@@ -1,4 +1,5 @@
-FROM python:3.14-slim
+# Pinned by digest; Dependabot's docker updates for /mcp move it.
+FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f
 
 WORKDIR /app
 
@@ -37,9 +38,11 @@ ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
-# Install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies from the hashed lock (`make lock-python` writes it from
+# requirements.txt, whose ranges used to float per build): every package at
+# one reviewed version and sha256, or the build fails.
+COPY requirements-lock.txt .
+RUN pip install --no-cache-dir --require-hashes -r requirements-lock.txt
 
 # No packaging toolchain in the runtime image (Trivy on PR #26). pip,
 # setuptools and wheel are build tools: nothing at runtime imports

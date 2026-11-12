@@ -1,5 +1,7 @@
 mcp==2.3.0
 httpx>=0.28.1
-PyJWT>=2.13.0,<3.0.0
+# Floor 2.14.0: 2.13.0 has GHSA-pxh4-856f-4h89 and CVE-2026-102271 (high) and
+# two medium advisories. The image installs requirements-lock.txt (make lock-python).
+PyJWT>=2.14.0,<3.0.0
 pydantic-settings>=2.15.0
 python-dotenv>=1.2.3

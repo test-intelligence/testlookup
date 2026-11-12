@@ -65,8 +65,11 @@ services:
       retries: 3
 
   # ── Grafana ─────────────────────────────────────────────────────────────────
+  # Pinned by version and digest. 11.3.0 had three high advisories
+  # (GHSA-3w66-95m3-8jxg, GHSA-9g84-39mm-q4p3, GHSA-f74p-cwhp-x2wx; fixed in
+  # 13.0.2 and 12.4.4). Dependabot's docker-compose updates move the pin.
   grafana:
-    image: grafana/grafana:11.3.0
+    image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
     container_name: testlookup-grafana
     restart: unless-stopped
     environment:
@@ -74,7 +77,16 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?GF_SECURITY_ADMIN_PASSWORD must be set — copy .env.example to .env}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_SERVER_ROOT_URL: http://localhost:3001
-      GF_INSTALL_PLUGINS: "grafana-jaeger-datasource"
+      # No plugin downloads. By default Grafana 13 fetches its "preinstalled"
+      # plugins (pyroscope, loki, mssql, elasticsearch and more) at their
+      # newest catalog version on first start and updates them on restart. The two data sources provisioned in
+      # infra/monitoring/grafana/provisioning (Prometheus, Jaeger) ship inside
+      # the image, so their versions are fixed by the digest above (13.3.1:
+      # jaeger 13.0.8, prometheus 13.2.5). The old GF_INSTALL_PLUGINS line
+      # installed "grafana-jaeger-datasource" unpinned on every start; that id
+      # is not in the plugin catalog.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
     volumes:
       - ./infra/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro

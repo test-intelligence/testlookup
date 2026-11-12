@@ -708,5 +708,12 @@ async def test_every_analytics_response_varies_on_the_credential(world) -> None:
         COVERAGE, params={"project_id": str(world.p1), "days": 50}, headers=world.admin
     )
     assert response.status_code == 200, response.text
-    assert response.headers["Vary"] == "Authorization, Cookie"
+    # The layer sends "Authorization, Cookie" (tests/regression/
+    # test_analytics_read_layer.py pins that exactly). Through the whole app,
+    # starlette 1.x's CORSMiddleware appends "Origin" to every response it
+    # passes, since its CORS headers depend on it; 0.52 did so only when the
+    # request carried an Origin header.
+    vary = [token.strip() for token in response.headers["Vary"].split(",")]
+    assert vary[:2] == ["Authorization", "Cookie"], vary
+    assert set(vary) <= {"Authorization", "Cookie", "Origin"}, vary
     assert "private" in response.headers["Cache-Control"]
