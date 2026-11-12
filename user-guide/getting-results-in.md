@@ -159,7 +159,7 @@ The run appears on **Runs** within about two minutes. A background sweep (the *d
 - The watcher runs in the beat and worker processes and is switched by the `drop_folder_watcher` feature flag (on by default). The minimal `docker-compose.dev-lite.yml` stack has no beat process, so the drop folder does nothing there.
 - An external MinIO can still notify `POST /webhooks/minio` for an immediate pick-up; see [Integrations](../docs/operations/integrations.md#drop-folder-polling-watcher).
 
-Anyone who can write to the bucket can file a run in any project, because the folder names the project: give CI credentials that can write only under their own project's prefix ([Security, section 7a](../architecture/SECURITY.md)). `scripts/simulate_upload.py` writes a sample build this way.
+Anyone who can write to the bucket can file a run in any project, because the folder names the project: give CI credentials that can write only under their own project's prefix ([Security, section 7a](../architecture/SECURITY.md)). `backend/scripts/simulate_upload.py` writes a sample build this way.
 
 ## Attaching runs to a release
 
