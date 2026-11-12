@@ -1615,15 +1615,13 @@ def test_gitignored_source_baseline_has_no_stale_entries() -> None:
         + ", ".join(sorted(baseline.get(k) or k for k in stale))
     )
 
-    # The three that remain are the genuine lowercase-`api_key` matches; the
-    # camelCase sources must not creep back in.
-    annotations = " ".join(baseline.values())
-    assert "backend/app/routers/api_keys.py" in annotations
-    for pruned in ("useApiKeys.ts", "ApiKeysPage.tsx", "apiKeyService.ts", "apiKey.ts"):
-        assert pruned not in annotations, (
-            f"{pruned} is back in the baseline; it never matches the lowercase "
-            "glob on a case-sensitive filesystem and must not be baselined."
-        )
+    # Since 2026-11-12 `.gitignore` names secret files by name and shape, so no
+    # tracked source matches it and the baseline is empty. An entry here means a
+    # glob is swallowing source again: narrow the glob or rename the file.
+    assert not fingerprints, (
+        "repo.no-gitignored-source baseline should be empty; it lists: "
+        + ", ".join(sorted(baseline.get(k) or k for k in fingerprints))
+    )
 
 
 # ── backend.streaming-body-not-rebound ───────────────────────────────────────
@@ -1731,17 +1729,15 @@ def _check_ignore(paths: list[str], *, force_case_sensitive: bool) -> set[str]:
     }
 
 
-# The camelCase API-key sources. `*apikey*` is lowercase, so a case-SENSITIVE
-# match (Linux CI) misses them and a case-INSENSITIVE one (a Windows checkout,
-# where core.ignorecase defaults to true) hits them.
-_CAMEL_CASE_SOURCES = [
-    "frontend/src/hooks/useApiKeys.ts",
-    "frontend/src/pages/settings/ApiKeysPage.tsx",
-    "frontend/src/services/apiKeyService.ts",
-    "frontend/src/types/apiKey.ts",
+# `.gitignore`'s `*apikey*.txt` is lowercase, so a case-SENSITIVE match (Linux
+# CI) misses these camelCase names and a case-INSENSITIVE one (a Windows
+# checkout, where core.ignorecase defaults to true) hits them.
+_CAMEL_CASE_PATHS = [
+    "scripts/ApiKeyDump.txt",
+    "frontend/src/ApiKeyExport.txt",
 ]
 # A genuine lowercase match, which must stay caught on every platform.
-_LOWERCASE_SOURCE = "backend/app/services/api_key_service.py"
+_LOWERCASE_PATH = "scripts/apikey_dump.txt"
 
 
 def test_the_guard_asks_git_case_sensitively():
@@ -1749,19 +1745,20 @@ def test_the_guard_asks_git_case_sensitively():
 
     Before this, a Windows checkout reported five `repo.no-gitignored-source`
     violations that CI could not see: git honoured `core.ignorecase = true`, so
-    the lowercase glob `*apikey*` matched `ApiKeysPage.tsx`. The same tree
+    the then-lowercase glob `*apikey*` matched `ApiKeysPage.tsx`. The same tree
     failed locally and passed in CI, which is how a gate teaches people to stop
-    reading it.
+    reading it. The source-swallowing globs are gone, so this checks the same
+    mechanism against the lowercase `*apikey*.txt` rule that remains.
     """
     matched = _check_ignore(
-        _CAMEL_CASE_SOURCES + [_LOWERCASE_SOURCE], force_case_sensitive=True
+        _CAMEL_CASE_PATHS + [_LOWERCASE_PATH], force_case_sensitive=True
     )
 
-    assert _LOWERCASE_SOURCE in matched, (
+    assert _LOWERCASE_PATH in matched, (
         "forcing case sensitivity must not blind the guard — a genuinely "
-        "lowercase `api_key` source is still a real finding"
+        "lowercase match is still a real finding"
     )
-    for path in _CAMEL_CASE_SOURCES:
+    for path in _CAMEL_CASE_PATHS:
         assert path not in matched, (
             f"{path} is camelCase; the lowercase glob does not match it on a "
             "case-sensitive filesystem, which is the answer CI gets"
