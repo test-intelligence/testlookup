@@ -2564,6 +2564,39 @@ locally by default.
 
 ### Security
 
+- **Secure defaults for the development stacks, the default install and the monitoring add-on** (2026-11-12
+  open-source repository review; branch `fix/secure-defaults-20261112`).
+  - `make quickstart`, `make dev` and `make dev-lite` run with dev-login on (passwordless admin) and published
+    the API (8000) and UI (3000) on every interface, so anyone on the same network could sign in as admin.
+    dev-lite's MongoDB, which has no authentication, was on `0.0.0.0:27017`. Every port of
+    `docker-compose.yml` and `docker-compose.dev-lite.yml` now binds to `127.0.0.1`, with
+    `<SERVICE>_PUBLISH_ADDR` to open one on purpose.
+  - The release compose (what `install.sh` runs) now keeps PostgreSQL (5433), the S3 store (9000) and
+    Ollama (11434) on `127.0.0.1` (`POSTGRES_PUBLISH_ADDR`, `MINIO_PUBLISH_ADDR`, `OLLAMA_PUBLISH_ADDR`). Only
+    the UI on 3000 stays on every interface.
+  - Ollama moves from 0.5.4 to 0.40.10 (GHSA-x8qc-fggm-mpqg / CVE-2026-7482, heap out-of-bounds read in the
+    GGUF loader, fixed in 0.17.1). Its Kubernetes container drops every capability and privilege escalation.
+    The image grows from about 1.6 GB to 3.4 GB, so `--with-llm` offline bundles grow too.
+  - The monitoring add-on publishes Jaeger, OTLP, Prometheus and Grafana on `127.0.0.1`
+    (`MONITORING_PUBLISH_ADDR`), and Prometheus no longer enables its unauthenticated `/-/quit` and
+    `/-/reload` lifecycle API.
+  - The public Kubernetes ingress (base and K3s overlay) no longer routes `/metrics`, which has no
+    authentication; Prometheus scrapes the pods directly.
+  - The single-VM template points the browser at the frontend's own address instead of `http://VM:8000`,
+    matching its guide, so the API stays on loopback there too.
+  - `scripts/gen-dev-env.sh` creates `.env` with mode 600 before writing any secret, and `install.sh` tightens
+    a reused `.env`.
+  - The production secret check now also refuses a placeholder `POSTGRES_PASSWORD`, `MINIO_SECRET_KEY`,
+    `REDIS_PASSWORD`, or a placeholder password inside `DATABASE_URL`, `REDIS_URL`, `CELERY_BROKER_URL` or
+    `CELERY_RESULT_BACKEND`, as copied from `.env.example`, `.env.gcp-vm.example` or
+    `infra/cloudrun/backend.env.example` (all three ship `APP_ENV=production`). Empty values stay allowed.
+  - The login rate limiter, the demo read-only gate, the forced password change and every rate-limit key and
+    request log read the routed path (`app.core.request_path.routed_path`) instead of `request.url.path`.
+    starlette 0.52 rebuilds that from the Host header (CVE-2026-48710): `Host: x?` made the login path empty,
+    so password guessing skipped the rate limiter, and nginx forwards such a Host.
+  Tests: `tests/regression/test_secure_deploy_defaults.py`, `tests/regression/test_routed_path.py`,
+  `tests/regression/test_example_placeholders_block_production.py`.
+
 - **The PRD heading parser could be stalled for minutes by one long line** (CodeQL py/polynomial-redos
   #57-#64). A PRD may be 200,000 characters on one line, and a heading line of 20,000 tabs ran for more than ten
   minutes. The heading, list-item, exit-criteria, link and emphasis patterns in
