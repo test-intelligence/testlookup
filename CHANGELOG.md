@@ -2034,6 +2034,14 @@ locally by default.
 
 ### Fixed
 
+- **A signed export or compliance pack was not byte-reproducible.** `_sign_pack` appended `signature.json` with a
+  str member name, so `zipfile` stamped it with the local wall clock, while every other member of a project, run,
+  subject or retention archive carries the fixed 1980-01-01 timestamp. Two exports of the same data either side of
+  a 2-second DOS-time tick differed in that member's headers, which made
+  `test_project_export_people::test_a_catalog_only_export_stays_schema_1_byte_for_byte_and_carries_no_email` fail
+  now and then (PR #375's CI). `signature.json` now goes through the same fixed-timestamp `ZipInfo`. Regression test:
+  `tests/regression/test_signed_archives_are_byte_reproducible.py` signs one archive twice, 3 s apart on
+  `zipfile`'s clock, and compares the bytes.
 - **Docs said there was no SAML single logout and no Kubernetes backup** (R4 gap 9). IdP-initiated SLO has
   existed since W20 (`/api/v1/sso/slo`); `docs/operations/integrations.md` documents it, and the administration
   guide and the in-app guide say it works one way. The same paragraphs said OIDC was not supported; it is.

@@ -658,7 +658,9 @@ def _build_manifest(
 
 #: A run archive's fixed member timestamp: two builds of the same data must
 #: produce the same member bytes (only manifest.json's ``generated_at`` and
-#: signature.json differ), so no entry carries the wall clock.
+#: signature.json's ``signed_at`` differ), so no entry carries the wall clock --
+#: ``signature.json`` included, which ``_sign_pack`` appends to every signed
+#: archive (a release pack's members keep their pre-W22b ``writestr`` headers).
 _FIXED_ZIP_DATE_TIME = (1980, 1, 1, 0, 0, 0)
 
 
@@ -1253,7 +1255,9 @@ async def _sign_pack(
     buffer = io.BytesIO(zip_bytes) if in_memory else zip_bytes
     buffer.seek(0)
     with zipfile.ZipFile(buffer, "a", compression=zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(compliance_signing.SIGNATURE_FILENAME, _serialize(document))
+        # The fixed timestamp, as every run-archive member: a str name would stamp the wall clock, and two
+        # signs of the same archive either side of a 2-second DOS-time tick would differ in the header.
+        zf.writestr(_member_info(compliance_signing.SIGNATURE_FILENAME), _serialize(document))
     return (
         buffer.getvalue() if in_memory else buffer,
         document["signature"],
