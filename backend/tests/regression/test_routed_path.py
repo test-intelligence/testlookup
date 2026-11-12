@@ -1,9 +1,9 @@
 """Security gates judge the routed path, never one rebuilt from the Host header.
 
-starlette builds ``request.url`` from the Host header and parses it again
-(CVE-2026-48710, GHSA-86qp-5c8j-p5mr; starlette 0.52.x here), so a Host
-header holding ``?`` or ``/`` changes ``request.url.path`` while the router
-still runs the real path. Before this fix three gates read ``request.url.path``:
+starlette before 1.0.1 built ``request.url`` from the Host header and parsed
+it again (CVE-2026-48710, GHSA-86qp-5c8j-p5mr), so a Host header holding ``?``
+or ``/`` changed ``request.url.path`` while the router still ran the real path.
+The backend ran starlette 0.52.1 then, and three gates read ``request.url.path``:
 
 * the login rate limiter (``app/main.py``): ``Host: x?`` made the path ``""``,
   the lookup found no limiter, and password guessing went unlimited. nginx
@@ -15,7 +15,9 @@ still runs the real path. Before this fix three gates read ``request.url.path``:
   temporary-password session call routes other than the password change.
 
 ``app.core.request_path.routed_path`` reads ``scope["path"]``; the last test
-refuses ``request.url.path`` anywhere in ``backend/app``.
+refuses ``request.url.path`` anywhere in ``backend/app``. The backend now runs
+starlette 1.10 (2026-11-12 supply-chain PR), which ignores a Host header that
+is not a valid host; the gates keep reading the routed path regardless.
 """
 from __future__ import annotations
 
@@ -37,7 +39,7 @@ pytestmark = pytest.mark.regression
 BACKEND_APP = Path(__file__).resolve().parents[2] / "app"
 LOGIN = "/api/v1/auth/login"
 
-#: Host headers that make starlette 0.52's ``request.url.path`` lie.
+#: Host headers that made starlette 0.52's ``request.url.path`` lie.
 SPOOFING_HOSTS = ("x?", "x/api/v1/auth/logout?", "testserver/api/v1/auth/logout#")
 
 
@@ -55,10 +57,13 @@ def _client() -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://testserver")
 
 
-def test_the_spoof_still_works_on_the_starlette_in_use():
-    """Guards the guard: if starlette stops lying, this file can be retired."""
-    assert _request(LOGIN, "x?").url.path == ""
-    assert _request(LOGIN, "x/api/v1/auth/logout?").url.path == "/api/v1/auth/logout"
+@pytest.mark.parametrize("host", SPOOFING_HOSTS)
+def test_the_starlette_in_use_no_longer_lets_the_host_rewrite_the_path(host):
+    """starlette 1.0.1 fixed CVE-2026-48710: an invalid Host falls back to the
+    server address. On 0.52.1 ``x?`` gave ``""`` and ``x/api/v1/auth/logout?``
+    gave the logout path. A starlette downgrade fails here and in
+    tests/regression/test_supply_chain_pins.py."""
+    assert _request(LOGIN, host).url.path == LOGIN
 
 
 @pytest.mark.parametrize("host", ("testserver", *SPOOFING_HOSTS))

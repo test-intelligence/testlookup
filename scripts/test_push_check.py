@@ -773,3 +773,47 @@ class TestTheGeneratorNameFollowsTheCheckout:
 
     def test_this_checkout_has_the_renamed_generator(self):
         assert push_check._generator_in(push_check.REPO) == push_check.REFERENCE_GENERATOR
+
+
+class TestTheSecretScan:
+    """2026-11-12 review M-9: gitleaks over the commits being pushed, with the
+    same rules as the Secret scan workflow, before they become public."""
+
+    def test_it_is_registered_cheap_and_before_the_slow_suites(self):
+        checks = push_check.build_checks()
+        names = [c.name for c in checks]
+        check = checks[names.index("repo: secret scan (gitleaks)")]
+        assert check.fn is push_check.check_secret_scan
+        assert not check.slow and check.always
+        assert names.index("repo: secret scan (gitleaks)") < names.index("backend: full test suite")
+
+    def test_without_gitleaks_it_says_nothing_was_scanned(self, monkeypatch):
+        monkeypatch.setattr(push_check.shutil, "which", lambda name: None)
+        ok, msg = push_check.check_secret_scan()
+        assert ok is True
+        assert "NOT scanned" in msg and push_check.GITLEAKS_INSTALL in msg
+
+    def test_it_scans_from_the_merge_base_and_fails_on_a_finding(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr(push_check.shutil, "which", lambda name: "/usr/bin/gitleaks")
+        monkeypatch.setattr(push_check, "_git_stdout", lambda *a: (0, "abc1234def\n"))
+
+        def fake_run(cmd, cwd, extra_env=None):
+            calls.append(cmd)
+            return 1, "Finding: REDACTED\nRuleID: k3s-node-token"
+
+        monkeypatch.setattr(push_check, "run", fake_run)
+        ok, msg = push_check.check_secret_scan()
+        assert ok is False
+        assert "k3s-node-token" in msg and "rotate" in msg
+        [cmd] = calls
+        assert cmd[1] == "git" and "--log-opts=abc1234def..HEAD" in cmd
+        assert str(push_check.REPO / ".gitleaks.toml") in cmd and "--redact" in cmd
+
+    def test_a_docs_only_push_still_runs_it(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["push_check.py"])
+        monkeypatch.setattr(push_check, "docs_only_change", lambda: (True, ["README.md"]))
+        monkeypatch.setattr(push_check, "check_secret_scan", lambda: (False, "Finding: REDACTED"))
+        assert push_check._main() == 1
+        monkeypatch.setattr(push_check, "check_secret_scan", lambda: (True, "clean"))
+        assert push_check._main() == 0

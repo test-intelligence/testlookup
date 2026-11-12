@@ -1,7 +1,7 @@
 # ============================================================
 # TestLookup — Developer Makefile
 # ============================================================
-.PHONY: help dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean clean-scratch backup restore preflight upgrade verify-ops-scripts migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push offline-bundle offline-bundle-plan images-check images-check-test logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo smoke setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-migrate k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
+.PHONY: help lock-python dev dev-llm dev-setup dev-lite dev-lite-stop dev-logs dev-logs-seed stop restart clean clean-scratch backup restore preflight upgrade verify-ops-scripts migrate migrate-create migrate-down migrate-status pull-llm pull-llm-large list-llm test-backend test-backend-cov test-frontend test-e2e test-agent lint format type-check build build-push offline-bundle offline-bundle-plan images-check images-check-test logs shell-backend shell-db simulate-upload seed-data seed-data-reset quickstart demo smoke setup-minio build-java-sdk build-java-sdk-docker mcp-install mcp-start mcp-sse mcp-sse-docker k8s-deploy-dev k8s-deploy-staging k8s-deploy-prod k8s-deploy-openshift k8s-deploy-openshift-artifactory k8s-deploy-openshift-artifactory-update k8s-migrate k8s-mirror-images-openshift k8s-status k8s-rollout-async k8s-rollout-async-dev k8s-rollout-async-staging k8s-rollout-async-prod k8s-status-async k8s-status-openshift k8s-scale-worker
 
 # Force bash for recipe shells. On Windows, GNU make defaults to cmd.exe which
 # breaks bash builtins like `until`/`for f in glob`. Git Bash provides bash at
@@ -245,16 +245,35 @@ quality-gate-update-baseline: ## Re-snapshot the ratchet baseline (review the di
 quality-gate-test: ## Run the unit tests for the quality-gate script itself
 	cd scripts && python -m pytest test_quality_gate.py -v
 
+# The backend and MCP images install requirements-lock.txt with
+# --require-hashes: every package, transitive ones included, at one version
+# with its sha256. requirements.txt stays the file you edit. After changing it,
+# run this (needs uv) and commit both. An existing pin stays put unless the
+# input changed; UPGRADE="--upgrade-package <name>" moves one on purpose.
+LOCK_PYTHON = uv pip compile requirements.txt --universal --python-version 3.14 --generate-hashes --quiet --custom-compile-command "make lock-python" -o requirements-lock.txt $(UPGRADE)
+
+lock-python: ## Re-lock backend/ and mcp/ requirements-lock.txt from requirements.txt (needs uv)
+	cd backend && $(LOCK_PYTHON)
+	cd mcp && $(LOCK_PYTHON)
+
 # ── Build ─────────────────────────────────────────────────────
 
-build: ## Build production Docker images (backend + frontend + mcp)
-	docker build -t testlookup/backend:latest --target production ./backend
-	docker build -t testlookup/frontend:latest --target production ./frontend
+# Local builds carry the published image names with a tag CI never pushes, so
+# `TESTLOOKUP_VERSION=local docker compose -f docker-compose.release.yml up`
+# runs them. They used to be testlookup/<image>:latest, a Docker Hub short
+# name: a `docker pull` or `compose pull` could replace them with someone
+# else's image of that name.
+LOCAL_IMAGE_PREFIX ?= ghcr.io/test-intelligence/testlookup
+LOCAL_IMAGE_TAG ?= local
+
+build: ## Build production Docker images (backend + frontend + mcp), tagged ghcr.io/...:local
+	docker build -t $(LOCAL_IMAGE_PREFIX)/backend:$(LOCAL_IMAGE_TAG) --target production ./backend
+	docker build -t $(LOCAL_IMAGE_PREFIX)/frontend:$(LOCAL_IMAGE_TAG) --target production ./frontend
 	# The MCP server is a first-class deployed image (docker-compose.release.yml,
 	# k8s/base/mcp-deployment.yaml, release.yml all ship it). Omitting it here
 	# produced an incomplete image set — and an incomplete offline bundle.
-	docker build -t testlookup/mcp:latest ./mcp
-	@echo "Production images built: backend, frontend, mcp."
+	docker build -t $(LOCAL_IMAGE_PREFIX)/mcp:$(LOCAL_IMAGE_TAG) ./mcp
+	@echo "Production images built: $(LOCAL_IMAGE_PREFIX)/{backend,frontend,mcp}:$(LOCAL_IMAGE_TAG)"
 
 build-push: ## Build and push images to registry (set REGISTRY env var)
 	docker build -t $(REGISTRY)/testlookup/backend:$(VERSION) --target production ./backend

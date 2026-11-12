@@ -77,7 +77,7 @@ jobs:
     name: K8s — Forbid :latest image tags
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Fail on :latest image tags in k8s/**
         run: |
           set -euo pipefail
@@ -123,10 +123,10 @@ jobs:
     name: Images — Manifest drift (compose / k8s / air-gap)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python 3.14
-        uses: actions/setup-python@v7.1.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
 
@@ -166,10 +166,10 @@ jobs:
     name: Quality Gates — Cross-cutting invariants
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python 3.14
-        uses: actions/setup-python@v7.1.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
 
@@ -202,21 +202,21 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
           cache: npm
           cache-dependency-path: e2e-runner/reporters/js/package-lock.json
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: "17"
           distribution: temurin
           cache: maven
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.4"
           cache: false
@@ -256,10 +256,10 @@ jobs:
     name: Docs — Mermaid diagrams
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js 26
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # jsdom 30 needs Node ^22.22.2 || ^24.15 || >=26; mermaid 12 needs >=22.12.
           node-version: "26"
@@ -301,12 +301,12 @@ jobs:
         working-directory: ./frontend
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Node 22 to match the frontend job: jsdom 30 pulls undici 8, which
       # needs >= 22.19.
       - name: Set up Node.js 26
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
           cache: npm
@@ -323,7 +323,7 @@ jobs:
 
       - name: Upload trace on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: docs-diagram-trace
           path: frontend/test-results/
@@ -351,10 +351,10 @@ jobs:
         working-directory: ./frontend
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js 26
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
           cache: npm
@@ -371,7 +371,7 @@ jobs:
 
       - name: Upload trace on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: e2e-hermetic-trace-${{ matrix.shard }}
           path: frontend/test-results/
@@ -400,10 +400,10 @@ jobs:
         working-directory: ./frontend
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js 26
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
           cache: npm
@@ -420,7 +420,7 @@ jobs:
 
       - name: Upload trace on failure
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: visual-regression-diff-${{ matrix.shard }}
           path: frontend/test-results/
@@ -488,18 +488,20 @@ jobs:
         working-directory: ./backend
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python 3.14
-        uses: actions/setup-python@v7.1.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements-lock.txt
 
+      # The hashed lock the backend image installs (make lock-python), so the
+      # suite runs on exactly the packages that ship.
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install --require-hashes -r requirements-lock.txt
           pip install -e ../cli
 
       - name: Lint with ruff
@@ -588,14 +590,14 @@ jobs:
         run: pytest tests/regression/test_celery_visibility_redelivery.py -v
 
       - name: Upload coverage report
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         if: always()
         with:
           files: ./backend/coverage.xml
           flags: backend
 
       - name: Upload test results
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: backend-test-results
@@ -651,17 +653,17 @@ jobs:
         working-directory: ./backend
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python 3.14
-        uses: actions/setup-python@v7.1.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/requirements-lock.txt
 
       - name: Install backend dependencies
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements-lock.txt
 
       - name: Apply migrations to the clean integration database
         env:
@@ -792,7 +794,8 @@ jobs:
             'backend/tests/integration/test_compose_queue_delivery_redis.py' \
             'backend/tests/regression/test_compose_worker_topology_contract.py' \
             'backend/tests/test_verify_compose_queues.py' \
-            'backend/requirements.txt'; then
+            'backend/requirements.txt' \
+            'backend/requirements-lock.txt'; then
             echo "run=false" >> "$GITHUB_OUTPUT"
           else
             echo "run=true" >> "$GITHUB_OUTPUT"
@@ -1101,7 +1104,7 @@ jobs:
 
       - name: Retain Compose queue delivery evidence
         if: always() && steps.compose-queue-scope.outputs.run == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: h07-compose-queue-${{ github.sha }}
           path: |
@@ -1148,6 +1151,7 @@ jobs:
             backend/app/models/postgres.py \
             backend/migrations/versions \
             backend/requirements.txt \
+            backend/requirements-lock.txt \
             backend/tests/regression/test_ingestion_fingerprint_param_limit.py \
             backend/tests/integration/test_ingestion_fingerprint_boundary_postgres.py; then
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -1206,7 +1210,7 @@ jobs:
 
       - name: Retain large-ingestion release evidence
         if: always() && steps.ingestion-boundary-scope.outputs.run == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: h06-postgres-boundary-${{ github.sha }}
           path: |
@@ -1228,13 +1232,13 @@ jobs:
         working-directory: ./frontend
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # jsdom 30 (the test DOM, pulled in by #629) requires Node >= 22.19 via
       # its undici 8 dependency; on Node 20 vitest workers crash at startup with
       # "webidl.util.markAsUncloneable is not a function". Run this job on 22.
       - name: Set up Node.js 26
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "26"
           cache: npm
@@ -1295,24 +1299,24 @@ jobs:
         working-directory: ./mcp
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python 3.14
-        uses: actions/setup-python@v7.1.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.14"
           cache: pip
-          cache-dependency-path: mcp/requirements.txt
+          cache-dependency-path: mcp/requirements-lock.txt
 
       - name: Set up Go for Kustomize validation
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.22.7"
           cache: false
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          pip install --require-hashes -r requirements-lock.txt
           pip install pytest pytest-cov pyyaml
 
       - name: Syntax check all Python files
@@ -1475,7 +1479,7 @@ jobs:
     # never collected. The commit-range collector added 165 tests that would
     # have been decorative without this job.
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Commit-range tests build real git repos, and some assert behaviour
           # against a genuine shallow clone — a depth-1 checkout here would
@@ -1486,7 +1490,7 @@ jobs:
       # requires-python >= 3.11 (the SDK >= 3.9), so this job tests the floor
       # users install on; the images and every other Python job run 3.14.
       - name: Set up Python 3.11
-        uses: actions/setup-python@v7.1.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
           cache: pip
@@ -1533,10 +1537,10 @@ jobs:
     # Without this job the regression test guarding that fix would be
     # decorative, which is the same trap called out in sdk-cli-test.
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           # The pom targets Java 11; 17 is the oldest current LTS that builds it
           # and is closer to what a consumer runs than the newest JDK.
@@ -1566,10 +1570,10 @@ jobs:
     # `go vet` runs alongside `go test` deliberately — the module is pure
     # stdlib, so vet is the only static check available and it costs seconds.
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           # go.mod declares 1.21; build on that rather than newest, so a
           # consumer pinned to the declared minimum is what CI proves.
@@ -1600,10 +1604,10 @@ jobs:
       run:
         working-directory: ./client/js
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # package.json declares engines node >= 18. This job deliberately tests an
           # old Node, the nearest to that floor that setup-node and npm still serve
@@ -1640,24 +1644,15 @@ jobs:
   security-deps:
     name: Security — Dependency scan (Trivy fs)
     runs-on: ubuntu-latest
-    # ~2-3 min: Trivy install 5 s, DB from cache (one ~1 min download a day),
-    # frontend lockfile resolution ~40 s, scan ~1 min.
+    # ~2 min: Trivy install 5 s, DB from cache (one ~1 min download a day),
+    # scan ~1 min.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Node.js 26
-        uses: actions/setup-node@v7
-        with:
-          node-version: "26"
-
-      - name: Resolve the frontend lockfile (none is committed)
-        # Trivy reads npm dependencies from a lockfile. build-images generates
-        # frontend/package-lock.json the same way before the Docker build;
-        # --package-lock-only resolves the tree without installing or running
-        # any package script.
-        working-directory: ./frontend
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      # Trivy reads frontend/package-lock.json as committed. CI used to
+      # regenerate it first (`npm install --package-lock-only`), so the scan
+      # and the published image could see a tree nobody reviewed.
 
       - name: Install checksum-verified Trivy 0.74.0
         # The same pinned build and digest as release.yml's promotion scan
@@ -1677,7 +1672,7 @@ jobs:
         run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       - name: Cache the Trivy vulnerability database (refreshed daily)
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/trivy
           key: trivy-db-${{ runner.os }}-${{ steps.day.outputs.day }}
@@ -1725,7 +1720,7 @@ jobs:
             dockerfile: e2e-runner/Dockerfile
             target: ""
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Detect changes to this image's inputs
         id: scope
@@ -1753,11 +1748,6 @@ jobs:
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Generate frontend package-lock.json (as build-images does)
-        if: steps.scope.outputs.run == 'true' && matrix.name == 'frontend'
-        working-directory: ./frontend
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-
       - name: Stage client SDKs into the backend context (as build-images does)
         if: steps.scope.outputs.run == 'true' && matrix.name == 'backend'
         run: |
@@ -1773,7 +1763,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.scope.outputs.run == 'true'
-        uses: docker/setup-buildx-action@v4.4.1
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         # Not from Docker Hub: buildkit's own image (ECR Public until its data limit ran out, 2026-10-15) and
         # every docker.io base image (python, node, nginx) through
         # mirror.gcr.io, falling back to Docker Hub. On 2026-10-09 all three
@@ -1796,7 +1786,7 @@ jobs:
 
       - name: Build the image (not pushed)
         if: steps.scope.outputs.run == 'true'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./${{ matrix.context }}
           file: ./${{ matrix.dockerfile }}
@@ -1832,7 +1822,7 @@ jobs:
 
       - name: Cache the Trivy vulnerability database (refreshed daily)
         if: steps.scope.outputs.run == 'true'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/trivy
           key: trivy-db-${{ runner.os }}-${{ steps.day.outputs.day }}
@@ -1878,15 +1868,20 @@ jobs:
       ]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
 
+    # id-token, attestations and artifact-metadata are for the signed build
+    # provenance at the end of the job (actions/attest-build-provenance).
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
 
     env:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Resolve and validate manifest version
         id: manifest-version
@@ -1899,35 +1894,28 @@ jobs:
           }
           printf 'version=v%s\n' "$version" >> "$GITHUB_OUTPUT"
 
-      # Generate package-lock.json before Docker build so npm ci works inside the image.
-      # This avoids needing to commit a lockfile while still getting reproducible installs.
-      # Node 26 = the frontend image's node:26-alpine, so the lockfile is written by the
-      # same npm that runs `npm ci` inside the build.
-      - name: Set up Node.js 26
-        uses: actions/setup-node@v7
-        with:
-          node-version: "26"
-
-      - name: Generate frontend package-lock.json
-        working-directory: ./frontend
-        run: npm install --package-lock-only
+      # The frontend image runs `npm ci` on frontend/package-lock.json as
+      # committed (the frontend job's `npm ci` already proves it matches
+      # package.json). This job used to regenerate it with `npm install
+      # --package-lock-only` first, so the published image could carry a tree
+      # that no PR reviewed.
 
       - name: Log in to Docker Hub (avoids pull rate limits on base images and buildkit)
-        uses: docker/login-action@v4.7.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         if: env.DOCKERHUB_USERNAME != ''
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4.7.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4.4.1
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         # Mirrors, not Docker Hub: see the image-scan job's buildx step.
         with:
           driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1
@@ -1937,7 +1925,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend
@@ -1989,7 +1977,7 @@ jobs:
 
       - name: Build & push backend
         id: build-backend
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./backend
           file: ./backend/Dockerfile
@@ -2007,7 +1995,7 @@ jobs:
 
       - name: Build & push frontend
         id: build-frontend
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
@@ -2022,7 +2010,7 @@ jobs:
 
       - name: Build & push MCP server
         id: build-mcp
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./mcp
           file: ./mcp/Dockerfile
@@ -2044,13 +2032,39 @@ jobs:
             --image "mcp=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp@${{ steps.build-mcp.outputs.digest }}" \
             --output verified-images/release-manifest.json
           python3 scripts/release/release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "${GITHUB_SHA}"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verified-images-${{ github.sha }}
           path: verified-images/release-manifest.json
           if-no-files-found: error
           retention-days: 14
           overwrite: false
+
+      # Signed SLSA build provenance for each pushed digest, recorded in
+      # Sigstore's public log and pushed next to the image. BuildKit's own
+      # provenance above is unsigned. Anyone can check an image with
+      #   gh attestation verify oci://ghcr.io/test-intelligence/testlookup/backend:<tag> --owner test-intelligence
+      # release.yml promotes these same digests, so a vX.Y.Z tag carries them.
+      - name: Attest backend build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend
+          subject-digest: ${{ steps.build-backend.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest frontend build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend
+          subject-digest: ${{ steps.build-frontend.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest MCP server build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp
+          subject-digest: ${{ steps.build-mcp.outputs.digest }}
+          push-to-registry: true
 
   # ─────────────────────────────────────────────────────────────
   # JOB 4: Deploy to dev (only on main branch, after images built)
@@ -2068,13 +2082,13 @@ jobs:
     environment: development
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v5.2.0
+        uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
 
       - name: Set up kustomize
-        uses: imranismail/setup-kustomize@v3
+        uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3.0.0
         with:
           kustomize-version: "5.4.2"
 

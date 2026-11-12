@@ -2613,7 +2613,24 @@ def test_the_real_dependabot_config_covers_every_manifest() -> None:
     tracked = subprocess.run(["git", "ls-files"], cwd=qg.REPO_ROOT, capture_output=True,
                              text=True, check=True).stdout.split()
     gaps = qg._dependabot_gaps(tracked, text.replace(entry, ""))
-    assert [gap[0] for gap in gaps] == ["mcp/requirements.txt"]
+    assert [gap[0] for gap in gaps] == ["mcp/requirements-lock.txt", "mcp/requirements.txt"]
+
+
+def test_compose_files_are_docker_compose_manifests() -> None:
+    """The images in docker-compose*.yml (Ollama, Grafana, postgres, ...) need
+    their own Dependabot entry: the "docker" ecosystem reads only Dockerfiles."""
+    tracked = [
+        "docker-compose.yml", "docker-compose.monitoring.yml", ".devcontainer/docker-compose.codespaces.yml",
+        "deploy/extra/compose.yaml", "backend/Dockerfile", "docs/compose-notes.md",
+    ]
+    text = (
+        'updates:\n'
+        '  - package-ecosystem: "docker"\n    directory: "/backend"\n'
+        '  - package-ecosystem: "docker-compose"\n    directories: ["/", "/.devcontainer"]\n'
+    )
+    assert qg._dependabot_gaps(tracked, text) == [("deploy/extra/compose.yaml", "docker-compose", "/deploy/extra")]
+    real = (qg.REPO_ROOT / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+    assert ("docker-compose", "/") in qg._dependabot_entries(real)
 
 
 # QA-B45-P4: the plural `directories:` form, its globs, and the manifest kinds

@@ -17,10 +17,13 @@ dependencies = [
     "typer[all]>=0.12",
     "rich>=13.0",
     "httpx>=0.27",
-    "pydantic>=2.0",
+    # Floors exclude releases with known advisories (2026-11-12 review):
+    # pydantic <2.4 CVE-2024-3772 (ReDoS); cryptography <49 CVE-2026-69249,
+    # GHSA-537c-gmf6-5ccf, CVE-2026-26007 (high).
+    "pydantic>=2.4",
     "platformdirs>=4.0",
     "pyyaml>=6.0",
-    "cryptography>=43",
+    "cryptography>=49",
 ]
 
 [project.scripts]

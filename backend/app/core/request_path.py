@@ -1,10 +1,11 @@
 """The path a request was routed by, never one rebuilt from the Host header.
 
-Starlette builds ``request.url`` as ``f"{scheme}://{host_header}{path}"`` and
-parses that string again, so a Host header holding ``?`` or ``/`` changes
-``request.url.path`` while routing still uses ``scope["path"]``
-(CVE-2026-48710, GHSA-86qp-5c8j-p5mr, fixed in starlette 1.0.1; this backend
-runs 0.52.x). Measured on starlette 0.52.1 for ``POST /api/v1/auth/login``:
+Starlette before 1.0.1 built ``request.url`` as ``f"{scheme}://{host_header}{path}"``
+and parsed that string again, so a Host header holding ``?`` or ``/`` changed
+``request.url.path`` while routing still used ``scope["path"]``
+(CVE-2026-48710, GHSA-86qp-5c8j-p5mr). Measured on starlette 0.52.1, which
+this backend ran until the 2026-11-12 supply-chain PR moved it to 1.10, for
+``POST /api/v1/auth/login``:
 
 * ``Host: x?`` gives ``request.url.path == ""``, so a lookup keyed on it
   (the login rate limiter) finds nothing and the request goes unlimited;
@@ -14,7 +15,8 @@ runs 0.52.x). Measured on starlette 0.52.1 for ``POST /api/v1/auth/login``:
 
 nginx forwards ``Host $host`` and accepts ``?`` in it, so the first case
 reaches a default install through the frontend. Every security decision and
-every rate-limit or metrics key reads :func:`routed_path` instead;
+every rate-limit or metrics key reads :func:`routed_path` instead, which
+does not depend on the starlette version;
 ``backend/tests/regression/test_routed_path.py`` refuses ``request.url.path``
 anywhere in ``backend/app``.
 """

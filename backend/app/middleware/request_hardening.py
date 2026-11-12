@@ -1,10 +1,11 @@
 """Request hardening at the ASGI layer (Trivy findings on PR #26).
 
 Two starlette advisories were reachable while ``fastapi==0.115.5`` pinned
-starlette below 0.42 (W33 moved to fastapi 0.136.3 / starlette 0.52.1). Both
-guards stay: starlette 0.52.1's ``Request.form()`` still builds the urlencoded
-``FormParser`` with no field or size limit (only the multipart parser gets
-``max_fields`` / ``max_part_size``), and refusing byte ranges costs nothing:
+starlette below 0.42. W33 moved to starlette 0.52.1, which fixed the Range
+one, and the 2026-11-12 supply-chain PR to 1.10.0, which fixes the form one
+(1.3.1). Both guards stay as defence in depth: the 64 KiB body cap is far
+below starlette 1.10's urlencoded limits (1000 fields of up to 1 MB each),
+and refusing byte ranges costs nothing:
 
 * CVE-2026-54283: ``request.form()`` ignores its limits for
   ``application/x-www-form-urlencoded`` bodies, so a client can make the

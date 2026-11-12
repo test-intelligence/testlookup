@@ -6603,6 +6603,11 @@ _MANIFEST_ECOSYSTEMS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"(^|/)Cargo\.toml$"), "cargo"),
     (re.compile(r"(^|/)go\.mod$"), "gomod"),
     (re.compile(r"(^|/)Dockerfile[^/]*$"), "docker"),
+    # Dependabot's own compose filename pattern (dependabot-core
+    # docker_compose/file_fetcher.rb). The service images in these files
+    # (Ollama 0.5.4, Grafana 11.3.0) sat behind known advisories with no
+    # update PR until the 2026-11-12 review.
+    (re.compile(r"(^|/)(docker-)?compose(-\w+)?(\.[\w-]+)?\.ya?ml$", re.IGNORECASE), "docker-compose"),
 )
 _DEPENDABOT_EXEMPT: dict[str, str] = {
     "client/examples/": (
@@ -7789,7 +7794,8 @@ GUARDS: list[Guard] = [
         description=(
             "Every tracked package manifest (requirements/pyproject/setup.py/"
             "Pipfile, package.json, pom.xml, build.gradle, Cargo.toml, go.mod, "
-            "Dockerfile) and the workflows have a .github/dependabot.yml entry, "
+            "Dockerfile, docker-compose*.yml) and the workflows have a "
+            ".github/dependabot.yml entry, "
             "`directory:` or `directories:` (re-audit M23, QA-B45-P4)."
         ),
         check=_ci_dependabot_covers_every_manifest,

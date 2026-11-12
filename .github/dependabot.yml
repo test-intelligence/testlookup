@@ -2,7 +2,7 @@
 #
 # The quality gate's ci.dependabot-covers-every-manifest guard enumerates the
 # tracked manifests (requirements*.txt / pyproject.toml / package.json /
-# pom.xml / go.mod / Dockerfile, and the workflows) and fails when one has no
+# pom.xml / go.mod / Dockerfile / docker-compose*.yml, and the workflows) and fails when one has no
 # entry here, so a new package cannot ship outside this net again. Before this
 # change only backend pip, frontend npm and the Actions were covered: mcp/,
 # cli/, the Python/JS/Java/Go SDKs and every base image were not.
@@ -101,6 +101,26 @@ updates:
     directory: "/mcp"
     schedule:
       interval: "weekly"
+
+  # ── Service images in the compose files ───────────────────────────────────
+  # postgres, mongo, valkey, versitygw, chroma, ollama, grafana, prometheus,
+  # jaeger, ...: the "docker" entries above read only Dockerfiles, so the
+  # images an install actually runs never got an update PR (2026-11-12 review
+  # M-10: Ollama 0.5.4 and Grafana 11.3.0 sat behind known advisories). It reads
+  # every docker-compose*.yml in these directories and skips image references
+  # built from a variable (${TESTLOOKUP_VERSION:-latest}). Kubernetes manifests
+  # are not covered; for the images deploy/images.manifest.txt lists, `make
+  # images-check` (CI job image-manifest-drift) fails a compose bump until the
+  # manifest and the overlays match it.
+  - package-ecosystem: "docker-compose"
+    directories:
+      - "/"
+      - "/.devcontainer"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
 
   # ── Workflows ─────────────────────────────────────────────────────────────
   - package-ecosystem: "docker"

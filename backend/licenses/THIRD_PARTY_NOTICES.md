@@ -181,6 +181,7 @@ Apache-2.0, MIT or MPL-2.0 and is used under Apache-2.0.
 | `signxml` | Apache-2.0 | backend |
 | `slowapi` | MIT | backend |
 | `sqlalchemy` | MIT | backend |
+| `starlette` | BSD-3-Clause | backend |
 | `structlog` | MIT OR Apache-2.0 | backend |
 | `tenacity` | Apache-2.0 | backend |
 | `threadpoolctl` | BSD-3-Clause | backend |

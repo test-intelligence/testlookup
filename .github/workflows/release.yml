@@ -16,7 +16,7 @@ jobs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
       version: ${{ steps.resolve.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - id: resolve
@@ -48,7 +48,7 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download and validate the SHA-bound image manifest
         env:
           GH_TOKEN: ${{ github.token }}
@@ -101,7 +101,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download and validate the SHA-bound image manifest
         # Artifact name is verified-images-${{ needs.resolve-tag.outputs.source_sha }}.
         env:
@@ -116,15 +116,23 @@ jobs:
         run: |
           test "$(sha256sum verified-images/release-manifest.json | cut -d' ' -f1)" = "$TESTED_MANIFEST_SHA256"
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4.7.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install pinned crane
+      # This job holds packages: write, so crane is checksum-verified like Trivy
+      # above (the sha256 is the release's checksums.txt entry, cross-checked
+      # against a download on 2026-11-12). A swapped asset fails here.
+      - name: Install checksum-verified crane 0.20.6
+        env:
+          CRANE_ARCHIVE_SHA256: c1d593d01551f2c9a3df5ca0a0be4385a839bd9b86d4a76e18d7b17d16559127
         run: |
-          curl -fsSL https://github.com/google/go-containerregistry/releases/download/v0.20.6/go-containerregistry_Linux_x86_64.tar.gz | tar -xz crane
-          sudo install crane /usr/local/bin/crane
+          set -euo pipefail
+          curl -fsSLo crane.tar.gz https://github.com/google/go-containerregistry/releases/download/v0.20.6/go-containerregistry_Linux_x86_64.tar.gz
+          echo "$CRANE_ARCHIVE_SHA256  crane.tar.gz" | sha256sum --check --strict
+          tar -xzf crane.tar.gz crane
+          sudo install -m 0755 crane /usr/local/bin/crane
       - name: Promote immutable digests without rebuilding
         env:
           VERSION: ${{ needs.resolve-tag.outputs.version }}

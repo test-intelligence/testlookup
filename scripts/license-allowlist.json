@@ -113,6 +113,7 @@
     "signxml": "Apache-2.0",
     "slowapi": "MIT",
     "sqlalchemy": "MIT",
+    "starlette": "BSD-3-Clause",
     "structlog": "MIT OR Apache-2.0",
     "tenacity": "Apache-2.0",
     "threadpoolctl": "BSD-3-Clause",

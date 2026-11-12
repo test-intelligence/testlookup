@@ -235,6 +235,7 @@ def build_checks() -> list[Check]:
         Check("frontend: eslint", [npm, "run", "lint"], FRONTEND, "frontend"),
         Check("frontend: tsc", [npm, "run", "type-check"], FRONTEND, "frontend"),
         Check("repo: quality gate", [py, "scripts/quality_gate.py"], REPO, "repo"),
+        Check("repo: secret scan (gitleaks)", [], REPO, "repo", fn=check_secret_scan),
         # CI's "Self-test the quality-gate script" step, which this gate did not
         # run: UX redesign P2's DEVELOPER_GUIDE guard count passed here and failed
         # CI (test_quality_gate.py pins the guide to the registry). The same five
@@ -576,6 +577,43 @@ def check_stale_references() -> tuple[bool, str]:
         f"    python {REFERENCE_GENERATOR}\n"
         "    git checkout -- " + " ".join(SKEWED_REFERENCES) + "\n"
         "  (the second line drops the local skew; commit what remains)"
+    )
+
+
+#: The release .github/workflows/secret-scan.yml installs (checksum-verified there).
+GITLEAKS_INSTALL = "go install github.com/zricethezav/gitleaks/v8@v8.30.1"
+
+
+def check_secret_scan() -> tuple[bool, str]:
+    """gitleaks over the commits this push adds, with the repo's .gitleaks.toml.
+
+    The same scan as the Secret scan workflow (2026-11-12 review M-9), run
+    before the commits leave the machine: once a token is pushed it is in the
+    public history, and only rotation helps. Only added lines are read, so
+    the fake tokens in existing redaction tests do not fire.
+    """
+    gitleaks = shutil.which("gitleaks")
+    if not gitleaks:
+        return True, (
+            "gitleaks is not installed, so these commits were NOT scanned here "
+            f"(CI's Secret scan workflow still runs). Install: {GITLEAKS_INSTALL}"
+        )
+    code, base = _git_stdout("merge-base", "HEAD", "origin/main")
+    base = base.strip()
+    if code != 0 or not base:
+        return True, "no merge base with origin/main, so nothing was scanned here (CI scans the PR)"
+    code, out = run(
+        [gitleaks, "git", "--config", str(REPO / ".gitleaks.toml"), "--redact", "--no-banner",
+         "--exit-code", "1", f"--log-opts={base}..HEAD", str(REPO)],
+        REPO,
+    )
+    if code == 0:
+        return True, f"no secrets in the commits since {base[:10]}"
+    return False, (
+        out.strip()
+        + "\n\nA real secret: remove it from these commits (amend or rebase) AND rotate it."
+        "\nA deliberate fake value: make it obviously fake, or end the line with a"
+        " `gitleaks:allow` comment and say why in the PR."
     )
 
 
@@ -952,6 +990,13 @@ def _main() -> int:
             for p in changed[:10]:
                 print(f"  {Colour.DIM}{p}{Colour.OFF}")
             print(f"{Colour.DIM}Run them anyway with --full.{Colour.OFF}")
+            # Except the secret scan: the Secret scan workflow runs on every
+            # path, and a token pasted into a README is what it is for.
+            ok, report = check_secret_scan()
+            if not ok:
+                print(f"\n{Colour.BAD}repo: secret scan (gitleaks) failed{Colour.OFF}\n{report}")
+                return 1
+            print(f"{Colour.DIM}repo: secret scan (gitleaks): {report}{Colour.OFF}")
             return 0
 
     print(f"{Colour.DIM}Running {len(checks)} checks that mirror CI. "
