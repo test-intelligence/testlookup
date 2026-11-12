@@ -7,6 +7,7 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ## [Unreleased] — 0.1.0
 
+- Fixed three backend integration tests that failed whenever a CI run crossed midnight UTC (main, run 43122547657). The coverage-snapshot tests read "today" once at import time, a day before the task ran. The trend-summary seed put today's runs on the previous day during a day's first minute. Each module now takes one UTC day for its whole world and runs at both edges of a day in a regression test. `pytest -p tests.integration.midnight_replay` replays a run that collects before midnight and runs after it. The product code was already correct.
 - Added a legal notice to the in-app guide (`/docs/legal`), a Disclaimer section in the README and a pointer in the operator guide. It quotes the Apache-2.0 no-warranty and limitation-of-liability terms (sections 7 and 8, word for word, checked against `LICENSE` by a regression test). It also gives project facts, the public demo's sample-data rule and the security-report route. It holds no terms that need a lawyer's review.
 - Added a release-test foundation with a disposable Podman candidate stack, Chromium and Python client checks, and independent HTML, Markdown and JSON reports for incomplete or failing runs.
 
