@@ -112,3 +112,41 @@ def test_readiness_never_blocks_a_worker_from_booting(tmp_path, monkeypatch):
     monkeypatch.setattr(celery_app, "READY_SENTINEL", str(tmp_path / "no" / "such" / "dir" / "s"))
     celery_app._mark_worker_ready()   # must not raise
     celery_app._clear_worker_ready()  # must not raise
+
+
+# ── Docker Compose (release stack) ───────────────────────────────────────────
+#
+# The backend image's HEALTHCHECK curls the API on :8000. Every Celery
+# container runs that image and serves no port, so without a healthcheck of its
+# own each one reads "unhealthy" while consuming tasks normally: seen on the
+# public demo VM (2026-11-11), and on every install of docker-compose.release.yml.
+
+_RELEASE = pathlib.Path(__file__).resolve().parents[3] / "docker-compose.release.yml"
+
+
+def _release_services() -> dict:
+    return yaml.safe_load(_RELEASE.read_text(encoding="utf-8"))["services"]
+
+
+@pytest.mark.parametrize("service", ["worker", "worker-children", "beat"])
+def test_no_compose_celery_service_inherits_the_api_probe(service):
+    check = _release_services()[service].get("healthcheck")
+    assert check, f"{service}: no healthcheck, so it inherits the image's API probe and reads unhealthy"
+    joined = " ".join(str(part) for part in check["test"])
+    assert "8000" not in joined, f"{service}: probes the API port, which a Celery process does not serve"
+    assert "inspect" not in joined, f"{service}: `inspect ping` measures responsiveness, not health"
+
+
+@pytest.mark.parametrize("service", ["worker", "worker-children"])
+def test_compose_workers_report_health_from_the_sentinel(service):
+    assert _release_services()[service]["healthcheck"]["test"] == ["CMD", "test", "-f", _SENTINEL]
+
+
+def test_compose_beat_check_matches_beat_and_not_itself():
+    services = _release_services()
+    test = services["beat"]["healthcheck"]["test"]
+    assert test[:3] == ["CMD", "pgrep", "-f"], (
+        "exec form: under CMD-SHELL the `sh -c` line contains the pattern, so pgrep always matches"
+    )
+    assert test[3] in services["beat"]["command"], "the pattern must match beat's own command line"
+    assert test[3] not in services["worker"]["command"]

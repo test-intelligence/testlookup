@@ -17,8 +17,13 @@ function label(key: string): string {
   return LABELS[key] ?? key.charAt(0).toUpperCase() + key.slice(1)
 }
 
-export default function DegradedBanner() {
+export default function DegradedBanner({ demo = false }: { demo?: boolean }) {
   const { unavailable, criticalUnavailable, isDegraded, isUnreachable } = useSystemHealth()
+
+  // On the public demo an unreachable backend is the nightly rebuild, and the
+  // demo banner (lazy, demo sessions only) says so calmly. Its words stay out
+  // of this eager component, which every deployment downloads.
+  if (isUnreachable && demo) return null
 
   // Checked BEFORE isDegraded: when the health poll itself fails we have no
   // check results, so `unavailable` is empty and the dependency banner below

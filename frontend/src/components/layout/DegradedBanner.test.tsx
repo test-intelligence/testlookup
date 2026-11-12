@@ -102,3 +102,31 @@ describe('DegradedBanner', () => {
     expect(screen.queryByText(/Redis unreachable/)).not.toBeInTheDocument()
   })
 })
+
+describe('DegradedBanner on the public read-only demo', () => {
+  // The demo's backend is unreachable for a minute or two every night while
+  // it is rebuilt from seed; a visitor with the app open saw an outage alarm.
+  // The demo banner says the demo is refreshing (DemoBanner.test.tsx); this
+  // banner stays out of its way.
+  beforeEach(() => {
+    mockHealth.value = health()
+  })
+
+  it('stays quiet while the demo is unreachable', () => {
+    mockHealth.value = health({ isUnreachable: true })
+    const { container } = render(<DegradedBanner demo />)
+    expect(container).toBeEmptyDOMElement()
+  })
+
+  it('still names a degraded dependency while the backend answers', () => {
+    mockHealth.value = health({ unavailable: ['minio'], isDegraded: true })
+    render(<DegradedBanner demo />)
+    expect(screen.getByText(/MinIO unreachable/)).toBeInTheDocument()
+  })
+
+  it('keeps the outage alarm for every deployment that is not the demo', () => {
+    mockHealth.value = health({ isUnreachable: true })
+    render(<DegradedBanner demo={false} />)
+    expect(screen.getByTestId('health-unreachable-banner')).toHaveAttribute('role', 'alert')
+  })
+})

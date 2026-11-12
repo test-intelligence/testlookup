@@ -14,6 +14,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import LoginPage from './LoginPage'
+import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import type {
   LoginResponse,
   MfaEnrollConfirmResponse,
@@ -146,6 +147,17 @@ describe('LoginPage — three-way login response routing', () => {
 
     await waitFor(() => expect(mockSetAuth).toHaveBeenCalledWith('acc', 'ref', USER))
     expect(screen.queryByTestId('mfa-challenge-panel')).toBeNull()
+  })
+
+  it('keeps the project an ordinary user last worked in', async () => {
+    // Only the demo forgets it (its data is rebuilt nightly); everyone else
+    // comes back to where they were.
+    useProjectStore.setState({ activeProjectId: 'p-1', activeProject: { id: 'p-1', name: 'Payments' } as never })
+    mockLogin.mockResolvedValue(TOKENS)
+    renderPage()
+    await submitPassword()
+    await waitFor(() => expect(mockSetAuth).toHaveBeenCalledWith('acc', 'ref', USER))
+    expect(useProjectStore.getState().activeProjectId).toBe('p-1')
   })
 
   it('does not resume the forced reset route after the reset session was cleared', async () => {
@@ -565,6 +577,26 @@ describe('LoginPage — public read-only demo', () => {
     await waitFor(() => expect(mockSetAuth).toHaveBeenCalledWith('acc', 'ref', USER, { demo: true }))
     expect(mockLogin).not.toHaveBeenCalled()
     expect(mockNavigate).toHaveBeenCalled()
+  })
+
+  it('starts a demo session on All projects, whatever an earlier visit picked', async () => {
+    // The demo is rebuilt every night with new project ids. A project kept from
+    // an earlier visit no longer exists, and every request the first page
+    // scoped to it answered 403 "You do not have access to this project".
+    useProjectStore.setState({
+      activeProjectId: 'project-from-before-the-reset',
+      activeProject: { id: 'project-from-before-the-reset', name: 'E-Commerce Platform' } as never,
+    })
+    let selectionWhenTheAppOpened: string | null = 'not navigated'
+    mockNavigate.mockImplementation(() => {
+      selectionWhenTheAppOpened = useProjectStore.getState().activeProjectId
+    })
+    mockDemoLogin.mockResolvedValue(TOKENS)
+    renderPage()
+    fireEvent.click(await screen.findByRole('button', { name: /explore the demo/i }))
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalled())
+    expect(selectionWhenTheAppOpened, 'the app opened still scoped to the stale project').toBe(ALL_PROJECTS_ID)
+    expect(useProjectStore.getState().activeProject).toBeNull()
   })
 
   it('says why when the demo is being reset', async () => {

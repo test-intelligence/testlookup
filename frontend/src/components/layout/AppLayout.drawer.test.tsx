@@ -52,6 +52,10 @@ vi.mock('@/store/authStore', () => ({ useAuthStore: stores.useAuthStore }))
 vi.mock('./ReleasePicker', () => ({ ReleasePicker: () => null }))
 vi.mock('./AppVersionBadge', () => ({ default: () => null }))
 vi.mock('./DegradedBanner', () => ({ default: () => null }))
+// The shell reads the health poll too (it tells the demo banner when the demo is refreshing).
+vi.mock('@/hooks/useSystemHealth', () => ({
+  useSystemHealth: () => ({ data: null, unavailable: [], criticalUnavailable: [], isDegraded: false, isUnreachable: false }),
+}))
 
 /** A controllable `matchMedia`: `setNarrow` fires the change the way a resize does. */
 const viewport = { narrow: true, listeners: new Set<() => void>() }

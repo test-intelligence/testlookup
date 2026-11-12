@@ -17,4 +17,16 @@ describe('DemoBanner', () => {
     expect(banner).toHaveTextContent(/reset every night/i)
     expect(screen.getByRole('link', { name: /get testlookup/i })).toHaveAttribute('href', GET_TESTLOOKUP_URL)
   })
+
+  it('says the demo is refreshing, calmly, while the backend is unreachable', () => {
+    // The nightly rebuild takes the backend away for a minute or two; a visitor
+    // with the app open saw the outage alarm "Can't reach the TestLookup backend".
+    render(<DemoBanner refreshing />)
+    const banner = screen.getByTestId('demo-refreshing-banner')
+    expect(banner).toHaveTextContent(/The live demo is refreshing/)
+    expect(banner).toHaveTextContent(/03:00 UTC/)
+    expect(banner).toHaveTextContent(/Explore the demo again/)
+    expect(banner).toHaveAttribute('role', 'status')
+    expect(screen.queryByTestId('demo-banner')).not.toBeInTheDocument()
+  })
 })

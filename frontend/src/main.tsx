@@ -6,7 +6,7 @@ import { Toaster } from 'react-hot-toast'
 import { SWRConfig } from 'swr'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
-import { installGlobalErrorHandlers } from './utils/errorReporting'
+import { installGlobalErrorHandlers, setTelemetrySuppressed } from './utils/errorReporting'
 import './index.css'
 import './store/themeStore' // Apply saved theme on load (before first paint)
 import { useAuthStore } from './store/authStore'
@@ -25,6 +25,10 @@ function SessionCacheBoundary() {
 
 // Install window.onerror + unhandledrejection listeners before anything renders
 installGlobalErrorHandlers()
+// The public read-only demo refuses telemetry like every other write, so a demo
+// session sends none. Wired here, where both modules are already imported: an
+// import between them splits the reporter into an eager chunk of its own.
+setTelemetrySuppressed(() => useAuthStore.getState().demoSession)
 
 const rootElement = document.getElementById('root');
 if (!rootElement) throw new Error('Failed to find the root element');

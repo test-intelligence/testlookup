@@ -91,6 +91,62 @@ locally by default.
   - Pinned by `tests/regression/test_demo_mode.py` (write rule, middleware through the real app, every demo-login
     branch), `test_demo_compose.py`, the session-serialization, forwarded-IP and worker-topology guards, and
     frontend tests for the toast, banner and sign-in.
+- **Public demo: fixes from the first deployment, and security hardening** (branch `fix/demo-deploy-followups`).
+  The demo went live on a 4 GB Hetzner VM on 2026-11-11. A security review of the live VM found that the app
+  containers could reach the internet, with no CPU or process ceiling, and that SSH still accepted passwords:
+  - **No route out:** `docker-compose.demo.yml` makes `testlookup_net` internal. Only cloudflared joins
+    `demo_egress`, to dial Cloudflare; `db-budget-check` runs with no network. A payload cannot be downloaded and
+    a mining pool cannot be reached. Every container gets `no-new-privileges` and memory, CPU (at most 1.5 vCPU)
+    and process ceilings; the containers that run unprivileged drop every capability.
+  - **`scripts/demo/harden-host.sh`** (run by the cloud config on new VMs): SSH keys only with no forwarding,
+    ufw rate limit, fail2ban jails including repeat offenders, kernel settings, Docker `no-new-privileges` and
+    `live-restore`, Docker CE in unattended upgrades.
+  - **`scripts/demo/watchdog.sh`** (cron, every 5 minutes, from `demo.sh install-cron`): kills miner processes and
+    rebuilds the containers, resets after 15 minutes of saturated CPU, and reports egress drift, unexpected
+    listening ports and mining-pool connections. Optional phone alerts through `DEMO_ALERT_URL` (ntfy.sh or
+    healthchecks.io). It resets at most once an hour.
+  - Runbook: a Security section with the threat table, the incident steps for a compromise and the owner's
+    account checklist.
+
+  The first deployment also hit these:
+  - `scripts/demo/demo.sh` lowered the worker concurrency to 2 without lowering the declared PostgreSQL connection
+    total, so `db-budget-check` exited 1 ("Compose fleet requires 19 connections but declares 23") and nothing
+    else started. `setup` now writes `PG_COMPOSE_REQUIRED_CONNECTIONS=19` beside the concurrencies.
+  - Reading a key absent from `.env` failed under `pipefail`, which ended the nightly reset just before it logged
+    `reset: done` (the heartbeat lookup). A missing key now reads as empty.
+  - New `demo.sh pull` and `DEMO_IMAGES=pull`: use the published GHCR images instead of building on the VM, which
+    a 4 GB, 2-vCPU server does slowly if at all. New `demo.sh token` reads the Cloudflare tunnel token from a
+    hidden prompt into `.env` only and starts the tunnel.
+  - `docker-compose.release.yml`: `worker`, `worker-children` and `beat` read "unhealthy" on every release-image
+    install, because they inherited the backend image's health check, which probes the API on :8000. The workers
+    now check the ready file the app writes once connected to the broker (as the Kubernetes probe does), and beat
+    checks its own process.
+  - A demo session no longer sends frontend telemetry, which the demo refuses (403) like every other write.
+    `main.tsx` registers the auth store's check with the reporter (`setTelemetrySuppressed`). The reporter imports
+    no store, because error boundaries import it lazily and the store pulls in the API client. Any import between
+    the two would also split the reporter into an eager chunk of its own (+356 B gzip).
+  - `deploy/demo/nginx-demo-edge.conf` no longer counts static files against the per-address limits. A phone's
+    first visit sent 142 requests in 10 seconds (hashed chunks Cloudflare had not cached yet at that location),
+    and nginx refused 38 of them with "too many requests". Pages and API calls stay limited.
+  - In a demo session, an unreachable backend shows "The live demo is refreshing" (nightly at 03:00 UTC and
+    after maintenance; sign in again with Explore the demo if signed out) instead of the outage alarm "Can't
+    reach the TestLookup backend". The words live in the demo banner, which only demo sessions load and which
+    is already in the browser when the server goes away. The shell passes the health poll's verdict to it, and
+    `DegradedBanner` stays quiet for demo sessions. Every other deployment keeps the alarm. The PR adds 88 B
+    gzip to the eager bundle. CI's budget check failed at 59 B over 180,000 before this restructure; the local
+    measurement had missed it because the shared `node_modules` is older than the lockfile.
+  - Demo sign-in starts on All projects. The nightly rebuild gives the projects new ids, so a project picked on an
+    earlier visit no longer existed: the first page's requests were scoped to it and each answered 403 "You do
+    not have access to this project" before the project list corrected the selection.
+  - Runbook: rule 1 answers with the app's `demo_read_only` JSON (the default HTML block page made the app show
+    "Request failed with status code 403"); the browser-check rule stays off, because every API call from a tab
+    without Cloudflare's clearance cookie failed with 403; rate limits block for one minute; the tunnel token is
+    copied in the owner's own browser, never by running the install command.
+  - Pinned by `tests/regression/test_demo_compose.py` (the demo settings through the budget validator and the
+    startup gate; the missing-key read, token, pull and image-mode paths of `demo.sh` under bash; no route out
+    for any service but cloudflared, ceilings, capabilities; the host-hardening settings; every watchdog check
+    against stub `ps`/`ss`/`docker` and a fake `/proc`), `test_worker_readiness_sentinel.py` (the Compose health
+    checks) and `errorReporting.test.ts`.
 - **Observability evidence on Run › Timing** (wave W39, STRAT-07 first slice; branch
   `feat/df-evidence-timeline-20261108`). A new card at the bottom of the Timing tab shows the Splunk, OpenShift and
   Prometheus evidence the AI analysis already fetched for the run on one time axis: the newest deep analysis'

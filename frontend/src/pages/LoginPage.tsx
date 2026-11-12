@@ -4,6 +4,7 @@ import toast from 'react-hot-toast';
 import { Zap, UserPlus, LogIn, Fingerprint, ShieldAlert, Eye } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuthStore } from '../store/authStore';
+import { useProjectStore } from '@/store/projectStore';
 import AppLogo from '@/components/ui/AppLogo';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { type SSOStatus, getSSOStatus } from '../services/ssoService';
@@ -121,6 +122,12 @@ export default function LoginPage() {
   const completeSignIn = async (tokens: TokenResponse, options?: { demo?: boolean }) => {
     const user = await fetchCurrentUser(tokens.access_token);
     if (options?.demo) {
+      // The demo's data is rebuilt every night with new project ids, so a
+      // project picked on an earlier visit no longer exists. Kept, it scoped
+      // the first page's requests to it, and each one answered 403 "You do not
+      // have access to this project" before the project list corrected it.
+      // A demo session starts on All projects, before anything is requested.
+      useProjectStore.getState().setAllProjects();
       // The shell shows the demo banner for this session (authStore.demoSession).
       setAuth(tokens.access_token, tokens.refresh_token, user, { demo: true });
     } else {
