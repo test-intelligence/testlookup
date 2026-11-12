@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.request_path import routed_path
 from app.core.security import ExpiredSignatureError, JWTError, decode_token
 from app.db.postgres import get_db
 from app.models.postgres import ApiKey, User, UserRole
@@ -631,7 +632,7 @@ async def get_current_active_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Inactive user account",
         )
-    refuse_until_password_changed(current_user, request.url.path)
+    refuse_until_password_changed(current_user, routed_path(request))
     if _is_write(request) and not _route_takes_scoped_key_writes(request):
         _refuse_scoped_key_without_write_scope(current_user)
     return current_user

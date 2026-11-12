@@ -28,7 +28,8 @@ def _user(*, must_change: bool, kind: str):
 
 
 def _request(path: str, method: str = "GET"):
-    return SimpleNamespace(url=SimpleNamespace(path=path), method=method, scope={})
+    # The gate reads scope["path"] (app.core.request_path.routed_path), not url.path.
+    return SimpleNamespace(url=SimpleNamespace(path=path), method=method, scope={"path": path})
 
 
 @pytest.mark.asyncio

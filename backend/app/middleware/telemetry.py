@@ -30,6 +30,8 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
+from app.core.request_path import routed_path
+
 logger = structlog.get_logger("http.access")
 
 # ── Correlation ID context var ───────────────────────────────────────────────
@@ -80,7 +82,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         structlog.contextvars.bind_contextvars(
             request_id=request_id,
             method=request.method,
-            path=request.url.path,
+            path=routed_path(request),
         )
 
         try:
@@ -92,7 +94,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
 
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
 
-        if request.url.path not in _SKIP_PATHS:
+        if routed_path(request) not in _SKIP_PATHS:
             log_fn = logger.warning if response.status_code >= 500 else logger.info
             log_fn(
                 "http_request",

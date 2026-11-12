@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.models.schemas import SCIMErrorResponse
+from app.core.request_path import routed_path
 
 SCIM_PREFIX = "/api/v1/scim/v2"
 SCIM_MEDIA_TYPE = "application/scim+json"
@@ -22,7 +23,7 @@ class SCIMJSONResponse(JSONResponse):
 
 
 def _is_scim_request(request: Request) -> bool:
-    path = request.url.path
+    path = routed_path(request)
     return path == SCIM_PREFIX or path.startswith(f"{SCIM_PREFIX}/")
 
 
