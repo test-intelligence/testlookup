@@ -102,16 +102,19 @@ def test_the_only_public_entry_is_the_tunnel_behind_a_profile(demo):
     assert demo["mcp"]["profiles"] == ["mcp"]
 
 
-@pytest.mark.parametrize(("service", "variable"), [
-    ("postgres", "POSTGRES_PUBLISH_ADDR"),
-    ("minio", "MINIO_PUBLISH_ADDR"),
-    ("frontend", "FRONTEND_PUBLISH_ADDR"),
+@pytest.mark.parametrize(("service", "variable", "prefix"), [
+    # Loopback unless asked otherwise (tests/regression/test_secure_deploy_defaults.py).
+    ("postgres", "POSTGRES_PUBLISH_ADDR", "${POSTGRES_PUBLISH_ADDR:-127.0.0.1}:"),
+    ("minio", "MINIO_PUBLISH_ADDR", "${MINIO_PUBLISH_ADDR:-127.0.0.1}:"),
+    ("ollama", "OLLAMA_PUBLISH_ADDR", "${OLLAMA_PUBLISH_ADDR:-127.0.0.1}:"),
+    # The front door: every interface unless a tunnel or proxy is the way in.
+    ("frontend", "FRONTEND_PUBLISH_ADDR", "${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}"),
 ])
-def test_release_ports_on_every_interface_can_be_bound_to_loopback(service, variable):
+def test_release_ports_take_a_bind_address(service, variable, prefix):
     ports = _load(RELEASE)["services"][service]["ports"]
     assert len(ports) == 1
-    assert str(ports[0]).startswith(f"${{{variable}:+${{{variable}}}:}}"), (
-        f"{service}: its published port must take an optional bind address ({variable})"
+    assert str(ports[0]).startswith(prefix), (
+        f"{service}: its published port must take a bind address ({variable})"
     )
 
 

@@ -10,6 +10,10 @@
 #
 # The backend service is extended with the OTEL environment variables so it
 # automatically ships spans to Jaeger and exposes /metrics for Prometheus.
+#
+# Every port is published on 127.0.0.1 only: Jaeger, the OTLP receivers and
+# Prometheus have no authentication. Reach them through an SSH tunnel, or set
+# MONITORING_PUBLISH_ADDR=0.0.0.0 in .env behind something that authenticates.
 
 services:
 
@@ -22,9 +26,9 @@ services:
       COLLECTOR_OTLP_ENABLED: "true"
       LOG_LEVEL: warn
     ports:
-      - "16686:16686"   # Jaeger UI
-      - "4317:4317"     # OTLP gRPC receiver
-      - "4318:4318"     # OTLP HTTP receiver  ← backend ships spans here
+      - "${MONITORING_PUBLISH_ADDR:-127.0.0.1}:16686:16686"   # Jaeger UI
+      - "${MONITORING_PUBLISH_ADDR:-127.0.0.1}:4317:4317"     # OTLP gRPC receiver
+      - "${MONITORING_PUBLISH_ADDR:-127.0.0.1}:4318:4318"     # OTLP HTTP receiver (the backend ships spans over testlookup_net)
     networks:
       - testlookup_net
     healthcheck:
@@ -42,13 +46,14 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=15d"
-      - "--web.enable-lifecycle"
+      # No --web.enable-lifecycle: it lets any caller POST /-/quit and
+      # /-/reload without authentication. Restart the container to reload.
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./infra/monitoring/prometheus-rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     ports:
-      - "9090:9090"
+      - "${MONITORING_PUBLISH_ADDR:-127.0.0.1}:9090:9090"
     networks:
       - testlookup_net
     depends_on:
@@ -75,7 +80,7 @@ services:
       - ./infra/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     ports:
-      - "3001:3000"
+      - "${MONITORING_PUBLISH_ADDR:-127.0.0.1}:3001:3000"
     networks:
       - testlookup_net
     depends_on:

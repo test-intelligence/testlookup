@@ -265,7 +265,7 @@ images:
     newTag: 1.5.9
   - name: ollama/ollama
     newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/ollama/ollama
-    newTag: 0.5.4
+    newTag: 0.40.10
   - name: busybox
     newName: ARTIFACTORY_REGISTRY_PLACEHOLDER/busybox
     newTag: "1.36"

@@ -36,7 +36,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-testlookup_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set — copy .env.example to .env}
     ports:
-      - "5433:5432"   # 5433 on host to avoid conflict with any local PostgreSQL on 5432
+      # Loopback-only by default, like every port of this development stack:
+      # it runs with dev-login on (APP_ENV=development), so anything published
+      # on every interface is open to the whole network. Set
+      # <SERVICE>_PUBLISH_ADDR=0.0.0.0 in .env to expose a port on purpose.
+      # 5433 on host to avoid conflict with any local PostgreSQL on 5432.
+      - "${POSTGRES_PUBLISH_ADDR:-127.0.0.1}:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -175,7 +180,7 @@ services:
       ROOT_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set — copy .env.example to .env}
       ROOT_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set — copy .env.example to .env}
     ports:
-      - "9000:9000"
+      - "${MINIO_PUBLISH_ADDR:-127.0.0.1}:9000:9000"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -221,12 +226,13 @@ services:
   # ──────────────────────────────────────────────────────────
 
   ollama:
-    image: ollama/ollama:0.5.4
+    image: ollama/ollama:0.40.10
     container_name: testlookup_ollama
     profiles: ["local-llm"]
     restart: unless-stopped
     ports:
-      - "11434:11434"
+      # Ollama has no authentication; the backend uses http://ollama:11434.
+      - "${OLLAMA_PUBLISH_ADDR:-127.0.0.1}:11434:11434"
     volumes:
       - ollama_models:/root/.ollama
     # Uncomment for NVIDIA GPU acceleration:
@@ -312,7 +318,9 @@ services:
     container_name: testlookup_backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # POST /api/v1/auth/dev-login hands out an admin token without a
+      # password here, so the API stays on the host unless asked otherwise.
+      - "${BACKEND_PUBLISH_ADDR:-127.0.0.1}:8000:8000"
     volumes:
       - ./backend:/app                   # Hot-reload in development
       - ./backend/app:/app/app
@@ -526,7 +534,7 @@ services:
     container_name: testlookup_frontend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PUBLISH_ADDR:-127.0.0.1}:3000:3000"
     volumes:
       - ./frontend/src:/app/src         # Hot-reload in development
       - ./frontend/public:/app/public

@@ -92,6 +92,10 @@ MONGO_USER="testlookup"; MONGO_DB="testlookup_logs"
 # Start from the documented example, then overwrite the secret-bearing lines so
 # all the explanatory comments + non-secret defaults are preserved.
 cp "$EXAMPLE" "$ENV_FILE"
+# Owner-only before any secret is written: .env holds every generated password
+# and the JWT signing key, and cp leaves the umask default (often 0644) that
+# lets other local users read it. The rewrites below keep this mode.
+chmod 600 "$ENV_FILE" 2>/dev/null || true
 
 # set_kv KEY VALUE — replace `KEY=...` in place (portable: rewrite via python).
 set_kv() {

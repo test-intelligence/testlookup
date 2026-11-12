@@ -60,13 +60,10 @@ spec:
                 name: testlookup-backend-diagnostics
                 port:
                   number: 8000
-          - path: /metrics
-            pathType: Prefix
-            backend:
-              service:
-                name: testlookup-backend
-                port:
-                  number: 8000
+          # No /metrics route: the endpoint has no authentication and would
+          # publish internal counters to the internet. Prometheus scrapes each
+          # pod directly (k8s/monitoring/podmonitors.yaml), and /metrics
+          # requests here fall through to the frontend, which never proxies it.
           - path: /
             pathType: Prefix
             backend:

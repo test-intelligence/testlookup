@@ -44,7 +44,9 @@ make quickstart
 | `make restart` | Restarts every service |
 | `make clean CONFIRM=yes` | Stops the stack and deletes all volumes (PostgreSQL, MongoDB, Valkey, object store, ChromaDB). Not a routine shutdown |
 
-The `.env` target runs `scripts/gen-dev-env.sh` only when `.env` does not exist. It copies `.env.example`, fills every secret with a random value, keeps `DATABASE_URL` and `MONGO_URI` in step with the generated passwords, and sets `APP_ENV=development`, `APP_DEBUG=true` and `DEV_AUTO_LOGIN_ENABLED=true` so the login page offers Quick Login buttons. That file is for a local machine only; existing `.env` values are never overwritten.
+The `.env` target runs `scripts/gen-dev-env.sh` only when `.env` does not exist. It copies `.env.example`, fills every secret with a random value, keeps `DATABASE_URL` and `MONGO_URI` in step with the generated passwords, and sets `APP_ENV=development`, `APP_DEBUG=true` and `DEV_AUTO_LOGIN_ENABLED=true` so the login page offers Quick Login buttons. That file is for a local machine only (on Linux and macOS it is created readable by your user only); existing `.env` values are never overwritten.
+
+Because Quick Login hands out an admin session without a password, the development stacks (`docker-compose.yml`, `docker-compose.dev-lite.yml`) publish every port on `127.0.0.1` only. To open the stack from another machine, prefer an SSH tunnel; otherwise set `FRONTEND_PUBLISH_ADDR` and `BACKEND_PUBLISH_ADDR` to `0.0.0.0` in `.env` and turn Quick Login off (`DEV_AUTO_LOGIN_ENABLED=false`) first.
 
 Once it is up:
 
@@ -55,8 +57,8 @@ Once it is up:
 | In-app user guide | [localhost:3000/docs](http://localhost:3000/docs) |
 | MCP server (SSE, bearer token required) | `http://127.0.0.1:8002/sse` (bound to loopback) |
 | Flower (Celery monitor, basic auth from `.env`) | `http://127.0.0.1:5555` |
-| PostgreSQL | host port 5433 |
-| Ollama and ChromaDB (`local-llm` profile) | port 11434; ChromaDB on `127.0.0.1:8001` (loopback only: it has no authentication, so only the backend and workers share its network) |
+| PostgreSQL | `127.0.0.1:5433` |
+| Ollama and ChromaDB (`local-llm` profile) | `127.0.0.1:11434` (Ollama has no authentication); ChromaDB on `127.0.0.1:8001` (loopback only: it has no authentication, so only the backend and workers share its network) |
 
 ### Services
 
@@ -126,7 +128,7 @@ docker compose -f docker-compose.release.yml exec ollama ollama pull qwen2.5:7b-
 docker compose -f docker-compose.release.yml exec ollama ollama pull nomic-embed-text:v1.5
 ```
 
-The release file publishes the backend on `127.0.0.1:8000` by default (`BACKEND_PUBLISH_ADDR`) and the frontend on port 3000. The frontend proxies `/api/`, `/ws/` and `/webhooks/` to the backend, so browsers only need port 3000.
+The release file publishes the frontend on port 3000 of every interface and everything else on `127.0.0.1` only: the backend (8000, `BACKEND_PUBLISH_ADDR`), PostgreSQL (5433, `POSTGRES_PUBLISH_ADDR`), the S3 store (9000, `MINIO_PUBLISH_ADDR`) and Ollama (11434, `OLLAMA_PUBLISH_ADDR`). The frontend proxies `/api/`, `/ws/` and `/webhooks/` to the backend, so browsers only need port 3000.
 
 ### Before other people use it
 
@@ -172,6 +174,8 @@ docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
 | Grafana | [localhost:3001](http://localhost:3001) | User `admin`, password `GF_SECURITY_ADMIN_PASSWORD` from `.env` (required); the TestLookup overview dashboard is provisioned from `infra/monitoring/grafana/` |
 | Prometheus | [localhost:9090](http://localhost:9090) | Scrape config `infra/monitoring/prometheus.yml`, alert rules `infra/monitoring/prometheus-rules/`, 15-day retention |
 | Jaeger | [localhost:16686](http://localhost:16686) | OTLP receivers on 4317 (gRPC) and 4318 (HTTP) |
+
+All of these listen on `127.0.0.1` only (`MONITORING_PUBLISH_ADDR`): Jaeger, the OTLP receivers and Prometheus have no authentication. Prometheus runs without `--web.enable-lifecycle`, so restart its container to reload the configuration.
 
 The override sets `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` and `METRICS_ENABLED=true` on the backend. The same alert rules are rendered for Kubernetes in [`k8s/monitoring`](deploy-kubernetes.md#monitoring-podmonitor-and-prometheusrule). Metric and alert reference: [observability](../../architecture/OBSERVABILITY.md).
 

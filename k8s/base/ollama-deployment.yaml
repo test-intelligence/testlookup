@@ -20,8 +20,18 @@ spec:
       #   nvidia.com/gpu: "true"
       containers:
         - name: ollama
-          image: ollama/ollama:0.5.4
+          image: ollama/ollama:0.40.10
           imagePullPolicy: IfNotPresent
+          # The image runs as root and writes /root/.ollama, so runAsNonRoot is
+          # not set; it needs no Linux capability and no privilege escalation.
+          # Ollama has no authentication: the allow-ollama NetworkPolicy is what
+          # limits callers to the backend and workers.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
           ports:
             - containerPort: 11434
               name: ollama

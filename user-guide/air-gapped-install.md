@@ -84,7 +84,7 @@ testlookup-offline-<version>/
 | `busybox:1.36` | worker init containers on Kubernetes | GPL-2.0 |
 
 `ollama/ollama` and `chromadb/chroma` are **opt-in** — add `--with-llm`. They add
-roughly 2 GB and are only useful if you also transfer the model blobs
+roughly 4 GB and are only useful if you also transfer the model blobs
 separately ([§9](#9-local-llm-in-an-air-gap)).
 
 Every one of these comes from **`deploy/images.manifest.txt`**, the single
@@ -453,7 +453,7 @@ including how to verify the result from TestLookup, is the
 
 ```bash
 # connected host — the exact tags TestLookup's defaults name (both Apache-2.0)
-docker run -d --name ollama-pack -v ollama_models:/root/.ollama ollama/ollama:0.5.4
+docker run -d --name ollama-pack -v ollama_models:/root/.ollama ollama/ollama:0.40.10
 docker exec ollama-pack ollama pull qwen2.5:7b-instruct
 docker exec ollama-pack ollama pull nomic-embed-text:v1.5
 docker rm -f ollama-pack

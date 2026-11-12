@@ -52,7 +52,7 @@ on:
   workflow_dispatch:
     inputs:
       with_llm:
-        description: "Also bundle Ollama + ChromaDB (adds ~2 GB)"
+        description: "Also bundle Ollama + ChromaDB (adds ~4 GB)"
         type: boolean
         default: false
 
