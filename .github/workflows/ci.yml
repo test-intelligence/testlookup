@@ -2094,8 +2094,12 @@ jobs:
 
       - name: Validate kubeconfig secret is set
         id: check-secret
+        # The secret reaches the shell through env, never interpolated into the
+        # script text, where a quote or $( in its value would run as code.
+        env:
+          KUBE_CONFIG_DEV: ${{ secrets.KUBE_CONFIG_DEV }}
         run: |
-          if [ -z "${{ secrets.KUBE_CONFIG_DEV }}" ]; then
+          if [ -z "$KUBE_CONFIG_DEV" ]; then
             echo "⚠️  KUBE_CONFIG_DEV secret is not set in GitHub Environment 'development'."
             echo "   Skipping deploy. Add the secret to enable automatic deployments."
             echo "   See: https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions"
@@ -2106,9 +2110,11 @@ jobs:
 
       - name: Configure kubeconfig
         if: steps.check-secret.outputs.skip != 'true'
+        env:
+          KUBE_CONFIG_DEV: ${{ secrets.KUBE_CONFIG_DEV }}
         run: |
           mkdir -p /tmp
-          echo "${{ secrets.KUBE_CONFIG_DEV }}" | base64 -d > /tmp/kubeconfig
+          printf '%s' "$KUBE_CONFIG_DEV" | base64 -d > /tmp/kubeconfig
           # Verify the decoded file is valid YAML with a server entry
           if ! grep -q "server:" /tmp/kubeconfig; then
             echo "ERROR: Decoded kubeconfig does not contain a 'server:' entry."
