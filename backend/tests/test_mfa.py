@@ -1587,6 +1587,7 @@ class TestWiringInvariants:
         class _Req:
             def __init__(self, path):
                 self.url = type("U", (), {"path": path})()
+                self.scope = {"path": path}
                 self.client = type("C", (), {"host": "10.0.0.1"})()
                 self.headers = {}
 

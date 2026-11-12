@@ -230,7 +230,7 @@ They are listed for your own license review.
 | `mongo:7` | SSPL-1.0 (MongoDB Community Server) | https://www.mongodb.com/legal/licensing/community-edition |
 | `ghcr.io/versity/versitygw:v1.8.0` | Apache-2.0 | https://github.com/versity/versitygw |
 | `busybox:1.36` | GPL-2.0-only | https://busybox.net/ |
-| `ollama/ollama:0.5.4` | MIT; the image also contains NVIDIA CUDA runtime libraries under the NVIDIA CUDA EULA | https://github.com/ollama/ollama |
+| `ollama/ollama:0.40.10` | MIT; the image also contains NVIDIA CUDA runtime libraries under the NVIDIA CUDA EULA | https://github.com/ollama/ollama |
 | `chromadb/chroma:1.5.9` | Apache-2.0 | https://github.com/chroma-core/chroma |
 | `mher/flower:2.0` | BSD-3-Clause | https://github.com/mher/flower |
 

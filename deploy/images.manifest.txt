@@ -83,10 +83,10 @@ ghcr.io/versity/versitygw:v1.8.0             infra  compose,k8s   core
 busybox:1.36                                 infra  k8s           core
 
 # ── Optional local-LLM stack (compose profile `local-llm`) ──────────────────
-# Bundled only with --with-llm: ollama + chroma add ~2 GB to the tarball and
+# Bundled only with --with-llm: ollama + chroma add ~4 GB to the tarball and
 # an air-gapped Ollama is useless without separately transferred model blobs
 # (see user-guide/air-gapped-install.md).
-ollama/ollama:0.5.4                          infra  compose,k8s   llm
+ollama/ollama:0.40.10                        infra  compose,k8s   llm
 chromadb/chroma:1.5.9                       infra  compose,k8s   llm
 
 # ── Tracked but never bundled ───────────────────────────────────────────────

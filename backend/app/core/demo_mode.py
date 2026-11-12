@@ -24,6 +24,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
+from app.core.request_path import routed_path
 
 #: Methods that never change state. Everything else is refused in demo mode.
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -81,6 +82,6 @@ def install_demo_mode(app: FastAPI) -> None:
 
     @app.middleware("http")
     async def demo_read_only(request: Request, call_next):
-        if settings.DEMO_MODE and demo_blocks(request.method, request.url.path):
+        if settings.DEMO_MODE and demo_blocks(request.method, routed_path(request)):
             return JSONResponse(status_code=403, content={"detail": DEMO_READ_ONLY})
         return await call_next(request)

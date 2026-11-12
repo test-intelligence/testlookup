@@ -62,7 +62,7 @@ services:
   # inherited from docker-compose.release.yml, so they are not started unless
   # you ask for them.
   ollama:
-    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/ollama/ollama:0.5.4
+    image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/ollama/ollama:0.40.10
 
   chromadb:
     image: ${TESTLOOKUP_REGISTRY:?TESTLOOKUP_REGISTRY must be set}/chromadb/chroma:1.5.9

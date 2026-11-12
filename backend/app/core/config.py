@@ -983,6 +983,37 @@ class Settings(BaseSettings):
                     "CRITICAL: MONGO_URI carries a placeholder password — the "
                     "database password is the one published in .env.example"
                 )
+            # The same test for every other credential the shipped templates
+            # carry (.env.example, .env.gcp-vm.example and
+            # infra/cloudrun/backend.env.example all ship APP_ENV=production):
+            # the Postgres and Redis passwords, the S3 secret key and the
+            # passwords inside connection URIs. Only a value that IS a
+            # placeholder is refused. An empty one is left alone: the release
+            # compose runs Valkey without a password on its private network,
+            # a DSN-only deployment leaves POSTGRES_PASSWORD unset, and each
+            # service refuses a missing credential on its own.
+            for name, value in (
+                ("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD),
+                ("MINIO_SECRET_KEY", self.MINIO_SECRET_KEY),
+                ("REDIS_PASSWORD", self.REDIS_PASSWORD),
+            ):
+                if str(value or "").strip() and _is_placeholder_secret(value):
+                    warnings.append(
+                        f"CRITICAL: {name} is still the placeholder from an example "
+                        "env file — set a generated value"
+                    )
+            for name, uri in (
+                ("DATABASE_URL", self.DATABASE_URL),
+                ("REDIS_URL", self.REDIS_URL),
+                ("CELERY_BROKER_URL", self.CELERY_BROKER_URL),
+                ("CELERY_RESULT_BACKEND", self.CELERY_RESULT_BACKEND),
+            ):
+                uri_password = _uri_password(uri)
+                if uri_password is not None and _is_placeholder_secret(uri_password):
+                    warnings.append(
+                        f"CRITICAL: {name} carries a placeholder password from an "
+                        "example env file — set a generated value"
+                    )
             # WARNING, not CRITICAL: the Jira webhook fails closed on its own (403
             # for every delivery), so an unset secret denies rather than exposes,
             # and refusing startup would break every deployment without Jira.

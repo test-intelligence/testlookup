@@ -47,7 +47,9 @@ services:
     build:
       target: production
       args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8000}
+        # Same-origin by default: nginx proxies /api to the backend, which stays
+        # on 127.0.0.1:8000 (BACKEND_PUBLISH_ADDR in docker-compose.yml).
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     ports:
       - "80:80"
     volumes: []

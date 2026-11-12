@@ -504,7 +504,10 @@ Compose also reads these variables, which `.env.example` does not list:
 | `CELERY_CONCURRENCY` | `4` | `--concurrency` of the main worker (and the budget gate's arithmetic). |
 | `CELERY_CHILDREN_CONCURRENCY` | `1` | Concurrency of the agent-children worker in `docker-compose.release.yml`. |
 | `PG_COMPOSE_REQUIRED_CONNECTIONS` | `14` (`docker-compose.yml`), `23` (`docker-compose.release.yml`) | The `PG_FLEET_REQUIRED_CONNECTIONS` value Compose gives its services; must equal what the budget gate computes. |
-| `BACKEND_PUBLISH_ADDR` | `127.0.0.1` | Host address the release Compose publishes the API port on. |
+| `BACKEND_PUBLISH_ADDR` | `127.0.0.1` | Host address the release and development Compose files publish the API port (8000) on. |
+| `POSTGRES_PUBLISH_ADDR`, `MINIO_PUBLISH_ADDR`, `OLLAMA_PUBLISH_ADDR` | `127.0.0.1` | Host address for PostgreSQL (5433), the S3 store (9000) and Ollama (11434) in every Compose file. Set `0.0.0.0` only to reach them from other machines on purpose: Docker-published ports bypass host firewalls, and Ollama has no authentication. |
+| `FRONTEND_PUBLISH_ADDR` | every interface (release), `127.0.0.1` (development) | Host address for the UI: port 3000 of the release file is the front door; the development stacks run with dev-login on, so they stay on the host. |
+| `MONITORING_PUBLISH_ADDR` | `127.0.0.1` | Host address for Jaeger, the OTLP receivers, Prometheus and Grafana in `docker-compose.monitoring.yml`. |
 | `TESTLOOKUP_IMAGE`, `TESTLOOKUP_VERSION` | see `docker-compose.release.yml` | Image prefix and tag for the no-build release stack. |
 | `REGISTRY`, `TESTLOOKUP_REGISTRY` | see `docker-compose.airgap.yml` | Registry the air-gapped override pulls from. |
 

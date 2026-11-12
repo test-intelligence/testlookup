@@ -21,6 +21,7 @@ from app.bootstrap import (
 )
 from app.core.config import settings
 from app.core.demo_mode import install_demo_mode
+from app.core.request_path import routed_path
 from app.core.http_client import close_http_client
 from app.core.logging_config import configure_logging
 from app.core.startup_gc import freeze_startup_heap
@@ -311,7 +312,7 @@ def _auth_rate_limit_key(request: Request) -> str:
     lockout (``users.failed_login_attempts`` / ``locked_until``, migration
     0117) is the control that is actually global.
     """
-    return f"{get_remote_address(request)}|{request.url.path}"
+    return f"{get_remote_address(request)}|{routed_path(request)}"
 
 
 def _build_auth_limiters() -> dict[str, tuple]:
@@ -355,7 +356,7 @@ async def rate_limit_auth(request: Request, call_next):
     Production: login 10/min, register 5/min, MFA verify 12/min.
     Development: 200/min for all (no friction during dev).
     """
-    entry = _AUTH_LIMITERS.get(request.url.path)
+    entry = _AUTH_LIMITERS.get(routed_path(request))
     if request.method == "POST" and entry:
         limited, error_msg = entry
         try:

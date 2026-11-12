@@ -29,6 +29,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.request_path import routed_path
 from app.core.scim_errors import (
     scim_http_exception_handler,
     scim_validation_exception_handler,
@@ -248,7 +249,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> Respo
         "analytics_unhandled_error",
         request_id=request_id_of(request),
         error_type=type(exc).__name__,
-        path=request.url.path,
+        path=routed_path(request),
         exc_info=exc,
     )
     body = error_body(

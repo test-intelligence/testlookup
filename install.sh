@@ -64,6 +64,8 @@ else
   say "Generating .env with random secrets"
   bash scripts/gen-dev-env.sh --release || die "could not generate .env"
 fi
+# Secrets only for this user, also for an .env reused from an older install.
+chmod 600 .env 2>/dev/null || true
 
 # ── Bring the stack up ───────────────────────────────────────────────────────
 PROFILE_ARGS=""

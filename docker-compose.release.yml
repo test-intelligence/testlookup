@@ -57,10 +57,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-testlookup_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set — generate a .env with scripts/gen-dev-env.sh}
     ports:
-      # Every interface by default (unchanged). Set POSTGRES_PUBLISH_ADDR=127.0.0.1
-      # to keep it on the host only; the public demo (docker-compose.demo.yml)
-      # does, because Docker-published ports bypass host firewalls such as ufw.
-      - "${POSTGRES_PUBLISH_ADDR:+${POSTGRES_PUBLISH_ADDR}:}5433:5432"
+      # Loopback-only by default: nothing outside the host needs the database
+      # (the backend and workers reach it on testlookup_net), and
+      # Docker-published ports bypass host firewalls such as ufw. Set
+      # POSTGRES_PUBLISH_ADDR=0.0.0.0 to reach it from other machines on purpose.
+      - "${POSTGRES_PUBLISH_ADDR:-127.0.0.1}:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # init-db.sql is fetched alongside this file by install.sh; it only enables
@@ -166,9 +167,10 @@ services:
       ROOT_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be set — generate a .env with scripts/gen-dev-env.sh}
       ROOT_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be set — generate a .env with scripts/gen-dev-env.sh}
     ports:
-      # Every interface by default (unchanged); MINIO_PUBLISH_ADDR=127.0.0.1
-      # keeps it on the host (see POSTGRES_PUBLISH_ADDR above).
-      - "${MINIO_PUBLISH_ADDR:+${MINIO_PUBLISH_ADDR}:}9000:9000"
+      # Loopback-only by default (see POSTGRES_PUBLISH_ADDR above): browsers
+      # never talk to the S3 store, downloads go through the backend. Set
+      # MINIO_PUBLISH_ADDR=0.0.0.0 to expose the root S3 API on purpose.
+      - "${MINIO_PUBLISH_ADDR:-127.0.0.1}:9000:9000"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -204,12 +206,16 @@ services:
   # AI LAYER — LOCAL LLM (OPTIONAL — profile: local-llm)
   # ──────────────────────────────────────────────────────────
   ollama:
-    image: ollama/ollama:0.5.4
+    image: ollama/ollama:0.40.10
     container_name: testlookup_ollama
     profiles: ["local-llm"]
     restart: unless-stopped
     ports:
-      - "11434:11434"
+      # Loopback-only by default: Ollama has no authentication, so anyone who
+      # can reach this port can run models and pull or delete them. The backend
+      # and workers use http://ollama:11434 on testlookup_net. Set
+      # OLLAMA_PUBLISH_ADDR=0.0.0.0 only behind something that authenticates.
+      - "${OLLAMA_PUBLISH_ADDR:-127.0.0.1}:11434:11434"
     volumes:
       - ollama_models:/root/.ollama
     healthcheck:

@@ -125,6 +125,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.analytics_errors import AnalyticsQueryError
+from app.core.request_path import routed_path
 
 logger = structlog.get_logger("core.analytics_read")
 
@@ -641,7 +642,7 @@ def route_of(request: Request) -> str:
     -- a metric label and a cache namespace must not carry an id."""
     route = request.scope.get("route")
     path = getattr(route, "path", None)
-    return str(path or request.url.path)
+    return str(path or routed_path(request))
 
 
 # ── Cache identity and ETag ────────────────────────────────────────────────
@@ -1031,7 +1032,7 @@ def _rate_limit_key(request: Request) -> str:
     # The path is in the key as well: slowapi derives its storage key from
     # key_func plus the limit STRING, so two routes sharing a limit string
     # would otherwise share one budget.
-    return f"{principal}|{request.url.path}"
+    return f"{principal}|{routed_path(request)}"
 
 
 def _limiter_for(route: str, limit: str) -> Any:

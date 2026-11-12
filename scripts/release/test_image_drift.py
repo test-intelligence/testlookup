@@ -97,7 +97,7 @@ def test_manifest_shape():
     assert [(r.ref, r.bundle, r.surfaces) for r in mongo] == [("mongo:7", "external", ("compose", "k8s"))]
     # The optional LLM images are opt-in, never core.
     llm = {r.ref for r in rows if r.bundle == "llm"}
-    assert llm == {"ollama/ollama:0.5.4", "chromadb/chroma:1.5.9"}
+    assert llm == {"ollama/ollama:0.40.10", "chromadb/chroma:1.5.9"}
 
 
 def test_unknown_bundle_class_is_refused(tmp_path: Path):
