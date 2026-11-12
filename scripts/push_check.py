@@ -65,10 +65,12 @@ To push anyway (deliberately, with a reason):
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import re
 from collections.abc import Callable
@@ -235,7 +237,7 @@ def build_checks() -> list[Check]:
         Check("frontend: eslint", [npm, "run", "lint"], FRONTEND, "frontend"),
         Check("frontend: tsc", [npm, "run", "type-check"], FRONTEND, "frontend"),
         Check("repo: quality gate", [py, "scripts/quality_gate.py"], REPO, "repo"),
-        Check("repo: secret scan (gitleaks)", [], REPO, "repo", fn=check_secret_scan),
+        Check("repo: secret scan (gitleaks)", [], REPO, "repo", fn=check_gitleaks),
         # CI's "Self-test the quality-gate script" step, which this gate did not
         # run: UX redesign P2's DEVELOPER_GUIDE guard count passed here and failed
         # CI (test_quality_gate.py pins the guide to the registry). The same five
@@ -584,13 +586,40 @@ def check_stale_references() -> tuple[bool, str]:
 GITLEAKS_INSTALL = "go install github.com/zricethezav/gitleaks/v8@v8.30.1"
 
 
-def check_secret_scan() -> tuple[bool, str]:
+def gitleaks_locations(report_path: Path) -> list[str]:
+    """``rule  path:line  (commit abc1234567)`` for each finding in a gitleaks
+    JSON report, and nothing else.
+
+    A finding also carries Secret, Match, Line, Fingerprint, Author, Email and
+    Message. Even redacted, those are derived from the matched value or
+    identify a person, so none of them is read here: the trufflehog lesson
+    (its SecretParts field leaked whole values) applies to every scanner.
+    """
+    try:
+        findings = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    located = []
+    for finding in findings if isinstance(findings, list) else []:
+        rule = str(finding.get("RuleID", "?"))
+        path = str(finding.get("File", "?"))
+        line = finding.get("StartLine")
+        commit = str(finding.get("Commit", ""))[:10]
+        located.append(f"{rule}  {path}:{line if isinstance(line, int) else '?'}  (commit {commit or '?'})")
+    return located
+
+
+def check_gitleaks() -> tuple[bool, str]:
     """gitleaks over the commits this push adds, with the repo's .gitleaks.toml.
 
     The same scan as the Secret scan workflow (2026-11-12 review M-9), run
     before the commits leave the machine: once a token is pushed it is in the
     public history, and only rotation helps. Only added lines are read, so
     the fake tokens in existing redaction tests do not fire.
+
+    The summary names rule ids, paths, line numbers and commits only. gitleaks'
+    own output is discarded, and its JSON report (in a temporary directory that
+    is deleted afterwards) is read through :func:`gitleaks_locations`.
     """
     gitleaks = shutil.which("gitleaks")
     if not gitleaks:
@@ -602,16 +631,26 @@ def check_secret_scan() -> tuple[bool, str]:
     base = base.strip()
     if code != 0 or not base:
         return True, "no merge base with origin/main, so nothing was scanned here (CI scans the PR)"
-    code, out = run(
-        [gitleaks, "git", "--config", str(REPO / ".gitleaks.toml"), "--redact", "--no-banner",
-         "--exit-code", "1", f"--log-opts={base}..HEAD", str(REPO)],
-        REPO,
-    )
-    if code == 0:
-        return True, f"no secrets in the commits since {base[:10]}"
+    with tempfile.TemporaryDirectory(prefix="push-check-gitleaks-") as tmp:
+        report_path = Path(tmp) / "gitleaks.json"
+        code, _discarded = run(
+            [gitleaks, "git", "--config", str(REPO / ".gitleaks.toml"), "--redact", "--no-banner",
+             "--exit-code", "1", "--report-format", "json", "--report-path", str(report_path),
+             f"--log-opts={base}..HEAD", str(REPO)],
+            REPO,
+        )
+        located = gitleaks_locations(report_path)
+    if code == 0 and not located:
+        return True, f"no findings in the commits since {base[:10]}"
+    if not located:
+        return False, (
+            f"gitleaks exited {code} without a report. Run it by hand to see why:\n"
+            f"  gitleaks git --config .gitleaks.toml --redact --log-opts={base}..HEAD ."
+        )
     return False, (
-        out.strip()
-        + "\n\nA real secret: remove it from these commits (amend or rebase) AND rotate it."
+        f"gitleaks found {len(located)} possible leak(s) in the commits since {base[:10]}:\n  "
+        + "\n  ".join(located)
+        + "\n\nA real one: remove it from these commits (amend or rebase) AND rotate it."
         "\nA deliberate fake value: make it obviously fake, or end the line with a"
         " `gitleaks:allow` comment and say why in the PR."
     )
@@ -992,11 +1031,11 @@ def _main() -> int:
             print(f"{Colour.DIM}Run them anyway with --full.{Colour.OFF}")
             # Except the secret scan: the Secret scan workflow runs on every
             # path, and a token pasted into a README is what it is for.
-            ok, report = check_secret_scan()
+            ok, summary = check_gitleaks()
             if not ok:
-                print(f"\n{Colour.BAD}repo: secret scan (gitleaks) failed{Colour.OFF}\n{report}")
+                print(f"\n{Colour.BAD}repo: secret scan (gitleaks) failed{Colour.OFF}\n{summary}")
                 return 1
-            print(f"{Colour.DIM}repo: secret scan (gitleaks): {report}{Colour.OFF}")
+            print(f"{Colour.DIM}repo: secret scan (gitleaks): {summary}{Colour.OFF}")
             return 0
 
     print(f"{Colour.DIM}Running {len(checks)} checks that mirror CI. "
