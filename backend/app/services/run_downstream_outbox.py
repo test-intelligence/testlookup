@@ -307,7 +307,7 @@ async def stage_finalize_operations(
                 # call with arguments its task does not take before publishing:
                 # every attempt failed with TypeError and was retried forever,
                 # so no finished run's analysis ever started (found by the
-                # re-audit's homelab check of N14).
+                # re-audit's reference K3s install check of N14).
                 {
                     "test_run_id": str(run.id),
                     "project_id": str(run.project_id),

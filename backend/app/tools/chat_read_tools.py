@@ -318,7 +318,7 @@ async def _fetch_failure_clusters(state: ChatToolState, build: str) -> tuple[str
         ).all()
         # The members, by name. Without them, asked "which tests are behind the
         # biggest blocker?", the model could only say the clusters do not name
-        # their tests (homelab, 2026-10-10). Only this run's own test cases.
+        # their tests (reference K3s install, 2026-10-10). Only this run's own test cases.
         member_ids = {
             parsed
             for r in rows
@@ -449,7 +449,7 @@ async def _fetch_quarantine_status(state: ChatToolState, test_name: str) -> tupl
     if not lines:
         # Say what was checked. "No flaky signal" read as "not flaky" beside the
         # flaky-tests list, which measures run history (testCheckoutCase03,
-        # 33% failure rate, homelab 2026-10-10).
+        # 33% failure rate, reference K3s install 2026-10-10).
         return (
             f"No quarantine record for tests matching {test_name!r}, and no AI analysis "
             "flagged one as flaky. Run-history flakiness is a separate measure: the "
@@ -482,7 +482,7 @@ async def _fetch_release_gate(state: ChatToolState, _q: str) -> tuple[str, str]:
         ).first()
         # The verdict on the NEWEST RUN that has one -- ordered by the run, not
         # by when the decision row was written. Ordered by created_at, the
-        # homelab's E-Commerce Platform answered with build-2000's verdict
+        # reference K3s install's E-Commerce Platform answered with build-2000's verdict
         # while build-2029 was the latest run, unlabelled as such.
         row = (
             await db.execute(
@@ -834,7 +834,7 @@ def _build_tokens(text: str) -> list[str]:
     import re
 
     # Filler words only -- never the "build" of a build number like
-    # "build-2029" (the homelab's E-Commerce builds are named that way).
+    # "build-2029" (the reference K3s install's E-Commerce builds are named that way).
     cleaned = re.sub(
         r"\b(builds?|runs?|compare|between|with|from)\b(?![-_.\d])", " ", text or "", flags=re.IGNORECASE,
     )
@@ -876,7 +876,7 @@ async def _fetch_build_comparison(state: ChatToolState, builds: str) -> tuple[st
                 .order_by(TestRun.start_time.desc())
             )
             # The run's own suite, and "no primary suite" is one too: the
-            # homelab's build-2029 (none) was compared with viz-3044, a
+            # reference K3s install's build-2029 (none) was compared with viz-3044, a
             # CheckoutSuite run on a feature branch, instead of build-2028.
             same = (
                 TestRun.primary_suite_name == run.primary_suite_name
@@ -1048,7 +1048,7 @@ def tool_status_label(name: str, args: Any) -> str:
     if arg and name in ("list_run_failures", "get_failure_clusters"):
         arg = _b(arg)
     if arg and name == "compare_builds":
-        # "Comparing builds build-2029…" was shown for one build (homelab,
+        # "Comparing builds build-2029…" was shown for one build (reference K3s install,
         # 2026-10-10): the tool compares it with the run before it.
         builds = _build_tokens(arg)
         if len(builds) >= 2:

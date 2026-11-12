@@ -97,7 +97,7 @@ def _claim_evidence(
     Every claim used to carry one identical array -- the anchor, the first five
     authorized artifacts, and the metric snapshot -- so the claim-evidence
     drawer showed bundle-level provenance as though it were claim-level.
-    Measured on the homelab 2026-08-22: 10 of 10 published reports had every
+    Measured on the reference K3s install 2026-08-22: 10 of 10 published reports had every
     claim sharing a byte-identical evidence list. Coverage read 100% while no
     claim cited evidence chosen for it.
     """

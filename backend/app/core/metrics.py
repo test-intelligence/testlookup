@@ -811,7 +811,7 @@ http_exchanges_ingested_total = Counter(
 
 # W25a HYG-04: one increment per FINISHED suite-membership parity comparison
 # (the daily beat or "Compare now"). The evidence of D26's 7-day clock is the
-# ``suite_membership_parity_runs`` row (the homelab has no Prometheus); this is
+# ``suite_membership_parity_runs`` row (the reference K3s install has no Prometheus); this is
 # the secondary signal for deployments that scrape. An already-running skip
 # writes no row and counts nothing. Incremented in worker/suite_parity_runner.py.
 suite_parity_runs_total = Counter(

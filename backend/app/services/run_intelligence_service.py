@@ -592,7 +592,7 @@ def _serialize_persisted_candidate(c) -> dict:
 # is THREE connections per worker (``db/postgres.py``), so three runs opened
 # at once held them all, every other request waited out the 30 s pool timeout,
 # and the first thing to need a connection -- the token revocation check --
-# answered 503 "revocation store unavailable" (homelab, 2026-10-13).
+# answered 503 "revocation store unavailable" (reference K3s install, 2026-10-13).
 #
 # Now a cold read answers with the heuristic candidates and schedules the
 # build: one per run (in flight), one at a time per worker (the slot is taken

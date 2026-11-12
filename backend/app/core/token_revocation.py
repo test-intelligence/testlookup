@@ -116,7 +116,7 @@ class RevocationUnavailable(RuntimeError):
     ``store`` names what failed: ``"database"`` (the durable PostgreSQL table)
     or ``"cache"`` (Redis, the legacy fallback). ``pool_exhausted`` is set when
     the database never answered because the worker had no free connection --
-    the homelab's "revocation store unavailable" 503s of 2026-10-13 were
+    the reference K3s install's "revocation store unavailable" 503s of 2026-10-13 were
     exactly that, with PostgreSQL and Redis both healthy, and the old message
     sent the investigation to Redis.
     """

@@ -1,6 +1,6 @@
 """Server-side integration lookups that run before the triage model call (W10 D-4).
 
-Small models skip tools (mistral-nemo, the homelab's analysis class), and a
+Small models skip tools (mistral-nemo, the reference K3s install's analysis class), and a
 stack without a reachable model never gets to call one. So the evidence the
 investigation context already authorizes -- the Splunk correlation for the
 failing service at the failure time, the OpenShift events of the pod the run

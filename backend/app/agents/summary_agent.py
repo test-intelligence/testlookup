@@ -193,7 +193,7 @@ def _format_results_line(run_data: dict[str, Any]) -> str:
 
     Both consumers of that line were harmed by it. Handed figures that do not
     reconcile, the LLM invented a count to make the arithmetic work ("Pass rate
-    was 60.0% with 1 failure out of 6 tests" — observed on the homelab
+    was 60.0% with 1 failure out of 6 tests" — observed on the reference K3s install
     2026-08-16), and the deterministic fallback printed the same contradiction
     straight at the user with no model involved at all.
 
@@ -205,7 +205,7 @@ def _format_results_line(run_data: dict[str, Any]) -> str:
     of the SUPPLIED failures only: n tests, n failed, 0.0 %. Printed here as the
     build's "Results … Pass rate 0.0%", the live model restated them as the run's
     result although the anchor run passed — summary_system v2's rule alone did
-    not stop it (homelab, 2026-11-04). So the line names them as supplied
+    not stop it (reference K3s install, 2026-11-04). So the line names them as supplied
     failures and carries no pass rate.
 
     With that line the re-walk (F-OR07-2, same day) no longer stated a pass
@@ -242,7 +242,7 @@ def _format_results_line(run_data: dict[str, Any]) -> str:
 
 # F-OR07-2: the live model copies the data-block markers (``<<data>>`` /
 # ``<</data>>``, ``inline_input_vocab.UNTRUSTED_OPEN`` / ``UNTRUSTED_CLOSE``)
-# into its prose -- "the <<data>>or07a walk sample<</data>> test" (homelab,
+# into its prose -- "the <<data>>or07a walk sample<</data>> test" (reference K3s install,
 # 2026-11-04). They are prompt plumbing, never words for a reader. A caller's
 # value can never contain them (``untrusted_input.neutralise`` turns ``<<`` into
 # ``‹‹`` before wrapping), so removing them from the generated report removes
@@ -283,7 +283,7 @@ class SummaryAgent(BaseAgent):
         # Which operation is in flight. The handler below wraps the whole body,
         # so without this a failure anywhere reports the same opaque sentence --
         # which is how 765 "Event loop is closed" rows accumulated on the
-        # homelab with no way to tell WHICH await raised.
+        # reference K3s install with no way to tell WHICH await raised.
         current_op = "read_state"
         # AIC-02: this run's call timeouts, from the timeout frozen into the
         # pipeline (and an explicit project override for this agent), computed
@@ -1051,7 +1051,7 @@ class SummaryAgent(BaseAgent):
         # invoke-level failure into an empty layer, exactly as it would have
         # sequentially.
         #
-        # Measured first, on the homelab over 30 days (1,191 summary stages):
+        # Measured first, on the reference K3s install over 30 days (1,191 summary stages):
         # only 308 of them make these calls at all -- the other 880 make none
         # and finish in 0.22s. On the 308 the stage takes a p50 of 41.2s for
         # four calls, so this is worth having on a quarter of runs and a no-op
@@ -1145,7 +1145,7 @@ class SummaryAgent(BaseAgent):
         # the context shows the model each failure by NAME and never by id, so
         # the model answered with names ("test_beta"). The consistency check
         # compares them with this run's analysed ids and failed 226 of 490
-        # homelab summaries -- every one of them on names. The list is a fact
+        # reference K3s install summaries -- every one of them on names. The list is a fact
         # the analyses already hold, so it is set from them, as the
         # deterministic fallback and the assembler already do; a model entry
         # that does not resolve to a flaky analysed test is dropped, on record.
@@ -1316,7 +1316,7 @@ class SummaryAgent(BaseAgent):
 
         F-4: tries provider-native structured output first, falling back to the
         historical parse-from-prose path. This stage is where the failures
-        actually are -- measured on the homelab 2026-08-22, the summary made 796
+        actually are -- measured on the reference K3s install 2026-08-22, the summary made 796
         of the pipeline's 1,557 LLM calls and accounted for **all 57** recorded
         schema failures (7.16%); every other stage measured zero. Recovering
         JSON with a regex is what makes those 57 possible.

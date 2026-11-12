@@ -109,7 +109,7 @@ async def _fetch_prior_analyses(
                 "created_at": r.created_at,
                 # Which run it analysed: asked how an analysis related to
                 # build 105, Ask AI could only say "the record doesn't say
-                # which build it covered" (homelab, 2026-10-10).
+                # which build it covered" (reference K3s install, 2026-10-10).
                 "build_number": getattr(r, "build_number", None),
             }
             for r in rows

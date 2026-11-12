@@ -1434,7 +1434,7 @@ def _build_deep_graph() -> StateGraph:
     # which is THREE hops against the other branches' one. LangGraph triggers a
     # node once per superstep in which any predecessor completed, so `summary`
     # ran twice — and took the whole specialist chain with it. Observed on the
-    # homelab 2026-08-16: `route_after_summary_deep` fired twice in a single
+    # reference K3s install 2026-08-16: `route_after_summary_deep` fired twice in a single
     # pipeline, every skipped specialist stage was recorded twice, and
     # `decision_report_verification` logged BOTH "passed" and "failed" 464 ms
     # apart, with the failing pass winning.
@@ -2853,7 +2853,7 @@ async def run_offline_pipeline(
         # Anything failing between creating (or claiming) this pipeline and
         # starting its graph left it 'running': the handler below wraps only
         # the graph, so every retry was then refused as not resumable
-        # (re-audit N27, found on the homelab).
+        # (re-audit N27, found on the reference K3s install).
         error_msg = f"Pipeline setup error: {_safe_workflow_error(exc)}"
         # Marked first: a log call that raises (QA reproduced one with a
         # non-UTF-8 stdout) must not leave the pipeline 'running' again.

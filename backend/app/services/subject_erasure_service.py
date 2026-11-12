@@ -121,7 +121,7 @@ def mention_pattern(username: str) -> re.Pattern[str]:
     A dot right after the name counts as the token's end only when no name character follows it. The product's
     mention parser (``activity.mentions``, ``_WORD_AFTER`` has no dot) resolves "please confirm @alice." at the
     end of a sentence, but this pattern used to refuse any following dot, so the erasure left such a mention
-    unrewritten (homelab walk, 2026-11-05). ``@alice.smith`` and ``@alice.com`` still do not match: they are
+    unrewritten (reference K3s install walk, 2026-11-05). ``@alice.smith`` and ``@alice.com`` still do not match: they are
     another name."""
     return re.compile(r"(?<![\w.@-])@" + re.escape(username) + r"(?![\w-]|\.[\w-])", re.IGNORECASE)
 

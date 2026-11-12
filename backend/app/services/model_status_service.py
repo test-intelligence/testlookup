@@ -64,7 +64,7 @@ PROBE_TIMEOUT_SECONDS = 3.0
 # Derived from llm_policy_service rather than duplicated here. A second,
 # hand-maintained provider list is what made a fully working OpenRouter
 # deployment report "Unknown LLM provider 'openrouter'" on the AI settings
-# page (homelab, 2026-08-16): #616 taught llm_factory and llm_policy_service
+# page (reference K3s install, 2026-08-16): #616 taught llm_factory and llm_policy_service
 # the new provider, this module was never updated, and the readiness page then
 # declared the LLM tier unavailable while it was demonstrably serving traffic.
 _CLOUD_PROVIDERS = tuple(sorted(REMOTE_PROVIDERS))
@@ -184,7 +184,7 @@ def _llm_chain_entry(
     ``reason`` is for a human to read; the code is what UI badges branch on. The
     settings page previously re-derived the cause from ``ollama_reachable`` and
     so labelled *any* non-Ollama failure "Model Missing" — telling an operator
-    with an unset OpenRouter key to go install a model (homelab, 2026-08-16).
+    with an unset OpenRouter key to go install a model (reference K3s install, 2026-08-16).
     A consumer that re-derives a cause the producer already determined will get
     it wrong the moment a new cause appears.
     """

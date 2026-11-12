@@ -5,7 +5,7 @@ the analysis concluded) and ``test_cases.failure_category`` (what Failure
 Analysis, the trend and chart rows, digests, failure groups and My Failures
 read). ``POST /analyze`` wrote both; the pipeline's batch upsert wrote only the
 first. So every run analysed by the pipeline showed its categories on Run
-Intelligence and "100% Unknown" everywhere else -- the homelab had 69 such
+Intelligence and "100% Unknown" everywhere else -- the reference K3s install had 69 such
 analyses and none on its test cases (E2E 2026-10-10).
 """
 from __future__ import annotations

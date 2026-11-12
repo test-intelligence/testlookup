@@ -658,7 +658,7 @@ def _normalize_jira_content(parsed: Any, cluster: FailureCluster) -> dict[str, A
     The model sometimes answers a field with an object or a list -- e.g.
     ``"description": {"what": ..., "why": ...}`` -- and asyncpg then refuses
     the whole INSERT ("expected str, got dict"), which lost every candidate of
-    the run (homelab, 2026-10-14). Each text field is rendered as text and
+    the run (reference K3s install, 2026-10-14). Each text field is rendered as text and
     clipped to its column; a missing or empty one takes the deterministic text.
     """
     fallback = _deterministic_jira_content(cluster)

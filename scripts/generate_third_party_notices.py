@@ -105,7 +105,7 @@ corresponding source code of the GPL- and LGPL-licensed packages it contains,
 for no more than the cost of performing the distribution. Request it by opening
 an issue titled "Source request: <image or bundle digest>" at
 <https://github.com/test-intelligence/testlookup/issues>, or by contacting a
-maintainer listed in [MAINTAINERS.md](MAINTAINERS.md). You may pass this offer
+maintainer listed in [MAINTAINERS.md](https://github.com/test-intelligence/testlookup/blob/main/MAINTAINERS.md). You may pass this offer
 on to anyone you give the image or bundle to.
 
 ## Services you run alongside TestLookup

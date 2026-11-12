@@ -131,7 +131,7 @@ def _single_input(tool):
     """``tool`` taking ONE string, for the ReAct text agent.
 
     The ReAct agent sends each ``Action Input`` as a single string. The first
-    time the slow path ran against a real model (homelab pod, 2026-10-09):
+    time the slow path ran against a real model (reference K3s install pod, 2026-10-09):
       * a tool with several arguments (Splunk: service + time; OpenShift: pod
         + namespace + time) failed pydantic validation ("timestamp_utc: Field
         required") and the exception ended the whole analysis;
@@ -181,7 +181,7 @@ def _single_input(tool):
 def _react_output_parser() -> Any:
     """The ReAct parser, taking tool names the way models decorate them.
 
-    Measured (homelab pod, 2026-10-09): mistral-nemo wrote
+    Measured (reference K3s install pod, 2026-10-09): mistral-nemo wrote
     ``Action: `fetch_allure_stacktrace` `` -- backticks included -- and the
     executor's exact lookup answered "not a valid tool" until the iteration
     cap. The input is cleaned by ``_single_input``; this cleans the name.
@@ -392,7 +392,7 @@ async def run_triage_agent(
     prompt = PromptTemplate.from_template(SYSTEM_PROMPT)
     # get_llm() returns BudgetedLLM, which LangChain does not accept as a model:
     # create_react_agent raised "Expected a Runnable" on every slow-path call
-    # (homelab ai_analysis routing 2026-09-11: "llm_error: TypeError: Expected
+    # (reference K3s install ai_analysis routing 2026-09-11: "llm_error: TypeError: Expected
     # a Runnable ..."). as_runnable() keeps every call inside its gates.
     react_llm = llm.as_runnable() if hasattr(llm, "as_runnable") else llm
     # AIC-02: the whole ReAct loop is bounded by the Settings > AI timeout the

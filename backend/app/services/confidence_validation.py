@@ -4,7 +4,7 @@ This logic lived as ``AnalysisAgent._validate_confidence`` and was therefore
 reachable only from the batch pipeline. ``POST /api/v1/analyze`` classifies the
 same test through the same router and persisted the engine's **raw** number, so
 the product published two different confidences for one test and one body of
-evidence — measured on the homelab 2026-08-16:
+evidence — measured on the reference K3s install 2026-08-16:
 
     pipeline-stored : confidence=50  evidence=0  requires_human_review=True
     POST /analyze   : confidence=95  evidence=0  requires_human_review=False

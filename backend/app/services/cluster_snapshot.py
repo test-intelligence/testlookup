@@ -6,7 +6,7 @@ results reference those rows -- so a run analysed twice holds two sets and
 every cluster id twice. Readers that asked for "the run's clusters" by
 ``test_run_id`` alone showed each cluster twice, counted it twice in project
 metrics, and a lookup by ``cluster_id`` raised ``MultipleResultsFound``
-(homelab, 2026-10-14).
+(reference K3s install, 2026-10-14).
 
 ``is_current_snapshot()`` keeps only the rows of each run's newest set. It is
 correlated on ``FailureCluster.test_run_id``, so it works for one run and for

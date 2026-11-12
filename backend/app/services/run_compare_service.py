@@ -275,7 +275,7 @@ async def _load_test_rows(
         # ``<testsuite>`` blocks has an authoritative per-row ``suite_name``
         # AND a run-level ``primary_suite_name`` naming just one of them, so
         # scoping to that one returned the WHOLE run. Measured on the live
-        # homelab: run 101 (trigger_source=api, ingestion_source=upload,
+        # reference K3s install: run 101 (trigger_source=api, ingestion_source=upload,
         # primary_suite_name='api', per-row suites api/regression/smoke)
         # scoped to ``api`` returned all 12 rows instead of 5 — the diff for
         # suite "api" listed ``test_inventory_sync`` and

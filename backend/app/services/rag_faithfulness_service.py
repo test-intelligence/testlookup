@@ -170,7 +170,7 @@ async def _active_llm_provider() -> str:
     ``get_llm()``, which resolves to whatever provider the deployment has
     configured. On a deployment running OpenRouter, a case judged by
     mistral-nemo was being recorded, and shown to the user, as judged by
-    "ollama" (homelab, 2026-08-16). Provenance on a gating decision has to name
+    "ollama" (reference K3s install, 2026-08-16). Provenance on a gating decision has to name
     the thing that made it — "which model refused my test case" is the first
     question an operator asks.
 

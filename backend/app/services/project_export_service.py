@@ -683,7 +683,7 @@ async def run_project_export(
             )
             # End the read-only snapshot NOW: every row is in the spool, and holding its connection through the
             # sign / write / verify steps needed a THIRD one (on_written, the storage config) — the worker's pool
-            # is size 1 + overflow 1, so the homelab's first export waited out two 30 s pool timeouts and failed
+            # is size 1 + overflow 1, so the reference K3s install's first export waited out two 30 s pool timeouts and failed
             # export_write (TimeoutError). Nothing below reads `project` (its id was taken above).
             await db.rollback()
             spool, signature, signing_key_id, _signing = await packs._sign_pack(

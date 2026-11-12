@@ -857,7 +857,7 @@ class ConversationAgent:
             "tool_calls": stats["tool_calls"],
             # Every lookup, the up-front ones included: the footer counted only
             # the model's calls, so "How I looked this up · 1 check" sat over a
-            # footer with no lookups (homelab, 2026-10-10).
+            # footer with no lookups (reference K3s install, 2026-10-10).
             "lookups": len(tool_trace),
             "tools": stats["tools"],
         }
@@ -1175,7 +1175,7 @@ class ConversationAgent:
                 # 44.4%. The rate is passed/executed and the missing terms were
                 # never shown. The model then reproduced the contradiction
                 # verbatim — "4 tests failed out of 10, resulting in a 44.4%
-                # pass rate" (homelab, 2026-08-16).
+                # pass rate" (reference K3s install, 2026-08-16).
                 #
                 # Same defect the run summary had. Handing a model figures that
                 # do not reconcile is handing it a reason to invent one that
@@ -1381,7 +1381,7 @@ class ConversationAgent:
         """("the first one", the test it means, "first") when the question
         points at a position in the previous answer's list.
 
-        Measured on the homelab, 2026-10-09: after a table whose first row was
+        Measured on the reference K3s install, 2026-10-09: after a table whose first row was
         testAuthenticationCase01, "Is the first one flaky or a regression?" got
         testAuthenticationCase02's history; after a flaky-tests table headed by
         testCheckoutCase03, "the top one" got testAuthenticationCase02 again.
@@ -1415,7 +1415,7 @@ class ConversationAgent:
     ) -> str:
         """Look up, before the model runs, the facts it was measured inventing.
 
-        Measured against mistral-nemo on the homelab, 2026-10-09:
+        Measured against mistral-nemo on the reference K3s install, 2026-10-09:
           * "Has test_refund_flow failed before, and is it quarantined?" — no
             tool call; a table of builds, statuses and dates that do not exist,
             and a quarantine state it never read.

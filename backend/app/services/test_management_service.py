@@ -658,7 +658,7 @@ async def list_automation_test_cases(
         # authoritative per-row value that must win.
         #
         # Stated honestly: the live-stream half is NOT reproducible on the
-        # homelab today — no live_stream run there has both a NULL per-row
+        # reference K3s install today — no live_stream run there has both a NULL per-row
         # suite and a ``primary_suite_name``. The case-sensitivity half was
         # reproduced (api -> 5, API -> 0).
         suite_key = normalize_suite_name(suite_name)

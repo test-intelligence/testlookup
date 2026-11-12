@@ -2217,7 +2217,7 @@ class EvidenceReference(BaseModel):
     # Defaults, not required: a stored analysis is read back through this model,
     # and the model's own JSON (and older rows) often carry only source + excerpt.
     # Required, they 500'd GET /analyze/{id} for 372 of 406 stored analyses on
-    # the homelab, so the test page never showed a stored root cause.
+    # the reference K3s install, so the test page never showed a stored root cause.
     reference_id: str = ""
     excerpt: str = ""
 
@@ -6117,7 +6117,7 @@ class SmtpConfigUpdate(BaseModel):
     port: int = Field(default=587, ge=1, le=65535)
     user: Optional[str] = Field(default=None, max_length=255)
     password: Optional[str] = Field(default=None, max_length=1000)  # None = keep existing
-    from_address: str = Field(default="noreply@testlookup.io", max_length=255)
+    from_address: str = Field(default="noreply@example.com", max_length=255)
     implicit_tls: bool = Field(
         default=True,
         description=(

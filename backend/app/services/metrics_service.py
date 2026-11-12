@@ -222,7 +222,7 @@ def _suite_match_clause(suite_name: SuiteArg):
     AND a run-level ``primary_suite_name`` naming just one of those suites, so
     filtering to that suite returned the WHOLE run.
 
-    Measured on the live homelab, project 2aefa4fa (Checkout Service), runs
+    Measured on the live reference K3s install, project 2aefa4fa (Checkout Service), runs
     101+102 — ``trigger_source=api``, ``primary_suite_name='api'``, 12 cases
     each across suites api/regression/smoke. Scoped to ``api``: truth 10,
     this clause returned 24 (both runs entire), restricted clause returns 10.
