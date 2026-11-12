@@ -7,7 +7,6 @@ const reportBoundaryErrorMock = vi.fn()
 
 vi.mock('../utils/errorReporting', () => ({
   reportBoundaryError: (...args: unknown[]) => reportBoundaryErrorMock(...args),
-  setTelemetrySuppressed: () => {},
 }))
 
 function Thrower(): React.ReactNode {

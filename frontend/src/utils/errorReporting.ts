@@ -15,11 +15,10 @@ import type { Metric } from 'web-vitals'
 
 /**
  * Whether this session sends no telemetry. The public read-only demo refuses
- * every write, this report included, so the auth store registers its demo
- * check here (`store/authStore.ts`). The dependency runs that way on purpose:
- * importing the store would pull in the API client, which reads `window` as it
- * loads, and error boundaries import this module lazily, sometimes after a
- * test's environment is gone.
+ * every write, this report included, so `main.tsx` registers the auth store's
+ * demo check here. This module imports no store on purpose: the store pulls in
+ * the API client, which reads `window` as it loads, and error boundaries
+ * import this module lazily, sometimes after a test's environment is gone.
  */
 let _telemetrySuppressed: () => boolean = () => false
 

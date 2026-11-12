@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import QuietSectionBoundary from './QuietSectionBoundary'
 
 const reportBoundaryError = vi.hoisted(() => vi.fn())
-vi.mock('@/utils/errorReporting', () => ({ reportBoundaryError, setTelemetrySuppressed: () => {} }))
+vi.mock('@/utils/errorReporting', () => ({ reportBoundaryError }))
 
 function Boom(): never {
   throw new Error('section exploded')

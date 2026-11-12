@@ -9,11 +9,10 @@
  * below it would render nothing at all.
  */
 import { render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import DegradedBanner from './DegradedBanner'
 import type { SystemHealth } from '@/hooks/useSystemHealth'
-import { useAuthStore } from '@/store/authStore'
 
 const mockHealth = vi.hoisted(() => ({ value: undefined as SystemHealth | undefined }))
 vi.mock('@/hooks/useSystemHealth', () => ({
@@ -107,38 +106,27 @@ describe('DegradedBanner', () => {
 describe('DegradedBanner on the public read-only demo', () => {
   // The demo's backend is unreachable for a minute or two every night while
   // it is rebuilt from seed; a visitor with the app open saw an outage alarm.
+  // The demo banner says the demo is refreshing (DemoBanner.test.tsx); this
+  // banner stays out of its way.
   beforeEach(() => {
     mockHealth.value = health()
-    useAuthStore.setState({ demoSession: true })
-  })
-  afterEach(() => {
-    useAuthStore.setState({ demoSession: false })
   })
 
-  it('says the demo is refreshing, calmly, instead of an outage alarm', () => {
+  it('stays quiet while the demo is unreachable', () => {
     mockHealth.value = health({ isUnreachable: true })
-    render(<DegradedBanner />)
-
-    const banner = screen.getByTestId('health-demo-refreshing-banner')
-    expect(banner).toHaveTextContent(/The live demo is refreshing/)
-    expect(banner).toHaveTextContent(/03:00 UTC/)
-    expect(banner).toHaveTextContent(/Explore the demo again/)
-    expect(banner).toHaveAttribute('role', 'status')
-    expect(screen.queryByTestId('health-unreachable-banner')).not.toBeInTheDocument()
+    const { container } = render(<DegradedBanner demo />)
+    expect(container).toBeEmptyDOMElement()
   })
 
   it('still names a degraded dependency while the backend answers', () => {
     mockHealth.value = health({ unavailable: ['minio'], isDegraded: true })
-    render(<DegradedBanner />)
+    render(<DegradedBanner demo />)
     expect(screen.getByText(/MinIO unreachable/)).toBeInTheDocument()
-    expect(screen.queryByTestId('health-demo-refreshing-banner')).not.toBeInTheDocument()
   })
 
-  it('keeps the outage alarm for every session that is not the demo', () => {
-    useAuthStore.setState({ demoSession: false })
+  it('keeps the outage alarm for every deployment that is not the demo', () => {
     mockHealth.value = health({ isUnreachable: true })
-    render(<DegradedBanner />)
+    render(<DegradedBanner demo={false} />)
     expect(screen.getByTestId('health-unreachable-banner')).toHaveAttribute('role', 'alert')
-    expect(screen.queryByTestId('health-demo-refreshing-banner')).not.toBeInTheDocument()
   })
 })

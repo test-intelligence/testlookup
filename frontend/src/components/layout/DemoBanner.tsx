@@ -12,7 +12,32 @@ export const GET_TESTLOOKUP_URL = 'https://testlookup.app'
  * sign-in (`authStore.demoSession`), so a normal deployment never downloads it
  * and never spends a request asking whether it is the demo.
  */
-export default function DemoBanner() {
+export default function DemoBanner({ refreshing = false }: { refreshing?: boolean }) {
+  // An unreachable backend on the demo is almost always the nightly rebuild
+  // (or maintenance): every container is recreated and the sample data
+  // re-seeded, for a minute or two. Say that, calmly; DegradedBanner stays
+  // quiet for demo sessions. The rebuild also replaces the demo account, so
+  // the visitor may land on the sign-in page afterwards. AppLayout passes the
+  // health poll's verdict in, so this lazy chunk imports nothing the shell
+  // does not already load (the eager bundle budget).
+  if (refreshing) {
+    return (
+      <div
+        role="status"
+        data-testid="demo-refreshing-banner"
+        className="flex items-start gap-2 border-b border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-4 py-2 text-sm text-[var(--color-text-secondary)]"
+      >
+        <Eye className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--color-accent)]" aria-hidden="true" />
+        <span>
+          <strong className="font-semibold text-[var(--color-text)]">The live demo is refreshing.</strong>{' '}
+          Its sample data is rebuilt every night at 03:00 UTC and after maintenance, which takes a few
+          minutes. Retrying automatically; if you are signed out when it is back, choose Explore the demo
+          again.
+        </span>
+      </div>
+    )
+  }
+
   return (
     <div
       role="status"

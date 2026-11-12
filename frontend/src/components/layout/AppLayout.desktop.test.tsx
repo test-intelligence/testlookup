@@ -82,6 +82,10 @@ vi.mock('@/store/authStore', () => ({ useAuthStore: stores.useAuthStore }))
 vi.mock('./ReleasePicker', () => ({ ReleasePicker: () => <div data-stub="release-picker" /> }))
 vi.mock('./AppVersionBadge', () => ({ default: () => <div data-stub="app-version" /> }))
 vi.mock('./DegradedBanner', () => ({ default: () => null }))
+// The shell reads the health poll too (it tells the demo banner when the demo is refreshing).
+vi.mock('@/hooks/useSystemHealth', () => ({
+  useSystemHealth: () => ({ data: null, unavailable: [], criticalUnavailable: [], isDegraded: false, isUnreachable: false }),
+}))
 
 /** The Tailwind v4 `max-lg:` query, as the shell's narrow switch reads it. */
 const NARROW_QUERY = '(width < 64rem)'

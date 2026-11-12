@@ -34,11 +34,12 @@
  * rather than dropped, and the buffer is bounded so a render loop cannot grow
  * it without limit.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest'
 
+import mainSource from '../main.tsx?raw'
 import { useAuthStore } from '../store/authStore'
 
-import { flush, reportBoundaryError, reportWebVital } from './errorReporting'
+import { flush, reportBoundaryError, reportWebVital, setTelemetrySuppressed } from './errorReporting'
 
 /** Chromium's per-origin beacon quota. Bodies at or above this get refused. */
 const BEACON_QUOTA = 64 * 1024
@@ -205,9 +206,22 @@ describe('vitals still work', () => {
 
 describe('the public read-only demo', () => {
   // The demo refuses every write (403 at the edge and in the app), this
-  // report included, so a demo session's sends could only fail.
+  // report included, so a demo session's sends could only fail. main.tsx
+  // registers the auth store's demo check; these tests register the same one.
+  beforeAll(() => {
+    setTelemetrySuppressed(() => useAuthStore.getState().demoSession)
+  })
+  afterAll(() => {
+    setTelemetrySuppressed(() => false)
+  })
   afterEach(() => {
     useAuthStore.setState({ demoSession: false })
+  })
+
+  it('is wired up by the app entry point', () => {
+    expect(mainSource).toMatch(
+      /^setTelemetrySuppressed\(\(\) => useAuthStore\.getState\(\)\.demoSession\)$/m,
+    )
   })
 
   it('sends nothing from a demo session', () => {
