@@ -77,7 +77,7 @@ services:
 
   # Valkey under the `redis` service name — see docker-compose.yml.
   redis:
-    image: valkey/valkey:8.1-alpine
+    image: valkey/valkey:9.1-alpine
     container_name: testlookup_lite_redis
     restart: unless-stopped
     # --requirepass is applied only when REDIS_PASSWORD is set (the container

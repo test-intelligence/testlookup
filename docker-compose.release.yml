@@ -118,7 +118,7 @@ services:
   # every redis:// URL and REDIS_* setting unchanged. Upgrading from Redis
   # 7.4: Valkey cannot load its data files — see UPGRADING.md.
   redis:
-    image: valkey/valkey:8.1-alpine
+    image: valkey/valkey:9.1-alpine
     container_name: testlookup_redis
     restart: unless-stopped
     # --requirepass is applied only when REDIS_PASSWORD is set (the container
