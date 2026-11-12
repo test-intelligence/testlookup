@@ -45967,7 +45967,7 @@ These are the full generated JSON Schema definitions, including required fields,
       "type": "boolean"
     },
     "from_address": {
-      "default": "noreply@testlookup.io",
+      "default": "noreply@example.com",
       "maxLength": 255,
       "title": "From Address",
       "type": "string"

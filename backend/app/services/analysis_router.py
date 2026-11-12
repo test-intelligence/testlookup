@@ -742,7 +742,7 @@ async def classify_test(
     #
     # Without this the evidence catalogue that F-3's citation contract reads is
     # empty for 87% of analyses, so no narrative citation can fire however
-    # correct the contract is. Measured on the homelab: 4,690 of 4,693 analyses
+    # correct the contract is. Measured on the reference K3s install: 4,690 of 4,693 analyses
     # carried no evidence at all.
     #
     # Never overwrites tool observations, and never fabricates: an engine that

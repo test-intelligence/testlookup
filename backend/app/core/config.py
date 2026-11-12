@@ -583,7 +583,7 @@ class Settings(BaseSettings):
     SMTP_PORT: int = 587
     SMTP_USER: Optional[str] = None
     SMTP_PASSWORD: Optional[str] = None
-    SMTP_FROM: str = "noreply@testlookup.io"
+    SMTP_FROM: str = "noreply@example.com"
     SMTP_TLS: bool = True
 
     # ── Search & Indexing (OPS-03) ──────────────────────────────

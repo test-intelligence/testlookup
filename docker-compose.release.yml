@@ -210,6 +210,11 @@ services:
     container_name: testlookup_ollama
     profiles: ["local-llm"]
     restart: unless-stopped
+    environment:
+      # Local-only: without this Ollama calls ollama.com at startup and about
+      # every 4 hours (model recommendations, the cloud model list), signed with
+      # a per-install key, and serves cloud models. Model pulls still work.
+      OLLAMA_NO_CLOUD: "1"
     ports:
       # Loopback-only by default: Ollama has no authentication, so anyone who
       # can reach this port can run models and pull or delete them. The backend

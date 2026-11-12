@@ -105,6 +105,7 @@ TestLookup ingests Allure results and JUnit-style output from those tools; it co
 - `AI_OFFLINE_MODE=true` is the default. It blocks hosted model providers and other outbound AI calls, while local endpoints such as [Ollama](https://ollama.com) keep working. The default local model is `qwen2.5:7b-instruct` (Apache-2.0).
 - Without any model, analysis still works through the built-in rules and ML classifiers; models add explanations and summaries on top.
 - An [offline bundle](user-guide/air-gapped-install.md) installs TestLookup on networks with no internet access (MongoDB, licensed SSPL-1.0, is mirrored separately).
+- TestLookup sends nothing to the project: no telemetry, analytics or update check. [Data and privacy](DATA_AND_PRIVACY.md) lists what is stored and what can leave your network.
 
 ## Install options
 

@@ -329,7 +329,7 @@ async def probe_smtp() -> ProbeResult:
     sender uses -- Settings -> Notifications (``smtp_config``), else the
     environment. Reading the environment alone, the probe reported
     "SMTP_ENABLED=false" for a relay configured in the UI that was delivering
-    mail (homelab, 2026-10-10)."""
+    mail (reference K3s install, 2026-10-10)."""
     from app.core.config import settings
     from app.services.notification import email_service
 

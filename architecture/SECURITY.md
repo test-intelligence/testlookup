@@ -353,7 +353,7 @@ Keep that credential out of CI (below), or switch the path off with the
 
 **The exposure as shipped.** Every Compose file sets MinIO's
 `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD` from `MINIO_ACCESS_KEY`/
-`MINIO_SECRET_KEY`. `scripts/simulate_upload.py` uploads with those same
+`MINIO_SECRET_KEY`. `backend/scripts/simulate_upload.py` uploads with those same
 variables, and k8s `secrets.yaml` carries one pair. So an uploader that uses
 the documented credential is MinIO's **root** user. It can write
 `<other-project>/runs/<n>/upload_complete.json` and have a run filed in that

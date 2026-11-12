@@ -177,7 +177,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `SMTP_PORT` | `int` | `587` |
 | `SMTP_USER` | `Optional[str]` | `None` |
 | `SMTP_PASSWORD` | `Optional[str]` | `None` |
-| `SMTP_FROM` | `str` | `'noreply@testlookup.io'` |
+| `SMTP_FROM` | `str` | `'noreply@example.com'` |
 | `SMTP_TLS` | `bool` | `True` |
 | `SEARCH_INDEX_BATCH_SIZE` | `int` | `200` |
 | `SEARCH_INDEX_INCREMENTAL_LIMIT` | `int` | `5000` |

@@ -110,7 +110,7 @@ Three facts apply to almost every row and are stated once here instead of repeat
 
 ### GDPR
 
-Roles first, because every row depends on them: in a self-hosted deployment **you are the controller and the processor**. There is no Anthropic-style vendor in the loop and no data-processing agreement to sign with the TestLookup project, because no one but you touches the data. The product's job is to make your obligations executable.
+Roles first, because every row depends on them: in a self-hosted deployment **you are the controller**, and the processing happens on infrastructure you run (if you run TestLookup for a client, you may be their processor instead). The TestLookup project is not a processor: it receives none of your data, so there is no data-processing agreement to sign with it. A hosted model or integration you enable processes what you send it under its own terms ([Data and privacy](../DATA_AND_PRIVACY.md)). The product's job is to make your obligations executable.
 
 | Article | What TestLookup provides | Where to see it | Honest limits |
 |---|---|---|---|

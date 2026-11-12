@@ -277,7 +277,7 @@ async def release_read_connection(db: AsyncSession) -> bool:
     A worker's pool is three connections (2 + 1), and a request that holds
     one while it opens a second session -- to cache a result, or while an LLM
     call takes another for its cost check -- needs two at once; a few such
-    requests together wait out the 30 s pool timeout (homelab, 2026-10-13/14).
+    requests together wait out the 30 s pool timeout (reference K3s install, 2026-10-13/14).
 
     ``close()`` ends the read transaction: not ``commit()`` (a read path
     must not commit, and stage-only services never do) and not

@@ -10,11 +10,20 @@ backups/
 homelabsetup/.homelab-credentials
 
 # ─── SECURITY: Never commit credentials or secrets ───────────────────────────
-*creds*
-*_creds*
-*credentials*
-*_secrets*
-*secrets*
+# Secret FILES by name and shape, never a bare substring: `*credentials*`,
+# `*secrets*` and `*api_key*` used to drop new source files such as
+# `api_key_service.py` or `test_credentials_flow.py` without a word (git just
+# leaves them out of `git add`). Add an exact path here for a new secret file.
+credentials.json
+*-credentials.json
+*_credentials.json
+.credentials
+*.credentials
+creds.json
+*.creds
+secrets.json
+*.secret
+*.secrets
 *.key
 *.pem
 *.p12
@@ -24,8 +33,8 @@ homelabsetup/.homelab-credentials
 # commit. Keep the committed .keep sentinels so `COPY certs/` still works in CI.
 **/certs/*.crt
 .tls-mitm-ca.crt
-*api_key*
-*apikey*
+*api_key*.txt
+*apikey*.txt
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Python

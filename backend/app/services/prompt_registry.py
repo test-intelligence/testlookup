@@ -315,7 +315,7 @@ Evidence snapshot:
 # v2 (F-OR07-2, owner-approved 2026-11-05): v1 asked every summary for a pass rate and a release readiness signal,
 # so on an inline invocation — whose data carries only failures the caller supplied, no pass rate for the build —
 # the live model still wrote "The pass rate ... is insufficient data" and "This failure indicates a risk to release
-# readiness" (homelab re-walk, build-20261105-000236). The exception names what to write instead.
+# readiness" (reference K3s install re-walk, build-20261105-000236). The exception names what to write instead.
 _register(
     "summary_executive",
     2,

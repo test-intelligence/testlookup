@@ -5,7 +5,7 @@ finished: the async engine disposed, Redis and httpx closed, Mongo reset. That
 was the correct teardown *given* a loop per task -- pooled asyncpg connections
 bound to a closed loop raise "Event loop is closed" (BUG-003), and each client
 left undrained leaked sockets under load (~96% of summary stages failed in a
-750-pipeline burst on the homelab). But it meant no connection ever outlived a
+750-pipeline burst on the reference K3s install). But it meant no connection ever outlived a
 task: every task that touched Postgres paid a TCP connect, authentication and a
 backend fork, and the pool the engine was configured with never pooled
 anything.

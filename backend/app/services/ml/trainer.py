@@ -213,7 +213,7 @@ async def train_classifier() -> dict[str, Any]:
     # ── 2b. Categories too rare to train on are left out ────────────────
     # A category with a handful of labels cannot survive the 80/20 split, the CV
     # folds AND the classifier's own stratified early-stopping split: on the
-    # homelab one single-sample category failed the whole retrain ("The least
+    # reference K3s install, one single-sample category failed the whole retrain ("The least
     # populated classes in y have only 1 member"), so the ML tier never
     # activated. Such categories are excluded and named; the model never
     # predicts them, so their failures keep going to the rules / LLM engines.

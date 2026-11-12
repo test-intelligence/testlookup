@@ -593,7 +593,7 @@ def refuse_until_password_changed(user: User, path: str | None) -> None:
     ``must_change_password`` was only a prompt on the login response and a
     redirect in the browser; the API served the token normally, so a user on
     an initial or admin-reset password could skip the change by calling the
-    API (homelab sweep, 2026-10-10). API keys are not refused: they are
+    API (reference K3s install sweep, 2026-10-10). API keys are not refused: they are
     separate long-lived credentials for automation, and an admin resetting a
     person's password must not silently break their pipelines.
     """

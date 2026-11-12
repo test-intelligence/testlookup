@@ -455,7 +455,7 @@ async def settle_review(
     # to be a bare ``if pipeline_run_id is not None``, so settling such a review
     # skipped the transition and reported success having changed nothing —
     # the page promises "accepting marks the pipeline run passed" and there was
-    # no run left to mark. Measured on the homelab deployment: 12 of 118
+    # no run left to mark. Measured on the reference K3s install: 12 of 118
     # pipeline-run reviews were in this state, and the one review a human had
     # accepted was one of them (BUG-012).
     if review.subject_type in _PIPELINE_BACKED_SUBJECTS and review.pipeline_run_id is None:

@@ -32,6 +32,12 @@ spec:
               drop: ["ALL"]
             seccompProfile:
               type: RuntimeDefault
+          env:
+            # Local-only: without this Ollama calls ollama.com at startup and
+            # about every 4 hours (model recommendations, the cloud model list),
+            # signed with a per-install key, and serves cloud models.
+            - name: OLLAMA_NO_CLOUD
+              value: "1"
           ports:
             - containerPort: 11434
               name: ollama

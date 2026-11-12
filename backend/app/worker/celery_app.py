@@ -289,7 +289,7 @@ celery_app.conf.update(
         # Trends. The task is idempotent.
         #
         # 5-minute idle threshold (lowered from 10 on 2026-05-16 after a
-        # homelab repro showed 5 ``running`` sessions in the API when
+        # reference K3s install repro showed 5 ``running`` sessions in the API when
         # only 2 were emitting telemetry — the Live page now flags stale
         # rows immediately at the 60s mark via ``utils/liveSessionFreshness``
         # but the DB still owned the lie for up to 15 minutes). Sweep
@@ -888,7 +888,7 @@ def _mark_worker_ready(**_kwargs: object) -> None:
 
     For a queue consumer with no Service in front of it, readiness gates only
     the rollout, so that failure mode is worse than useless: it **deadlocks the
-    deploy**. Observed on the homelab — the new ReplicaSet never reported
+    deploy**. Observed on the reference K3s install — the new ReplicaSet never reported
     Ready, so the Deployment could not scale down the old one, and an
     OOM-looping pod from the previous revision stayed alive serving the queue
     while the replacement sat NotReady beside it.

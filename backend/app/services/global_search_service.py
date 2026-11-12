@@ -420,7 +420,7 @@ async def _search_test_cases(
 
     # Re-audit H9. This used to be ONE OR across five predicates, and two of
     # them each defeated the trigram indexes on test_cases (measured on the
-    # homelab, 50,510 test_cases -- see migration 0166 for the plans):
+    # reference K3s install, 50,510 test_cases -- see migration 0166 for the plans):
     #
     #   * TestRun.primary_suite_name is a column on ANOTHER table. A bitmap OR
     #     only combines indexes on one table, so that branch forced the whole

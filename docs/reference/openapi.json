@@ -42809,7 +42809,7 @@
             "type": "boolean"
           },
           "from_address": {
-            "default": "noreply@testlookup.io",
+            "default": "noreply@example.com",
             "maxLength": 255,
             "title": "From Address",
             "type": "string"

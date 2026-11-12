@@ -1,0 +1,37 @@
+# Code owners for test-intelligence/testlookup.
+#
+# GitHub requests a review from the listed owner on every pull request that
+# touches a matching path (the last matching line wins). It blocks a merge only
+# when the `main` ruleset turns on "Require review from Code Owners"; leave that
+# off while there is a single maintainer, or nobody can merge their own PR.
+# Keep this file in step with MAINTAINERS.md as maintainers join.
+
+# Default owner for everything
+*                                       @anandtopu
+
+# Security-sensitive areas: changes here always get a maintainer's review
+/.github/                               @anandtopu
+/SECURITY.md                            @anandtopu
+/THREAT_MODEL.md                        @anandtopu
+/backend/app/core/                      @anandtopu
+/backend/app/routers/auth.py            @anandtopu
+/backend/app/routers/sso.py             @anandtopu
+/backend/app/routers/scim.py            @anandtopu
+/backend/app/routers/mfa.py             @anandtopu
+/backend/app/services/secret_service.py @anandtopu
+/backend/migrations/                    @anandtopu
+/mcp/                                   @anandtopu
+/install.sh                             @anandtopu
+/docker-compose*.yml                    @anandtopu
+/k8s/                                   @anandtopu
+/scripts/release/                       @anandtopu
+/scripts/license-allowlist.json         @anandtopu
+/.trivyignore.yaml                      @anandtopu
+
+# Governance and licensing
+/LICENSE                                @anandtopu
+/NOTICE                                 @anandtopu
+/THIRD_PARTY_NOTICES.md                 @anandtopu
+/GOVERNANCE.md                          @anandtopu
+/MAINTAINERS.md                         @anandtopu
+/CODE_OF_CONDUCT.md                     @anandtopu

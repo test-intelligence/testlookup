@@ -336,7 +336,7 @@ def check_release_consistency(decision) -> ConsistencyReport:
     # (``_release_band``), while the gate derives it from the score AND the
     # pass rate AND the policy (hard pass-rate floor -> NO_GO, pass rate under
     # the minimum -> CONDITIONAL_GO, BLOCK/WARN rules, kind-budget downgrade).
-    # Two modules, one rule: a third of all homelab decisions were flagged,
+    # Two modules, one rule: a third of all reference K3s install decisions were flagged,
     # every one of them the gate's own correct answer. When the decision
     # carries its policy evaluation and pass rate, the check now REPLAYS the
     # gate's mapping -- the same functions -- and a mismatch is a real

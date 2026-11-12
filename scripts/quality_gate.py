@@ -5506,11 +5506,13 @@ def _ai_prompt_manifest_sync(
 
 # ── repo.no-gitignored-source ────────────────────────────────────────────────
 #
-# `.gitignore` carries deliberately broad security globs — `*credentials*`,
-# `*secrets*`, `*api_key*`, `*apikey*` — that match at every depth and do not
-# care about file type. They also match ordinary source.
+# `.gitignore` used to carry broad security globs — `*credentials*`,
+# `*secrets*`, `*api_key*`, `*apikey*` — that matched at every depth and did
+# not care about file type, so they also matched ordinary source. Since
+# 2026-11-12 it names secret files by name and shape instead; this guard stays
+# so that a future broad pattern cannot swallow source again.
 #
-# This has cost real incidents twice:
+# The broad globs cost real incidents twice:
 #
 #   1. A regression test named ``test_no_shared_default_credentials.py`` was
 #      silently excluded. ``git add`` printed a hint and committed everything

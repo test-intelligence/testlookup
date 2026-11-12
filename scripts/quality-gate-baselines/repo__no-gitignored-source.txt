@@ -13,43 +13,16 @@
 # Reviewed in PR; remove entries as the code is cleaned up.
 # ---- notes below this line are preserved across --update-baseline ----
 #
-# -- Why these three are here -------------------------------------------------
+# -- History ---------------------------------------------------------------
 #
-# All three match `.gitignore` line 27, `*api_key*` (lowercase, with the
-# underscore). That glob exists to stop a file full of API keys being
-# committed; it also matches the source of the API-key FEATURE, which is a
-# different thing entirely.
+# This baseline held three tracked API-key sources (the router, its Alembic
+# migration and its test) that the old security globs `*api_key*`,
+# `*credentials*` and `*secrets*` matched at every depth. Before that it held
+# eight, until five camelCase entries that never matched on a case-sensitive
+# filesystem were pruned. A test pins this baseline at zero stale entries.
 #
-# These files are tracked, so they work today. What they are not is safe: any
-# one of them, deleted and recreated -- or added by a tool that does not force
-# -- vanishes from the commit silently. Two are worth naming:
-#
-#   backend/app/routers/api_keys.py                    the API-key router itself
-#   backend/migrations/versions/0056_api_key_...py     an Alembic migration; losing
-#                                                      it breaks `upgrade head`
-#                                                      for every deployment
-#
-# They are baselined rather than renamed on purpose. The names are correct --
-# `api_keys.py` is exactly what that router should be called, and a migration
-# filename is part of the revision chain. Renaming good code to appease an
-# overbroad glob is backwards, and `git add -f` just moves the trap to whoever
-# touches the file next.
-#
-# This list held EIGHT entries until five were pruned: the camelCase
-# frontend/client sources (useApiKeys.ts, ApiKeysPage.tsx, apiKeyService.ts,
-# apiKey.ts, ParallelSuitesWithOneApiKeyTest.java). Those spell the feature as
-# `ApiKey` / `apiKey`, which does NOT contain the lowercase substring
-# `api_key` or `apikey` and so never matched the globs on a case-sensitive
-# filesystem -- git check-ignore is the authority, and on Linux CI it does not
-# flag them. They were baselined (likely captured on a case-insensitive box)
-# and had sat as permanent stale `!!` drift, training reviewers to tune out
-# gate warnings. A test now pins this baseline at zero stale entries.
-#
-# The real fix for the three that DO match is to anchor the glob to the file
-# types that actually carry secrets (`*api_key*.json`, `*.env`, `*.txt`, ...)
-# so it stops matching source. That narrows a SECURITY control, so it is the
-# owner's call, not this guard's.
-# Clear these three by doing that, then re-run with --update-baseline.
-775dae70c8bba1ee  # backend/app/routers/api_keys.py
-f9b92aa520f6c7ff  # backend/migrations/versions/0056_api_key_project_scope.py
-418a2f36ce7ac705  # backend/tests/test_api_key_auth.py
+# 2026-11-12: `.gitignore` now names secret FILES by name and shape
+# (`credentials.json`, `*.secrets`, `*api_key*.txt`, ...) instead of bare
+# substrings, so no tracked source matches any more and the baseline is
+# empty. Keep it that way: rename a new source file, or narrow the glob that
+# caught it, rather than adding an entry here.

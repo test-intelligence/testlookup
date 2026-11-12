@@ -125,7 +125,7 @@ async def get_smtp_config(
         host=cfg.get("host", "localhost"),
         port=cfg.get("port", 587),
         user=cfg.get("user") or None,
-        from_address=cfg.get("from_address", "noreply@testlookup.io"),
+        from_address=cfg.get("from_address", "noreply@example.com"),
         implicit_tls=cfg.get("tls", True),
         has_secret_material=smtp_secret_present,
     )
@@ -210,7 +210,7 @@ async def test_smtp_config(
         "plain",
     )
     msg["Subject"] = "TestLookup — SMTP Test"
-    msg["From"] = cfg.get("from_address", "noreply@testlookup.io")
+    msg["From"] = cfg.get("from_address", "noreply@example.com")
     msg["To"] = current_user.email
 
     from app.services.notification.email_service import smtp_host

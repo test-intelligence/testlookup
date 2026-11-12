@@ -2666,7 +2666,7 @@ def _enqueue_snapshot_rebuild(task_id: str | None, test_run_id: str) -> bool:
     bind=True,
     max_retries=0,
     # Not ``ai_analysis``: the rebuild may wait up to five minutes for the run's
-    # defect-candidate build, and the ai_analysis pool (2 slots on the homelab)
+    # defect-candidate build, and the ai_analysis pool (2 slots on the reference K3s install)
     # is where pipelines run -- two failed runs would stall every new pipeline.
     queue="default",
     soft_time_limit=360,
@@ -5883,7 +5883,7 @@ def close_stale_live_sessions(self, idle_minutes: int = 15) -> dict:
                         # so sessions that opened and were never used
                         # don't sit ``active`` forever. 2026-05-15: this
                         # branch added after finding 7 sessions on the
-                        # homelab stuck idle 50-65 min with NULL
+                        # reference K3s install stuck idle 50-65 min with NULL
                         # last_event_at — they were registered by the
                         # SDK but the first event never arrived, and the
                         # prior reaper treated ``is_idle=True`` then
