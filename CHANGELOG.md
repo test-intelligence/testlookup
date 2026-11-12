@@ -2570,7 +2570,8 @@ locally by default.
     capped it below 1.0; 8.1.0 does not. This fixes CVE-2026-54283 (urlencoded form limits ignored),
     CVE-2026-48710 (the Host header rewrote `request.url.path`), CVE-2026-48818, CVE-2026-48817 and
     CVE-2026-54282. FastAPI stays on 0.136.3. The routed-path gates and the form and Range middleware stay as
-    defence in depth.
+    defence in depth. One visible change: starlette 1.x's CORS middleware adds `Origin` to the `Vary` header
+    of every response, not only those to a request that sent `Origin`.
   - The backend and MCP images install `requirements-lock.txt` with `--require-hashes`: every package,
     transitive ones included (218 for the backend, 35 for MCP), at one version and sha256. Before, about 140
     backend packages and the whole MCP set floated at build time, and Dependabot could not see them.
