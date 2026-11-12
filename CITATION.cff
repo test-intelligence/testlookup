@@ -1,0 +1,28 @@
+# Citation metadata (Citation File Format 1.2.0, https://citation-file-format.github.io/).
+# GitHub shows a "Cite this repository" button from this file. On each release,
+# set `version` and add `date-released` (RELEASING.md, step 3).
+cff-version: 1.2.0
+message: "If you use TestLookup in your work, please cite it using the metadata below."
+type: software
+title: "TestLookup"
+abstract: >-
+  Self-hosted, offline-first test-result intelligence: collects results from
+  test frameworks and CI systems, classifies and clusters failures, and turns
+  the evidence into an auditable release recommendation (GO / CONDITIONAL_GO /
+  NO_GO). Ships a web app, REST API, CLI, client SDKs and an MCP server.
+authors:
+  - name: "TestLookup Contributors"
+repository-code: "https://github.com/test-intelligence/testlookup"
+url: "https://testlookup.app"
+license: Apache-2.0
+version: "0.1.0"
+keywords:
+  - testing
+  - test-results
+  - test-failure-analysis
+  - flaky-tests
+  - release-gating
+  - continuous-integration
+  - quality-assurance
+  - mcp
+  - self-hosted

@@ -15,6 +15,11 @@ This codespace runs the whole app with demo data: three sample projects with
 This copy is yours: you can change anything, upload your own results
 (`POST /api/v1/ingest`) and try every feature.
 
+**Keep port 3000 private.** Codespaces forwards it as private (only you,
+signed in to GitHub, can open it), which is the default. Do not switch it to
+**Public** in the Ports tab: the one-click sign-in needs no password, so anyone
+with the link could sign in as Admin.
+
 **Cost:** the codespace runs on your GitHub account's Codespaces allowance.
 Free accounts get a monthly quota, and a 4-core machine uses it faster. Stop
 the codespace when you are done, or delete it from

@@ -236,6 +236,35 @@ push again; the check is meant to be required before a pull request merges.
 
 Full DCO text: https://developercertificate.org/
 
+## AI-assisted contributions
+
+TestLookup is built with help from AI coding assistants (many commits carry a
+`Co-Authored-By:` trailer naming one), and contributions made the same way are
+welcome on these terms:
+
+1. **You are the author.** Whatever tools you use, you are responsible for the
+   whole change: you have read it, you understand it, and you can explain it in
+   review.
+2. **Your sign-off covers it.** The `Signed-off-by` line certifies that you have
+   the right to submit the change under Apache-2.0, AI-assisted or not. Use a
+   tool whose terms let you contribute its output under that license.
+3. **Say when a tool wrote a meaningful part.** Add a `Co-Authored-By:` or
+   `Assisted-by:` trailer naming it, or a sentence in the pull request.
+   Autocomplete of a few tokens, spelling fixes and formatting need no note.
+4. **No copied code without its license.** Don't submit code that you or the
+   tool copied from another project, a blog, a Q&A site or documentation unless
+   its license is on `scripts/license-allowlist.json`, its copyright notice is
+   kept, and the pull request says where it came from.
+5. **Same bar as any change.** AI-written code needs the same tests, and large
+   generated files (lockfiles, snapshots, reference docs) must come from the
+   project's own generators, never from a tool's guess. Never paste secrets,
+   customer data or real test logs into a tool to produce a contribution.
+
+Maintainers review AI-assisted changes to the same standard, may ask you to
+explain or simplify code you can't explain, and may close a pull request that
+looks like unreviewed generated output (it doesn't build, invents APIs, or
+ignores the issue it claims to fix).
+
 ## Code of Conduct
 
 This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md).

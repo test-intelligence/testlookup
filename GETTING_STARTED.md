@@ -113,6 +113,7 @@ A green smoke check proves the services answer, not that every queue and model w
 
 - Run it for a team: [deployment guide](docs/operations/deployment.md) (Compose release images, Kubernetes, OpenShift, managed clouds, air-gapped).
 - Operate it: [operator guide](user-guide/README.md), [administration](user-guide/administration.md), [troubleshooting](user-guide/troubleshooting.md).
+- Set retention: nothing is purged until you turn on a [retention policy](user-guide/administration.md#data-retention--purge), and [Data and privacy](DATA_AND_PRIVACY.md) lists what TestLookup stores.
 - Wire up CI: [getting results in](user-guide/getting-results-in.md).
 - Understand the system: [ARCHITECTURE.md](ARCHITECTURE.md).
 - Contribute: [CONTRIBUTING.md](CONTRIBUTING.md).

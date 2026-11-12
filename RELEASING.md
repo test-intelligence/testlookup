@@ -29,7 +29,8 @@ How a maintainer cuts a release. Users upgrading an install want
 3. **Refresh the third-party notices**: `python scripts/generate_third_party_notices.py`
    (it reads the lockfiles, `scripts/license-allowlist.json` and
    `deploy/images.manifest.txt`; `--check` reports a stale file).
-   **Bump `VERSION`** to `X.Y.Z` in the same pull request. Merge it and wait
+   **Bump `VERSION`** to `X.Y.Z` in the same pull request, and set `version`
+   and `date-released` in [CITATION.cff](CITATION.cff) to match. Merge it and wait
    for CI on `main` to finish: it builds and records the image digests for that
    commit.
 4. **Tag the merge commit** (an annotated, signed-off tag on a commit reachable
@@ -80,6 +81,7 @@ assembled release. Branch protection should require the lightweight check on
 - [ ] CHANGELOG section dated, `[Unreleased]` reset
 - [ ] UPGRADING.md has the version's notes (or says "no action needed")
 - [ ] `VERSION` matches the tag
+- [ ] `CITATION.cff` has the same `version` and the release's `date-released`
 - [ ] `THIRD_PARTY_NOTICES.md` regenerated (`--check` passes)
 - [ ] "Promote verified release" succeeded; `:vX.Y.Z` exists for backend, frontend and mcp
 - [ ] Offline bundle built and attached (with checksums)
