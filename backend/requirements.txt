@@ -7,7 +7,7 @@
 # included router's routes into app.routes (fastapi#15745): the metrics
 # middleware below (prometheus-fastapi-instrumentator 7.0.0) then raises
 # AttributeError on every request, and its fix (8.0.1) needs Starlette 1.x.
-fastapi==0.136.3
+fastapi==0.162.2
 uvicorn[standard]==0.54.0
 gunicorn==26.2.0
 python-multipart==0.0.33
@@ -19,7 +19,7 @@ httpcore==1.0.9
 # instruments only "sqlalchemy < 2.1", so on 2.1 no database span is recorded
 # and every start with OTEL_ENABLED (the default) logs an error. 2.1 moves in
 # its own wave once contrib ships a release that accepts it.
-sqlalchemy[asyncio]==2.0.57
+sqlalchemy[asyncio]==2.1.8
 asyncpg==0.32.0
 alembic==1.20.1
 motor==3.7.1            # Async MongoDB driver (requires pymongo>=4.9,<5.0)
@@ -31,7 +31,7 @@ pymongo==4.19.0          # CVE-2026-106435 fixed in 4.18.3 (CVE-2026-96748/-9674
 aioboto3==15.5.0
 
 # ── Validation & Settings ────────────────────────────────────
-pydantic==2.14.2
+pydantic==2.14.3
 pydantic-settings==2.16.2
 email-validator==2.3.0
 PyYAML==6.0.3
@@ -100,10 +100,10 @@ flower==2.2.0
 # threadpoolctl and narwhals are scikit-learn 1.9's own requirements, pinned to
 # the versions the tests run against.
 scikit-learn==1.9.1
-scipy==1.17.1
-numpy==2.4.6
+scipy==1.18.1
+numpy==2.5.4
 joblib==1.6.0
-threadpoolctl==3.7.0
+threadpoolctl==3.8.0
 narwhals==2.28.0
 
 # ── XML / JSON Parsing ───────────────────────────────────────
@@ -153,8 +153,8 @@ python-dateutil==2.9.0.post0
 pytz==2026.6
 structlog==26.1.0
 # google-genai (langchain-google-genai 4) requires tenacity <9.2.
-tenacity==9.1.4
-click==8.5.0
+tenacity==9.2.1
+click==8.5.1
 
 # ── Export: Excel / Word / PDF ───────────────────────────────
 openpyxl==3.1.5           # Excel export (.xlsx)
@@ -176,6 +176,6 @@ factory-boy==3.3.3
 freezegun==1.5.5
 
 # ── Code Quality ─────────────────────────────────────────────
-ruff==0.17.3
+ruff==0.17.4
 mypy==2.4.1
 types-python-dateutil==2.9.0.20260518
