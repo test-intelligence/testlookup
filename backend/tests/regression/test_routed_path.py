@@ -50,9 +50,9 @@ def _request(path: str, host: str, method: str = "POST") -> Request:
 
 
 def _client() -> httpx.AsyncClient:
-    from app.main import app
+    import app.main as main
 
-    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver")
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://testserver")
 
 
 def test_the_spoof_still_works_on_the_starlette_in_use():
