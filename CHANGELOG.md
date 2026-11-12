@@ -8,7 +8,7 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 ## [Unreleased] — 0.1.0
 
 - Added a release-test foundation with a disposable Podman candidate stack, Chromium and Python client checks, and independent HTML, Markdown and JSON reports for incomplete or failing runs.
-- Added end-to-end coverage for the 13 required release journeys, including browser uploads of all 11 native report formats and ZIP archives, and live reporter checks for Python, Java, JavaScript/TypeScript and Go. The upgrade drill verifies preserved data against a distinct prior build.
+- Added end-to-end coverage for the 13 required release journeys, including browser uploads of all 11 native report formats and ZIP archives, and live reporter checks for Python, Java, JavaScript/TypeScript and Go. The upgrade drill verifies preserved data against a distinct prior build. Until 2026-12-11 the release-runner image scan accepts the HIGH findings inside the Cypress 16.3.0 binary only, which has no fixed release yet.
 
 The first public release. TestLookup is a self-hosted test-intelligence
 platform: it ingests test results from CI and live test runs, explains

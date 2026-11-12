@@ -90,3 +90,174 @@ vulnerabilities:
       NOT REACHABLE. util-linux mount(8) flaw; the nginx container never runs mount and
       has no privilege to mount (non-privileged pod, no CAP_SYS_ADMIN).
     expired_at: 2026-12-09
+  # ── e2e-runner image: packages bundled INSIDE the Cypress 16.3.0 binary (its Electron app's
+  #    resources/app tree). 16.3.0 (2026-11-10) is the newest Cypress, so none of these fixes can be
+  #    installed. Every entry is scoped to that one directory: the same id anywhere else (another
+  #    image, a lockfile, a later Cypress) still fails the scan. scripts/test_ci_security.py ties the
+  #    path to the Cypress version e2e-runner/reporters/js/package-lock.json installs, so a Cypress
+  #    bump fails until these entries are re-reviewed or deleted.
+  # @babel/plugin-transform-modules-systemjs
+  - id: CVE-2026-44728
+    statement: &cypress-bundle >-
+      MITIGATED. Not shipped, and not fixable yet: bundled inside the Cypress 16.3.0 binary, the
+      newest release, in the CI-only e2e-runner image. CI never publishes that image (build-images pushes backend,
+      frontend and MCP only), and it runs only as a release-verification job. There Cypress runs
+      one local spec of two arithmetic tests (e2e-runner/reporters/js/release.cy.js) headless in
+      Electron and visits no page. Dependabot watches e2e-runner/reporters/js; re-review on the
+      next Cypress release.
+    expired_at: 2026-12-11
+    paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]
+  # @graphql-tools/utils
+  - {id: CVE-2026-104852, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # @opentelemetry/propagator-jaeger
+  - {id: CVE-2026-59892, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # @xmldom/xmldom
+  - {id: CVE-2026-34601, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-41672, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-41673, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-41674, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-41675, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-83605, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-83607, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-83608, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-83613, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-83614, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-83615, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-83616, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-83619, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # adm-zip
+  - {id: CVE-2026-102282, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-39244, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-77301, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: GHSA-8238-w5pm-2374, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: GHSA-rcw4-f5rp-g42v, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # ansi-regex
+  - {id: CVE-2021-3807, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # basic-ftp
+  - {id: CVE-2026-102990, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-41324, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-44240, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # body-parser
+  - {id: CVE-2026-111181, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # brace-expansion
+  - {id: CVE-2026-102276, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-102278, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-13149, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-14257, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-69152, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # braces
+  - {id: CVE-2024-4068, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # browserslist
+  - {id: CVE-2026-73088, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-73089, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # compression
+  - {id: CVE-2026-87776, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # decode-uri-component
+  - {id: CVE-2026-118664, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # deepmerge-ts
+  - {id: CVE-2026-40345, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # engine.io
+  - {id: CVE-2026-102599, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # fast-uri
+  - {id: CVE-2026-13676, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-16221, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-18446, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-6321, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-6322, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-75975, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-76172, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-84292, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # follow-redirects
+  - {id: CVE-2026-111755, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-111756, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-116689, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # image-size
+  - {id: CVE-2025-71329, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2025-71330, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # ip-address
+  - {id: CVE-2026-69192, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # js-yaml
+  - {id: CVE-2026-59869, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: CVE-2026-84375, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  - {id: GHSA-5p4m-2wfm-xmqj, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # launch-editor
+  - {id: CVE-2026-112942, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # lodash
+  - {id: CVE-2026-4800, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # minimatch
+  - {id: CVE-2026-27904, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # path-to-regexp
+  - {id: CVE-2026-4867, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # picomatch
+  - {id: CVE-2026-33671, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # socket.io-parser
+  - {id: CVE-2026-69185, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # tar-fs
+  - {id: CVE-2025-59343, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # webpack-dev-middleware
+  - {id: CVE-2026-76844, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}
+  # ws
+  - {id: CVE-2026-48779, statement: *cypress-bundle, expired_at: 2026-12-11,
+      paths: ["opt/cypress/16.3.0/Cypress/resources/app/**"]}

@@ -151,13 +151,47 @@ ACCEPTED = {
     # 1.2.22) and CVE-2026-104873 (langgraph-sdk 0.2.15 -> 0.4.14, fix 0.4.4).
 }
 
+# PR #375: the HIGH findings Trivy reported inside the Cypress 16.3.0 binary of the e2e-runner image
+# (CI run 43053849052). Every one is scoped to that binary's directory, never accepted repo-wide.
+CYPRESS_BUNDLE = {
+    "CVE-2026-44728", "CVE-2026-104852", "CVE-2026-59892", "CVE-2026-34601", "CVE-2026-41672",
+    "CVE-2026-41673", "CVE-2026-41674", "CVE-2026-41675", "CVE-2026-83605", "CVE-2026-83607", "CVE-2026-83608",
+    "CVE-2026-83613", "CVE-2026-83614", "CVE-2026-83615", "CVE-2026-83616", "CVE-2026-83619",
+    "CVE-2026-102282", "CVE-2026-39244", "CVE-2026-77301", "GHSA-8238-w5pm-2374", "GHSA-rcw4-f5rp-g42v",
+    "CVE-2021-3807", "CVE-2026-102990", "CVE-2026-41324", "CVE-2026-44240", "CVE-2026-111181",
+    "CVE-2026-102276", "CVE-2026-102278", "CVE-2026-13149", "CVE-2026-14257", "CVE-2026-69152",
+    "CVE-2024-4068", "CVE-2026-73088", "CVE-2026-73089", "CVE-2026-87776", "CVE-2026-118664", "CVE-2026-40345",
+    "CVE-2026-102599", "CVE-2026-13676", "CVE-2026-16221", "CVE-2026-18446", "CVE-2026-6321", "CVE-2026-6322",
+    "CVE-2026-75975", "CVE-2026-76172", "CVE-2026-84292", "CVE-2026-111755", "CVE-2026-111756",
+    "CVE-2026-116689", "CVE-2025-71329", "CVE-2025-71330", "CVE-2026-69192", "CVE-2026-59869",
+    "CVE-2026-84375", "GHSA-5p4m-2wfm-xmqj", "CVE-2026-112942", "CVE-2026-4800", "CVE-2026-27904",
+    "CVE-2026-4867", "CVE-2026-33671", "CVE-2026-69185", "CVE-2025-59343", "CVE-2026-76844", "CVE-2026-48779",
+}
+CYPRESS_LOCK = ROOT / "e2e-runner" / "reporters" / "js" / "package-lock.json"
+
 
 def test_the_accepted_findings_are_exactly_the_triaged_ones() -> None:
     doc = yaml.safe_load(IGNORE.read_text(encoding="utf-8"))
     ids = {entry["id"] for entry in doc["vulnerabilities"]}
-    assert ids == ACCEPTED, ids ^ ACCEPTED
+    assert ids == ACCEPTED | CYPRESS_BUNDLE, ids ^ (ACCEPTED | CYPRESS_BUNDLE)
     for entry in doc["vulnerabilities"]:
         assert entry["statement"].startswith(("MITIGATED.", "NOT REACHABLE.")), entry["id"]
+
+
+def test_the_cypress_bundle_acceptances_cover_only_the_installed_cypress_binary() -> None:
+    """A Cypress bump moves the binary's directory, so it fails here until the entries are re-triaged or
+    deleted, and none of these ids is accepted outside the binary (a lockfile, another image)."""
+    lock = json.loads(CYPRESS_LOCK.read_text(encoding="utf-8"))
+    installed = lock["packages"]["node_modules/cypress"]["version"]
+    doc = yaml.safe_load(IGNORE.read_text(encoding="utf-8"))
+    entries = [entry for entry in doc["vulnerabilities"] if entry["id"] in CYPRESS_BUNDLE]
+    assert len(entries) == len(CYPRESS_BUNDLE)
+    for entry in entries:
+        assert entry.get("paths") == [f"opt/cypress/{installed}/Cypress/resources/app/**"], entry["id"]
+        assert f"Cypress {installed} binary" in entry["statement"], entry["id"]
+    for entry in doc["vulnerabilities"]:
+        if entry["id"] not in CYPRESS_BUNDLE:
+            assert not any("cypress" in path.lower() for path in entry.get("paths") or []), entry["id"]
 
 
 def _final_stage(dockerfile: str) -> list[str]:
