@@ -161,6 +161,28 @@ def test_the_kubernetes_ollama_container_drops_privileges():
     assert context.get("seccompProfile", {}).get("type") == "RuntimeDefault"
 
 
+@pytest.mark.parametrize("relative", ["docker-compose.yml", "docker-compose.release.yml"])
+def test_the_compose_ollama_runs_local_only(relative):
+    """Ollama 0.40 calls ollama.com at startup and every ~4 h unless told not to.
+
+    The calls (model recommendations and the cloud model list) are signed with a
+    per-install key; DATA_AND_PRIVACY.md promises the bundled stack phones no one.
+    """
+    env = _services(relative)["ollama"].get("environment") or {}
+    if isinstance(env, list):
+        env = dict(item.split("=", 1) for item in env)
+    assert str(env.get("OLLAMA_NO_CLOUD", "")).lower() in {"1", "true"}, (
+        f"{relative}: set OLLAMA_NO_CLOUD=1 on the ollama service"
+    )
+
+
+def test_the_kubernetes_ollama_runs_local_only():
+    docs = list(yaml.safe_load_all((ROOT / "k8s/base/ollama-deployment.yaml").read_text(encoding="utf-8")))
+    deployment = next(d for d in docs if d and d.get("kind") == "Deployment")
+    env = {e["name"]: e.get("value") for e in deployment["spec"]["template"]["spec"]["containers"][0].get("env") or []}
+    assert str(env.get("OLLAMA_NO_CLOUD", "")).lower() in {"1", "true"}
+
+
 @pytest.mark.parametrize("relative", ["k8s/base/ingress.yaml", "k8s/overlays/homelab/ingress-traefik.yaml"])
 def test_the_public_ingress_does_not_route_metrics(relative):
     paths = []
