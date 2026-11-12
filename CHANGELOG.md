@@ -122,6 +122,9 @@ locally by default.
   - A demo session no longer sends frontend telemetry, which the demo refuses (403) like every other write. The
     auth store registers that check with the reporter (`setTelemetrySuppressed`), so the reporter, which error
     boundaries import lazily, does not pull in the API client.
+  - `deploy/demo/nginx-demo-edge.conf` no longer counts static files against the per-address limits. A phone's
+    first visit sent 142 requests in 10 seconds (hashed chunks Cloudflare had not cached yet at that location),
+    and nginx refused 38 of them with "too many requests". Pages and API calls stay limited.
   - In a demo session, an unreachable backend shows "The live demo is refreshing" (nightly at 03:00 UTC and
     after maintenance; sign in again with Explore the demo if signed out) instead of the outage alarm "Can't
     reach the TestLookup backend". Every other deployment keeps the alarm.

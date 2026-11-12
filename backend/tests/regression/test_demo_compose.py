@@ -133,6 +133,27 @@ def test_nginx_gets_the_real_address_and_a_per_address_limit(demo):
     assert "limit_req_status 429;" in conf
 
 
+def test_static_files_do_not_count_against_the_per_address_limit():
+    """A first visit fetches 100+ hashed chunks at once; counting them refused a phone's cold load.
+
+    Live demo, 2026-11-11: a phone on mobile data sent 142 requests in 10 s,
+    mostly /assets/*.js that Cloudflare had not cached yet at that location,
+    and nginx refused 38 with 429. Pages and API calls stay limited.
+    """
+    conf = EDGE_CONF.read_text(encoding="utf-8")
+    block = re.search(r"^map \$uri \$demo_limit_key \{\n(.*?)^\}", conf, re.MULTILINE | re.DOTALL)
+    assert block, "the limit key must come from a map that exempts static files"
+    exempt = next(line for line in block.group(1).splitlines() if line.rstrip().endswith('"";'))
+    pattern = exempt.split()[0].lstrip("~*")
+    for path in ("/assets/AIAgentsPage-CaUzHZMx.js", "/assets/index-3f2a.css", "/assets/inter-latin.woff2", "/favicon.ico", "/logo.svg"):
+        assert re.search(pattern, path, re.IGNORECASE), f"{path} would still count against the limit"
+    for path in ("/api/v1/projects", "/api/v1/auth/demo-login", "/overview", "/", "/health/details"):
+        assert not re.search(pattern, path, re.IGNORECASE), f"{path} must stay limited"
+    assert re.search(r"^\s*default\s+\$binary_remote_addr;$", block.group(1), re.MULTILINE)
+    assert re.search(r"^limit_req_zone \$demo_limit_key zone=demo_per_ip:", conf, re.MULTILINE)
+    assert re.search(r"^limit_conn_zone \$demo_limit_key zone=demo_conn:", conf, re.MULTILINE)
+
+
 def test_every_long_running_service_has_a_memory_ceiling_and_log_rotation(demo):
     for name in ("postgres", "mongo", "redis", "minio", "backend", "worker", "worker-children", "beat", "frontend", "cloudflared"):
         service = demo[name]

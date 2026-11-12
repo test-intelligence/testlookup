@@ -199,10 +199,15 @@ Security → WAF → **Rate limiting rules** (the Pro plan allows two):
 
 A dashboard visit made 21 API calls in its busiest 10 seconds, so rule A
 leaves about three times that. Watch Security → Events for a few days and
-adjust it. Behind the edge, nginx allows
+adjust it. Behind the edge, for pages and API calls, nginx allows
 20 requests/s per address with a burst of 80
 (`deploy/demo/nginx-demo-edge.conf`), and the API allows 10 demo sign-ins per
-minute per address.
+minute per address. Static files (`.js`, `.css`, fonts, images) are not counted:
+a first visit fetches well over a hundred hashed chunks at once, which
+Cloudflare serves from its cache only after the first request at each of its
+locations, and counting them refused a phone's first load. nginx will not
+reload a change to a zone's key; restart the frontend container instead
+(`docker restart testlookup_frontend`, under a second).
 
 No cache rule is needed. nginx marks hashed assets `public, immutable` (so
 Cloudflare caches them) and `index.html` `no-cache`. API responses are not
