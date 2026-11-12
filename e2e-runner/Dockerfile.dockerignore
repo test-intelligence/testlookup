@@ -24,6 +24,17 @@ scripts/release/**
 !client
 client/**
 !client/*.py
+!client/js
+!client/js/**
+!client/java
+!client/java/**
+!client/go
+!client/go/**
+**/node_modules
+**/target
+client/js/dist
+e2e-runner/reporters/prepared
+**/test-results
 **/__pycache__
 **/.pytest_cache
 **/*.pyc

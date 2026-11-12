@@ -1,4 +1,4 @@
-"""Run the release foundation and write a report even when collection fails."""
+"""Run the release journeys and write a decision even when collection fails."""
 
 import argparse
 import base64
@@ -9,6 +9,7 @@ from html import escape
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from urllib.parse import urlparse
@@ -23,7 +24,7 @@ from release_manifest import validate_manifest  # noqa: E402 - shared repository
 ROLES = ("VIEWER", "TESTER", "QA_ENGINEER", "QA_LEAD", "ADMIN")
 PUBLIC = ["TL-DEPLOY-002", "TL-AUTH-002"]
 IDENTITIES = ["TL-ROLE-002 " + role for role in ROLES]
-# Each required but as-yet unimplemented journey remains visible in the verdict.
+# Catalogue obligations stay in the verdict even when a runner cannot execute them.
 CATALOGUE = {
     entry["id"]: entry
     for entry in json.loads((ROOT / "e2e-runner/catalogue.yaml").read_bytes())
@@ -31,7 +32,45 @@ CATALOGUE = {
 JOURNEYS = {
     key: entry["priority"]
     for key, entry in CATALOGUE.items()
-    if entry["status"] == "designed"
+    if entry["layer"] == "live journey"
+}
+NATIVE_UPLOAD_FORMATS = (
+    "junit",
+    "testng",
+    "nunit",
+    "trx",
+    "xunit",
+    "pytest",
+    "robot",
+    "playwright",
+    "cypress",
+    "allure",
+    "cucumber",
+)
+UPLOAD_FORMATS = (*NATIVE_UPLOAD_FORMATS, "zip")
+REPORTERS = (
+    "robot",
+    "junit5",
+    "junit6",
+    "testng",
+    "go",
+    "jest",
+    "mocha",
+    "playwright",
+    "vitest",
+    "cypress",
+    "cucumber",
+)
+LIVE_CLIENT_JOURNEYS = {
+    "test_release_attribution_gate_and_hold": "TL-GATE-001",
+    "test_failure_spine": "TL-SPINE-001",
+    "test_flaky_quarantine_lifecycle": "TL-FLAKY-001",
+    "test_defect_triage_recurrence": "TL-TRIAGE-001",
+    "test_search_saved_view_chat": "TL-SEARCH-001",
+    "test_ai_review_pipeline": "TL-AI-001",
+    "test_admin_delivery_retention": "TL-ADMIN-001",
+    "test_managed_case_lifecycle": "TL-TCM-001",
+    "test_project_memberships": "TL-ROLE-001",
 }
 
 
@@ -43,6 +82,24 @@ def specs(suites):
     for suite in suites:
         yield from suite.get("specs", [])
         yield from specs(suite.get("suites", []))
+
+
+def client_evidence(name, problem):
+    evidence = "clients.xml · " + name
+    if problem is None:
+        return evidence
+    traceback = (problem.text or "").replace("\\", "/")
+    locations = re.findall(r"(e2e-runner/live/[\w-]+\.py:[0-9]+): in ", traceback)
+    if locations:
+        evidence += " · " + locations[-1]
+    # Numeric count comparisons are safe to display. Request headers, response
+    # payloads and arbitrary exception text remain in the private diagnostics.
+    comparison = re.search(
+        r"(?m)^E\s+assert (\([0-9, ]+\) == \([0-9, ]+\))\s*$", traceback
+    )
+    if comparison:
+        evidence += " · observed vs expected " + comparison[1].replace(" == ", " / ")
+    return evidence
 
 
 def render(directory, report):
@@ -232,6 +289,17 @@ def main():
     inventory = {k: "P0" for k in expected}
     if args.tier != "smoke":
         inventory.update(JOURNEYS)
+        if target == "ephemeral":
+            del inventory["TL-INGEST-001"]
+            browser_cases = [
+                "TL-AUTH-001",
+                "TL-STREAM-001",
+                *("TL-INGEST-001 " + fmt for fmt in UPLOAD_FORMATS),
+            ]
+            inventory.update(
+                {key: CATALOGUE[key.split()[0]]["priority"] for key in browser_cases}
+            )
+            expected.extend(browser_cases)
     cases = {
         k: {
             "id": k,
@@ -246,6 +314,19 @@ def main():
         "test_mcp_stdio_public_health": "TL-MCP-002",
     }
     if target == "ephemeral" and args.tier != "smoke":
+        clients.update(LIVE_CLIENT_JOURNEYS)
+        clients.update(
+            {
+                f"test_cli_upload_native[{fmt}]": "TL-CLI-003 " + fmt
+                for fmt in NATIVE_UPLOAD_FORMATS
+            }
+        )
+        clients.update(
+            {
+                f"test_framework_reporter[{framework}]": "TL-SDK-002 " + framework
+                for framework in REPORTERS
+            }
+        )
         clients.update(
             {
                 "test_gate_empty_evidence": "TL-GATE-002",
@@ -261,12 +342,13 @@ def main():
     for key in clients.values():
         cases[key] = {
             "id": key,
-            "priority": "P1" if key in ("TL-CLI-002", "TL-MCP-002") else "P0",
+            "priority": CATALOGUE[key.split()[0]]["priority"],
             "status": "BLOCKED",
             "evidence": "No client JUnit result.",
         }
     report = {
         "target": target,
+        "execution_backend": os.environ.get("TL_PLATFORM", "unspecified"),
         "tier": args.tier,
         "start": timestamp(),
         "tag": "unmeasured",
@@ -287,8 +369,12 @@ def main():
             tag=manifest["version"],
             images=manifest["images"],
         )
-        if target != "ephemeral":
-            image_file = os.environ.get("TL_DEPLOYMENT_IMAGES")
+        image_file = os.environ.get("TL_DEPLOYMENT_IMAGES")
+        if (
+            target != "ephemeral"
+            or report["execution_backend"] == "kubernetes"
+            or image_file
+        ):
             report["image_verification"] = "unverified"
             if image_file:
                 entries = json.loads(Path(image_file).read_text(encoding="utf-8-sig"))
@@ -414,15 +500,9 @@ def main():
             )
             if blocked:
                 cases[key]["classification"] = "environment"
-                reason = next(
-                    (
-                        m.split("BLOCKED:", 1)[1].splitlines()[0].strip()
-                        for m in messages
-                        if "BLOCKED:" in m
-                    ),
-                    "Target connection unavailable.",
+                cases[key]["evidence"] += (
+                    " · Target connection or test prerequisite unavailable."
                 )
-                cases[key]["evidence"] += " · " + reason
             for r in results:
                 for a in r.get("attachments", []):
                     if a["name"] not in {"observed-build", "request-evidence"}:
@@ -464,10 +544,12 @@ def main():
                 stdout=log,
                 stderr=subprocess.STDOUT,
             )
+        seen_clients = set()
         for test_case in ET.parse(xml).iter("testcase"):
             key = clients.get(test_case.get("name"))
-            if key is None:
-                raise ValueError("Unexpected client test result")
+            if key is None or key in seen_clients:
+                raise ValueError("Unexpected or duplicate client test result")
+            seen_clients.add(key)
             status = next(
                 (
                     value
@@ -480,8 +562,13 @@ def main():
                 ),
                 "PASSED",
             )
+            outcome = test_case.find("failure")
+            reason = outcome.get("message", "") if outcome is not None else ""
+            if "BLOCKED:" in reason:
+                status = "BLOCKED"
+            problem = outcome if outcome is not None else test_case.find("error")
             cases[key].update(
-                status=status, evidence="clients.xml · " + test_case.get("name")
+                status=status, evidence=client_evidence(test_case.get("name"), problem)
             )
         if client_process.returncode and all(
             cases[k]["status"] == "PASSED" for k in clients.values()
@@ -504,14 +591,15 @@ def main():
         ET.ParseError,
         subprocess.SubprocessError,
     ) as exc:
+        (directory / "runner-private.log").write_text(str(exc), encoding="utf-8")
         report["errors"].append(
-            f"Runner precondition or evidence error: {type(exc).__name__}: {exc}"
+            f"Runner precondition or evidence error ({type(exc).__name__}). Inspect runner-private.log."
         )
-    # The commissioning slice cannot sign a promotion until the full required set is implemented.
     for key, case in cases.items():
         details = CATALOGUE[key.split()[0]]
         case.update(
-            title=details["title"],
+            title=details["title"]
+            + (" · " + key.split(" ", 1)[1] if " " in key else ""),
             journey=details["journey"],
             use_case=details["use_case"],
             layer=details["layer"],

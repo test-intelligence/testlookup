@@ -15,6 +15,7 @@ spec:
           args: ["--out", "/reports/${RUN_ID}", "--tier", "regression"]
           env:
             - {name: TL_TARGET, value: homelab}
+            - {name: TL_PLATFORM, value: kubernetes}
             - {name: TL_WEB, value: "${TL_WEB}"}
             - {name: TL_API, value: "${TL_API}"}
             - {name: TL_MANIFEST, value: /candidate/release-manifest.json}

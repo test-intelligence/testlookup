@@ -197,6 +197,54 @@ jobs:
           cd scripts
           python -m pytest test_quality_gate.py test_mypy_ratchet.py test_ci_security.py test_clean_scratch.py test_push_check.py -v
 
+  release-runner-test:
+    name: Release runner — controllers and native producer oracles
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "26"
+          cache: npm
+          cache-dependency-path: e2e-runner/reporters/js/package-lock.json
+      - uses: actions/setup-java@v6
+        with:
+          java-version: "17"
+          distribution: temurin
+          cache: maven
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.27.4"
+          cache: false
+      - run: python -m pip install pytest PyYAML httpx==0.28.1
+      - name: Verify release job and upgrade decision
+        run: python -m pytest e2e-runner/test_policy.py e2e-runner/test_merge_upgrade.py e2e-runner/upgrade_test.py e2e-runner/test_release_campaign.py e2e-runner/test_fixture_probe.py e2e-runner/test_bootstrap_admin.py
+      - name: Build the reporter loaded by the Playwright fixture config
+        working-directory: client/js
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Install native producer frameworks
+        working-directory: e2e-runner/reporters/js
+        env:
+          CYPRESS_INSTALL_BINARY: "0"
+        run: npm ci --no-audit --no-fund
+      - name: Verify deliberate pass, failure and skip outcomes
+        env:
+          PYTHONPATH: e2e-runner
+        run: |
+          python -m pytest -p producer_ci \
+            e2e-runner/fixtures/native/producers/playwright/reports.spec.cjs \
+            e2e-runner/fixtures/native/producers/testng/src/test \
+            e2e-runner/reporters/go/reporter_test.go \
+            e2e-runner/reporters/js/release.jest.test.cjs \
+            e2e-runner/reporters/js/release.playwright.spec.ts \
+            e2e-runner/reporters/js/release.vitest.test.mjs
+
   # ─────────────────────────────────────────────────────────────
   # JOB 0c: Validate Mermaid diagrams in markdown
   # Parses every ```mermaid block in tracked *.md with the Mermaid
@@ -1694,7 +1742,7 @@ jobs:
           git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
           extra_inputs=()
           if [[ "$IMAGE_NAME" == "e2e-runner" ]]; then
-            extra_inputs=(e2e-runner/ frontend/package.json frontend/package-lock.json cli/ mcp/ frontend/tests/release/ frontend/playwright.release.config.ts samples/ scripts/release/release_manifest.py)
+            extra_inputs=(e2e-runner/ frontend/package.json frontend/package-lock.json cli/ mcp/ client/ frontend/tests/release/ frontend/playwright.release.config.ts samples/ scripts/release/release_manifest.py)
           fi
           if git diff --quiet "$PR_BASE_SHA" HEAD -- "${extra_inputs[@]}" \
             "$CONTEXT/Dockerfile" "$CONTEXT/requirements*.txt" \
@@ -1741,6 +1789,11 @@ jobs:
         id: day
         run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
+      - name: Verify Ubuntu archive access from the hosted runner
+        if: steps.scope.outputs.run == 'true' && matrix.name == 'e2e-runner'
+        id: mirror
+        run: python3 e2e-runner/build_mirror.py >> "$GITHUB_OUTPUT"
+
       - name: Build the image (not pushed)
         if: steps.scope.outputs.run == 'true'
         uses: docker/build-push-action@v7
@@ -1756,6 +1809,8 @@ jobs:
           # zlib CVE-2026-85091 in the mcp image although Debian had shipped the fix).
           build-args: |
             OS_PATCH_DAY=${{ steps.day.outputs.day }}
+            ${{ steps.mirror.outputs.build_arg }}
+          add-hosts: ${{ steps.mirror.outputs.host_mapping }}
           cache-from: |
             type=gha,scope=scan-${{ matrix.name }}
             type=gha
@@ -1804,6 +1859,7 @@ jobs:
     needs:
       [
         quality-gate,
+        release-runner-test,
         backend-test,
         postgres-integration,
         frontend-test,

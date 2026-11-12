@@ -13,13 +13,14 @@ import uuid
 
 import yaml
 from evidence import attach_logs
+from fakes_config import configure as configure_fixtures
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts" / "release"))
 from release_manifest import validate_manifest  # noqa: E402 - shared repository validator
 
 
-def prepare(directory, manifest, project):
+def prepare(directory, manifest, project, engine="podman", *, host_runner=False):
     config = yaml.safe_load(
         (ROOT / "docker-compose.release.yml").read_text(encoding="utf-8")
     )
@@ -40,6 +41,14 @@ def prepare(directory, manifest, project):
         service["restart"] = "no"
         component = name if name in ("frontend", "mcp") else "backend"
         service["image"] = infrastructure.get(name, images[component]["source_ref"])
+    # Fresh database volumes initialize before serving the final daemon. Under
+    # Podman this can exceed the ordinary retry window on a busy host.
+    for store in ("postgres", "mongo"):
+        services[store]["healthcheck"]["start_period"] = "180s"
+    services["postgres"]["healthcheck"]["test"] = [
+        "CMD-SHELL",
+        "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-testlookup_user} -d ${POSTGRES_DB:-testlookup}",
+    ]
     # Ask Compose for free host ports. All database and worker ports remain internal.
     for name, port in (("backend", 8000), ("frontend", 80), ("mcp", 8002)):
         services[name]["ports"] = [f"127.0.0.1::{port}"]
@@ -51,7 +60,11 @@ def prepare(directory, manifest, project):
     services["backend"]["depends_on"]["minio-setup"] = {
         "condition": "service_completed_successfully"
     }
-    services["mcp"]["environment"].append("TESTLOOKUP_MCP_ALLOWED_HOSTS=mcp:8002")
+    allowed_mcp_hosts = "mcp:8002,127.0.0.1:*" if host_runner else "mcp:8002"
+    services["mcp"]["environment"].append(f"TESTLOOKUP_MCP_ALLOWED_HOSTS={allowed_mcp_hosts}")
+    configure_fixtures(config, directory, engine, images["backend"]["source_ref"])
+    if host_runner:
+        services["release-fixture"]["ports"] = ["127.0.0.1::8080"]
     (directory / "compose.json").write_text(json.dumps(config), encoding="utf-8")
     (directory / "scripts").mkdir()
     shutil.copyfile(
@@ -87,8 +100,14 @@ def main():
     p.add_argument("--out", type=Path)
     p.add_argument("--tier", choices=["smoke", "regression", "full"], default="smoke")
     p.add_argument("--repeat", type=int, default=1)
+    p.add_argument("--startup-timeout", type=int, default=300,
+                   help="Seconds to wait for the disposable services to become ready")
+    p.add_argument("--defer-upgrade", action="store_true",
+                   help="Allow an intermediate result pending only the separate upgrade operator")
     p.add_argument("command", nargs=argparse.REMAINDER)
     args = p.parse_args()
+    if args.startup_timeout < 1:
+        p.error("--startup-timeout must be positive")
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if args.runner_image:
         if command or args.out is None or args.out.exists():
@@ -104,7 +123,7 @@ def main():
     project = "tl-e2e-" + uuid.uuid4().hex[:12]
     with tempfile.TemporaryDirectory(prefix=project) as name:
         directory = Path(name)
-        settings = prepare(directory, manifest, project)
+        settings = prepare(directory, manifest, project, args.engine, host_runner=not args.runner_image)
         compose = [
             args.engine,
             "compose",
@@ -128,7 +147,7 @@ def main():
                 "-d",
                 "--wait",
                 "--wait-timeout",
-                "300",
+                str(args.startup_timeout),
                 "frontend",
                 "worker",
                 "worker-children",
@@ -163,6 +182,10 @@ def main():
                         "-e",
                         "TL_TARGET=ephemeral",
                         "-e",
+                        "TL_PLATFORM=" + args.engine,
+                        "-e",
+                        "TL_FAKE_URL=http://release-fixture:8080",
+                        "-e",
                         "TL_API=http://backend:8000",
                         "-e",
                         "TL_WEB=http://frontend",
@@ -191,7 +214,6 @@ def main():
                                 args.tier,
                             ]
                         )
-                        codes.append(result.returncode)
                         generated = Path(staging) / name
                         if not generated.is_dir():
                             raise RuntimeError(
@@ -199,6 +221,13 @@ def main():
                             )
                         generated.rename(target)
                         attach_logs(target, invoke)
+                        code = result.returncode
+                        if code == 1 and args.defer_upgrade:
+                            from merge_upgrade import pending_only_upgrade
+
+                            if pending_only_upgrade(json.loads((target / "results.json").read_bytes())):
+                                code = 0
+                        codes.append(code)
                     return int(any(codes))
 
             def address(service, port):
@@ -214,6 +243,9 @@ def main():
             runner_env = {
                 **os.environ,
                 "TL_TARGET": "ephemeral",
+                "TL_PLATFORM": args.engine,
+                "TL_COMPOSE_PROJECT": project,
+                "TL_FAKE_URL": address("release-fixture", 8080),
                 "TL_API": address("backend", 8000),
                 "TL_WEB": address("frontend", 80),
                 "TL_MCP": address("mcp", 8002),

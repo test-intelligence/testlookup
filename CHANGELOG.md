@@ -9,6 +9,7 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 - Added a legal notice to the in-app guide (`/docs/legal`), a Disclaimer section in the README and a pointer in the operator guide. It quotes the Apache-2.0 no-warranty and limitation-of-liability terms (sections 7 and 8, word for word, checked against `LICENSE` by a regression test). It also gives project facts, the public demo's sample-data rule and the security-report route. It holds no terms that need a lawyer's review.
 - Added a release-test foundation with a disposable Podman candidate stack, Chromium and Python client checks, and independent HTML, Markdown and JSON reports for incomplete or failing runs.
+- Added end-to-end coverage for the 13 required release journeys, including browser uploads of all 11 native report formats and ZIP archives, and live reporter checks for Python, Java, JavaScript/TypeScript and Go. The upgrade drill verifies preserved data against a distinct prior build. Until 2026-12-11 the release-runner image scan accepts the HIGH findings inside the Cypress 16.3.0 binary only, which has no fixed release yet.
 
 The first public release. TestLookup is a self-hosted test-intelligence
 platform: it ingests test results from CI and live test runs, explains

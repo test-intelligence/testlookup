@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assemblies timestamp="11/11/2026 14:04:39">
+  <assembly name="Producer.dll" environment="64-bit .NET .NET 8.0 [collection-per-class, parallel (24 threads)]" test-framework="xUnit.net 2.9.3.0" run-date="2026-11-11" run-time="14:04:39" total="3" passed="1" failed="1" skipped="1" time="0.040" errors="0">
+    <errors />
+    <collection total="3" passed="1" failed="1" skipped="1" name="Test collection for Reports" time="0.006">
+      <test name="Reports.Fails" type="Reports" method="Fails" time="0.0035325" result="Fail">
+        <failure exception-type="Xunit.Sdk.FailException">
+          <message><![CDATA[release fixture expected failure]]></message>
+          <stack-trace><![CDATA[   at Reports.Fails() in /work/xunit/Reports.cs:line 4
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)]]></stack-trace>
+        </failure>
+      </test>
+      <test name="Reports.Skips" type="Reports" method="Skips" time="0" result="Skip">
+        <reason><![CDATA[release fixture skip]]></reason>
+      </test>
+      <test name="Reports.Passes" type="Reports" method="Passes" time="0.0023239" result="Pass" />
+    </collection>
+  </assembly>
+</assemblies>

@@ -38,11 +38,13 @@ jobs:
   regression:
     needs: verified
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.tier == 'full' && 240 || 100 }}
+    timeout-minutes: ${{ inputs.tier == 'full' && 300 || 180 }}
     outputs:
       manifest_sha256: ${{ steps.attest.outputs.manifest_sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
       - name: Retrieve verified manifest
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,10 +54,11 @@ jobs:
         run: |
           gh run download "$CI_RUN" --name "$ARTIFACT" --dir verified
           python3 scripts/release/release_manifest.py validate --manifest verified/release-manifest.json --expected-source-sha "$SOURCE_SHA"
-      - name: Verify candidate on Podman
+      - name: Verify release journeys and previous-build upgrade on Podman
         env:
           TIER: ${{ inputs.tier }}
           GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
           # The hosted image installs Compose as a CLI plugin. Select that
@@ -76,10 +79,10 @@ jobs:
           fi
           podman compose version
           printf '%s' "$GH_TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          unset GH_TOKEN
           python3 -m venv "$RUNNER_TEMP/tl-e2e"
           "$RUNNER_TEMP/tl-e2e/bin/pip" install PyYAML==6.0.3
-          "$RUNNER_TEMP/tl-e2e/bin/python" e2e-runner/launch.py --engine podman --manifest verified/release-manifest.json --tier "$TIER" --out release-results
+          "$RUNNER_TEMP/tl-e2e/bin/python" e2e-runner/release_campaign.py --repository "$REPOSITORY" \
+            --manifest verified/release-manifest.json --tier "$TIER" --out release-results
       - name: Show release decision
         if: always() && hashFiles('release-results/summary.md') != ''
         run: cat release-results/summary.md >> "$GITHUB_STEP_SUMMARY"
