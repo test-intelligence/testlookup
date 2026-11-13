@@ -1,6 +1,6 @@
 """Provision (or converge) a machine account from its Kubernetes secret.
 
-Designed for kubectl stdin piping, same as scripts/createAdmin.py:
+Designed for kubectl stdin piping:
 
     kubectl -n testlookup exec -i deployment/testlookup-backend -- \
         env SERVICE_USERNAME=ci_agent SERVICE_PASSWORD=... SERVICE_ROLE=QA_LEAD \
@@ -10,7 +10,7 @@ This helper remains available for machine integrations that intentionally own
 a service identity. Network MCP does not use it: every remote MCP request is
 authenticated with the presenting caller's TestLookup bearer token.
 
-Unlike createAdmin.py this CONVERGES an existing account. For a machine account
+Unlike backend/scripts/create_admin.py this CONVERGES an existing account. For a machine account
 the secret is the source of truth: if the stored password no longer matches it
 the account is unusable, and the deploy should repair that rather than report
 success. A human admin's password is deliberately never overwritten that way —

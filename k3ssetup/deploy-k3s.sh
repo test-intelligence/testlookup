@@ -1396,35 +1396,36 @@ if wait_for_pods "$BACKEND_POD_SELECTOR" 120; then
   BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l "$BACKEND_POD_SELECTOR" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 
   if [ -n "$BACKEND_POD" ]; then
-    log "Running scripts/createAdmin.py inside backend pod (idempotent)..."
-    # Pipe the script over stdin (matches the docstring usage). `env ...` sets
-    # the per-invocation values without mutating the pod's environment. The
-    # script never prints the password; this script shows it once below.
-    if ADMIN_OUTPUT=$(kubectl -n "$NAMESPACE" exec -i "$BACKEND_POD" -- \
+    log "Running /app/scripts/create_admin.py in the backend pod (idempotent)..."
+    # The image ships the script. `env ...` sets the per-invocation values
+    # without changing the pod's environment, and `sh -c` keeps Git Bash from
+    # rewriting the in-pod path. The script does not print a password it was
+    # given; this script shows the generated one once below.
+    if ADMIN_OUTPUT=$(kubectl -n "$NAMESPACE" exec "$BACKEND_POD" -- \
         env \
           ADMIN_USERNAME="$ADMIN_USERNAME" \
           ADMIN_PASSWORD="$ADMIN_PASSWORD" \
           ADMIN_EMAIL="$ADMIN_EMAIL" \
           ADMIN_FULL_NAME="$ADMIN_FULL_NAME" \
           ADMIN_PASSWORD_GENERATED="$ADMIN_PASSWORD_GENERATED" \
-          python < "$REPO_ROOT/scripts/createAdmin.py" 2>&1); then
+          sh -c "python /app/scripts/create_admin.py" 2>&1); then
       echo "$ADMIN_OUTPUT"
       if echo "$ADMIN_OUTPUT" | grep -q "^admin user created"; then
         ADMIN_CREATED=true
       fi
     else
-      warn "createAdmin.py failed inside the backend pod. Output:"
+      warn "create_admin.py failed inside the backend pod. Output:"
       echo "$ADMIN_OUTPUT"
       warn "Run it manually once the backend is healthy (it generates a password when"
-      warn "ADMIN_PASSWORD is unset and prints nothing secret):"
-      warn "  kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- python < scripts/createAdmin.py"
+      warn "ADMIN_PASSWORD is unset and shows it once):"
+      warn "  kubectl -n $NAMESPACE exec deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
     fi
   else
     warn "Could not find backend pod. Create admin user manually later."
   fi
 else
   warn "Backend not ready. Create admin user manually after backend starts:"
-  echo "  kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- python < scripts/createAdmin.py"
+  echo "  kubectl -n $NAMESPACE exec deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
 fi
 
 if [ "$ADMIN_CREATED" = true ]; then

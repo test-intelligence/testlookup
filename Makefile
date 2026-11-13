@@ -408,7 +408,7 @@ create-admin: ## Create initial admin user (Docker Compose)
 	$(DOCKER_COMPOSE) exec backend python /app/scripts/create_admin.py
 
 create-admin-k8s: ## Create initial admin user (Kubernetes)
-	kubectl -n testlookup exec -it deployment/testlookup-backend -- python /app/scripts/create_admin.py
+	kubectl -n testlookup exec -it deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'
 
 simulate-upload: ## Simulate a single Jenkins test run upload to MinIO
 	$(DOCKER_COMPOSE) exec backend python /app/scripts/simulate_upload.py

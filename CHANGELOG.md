@@ -177,6 +177,7 @@ Everything under Added is new to the public. The other sections matter to anyone
 
 ### Removed
 
+- `scripts/createAdmin.py`, a second copy of the admin creator that the K3s, OpenShift and generic Kubernetes deploys piped into the backend pod. They run the image's `/app/scripts/create_admin.py`, as the release stack does: `kubectl -n testlookup exec deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'`.
 - Four database tables and three MongoDB collections that nothing ever wrote; the migration refuses to drop a table that holds a row, `backend/scripts/drop_dead_mongo_collections.py` drops the empty collections, and an older project export that lists a removed table still imports.
 - The Slack "Default Channel" and project "Jenkins Job Pattern" fields, which did nothing (the API still accepts and ignores `slack_default_channel`).
 - `TESTLOOKUP_UPLOAD_MODE` in the Python and Java reporters, which changed nothing.
@@ -217,6 +218,7 @@ Everything under Added is new to the public. The other sections matter to anyone
   - the single-VM Compose overlay runs the images it builds: the backend, workers, migration, seed and frontend kept the development file's source bind mounts, because `volumes: []` in an override removes nothing (it is `volumes: !reset []` now, which needs Docker Compose 2.24.4 or newer);
   - the release Compose frontend and MCP server have healthchecks;
   - the cloud, generic and OpenShift Kubernetes overlays no longer render the placeholder `testlookup-secrets` Secret, so `kubectl apply -k` and `scripts/deploy-k8s.sh` no longer fail on its placeholder values or try to overwrite the Secret you created;
+  - the OpenShift deploy makes a generated admin password one that must be changed at first sign-in, as the K3s and generic Kubernetes deploys already did;
   - the K3s and OpenShift deploys create the object-store buckets when run from Git Bash on Windows, including with a Git Bash-style `KUBECONFIG=/c/...` (Git Bash rewrote the in-pod script path, so that step always failed there).
 - Documentation: THREAT_MODEL.md describes the system that ships, the guides now say SAML single logout, OIDC and Kubernetes backups work, and the compliance guide no longer claims a legal sign-off.
 
@@ -254,6 +256,7 @@ Everything under Added is new to the public. The other sections matter to anyone
 - **Supply chain:**
   - the backend and MCP images install hash-locked Python requirements (`--require-hashes`, every transitive package pinned; `make lock-python` regenerates them) and nothing else: the backend image no longer upgrades pip or installs watchfiles unpinned;
   - every CI job installs the frontend with `npm ci` from the committed lockfile;
+  - a weekly workflow scans the third-party images (PostgreSQL, Valkey, MongoDB, versitygw, Ollama, Chroma, busybox, Flower and the monitoring add-on) for HIGH and CRITICAL findings with a fixed version, and so does every pull request that changes one;
   - base images are pinned by digest, the frontend's nginx by version, and every GitHub Action by commit SHA; the release job checks crane's checksum before running it;
   - published images carry signed SLSA build provenance: `gh attestation verify oci://ghcr.io/test-intelligence/testlookup/backend:<tag> --owner test-intelligence`;
   - a gitleaks secret scan checks every pull request, every push to `main` and the local push check, with extra rules for TestLookup API keys, K3s node tokens and Cloudflare tunnel tokens.

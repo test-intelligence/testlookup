@@ -1,0 +1,110 @@
+name: Third-party image scan
+
+# CI's image scan covers the four images this repository builds. The images it
+# only pulls (PostgreSQL, Valkey, MongoDB, versitygw, Ollama, Chroma, busybox,
+# Flower and the monitoring add-on's Jaeger, Prometheus and Grafana) were in no
+# scan, and Dependabot tracks only their Compose tags (OSS review 2026-11-12,
+# H-4). This scans every `infra` row of deploy/images.manifest.txt and every
+# image in docker-compose.monitoring.yml: weekly, when either file changes on
+# main, and on demand.
+#
+# It reports and does not fail on findings: an upstream image's findings are
+# fixed by moving to a newer tag in the manifest (scripts/release/
+# check_image_drift.py then keeps Compose and Kubernetes in step), not by an
+# acceptance file. It fails when an image cannot be pulled or scanned, so a
+# row that names a tag nobody publishes is caught.
+
+on:
+  schedule:
+    - cron: "23 6 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - deploy/images.manifest.txt
+      - docker-compose.monitoring.yml
+      - .github/workflows/third-party-images.yml
+  # A pull request that changes an image or this workflow sees the report
+  # before it merges.
+  pull_request:
+    paths:
+      - deploy/images.manifest.txt
+      - docker-compose.monitoring.yml
+      - .github/workflows/third-party-images.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: third-party-images
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    name: Security — Third-party image scan (Trivy)
+    runs-on: ubuntu-latest
+    # ~11 images, ~1-3 min each to pull and scan (Ollama is ~3.4 GB).
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install checksum-verified Trivy 0.74.0
+        # The same pinned build and digest as ci.yml and release.yml
+        # (scripts/test_ci_security.py fails if they drift apart).
+        env:
+          TRIVY_ARCHIVE_SHA256: 2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+        run: |
+          set -euo pipefail
+          curl -fsSLo trivy.tar.gz https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz
+          echo "$TRIVY_ARCHIVE_SHA256  trivy.tar.gz" | sha256sum --check --strict
+          tar -xzf trivy.tar.gz trivy
+          sudo install -m 0755 trivy /usr/local/bin/trivy
+          rm -f trivy trivy.tar.gz
+
+      - name: Day stamp for the vulnerability-DB cache
+        id: day
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the Trivy vulnerability database (refreshed daily)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ runner.os }}-${{ steps.day.outputs.day }}
+          restore-keys: trivy-db-${{ runner.os }}-
+
+      - name: List the third-party images
+        run: |
+          set -euo pipefail
+          {
+            awk '!/^[[:space:]]*#/ && NF >= 2 && $2 == "infra" { print $1 }' deploy/images.manifest.txt
+            sed -n 's/^[[:space:]]*image:[[:space:]]*//p' docker-compose.monitoring.yml
+          } | sort -u > third-party-images.txt
+          test "$(wc -l < third-party-images.txt)" -ge 8
+          cat third-party-images.txt
+
+      - name: Scan each image (HIGH and CRITICAL with a fixed version)
+        run: |
+          set -uo pipefail
+          {
+            echo "## Third-party images: HIGH and CRITICAL findings with a fixed version"
+            echo
+            echo "Fix a finding by moving to a newer tag in deploy/images.manifest.txt."
+            echo
+            echo "| Image | Findings |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          unscanned=0
+          while read -r image; do
+            echo "::group::$image"
+            if trivy image --quiet --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed \
+                --format json --output result.json --timeout 15m "$image"; then
+              count=$(jq '[.Results[]?.Vulnerabilities[]?] | length' result.json)
+              echo "| \`$image\` | $count |" >> "$GITHUB_STEP_SUMMARY"
+              trivy convert --format table result.json
+            else
+              echo "| \`$image\` | could not be scanned |" >> "$GITHUB_STEP_SUMMARY"
+              unscanned=$((unscanned + 1))
+            fi
+            echo "::endgroup::"
+          done < third-party-images.txt
+          exit "$unscanned"

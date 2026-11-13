@@ -461,3 +461,39 @@ def test_the_gitleaks_rules_add_the_tokens_the_defaults_missed() -> None:
     assert rules["cloudflare-tunnel-token"].search("eyJhIjoi" + "Q" * 48)
     for allow in config["allowlists"]:
         assert len(allow["description"]) >= 20, "say why the allowlist entry is safe"
+
+
+THIRD_PARTY = WORKFLOWS / "third-party-images.yml"
+MANIFEST = ROOT / "deploy" / "images.manifest.txt"
+
+
+def _infra_images() -> list[str]:
+    """The `infra` rows of the image manifest, read the way the workflow's awk does."""
+    rows = []
+    for line in MANIFEST.read_text(encoding="utf-8").splitlines():
+        fields = line.split()
+        if fields and not fields[0].startswith("#") and len(fields) >= 2 and fields[1] == "infra":
+            rows.append(fields[0])
+    return rows
+
+
+def test_third_party_images_are_scanned_weekly_and_when_the_manifest_changes() -> None:
+    """H-4 (OSS review 2026-11-12): Ollama, the data stores and the monitoring images
+    were in no scan. The workflow reports their HIGH/CRITICAL findings with a fix."""
+    workflow = _workflow(THIRD_PARTY)
+    triggers = workflow.get("on") or workflow.get(True)  # YAML 1.1 reads a bare `on` as True
+    assert triggers["schedule"], "no weekly run"
+    assert "deploy/images.manifest.txt" in triggers["push"]["paths"]
+    assert "docker-compose.monitoring.yml" in triggers["push"]["paths"]
+    assert workflow["permissions"] == {"contents": "read"}
+
+
+def test_the_third_party_scan_uses_the_pinned_trivy_and_covers_every_infra_row() -> None:
+    text = THIRD_PARTY.read_text(encoding="utf-8")
+    assert _install_pin(text) == _install_pin(CI.read_text(encoding="utf-8"))
+    assert "sha256sum --check --strict" in text
+    assert '$2 == "infra"' in text and "deploy/images.manifest.txt" in text
+    images = _infra_images()
+    assert len(images) >= 8 and any(i.startswith("ollama/ollama:") for i in images), images
+    [scan] = [line for line in text.replace("\\\n", " ").splitlines() if line.strip().startswith("if trivy image")]
+    assert "--severity HIGH,CRITICAL" in scan and "--ignore-unfixed" in scan, scan

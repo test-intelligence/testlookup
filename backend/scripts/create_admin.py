@@ -1,37 +1,56 @@
 #!/usr/bin/env python3
-"""
-Create the initial admin user for a fresh TestLookup deployment.
+"""Create the first TestLookup admin on a fresh install.
 
-Usage (inside the backend container):
-    python /app/scripts/create_admin.py
+The image ships this file as /app/scripts/create_admin.py:
 
-Or from kubectl:
-    kubectl -n testlookup exec -it deployment/testlookup-backend -- \
-        python /app/scripts/create_admin.py
+    docker compose exec backend python /app/scripts/create_admin.py
+    kubectl -n testlookup exec deployment/testlookup-backend -- \\
+        sh -c 'python /app/scripts/create_admin.py'
 
-Environment variables (optional overrides):
-    ADMIN_EMAIL       default: admin@example.com
+The release stack's db-migrate service and the K3s, OpenShift and generic
+Kubernetes deploy scripts run it after migrations. It was also kept as
+scripts/createAdmin.py for piping over kubectl stdin; that copy is gone.
+
+Idempotent: if a user with the target username or email already exists, it
+prints that account and exits WITHOUT modifying it (its password is never
+changed or shown). The first output line is ``admin user created`` or
+``admin user already exists - no changes made``; the deploy scripts read it.
+
+There is no default password. Environment variables:
     ADMIN_USERNAME    default: admin
-    ADMIN_PASSWORD    default: none — a random password is generated, printed
-                      once, and must be changed at first sign-in
+    ADMIN_EMAIL       default: admin@example.com
     ADMIN_FULL_NAME   default: TestLookup Admin
-    ADMIN_PASSWORD_GENERATED  "true" when the caller generated ADMIN_PASSWORD:
-                      the account must change it at first sign-in
-
-The script is idempotent — if the admin user already exists, it prints the
-existing user info and exits without changes.
+    ADMIN_PASSWORD    the password to set. When unset or empty, a random one is
+                      generated, printed ONCE, and the account must change it
+                      at first sign-in.
+    ADMIN_PASSWORD_GENERATED
+                      "true" when the CALLER generated ADMIN_PASSWORD (the
+                      deploy scripts do, and show it themselves): the account
+                      must change it at first sign-in, and it is not printed.
 """
+from __future__ import annotations
+
 import asyncio
 import os
 import secrets
 import sys
+from pathlib import Path
 
-# Ensure the app package is importable when running from /app/scripts/
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# /app/scripts/create_admin.py -> /app, where the `app` package lives.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+
+def resolve_password(environ) -> tuple[str, bool, bool]:
+    """(password, generated_here, must_change) for this invocation."""
+    password = environ.get("ADMIN_PASSWORD", "")
+    if not password:
+        return secrets.token_urlsafe(18), True, True
+    caller_generated = environ.get("ADMIN_PASSWORD_GENERATED", "").lower() == "true"
+    return password, False, caller_generated
 
 
 async def main() -> None:
-    from sqlalchemy import select
+    from sqlalchemy import or_, select
 
     from app.core.security import get_password_hash
     from app.db.postgres import AsyncSessionLocal
@@ -40,64 +59,46 @@ async def main() -> None:
     email = os.environ.get("ADMIN_EMAIL", "admin@example.com")
     username = os.environ.get("ADMIN_USERNAME", "admin")
     full_name = os.environ.get("ADMIN_FULL_NAME", "TestLookup Admin")
-    password = os.environ.get("ADMIN_PASSWORD", "")
 
     async with AsyncSessionLocal() as db:
-        # Check if user already exists
-        result = await db.execute(
-            select(User).where(
-                (User.email == email) | (User.username == username)
-            )
-        )
-        existing = result.scalar_one_or_none()
+        # first(), not one_or_none(): the username and the email can each
+        # match a different account, and neither may be touched.
+        existing = (
+            await db.execute(select(User).where(or_(User.username == username, User.email == email)))
+        ).scalars().first()
 
-        if existing:
-            print(f"\n  Admin user already exists:")
-            print(f"    username : {existing.username}")
-            print(f"    email    : {existing.email}")
-            print(f"    role     : {existing.role}")
-            print(f"    active   : {existing.is_active}")
-            print(f"\n  No changes made. To reset password, use the API or update the DB directly.\n")
+        if existing is not None:
+            print("admin user already exists - no changes made")
+            print(f"  username: {existing.username}")
+            print(f"  email:    {existing.email}")
+            print(f"  role:     {existing.role}")
+            print(f"  active:   {existing.is_active}")
+            print("  reset a password from the admin UI or with scripts/getUser.py")
             return
 
-        # Generate password if not provided
-        if not password:
-            password = secrets.token_urlsafe(16)
-            generated = True
-        else:
-            generated = False
-        # The installers generate the password themselves and show it; the
-        # account must still change it at first sign-in.
-        must_change = generated or os.environ.get("ADMIN_PASSWORD_GENERATED", "").lower() == "true"
-
-        user = User(
+        password, generated_here, must_change = resolve_password(os.environ)
+        admin = User(
             email=email,
             username=username,
             full_name=full_name,
             hashed_password=get_password_hash(password),
-            role=UserRole.ADMIN,
+            role=UserRole.ADMIN.value,
             is_active=True,
             must_change_password=must_change,
         )
-        db.add(user)
+        db.add(admin)
         await db.commit()
-        await db.refresh(user)
+        await db.refresh(admin)
 
-        print(f"\n  {'='*50}")
-        print(f"  Admin user created successfully!")
-        print(f"  {'='*50}")
-        print(f"    username : {username}")
-        print(f"    email    : {email}")
-        if generated:
-            print(f"    password : {password}")
-        else:
-            print("    password : (the ADMIN_PASSWORD supplied)")
-        print(f"    role     : ADMIN")
-        print(f"  {'='*50}")
-        if generated:
-            print(f"  ** Password was auto-generated. Save it now — it cannot be retrieved later;")
-            print(f"     you will be asked to change it at first sign-in. **")
-        print(f"  {'='*50}\n")
+        print("admin user created")
+        print(f"  username: {admin.username}")
+        print(f"  email:    {admin.email}")
+        print(f"  role:     {admin.role}")
+        print(f"  active:   {admin.is_active}")
+        if generated_here:
+            print(f"  password: {password}")
+            print("  ** generated for this install and shown only once: save it now;")
+            print("     you will be asked to change it at first sign-in **")
 
 
 if __name__ == "__main__":
