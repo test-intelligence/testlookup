@@ -295,8 +295,8 @@ def test_a_default_webhook_secret_refuses_to_boot_production(monkeypatch):
     """It gates a cross-tenant write, so it is CRITICAL, not a WARNING."""
     monkeypatch.setattr(settings, "APP_ENV", "production")
     monkeypatch.setattr(settings, "WEBHOOK_SECRET", "change-me-webhook-secret")
-    monkeypatch.setattr(settings, "JWT_SECRET_KEY", "a-real-jwt-secret")
-    monkeypatch.setattr(settings, "APP_SECRET_KEY", "a-real-app-secret")
+    monkeypatch.setattr(settings, "JWT_SECRET_KEY", "a-real-jwt-secret-0123456789abcdef")
+    monkeypatch.setattr(settings, "APP_SECRET_KEY", "a-real-app-secret-0123456789abcdef")
     monkeypatch.setattr(settings, "DEV_AUTO_LOGIN_ENABLED", False)
 
     critical = settings.critical_security_failures()
@@ -451,9 +451,9 @@ def test_env_example_placeholders_block_production(monkeypatch, field, placehold
     guard could not see.
     """
     monkeypatch.setattr(settings, "APP_ENV", "production")
-    monkeypatch.setattr(settings, "JWT_SECRET_KEY", "a-real-jwt-secret")
-    monkeypatch.setattr(settings, "APP_SECRET_KEY", "a-real-app-secret")
-    monkeypatch.setattr(settings, "WEBHOOK_SECRET", "a-real-webhook-secret")
+    monkeypatch.setattr(settings, "JWT_SECRET_KEY", "a-real-jwt-secret-0123456789abcdef")
+    monkeypatch.setattr(settings, "APP_SECRET_KEY", "a-real-app-secret-0123456789abcdef")
+    monkeypatch.setattr(settings, "WEBHOOK_SECRET", "a-real-webhook-secret-0123456789abcdef")
     monkeypatch.setattr(settings, "DEV_AUTO_LOGIN_ENABLED", False)
     assert settings.critical_security_failures() == []
 

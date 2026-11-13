@@ -1039,7 +1039,7 @@ def posted(monkeypatch):
 
 @pytest.fixture
 def docs_example_allow_listed(offline, resolves, monkeypatch):
-    """The CHANGELOG's own example; nothing resolves on-box."""
+    """THREAT_MODEL.md's own example; nothing resolves on-box."""
     resolves({})
     monkeypatch.setattr(
         settings, "OFFLINE_NOTIFICATION_ALLOWED_HOSTS", "hooks.slack.com,.webhook.office.com"

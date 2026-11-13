@@ -13,8 +13,7 @@ experience for a local-first product.
 Flips both flags to ``enabled_global=true``. The flag machinery is kept
 (an admin can still disable either format per project / globally from
 Settings > Feature Flags); only the DEFAULT changes. Deployments where an
-admin deliberately disabled the formats will need to re-disable once —
-called out in the CHANGELOG.
+admin deliberately disabled the formats will need to re-disable once.
 """
 from alembic import op
 import sqlalchemy as sa

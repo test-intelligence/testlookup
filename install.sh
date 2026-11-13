@@ -14,6 +14,9 @@
 #   TL_PROFILE=demo          add a compose profile       (demo = demo projects, the
 #                            documented default for an evaluation; or local-llm)
 #   TL_NO_UP=1               download + gen .env only, don't `up`
+#
+# Everything runs from main(), called on the last line: a download cut short
+# by the network defines functions but runs nothing.
 set -euo pipefail
 
 REPO_RAW="https://raw.githubusercontent.com/test-intelligence/testlookup"
@@ -25,68 +28,74 @@ say()  { printf '\033[1;36m==>\033[0m %s\n' "$1"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$1" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$1" >&2; exit 1; }
 
-# ── Preflight ────────────────────────────────────────────────────────────────
-command -v docker >/dev/null 2>&1 || die "docker is required but not found. Install Docker Desktop / Engine first: https://docs.docker.com/get-docker/"
-if docker compose version >/dev/null 2>&1; then
-  DC="docker compose"
-elif command -v docker-compose >/dev/null 2>&1; then
-  DC="docker-compose"
-else
-  die "Docker Compose v2 is required (got neither 'docker compose' nor 'docker-compose')."
-fi
-
-DL=""
-if command -v curl >/dev/null 2>&1; then DL="curl -fsSL -o"; fi
-if [ -z "$DL" ] && command -v wget >/dev/null 2>&1; then DL="wget -qO"; fi
-[ -n "$DL" ] || die "need curl or wget to download files."
-
 fetch() {  # fetch <remote-path> <local-path>
   local url="${REPO_RAW}/${REF}/$1"
   mkdir -p "$(dirname "$2")"
   $DL "$2" "$url" || die "failed to download $url"
 }
 
-# ── Download the release artifacts ───────────────────────────────────────────
-say "Installing TestLookup into ./$DIR (ref: $REF)"
-mkdir -p "$DIR"
-cd "$DIR"
+main() {
+  # ── Preflight ──────────────────────────────────────────────────────────────
+  command -v docker >/dev/null 2>&1 || die "docker is required but not found. Install Docker Desktop / Engine first: https://docs.docker.com/get-docker/"
+  if docker compose version >/dev/null 2>&1; then
+    DC="docker compose"
+  elif command -v docker-compose >/dev/null 2>&1; then
+    DC="docker-compose"
+  else
+    die "Docker Compose v2 is required (got neither 'docker compose' nor 'docker-compose')."
+  fi
 
-fetch "$COMPOSE_FILE"          "$COMPOSE_FILE"
-fetch ".env.example"           ".env.example"
-fetch "scripts/gen-dev-env.sh" "scripts/gen-dev-env.sh"
-fetch "scripts/init-db.sql"    "scripts/init-db.sql"
-chmod +x scripts/gen-dev-env.sh 2>/dev/null || true
+  DL=""
+  if command -v curl >/dev/null 2>&1; then DL="curl -fsSL -o"; fi
+  if [ -z "$DL" ] && command -v wget >/dev/null 2>&1; then DL="wget -qO"; fi
+  [ -n "$DL" ] || die "need curl or wget to download files."
 
-# ── Generate .env (random local secrets) ─────────────────────────────────────
-if [ -f .env ]; then
-  say "Reusing existing .env"
-else
-  say "Generating .env with random secrets"
-  bash scripts/gen-dev-env.sh --release || die "could not generate .env"
-fi
-# Secrets only for this user, also for an .env reused from an older install.
-chmod 600 .env 2>/dev/null || true
+  # ── Download the release artifacts ─────────────────────────────────────────
+  say "Installing TestLookup into ./$DIR (ref: $REF)"
+  mkdir -p "$DIR"
+  cd "$DIR"
 
-# ── Bring the stack up ───────────────────────────────────────────────────────
-PROFILE_ARGS=""
-[ -n "${TL_PROFILE:-}" ] && PROFILE_ARGS="--profile ${TL_PROFILE}"
+  fetch "$COMPOSE_FILE"          "$COMPOSE_FILE"
+  fetch ".env.example"           ".env.example"
+  fetch "scripts/gen-dev-env.sh" "scripts/gen-dev-env.sh"
+  fetch "scripts/init-db.sql"    "scripts/init-db.sql"
+  chmod +x scripts/gen-dev-env.sh 2>/dev/null || true
 
-if [ "${TL_NO_UP:-0}" = "1" ]; then
-  say "TL_NO_UP set — skipping 'up'. Start it yourself with:"
-  echo "    cd $DIR && $DC -f $COMPOSE_FILE $PROFILE_ARGS up -d"
-  exit 0
-fi
+  # ── Generate .env (random local secrets) ───────────────────────────────────
+  if [ -f .env ]; then
+    say "Reusing existing .env"
+  else
+    say "Generating .env with random secrets"
+    bash scripts/gen-dev-env.sh --release || die "could not generate .env"
+  fi
+  # Secrets only for this user, also for an .env reused from an older install.
+  chmod 600 .env 2>/dev/null || true
 
-# The first admin's password lives in .env (INITIAL_ADMIN_PASSWORD); show it
-# once at the end. An .env reused from an earlier install keeps its admin.
-INITIAL_ADMIN_SHOWN="$(sed -n 's/^INITIAL_ADMIN_PASSWORD=//p' .env | head -n 1)"
-[ -n "$INITIAL_ADMIN_SHOWN" ] || INITIAL_ADMIN_SHOWN="(generated: see '$DC -f $COMPOSE_FILE logs db-migrate')"
+  # ── Bring the stack up ─────────────────────────────────────────────────────
+  PROFILE_ARGS=""
+  [ -n "${TL_PROFILE:-}" ] && PROFILE_ARGS="--profile ${TL_PROFILE}"
 
-say "Pulling images and starting the stack (first boot pulls a few GB)…"
-# shellcheck disable=SC2086
-TESTLOOKUP_VERSION="${TESTLOOKUP_VERSION:-latest}" $DC -f "$COMPOSE_FILE" $PROFILE_ARGS up -d
+  if [ "${TL_NO_UP:-0}" = "1" ]; then
+    say "TL_NO_UP set — skipping 'up'. Start it yourself with:"
+    echo "    cd $DIR && $DC -f $COMPOSE_FILE $PROFILE_ARGS up -d"
+    exit 0
+  fi
 
-cat <<EOF
+  # The first admin's password lives in .env (INITIAL_ADMIN_PASSWORD). Say
+  # where, never the value: a terminal's scrollback, a CI log or a shared
+  # screen keeps what is printed (OSS review 2026-11-12, M-14). An .env reused
+  # from an earlier install keeps its admin.
+  if grep -q '^INITIAL_ADMIN_PASSWORD=.' .env; then
+    PASSWORD_HINT="in .env (readable by you only): grep '^INITIAL_ADMIN_PASSWORD=' .env"
+  else
+    PASSWORD_HINT="generated at first start: $DC -f $COMPOSE_FILE logs db-migrate"
+  fi
+
+  say "Pulling images and starting the stack (first boot pulls a few GB)…"
+  # shellcheck disable=SC2086
+  TESTLOOKUP_VERSION="${TESTLOOKUP_VERSION:-latest}" $DC -f "$COMPOSE_FILE" $PROFILE_ARGS up -d
+
+  cat <<EOF
 
 TestLookup is starting. Give it a minute for migrations + health checks, then:
 
@@ -96,7 +105,7 @@ TestLookup is starting. Give it a minute for migrations + health checks, then:
 
 First sign-in (created on a new install only; you will be asked to change it):
   Username  : admin
-  Password  : ${INITIAL_ADMIN_SHOWN}
+  Password  : ${PASSWORD_HINT}
 
 Useful commands (run from ./$DIR):
   $DC -f $COMPOSE_FILE ps           # service status
@@ -104,9 +113,12 @@ Useful commands (run from ./$DIR):
   $DC -f $COMPOSE_FILE down         # stop (keeps data)
 
 EOF
-if [ "${TL_PROFILE:-}" = "demo" ]; then
-  echo "Demo projects load in the background once the database is ready:"
-  echo "  $DC -f $COMPOSE_FILE logs -f seed-init"
-else
-  echo "Want demo data? Re-run with: curl -fsSL <install.sh URL> | TL_PROFILE=demo bash"
-fi
+  if [ "${TL_PROFILE:-}" = "demo" ]; then
+    echo "Demo projects load in the background once the database is ready:"
+    echo "  $DC -f $COMPOSE_FILE logs -f seed-init"
+  else
+    echo "Want demo data? Re-run with: curl -fsSL <install.sh URL> | TL_PROFILE=demo bash"
+  fi
+}
+
+main "$@"
