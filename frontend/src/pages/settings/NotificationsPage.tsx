@@ -88,7 +88,7 @@ export function SmtpConfigCard() {
   const [showPassword, setShowPassword] = useState(false)
 
   // A failed GET must not leave the form editable at its constructor defaults.
-  // Those defaults (localhost:587, noreply@testlookup.io, disabled) are not the
+  // Those defaults (localhost:587, noreply@example.com, disabled) are not the
   // deployment's config -- they are placeholders -- and Save posts the whole
   // object, so one click would overwrite a working production SMTP setup with
   // fiction. When we could not read the config, we do not offer to write it.
@@ -100,7 +100,7 @@ export function SmtpConfigCard() {
   const [user, setUser] = useState('')
   const [password, setPassword] = useState('')
   const [clearPassword, setClearPassword] = useState(false)
-  const [fromAddress, setFromAddress] = useState('noreply@testlookup.io')
+  const [fromAddress, setFromAddress] = useState('noreply@example.com')
   const [implicitTls, setImplicitTls] = useState(true)
   const [passwordSet, setPasswordSet] = useState(false)
 
@@ -281,7 +281,7 @@ export function SmtpConfigCard() {
                       type="email"
                       value={fromAddress}
                       onChange={e => setFromAddress(e.target.value)}
-                      placeholder="noreply@testlookup.io"
+                      placeholder="noreply@example.com"
                       disabled={!canSave}
                       className="input w-full text-sm"
                     />

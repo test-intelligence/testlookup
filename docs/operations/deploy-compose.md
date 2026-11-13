@@ -89,7 +89,7 @@ It checks for Docker and Compose v2, downloads `docker-compose.release.yml`, `.e
 
 `--release` fills every secret with a random value and keeps the secure defaults: `APP_ENV=production` and `DEV_AUTO_LOGIN_ENABLED=false`, so there is no passwordless login. It also writes a random `INITIAL_ADMIN_PASSWORD` into `.env`. On first start the `db-migrate` service runs `alembic upgrade head` and then `scripts/create_admin.py`, which creates the user `admin` with that password on a new database only (an existing admin is never modified) and requires a password change at the first sign-in.
 
-The installer prints the admin login once at the end; the password is stored in `.env` as `INITIAL_ADMIN_PASSWORD`. If `.env` has no `INITIAL_ADMIN_PASSWORD`, a random password is generated and printed once in `docker compose -f docker-compose.release.yml logs db-migrate`. Sign in at [localhost:3000](http://localhost:3000) and set your own password.
+The installer ends by saying where the admin password is, never the value, because a terminal's scrollback or a CI log keeps what is printed: it is stored in `.env` (mode 600) as `INITIAL_ADMIN_PASSWORD`. If `.env` has no `INITIAL_ADMIN_PASSWORD`, a random password is generated and printed once in `docker compose -f docker-compose.release.yml logs db-migrate`. Sign in at [localhost:3000](http://localhost:3000) and set your own password.
 
 | Variable | Default | Effect |
 |---|---|---|

@@ -65,6 +65,12 @@ _SECRET_PLACEHOLDER_MARKERS: tuple[str, ...] = (
 _ANGLE_PLACEHOLDER = _re.compile("<[a-z0-9][a-z0-9 ._-]*>")
 
 
+# A signing or encryption secret shorter than this is refused in production
+# (OSS review 2026-11-12, M-2): every shipped generator makes 48-64 characters
+# (`openssl rand -hex 32`), so only a hand-typed value can be this short.
+MIN_SIGNING_SECRET_LENGTH = 32
+
+
 def _is_placeholder_secret(value: str) -> bool:
     """True when a secret is unset or still one of the shipped placeholders.
 
@@ -972,6 +978,18 @@ class Settings(BaseSettings):
                     "CRITICAL: WEBHOOK_SECRET is set to the default — live-event and "
                     "webhook endpoints accept anyone who read the source"
                 )
+            # A real value can still be guessable when it is short (a word, a
+            # project name). The placeholder message above wins for a placeholder.
+            for name, value in (
+                ("JWT_SECRET_KEY", self.JWT_SECRET_KEY),
+                ("APP_SECRET_KEY", self.APP_SECRET_KEY),
+                ("WEBHOOK_SECRET", self.WEBHOOK_SECRET),
+            ):
+                if not _is_placeholder_secret(value) and len(str(value).strip()) < MIN_SIGNING_SECRET_LENGTH:
+                    warnings.append(
+                        f"CRITICAL: {name} is shorter than {MIN_SIGNING_SECRET_LENGTH} characters — "
+                        "generate one with `openssl rand -hex 32`"
+                    )
             # Re-audit N12. .env.example ships
             # MONGO_URI=mongodb://testlookup:change-me-to-a-strong-password@...
             # and nothing checked it, so copying the example file and deploying

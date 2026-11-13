@@ -1,8 +1,8 @@
 /**
  * `/my-failures` had a release filter that did nothing.
  *
- * The backend gained `release_id` during the epic — the changelog entry says
- * "`/my-failures` … now honour the release" — and the frontend hook was never
+ * The backend gained `release_id` during the epic — its `/my-failures`
+ * endpoints honour the release — and the frontend hook was never
  * updated. So the picker sat in the header, visible on the page, changing
  * nothing. An INERT filter is worse than an absent one: the reader takes the
  * list as "2.4.0's failures assigned to me" when it is the project's.

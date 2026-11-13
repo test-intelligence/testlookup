@@ -160,7 +160,7 @@ class TimestampMixin(BaseModel):
 # is the historical value from ``UserCreate`` and is kept so this change adds
 # no new rejection to the one path that was already capped.
 #
-# Caveat worth knowing (NOT fixed here — see CHANGELOG): the pinned bcrypt
+# Caveat worth knowing (NOT fixed here; an open password-policy decision): the pinned bcrypt
 # does not truncate silently, it raises ``ValueError`` past 72 bytes, so a
 # 73–128 char password still 500s inside ``get_password_hash``. The cap
 # narrows that window but does not close it; closing it is a password-policy
@@ -497,8 +497,8 @@ class LoginRequest(BaseModel):
     # been set in the first place — so this rejects nothing that works today.
     # NOTE: this schema is currently unreferenced; ``POST /auth/login`` binds
     # ``OAuth2PasswordRequestForm``, whose ``password`` is uncapped. That is
-    # the live unauthenticated bcrypt surface and it is NOT closed here (see
-    # CHANGELOG); the cap is on the schema so it is right the day the schema
+    # the live unauthenticated bcrypt surface and it is NOT closed here (an
+    # open follow-up); the cap is on the schema so it is right the day the schema
     # is wired up.
     password: str = Field(..., max_length=MAX_PASSWORD_LENGTH)
 

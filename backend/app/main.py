@@ -191,7 +191,7 @@ app = FastAPI(
     docs_url="/api-docs",
     redoc_url="/api-docs/redoc",
     # Under the /api-docs prefix on purpose. The ingress routes /api/,
-    # /webhooks/, /ws/, /health/, /metrics and (now) /api-docs to this service;
+    # /webhooks/, /ws/, /health/ and /api-docs to this service (never /metrics);
     # everything else falls through to the SPA. A bare /openapi.json therefore
     # returned the frontend's HTML, so Swagger UI rendered its shell and could
     # never load the spec -- broken from outside the cluster for as long as the

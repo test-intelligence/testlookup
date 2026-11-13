@@ -3,7 +3,7 @@
  * placeholders.
  *
  * `SmtpConfigCard` initialises its fields to constructor defaults —
- * `localhost`, port 587, `noreply@testlookup.io`, disabled — and then
+ * `localhost`, port 587, `noreply@example.com`, disabled — and then
  * overwrites them from `getSmtpConfig()`. The load `.catch` was empty, with a
  * comment assuming the only possible failure was an insufficient role. Any
  * other failure (backend down, 500, timeout) therefore left those placeholders
@@ -58,7 +58,7 @@ describe('SmtpConfigCard when its config cannot be read', () => {
 
     // The placeholders that would have been written over the real server.
     expect(screen.queryByDisplayValue('localhost')).not.toBeInTheDocument()
-    expect(screen.queryByDisplayValue('noreply@testlookup.io')).not.toBeInTheDocument()
+    expect(screen.queryByDisplayValue('noreply@example.com')).not.toBeInTheDocument()
     expect(screen.queryByDisplayValue('587')).not.toBeInTheDocument()
     // No Save button means no way to commit a value we never read.
     expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument()

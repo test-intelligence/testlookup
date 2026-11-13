@@ -42,7 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/i
 ```
 
 - **Time and size:** the images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026). On a 100 Mbit/s connection, expect about 5 minutes from the command to a working dashboard. Leave about 8 GB of memory free for the services.
-- **Then:** open [localhost:3000](http://localhost:3000) and sign in as `admin` with the password the installer prints. It is also saved in `testlookup/.env` as `INITIAL_ADMIN_PASSWORD`, and you choose a new one at the first sign-in. The demo projects load in the background after the database is ready.
+- **Then:** open [localhost:3000](http://localhost:3000) and sign in as `admin`. The installer never prints the password: it is in `testlookup/.env` as `INITIAL_ADMIN_PASSWORD` (readable by you only; `grep '^INITIAL_ADMIN_PASSWORD=' testlookup/.env` shows it), and you choose a new one at the first sign-in. The demo projects load in the background after the database is ready.
 - **What it does:** downloads the release Compose file into `./testlookup`, writes a `.env` with random secrets in production mode (no passwordless login), and starts the stack. Read [install.sh](install.sh) first if your policy asks you to. Leave out `TL_PROFILE=demo` to start with an empty instance for your team.
 
 Nothing to install? Replay real screens in the browser with the [guided tours](https://testlookup.app/demo/) (first run, failure triage, release review), or [open a Codespace](https://codespaces.new/test-intelligence/testlookup?quickstart=1) that starts the full app with demo data on your GitHub account's Codespaces allowance.
@@ -113,7 +113,7 @@ The website's [quick start](https://testlookup.app/docs/next/quickstart/) uses t
 
 ### Option A: one-command install (published images)
 
-The [command above](#run-it-in-one-command). It pulls `ghcr.io/test-intelligence/testlookup` images and builds nothing. Sign-in is always `admin` with the printed password. Other settings (`TESTLOOKUP_VERSION` to pin an image tag, `TL_PROFILE=local-llm` for local models, `TL_DIR`, `TL_NO_UP`) are in the [Compose guide](docs/operations/deploy-compose.md#release-images-without-a-clone). No release has been tagged yet, so the default image tag, `latest`, follows the newest build of `main`.
+The [command above](#run-it-in-one-command). It pulls `ghcr.io/test-intelligence/testlookup` images and builds nothing. Sign-in is always `admin`, with the password from `.env` (`INITIAL_ADMIN_PASSWORD`). Other settings (`TESTLOOKUP_VERSION` to pin an image tag, `TL_PROFILE=local-llm` for local models, `TL_DIR`, `TL_NO_UP`) are in the [Compose guide](docs/operations/deploy-compose.md#release-images-without-a-clone). No release has been tagged yet, so the default image tag, `latest`, follows the newest build of `main`.
 
 ### Option B: build from a clone (development)
 

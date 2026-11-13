@@ -411,7 +411,7 @@ Setup steps for each integration are in [Integrations](integrations.md). Values 
 | `SMTP_PORT` | int | `587` | SMTP port. Must agree with `SMTP_TLS`: `465` = implicit TLS, `587` = STARTTLS. |
 | `SMTP_USER` | str (optional) | unset | SMTP username (omit for an unauthenticated relay). |
 | `SMTP_PASSWORD` | str (optional) | unset | SMTP password. **Secret.** |
-| `SMTP_FROM` | str | `noreply@testlookup.io` | Sender address. Set one your relay is allowed to send as. |
+| `SMTP_FROM` | str | `noreply@example.com` | Sender address. Set one your relay is allowed to send as. |
 | `SMTP_TLS` | bool | `true` | `true` = implicit TLS (port 465); `false` = STARTTLS required (port 587). Plain unencrypted SMTP is not supported. **The defaults pair implicit TLS with port 587, which fails**: with port 587 set `SMTP_TLS=false` (as `.env.example` does), or use port 465. |
 | `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` | str | empty | Off-box hosts the deployment's own Slack/Teams webhooks and SMTP relay may still reach while `AI_OFFLINE_MODE` is on. Comma-separated; `.example.com` matches subdomains. Per-user and per-team webhooks never use this list. Empty: every off-box destination is refused. |
 | `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS` | str | empty | Recipient domains email may reach while offline (`corp.example` exactly, `.corp.example` subdomains). Set: every recipient must match. Empty: an on-box relay may deliver; an off-box relay admitted by the host list is refused. |

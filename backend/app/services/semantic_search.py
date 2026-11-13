@@ -20,7 +20,7 @@ Phase 3 / code-reviewer gate (c) — ACCEPTED DEVIATIONS (documented, not silent
   so the proper per-project shard (which would also have to re-shape the
   cross-project full-reindex batching in ``_upsert_rows_to_collection`` and the
   multi-project ``$in`` / ``allowed_project_ids`` query fan-out) is deferred and
-  recorded here rather than introduced implicitly. See CHANGELOG Phase 3 note.
+  recorded here rather than introduced implicitly.
 * **Offline-safe, but not "by construction" — by a guard.** The semantic path
   is *opt-in* (``search_type=semantic``/``hybrid``; the router defaults to
   keyword) and *fails back to keyword* on any ChromaDB error.

@@ -3,7 +3,7 @@
 ``legacy_unscoped_documents`` counts what is left in the similarity cache's old
 collection, which every tenant shared before re-audit M15 and which may hold any
 tenant's analyses. The M15 fix computed it in ``get_semantic_cache_stats``, and
-its CHANGELOG entry said "the cache's health endpoint now reports" it -- but no
+the fix claimed "the cache's health endpoint now reports" it -- but no
 endpoint called that function, so nobody could see it.
 """
 from __future__ import annotations
