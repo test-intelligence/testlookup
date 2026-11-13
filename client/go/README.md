@@ -4,24 +4,22 @@ Streams Go test results to a TestLookup server while the tests run. Results appe
 
 Other reporters and the shared concepts (credentials, live identity) are in [client/README.md](../README.md).
 
-## Module and install (from source)
+## Module and install
 
-`go.mod` declares the module as:
-
-```
-module github.com/testlookup/testlookup-go
-```
-
-with the package in the `testlookup` subdirectory, so the import path is `github.com/testlookup/testlookup-go/testlookup` (Go 1.21 or newer). That module path is not where the code lives (this directory, `client/go`, in [github.com/test-intelligence/testlookup](https://github.com/test-intelligence/testlookup)), and nothing is published under it, so `go get` cannot fetch it. Use the module from a clone with a `replace` directive in your own `go.mod`:
+The module is `github.com/test-intelligence/testlookup/client/go` (this directory of [github.com/test-intelligence/testlookup](https://github.com/test-intelligence/testlookup)), and the package is in its `testlookup` subdirectory. It needs Go 1.21 or newer.
 
 ```
-require github.com/testlookup/testlookup-go v0.0.0
-
-replace github.com/testlookup/testlookup-go => /path/to/testlookup/client/go
+go get github.com/test-intelligence/testlookup/client/go@main
 ```
 
 ```go
-import "github.com/testlookup/testlookup-go/testlookup"
+import "github.com/test-intelligence/testlookup/client/go/testlookup"
+```
+
+No version is tagged yet, so `@main` resolves to a pseudo-version of the current `main`. Releases are tagged `client/go/vX.Y.Z`, Go's convention for a module in a subdirectory; once one exists, pin it with `@vX.Y.Z`. To build against a clone instead, or with the ZIP from your server's SDK Downloads, add a `replace` directive to your own `go.mod`:
+
+```
+replace github.com/test-intelligence/testlookup/client/go => /path/to/testlookup/client/go
 ```
 
 Run the package's own tests with `go test ./...` in `client/go`.
@@ -43,7 +41,7 @@ import (
     "testing"
     "time"
 
-    "github.com/testlookup/testlookup-go/testlookup"
+    "github.com/test-intelligence/testlookup/client/go/testlookup"
 )
 
 var tr *testlookup.TestReporter
@@ -130,9 +128,6 @@ reporter, err := testlookup.New(testlookup.Config{
 Today's behaviour, to be removed from this list as each is fixed:
 
 - Authentication is a **JWT access token** only; there is no API-key option.
-- The module path declared in `go.mod` (`github.com/testlookup/testlookup-go`)
-  does not match the repository, so `go get` cannot fetch it; use a `replace`
-  directive pointing at a clone, as shown above.
 - `New` does not read `TESTLOOKUP_BUILD`, `TESTLOOKUP_BRANCH` or
   `TESTLOOKUP_COMMIT`, although the package documentation says so; use
   `SessionOptionsFromEnv()`.

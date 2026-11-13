@@ -9,7 +9,7 @@ Reporters stream test results to a TestLookup server while the tests run, so a r
 | JavaScript / TypeScript | [client/js](js/README.md) | Jest reporter, Mocha reporter | [client/js/README.md](js/README.md) |
 | Go | [client/go](go/README.md) | Go `testing` helpers | [client/go/README.md](go/README.md) |
 
-None of the reporters is published to a package registry yet (PyPI, Maven Central, npm, the Go module proxy): install them from a clone of [github.com/test-intelligence/testlookup](https://github.com/test-intelligence/testlookup). Runnable sample projects are in [client/examples](examples/README.md). The reporters do not share one configuration mechanism; [user-guide/cli-sdk-mcp.md](../user-guide/cli-sdk-mcp.md#configuration-discovery-per-sdk) compares them.
+None of the reporters is published to a package registry yet (PyPI, Maven Central, npm): install them from a clone of [github.com/test-intelligence/testlookup](https://github.com/test-intelligence/testlookup). The Go module is the exception: `go get` fetches it straight from this repository (see [client/go](go/README.md#module-and-install)). Runnable sample projects are in [client/examples](examples/README.md). The reporters do not share one configuration mechanism; [user-guide/cli-sdk-mcp.md](../user-guide/cli-sdk-mcp.md#configuration-discovery-per-sdk) compares them.
 
 ## Credentials
 

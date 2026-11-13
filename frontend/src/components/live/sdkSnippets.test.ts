@@ -101,7 +101,7 @@ describe('sdkSnippets — Go identifiers exist in client/go', () => {
   it('installs from the downloaded ZIP, not from a registry', () => {
     const install = getInstallSnippet('go')
     expect(install).toContain('Download the Go ZIP')
-    expect(install).toMatch(/-replace=github\.com\/testlookup\/testlookup-go=\.\/go/)
+    expect(install).toContain(`-replace=${go.module}=./go`)
     expect(code).not.toMatch(/\bgo get\b/)
   })
 })

@@ -4297,7 +4297,7 @@ def _sdk_repo(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     _redirect_repo_root(monkeypatch, tmp_path)
     go_pkg = tmp_path / "client" / "go" / "testlookup"
     go_pkg.mkdir(parents=True)
-    (go_pkg.parent / "go.mod").write_bytes(b"module github.com/testlookup/testlookup-go\n\ngo 1.21\n")
+    (go_pkg.parent / "go.mod").write_bytes(b"module github.com/test-intelligence/testlookup/client/go\n\ngo 1.21\n")
     go_src = "\n".join([
         "package testlookup",
         "",
@@ -4397,7 +4397,7 @@ def test_sdk_symbols_generator_reads_only_the_public_sdk_surface(monkeypatch, tm
     _sdk_repo(monkeypatch, tmp_path)
     symbols = _sdk_generator().build_symbols(tmp_path)
     go, js = symbols["go"], symbols["js"]
-    assert go["import_path"] == "github.com/testlookup/testlookup-go/testlookup"
+    assert go["import_path"] == "github.com/test-intelligence/testlookup/client/go/testlookup"
     assert go["functions"] == ["New"]  # TestOnly lives in a _test.go file
     assert go["constants"] == ["Passed"]
     assert go["methods"] == {"Reporter": ["StartSession"]}

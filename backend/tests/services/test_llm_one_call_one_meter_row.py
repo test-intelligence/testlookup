@@ -99,7 +99,7 @@ class _Reported:
         )
 
 
-def _patch_investigator(monkeypatch, inner):
+def _patch_investigator(monkeypatch, inner, *, call_timeout_s=None):
     from app.agents.investigator import hypotheses as hyp
     import app.services.llm_factory as factory
 
@@ -118,7 +118,8 @@ def _patch_investigator(monkeypatch, inner):
     monkeypatch.setattr(hyp, "reserve_investigation_budget", reserve_investigation_budget)
     monkeypatch.setattr(hyp, "settle_investigation_budget", settle_investigation_budget)
     monkeypatch.setattr(hyp, "is_cancel_requested", not_cancelled)
-    monkeypatch.setattr(hyp, "_LLM_CALL_TIMEOUT_S", 0.05)
+    if call_timeout_s is not None:
+        monkeypatch.setattr(hyp, "_LLM_CALL_TIMEOUT_S", call_timeout_s)
     monkeypatch.setattr(factory, "get_llm", get_llm)
     return hyp
 
@@ -156,7 +157,11 @@ async def _hypothesis_stage(hyp) -> tuple:
 
 @pytest.mark.asyncio
 async def test_a_hypothesis_call_that_times_out_after_sending_is_metered_once(world, monkeypatch):
-    hyp = _patch_investigator(monkeypatch, _Hangs())
+    # The stub never answers, so the timeout always fires after the call is sent. It
+    # was 0.05 s for every test, which a slower machine spent before the first call
+    # was even sent (about 1 s of cold imports), so all three tests failed there;
+    # the answering stubs keep the production timeout and never race it.
+    hyp = _patch_investigator(monkeypatch, _Hangs(), call_timeout_s=2.0)
     weighed, usage = await _hypothesis_stage(hyp)
     assert weighed is None and usage.source == "estimated"  # the agent still estimates for its own ledger
     assert world.settles == [(0.5, True)]

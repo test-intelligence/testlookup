@@ -168,6 +168,7 @@ Everything under Added is new to the public. The other sections matter to anyone
 - The example release-test Jenkins pipeline moved to `e2e-runner/Jenkinsfile.release-e2e`; point an existing job's Script Path there.
 - `make build` tags images `ghcr.io/test-intelligence/testlookup/<image>:local` instead of `testlookup/<image>:latest`.
 - The single-node K3s path is `k3ssetup/` and `k8s/overlays/k3s/` (it was `homelabsetup/` and `k8s/overlays/homelab/`): run `./k3ssetup/deploy-k3s.sh` or `make k8s-deploy-k3s`. The old variable, site file and credentials file names are still read, and the rendered resources keep their names ([UPGRADING.md](UPGRADING.md)).
+- The Go reporter's module path is `github.com/test-intelligence/testlookup/client/go` (it was `github.com/testlookup/testlookup-go`, which `go get` could not fetch): `go get github.com/test-intelligence/testlookup/client/go@main` works, releases tag `client/go/vX.Y.Z`, and a `require`, `replace` or `import` line that names the old path needs the new one.
 
 ### Deprecated
 

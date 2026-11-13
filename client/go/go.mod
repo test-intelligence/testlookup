@@ -1,4 +1,4 @@
-module github.com/testlookup/testlookup-go
+module github.com/test-intelligence/testlookup/client/go
 
 go 1.21
 
