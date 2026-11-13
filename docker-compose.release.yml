@@ -153,7 +153,7 @@ services:
   # MinIO/Silo data directory is never read or modified. Upgrading from
   # MinIO/Silo: see UPGRADING.md (scripts/s3_setup.py --copy-from-endpoint).
   minio:
-    image: ghcr.io/versity/versitygw:v1.8.0
+    image: ghcr.io/versity/versitygw:v1.11.0
     container_name: testlookup_minio
     restart: unless-stopped
     # The posix backend refuses to start when its root directory is missing.
@@ -206,7 +206,7 @@ services:
   # AI LAYER — LOCAL LLM (OPTIONAL — profile: local-llm)
   # ──────────────────────────────────────────────────────────
   ollama:
-    image: ollama/ollama:0.40.10
+    image: ollama/ollama:0.40.15
     container_name: testlookup_ollama
     profiles: ["local-llm"]
     restart: unless-stopped

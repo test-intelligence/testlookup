@@ -166,7 +166,7 @@ services:
   # directory is never read or modified. Upgrading from MinIO/Silo: see
   # UPGRADING.md (scripts/s3_setup.py --copy-from-endpoint).
   minio:
-    image: ghcr.io/versity/versitygw:v1.8.0
+    image: ghcr.io/versity/versitygw:v1.11.0
     container_name: testlookup_minio
     restart: unless-stopped
     # The posix backend refuses to start when its root directory is missing.
@@ -226,7 +226,7 @@ services:
   # ──────────────────────────────────────────────────────────
 
   ollama:
-    image: ollama/ollama:0.40.10
+    image: ollama/ollama:0.40.15
     container_name: testlookup_ollama
     profiles: ["local-llm"]
     restart: unless-stopped
@@ -515,7 +515,7 @@ services:
   # control plane (inspect, revoke, terminate) is not exposed to anyone on
   # the LAN. Credentials are loaded from .env (FLOWER_USER / FLOWER_PASSWORD).
   flower:
-    image: mher/flower:2.0
+    image: mher/flower:2.2
     container_name: testlookup_flower
     restart: unless-stopped
     command:

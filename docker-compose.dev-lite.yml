@@ -111,7 +111,7 @@ services:
     # Pinned to the same tag as docker-compose.yml — a floating :latest makes
     # the lite stack drift from the stack everyone else runs, and it can't be
     # carried in the offline bundle (deploy/images.manifest.txt).
-    image: ghcr.io/versity/versitygw:v1.8.0
+    image: ghcr.io/versity/versitygw:v1.11.0
     container_name: testlookup_lite_minio
     restart: unless-stopped
     # The posix backend refuses to start when its root directory is missing.
