@@ -1266,18 +1266,24 @@ header "Step 7 — Create object-store buckets"
 # (MINIO_ENDPOINT / MINIO_ACCESS_KEY / MINIO_SECRET_KEY / bucket names), so
 # the build machine needs no S3 client and no port-forward. Idempotent: an
 # existing bucket is left as it is.
+#
+# MSYS_NO_PATHCONV=1: Git Bash on Windows rewrites an argument that starts with
+# / into a Windows path (/app/scripts/s3_setup.py became
+# "C:/Program Files/Git/app/scripts/s3_setup.py", which the pod does not have),
+# so this step failed on every Windows deploy. The variable stops that rewrite
+# and means nothing to any other shell.
 S3_SETUP_POD=$(kubectl -n "$NAMESPACE" get pod -l "$BACKEND_POD_SELECTOR" \
   --field-selector=status.phase=Running \
   -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
 if [ -z "$S3_SETUP_POD" ]; then
   warn "No running backend pod yet — skipping bucket creation. Run later:"
-  warn "  kubectl -n $NAMESPACE exec deploy/testlookup-backend -c backend -- python /app/scripts/s3_setup.py"
-elif kubectl -n "$NAMESPACE" exec "$S3_SETUP_POD" -c backend -- \
+  warn "  MSYS_NO_PATHCONV=1 kubectl -n $NAMESPACE exec deploy/testlookup-backend -c backend -- python /app/scripts/s3_setup.py"
+elif MSYS_NO_PATHCONV=1 kubectl -n "$NAMESPACE" exec "$S3_SETUP_POD" -c backend -- \
      python /app/scripts/s3_setup.py; then
   log "Object-store buckets are in place."
 else
   warn "Bucket setup did not complete. Re-run it once the object store is up:"
-  warn "  kubectl -n $NAMESPACE exec deploy/testlookup-backend -c backend -- python /app/scripts/s3_setup.py"
+  warn "  MSYS_NO_PATHCONV=1 kubectl -n $NAMESPACE exec deploy/testlookup-backend -c backend -- python /app/scripts/s3_setup.py"
 fi
 
 # ── Step 8: Pull Ollama Models ─────────────────────────────

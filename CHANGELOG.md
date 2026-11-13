@@ -213,6 +213,7 @@ Everything under Added is new to the public. The other sections matter to anyone
   - release-image workers and beat report healthy, and the bucket setup creates every bucket the backend writes to;
   - Kubernetes overlays default `DEV_AUTO_LOGIN_ENABLED=false` instead of refusing to start, and the single-VM Compose file gives the backend working MongoDB credentials;
   - shell scripts are executable on Linux and macOS clones.
+  - the K3s and OpenShift deploys create the object-store buckets when run from Git Bash on Windows (Git Bash rewrote the in-pod script path, so that step always failed there).
 - Documentation: THREAT_MODEL.md describes the system that ships, the guides now say SAML single logout, OIDC and Kubernetes backups work, and the compliance guide no longer claims a legal sign-off.
 
 ### Security
