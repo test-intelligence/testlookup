@@ -141,7 +141,12 @@ async def test_heartbeat_renews_while_the_body_runs(monkeypatch):
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", _session_factory())
 
     async with pl.held_lease("p1", "tok", heartbeat_seconds=0.01) as lost:
-        await asyncio.sleep(0.06)
+        # Wait for the renewals, not a fixed 60 ms: under the full suite's load
+        # (and Windows' ~15 ms timer) 60 ms once held a single heartbeat.
+        for _ in range(200):
+            if len(renewals) >= 2:
+                break
+            await asyncio.sleep(0.01)
         assert not lost.is_set()
     assert len(renewals) >= 2, "the heartbeat must renew repeatedly, not once"
 
