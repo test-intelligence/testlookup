@@ -98,9 +98,16 @@ variable "endpoint_public_access" {
 }
 
 variable "public_access_cidrs" {
-  description = "CIDRs allowed to reach the public EKS API endpoint."
+  # No default: the old one, 0.0.0.0/0, opened the cluster API to the
+  # internet. Set your office/VPN egress CIDRs in the tfvars file, or pass
+  # [] with endpoint_public_access = false for a private endpoint.
+  description = "CIDRs allowed to reach the public EKS API endpoint (required; no default)."
   type        = list(string)
-  default     = ["0.0.0.0/0"]
+
+  validation {
+    condition     = alltrue([for c in var.public_access_cidrs : can(cidrhost(c, 0))])
+    error_message = "public_access_cidrs must be a list of CIDR blocks, such as [\"203.0.113.0/24\"]."
+  }
 }
 
 ###############################################################################

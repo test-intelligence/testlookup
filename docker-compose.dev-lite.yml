@@ -13,8 +13,8 @@ name: testlookup
 #   docker compose -f docker-compose.dev-lite.yml up -d --build
 #
 # Every port is published on 127.0.0.1 only: this stack runs with dev-login on
-# (passwordless admin) and MongoDB without authentication. Set
-# <SERVICE>_PUBLISH_ADDR=0.0.0.0 in .env to expose a port on purpose.
+# (passwordless admin). Set <SERVICE>_PUBLISH_ADDR=0.0.0.0 in .env to expose
+# a port on purpose.
 # The one-shot db-migrate service applies the schema before the API starts.
 # ============================================================
 
@@ -55,8 +55,12 @@ services:
     restart: unless-stopped
     environment:
       MONGO_INITDB_DATABASE: ${MONGO_DB:-testlookup_logs}
+      # Same credentials as docker-compose.yml; gen-dev-env.sh writes them.
+      # They apply when the data volume is created: a volume from before
+      # this change has no user, so remove it once (UPGRADING.md).
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-testlookup}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?MONGO_PASSWORD must be set — copy .env.example to .env}
     ports:
-      # No authentication on this MongoDB, so it never leaves the host.
       - "127.0.0.1:27017:27017"
     volumes:
       - lite_mongo_data:/data/db
@@ -210,7 +214,7 @@ services:
       - MONGO_HOST=mongo
       - MINIO_ENDPOINT=minio:9000
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
-      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_URI=mongodb://${MONGO_USER:-testlookup}:${MONGO_PASSWORD}@mongo:27017/${MONGO_DB:-testlookup_logs}?authSource=admin
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
@@ -273,7 +277,7 @@ services:
       - MONGO_HOST=mongo
       - MINIO_ENDPOINT=minio:9000
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
-      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_URI=mongodb://${MONGO_USER:-testlookup}:${MONGO_PASSWORD}@mongo:27017/${MONGO_DB:-testlookup_logs}?authSource=admin
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
@@ -316,7 +320,7 @@ services:
       - MONGO_HOST=mongo
       - MINIO_ENDPOINT=minio:9000
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
-      - MONGO_URI=mongodb://mongo:27017
+      - MONGO_URI=mongodb://${MONGO_USER:-testlookup}:${MONGO_PASSWORD}@mongo:27017/${MONGO_DB:-testlookup_logs}?authSource=admin
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1

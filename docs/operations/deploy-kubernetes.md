@@ -30,7 +30,7 @@ Whatever you use for the broker must persist data and must not evict keys withou
 
 ### Secret `testlookup-secrets`
 
-`k8s/base/secrets.yaml` is a template with placeholder values. Create the real Secret out of band (External Secrets Operator, Vault, your cloud's secret manager, or `kubectl create secret`) and do not commit it. The production startup check refuses placeholder values.
+`k8s/base/secrets.yaml` is a template with placeholder values, and kustomize does not apply it. Create the real Secret before the first `kubectl apply -k`, out of band (External Secrets Operator, Vault, your cloud's secret manager, or `kubectl create secret`) and do not commit it. The production startup check refuses placeholder values.
 
 | Key | Required | Value |
 |---|---|---|
@@ -134,7 +134,9 @@ Runs `alembic upgrade head` as one Kubernetes Job (`backoffLimit: 0`, kept for 7
 
 ## Network policies
 
-`default-deny-all` blocks all traffic, then explicit policies open what each component needs: DNS egress for every pod; the frontend (port 80), the backend (port 8000) and MCP (port 8002) accept traffic from the `ingress-nginx` namespace and from OpenShift's router, matched by the `openshift-ingress` namespace name and by the `policy-group.network.openshift.io/ingress` namespace label (which also covers a router on the host network); the backend also accepts port 8000 from the frontend, workers and MCP; workers and the backend accept metrics scrapes from the `monitoring`, `openshift-monitoring` and `openshift-user-workload-monitoring` namespaces, or any namespace labelled `testlookup.io/metrics-scraper: "true"`. Backend and worker egress is open because datastores may live outside the namespace.
+`default-deny-all` blocks all traffic, then explicit policies open what each component needs: DNS egress for every pod; the frontend (port 80), the backend (port 8000) and MCP (port 8002) accept traffic from the `ingress-nginx` namespace and from OpenShift's router, matched by the `openshift-ingress` namespace name and by the `policy-group.network.openshift.io/ingress` namespace label (which also covers a router on the host network); the backend also accepts port 8000 from the frontend, workers and MCP; workers and the backend accept metrics scrapes from the `monitoring`, `openshift-monitoring` and `openshift-user-workload-monitoring` namespaces, or any namespace labelled `testlookup.io/metrics-scraper: "true"`. Backend and worker egress reaches every pod in the cluster, because datastores may live in another namespace, and every address outside it except the cloud metadata service (`169.254.169.254`, and `fd00:ec2::254` on AWS), which hands out the node's cloud credentials.
+
+If the backend or the workers get cloud credentials from the metadata service on purpose (an EC2 instance role, GKE Workload Identity, an Azure IMDS managed identity), patch `allow-backend` and `allow-workers` in your overlay with an egress rule for the metadata endpoint your platform documents. IRSA, EKS Pod Identity and Azure Workload Identity do not use it.
 
 The base assumes the datastores run outside the namespace. An overlay that runs PostgreSQL, MongoDB, Redis or the object store inside it, as `reference K3s install` and `openshift-artifactory` do, includes the [`colocated-data-stores` component](../../k8s/components/colocated-data-stores/networkpolicy.yaml):
 

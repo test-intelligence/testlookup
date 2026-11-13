@@ -216,13 +216,14 @@ Everything under Added is new to the public. The other sections matter to anyone
   - shell scripts are executable on Linux and macOS clones;
   - the single-VM Compose overlay runs the images it builds: the backend, workers, migration, seed and frontend kept the development file's source bind mounts, because `volumes: []` in an override removes nothing (it is `volumes: !reset []` now, which needs Docker Compose 2.24.4 or newer);
   - the release Compose frontend and MCP server have healthchecks;
+  - the cloud, generic and OpenShift Kubernetes overlays no longer render the placeholder `testlookup-secrets` Secret, so `kubectl apply -k` and `scripts/deploy-k8s.sh` no longer fail on its placeholder values or try to overwrite the Secret you created;
   - the K3s and OpenShift deploys create the object-store buckets when run from Git Bash on Windows, including with a Git Bash-style `KUBECONFIG=/c/...` (Git Bash rewrote the in-pod script path, so that step always failed there).
 - Documentation: THREAT_MODEL.md describes the system that ships, the guides now say SAML single logout, OIDC and Kubernetes backups work, and the compliance guide no longer claims a legal sign-off.
 
 ### Security
 
 - **Network exposure:**
-  - the development stacks bind every port to `127.0.0.1` (`<SERVICE>_PUBLISH_ADDR` opens one on purpose);
+  - the development stacks bind every port to `127.0.0.1` (`<SERVICE>_PUBLISH_ADDR` opens one on purpose), and the dev-lite stack's MongoDB requires the password from `.env`, like the other stacks;
   - the release stack keeps PostgreSQL, the S3 store and Ollama on loopback, and the single-VM template keeps the API there too;
   - the monitoring add-on binds to loopback, with Prometheus's unauthenticated lifecycle API off;
   - the public Kubernetes ingress and the OpenShift API Routes no longer route the unauthenticated `/metrics` (the OpenShift API host has one Route per backend path: `testlookup-api`, `-webhooks`, `-docs`, `-ws` and `-health`);
@@ -230,7 +231,7 @@ Everything under Added is new to the public. The other sections matter to anyone
   - ChromaDB is reachable only by the backend and the workers.
 - **Host-header path confusion (CVE-2026-48710):** the login rate limiter, the demo read-only gate, the forced password change, rate-limit keys and request logs read the routed path, so a crafted `Host` header can no longer skip the login rate limit; starlette 1.10 also fixes the underlying bug.
 - **Weak secrets:** a production start refuses placeholder database, S3 and Redis passwords copied from the example files and a JWT, app or webhook secret shorter than 32 characters, `.env` is written with mode 600, `install.sh` says where the admin password is instead of printing it and runs nothing if its download is cut short, no script, seed or test carries a default admin password, and example configuration uses placeholders only.
-- **Open sign-up and passwordless login:** self-registration is off by default and a sign-up is a Viewer (it was a role that can create API keys), and `install.sh` writes a production `.env` without dev-login.
+- **Open sign-up and passwordless login:** self-registration is off by default and a sign-up is a Viewer (it was a role that can create API keys), `install.sh` writes a production `.env` without dev-login, and `DEV_AUTO_LOGIN_ENABLED` defaults to `false` in code (only the development stacks turn it on), so an API started without that setting never offers passwordless admin.
 - **Authorization:**
   - a Viewer can no longer create, edit or comment on test cases through the API, and deleting one needs a QA engineer;
   - project API keys and synthetic accounts cannot decide agent actions, and the person who requested an investigation cannot approve its actions;
@@ -246,10 +247,13 @@ Everything under Added is new to the public. The other sections matter to anyone
 - **Injection:** a project's Splunk index must be a plain name, Slack and Teams digest text is escaped (a test named `<!channel>` no longer pings the channel), and pasted agent input reaches the model only inside data markers that are stripped from the output.
 - **ReDoS:** the PRD heading parser (CodeQL py/polynomial-redos) and the SCIM `userName` filter parser run in linear time, and two regexes in development tooling were fixed in the same CodeQL triage.
 - **Sensitive data in logs:** Celery worker and beat logs go through the same redaction as the API, and twenty log lines that named a person by username or e-mail now log the user id.
+- **Cloud credentials:** on Kubernetes the backend and workers can no longer reach the cloud metadata service (`169.254.169.254`, and `fd00:ec2::254` on AWS), which hands out the node's cloud credentials; their egress allowed every address.
+- **EKS API endpoint:** the AWS Terraform has no default for `public_access_cidrs` (it was `0.0.0.0/0`), so the cluster API is open only to the CIDRs you set.
 - **Public bucket:** the unused, publicly readable `testlookup-attachments` bucket is no longer created.
 - **Demo hardening:** `docker-compose.demo.yml` gives the app containers no route to the internet, memory, CPU and process ceilings, and `no-new-privileges`, and demo sign-in refuses admin, service and MFA accounts and is rate-limited.
 - **Supply chain:**
-  - the backend and MCP images install hash-locked Python requirements (`--require-hashes`, every transitive package pinned; `make lock-python` regenerates them);
+  - the backend and MCP images install hash-locked Python requirements (`--require-hashes`, every transitive package pinned; `make lock-python` regenerates them) and nothing else: the backend image no longer upgrades pip or installs watchfiles unpinned;
+  - every CI job installs the frontend with `npm ci` from the committed lockfile;
   - base images are pinned by digest, the frontend's nginx by version, and every GitHub Action by commit SHA; the release job checks crane's checksum before running it;
   - published images carry signed SLSA build provenance: `gh attestation verify oci://ghcr.io/test-intelligence/testlookup/backend:<tag> --owner test-intelligence`;
   - a gitleaks secret scan checks every pull request, every push to `main` and the local push check, with extra rules for TestLookup API keys, K3s node tokens and Cloudflare tunnel tokens.

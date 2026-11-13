@@ -49,7 +49,7 @@ A value counts as a **placeholder** when it is empty, when it contains `change-m
 Two more production-only behaviours:
 
 - With `APP_ENV=production` the API also queries PostgreSQL at startup (`SHOW max_connections`, reserved connections, the role's connection limit) and refuses to start when the server's `max_connections` is below `PG_FLEET_MAX_CONNECTIONS` or when `PG_FLEET_REQUIRED_CONNECTIONS` exceeds the usable capacity. See [PostgreSQL connection budget](database-connection-budget.md).
-- `DEV_AUTO_LOGIN_ENABLED` defaults to **true in code**. The Compose files, the Kubernetes base (`k8s/base/configmap.yaml`) and the `reference K3s install` and `openshift-artifactory` overlays set it to `false`. A deployment that writes its own ConfigMap or environment must set `DEV_AUTO_LOGIN_ENABLED=false` too, or the API refuses to start in production.
+- `DEV_AUTO_LOGIN_ENABLED` defaults to `false`. The development stacks turn it on in `.env` (`scripts/gen-dev-env.sh` writes `true`), and the API refuses to start in production when it is `true`.
 
 ## Core application and HTTP edge
 
@@ -65,7 +65,7 @@ Two more production-only behaviours:
 | `BUILD_DATE` | str | empty | Build timestamp, same source and purpose as `BUILD_REVISION`. |
 | `CORS_ORIGINS_RAW` (env name `CORS_ORIGINS` or `CORS_ORIGINS_RAW`) | str | `http://localhost:3000,http://localhost:5173` | Origins allowed to make credentialed cross-origin calls. Comma-separated, or a JSON list. Its first entry is also the fallback for `PUBLIC_BASE_URL`. Set it to the URL users open (for example `https://testlookup.example.com`). A `*` triggers a production warning. |
 | `PUBLIC_BASE_URL` | str | empty | Externally reachable dashboard URL, used to build links in Jira issues, Slack/Teams messages, emails, GitHub check runs, GitLab notes and report links, and the page a browser returns to after SAML sign-in (`<PUBLIC_BASE_URL>/sso/callback`), so it must be the URL users open. Empty falls back to the first `CORS_ORIGINS` entry, then `http://localhost:3000`. Set it explicitly in production. |
-| `DEV_AUTO_LOGIN_ENABLED` | bool | `true` | Enables `POST /api/v1/auth/dev-login`, which issues an admin token without credentials, and only when `APP_ENV=development`. **Production check** (CRITICAL when true). Set `false` everywhere except a local development stack. |
+| `DEV_AUTO_LOGIN_ENABLED` | bool | `false` | Enables `POST /api/v1/auth/dev-login`, which issues an admin token without credentials, and only when `APP_ENV=development`. **Production check** (CRITICAL when true). Set `false` everywhere except a local development stack. |
 | `TRUSTED_PROXY_IPS` | str | empty | Peers (addresses or CIDR networks, comma-separated) allowed to supply `X-Forwarded-For` / `X-Forwarded-Proto`. Empty trusts nothing, so the client address is the immediate peer. Set it to your ingress or load-balancer range so rate limits, lockout and audit logs see the real client. Deliberately not named `FORWARDED_ALLOW_IPS`, which gunicorn would parse and reject when given a CIDR. `docker-compose.release.yml` sets `172.16.0.0/12`. |
 | `FORM_URLENCODED_MAX_BYTES` | int | `65536` | Largest accepted `application/x-www-form-urlencoded` body (login and token exchanges are a few hundred bytes). |
 | `FORM_URLENCODED_ACS_MAX_BYTES` | int | `2097152` | The same limit for the SAML ACS endpoint, whose `SAMLResponse` is larger. |
