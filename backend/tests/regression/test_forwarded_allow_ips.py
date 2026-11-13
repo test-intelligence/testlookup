@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from compose_topology_contract import load_compose_file
 from uvicorn.middleware.proxy_headers import _TrustedHosts
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -556,9 +557,7 @@ def test_a_compose_file_claiming_to_be_non_production_has_no_production_frontend
 
 
 def _compose_backend(name: str) -> dict:
-    return yaml.safe_load((ROOT / name).read_text(encoding="utf-8"))["services"][
-        "backend"
-    ]
+    return load_compose_file(ROOT / name)["services"]["backend"]
 
 
 def _declared_env_keys(service: dict) -> set:

@@ -213,7 +213,9 @@ Everything under Added is new to the public. The other sections matter to anyone
   - pods keep serving for 10 s after they are told to stop, so a deploy no longer answers 504;
   - release-image workers and beat report healthy, and the bucket setup creates every bucket the backend writes to;
   - Kubernetes overlays default `DEV_AUTO_LOGIN_ENABLED=false` instead of refusing to start, and the single-VM Compose file gives the backend working MongoDB credentials;
-  - shell scripts are executable on Linux and macOS clones.
+  - shell scripts are executable on Linux and macOS clones;
+  - the single-VM Compose overlay runs the images it builds: the backend, workers, migration, seed and frontend kept the development file's source bind mounts, because `volumes: []` in an override removes nothing (it is `volumes: !reset []` now, which needs Docker Compose 2.24.4 or newer);
+  - the release Compose frontend and MCP server have healthchecks;
   - the K3s and OpenShift deploys create the object-store buckets when run from Git Bash on Windows, including with a Git Bash-style `KUBECONFIG=/c/...` (Git Bash rewrote the in-pod script path, so that step always failed there).
 - Documentation: THREAT_MODEL.md describes the system that ships, the guides now say SAML single logout, OIDC and Kubernetes backups work, and the compliance guide no longer claims a legal sign-off.
 
@@ -239,6 +241,8 @@ Everything under Added is new to the public. The other sections matter to anyone
   - the legacy Jira ticket paths respect offline mode;
   - the Fixer recognises public GitHub by hostname (CodeQL incomplete URL substring sanitization), so its clone token never goes to a look-alike host;
   - the Ragas evaluator judges with the configured model inside the cost cap instead of OpenAI's default.
+- **Images in chat answers:** an image in an AI answer is shown as a link instead of loaded, and the CSP's `img-src` allows only the app itself, `data:` and `blob:` (it allowed any `https:` host), so a prompt-injected answer can no longer send data out through an image URL.
+- **Kubernetes service-account tokens:** the frontend, MCP server, Ollama and the bundled data stores, which never call the Kubernetes API, no longer get a token mounted.
 - **Injection:** a project's Splunk index must be a plain name, Slack and Teams digest text is escaped (a test named `<!channel>` no longer pings the channel), and pasted agent input reaches the model only inside data markers that are stripped from the output.
 - **ReDoS:** the PRD heading parser (CodeQL py/polynomial-redos) and the SCIM `userName` filter parser run in linear time, and two regexes in development tooling were fixed in the same CodeQL triage.
 - **Sensitive data in logs:** Celery worker and beat logs go through the same redaction as the API, and twenty log lines that named a person by username or e-mail now log the user id.

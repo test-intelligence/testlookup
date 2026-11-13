@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import yaml
+from compose_topology_contract import load_compose_file
 
 pytestmark = pytest.mark.regression
 
@@ -70,7 +71,7 @@ def _manifest_rows() -> list[tuple[str, str, str, str]]:
 
 
 def _compose(path: Path) -> dict:
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return load_compose_file(path)
 
 
 def _k8s_docs(path: Path) -> list[dict]:

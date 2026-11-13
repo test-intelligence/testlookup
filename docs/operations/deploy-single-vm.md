@@ -14,6 +14,7 @@ If you do not need to build from source, the [release-image install](deploy-comp
 | `frontend` | Production nginx image on host port 80; the API URL is compiled in from `VITE_API_BASE_URL` |
 | `worker`, `worker-children`, `beat`, `flower` | Moved to the `async` profile; the worker consumes `default,critical,ingestion,ai_analysis` with `CELERY_WORKER_CONCURRENCY` (template default 1) |
 | `ollama`, `chromadb` | Moved to the `ai` profile |
+| `backend`, `frontend`, workers, `db-migrate`, `seed-init` | No source bind mounts: `volumes: !reset []` drops the development file's mounts, so each runs the image that was built (a plain `volumes: []` would keep them, because Compose merges volumes from every file) |
 | All application images | Tagged `gcr.io/${GCP_PROJECT_ID}/testlookup-{backend,frontend,mcp}:${IMAGE_TAG}`; both variables are required. The images are built on the VM; nothing is pushed unless you push them |
 
 Uploads are processed by the Celery workers, so always run the `async` profile. Without it the API accepts files that are never parsed.
@@ -49,7 +50,7 @@ The reserved address keeps the external IP stable across restarts; the frontend 
 gcloud compute ssh testlookup-vm --zone=us-central1-a
 ```
 
-On the VM, install Docker Engine and the Compose plugin from Docker's Debian repository ([Docker's instructions](https://docs.docker.com/engine/install/debian/)), add your user to the `docker` group, then:
+On the VM, install Docker Engine and the Compose plugin (2.24.4 or newer, for `!reset`) from Docker's Debian repository ([Docker's instructions](https://docs.docker.com/engine/install/debian/)), add your user to the `docker` group, then:
 
 ```bash
 sudo apt-get install -y git make

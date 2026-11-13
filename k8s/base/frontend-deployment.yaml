@@ -27,6 +27,9 @@ spec:
       # its endpoints; the preStop sleep keeps nginx serving through that lag,
       # and the grace period leaves the in-flight requests time to finish.
       terminationGracePeriodSeconds: 45
+      # No Kubernetes API calls here, so no service-account token in the pod
+      # (OSS review 2026-11-12, L-8).
+      automountServiceAccountToken: false
       containers:
         - name: frontend
           image: ghcr.io/test-intelligence/testlookup/frontend:v0.1.0

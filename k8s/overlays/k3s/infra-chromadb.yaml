@@ -30,6 +30,9 @@ spec:
       labels:
         app: testlookup-chromadb
     spec:
+      # No Kubernetes API calls here, so no service-account token in the pod
+      # (OSS review 2026-11-12, L-8).
+      automountServiceAccountToken: false
       containers:
         - name: chromadb
           image: chromadb/chroma:1.5.9

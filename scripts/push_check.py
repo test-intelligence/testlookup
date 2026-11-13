@@ -101,10 +101,6 @@ GATE_SELF_TESTS = (
     "test_push_check.py",
 )
 
-_LLM_TIMEOUT = (
-    "the hypothesis LLM call times out on this machine (TimeoutError); "
-    "flagged as local-only before any change in the session that found it"
-)
 _NO_LOCAL_CHROMADB = (
     "the hook's Python has no chromadb (CI installs requirements.txt's 1.5.9); the "
     "worker task under test imports app.db.chroma at run time"
@@ -155,12 +151,6 @@ KNOWN_LOCAL_FAILURES: dict[str, str] = {
     "test_extract_docx_preserves_mixed_block_order_and_formatting": (
         "docx extraction differs under the local python-docx build"
     ),
-    "tests/services/test_llm_one_call_one_meter_row.py::"
-    "test_a_hypothesis_call_that_times_out_after_sending_is_metered_once": _LLM_TIMEOUT,
-    "tests/services/test_llm_one_call_one_meter_row.py::"
-    "test_a_hypothesis_call_with_no_reported_usage_is_metered_once": _LLM_TIMEOUT,
-    "tests/services/test_llm_one_call_one_meter_row.py::"
-    "test_a_hypothesis_call_with_reported_usage_is_metered_once_by_the_stage": _LLM_TIMEOUT,
     # A p95 WALL-CLOCK budget, measured while this machine runs ~11,000 other
     # tests. It failed on a different parametrised case each full run
     # ([flaky_coach], then [run_list]) and passed 7/7 three times running in

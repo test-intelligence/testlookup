@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from compose_topology_contract import load_compose_file
 
 ROOT = Path(__file__).resolve().parents[2]
 ENV = ROOT / "backend/migrations/env.py"
@@ -149,7 +150,7 @@ def test_kubernetes_backend_has_a_deployment_owned_runtime_command():
 
 def test_gcp_vm_migration_uses_the_same_production_build_stage_as_backend():
     base = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
-    overlay = yaml.safe_load((ROOT / "docker-compose.gcp-vm.yml").read_text(encoding="utf-8"))
+    overlay = load_compose_file(ROOT / "docker-compose.gcp-vm.yml")
     assert overlay["services"]["backend"]["build"]["target"] == "production"
     assert overlay["services"]["db-migrate"]["build"]["target"] == "production"
     assert base["services"]["backend"]["build"]["context"] == base["services"]["db-migrate"]["build"]["context"]
