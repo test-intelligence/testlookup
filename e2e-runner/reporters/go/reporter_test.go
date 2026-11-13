@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/testlookup/testlookup-go/testlookup"
+	"github.com/test-intelligence/testlookup/client/go/testlookup"
 )
 
 var reporter *testlookup.TestReporter

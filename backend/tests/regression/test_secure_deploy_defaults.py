@@ -210,6 +210,23 @@ def test_every_long_running_release_service_has_a_healthcheck():
     assert not missing, f"docker-compose.release.yml: no healthcheck for {missing}"
 
 
+@pytest.mark.parametrize("overlay", ["openshift", "openshift-artifactory"])
+def test_no_openshift_route_publishes_the_whole_backend(overlay):
+    """A Route without a path sends every path of its host, /metrics included.
+
+    Both OpenShift overlays had one Route for the whole API host (OSS review
+    2026-11-12, M-12); the API host now carries one Route per path the Ingress
+    sends to the backend.
+    """
+    routes = [d for d in yaml.safe_load_all((ROOT / f"k8s/overlays/{overlay}/route.yaml").read_text(encoding="utf-8"))
+              if d and d.get("kind") == "Route"]
+    backend = [r for r in routes if r["spec"]["to"]["name"].startswith("testlookup-backend")]
+    assert backend, f"{overlay}: no Route to the backend found, so this check proves nothing"
+    bad = [r["metadata"]["name"] for r in backend
+           if (r["spec"].get("path") or "/").rstrip("/") in ("", "/metrics")]
+    assert not bad, f"{overlay}: these Routes publish /metrics (no path, or /metrics itself): {bad}"
+
+
 def test_prometheus_has_no_unauthenticated_lifecycle_api():
     command = _services("docker-compose.monitoring.yml")["prometheus"]["command"]
     assert "--web.enable-lifecycle" not in command
@@ -230,7 +247,7 @@ def test_gen_dev_env_makes_the_env_file_owner_only_before_writing_secrets():
     chmod = script.index('chmod 600 "$ENV_FILE"')
     first_secret = script.index("set_kv POSTGRES_PASSWORD")
     assert copy < chmod < first_secret
-    assert re.search(r"^chmod 600 \.env", (ROOT / "install.sh").read_text(encoding="utf-8"), re.MULTILINE)
+    assert re.search(r"^\s*chmod 600 \.env", (ROOT / "install.sh").read_text(encoding="utf-8"), re.MULTILINE)
 
 
 def _bash() -> list[str] | None:

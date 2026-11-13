@@ -24,7 +24,7 @@ off, and ``viz_customize`` (read by nothing) stays as it is. Removing the flags
 and their seam is the rest of Phase D.
 
 As with 0099, an admin who turned one of these off deliberately has to do it
-again once -- called out in the CHANGELOG. The downgrade switches the three
+again once. The downgrade switches the three
 off; allow-lists that existed before cannot be recovered.
 """
 from alembic import op

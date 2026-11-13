@@ -1,9 +1,10 @@
 """OpenShift's router reaches every Service an OpenShift Route points at.
 
-Both OpenShift overlays publish three Routes: the UI (``testlookup-frontend``,
-port ``http``), the API (``testlookup-backend``, port ``http``; the Artifactory
-deploy script advertises it as ``https://<api host>/docs``) and MCP
-(``testlookup-mcp``, port ``sse``). Under the base ``default-deny-all`` the
+Both OpenShift overlays publish the UI (``testlookup-frontend``, port
+``http``), MCP (``testlookup-mcp``, port ``sse``) and, on the API host, one
+Route per backend path (``testlookup-backend``, and ``/health/`` to
+``testlookup-backend-diagnostics``, port ``http``; the Artifactory deploy
+script advertises ``https://<api host>/api-docs``). Under the base ``default-deny-all`` the
 router needs an ingress allow on each target. ``allow-frontend`` and
 ``allow-mcp`` admitted the ``openshift-ingress`` namespace; ``allow-backend``
 did not, so the API Route never reached the backend.
@@ -69,7 +70,8 @@ def test_the_route_scan_finds_the_api_route():
     for overlay in OPENSHIFT_OVERLAYS:
         routes = {name: (svc, port) for name, svc, port in _routes(overlay)}
         assert routes.get("testlookup-api") == ("testlookup-backend", "http"), (overlay, routes)
-        assert len(routes) == 3, (overlay, routes)
+        assert routes.get("testlookup-api-health") == ("testlookup-backend-diagnostics", "http"), (overlay, routes)
+        assert len(routes) == 7, (overlay, routes)
 
 
 @pytest.mark.parametrize("router", sorted(ROUTERS))

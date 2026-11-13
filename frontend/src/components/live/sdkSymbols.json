@@ -98,7 +98,7 @@
       "RunSuite",
       "SessionOptionsFromEnv"
     ],
-    "import_path": "github.com/testlookup/testlookup-go/testlookup",
+    "import_path": "github.com/test-intelligence/testlookup/client/go/testlookup",
     "methods": {
       "Reporter": [
         "CloseSession",
@@ -122,7 +122,7 @@
         "T"
       ]
     },
-    "module": "github.com/testlookup/testlookup-go",
+    "module": "github.com/test-intelligence/testlookup/client/go",
     "package": "testlookup",
     "types": [
       "CIContext",

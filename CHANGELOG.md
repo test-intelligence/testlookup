@@ -168,6 +168,7 @@ Everything under Added is new to the public. The other sections matter to anyone
 - The example release-test Jenkins pipeline moved to `e2e-runner/Jenkinsfile.release-e2e`; point an existing job's Script Path there.
 - `make build` tags images `ghcr.io/test-intelligence/testlookup/<image>:local` instead of `testlookup/<image>:latest`.
 - The single-node K3s path is `k3ssetup/` and `k8s/overlays/k3s/` (it was `homelabsetup/` and `k8s/overlays/homelab/`): run `./k3ssetup/deploy-k3s.sh` or `make k8s-deploy-k3s`. The old variable, site file and credentials file names are still read, and the rendered resources keep their names ([UPGRADING.md](UPGRADING.md)).
+- The Go reporter's module path is `github.com/test-intelligence/testlookup/client/go` (it was `github.com/testlookup/testlookup-go`, which `go get` could not fetch): `go get github.com/test-intelligence/testlookup/client/go@main` works, releases tag `client/go/vX.Y.Z`, and a `require`, `replace` or `import` line that names the old path needs the new one.
 
 ### Deprecated
 
@@ -224,11 +225,11 @@ Everything under Added is new to the public. The other sections matter to anyone
   - the development stacks bind every port to `127.0.0.1` (`<SERVICE>_PUBLISH_ADDR` opens one on purpose);
   - the release stack keeps PostgreSQL, the S3 store and Ollama on loopback, and the single-VM template keeps the API there too;
   - the monitoring add-on binds to loopback, with Prometheus's unauthenticated lifecycle API off;
-  - the public Kubernetes ingress no longer routes the unauthenticated `/metrics`;
+  - the public Kubernetes ingress and the OpenShift API Routes no longer route the unauthenticated `/metrics` (the OpenShift API host has one Route per backend path: `testlookup-api`, `-webhooks`, `-docs`, `-ws` and `-health`);
   - the bundled Ollama runs with `OLLAMA_NO_CLOUD=1`, so it no longer calls ollama.com at startup and every few hours or serves cloud models;
   - ChromaDB is reachable only by the backend and the workers.
 - **Host-header path confusion (CVE-2026-48710):** the login rate limiter, the demo read-only gate, the forced password change, rate-limit keys and request logs read the routed path, so a crafted `Host` header can no longer skip the login rate limit; starlette 1.10 also fixes the underlying bug.
-- **Weak secrets:** a production start refuses placeholder database, S3 and Redis passwords copied from the example files, `.env` is written with mode 600, no script, seed or test carries a default admin password, and example configuration uses placeholders only.
+- **Weak secrets:** a production start refuses placeholder database, S3 and Redis passwords copied from the example files and a JWT, app or webhook secret shorter than 32 characters, `.env` is written with mode 600, `install.sh` says where the admin password is instead of printing it and runs nothing if its download is cut short, no script, seed or test carries a default admin password, and example configuration uses placeholders only.
 - **Open sign-up and passwordless login:** self-registration is off by default and a sign-up is a Viewer (it was a role that can create API keys), and `install.sh` writes a production `.env` without dev-login.
 - **Authorization:**
   - a Viewer can no longer create, edit or comment on test cases through the API, and deleting one needs a QA engineer;

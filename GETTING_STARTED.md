@@ -44,7 +44,7 @@ Open [localhost:3000](http://localhost:3000).
 
 | You started with | Sign in |
 |---|---|
-| Option A | User `admin` and the password the installer printed (also in `testlookup/.env` as `INITIAL_ADMIN_PASSWORD`). You choose a new password at the first sign-in. |
+| Option A | User `admin` and the password in `testlookup/.env` as `INITIAL_ADMIN_PASSWORD` (`grep '^INITIAL_ADMIN_PASSWORD=' testlookup/.env`; the installer does not print it). You choose a new password at the first sign-in. |
 | Option B | The login page shows **Quick Login** buttons, because the clone runs in development mode. Choose **Admin**; no password is needed. Production builds never show these buttons. |
 
 Pick a demo project in the project selector in the header.

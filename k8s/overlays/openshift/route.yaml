@@ -16,6 +16,11 @@ spec:
   tls:
     termination: edge
 ---
+# The API host carries only the paths the base Ingress sends to the backend
+# (k8s/base/ingress.yaml). One Route for the whole host also published
+# /metrics, which has no authentication (OSS review 2026-11-12, M-12);
+# Prometheus scrapes the pods directly (k8s/monitoring/podmonitors.yaml).
+# /health/ goes to the diagnostics Service, as in the Ingress.
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
@@ -25,9 +30,82 @@ metadata:
     haproxy.router.openshift.io/hsts_header: "max-age=31536000"
 spec:
   host: testlookup-api.apps.example.com
+  path: /api/
   to:
     kind: Service
     name: testlookup-backend
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup-api-webhooks
+  namespace: testlookup
+  annotations:
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
+spec:
+  host: testlookup-api.apps.example.com
+  path: /webhooks/
+  to:
+    kind: Service
+    name: testlookup-backend
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup-api-docs
+  namespace: testlookup
+  annotations:
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
+spec:
+  host: testlookup-api.apps.example.com
+  path: /api-docs
+  to:
+    kind: Service
+    name: testlookup-backend
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup-api-ws
+  namespace: testlookup
+  annotations:
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
+spec:
+  host: testlookup-api.apps.example.com
+  path: /ws/
+  to:
+    kind: Service
+    name: testlookup-backend
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup-api-health
+  namespace: testlookup
+  annotations:
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
+spec:
+  host: testlookup-api.apps.example.com
+  path: /health/
+  to:
+    kind: Service
+    name: testlookup-backend-diagnostics
   port:
     targetPort: http
   tls:

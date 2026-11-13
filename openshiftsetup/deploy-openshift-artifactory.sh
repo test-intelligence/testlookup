@@ -424,7 +424,8 @@ if ca:
 print(json.dumps({"spec": {"tls": tls}}))
 PY
 )"
-    for r in testlookup testlookup-api testlookup-mcp; do
+    # Every Route of the app, so a new path-scoped API Route is never missed.
+    for r in $(oc -n "$NAMESPACE" get route -l app.kubernetes.io/name=testlookup -o name); do
       oc -n "$NAMESPACE" patch route "$r" --type=merge -p "$PATCH_JSON" \
         && log "Patched cert into route/$r" || warn "Failed to patch cert into route/$r"
     done
@@ -538,7 +539,7 @@ header "Deployment Complete"
 echo -e "${GREEN}TestLookup deployed to OpenShift namespace '$NAMESPACE' (images from $ARTIFACTORY_PULL_REGISTRY).${NC}"
 echo ""
 echo "  Dashboard:  https://${ROUTE_HOST_FRONTEND}"
-echo "  API:        https://${ROUTE_HOST_API}/docs"
+echo "  API:        https://${ROUTE_HOST_API}/api-docs"
 echo "  MCP (SSE):  https://${ROUTE_HOST_MCP}/sse"
 if [ "$ADMIN_CREATED" = true ] && [ "$ADMIN_PASSWORD_GENERATED" = true ]; then
   echo "  Admin:      ${ADMIN_USERNAME}"

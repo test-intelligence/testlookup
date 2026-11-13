@@ -211,7 +211,7 @@ def test_glob_legacy_normalized_rows_still_match():
 
 
 def test_match_path_rule_nested_docs_behavior_change():
-    # THE behaviour change called out in the CHANGELOG: docs/* no longer
+    # THE behaviour change of the gitignore-style matcher: docs/* no longer
     # matches nested paths (previously fnmatch let * span /).
     rules = [_rule("docs/*", "@docs")]
     assert cs.match_path_rule("docs/readme.md", rules) is not None

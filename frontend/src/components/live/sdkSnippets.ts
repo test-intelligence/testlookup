@@ -68,15 +68,15 @@ cd ..
 npm install --save-dev ./js/${JS_SDK_TARBALL}`
     case 'go':
       return `# Download the Go ZIP from SDK Downloads above and extract it
-# into your module (it unpacks to go/). The module is not published,
-# so point go.mod at the extracted folder:
+# into your module (it unpacks to go/). To use the copy that matches
+# this server, point go.mod at the extracted folder:
 go mod edit \\
-  -require=github.com/testlookup/testlookup-go@v0.0.0 \\
-  -replace=github.com/testlookup/testlookup-go=./go
+  -require=github.com/test-intelligence/testlookup/client/go@v0.0.0 \\
+  -replace=github.com/test-intelligence/testlookup/client/go=./go
 
 # The same, as go.mod lines:
-# require github.com/testlookup/testlookup-go v0.0.0
-# replace github.com/testlookup/testlookup-go => ./go`
+# require github.com/test-intelligence/testlookup/client/go v0.0.0
+# replace github.com/test-intelligence/testlookup/client/go => ./go`
   }
 }
 
@@ -268,7 +268,7 @@ import (
     "testing"
     "time"
 
-    "github.com/testlookup/testlookup-go/testlookup"
+    "github.com/test-intelligence/testlookup/client/go/testlookup"
 )
 
 var tr *testlookup.TestReporter
@@ -381,7 +381,7 @@ import (
     "context"
     "log"
 
-    "github.com/testlookup/testlookup-go/testlookup"
+    "github.com/test-intelligence/testlookup/client/go/testlookup"
 )
 
 func main() {

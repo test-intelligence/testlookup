@@ -184,13 +184,56 @@ class TestStartupGuards:
 
         s = Settings(
             APP_ENV="production",
-            JWT_SECRET_KEY="a-real-strong-secret-key-here",
-            APP_SECRET_KEY="another-real-strong-key",
-            WEBHOOK_SECRET="webhook-real-secret",
+            JWT_SECRET_KEY="a-real-strong-secret-key-here-0123456789abcdef",
+            APP_SECRET_KEY="another-real-strong-key-0123456789abcdef",
+            WEBHOOK_SECRET="webhook-real-secret-0123456789abcdef",
             DEV_AUTO_LOGIN_ENABLED=False,
         )
         warnings = s.validate_production_secrets()
         assert warnings == []
+
+
+class TestShortSigningSecrets:
+    """A real but short JWT, app or webhook secret refuses a production start (OSS review M-2)."""
+
+    LONG = {
+        "JWT_SECRET_KEY": "j" * 32,
+        "APP_SECRET_KEY": "a" * 32,
+        "WEBHOOK_SECRET": "w" * 32,
+    }
+
+    @pytest.mark.parametrize("field", ["JWT_SECRET_KEY", "APP_SECRET_KEY", "WEBHOOK_SECRET"])
+    def test_a_short_real_secret_is_critical_in_production(self, field):
+        from app.core.config import Settings
+
+        s = Settings(APP_ENV="production", DEV_AUTO_LOGIN_ENABLED=False, **{**self.LONG, field: "projectname2026"})
+        failures = s.critical_security_failures()
+        assert [f for f in failures if field in f and "shorter than 32" in f], failures
+
+    def test_thirty_two_characters_is_enough(self):
+        from app.core.config import Settings
+
+        s = Settings(APP_ENV="production", DEV_AUTO_LOGIN_ENABLED=False, **self.LONG)
+        assert s.critical_security_failures() == []
+
+    def test_one_character_short_is_refused(self):
+        from app.core.config import Settings
+
+        s = Settings(APP_ENV="production", DEV_AUTO_LOGIN_ENABLED=False, **{**self.LONG, "JWT_SECRET_KEY": "j" * 31})
+        assert any("JWT_SECRET_KEY is shorter" in f for f in s.critical_security_failures())
+
+    def test_a_placeholder_gets_the_placeholder_message_only(self):
+        from app.core.config import Settings
+
+        s = Settings(APP_ENV="production", DEV_AUTO_LOGIN_ENABLED=False, **{**self.LONG, "JWT_SECRET_KEY": "change-me"})
+        jwt = [f for f in s.critical_security_failures() if "JWT_SECRET_KEY" in f]
+        assert len(jwt) == 1 and "default" in jwt[0], jwt
+
+    def test_development_is_not_checked(self):
+        from app.core.config import Settings
+
+        s = Settings(APP_ENV="development", JWT_SECRET_KEY="short", APP_SECRET_KEY="short", WEBHOOK_SECRET="short")
+        assert s.critical_security_failures() == []
 
 
 class TestCriticalSecurityFailures:
@@ -230,9 +273,9 @@ class TestCriticalSecurityFailures:
 
         s = Settings(
             APP_ENV="production",
-            JWT_SECRET_KEY="a-real-strong-secret-key-here",
-            APP_SECRET_KEY="another-real-strong-key",
-            WEBHOOK_SECRET="a-real-webhook-secret",
+            JWT_SECRET_KEY="a-real-strong-secret-key-here-0123456789abcdef",
+            APP_SECRET_KEY="another-real-strong-key-0123456789abcdef",
+            WEBHOOK_SECRET="a-real-webhook-secret-0123456789abcdef",
             SSO_ENABLED=True,
             SAML_BASE_URL="http://localhost:8000",
             DEV_AUTO_LOGIN_ENABLED=False,
@@ -246,8 +289,8 @@ class TestCriticalSecurityFailures:
 
         s = Settings(
             APP_ENV="production",
-            JWT_SECRET_KEY="a-real-strong-secret-key-here",
-            APP_SECRET_KEY="another-real-strong-key",
+            JWT_SECRET_KEY="a-real-strong-secret-key-here-0123456789abcdef",
+            APP_SECRET_KEY="another-real-strong-key-0123456789abcdef",
             WEBHOOK_SECRET="change-me-webhook-secret",
             DEV_AUTO_LOGIN_ENABLED=False,
         )
