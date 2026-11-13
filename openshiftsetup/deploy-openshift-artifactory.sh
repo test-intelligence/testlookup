@@ -474,11 +474,13 @@ fi
 # scripts/s3_setup.py ships in the backend image (/app/scripts) and reads the
 # pod's own MINIO_* settings: it waits for testlookup-minio and creates every
 # bucket the backend writes to (idempotent; no client image, no internet).
+# MSYS_NO_PATHCONV=1 keeps Git Bash on Windows from rewriting /app/... into a
+# Windows path the pod does not have; other shells ignore it.
 header "Step 12 — S3 buckets"
-S3_SETUP_HINT="$KCLI -n $NAMESPACE exec deploy/testlookup-backend -- python /app/scripts/s3_setup.py"
+S3_SETUP_HINT="MSYS_NO_PATHCONV=1 $KCLI -n $NAMESPACE exec deploy/testlookup-backend -- python /app/scripts/s3_setup.py"
 BACKEND_POD="$("$KCLI" -n "$NAMESPACE" get pod -l app=testlookup-backend --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")"
 if [ -n "$BACKEND_POD" ]; then
-  "$KCLI" -n "$NAMESPACE" exec "$BACKEND_POD" -- python /app/scripts/s3_setup.py \
+  MSYS_NO_PATHCONV=1 "$KCLI" -n "$NAMESPACE" exec "$BACKEND_POD" -- python /app/scripts/s3_setup.py \
     && log "S3 buckets ready." \
     || warn "Bucket setup failed — fix the cause, then re-run: $S3_SETUP_HINT"
 else
