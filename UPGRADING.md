@@ -220,6 +220,16 @@ point any script of your own at the new paths. Nothing else needs to change:
 - the rendered manifests keep every resource name, so the next deploy
   updates in place (only comments inside two ConfigMaps change).
 
+### Go reporter module path
+
+The Go reporter's module path is `github.com/test-intelligence/testlookup/client/go`; it was `github.com/testlookup/testlookup-go`, which nothing served, so every user had a `replace` directive pointing at a clone. Rename the path in your `go.mod` (`require` and `replace`) and in your imports:
+
+```go
+import "github.com/test-intelligence/testlookup/client/go/testlookup"
+```
+
+You can drop the `replace` directive and run `go get github.com/test-intelligence/testlookup/client/go@main` (or `@vX.Y.Z` once `client/go/vX.Y.Z` is tagged); keep it if you build from a clone or from your server's SDK Downloads ZIP.
+
 ### Install locations
 
 `install.sh` and `docker-compose.release.yml` now use

@@ -15,8 +15,10 @@ How a maintainer cuts a release. Users upgrading an install want
   Every push to `main` publishes `:<commit-sha>` and `:latest`; a release adds
   the immutable `:vX.Y.Z` alias to the exact digests CI verified — the release
   never rebuilds.
-- The SDKs, CLI and MCP server are released from the same tag; they are not
+- The SDKs, CLI and MCP server are released from the same commit; they are not
   published to package registries yet (install from source, see their READMEs).
+  The Go module is fetched straight from this repository, so it gets its own
+  tag, `client/go/vX.Y.Z` (Go's convention for a module in a subdirectory).
 
 ## Cutting a release
 
@@ -39,7 +41,8 @@ How a maintainer cuts a release. Users upgrading an install want
    ```bash
    git switch main && git pull
    git tag -a vX.Y.Z -m "TestLookup vX.Y.Z"
-   git push origin vX.Y.Z
+   git tag -a client/go/vX.Y.Z -m "TestLookup Go reporter vX.Y.Z"
+   git push origin vX.Y.Z client/go/vX.Y.Z
    ```
 
 5. **Watch "Promote verified release"** (`.github/workflows/release.yml`). It
