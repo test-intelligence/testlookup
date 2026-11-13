@@ -493,6 +493,13 @@ services:
       - "${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:80"
     environment:
       - BACKEND_UPSTREAM=backend:8000
+    healthcheck:
+      # busybox wget ships in the nginx image; the same path as the k8s probes.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     depends_on:
       - backend
     networks:
@@ -530,6 +537,13 @@ services:
       - "127.0.0.1:8002:8002"
     environment:
       - TESTLOOKUP_API_URL=http://backend:8000
+    healthcheck:
+      # The image has no curl or wget; the same endpoint as the k8s liveness probe.
+      test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8002/health/live', timeout=5).status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     depends_on:
       backend:
         condition: service_healthy

@@ -38,6 +38,9 @@ spec:
       labels:
         app: testlookup-minio
     spec:
+      # No Kubernetes API calls here, so no service-account token in the pod
+      # (OSS review 2026-11-12, L-8).
+      automountServiceAccountToken: false
       containers:
         - name: minio
           image: ghcr.io/versity/versitygw:v1.8.0

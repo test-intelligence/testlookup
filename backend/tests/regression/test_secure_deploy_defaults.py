@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from compose_topology_contract import load_compose_file
 
 pytestmark = pytest.mark.regression
 
@@ -83,7 +84,7 @@ def _published(entry) -> tuple[str, str]:
 
 
 def _services(relative: str) -> dict:
-    return (yaml.safe_load((ROOT / relative).read_text(encoding="utf-8")) or {}).get("services") or {}
+    return load_compose_file(ROOT / relative).get("services") or {}
 
 
 def _port_cases():
@@ -194,6 +195,19 @@ def test_the_public_ingress_does_not_route_metrics(relative):
         f"{relative} routes /metrics, which has no authentication, to the internet; "
         "Prometheus scrapes pods directly (k8s/monitoring/podmonitors.yaml)"
     )
+
+
+def test_every_long_running_release_service_has_a_healthcheck():
+    """`docker compose ps` and `depends_on: service_healthy` can only report what is probed.
+
+    The frontend and the MCP server had none (OSS review 2026-11-12, L-9); one-shot
+    jobs (`restart: "no"`) finish instead of staying healthy.
+    """
+    services = _services("docker-compose.release.yml")
+    long_running = {name: s for name, s in services.items() if str(s.get("restart", "")).lower() != "no"}
+    assert {"backend", "frontend", "mcp"} <= set(long_running), sorted(long_running)
+    missing = sorted(name for name, s in long_running.items() if not (s.get("healthcheck") or {}).get("test"))
+    assert not missing, f"docker-compose.release.yml: no healthcheck for {missing}"
 
 
 def test_prometheus_has_no_unauthenticated_lifecycle_api():

@@ -30,6 +30,9 @@ spec:
       labels:
         app: testlookup-redis
     spec:
+      # No Kubernetes API calls here, so no service-account token in the pod
+      # (OSS review 2026-11-12, L-8).
+      automountServiceAccountToken: false
       containers:
         - name: redis
           image: valkey/valkey:8.1-alpine

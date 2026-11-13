@@ -18,6 +18,9 @@ spec:
       # Schedule on GPU node if available — comment out if CPU-only
       # nodeSelector:
       #   nvidia.com/gpu: "true"
+      # No Kubernetes API calls here, so no service-account token in the pod
+      # (OSS review 2026-11-12, L-8).
+      automountServiceAccountToken: false
       containers:
         - name: ollama
           image: ollama/ollama:0.40.10

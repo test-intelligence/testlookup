@@ -6,19 +6,24 @@ name: testlookup
 #
 # This override switches app services to production targets,
 # avoids bind mounts, and keeps resource-heavy services optional.
+#
+# `volumes: !reset []` drops the development file's source bind mounts; a
+# plain `[]` would not, because Compose merges volumes from every file.
+# Needs Docker Compose 2.24.4 or newer.
 
 services:
   db-migrate:
     image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
     build:
       target: production
+    volumes: !reset []
 
   backend:
     image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
     build:
       target: production
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
-    volumes: []
+    volumes: !reset []
     environment:
       - APP_ENV=${APP_ENV:-production}
       - APP_DEBUG=${APP_DEBUG:-false}
@@ -52,7 +57,7 @@ services:
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     ports:
       - "80:80"
-    volumes: []
+    volumes: !reset []
     environment: []
 
   worker:
@@ -60,7 +65,7 @@ services:
     build:
       target: production
     profiles: ["async"]
-    volumes: []
+    volumes: !reset []
     command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_WORKER_CONCURRENCY:-1} -Q default,critical,ingestion,ai_analysis
 
   worker-children:
@@ -68,20 +73,20 @@ services:
     build:
       target: production
     profiles: ["async"]
-    volumes: []
+    volumes: !reset []
 
   beat:
     image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
     build:
       target: production
     profiles: ["async"]
-    volumes: []
+    volumes: !reset []
 
   seed-init:
     image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}
     build:
       target: production
-    volumes: []
+    volumes: !reset []
 
   # Bucket setup (scripts/s3_setup.py) runs from the same production image.
   minio-setup:
