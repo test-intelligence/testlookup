@@ -5,7 +5,7 @@
 # ── Base stage ───────────────────────────────────────────────
 # Pinned by digest, here and in the production stage, so every build starts
 # from the same base; Dependabot's docker updates for /backend move both.
-FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS base
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS base
 
 WORKDIR /app
 
@@ -112,7 +112,7 @@ RUN mkdir -p /app/__client_sdks_staged && \
 RUN python -m compileall -q app/
 
 # ── Production stage ─────────────────────────────────────────
-FROM python:3.14-slim@sha256:9aaa474097d094040649f2162a627c0049b408f52138d980916788d80f04802f AS production
+FROM python:3.15-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS production
 
 WORKDIR /app
 
