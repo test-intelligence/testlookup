@@ -58,7 +58,7 @@ async def test_stale_sent_child_is_replayed_only_while_queued(monkeypatch):
                 )
             ).first()
             if authority is None:
-                pytest.skip("homelab database has no failed test authority fixture")
+                pytest.skip("reference K3s install database has no failed test authority fixture")
             run_id, project_id, test_case_id = authority
 
             await db.execute(
@@ -235,7 +235,7 @@ async def test_concurrent_parent_dispatch_is_singleton_and_reuses_spawn_key(monk
                 )
             ).mappings().first()
             if authority is None:
-                pytest.skip("homelab database has no failed test authority fixture")
+                pytest.skip("reference K3s install database has no failed test authority fixture")
             run_id = authority["run_id"]
             project_id = authority["project_id"]
             test_case_id = authority["test_case_id"]

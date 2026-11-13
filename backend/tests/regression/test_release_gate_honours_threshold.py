@@ -1,6 +1,6 @@
 """A run below the configured pass-rate threshold must not be a clean GO.
 
-Closes F-020, measured on the live homelab (2026-08-07) across nine pass-rate
+Closes F-020, measured on a live reference K3s install (2026-08-07) across nine pass-rate
 levels on a throwaway project, default `synthesized` path, no ReleaseGatePolicy::
 
     pass_rate  100  95  89  83  70  64 | 62     50     0

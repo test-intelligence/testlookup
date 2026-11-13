@@ -1,6 +1,6 @@
 """Regression: a routine startup condition must not reach observability as an error.
 
-Bug (homelab, 2026-08-16, E-017): ``LiveEventStreamConsumer._ensure_group``
+Bug (reference K3s install, 2026-08-16, E-017): ``LiveEventStreamConsumer._ensure_group``
 called ``XGROUP CREATE`` unconditionally and swallowed the resulting
 ``BUSYGROUP Consumer Group name already exists``. The consumer group lives in
 Redis and survives pod restarts, so on every deploy after the first this fired

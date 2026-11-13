@@ -1,7 +1,7 @@
 """Phase D L1: the viz load-test scenarios in ``scripts/load_test_concurrent.py``.
 
 No network: every HTTP exchange goes through ``httpx.MockTransport``. What is
-pinned here is what a homelab run cannot check for itself afterwards -- that
+pinned here is what a reference K3s install run cannot check for itself afterwards -- that
 each request asked the question it claims to (only parameters the route
 declares, repeated parameters in FastAPI's shape), that the viz list never
 leaks into the live pytest smoke set, that the shared dev stack is refused,

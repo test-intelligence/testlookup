@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================
-# Prune old TestLookup images from the homelab registry
+# Prune old TestLookup images from the reference K3s install registry
 # ============================================================
 # Every deploy pushes a new immutable build-YYYYMMDD-HHMMSS tag of
 # testlookup/backend, testlookup/frontend and testlookup/mcp (~1 GB of new
@@ -16,11 +16,11 @@
 # other apps on the cluster deploy by digest, with no tag.
 #
 # Usage:
-#   ./homelabsetup/prune-registry.sh [--registry=host:port] [--keep=N] [--dry-run] [--no-gc]
+#   ./k3ssetup/prune-registry.sh [--registry=host:port] [--keep=N] [--dry-run] [--no-gc]
 #
 # Exit codes: 0 done (or nothing to prune), 2 bad flag, 3 the registry refuses
 # deletes (registry:2 needs REGISTRY_STORAGE_DELETE_ENABLED=true), 4 the
-# registry is unreachable. deploy-homelab.sh runs this after a successful
+# registry is unreachable. deploy-k3s.sh runs this after a successful
 # deploy and only warns on a non-zero exit: pruning never fails a deploy.
 # ============================================================
 set -u

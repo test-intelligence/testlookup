@@ -1,7 +1,7 @@
 /**
  * Regression guard: a deliberately un-probed service is not a degraded system.
  *
- * Bug (homelab, 2026-08-16): `/health/details` returned
+ * Bug (reference K3s install, 2026-08-16): `/health/details` returned
  *   "ollama": { "status": "skipped", "detail": "AI_OFFLINE_MODE=false — using cloud LLM" }
  * alongside an overall "status": "healthy". This hook counted every check whose
  * status was not exactly 'ok' as unavailable, so a fully working OpenRouter

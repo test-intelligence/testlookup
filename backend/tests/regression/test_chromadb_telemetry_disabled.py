@@ -1,7 +1,7 @@
 """
 Regression: BUG-001 — ChromaDB anonymous telemetry must be disabled.
 
-Symptom (live homelab, run 493d5c1f, 2026-06-06): the AI worker logged, ~5x per
+Symptom (live reference K3s install, run 493d5c1f, 2026-06-06): the AI worker logged, ~5x per
 pipeline, ``Failed to send telemetry event ClientStartEvent: capture() takes 1
 positional argument but 3 were given`` — ChromaDB's bundled posthog telemetry
 breaking against the installed posthog, plus an unwanted outbound phone-home in

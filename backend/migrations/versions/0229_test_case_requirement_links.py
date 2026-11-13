@@ -27,7 +27,7 @@ feature-flag row:
   ``enabled_global`` = the fresh-install condition of 0201 / 0212 (no user and
   no project exists yet -- the state ``alembic upgrade head`` runs in on a new
   install); a row that already exists is left as it is (``ON CONFLICT (key) DO
-  NOTHING``). On an upgraded deployment (the homelab) an admin turns it on at
+  NOTHING``). On an upgraded deployment (the reference K3s install) an admin turns it on at
   deploy with ``PATCH /api/v1/feature-flags/test_case_requirement_traceability``
   (``{"enabled_global": true}``). Off, the requirement routes answer 404 and the
   page shows nothing of the feature.

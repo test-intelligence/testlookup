@@ -1,6 +1,6 @@
 """The outbox-driven AI pipeline starts, and a setup failure never strands it (re-audit N27).
 
-Found on the homelab, on the first AI pipeline the outbox ever published (N23
+Found on the reference K3s install, on the first AI pipeline the outbox ever published (N23
 had kept every one from being published at all):
 
 * ``run_agent_pipeline`` calls ``run_offline_pipeline(pipeline_run_id=...,

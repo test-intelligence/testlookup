@@ -8,7 +8,7 @@ route, ``sso_service.log_identity_event``) and by a direct insert everywhere els
 product usage, every reference row — a generic row builder that reads the LIVE catalog: NOT NULL columns, CHECK
 literals, enum labels, FK parents). A bystander (``yvkq…``) is seeded into the same locations.
 
-Then the REAL runner (``run_export_job``) on the homelab worker's 1 + 1 pool:
+Then the REAL runner (``run_export_job``) on the reference K3s install worker's 1 + 1 pool:
 1. ``succeeded``; the stored archive verifies (``verify_archive_file``: chain intact, signature valid — signed);
 2. EVERY exported location's member has ≥ 1 row of that location (a ``full`` / ``metadata`` row names it in
    ``_location``, a reference row by ``table`` + ``column``, ``profile.json`` for the profile category) —
@@ -524,7 +524,7 @@ async def world(env: Any, tmp_path_factory: pytest.TempPathFactory) -> Any:
 
 
 def _worker_pool() -> Any:
-    """The homelab worker's pool: 1 + overflow 1 (a bigger pool would hide a third connection)."""
+    """The reference K3s install worker's pool: 1 + overflow 1 (a bigger pool would hide a third connection)."""
     engine = create_async_engine(_dsn(), pool_size=1, max_overflow=1, pool_timeout=10)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     sessions.engine = engine  # type: ignore[attr-defined]

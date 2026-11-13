@@ -140,7 +140,7 @@ class KubernetesUpgrade:
         container["env"] = list(env.values())
 
     def _render(self, manifest):
-        raw = self._run(["kubectl", "kustomize", str(ROOT / "k8s/overlays/homelab")]).stdout
+        raw = self._run(["kubectl", "kustomize", str(ROOT / "k8s/overlays/k3s")]).stdout
         infrastructure, applications = [], []
         allowed = {"ServiceAccount", "ConfigMap", "Service", "PersistentVolumeClaim", "Deployment"}
         for item in yaml.safe_load_all(raw):

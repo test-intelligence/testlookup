@@ -327,12 +327,12 @@ def test_the_helper_still_allows_a_narrow_public_range():
     assert _is_a_real_trust_boundary("35.191.0.0/16,130.211.0.0/22")
 
 
-def _homelab_value() -> str:
-    text = (ROOT / "k8s" / "overlays" / "homelab" / "kustomization.yaml").read_text(
+def _k3s_value() -> str:
+    text = (ROOT / "k8s" / "overlays" / "k3s" / "kustomization.yaml").read_text(
         encoding="utf-8"
     )
     lines = [ln for ln in text.splitlines() if "TRUSTED_PROXY_IPS" in ln]
-    assert lines, "the homelab overlay no longer narrows the trust boundary"
+    assert lines, "the K3s overlay no longer narrows the trust boundary"
     return lines[0].split(":", 1)[1].strip().strip('"')
 
 
@@ -360,10 +360,10 @@ def test_base_configmap_does_not_trust_every_peer():
     )
 
 
-def test_homelab_overlay_does_not_trust_every_peer():
-    value = _homelab_value()
+def test_k3s_overlay_does_not_trust_every_peer():
+    value = _k3s_value()
     assert _is_a_real_trust_boundary(value), _WILDCARD_EXPLANATION.format(
-        source="k8s/overlays/homelab/kustomization.yaml", value=value
+        source="k8s/overlays/k3s/kustomization.yaml", value=value
     )
 
 
@@ -400,8 +400,8 @@ def test_a_wildcard_returns_the_callers_own_value():
 
 
 def test_the_pod_cidr_returns_the_real_client():
-    """The shipped homelab value, against the same chain."""
-    trusted = _TrustedHosts(_homelab_value())
+    """The shipped reference K3s install value, against the same chain."""
+    trusted = _TrustedHosts(_k3s_value())
     assert trusted.get_trusted_client_address(CHAIN)[0] == REAL_CLIENT, (
         "the trust boundary no longer resolves the true client — the login "
         "rate limiter and every audit IP depend on this"
@@ -409,7 +409,7 @@ def test_the_pod_cidr_returns_the_real_client():
 
 
 def test_trusting_the_clients_too_reopens_the_spoof():
-    """Why the homelab overlay narrows instead of inheriting the base value.
+    """Why the K3s overlay narrows instead of inheriting the base value.
 
     That cluster's users are on 192.168.0.0/24. Trusting the range they sit in
     makes the caller itself a trusted hop, so the reverse walk continues past
@@ -419,7 +419,7 @@ def test_trusting_the_clients_too_reopens_the_spoof():
     broad = _TrustedHosts("10.0.0.0/8,172.16.0.0/12,192.168.0.0/16")
     assert broad.get_trusted_client_address(lan_chain)[0] == SPOOFED
 
-    narrow = _TrustedHosts(_homelab_value())
+    narrow = _TrustedHosts(_k3s_value())
     assert narrow.get_trusted_client_address(lan_chain)[0] == "192.168.0.50"
 
 
@@ -430,17 +430,17 @@ def test_the_header_is_ignored_when_the_peer_is_not_trusted():
     peer is itself trusted, so a caller that reaches the API directly cannot
     inject an address at all.
     """
-    trusted = _TrustedHosts(_homelab_value())
+    trusted = _TrustedHosts(_k3s_value())
     assert REAL_CLIENT not in trusted
     assert INGRESS_POD in trusted
 
 
-def test_the_homelab_value_covers_every_node_pod_cidr():
+def test_the_k3s_value_covers_every_node_pod_cidr():
     """A narrowed value is only correct if it still covers every hop.
 
     Measured on the live cluster: 10.42.0.0/24, 10.42.1.0/24, 10.42.2.0/24.
     """
-    network = ipaddress.ip_network(_homelab_value())
+    network = ipaddress.ip_network(_k3s_value())
     for node_cidr in ("10.42.0.0/24", "10.42.1.0/24", "10.42.2.0/24"):
         assert ipaddress.ip_network(node_cidr).subnet_of(network), (
             "pod CIDR " + node_cidr + " is outside TRUSTED_PROXY_IPS, so "

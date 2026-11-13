@@ -263,7 +263,7 @@ function CodeBlock({ code }: { code: string }) {
 }
 
 // Direct backend URL — bypasses the Vite proxy which can't stream binary responses.
-// Falls back to same-origin so it Just Works behind any ingress (k8s/gcp/aws/homelab).
+// Falls back to same-origin so it Just Works behind any ingress (k8s/gcp/aws/k3s).
 const SDK_API_BASE =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ||
   (typeof window !== 'undefined' ? window.location.origin : '')

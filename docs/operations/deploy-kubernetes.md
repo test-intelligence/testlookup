@@ -22,7 +22,7 @@ TestLookup ships a Kustomize base (`k8s/base`) and overlays per environment and 
 The base does **not** run PostgreSQL, MongoDB, Valkey/Redis, the S3-compatible store or ChromaDB. You either:
 
 - point the configuration at managed or existing services (recommended for production): set `DATABASE_URL` and `MONGO_URI` in the Secret, and `REDIS_URL`, `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `MINIO_ENDPOINT`, `MINIO_USE_SSL`, `CHROMA_HOST` and `CHROMA_PORT` in a ConfigMap patch; or
-- run them in the cluster with pods labelled `app: testlookup-postgres`, `app: testlookup-mongo`, `app: testlookup-redis`, `app: testlookup-minio` and `app: testlookup-chromadb`, so the base Services find them. The `homelab` (single-node K3s) and `openshift-artifactory` overlays contain complete `infra-*.yaml` examples you can copy into your own overlay.
+- run them in the cluster with pods labelled `app: testlookup-postgres`, `app: testlookup-mongo`, `app: testlookup-redis`, `app: testlookup-minio` and `app: testlookup-chromadb`, so the base Services find them. The `reference K3s install` (single-node K3s) and `openshift-artifactory` overlays contain complete `infra-*.yaml` examples you can copy into your own overlay.
 
 Whatever you use for the broker must persist data and must not evict keys without a TTL; the requirements are spelled out under [external Valkey or Redis](deploy-openshift.md#external-valkey-or-redis-requirements). External PostgreSQL must report at least `PG_FLEET_MAX_CONNECTIONS` (400 by default) from `SHOW max_connections`; see [database connection budget](database-connection-budget.md).
 
@@ -136,7 +136,7 @@ Runs `alembic upgrade head` as one Kubernetes Job (`backoffLimit: 0`, kept for 7
 
 `default-deny-all` blocks all traffic, then explicit policies open what each component needs: DNS egress for every pod; the frontend (port 80), the backend (port 8000) and MCP (port 8002) accept traffic from the `ingress-nginx` namespace and from OpenShift's router, matched by the `openshift-ingress` namespace name and by the `policy-group.network.openshift.io/ingress` namespace label (which also covers a router on the host network); the backend also accepts port 8000 from the frontend, workers and MCP; workers and the backend accept metrics scrapes from the `monitoring`, `openshift-monitoring` and `openshift-user-workload-monitoring` namespaces, or any namespace labelled `testlookup.io/metrics-scraper: "true"`. Backend and worker egress is open because datastores may live outside the namespace.
 
-The base assumes the datastores run outside the namespace. An overlay that runs PostgreSQL, MongoDB, Redis or the object store inside it, as `homelab` and `openshift-artifactory` do, includes the [`colocated-data-stores` component](../../k8s/components/colocated-data-stores/networkpolicy.yaml):
+The base assumes the datastores run outside the namespace. An overlay that runs PostgreSQL, MongoDB, Redis or the object store inside it, as `reference K3s install` and `openshift-artifactory` do, includes the [`colocated-data-stores` component](../../k8s/components/colocated-data-stores/networkpolicy.yaml):
 
 ```yaml
 components:

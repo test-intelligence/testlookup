@@ -1,6 +1,6 @@
 """The background defect-candidate build saves what it builds, and says when it can't.
 
-Re-testing the run page on the homelab (2026-10-14), three of four runs got no
+Re-testing the run page on the reference K3s install (2026-10-14), three of four runs got no
 candidates and the log said nothing. Diagnosed in the pod with the commit
 rolled back:
 

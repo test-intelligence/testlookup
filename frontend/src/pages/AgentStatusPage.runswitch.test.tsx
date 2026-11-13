@@ -12,7 +12,7 @@
  *
  * BUG-011 (2026-09-19): that fix cleared the id and stopped. The panels then
  * showed "Select a pipeline run to see agent stages" for EVERY run picked —
- * measured against the homelab as four runs, four different left-hand lists,
+ * measured against the reference K3s install as four runs, four different left-hand lists,
  * one identical empty panel. Wrong content became no content, which reads the
  * same way from the user's chair ("it is static values") and added a mandatory
  * second click. A run on the route now also opens its newest pipeline.
@@ -92,7 +92,7 @@ function pipeline(id: string, runId: string, createdAt: string) {
 }
 
 const pipelineForRun1 = pipeline('pipe-1', 'run-1', '2026-03-31T10:00:00Z')
-// run-2 carries two, deliberately out of order: homelab runs hold 0, 2 and 13,
+// run-2 carries two, deliberately out of order: reference K3s install runs hold 0, 2 and 13,
 // so "the run's pipeline" is not a thing — the NEWEST one is what opens.
 const pipeRun2Older = pipeline('pipe-2-old', 'run-2', '2026-03-31T11:00:00Z')
 const pipeRun2Newer = pipeline('pipe-2-new', 'run-2', '2026-03-31T12:00:00Z')

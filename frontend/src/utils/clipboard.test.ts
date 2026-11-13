@@ -3,7 +3,7 @@ import { copyTextToClipboard } from './clipboard'
 
 // `frontend.clipboard-util` (quality gate) forces all 16 copy call sites through
 // this helper precisely because navigator.clipboard is unavailable on HTTP
-// origins — the homelab and air-gapped installs. The fallback path is the whole
+// origins — the reference K3s install and air-gapped installs. The fallback path is the whole
 // point of the helper and it shipped with no test at all.
 
 const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
@@ -80,7 +80,7 @@ describe('copyTextToClipboard', () => {
 
       await expect(copyTextToClipboard('api-key')).resolves.toBe(true)
 
-      // This is the homelab / air-gap case: the async API exists but must not
+      // This is the reference K3s install / air-gap case: the async API exists but must not
       // be used, because the browser refuses it off a secure origin.
       expect(writeText).not.toHaveBeenCalled()
       expect(execCommand).toHaveBeenCalledWith('copy')

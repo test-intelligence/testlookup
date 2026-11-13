@@ -10,7 +10,7 @@ set on a deployment that doesn't use SAML. Worse, the config's own
 localhost warning for it is gated on ``SSO_ENABLED``, so on a non-SSO
 deployment nothing ever flagged the default.
 
-Measured against the live homelab, which sets ``PUBLIC_BASE_URL`` correctly:
+Measured against a live reference K3s install, which sets ``PUBLIC_BASE_URL`` correctly:
 
 ============================================  ===========================
                                               result

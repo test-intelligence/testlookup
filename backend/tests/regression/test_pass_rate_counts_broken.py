@@ -1,6 +1,6 @@
 """A run with BROKEN tests must never report a 100% pass rate.
 
-Found by exploratory testing against the live homelab (2026-08-07), on a
+Found by exploratory testing against a live reference K3s install (2026-08-07), on a
 throwaway project ingested specifically to isolate this.
 
     run: 10 PASSED, 0 FAILED, 2 BROKEN, total 12
@@ -40,7 +40,7 @@ def _pass_rate(passed: int, failed: int, broken: int) -> float:
     return (passed / denom * 100.0) if denom else 0.0
 
 
-class TestTheHomelabRepro:
+class TestTheReferenceInstallRepro:
     def test_broken_tests_prevent_a_100_percent_claim(self):
         """10 passed / 0 failed / 2 broken previously reported 100%."""
         rate = _pass_rate(passed=10, failed=0, broken=2)

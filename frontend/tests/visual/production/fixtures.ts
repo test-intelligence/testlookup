@@ -2290,7 +2290,7 @@ export const FAILURES: ApiHandlers = [
 ]
 
 /**
- * W23b FAIL-12: the default `GET /api/v1/runs/{run_id}/bisect?fingerprint=` answer -- the homelab's, in the REAL
+ * W23b FAIL-12: the default `GET /api/v1/runs/{run_id}/bisect?fingerprint=` answer -- the reference K3s install's, in the REAL
  * `BisectResponse` shape: narrowed on the run's branch (`main`), last passed in build 238 (`runs()[2]`), first
  * failed in build 240 (`runs()[0]`), build 239 in between did not run the test, and no commit list (offline
  * mode). `run_id` / `fingerprint` echo the request; the test's name is the top-failing row's with that

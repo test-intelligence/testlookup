@@ -1,6 +1,6 @@
 """Enabling a hosted LLM provider takes five settings that must agree.
 
-Turning OpenRouter on for the homelab needed all of:
+Turning OpenRouter on for the reference K3s install needed all of:
 
     AI_OFFLINE_MODE            false        the hard egress ceiling
     LLM_PROVIDER               openrouter   what to call
@@ -34,7 +34,7 @@ import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 BASE_CONFIG = REPO / "k8s" / "base" / "configmap.yaml"
-HOMELAB = REPO / "k8s" / "overlays" / "homelab" / "kustomization.yaml"
+K3S = REPO / "k8s" / "overlays" / "k3s" / "kustomization.yaml"
 
 pytestmark = pytest.mark.skipif(
     not BASE_CONFIG.exists(), reason="k8s manifests not present in this checkout"
@@ -71,12 +71,12 @@ def test_the_shipped_default_is_offline():
     )
 
 
-@pytest.mark.skipif(not HOMELAB.exists(), reason="homelab overlay not present")
+@pytest.mark.skipif(not K3S.exists(), reason="k3s overlay not present")
 def test_a_configured_provider_is_also_permitted():
     """The LLMPolicyViolation trap. AI_LLM_PROVIDER_ALLOWLIST is enforced
     independently of LLM_PROVIDER, so naming a provider without permitting it
     fails at call time with an error that looks like a broken integration."""
-    cfg = _values(HOMELAB.read_text(encoding="utf-8"))
+    cfg = _values(K3S.read_text(encoding="utf-8"))
     provider = cfg.get("LLM_PROVIDER")
     if not provider:
         pytest.skip("overlay does not pin a provider")
@@ -90,10 +90,10 @@ def test_a_configured_provider_is_also_permitted():
     )
 
 
-@pytest.mark.skipif(not HOMELAB.exists(), reason="homelab overlay not present")
+@pytest.mark.skipif(not K3S.exists(), reason="k3s overlay not present")
 def test_a_hosted_provider_has_its_origin_permitted():
     """Same trap, the base-URL half."""
-    cfg = _values(HOMELAB.read_text(encoding="utf-8"))
+    cfg = _values(K3S.read_text(encoding="utf-8"))
     provider = cfg.get("LLM_PROVIDER")
     urls = cfg.get("AI_LLM_ALLOWED_BASE_URLS")
     if not provider or urls is None:
@@ -111,23 +111,23 @@ def test_a_hosted_provider_has_its_origin_permitted():
     )
 
 
-@pytest.mark.skipif(not HOMELAB.exists(), reason="homelab overlay not present")
+@pytest.mark.skipif(not K3S.exists(), reason="k3s overlay not present")
 def test_enabling_egress_names_a_provider_and_model():
     """`AI_OFFLINE_MODE=false` on its own just opens the ceiling. Without a
     provider and model pinned alongside it, the deployment inherits whatever the
     base sets — which is the local one it cannot run."""
-    cfg = _values(HOMELAB.read_text(encoding="utf-8"))
+    cfg = _values(K3S.read_text(encoding="utf-8"))
     if cfg.get("AI_OFFLINE_MODE") != "false":
         pytest.skip("overlay is offline; nothing to check")
     assert cfg.get("LLM_PROVIDER"), "egress enabled but no LLM_PROVIDER pinned"
     assert cfg.get("LLM_MODEL"), "egress enabled but no LLM_MODEL pinned"
 
 
-@pytest.mark.skipif(not HOMELAB.exists(), reason="homelab overlay not present")
+@pytest.mark.skipif(not K3S.exists(), reason="k3s overlay not present")
 def test_the_local_provider_stays_permitted():
     """Keeping ollama in the allowlist makes reverting a one-line change to
     LLM_PROVIDER instead of another allowlist edit under pressure."""
-    cfg = _values(HOMELAB.read_text(encoding="utf-8"))
+    cfg = _values(K3S.read_text(encoding="utf-8"))
     allowlist = cfg.get("AI_LLM_PROVIDER_ALLOWLIST")
     if not allowlist:
         pytest.skip("no allowlist configured")

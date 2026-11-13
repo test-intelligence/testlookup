@@ -15,7 +15,7 @@ survives in the queue.
 transition entirely and reported success having changed nothing. The page
 promises "Accepting marks the pipeline run passed"; there was no run to mark.
 
-Measured on the homelab deployment before the fix::
+Measured on the reference K3s install deployment before the fix::
 
     pipeline_run_id IS NULL | subject is a real pipeline | count
     false                   | yes                        |  106

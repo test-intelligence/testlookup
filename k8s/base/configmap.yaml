@@ -89,12 +89,12 @@ data:
   # drawn from (GKE, EKS and AKS all allocate inside them) and is correct
   # wherever CLIENTS arrive from public addresses. An on-premise cluster whose
   # users share the RFC1918 space with the pods MUST narrow this to the pod
-  # CIDR in its overlay -- see overlays/homelab, which pins 10.42.0.0/16.
+  # CIDR in its overlay -- see overlays/k3s, which pins 10.42.0.0/16.
   TRUSTED_PROXY_IPS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
   # ── Observability ────────────────────────────────────────────────────────────
   # Off by default (re-audit N22): with no collector endpoint the backend used
   # to print every span to stdout (~90k log lines per 10 minutes on the
-  # homelab). To enable tracing, set BOTH in an overlay:
+  # reference K3s install). To enable tracing, set BOTH in an overlay:
   #   OTEL_ENABLED: "true"
   #   OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger-collector:4318"
   # CI renders every overlay and fails if one enables tracing without an

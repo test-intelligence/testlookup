@@ -60,7 +60,7 @@ if [ "${SHIM_EMPTY:-}" = mongodump ]; then : > "$out"; else printf 'mongo-fake' 
 """,
     "mongorestore": """echo "mongorestore $*" >> "$SHIM_LOG"
 """,
-    # Readiness probes (the wait added after the homelab run): count calls in
+    # Readiness probes (the wait added after the reference K3s install run): count calls in
     # $SHIM_LOG.count.<tool>; SHIM_NOT_READY=N fails the first N calls,
     # SHIM_NEVER_READY=<tool> fails every call.
     "pg_isready": """echo "pg_isready $*" >> "$SHIM_LOG"
@@ -451,14 +451,14 @@ def test_the_backup_pod_can_reach_the_stores_under_default_deny() -> None:
     assert template["metadata"]["labels"]["app"] == "testlookup-backup"
 
 
-@pytest.mark.parametrize("overlay", ["homelab", "openshift-artifactory"])
+@pytest.mark.parametrize("overlay", ["k3s", "openshift-artifactory"])
 def test_overlays_with_in_cluster_stores_include_the_component(overlay: str) -> None:
     kustomization = yaml.safe_load(
         (REPO_ROOT / "k8s" / "overlays" / overlay / "kustomization.yaml").read_text(encoding="utf-8"))
     assert "../../components/backup" in kustomization.get("components", [])
 
 
-# ── wait for each store before touching it (homelab run, re-audit M25) ──────
+# ── wait for each store before touching it (reference K3s install run, re-audit M25) ──────
 #
 # The first live run failed in its first second: pg_dump got "Connection
 # refused" because k3s/kube-router had not yet programmed the new pod's
@@ -560,7 +560,7 @@ def _before(text: str, first: str, then: str, inside: str) -> bool:
     return body.index(first) < body.index(then)
 
 
-@pytest.mark.parametrize("overlay", ["homelab", "openshift-artifactory"])
+@pytest.mark.parametrize("overlay", ["k3s", "openshift-artifactory"])
 def test_rendered_backup_waits_before_every_dump(overlay: str) -> None:
     docs = _rendered(overlay)
     cronjob = next(d for d in docs if d["kind"] == "CronJob" and d["metadata"]["name"] == "testlookup-backup")

@@ -15,7 +15,7 @@ kind: Kustomization
 #   - StorageClass defaults to whatever your cluster provides — override via
 #     STORAGE_CLASS env in scripts/deploy-k8s.sh, or patch this file.
 #   - Stateful workloads (postgres/mongo/redis/minio) run IN-CLUSTER by default
-#     (see homelab overlay for an example wiring). For production, swap to
+#     (see K3s overlay for an example wiring). For production, swap to
 #     external managed services and update testlookup-secrets accordingly.
 
 resources:

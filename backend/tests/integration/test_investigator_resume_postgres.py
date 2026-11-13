@@ -56,7 +56,7 @@ async def test_child_resume_is_lock_serialized_and_preserves_completed_hypothesi
                 )
             ).first()
             if cluster is None:
-                pytest.skip("homelab database has no persisted failure-cluster fixture")
+                pytest.skip("reference K3s install database has no persisted failure-cluster fixture")
             cluster_id, run_id, parent_pipeline_id, display_id, members = cluster
             project_id = (
                 await db.execute(

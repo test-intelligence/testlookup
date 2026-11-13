@@ -2,7 +2,7 @@
 
 Onboarding said "The CLI is not published to PyPI — it ships in the repo" and
 offered only ``pip install -e cli/`` (a clone). The image's build context now
-stages a wheel built from ``cli/`` (CI and ``deploy-homelab.sh``) under
+stages a wheel built from ``cli/`` (CI and ``deploy-k3s.sh``) under
 ``client_sdks/cli/``; ``GET /api/v1/sdk/cli/info`` names it, ``GET
 /api/v1/sdk/cli/<wheel>`` serves it with its real file name (pip needs one), and
 ``GET /api/v1/sdk`` lists "CLI". Only a staged wheel name is ever served.

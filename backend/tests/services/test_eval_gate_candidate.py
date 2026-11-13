@@ -205,7 +205,7 @@ async def test_without_a_candidate_run_the_gate_answers_as_before_plus_the_new_k
 
 @pytest.mark.asyncio
 async def test_without_a_candidate_a_replay_baseline_is_never_compared_with_label_agreement(monkeypatch):
-    """Found on the homelab walk: label agreement 0.83 vs a replay baseline 0.92 read FAIL (no_regression)."""
+    """Found on the reference K3s install walk: label agreement 0.83 vs a replay baseline 0.92 read FAIL (no_regression)."""
     items = [{"input": {}, "expected_output": {"correct": True}}] * 10 + [
         {"input": {}, "expected_output": {"correct": False}}
     ] * 2

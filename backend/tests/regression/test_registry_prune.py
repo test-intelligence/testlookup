@@ -1,9 +1,9 @@
-"""The homelab deploy prunes old TestLookup images from the registry, and only those.
+"""The reference K3s install deploy prunes old TestLookup images from the registry, and only those.
 
 On 2026-10-18 the in-cluster registry held ~570 builds of each TestLookup image
 (48.8 GB on one node's disk): every deploy pushes a new immutable
 ``build-YYYYMMDD-HHMMSS`` tag and nothing ever removed an old one.
-``homelabsetup/prune-registry.sh`` now keeps the newest N dated builds,
+``k3ssetup/prune-registry.sh`` now keeps the newest N dated builds,
 ``latest`` and every digest a kept tag shares, deletes the rest of
 testlookup/{backend,frontend,mcp}, and never reads another repository (other
 apps on the cluster deploy by digest, with no tag).
@@ -23,14 +23,14 @@ import threading
 import pytest
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
-PRUNE = REPO / "homelabsetup" / "prune-registry.sh"
-DEPLOY = REPO / "homelabsetup" / "deploy-homelab.sh"
+PRUNE = REPO / "k3ssetup" / "prune-registry.sh"
+DEPLOY = REPO / "k3ssetup" / "deploy-k3s.sh"
 BASH = shutil.which("bash")
 CURL = shutil.which("curl")
 
 pytestmark = pytest.mark.skipif(
     not PRUNE.exists() or not BASH or not CURL,
-    reason="needs homelabsetup/prune-registry.sh, bash and curl",
+    reason="needs k3ssetup/prune-registry.sh, bash and curl",
 )
 
 # repo -> {tag: digest}. backend: the three newest dated builds plus older

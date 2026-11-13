@@ -25,7 +25,7 @@ Why this lives under ``tests/integration/`` not ``tests/``:
     Integration tests run real HTTP against a live stack. This file is
     skipped unless ``TESTLOOKUP_E2E_BASE_URL`` is set in the environment.
     Set it to ``http://localhost:8000`` to run against ``make dev``, or
-    to a homelab/staging URL for a smoke check after deploy.
+    to a K3s/staging URL for a smoke check after deploy.
 
 What is asserted vs. observed:
 

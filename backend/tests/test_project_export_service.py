@@ -292,7 +292,7 @@ def test_the_source_session_executes_only_selects(signing: Any) -> None:
 
 def test_the_snapshot_is_ended_before_the_archive_is_written(signing: Any) -> None:
     """The worker's pool holds 2 connections: the snapshot must hand its back before the write (on_written and the
-    storage config each need one) — the homelab's first export held it and failed export_write (TimeoutError)."""
+    storage config each need one) — the reference K3s install's first export held it and failed export_write (TimeoutError)."""
     project, rows, users = _seed()
     db = RecordingSession(rows, users)
     storage = FakeStorage()

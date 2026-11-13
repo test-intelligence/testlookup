@@ -386,7 +386,7 @@ async def test_comparison_defaults_to_the_previous_run_of_the_same_suite(monkeyp
 
 @pytest.mark.asyncio
 async def test_a_run_without_a_primary_suite_is_compared_with_one_without_either(monkeypatch):
-    """Measured on the homelab, 2026-10-10: "What changed since the previous
+    """Measured on the reference K3s install, 2026-10-10: "What changed since the previous
     build?" compared build-2029 (no primary suite) with viz-3044, a
     CheckoutSuite run on a feature branch that happened to start between it
     and build-2028. "No primary suite" now matches "no primary suite"."""
@@ -415,7 +415,7 @@ async def test_a_run_without_a_primary_suite_is_compared_with_one_without_either
 
 @pytest.mark.asyncio
 async def test_clusters_name_their_member_tests():
-    """Measured on the homelab, 2026-10-10: asked which tests are behind the
+    """Measured on the reference K3s install, 2026-10-10: asked which tests are behind the
     biggest blocker, Haiku could only say "the clusters don't list their member
     tests". They are stored (member_test_ids); the tool now names them and links
     them, and says so when none belong to this run."""
@@ -508,7 +508,7 @@ async def test_the_flaky_list_carries_quarantine_state(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_release_gate_says_when_the_latest_run_has_no_verdict():
-    """Ordered by when the decision row was written, the homelab's E-Commerce
+    """Ordered by when the decision row was written, the reference K3s install's E-Commerce
     Platform answered with build-2000's verdict while build-2029 was latest."""
     latest = SimpleNamespace(id=uuid.uuid4(), build_number="build-2029")
     verdict = SimpleNamespace(

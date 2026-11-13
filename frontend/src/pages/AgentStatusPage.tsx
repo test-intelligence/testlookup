@@ -1216,14 +1216,14 @@ export default function AgentStatusPage() {
   // again 2026-09-19). Dropping the stale id left `selectedPipeline` null, so
   // the report fell back to "Select a pipeline run to see agent stages" — the
   // same placeholder for every run the user picked. Measured against the
-  // homelab: four different runs, four different pipeline lists, and an
+  // reference K3s install: four different runs, four different pipeline lists, and an
   // identical empty panel each time. Replacing the wrong pipeline with NO
   // pipeline reads as "selecting a run changes nothing", which is what was
   // reported, and it made a second click mandatory.
   //
   // So a run chosen in the picker now also opens that run's newest pipeline
   // (`pipelines` is sorted created_at-descending just below). Runs carry 0, 2
-  // or 13 pipelines on the homelab, so "the one pipeline" is not a safe
+  // or 13 pipelines on the reference K3s install, so "the one pipeline" is not a safe
   // assumption — newest-first is, and it matches what the "Run #N" label leads
   // the reader to expect. A run with no pipelines keeps the placeholder, which
   // is honest there: the pipelines list explains the absence.

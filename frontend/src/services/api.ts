@@ -18,7 +18,7 @@ declare module 'axios' {
 
 // When VITE_API_BASE_URL is unset, use same-origin relative URLs. This makes
 // the production bundle deploy-target agnostic — it works behind any ingress
-// (k8s/homelab/gcp/aws) over both http and https without mixed-content or CORS
+// (k8s/k3s/gcp/aws) over both http and https without mixed-content or CORS
 // issues. In Vite dev mode, vite.config.ts proxies /api to localhost:8000.
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 

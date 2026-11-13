@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # ============================================================
-# bootstrap-homelab.sh — One-shot K3s cluster bootstrap over SSH
+# bootstrap-k3s.sh — One-shot K3s cluster bootstrap over SSH
 # ============================================================
 # Goes from "fresh Linux nodes with SSH access" to "kubectl-ready K3s
 # cluster with MetalLB + cert-manager," then (with --deploy) hands off to
-# deploy-homelab.sh for the application install. One node is enough: the
+# deploy-k3s.sh for the application install. One node is enough: the
 # first node runs the K3s server (control plane + workloads), any further
 # nodes join as agents. Guide: docs/operations/deploy-k3s.md.
 #
 # Site configuration (required; NOT part of the repository) — read from the
-# env file named by TESTLOOKUP_HOMELAB_ENV (see homelabsetup/homelab.env.example):
+# env file named by TESTLOOKUP_K3S_ENV (see k3ssetup/k3s.env.example):
 #   K3S_NODES       "name=ip [name=ip ...]"   first entry = the K3s server
 #   K3S_NODE_USER   SSH user with sudo on every node
 #   K3S_LB_RANGE    MetalLB address range, e.g. 10.0.0.240-10.0.0.250
@@ -18,15 +18,15 @@
 # Credentials (NEVER hardcoded):
 #   - First, the script tries SSH key auth (idempotent — re-runs are free).
 #   - If key auth fails, it falls back to password auth via sshpass.
-#   - Passwords are read from env vars HOMELAB_NODE<n>_PASS (n = 1, 2, ...
+#   - Passwords are read from env vars K3S_NODE<n>_PASS (n = 1, 2, ...
 #     in K3S_NODES order), or prompted interactively (read -s) if unset.
 #     Never written to disk.
 #
 # Usage:
-#   ./homelabsetup/bootstrap-homelab.sh                 # bootstrap only
-#   ./homelabsetup/bootstrap-homelab.sh --deploy        # bootstrap + app deploy
-#   ./homelabsetup/bootstrap-homelab.sh --skip-prereqs  # K3s only, no MetalLB/cert-manager
-#   ./homelabsetup/bootstrap-homelab.sh --teardown      # uninstall K3s from all nodes
+#   ./k3ssetup/bootstrap-k3s.sh                 # bootstrap only
+#   ./k3ssetup/bootstrap-k3s.sh --deploy        # bootstrap + app deploy
+#   ./k3ssetup/bootstrap-k3s.sh --skip-prereqs  # K3s only, no MetalLB/cert-manager
+#   ./k3ssetup/bootstrap-k3s.sh --teardown      # uninstall K3s from all nodes
 # ============================================================
 
 set -euo pipefail
@@ -34,8 +34,8 @@ set -euo pipefail
 # ── Configuration ───────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SITE_CONFIG_FILE=""
-# shellcheck source=homelabsetup/lib-site-config.sh
-. "$REPO_ROOT/homelabsetup/lib-site-config.sh"
+# shellcheck source=k3ssetup/lib-site-config.sh
+. "$REPO_ROOT/k3ssetup/lib-site-config.sh"
 load_site_config
 
 # Parse "name=ip name=ip ..." into parallel arrays (first = K3s server).
@@ -126,8 +126,9 @@ require_cmd() {
 # Index 0/1/2 → password env var → fallback to prompt
 get_password() {
   local idx="$1"
-  local var="HOMELAB_NODE$((idx + 1))_PASS"
-  local val="${!var:-}"
+  local var="K3S_NODE$((idx + 1))_PASS"
+  local legacy="HOMELAB_NODE$((idx + 1))_PASS"   # the name before the K3s rename
+  local val="${!var:-${!legacy:-}}"
   if [[ -z "$val" ]]; then
     read -rsp "Password for ${NODE_USER}@${NODES_IP[$idx]}: " val
     echo
@@ -209,8 +210,8 @@ require_site_layout() {
   fi
   if [ "${#missing[@]}" -gt 0 ]; then
     echo -e "${RED}[x]${NC} Missing site configuration: ${missing[*]}" >&2
-    echo "    Set them in the env file named by TESTLOOKUP_HOMELAB_ENV" >&2
-    echo "    (template: homelabsetup/homelab.env.example)." >&2
+    echo "    Set them in the env file named by TESTLOOKUP_K3S_ENV" >&2
+    echo "    (template: k3ssetup/k3s.env.example)." >&2
     return 1
   fi
 }
@@ -230,7 +231,7 @@ preflight() {
   if [[ ! -f "$SSH_KEY" ]]; then
     log "Generating SSH key at $SSH_KEY"
     mkdir -p "$(dirname "$SSH_KEY")"
-    ssh-keygen -t ed25519 -N "" -f "$SSH_KEY" -C "testlookup-homelab"
+    ssh-keygen -t ed25519 -N "" -f "$SSH_KEY" -C "testlookup-k3s"
   else
     log "Using existing SSH key: $SSH_KEY"
   fi
@@ -369,7 +370,7 @@ $(for i in "${missing[@]}"; do echo "       - ${NODES_NAME[$i]} (${NODES_IP[$i]}
     /etc/sudoers.d/${NODE_USER} on each missing node (you'll be prompted
     once per node for ${NODE_USER}'s sudo password):
 
-        ./homelabsetup/bootstrap-homelab.sh --configure-sudo
+        ./k3ssetup/bootstrap-k3s.sh --configure-sudo
 
     Or do it manually, once per missing node:
 
@@ -377,7 +378,7 @@ $(for i in "${missing[@]}"; do echo "       - ${NODES_NAME[$i]} (${NODES_IP[$i]}
           | sudo tee /etc/sudoers.d/${NODE_USER} && \\
           sudo chmod 440 /etc/sudoers.d/${NODE_USER}"
 
-    Then re-run ./homelabsetup/bootstrap-homelab.sh
+    Then re-run ./k3ssetup/bootstrap-k3s.sh
 ══════════════════════════════════════════════════════════════════════
 EOF
   exit 1
@@ -621,7 +622,7 @@ EOF
 configure_registry_mirrors() {
   header "Configuring K3s registry mirror on all nodes"
   # Without this, kubelet on the workers can't pull from registry.local:30500
-  # because it's an insecure HTTP registry. deploy-homelab.sh would normally
+  # because it's an insecure HTTP registry. deploy-k3s.sh would normally
   # ask the user to do this by hand on each node.
 
   local mirror_config
@@ -718,7 +719,7 @@ YAML"
 }
 
 # Confirms the registry's /v2/_catalog lists every required image with the
-# expected tag. Run AFTER deploy-homelab.sh has built+pushed.
+# expected tag. Run AFTER deploy-k3s.sh has built+pushed.
 verify_pushed_images() {
   header "Verifying images in registry"
 
@@ -758,7 +759,7 @@ verify_pushed_images() {
       - Docker push failed silently (check 'docker push' output above)
       - Docker Desktop missing 'registry.local:30500' in insecure-registries
       - Wrong registry hostname — image was tagged for a different registry
-    Re-run deploy-homelab.sh manually to retry the build/push step."
+    Re-run deploy-k3s.sh manually to retry the build/push step."
   fi
 
   log "All ${#REGISTRY_IMAGES[@]} images verified in registry."
@@ -826,13 +827,13 @@ EOF
 
   if $DO_DEPLOY; then
     verify_docker_insecure_registry
-    header "Handing off to deploy-homelab.sh"
+    header "Handing off to deploy-k3s.sh"
     export KUBECONFIG="$LOCAL_KUBECONFIG"
-    "$REPO_ROOT/homelabsetup/deploy-homelab.sh"
+    "$REPO_ROOT/k3ssetup/deploy-k3s.sh"
     verify_pushed_images
   else
     echo "Next step (when ready):"
-    echo "  KUBECONFIG=$LOCAL_KUBECONFIG ./homelabsetup/deploy-homelab.sh"
+    echo "  KUBECONFIG=$LOCAL_KUBECONFIG ./k3ssetup/deploy-k3s.sh"
     echo "Or re-run this script with --deploy to do everything in one shot."
   fi
 }

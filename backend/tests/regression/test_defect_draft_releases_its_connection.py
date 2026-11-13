@@ -4,7 +4,7 @@
 ``get_defect_candidate`` on the request's session: the reads, then the LLM
 call with the connection still checked out, and the call's cost-cap check
 took a second one. A worker has three, so a few drafts at once starved the
-pool the way the run-intelligence GET did (#247; homelab, 2026-10-14).
+pool the way the run-intelligence GET did (#247; reference K3s install, 2026-10-14).
 
 ``get_defect_candidate`` now closes a session with nothing pending before the
 LLM call; the session reopens for the reads after it. The test drives the

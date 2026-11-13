@@ -6,7 +6,7 @@ windows on ``test_cases.created_at`` (top failing, failure categories) then
 counted all thirty days as "the last 7", while the flaky list (windowed on the
 run's start, through ``test_case_history``) did not: one /failures row read
 "7" failures over "failed 3 of 7 executions" (the UX redesign's browser E2E
-pass, 2026-10-08; every seeded install, the homelab demo included).
+pass, 2026-10-08; every seeded install, the reference K3s install demo included).
 
 The same pass found the seed never ran the canonical sync, so /suites listed
 none of its six suites; ``_seed_suite_catalog`` runs it now.

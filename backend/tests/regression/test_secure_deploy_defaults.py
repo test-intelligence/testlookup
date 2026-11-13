@@ -183,7 +183,7 @@ def test_the_kubernetes_ollama_runs_local_only():
     assert str(env.get("OLLAMA_NO_CLOUD", "")).lower() in {"1", "true"}
 
 
-@pytest.mark.parametrize("relative", ["k8s/base/ingress.yaml", "k8s/overlays/homelab/ingress-traefik.yaml"])
+@pytest.mark.parametrize("relative", ["k8s/base/ingress.yaml", "k8s/overlays/k3s/ingress-traefik.yaml"])
 def test_the_public_ingress_does_not_route_metrics(relative):
     paths = []
     for doc in yaml.safe_load_all((ROOT / relative).read_text(encoding="utf-8")):

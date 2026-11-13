@@ -140,7 +140,7 @@ async def test_with_redis_down_the_stored_row_is_still_the_truth(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_a_flushed_redis_is_reseeded_from_the_row(monkeypatch):
-    """The homelab acceptance: restart/flush Redis and the stored mode still holds."""
+    """The reference K3s install acceptance: restart/flush Redis and the stored mode still holds."""
     redis = RecordingRedis()
     install(monkeypatch, redis=redis)
     db = StoredConfigSession({"analysis_mode": "rules"})

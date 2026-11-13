@@ -206,7 +206,7 @@ beforeEach(() => {
 
 const tab = (name: RegExp) => screen.getByRole('tab', { name })
 
-// Action sweep, homelab 2026-10-10: "Refresh" re-runs the analysis (QA engineer
+// Action sweep, reference K3s install 2026-10-10: "Refresh" re-runs the analysis (QA engineer
 // and above) and was offered to viewers on /flaky, /flaky-coach and /quarantine,
 // who got a 403 and a toast blaming their role for clicking it.
 describe('FlakyTestsPage — Refresh is offered only to who can run it', () => {

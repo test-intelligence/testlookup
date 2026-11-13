@@ -1,6 +1,6 @@
 """GET /training/status read a count its query never selected.
 
-The API sweep (homelab, 2026-10-10) found ``GET /api/v1/training/status``
+The API sweep (reference K3s install, 2026-10-10) found ``GET /api/v1/training/status``
 answering 500 for every role: ``get_training_status`` read ``totals.labelled``
 from an aggregate that selected only ``total`` and ``unexported``. The count had
 been folded into ``get_feedback_stats``' aggregate instead (F-10). Both unit

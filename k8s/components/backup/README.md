@@ -1,6 +1,6 @@
 # Kubernetes backup and restore (re-audit M25)
 
-Namespace `testlookup` throughout. Enabled in the `homelab` and
+Namespace `testlookup` throughout. Enabled in the `reference K3s install` and
 `openshift-artifactory` overlays, whose Postgres, MongoDB and MinIO run in the
 cluster. To enable it elsewhere, add to the overlay's `kustomization.yaml`:
 
@@ -79,7 +79,7 @@ Postgres, a `mongosh` ping for MongoDB, and MinIO's `/minio/health/live`. It
 polls every `BACKUP_WAIT_INTERVAL` seconds (default 2) and fails loudly after
 `BACKUP_WAIT_SECONDS` (default 120).
 
-The wait exists because of the first live run on the homelab. k3s enforces
+The wait exists because of the first live run on the reference K3s install. k3s enforces
 NetworkPolicy with kube-router, which programs a new pod's label-matched allow
 rules shortly after the pod starts. Until then the namespace's
 `default-deny-all` rejects the pod's traffic. `pg_dump` therefore failed in its

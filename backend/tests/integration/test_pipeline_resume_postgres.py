@@ -62,7 +62,7 @@ async def test_same_pipeline_resume_claim_is_single_winner_and_resets_only_incom
                 )
             ).first()
             if run is None:
-                pytest.skip("homelab database has no test run fixture")
+                pytest.skip("reference K3s install database has no test run fixture")
             run_id, project_id = run
             await db.execute(
                 text(
@@ -151,7 +151,7 @@ async def test_resume_claim_without_authority_is_fail_closed_and_non_mutating(mo
                 )
             ).scalar_one_or_none()
             if run is None:
-                pytest.skip("homelab database has no test run fixture")
+                pytest.skip("reference K3s install database has no test run fixture")
             await db.execute(
                 text(
                     "INSERT INTO agent_pipeline_runs "
@@ -198,7 +198,7 @@ async def test_queued_resume_cannot_claim_a_review_rejected_row(monkeypatch):
                 )
             ).scalar_one_or_none()
             if run is None:
-                pytest.skip("homelab database has no test run fixture")
+                pytest.skip("reference K3s install database has no test run fixture")
             await db.execute(
                 text(
                     "INSERT INTO agent_pipeline_runs "

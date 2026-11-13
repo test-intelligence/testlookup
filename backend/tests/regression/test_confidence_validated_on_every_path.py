@@ -1,6 +1,6 @@
 """Regression: every path that publishes a confidence must apply the caps.
 
-Measured on the homelab, 2026-08-16, one test case, one body of evidence:
+Measured on the reference K3s install, 2026-08-16, one test case, one body of evidence:
 
     pipeline-stored : confidence=50  evidence=0  requires_human_review=True
     POST /analyze   : confidence=95  evidence=0  requires_human_review=False

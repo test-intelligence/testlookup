@@ -756,7 +756,7 @@ async def test_only_an_admin_imports_and_another_admins_job_is_the_unknown_404(e
 
 
 async def test_the_import_runs_inside_a_two_connection_worker_pool(env):
-    """The homelab's Celery worker pool is size 1 + overflow 1 (the export failed export_write there by holding a
+    """The reference K3s install's Celery worker pool is size 1 + overflow 1 (the export failed export_write there by holding a
     third connection): the import's ONE transaction plus its progress / manifest writes must fit in two."""
     response = await _post(env, env.archive, name=f"W24 pool check {env.tag}")
     assert response.status_code == 202, response.text

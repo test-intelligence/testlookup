@@ -447,16 +447,16 @@ def test_ingest_formats_flags_unparseable_frontend_registry(
     assert "cannot parse" in violations[0].message
 
 
-# ── Guard: homelab.build-tag-placeholder ─────────────────────────────────────
+# ── Guard: k3s.build-tag-placeholder ─────────────────────────────────────
 
 
-def _write_homelab_overlay(tmp_path: Path, tags: dict[str, str | None]) -> Path:
+def _write_k3s_overlay(tmp_path: Path, tags: dict[str, str | None]) -> Path:
     """Render a minimal overlay file whose ``images:`` block matches the
     real one's shape. ``tags`` maps image name → ``newTag`` value, or
     ``None`` to omit the ``newTag:`` line entirely (simulating the
     "missing newTag" failure mode).
     """
-    rel = "k8s/overlays/homelab/kustomization.yaml"
+    rel = "k8s/overlays/k3s/kustomization.yaml"
     path = tmp_path / rel
     blocks: list[str] = []
     for name, tag in tags.items():
@@ -550,48 +550,48 @@ def test_ai_output_hedging_preserves_line_numbers_after_block_comment(
     assert [v.line for v in violations] == [4]
 
 
-def test_homelab_build_tag_placeholder_passes_when_all_placeholders(
+def test_k3s_build_tag_placeholder_passes_when_all_placeholders(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _redirect_repo_root(monkeypatch, tmp_path)
-    _write_homelab_overlay(tmp_path, {
+    _write_k3s_overlay(tmp_path, {
         "ghcr.io/test-intelligence/testlookup/backend": "BUILD_TAG_PLACEHOLDER",
         "ghcr.io/test-intelligence/testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
         "ghcr.io/test-intelligence/testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
     })
-    assert qg._homelab_build_tag_placeholder() == []
+    assert qg._k3s_build_tag_placeholder() == []
 
 
-def test_homelab_build_tag_placeholder_fails_on_substituted_tag(
+def test_k3s_build_tag_placeholder_fails_on_substituted_tag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The killer scenario: deploy-homelab.sh was killed mid-run after
+    """The killer scenario: deploy-k3s.sh was killed mid-run after
     its sed but before its EXIT trap. The substituted timestamp tag got
     committed by accident."""
     _redirect_repo_root(monkeypatch, tmp_path)
-    _write_homelab_overlay(tmp_path, {
+    _write_k3s_overlay(tmp_path, {
         "ghcr.io/test-intelligence/testlookup/backend": "build-20260518-013421",
         "ghcr.io/test-intelligence/testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
         "ghcr.io/test-intelligence/testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
     })
-    violations = qg._homelab_build_tag_placeholder()
+    violations = qg._k3s_build_tag_placeholder()
     assert len(violations) == 1
     assert "ghcr.io/test-intelligence/testlookup/backend" in violations[0].message
     assert "build-20260518-013421" in violations[0].message
     assert violations[0].line > 0  # points at the offending line
 
 
-def test_homelab_build_tag_placeholder_fails_when_all_substituted(
+def test_k3s_build_tag_placeholder_fails_when_all_substituted(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """All three images substituted = three violations (one per image)."""
     _redirect_repo_root(monkeypatch, tmp_path)
-    _write_homelab_overlay(tmp_path, {
+    _write_k3s_overlay(tmp_path, {
         "ghcr.io/test-intelligence/testlookup/backend": "build-20260518-013421",
         "ghcr.io/test-intelligence/testlookup/frontend": "build-20260518-013421",
         "ghcr.io/test-intelligence/testlookup/mcp": "build-20260518-013421",
     })
-    violations = qg._homelab_build_tag_placeholder()
+    violations = qg._k3s_build_tag_placeholder()
     assert len(violations) == 3
     names = {v.message.split("'")[1] for v in violations}
     assert names == {
@@ -601,7 +601,7 @@ def test_homelab_build_tag_placeholder_fails_when_all_substituted(
     }
 
 
-def test_homelab_build_tag_placeholder_flags_missing_image_entry(
+def test_k3s_build_tag_placeholder_flags_missing_image_entry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Dropping one of the pinned images out of the overlay entirely
@@ -609,42 +609,42 @@ def test_homelab_build_tag_placeholder_flags_missing_image_entry(
     whatever ``image:`` line lives in the base deployment, which could
     be a floating tag."""
     _redirect_repo_root(monkeypatch, tmp_path)
-    _write_homelab_overlay(tmp_path, {
+    _write_k3s_overlay(tmp_path, {
         "ghcr.io/test-intelligence/testlookup/backend": "BUILD_TAG_PLACEHOLDER",
         # testlookup/frontend omitted entirely
         "ghcr.io/test-intelligence/testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
     })
-    violations = qg._homelab_build_tag_placeholder()
+    violations = qg._k3s_build_tag_placeholder()
     assert len(violations) == 1
     assert "ghcr.io/test-intelligence/testlookup/frontend" in violations[0].message
     assert "missing 'images:' entry" in violations[0].message
 
 
-def test_homelab_build_tag_placeholder_flags_missing_new_tag(
+def test_k3s_build_tag_placeholder_flags_missing_new_tag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """An entry without any ``newTag:`` line at all — the cluster would
     inherit the base's tag, which is a regression we want to catch."""
     _redirect_repo_root(monkeypatch, tmp_path)
-    _write_homelab_overlay(tmp_path, {
+    _write_k3s_overlay(tmp_path, {
         "ghcr.io/test-intelligence/testlookup/backend": None,  # no newTag line
         "ghcr.io/test-intelligence/testlookup/frontend": "BUILD_TAG_PLACEHOLDER",
         "ghcr.io/test-intelligence/testlookup/mcp": "BUILD_TAG_PLACEHOLDER",
     })
-    violations = qg._homelab_build_tag_placeholder()
+    violations = qg._k3s_build_tag_placeholder()
     assert len(violations) == 1
     assert "no newTag" in violations[0].message
 
 
-def test_homelab_build_tag_placeholder_passes_when_overlay_missing(
+def test_k3s_build_tag_placeholder_passes_when_overlay_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """A repo that doesn't ship the homelab overlay shouldn't fail the
+    """A repo that doesn't ship the K3s overlay shouldn't fail the
     guard — the overlay's optional. Forked / minimal checkouts must
     stay green."""
     _redirect_repo_root(monkeypatch, tmp_path)
-    # Don't write k8s/overlays/homelab/kustomization.yaml at all.
-    assert qg._homelab_build_tag_placeholder() == []
+    # Don't write k8s/overlays/k3s/kustomization.yaml at all.
+    assert qg._k3s_build_tag_placeholder() == []
 
 
 # ── Ratchet behaviour: baseline + new-violation diff ─────────────────────────
@@ -1372,7 +1372,7 @@ def _guide_guard_rows(doc: str) -> dict[str, bool]:
     """Gate id -> "is it flagged as an absolute rule", for every guard row in
     the guide's per-surface tables. Rows read ``| `backend.no-print` | ... |``
     and an absolute rule carries a trailing dagger after the id."""
-    rows = re.findall(r"^\| `([a-z]+\.[a-z0-9-]+)` *(" + _DAGGER + r"?)", doc, re.M)
+    rows = re.findall(r"^\| `([a-z][a-z0-9]*\.[a-z0-9-]+)` *(" + _DAGGER + r"?)", doc, re.M)
     return {name: bool(mark) for name, mark in rows}
 
 

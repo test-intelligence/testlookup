@@ -14,7 +14,7 @@ const ALLOWED_EXTERNAL_SCHEMES = new Set(['https:', 'http:'])
  * safe to assign to an anchor `href` or `window.location.href`.
  *
  * In production, only `https:` is accepted. In dev, `http:` is also allowed
- * to support local IdPs and homelab Jira instances during development.
+ * to support local IdPs and reference K3s install Jira instances during development.
  */
 export function isSafeExternalUrl(url: unknown): url is string {
   if (typeof url !== 'string' || url.length === 0) return false

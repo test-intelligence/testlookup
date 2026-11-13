@@ -11,7 +11,7 @@
  * error state. Nothing pinned that mapping, and it is one `catch` edit away
  * from turning every unbudgeted project's page into a failure.
  *
- * Found by a live sweep of the homelab, which flagged the 404 on
+ * Found by a live sweep of the reference K3s install, which flagged the 404 on
  * ``/deep-investigate/:runId``. The 404 turned out to be correct on both
  * sides — but correct-and-untested, which is how it stops being correct.
  *

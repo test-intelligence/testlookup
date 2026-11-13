@@ -1,6 +1,6 @@
 """W31 STRAT-12 (E-10): an erased account's placeholder address is never mailed.
 
-The homelab's SMTP is a LIVE relay, so the guard is proven ONLINE (``AI_OFFLINE_MODE``
+The reference K3s install's SMTP is a LIVE relay, so the guard is proven ONLINE (``AI_OFFLINE_MODE``
 false, the relay a public host): each of the three senders of
 ``services/notification/email_service.py`` refuses a ``…@erased.invalid``
 recipient inside ``_assert_smtp_allowed`` — before ``aiosmtplib.send``, which is

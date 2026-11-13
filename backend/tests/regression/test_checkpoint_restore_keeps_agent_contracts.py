@@ -23,7 +23,7 @@ closed, and no decision report was published -- leaving the run ``partial``.
 
 ``_load_checkpoint`` selects the latest **failed or partial** prior run, so the
 next attempt restored the same way and failed the same way. **Once a deep
-pipeline went partial it could never publish again.** Measured on the homelab
+pipeline went partial it could never publish again.** Measured on the reference K3s install
 2026-08-23: 5 of 5 re-runs failed with ``missing_contracts`` naming exactly the
 two stages the logs showed as ``stage_restored_from_checkpoint``, while 3 runs
 with no checkpoint completed and published.
@@ -75,7 +75,7 @@ def _restore(*stages: str) -> dict:
 
 
 def test_every_restored_stage_keeps_its_contract():
-    """The exact pair the homelab reported as missing."""
+    """The exact pair the reference K3s install reported as missing."""
     merged = _restore("summary", "flaky_sentinel")
 
     assert set(merged["agent_contracts"]) == {"summary", "flaky_sentinel"}, (

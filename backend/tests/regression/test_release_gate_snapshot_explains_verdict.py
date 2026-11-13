@@ -1,6 +1,6 @@
 """The release-gate snapshot must explain its own verdict.
 
-Found by exploratory testing against the live homelab (2026-08-07). The
+Found by exploratory testing against a live reference K3s install (2026-08-07). The
 quick-look (``synthesized``) release-readiness response returned, for one run::
 
     recommendation        = GO

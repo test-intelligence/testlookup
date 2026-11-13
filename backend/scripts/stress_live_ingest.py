@@ -30,7 +30,7 @@ needed. This script is that test. It drives N live runs through the SDK's own pr
 Verdict (the backlog's thresholds, ``02-backlog-final.md:3983``): finalize p95 > 30 s → build the finalize
 coalescer; WS frames/s per client p95 > 10 → build the frame coalescer; otherwise "not needed — HYG-06
 coalescers close NOT_A_GAP with these numbers". A value at or above 80 % of a threshold that does not cross it
-is "borderline — re-measure on the homelab-shaped stack before building", never a pass; a measurement that
+is "borderline — re-measure on the reference K3s install-shaped stack before building", never a pass; a measurement that
 could not be taken (no ``--dsn``, no WebSocket client) makes the verdict "incomplete", never "not needed".
 
 Acceptance (W25e, ``acceptance()``): finalize p95 ≤ 30 s measured from the DELETE's 204, and WS frames/s per
@@ -51,7 +51,7 @@ is recorded, not reopened).
 
 SAFETY — this runs ONLY against a throwaway LOCAL stack:
 * a ``--base-url`` / ``--dsn`` / ``--redis-url`` host that is not loopback (``localhost``, ``127.0.0.0/8``,
-  ``::1``) is refused with exit 2 BEFORE any request (the homelab API OOMs on bulk work);
+  ``::1``) is refused with exit 2 BEFORE any request (the reference K3s install API OOMs on bulk work);
 * port 8000 (the shared ``make dev`` stack) is refused unless ``--allow-dev-stack``;
 * finalize stages notifications, webhooks and (with AI on) the agent pipeline for every run: the stack MUST run
   with ``AI_OFFLINE_MODE=true`` and NO SMTP / webhook / integration configured, so 500 finalized runs send no
@@ -209,7 +209,7 @@ class Verdict:
 
 
 _NOT_NEEDED = "not needed — HYG-06 coalescers close NOT_A_GAP with these numbers"
-_BORDERLINE = "borderline — re-measure on the homelab-shaped stack before building"
+_BORDERLINE = "borderline — re-measure on the reference K3s install-shaped stack before building"
 
 
 def verdict(finalize_p95_s: Optional[float], frames_p95: Optional[float]) -> Verdict:

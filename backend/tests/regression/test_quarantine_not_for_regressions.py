@@ -1,6 +1,6 @@
 """A persistently-broken test must never be recommended for quarantine.
 
-Found by exploratory testing against the live homelab (2026-08-07), one
+Found by exploratory testing against a live reference K3s install (2026-08-07), one
 iteration after the sibling ``flaky_test_count`` fix (PR #461).
 
 ``GET /api/v1/projects/{id}/flaky-coach`` returned this for the seeded project::
@@ -98,7 +98,7 @@ class TestRegressionsAreNotQuarantined:
         )
         assert verdict == "INVESTIGATE"
 
-    def test_the_exact_case_found_on_the_homelab(self):
+    def test_the_exact_case_found_on_the_k3s(self):
         """test_discount_stacking: p f f f f, failure_rate 0.8."""
         assert _compute_quarantine_recommendation(0.8, 1) == "INVESTIGATE"
 

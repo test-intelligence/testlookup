@@ -84,8 +84,8 @@ jobs:
           # Match two patterns:
           #   image: foo/bar:latest             (any image: line ending in :latest)
           #   newTag: latest                    (any kustomize override pinning :latest)
-          # The BUILD_TAG_PLACEHOLDER literal in homelab/kustomization.yaml is
-          # intentional: it's substituted in-place by deploy-homelab.sh and is
+          # The BUILD_TAG_PLACEHOLDER literal in k3s/kustomization.yaml is
+          # intentional: it's substituted in-place by deploy-k3s.sh and is
           # designed to fail at ImagePull if anyone bypasses the deploy script.
           violations=$(grep -rnE '(image:[[:space:]]*[^[:space:]]+:latest$|^[[:space:]]*newTag:[[:space:]]*latest$)' \
             k8s/ || true)
@@ -94,7 +94,7 @@ jobs:
             echo "$violations"
             echo
             echo "Pin to an exact version, or use the BUILD_TAG mechanism in"
-            echo "homelabsetup/deploy-homelab.sh."
+            echo "k3ssetup/deploy-k3s.sh."
             exit 1
           fi
           echo "All k8s image tags pinned. ✓"
@@ -1247,7 +1247,7 @@ jobs:
       # `npm ci` on the committed lockfile, as the frontend image build does. `npm install`
       # quietly repaired a lockfile that `npm ci` rejects (W45: vitest 5 depends on picomatch 4
       # while the overrides pinned picomatch 2.3.2 globally), so CI was green and the first
-      # failure was the homelab image build. A missing or out-of-sync lockfile now fails here.
+      # failure was the K3s image build. A missing or out-of-sync lockfile now fails here.
       - name: Install dependencies (the committed lockfile, as the image does)
         run: npm ci
 
@@ -1382,7 +1382,7 @@ jobs:
         run: |
           go install sigs.k8s.io/kustomize/kustomize/v5@v5.7.1
           export PATH="$(go env GOPATH)/bin:$PATH"
-          for overlay in base overlays/dev overlays/staging overlays/prod overlays/homelab overlays/openshift overlays/openshift-artifactory overlays/aws-eks overlays/gcp-gke overlays/azure-aks overlays/self-hosted; do
+          for overlay in base overlays/dev overlays/staging overlays/prod overlays/k3s overlays/openshift overlays/openshift-artifactory overlays/aws-eks overlays/gcp-gke overlays/azure-aks overlays/self-hosted; do
             safe_name="${overlay//\//-}"
             kustomize build "../k8s/${overlay}" > "/tmp/${safe_name}.yaml"
             python ../scripts/validate_db_connection_budget.py --manifest "/tmp/${safe_name}.yaml"
@@ -1441,7 +1441,7 @@ jobs:
                   elif doc.get("kind") == "Route" and doc.get("spec", {}).get("to", {}).get("name") == "testlookup-mcp":
                       exposed_hosts.add(doc["spec"]["host"])
                       assert doc.get("metadata", {}).get("annotations", {}).get("haproxy.router.openshift.io/timeout") == "1h", path
-              if path.name == "overlays-homelab.yaml":
+              if path.name == "overlays-k3s.yaml":
                   assert not exposed_hosts, (path, exposed_hosts)
                   assert "127.0.0.1:*" in allowed_hosts and "localhost:*" in allowed_hosts
               else:
@@ -1939,7 +1939,7 @@ jobs:
       # Stage client SDKs into the backend build context so the production
       # Dockerfile can bake them into the image at /app/client_sdks (the
       # ``/api/v1/sdk/{lang}`` download endpoint reads from there). Mirrors
-      # the staging step in homelabsetup/deploy-homelab.sh — without it the
+      # the staging step in k3ssetup/deploy-k3s.sh — without it the
       # `COPY --from=builder /app/__client_sdks_staged ./client_sdks` line
       # in backend/Dockerfile fails with "/app/__client_sdks_staged: not
       # found" during the production build.

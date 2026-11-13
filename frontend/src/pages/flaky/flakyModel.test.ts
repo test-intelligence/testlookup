@@ -13,7 +13,7 @@ import {
 describe('flakySubtitle', () => {
   it('says nothing about the count before there is one (E2E 2026-10-10)', () => {
     // The Flaky tests header read "0 flaky tests · 0 quarantine candidates"
-    // while the request was still running -- 30 s on the homelab -- and the
+    // while the request was still running -- 30 s on the reference K3s install -- and the
     // list then showed two flaky tests.
     expect(flakySubtitle(undefined)).toBe('Counting flaky tests · last 30 days')
     expect(flakySubtitle(undefined)).not.toMatch(/\b0 flaky/)

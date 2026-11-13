@@ -1,7 +1,7 @@
 # Build-context exclusions for the backend image.
 #
 # This file is read by ``docker build`` when the context is
-# ``backend/`` (see homelabsetup/deploy-homelab.sh:346). Without it,
+# ``backend/`` (see k3ssetup/deploy-k3s.sh:346). Without it,
 # Docker tries to ship every file under backend/ to the daemon — which
 # (a) makes the context huge (~70 MB before this file), (b) breaks on
 # Windows when pytest-owned directories like ``.pytest_cache`` are
@@ -87,7 +87,7 @@ Thumbs.db
 logs/
 
 # ── Test artifacts the SDK build context staging leaves behind ───────
-# (deploy-homelab.sh stages client SDKs INTO backend/clients/ before
+# (deploy-k3s.sh stages client SDKs INTO backend/clients/ before
 # building; pytest_cache from a prior local run can be there too.)
 clients/**/__pycache__/
 clients/**/.pytest_cache/

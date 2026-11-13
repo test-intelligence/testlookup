@@ -1,7 +1,7 @@
 /**
  * Ask AI (`/chat`), hermetic: a conversation, end to end in the browser.
  *
- * Rebuilt 2026-10-09 after a homelab evaluation (blank 7–10 s waits, tables
+ * Rebuilt 2026-10-09 after a reference K3s install evaluation (blank 7–10 s waits, tables
  * as raw `|` text, every project's conversations in one list, provider
  * failures saved as answers). Held here:
  *   - the request inventory of one load (the session list is the active

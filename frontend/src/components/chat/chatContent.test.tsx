@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { askAboutRun, askAboutRunHref, buildLabel, metaLine, sourceLinks, starterPrompts } from './chatContent'
 
 describe('chat text helpers', () => {
-  it("links a run's question to the run's own project (homelab, 2026-10-10)", () => {
+  it("links a run's question to the run's own project (reference K3s install, 2026-10-10)", () => {
     const href = askAboutRunHref({ build_number: 'viz-3043', project_id: '9eb9d19f-4b40' })
     const url = new URL(href, 'http://x')
     expect(url.pathname).toBe('/chat')
@@ -47,7 +47,7 @@ describe('chat text helpers', () => {
     expect(metaLine(null)).toBeNull()
   })
 
-  it('counts the lookups made before the model ran (homelab, 2026-10-10)', () => {
+  it('counts the lookups made before the model ran (reference K3s install, 2026-10-10)', () => {
     // A flaky-tests answer: the list was looked up up front, the model called
     // nothing. The footer said nothing while "How I looked this up" said 1.
     expect(metaLine({ status: 'complete', model: 'anthropic/claude-haiku-5.5', first_token_ms: 5600, total_ms: 7300, tool_calls: 0, lookups: 1 }))

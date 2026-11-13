@@ -181,7 +181,7 @@ def test_compose_broker_is_valkey_under_the_redis_name(name):
     assert any(str(v).endswith(":/data") for v in redis["volumes"])
 
 
-@pytest.mark.parametrize("overlay", ["homelab", "openshift-artifactory"])
+@pytest.mark.parametrize("overlay", ["k3s", "openshift-artifactory"])
 def test_k8s_broker_is_valkey_under_the_redis_names(overlay):
     docs = _k8s_docs(ROOT / "k8s" / "overlays" / overlay / "infra-redis.yaml")
     deployment = next(d for d in docs if d["kind"] == "Deployment")
@@ -193,11 +193,11 @@ def test_k8s_broker_is_valkey_under_the_redis_names(overlay):
     assert container["command"][0] in ("valkey-server", "redis-server")
 
 
-def test_homelab_broker_differs_from_redis_7_only_by_its_image():
-    """The owner's running homelab pins the old image with a one-line patch,
+def test_k3s_broker_differs_from_redis_7_only_by_its_image():
+    """The owner's running reference K3s install pins the old image with a one-line patch,
     so the command and probes must work with BOTH images: the Valkey image
     ships redis-server / redis-cli symlinks, redis:7 has no valkey-* binaries."""
-    docs = _k8s_docs(ROOT / "k8s" / "overlays" / "homelab" / "infra-redis.yaml")
+    docs = _k8s_docs(ROOT / "k8s" / "overlays" / "k3s" / "infra-redis.yaml")
     [container] = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]["containers"]
     assert container["command"][0] == "redis-server"
     assert container["readinessProbe"]["exec"]["command"] == ["redis-cli", "ping"]
@@ -223,7 +223,7 @@ def test_compose_object_store_is_versitygw_under_the_minio_name(name):
     assert "http://127.0.0.1:9000/health" in minio["healthcheck"]["test"]
 
 
-@pytest.mark.parametrize("overlay", ["homelab", "openshift-artifactory"])
+@pytest.mark.parametrize("overlay", ["k3s", "openshift-artifactory"])
 def test_k8s_object_store_is_versitygw_under_the_minio_names(overlay):
     docs = _k8s_docs(ROOT / "k8s" / "overlays" / overlay / "infra-minio.yaml")
     deployment = next(d for d in docs if d["kind"] == "Deployment")

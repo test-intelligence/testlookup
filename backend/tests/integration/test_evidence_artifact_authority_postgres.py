@@ -36,7 +36,7 @@ async def test_verified_artifact_scope_and_immutability_triggers_fail_closed():
                 )
             ).first()
             if fixture is None:
-                pytest.skip("homelab database has no test-case fixture")
+                pytest.skip("reference K3s install database has no test-case fixture")
             test_case_id, run_id, project_id = fixture
             await db.execute(
                 text(

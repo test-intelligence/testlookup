@@ -53,7 +53,7 @@ spec:
       # the initial broker connect fails, and although Celery retries the
       # connection, the consumer loop is not always re-established cleanly —
       # leaving a "1/1 Running" pod that is silently NOT consuming from its
-      # queue. See: persist_live_session was never running on the homelab
+      # queue. See: persist_live_session was never running on the reference K3s install
       # despite live sessions completing, because worker-ingestion came up
       # before testlookup-redis.
       initContainers:
@@ -689,7 +689,7 @@ spec:
           # memory limit 1Gi -> 4Gi, i.e. 1024Mi per child at --concurrency=4.
           #
           # 2Gi was tried first, by analogy with worker-ingestion. Measured on
-          # the homelab: still OOMKilled, and still OOMKilled on a second run
+          # the reference K3s install: still OOMKilled, and still OOMKilled on a second run
           # with the ONNX weights already cached on disk — so the download was
           # never the dominant cost and the per-child budget was the whole
           # problem. At 2Gi/4 that budget was 512Mi, the lowest of any worker,

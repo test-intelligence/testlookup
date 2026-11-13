@@ -1,6 +1,6 @@
-# Single-node K3s ("homelab") overlay: the in-cluster datastores, a Traefik
+# Single-node K3s overlay: the in-cluster datastores, a Traefik
 # ingress on plain HTTP, single replicas and local-path storage. Deploy it with
-# homelabsetup/deploy-homelab.sh, which renders a per-deploy overlay on top of
+# k3ssetup/deploy-k3s.sh, which renders a per-deploy overlay on top of
 # this one (your host name, registry, image tag and site patches) — see
 # docs/operations/deploy-k3s.md. Applying this directory directly fails at
 # image pull on purpose (BUILD_TAG_PLACEHOLDER below).
@@ -10,13 +10,13 @@ kind: Kustomization
 resources:
   - ../../base
   - ingress-traefik.yaml
-  # middleware-redirect-https.yaml removed — homelab ingress is HTTP-only.
+  # middleware-redirect-https.yaml removed — reference K3s install ingress is HTTP-only.
   - infra-postgres.yaml
   - infra-mongo.yaml
   - infra-redis.yaml
   - infra-minio.yaml
   - infra-chromadb.yaml
-  - netpol-homelab.yaml
+  - netpol-k3s.yaml
   - frontend-nginx-configmap.yaml
 
 # Kubernetes backup + restore (re-audit M25): daily pg_dump / mongodump /
@@ -85,7 +85,7 @@ patches:
   # ── Force re-pull on pod start ────────────────────────────────────────────
   # Now that BUILD_TAG is immutable per deploy, kubectl apply -k normally
   # forces a rollout on its own. This patch is retained for the corner case
-  # of re-running deploy-homelab.sh against the same BUILD_TAG (e.g. local
+  # of re-running deploy-k3s.sh against the same BUILD_TAG (e.g. local
   # iteration without --skip-build that happens to land within the same
   # second). Targets app.kubernetes.io/name=testlookup so infra deployments
   # (postgres/mongo/redis/minio/chromadb/ollama) keep IfNotPresent.
@@ -97,7 +97,7 @@ patches:
       kind: Deployment
       labelSelector: app.kubernetes.io/name=testlookup
 
-  # ── Single-replica deployments for homelab ────────────────────────────────
+  # ── Single-replica deployments for reference K3s install ────────────────────────────────
   - patch: |-
       - op: replace
         path: /spec/replicas
@@ -154,7 +154,7 @@ patches:
       kind: Deployment
       name: testlookup-beat
 
-  # ── Cap HPAs for homelab resource limits ──────────────────────────────────
+  # ── Cap HPAs for reference K3s install resource limits ──────────────────────────────────
   - patch: |-
       - op: replace
         path: /spec/minReplicas
@@ -182,7 +182,7 @@ patches:
       kind: PersistentVolumeClaim
       name: ollama-models-pvc
 
-  # ── Lower Ollama memory for homelab (models are smaller) ──────────────────
+  # ── Lower Ollama memory for reference K3s install (models are smaller) ──────────────────
   - patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/memory
@@ -291,7 +291,7 @@ patches:
       name: testlookup-config
 
 images:
-  # homelabsetup/deploy-homelab.sh maps these names onto the configured
+  # k3ssetup/deploy-k3s.sh maps these names onto the configured
   # registry (K3S_REGISTRY) and an immutable build tag (build-YYYYMMDD-HHMMSS)
   # in its per-deploy overlay, so nothing ever runs a floating :latest and this
   # file is never edited. The placeholder intentionally won't resolve in any
@@ -299,7 +299,7 @@ images:
   # script) fails at ImagePull, which prevents accidental :latest deploys.
   #
   # **Port 30500, not 5000.** This is the NodePort the registry pod is exposed
-  # on (``REGISTRY_NODEPORT`` in bootstrap-homelab.sh, mirrored via
+  # on (``REGISTRY_NODEPORT`` in bootstrap-k3s.sh, mirrored via
   # ``/etc/rancher/k3s/registries.yaml`` on every K3s node). The registry's
   # pod-internal port (5000) is not covered by the containerd mirror config, so
   # pulls would fail with "connection refused" while pushes kept succeeding.

@@ -15,7 +15,7 @@
  *
  * "All settings" (the `/settings` index) heads the list for those who can open
  * it: BUG-009's guarantee, a way back to the index from every sub-page, kept
- * now that the breadcrumb is gone (`probe-jr-homelab-verify.spec.ts`).
+ * now that the breadcrumb is gone (a live probe).
  */
 import type { ReactNode } from 'react'
 import { Link, useLocation } from 'react-router-dom'

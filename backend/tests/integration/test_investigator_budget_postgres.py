@@ -38,7 +38,7 @@ async def test_reservation_row_lock_admits_one_call_and_preserves_invalid_settle
                 )
             ).first()
             if run is None:
-                pytest.skip("homelab database has no test run fixture")
+                pytest.skip("reference K3s install database has no test run fixture")
             run_id, project_id = run
             await db.execute(
                 text(
@@ -114,7 +114,7 @@ async def test_concurrent_settlement_creates_one_completed_receipt(
                 )
             ).first()
             if run is None:
-                pytest.skip("homelab database has no test run fixture")
+                pytest.skip("reference K3s install database has no test run fixture")
             run_id, project_id = run
             await db.execute(
                 text(

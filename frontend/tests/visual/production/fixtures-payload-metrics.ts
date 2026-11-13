@@ -279,7 +279,7 @@ export const DEFAULT_PROMETHEUS_TEMPLATES = [
   { id: 'cpu_usage', label: 'CPU usage', unit: 'ratio', promql: 'sum(rate(container_cpu_usage_seconds_total{container="{service}"}[1m]))' },
 ]
 
-/** The read's Prometheus block on a deployment where nobody saved one (the homelab's state): off, no URL, the defaults. */
+/** The read's Prometheus block on a deployment where nobody saved one (the reference K3s install's state): off, no URL, the defaults. */
 export const PROMETHEUS_UNCONFIGURED = {
   prometheus_enabled: false,
   prometheus_base_url: null as string | null,

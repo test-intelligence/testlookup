@@ -27,7 +27,7 @@ def test_cutover_disables_hpa_before_scaling_legacy_backend():
 def test_every_supported_kubernetes_apply_path_invokes_cutover():
     expected = {
         "Makefile": 4,
-        "homelabsetup/deploy-homelab.sh": 1,
+        "k3ssetup/deploy-k3s.sh": 1,
         "openshiftsetup/deploy-openshift-artifactory.sh": 1,
         "scripts/deploy-k8s.sh": 1,
         ".github/workflows/ci.yml": 1,

@@ -11,7 +11,7 @@ there every case in the run really does belong to ``primary_suite_name``. It is
 wrong for an upload — a multi-``<testsuite>`` upload has an authoritative
 per-row suite AND a run-level label naming just one of them.
 
-Measured on the live homelab, project 2aefa4fa scoped to ``api``::
+Measured on a live reference K3s install, project 2aefa4fa scoped to ``api``::
 
     truth: per-row suite = api            5 distinct tests
     clause as written                    12     <- the whole run

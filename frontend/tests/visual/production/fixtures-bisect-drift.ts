@@ -19,7 +19,7 @@
  *    server.
  *
  * Then `base`, then the shared sets exactly as the existing specs use them: `FAILURES_ON` (whose `FAILURES`
- * answers every other `…/bisect` with the homelab's `offlineNarrowing`) and `RUN_PAGE`. Every other request
+ * answers every other `…/bisect` with the reference K3s install's `offlineNarrowing`) and `RUN_PAGE`. Every other request
  * fails closed as today.
  *
  * Fresh state per call; `state` is live and mutable (a spec may change an answer or the diff between steps).
@@ -65,7 +65,7 @@ export function worldRunRef(run: FixtureRun, overrides: Partial<BisectRunRef> = 
   }
 }
 
-/** The compare when nothing is fetched: `unavailable` / `offline_mode` by default (the homelab's). */
+/** The compare when nothing is fetched: `unavailable` / `offline_mode` by default (the reference K3s install's). */
 export function worldOfflineCompare(overrides: Partial<BisectCompare> = {}): BisectCompare {
   return {
     state: 'unavailable', reason: 'offline_mode', host: null, cached: false, commit_count: 0, truncated: false,

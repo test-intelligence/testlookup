@@ -97,7 +97,7 @@ describe('isSafeExternalUrl', () => {
   })
 
   describe('http is dev-only', () => {
-    it('accepts http when DEV is true (local IdPs, homelab Jira)', () => {
+    it('accepts http when DEV is true (local IdPs, reference K3s install Jira)', () => {
       vi.stubEnv('DEV', true)
       expect(isSafeExternalUrl('http://localhost:8080/sso')).toBe(true)
     })

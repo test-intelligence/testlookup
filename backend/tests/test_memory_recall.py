@@ -122,7 +122,7 @@ async def test_prior_analyses_are_cited_with_category_confidence_date():
 
 
 def test_a_prior_analysis_names_the_build_it_analysed():
-    """Homelab, 2026-10-10: asked whether an analysis dated 2026-08-25 was of
+    """Reference K3s install, 2026-10-10: asked whether an analysis dated 2026-08-25 was of
     build 105, Ask AI could only say the record did not say. It does."""
     report = mr.render_recall_report({
         "test_name": "test_refund_flow",

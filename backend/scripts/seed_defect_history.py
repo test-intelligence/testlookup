@@ -22,7 +22,7 @@ Usage (from ``backend/``)::
     python scripts/seed_defect_history.py --project-slug payment-service
 
 ``seed_dev_data.main`` also calls :func:`apply_defect_history` for each project
-after the visualization seed. Never run ``seed_data.py`` on the homelab; this
+after the visualization seed. Never run ``seed_data.py`` on the reference K3s install; this
 script is safe there (at most 21 rows, marker-scoped).
 """
 from __future__ import annotations

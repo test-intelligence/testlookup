@@ -74,7 +74,7 @@ def _fake_report(stress):
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
-        ("https://homelab.example", REFUSED_HOST),
+        ("https://k3s.example", REFUSED_HOST),
         ("http://192.168.1.10:8000", REFUSED_HOST),
         ("http://0.0.0.0:18001", REFUSED_HOST),
         (
@@ -88,7 +88,7 @@ def _fake_report(stress):
             "stack\n",
         ),
     ],
-    ids=["homelab", "lan-8000", "unspecified", "dev-stack-8000", "not-http"],
+    ids=["remote-host", "lan-8000", "unspecified", "dev-stack-8000", "not-http"],
 )
 def test_a_non_local_target_is_refused_with_exit_2_before_any_request(stress, no_network, capsys, url, expected):
     assert stress.main(["--base-url", url, "--project-id", PROJECT]) == 2
@@ -164,9 +164,9 @@ def test_a_loopback_target_is_accepted_and_the_reports_are_written(stress, monke
         (12.0, 11.0, "frame_coalescer", "build the frame coalescer"),
         (12.0, 4.0, "not_needed", "not needed — HYG-06 coalescers close NOT_A_GAP with these numbers"),
         (31.0, 11.0, "both_coalescers", "build the finalize coalescer and the frame coalescer"),
-        (25.0, 4.0, "borderline", "borderline — re-measure on the homelab-shaped stack before building"),
-        (12.0, 8.5, "borderline", "borderline — re-measure on the homelab-shaped stack before building"),
-        (30.0, 10.0, "borderline", "borderline — re-measure on the homelab-shaped stack before building"),
+        (25.0, 4.0, "borderline", "borderline — re-measure on the reference K3s install-shaped stack before building"),
+        (12.0, 8.5, "borderline", "borderline — re-measure on the reference K3s install-shaped stack before building"),
+        (30.0, 10.0, "borderline", "borderline — re-measure on the reference K3s install-shaped stack before building"),
         (23.9, 7.9, "not_needed", "not needed — HYG-06 coalescers close NOT_A_GAP with these numbers"),
     ],
     ids=["finalize", "frames", "neither", "both", "finalize-near", "frames-near", "at-thresholds", "just-clear"],

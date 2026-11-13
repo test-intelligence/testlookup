@@ -4,7 +4,7 @@ chromadb/chroma 1.x runs ``chroma run /config.yaml``, whose ``persist_path``
 is ``/data``. The manifests still carried Chroma 0.x's ``IS_PERSISTENT`` /
 ``PERSIST_DIRECTORY=/chroma/chroma`` and mounted the volume there, so the live
 vectors lived in the container's writable layer and were lost whenever the
-container was recreated (homelab, 2026-10-12: ``/data`` held the October
+container was recreated (reference K3s install, 2026-10-12: ``/data`` held the October
 collections, the volume only August's 0.x files).
 
 The Compose healthcheck also called ``curl``, which the image does not ship,
@@ -21,7 +21,7 @@ import yaml
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 COMPOSE_FILES = ["docker-compose.yml", "docker-compose.release.yml"]
-OVERLAYS = ["homelab", "openshift-artifactory"]
+OVERLAYS = ["k3s", "openshift-artifactory"]
 CHROMA_1X_PERSIST_PATH = "/data"
 
 

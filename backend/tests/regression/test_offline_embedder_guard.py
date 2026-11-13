@@ -431,7 +431,7 @@ async def test_a_successful_index_still_advances_the_cursor(monkeypatch, func_na
 
 # ── The cache location is configurable, and ChromaDB must honour it ──────────
 #
-# Regression (homelab, 2026-08-17): ``worker-default`` OOM-killed in a loop.
+# Regression (reference K3s install, 2026-08-17): ``worker-default`` OOM-killed in a loop.
 # ChromaDB re-downloaded the 79 MB all-MiniLM archive on **every container
 # restart**, because in the worker pods ``HOME`` is ``/tmp`` — the container's
 # writable layer, discarded on restart — and the download plus ONNX load across

@@ -61,7 +61,7 @@ def test_exporter_configuration_failure_does_not_abort_startup(monkeypatch, capl
 #
 # k8s/base/configmap.yaml shipped OTEL_ENABLED=true with the endpoint
 # commented out, so every span was printed to stdout by ConsoleSpanExporter:
-# ~90k backend log lines per 10 minutes on the homelab.
+# ~90k backend log lines per 10 minutes on the reference K3s install.
 
 
 def _spy(monkeypatch):

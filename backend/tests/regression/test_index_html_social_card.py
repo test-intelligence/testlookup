@@ -196,7 +196,7 @@ def test_the_png_row_reader_unfilters_each_filter_type():
 def test_the_three_frontend_configs_are_enumerated():
     assert {
         "frontend/nginx.conf.template",
-        "k8s/overlays/homelab/frontend-nginx-configmap.yaml:default.conf",
+        "k8s/overlays/k3s/frontend-nginx-configmap.yaml:default.conf",
         "k8s/overlays/openshift-artifactory/frontend-nginx-configmap.yaml:default.conf",
     } <= set(CONFIGS)
 

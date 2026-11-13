@@ -28,7 +28,7 @@ auth:
   # API key is used. A value starting with qai_ is always sent as an API key.
   api_key: ""                          # TESTLOOKUP_API_KEY  (sent as X-API-Key)
   token: ""                            # TESTLOOKUP_TOKEN    (JWT access token)
-  # TLS for self-signed / homelab servers. Set at most one.
+  # TLS for self-signed / reference K3s install servers. Set at most one.
   # ca_cert_path: "./testlookup-ca.crt"  # TESTLOOKUP_CA_CERT (trust only this CA bundle)
   # insecure: false                      # TESTLOOKUP_INSECURE (true skips verification)
 

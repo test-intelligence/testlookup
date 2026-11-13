@@ -24,7 +24,7 @@ latest patch release of the target line.
    service migrates first). Kubernetes: `scripts/deploy-k8s.sh` or the overlay
    of your choice (the migration Job runs before the rollout; see
    [docs/operations/deployment.md](docs/operations/deployment.md)). Single-node
-   K3s: `./homelabsetup/deploy-homelab.sh --skip-registry --skip-models`.
+   K3s: `./k3ssetup/deploy-k3s.sh --skip-registry --skip-models`.
 5. **Verify.** `GET /health/ready` is `ok` and `GET /health/version` reports
    the new commit.
 
@@ -196,16 +196,29 @@ A release install (`install.sh`) created before 0.1.0 used the local/demo
 `INITIAL_ADMIN_PASSWORD`, and restart: the `db-migrate` service creates the
 `admin` account if none exists yet.
 
-### Single-node K3s (`homelabsetup/`)
+### Single-node K3s (`k3ssetup/`)
 
 Site-specific values moved out of the repository into a local env file
-(`TESTLOOKUP_HOMELAB_ENV`, template `homelabsetup/homelab.env.example`). Before
+(`TESTLOOKUP_K3S_ENV`, template `k3ssetup/k3s.env.example`). Before
 your next deploy, create that file with at least the host your install serves
 (`K3S_HOST`) and any registry address you used; put the AI provider settings
 your overlay used to carry into a site patch (`K3S_PATCHES_DIR`). If the file
 is missing, the deploy stops before changing anything because the host would
 change. The `make k8s-stop-homelab` / `k8s-restart-homelab` targets were
 removed (their scripts were never in the repository).
+
+The path itself was renamed from `homelabsetup/` and `k8s/overlays/homelab/`
+to `k3ssetup/` and `k8s/overlays/k3s/`: run `./k3ssetup/deploy-k3s.sh` (was
+`deploy-homelab.sh`) and `make k8s-deploy-k3s` (was `k8s-deploy-homelab`), and
+point any script of your own at the new paths. Nothing else needs to change:
+
+- `TESTLOOKUP_HOMELAB_ENV`, `~/.config/testlookup/homelab.env` and
+  `HOMELAB_NODE<n>_PASS` are still read when their new names
+  (`TESTLOOKUP_K3S_ENV`, `k3s.env`, `K3S_NODE<n>_PASS`) are not set;
+- an existing `homelabsetup/.homelab-credentials` is still used (git leaves
+  the ignored file in place), so no second admin password is generated;
+- the rendered manifests keep every resource name, so the next deploy
+  updates in place (only comments inside two ConfigMaps change).
 
 ### Install locations
 

@@ -2164,7 +2164,7 @@ def test_celery_does_not_globally_requeue_worker_lost_tasks():
     )
 
 
-# ── Every staged payload must fit its task (found by the N14 homelab check) ──
+# ── Every staged payload must fit its task (found by the N14 reference K3s install check) ──
 
 
 @pytest.mark.asyncio

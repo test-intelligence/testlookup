@@ -1,6 +1,6 @@
 """Re-audit N29: the summary cites flaky tests by this run's ids, not by name.
 
-On the homelab, 226 of 490 summaries carrying a consistency report failed
+On the reference K3s install, 226 of 490 summaries carrying a consistency report failed
 ``referential_integrity_flaky_ids`` -- and every one of the 226 cited test
 NAMES (``"test_beta"``, ``"test_payment_timeout"``), never an id. The
 evidence-pack prompt asks for ``flaky_test_ids``, but the context shows the
@@ -8,7 +8,7 @@ model each failure by name only, so the model answered with names; the check
 compares with this run's analysed ids (UUIDs) and could never match.
 
 The fixtures use the real shapes: analyses keyed by UUID, with test names
-like the ones the homelab rows cited.
+like the ones the reference K3s install rows cited.
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ async def _generate(monkeypatch, flaky_answer: list[str]):
             "evidence pack": json.dumps({
                 "top_stack_traces": ["expected 1, got 2"],
                 "log_anomalies": [],
-                # What the homelab rows show the model answering: names.
+                # What the reference K3s install rows show the model answering: names.
                 "flaky_test_ids": flaky_answer,
                 "data_sources_used": ["flakiness_db"],
             }),

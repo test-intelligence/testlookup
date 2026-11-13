@@ -1,6 +1,6 @@
 """``/stream/active`` must validate ``project_id`` for EVERY role.
 
-Found by exploratory testing against the live homelab (2026-08-07), while
+Found by exploratory testing against a live reference K3s install (2026-08-07), while
 resolving an earlier inconclusive observation. As an ADMIN::
 
     GET /api/v1/stream/active?project_id=all         -> 200 {"sessions": [], "count": 0}

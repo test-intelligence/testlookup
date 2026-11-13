@@ -3,7 +3,7 @@ import { checkStatus } from './http'
 
 for (const role of ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']) {
   test('TL-ROLE-002 ' + role + ' session resolves to its configured principal', {
-    tag: ['@P0', '@smoke', '@regression', '@full', '@homelab-safe', '@journey:J01', '@area:auth', '@role:' + role],
+    tag: ['@P0', '@smoke', '@regression', '@full', '@k3s-safe', '@journey:J01', '@area:auth', '@role:' + role],
   }, async ({ request }) => {
     const api = process.env.TL_API
     let token = process.env['TL_TOKEN_' + role]

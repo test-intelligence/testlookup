@@ -6,7 +6,7 @@ Revises: 0194
 Phase D of the Visualization Upgrade, step one. Migration 0192 seeded the six
 viz flags disabled; the charts behind three of them have shipped and are on
 wherever they were shown (the owner's rule: every feature visible). This turns
-those three on for every install -- fresh ones and the existing homelab alike:
+those three on for every install -- fresh ones and the existing reference K3s install alike:
 
 * ``viz_chart_data_api`` -- the report catalogues (VIZ-E2/E4);
 * ``viz_advanced_charts`` -- heatmaps, coverage map, failure groups, scatter,

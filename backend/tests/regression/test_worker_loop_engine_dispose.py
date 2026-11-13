@@ -1,6 +1,6 @@
 """Regression (BUG-003, re-audit M1): the async engine and the worker's event loop.
 
-BUG-003 (homelab run 493d5c1f, 2026-06-06). The AI and ingestion workers logged
+BUG-003 (reference K3s install run 493d5c1f, 2026-06-06). The AI and ingestion workers logged
 ``Exception terminating connection <AdaptedConnection <asyncpg...>>`` then
 ``RuntimeError: Event loop is closed``, and the AI pipeline ended ``partial``.
 Every task ran on a private, short-lived loop; the ``@lru_cache``'d engine

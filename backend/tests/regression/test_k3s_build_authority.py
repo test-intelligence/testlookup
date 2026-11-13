@@ -1,4 +1,4 @@
-"""Behavioral checks for exact-source homelab deployment authority."""
+"""Behavioral checks for exact-source reference K3s install deployment authority."""
 from __future__ import annotations
 
 import re
@@ -13,7 +13,7 @@ import yaml
 from tests.shell_utils import bash_environment
 
 REPO = Path(__file__).resolve().parents[3]
-DEPLOY = REPO / "homelabsetup/deploy-homelab.sh"
+DEPLOY = REPO / "k3ssetup/deploy-k3s.sh"
 MCP_DEPLOYMENT = REPO / "k8s/base/mcp-deployment.yaml"
 
 
@@ -160,7 +160,7 @@ def _pod(
     return f"{name} {phase} {image} {ready} {image_id} {deleting}"
 
 
-# The retained migration Job pod as the 2026-10-02 homelab deploy listed it:
+# The retained migration Job pod as the 2026-10-02 reference K3s install deploy listed it:
 # same image and digest as the backend, completed, never Ready.
 COMPLETED_MIGRATION_POD = _pod(
     name="testlookup-migrate-1253898204-20261002135906-38162-16907-ptvzb",

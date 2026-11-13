@@ -1,4 +1,4 @@
-"""Regression guard for the homelab Redis broker durability contract."""
+"""Regression guard for the reference K3s install Redis broker durability contract."""
 
 from pathlib import Path
 
@@ -6,7 +6,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[3]
-REDIS_MANIFEST = ROOT / "k8s" / "overlays" / "homelab" / "infra-redis.yaml"
+REDIS_MANIFEST = ROOT / "k8s" / "overlays" / "k3s" / "infra-redis.yaml"
 
 
 def _resources() -> dict[str, dict]:
@@ -17,7 +17,7 @@ def _resources() -> dict[str, dict]:
     }
 
 
-def test_homelab_redis_has_durable_broker_storage_and_safe_eviction():
+def test_k3s_redis_has_durable_broker_storage_and_safe_eviction():
     resources = _resources()
     deployment = resources["Deployment"]
     container = deployment["spec"]["template"]["spec"]["containers"][0]

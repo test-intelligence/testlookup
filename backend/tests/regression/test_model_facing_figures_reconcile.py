@@ -12,7 +12,7 @@ cannot all be true of the same run as a reader would combine them:
 ``10 - 4 = 6`` passed reads as 60%, not 44.4%.
 
 Handed figures that do not reconcile, the model invents one that does. Observed
-live on the homelab, 2026-08-16, with ground truth of 4 passed / 4 failed /
+live on the reference K3s install, 2026-08-16, with ground truth of 4 passed / 4 failed /
 1 broken / 1 skipped:
 
     "In the most recent run (s2-6), 4 tests failed out of 10, resulting in a

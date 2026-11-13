@@ -1,4 +1,4 @@
-"""``deploy-homelab.sh --skip-build`` must resolve a tag instead of aborting.
+"""``deploy-k3s.sh --skip-build`` must resolve a tag instead of aborting.
 
 The flag exists for exactly one situation: a deploy whose images built and
 pushed fine but whose apply phase died partway, so you want to resume without
@@ -48,7 +48,7 @@ import pytest
 from tests.shell_utils import bash_environment
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-DEPLOY_SCRIPT = REPO_ROOT / "homelabsetup" / "deploy-homelab.sh"
+DEPLOY_SCRIPT = REPO_ROOT / "k3ssetup" / "deploy-k3s.sh"
 
 
 def _find_bash() -> str | None:
@@ -77,7 +77,7 @@ BASH = _find_bash()
 
 pytestmark = pytest.mark.skipif(
     BASH is None or not DEPLOY_SCRIPT.is_file(),
-    reason="needs a POSIX bash and homelabsetup/deploy-homelab.sh",
+    reason="needs a POSIX bash and k3ssetup/deploy-k3s.sh",
 )
 
 

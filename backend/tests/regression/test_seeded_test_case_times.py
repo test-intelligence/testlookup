@@ -4,7 +4,7 @@
 so thirty days of seeded results were all dated the minute the seed ran, and
 the 7-day "top failing" window counted thirty days of failures: one /failures
 row read "7" over "failed 3 of 7 executions" (the UX redesign's browser E2E
-pass, 2026-10-08; every seeded install, the homelab demo included). Migration
+pass, 2026-10-08; every seeded install, the reference K3s install demo included). Migration
 0199 repairs the rows already written; the Postgres half of these tests is
 ``tests/integration/test_seeded_test_case_times_postgres.py``.
 """

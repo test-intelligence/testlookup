@@ -32,7 +32,7 @@ REPO = Path(__file__).resolve().parents[3]
 SERVICES = REPO / "k8s" / "base" / "services.yaml"
 INGRESSES = (
     REPO / "k8s" / "base" / "ingress.yaml",
-    REPO / "k8s" / "overlays" / "homelab" / "ingress-traefik.yaml",
+    REPO / "k8s" / "overlays" / "k3s" / "ingress-traefik.yaml",
 )
 
 # The endpoints an operator needs while the backend is refusing traffic. All

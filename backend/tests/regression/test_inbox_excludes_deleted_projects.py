@@ -1,6 +1,6 @@
 """A soft-deleted project's failures must not stay in the assignment inbox.
 
-Found by exploratory testing against the live homelab (2026-08-07) -- and found
+Found by exploratory testing against a live reference K3s install (2026-08-07) -- and found
 by accident, which is the interesting part. An earlier iteration created a
 throwaway project, probed it, and deleted it. Two iterations later,
 ``GET /api/v1/me/assigned-failures?scope=team`` still returned that project's

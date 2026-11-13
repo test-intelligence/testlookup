@@ -37,7 +37,7 @@ Usage::
 
 Viz suite (Visualization Upgrade, Phase D L1) -- ``VIZ_SCENARIOS``, a separate
 list the live pytest smoke run never touches. For a disposable target only
-(the homelab with ``seed_large_dataset.py --scale large``); localhost:8000 is
+(the reference K3s install with ``seed_large_dataset.py --scale large``); localhost:8000 is
 refused, because that is the shared dev stack::
 
     kubectl -n testlookup port-forward svc/testlookup-backend 18000:8000
@@ -530,7 +530,7 @@ async def run_scenario(
 # A SEPARATE list from ``SCENARIOS``, selected with ``bench --suite viz``.
 # ``SCENARIOS`` is what ``tests/test_performance_budgets_live.py`` auto-runs
 # against localhost:8000 on every pytest run; these are capacity scenarios for
-# the homelab's 1M-row synthetic dataset (``scripts/seed_large_dataset.py``),
+# the reference K3s install's 1M-row synthetic dataset (``scripts/seed_large_dataset.py``),
 # and must never be swept into that smoke run.
 #
 # Every path, parameter and limit below was read off the routers

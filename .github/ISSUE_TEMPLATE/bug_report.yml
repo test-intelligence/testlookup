@@ -41,7 +41,7 @@ body:
         - Docker Compose from a clone (make dev / make quickstart)
         - Docker Compose release images (install.sh)
         - Kubernetes (k8s overlays)
-        - Single-node K3s (homelabsetup/)
+        - Single-node K3s (k3ssetup/)
         - OpenShift / air-gapped bundle
         - Managed cloud (EKS / GKE / AKS)
         - Other

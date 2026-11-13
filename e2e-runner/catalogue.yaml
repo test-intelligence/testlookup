@@ -229,7 +229,7 @@
     "area": "deploy",
     "layer": "API",
     "use_case": "UC-013",
-    "eligibility": "homelab-safe",
+    "eligibility": "k3s-safe",
     "status": "implemented"
   },
   {
@@ -241,7 +241,7 @@
     "area": "auth",
     "layer": "UI",
     "use_case": "UC-001",
-    "eligibility": "homelab-safe",
+    "eligibility": "k3s-safe",
     "status": "implemented"
   },
   {
@@ -253,7 +253,7 @@
     "area": "auth",
     "layer": "API",
     "use_case": "UC-001",
-    "eligibility": "homelab-safe",
+    "eligibility": "k3s-safe",
     "status": "implemented"
   },
   {
@@ -277,7 +277,7 @@
     "area": "cli",
     "layer": "CLI",
     "use_case": "UC-013",
-    "eligibility": "homelab-safe",
+    "eligibility": "k3s-safe",
     "status": "implemented"
   },
   {
@@ -302,7 +302,7 @@
     "area": "mcp",
     "layer": "MCP stdio",
     "use_case": "UC-013",
-    "eligibility": "homelab-safe",
+    "eligibility": "k3s-safe",
     "status": "implemented"
   },
   {

@@ -174,7 +174,7 @@ describe('OverviewPage', () => {
 
   // ── KPI trend units ──────────────────────────────────────────────────────
   //
-  // Regression (homelab, 2026-08-16): `MetricCard.trend` is a RELATIVE
+  // Regression (reference K3s install, 2026-08-16): `MetricCard.trend` is a RELATIVE
   // PERCENTAGE change vs the previous period — ((cur - prev) / prev) * 100 in
   // metrics_service — but the KPI rendered it bare. The live dashboard showed
   //     TOTAL EXECUTIONS  150   ▲ +400
@@ -586,7 +586,7 @@ describe('OverviewPage', () => {
  * both already said 24 h, so the metric's intent was never in doubt.
  */
 describe('OverviewPage — executions are not runs', () => {
-  // Regression (homelab, 2026-08-16): `total_executions_7d` counts TEST
+  // Regression (reference K3s install, 2026-08-16): `total_executions_7d` counts TEST
   // EXECUTIONS, but the page called them "runs" in five places, including the
   // release verdict's stated sample size. Measured live:
   //
@@ -751,7 +751,7 @@ describe('OverviewPage — the 24-hour new failures describe their own metric', 
 describe('OverviewPage — a KPI caption must not deny its own value', () => {
   // UX redesign P3: the caption sits where the tile's trend line would, beside
   // the value (a compact MetricCard), and still explains the missing LINE.
-  // Regression (homelab, 2026-08-16): the caption under each KPI fills the slot
+  // Regression (reference K3s install, 2026-08-16): the caption under each KPI fills the slot
   // the sparkline would occupy, and appears whenever the series has fewer than
   // two points. It was worded as a claim about the metric, so a project whose
   // runs all landed on one day read:

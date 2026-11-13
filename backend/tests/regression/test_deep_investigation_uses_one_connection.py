@@ -7,12 +7,12 @@ before it -- held the request's ``get_db`` session. One request therefore
 needed two pooled connections at once. A production worker has three (2 + 1),
 so two or three of these requests in one worker each held one and waited for
 another: the worker stalled for the 30 s pool timeout and answered 500
-(homelab re-test of the Analysis tab, 2026-10-14).
+(reference K3s install re-test of the Analysis tab, 2026-10-14).
 
 The handlers now take ``db: AsyncSession = Depends(get_db)``, which FastAPI
 resolves to the guard's session. The test drives the real routes and the real
 guard on a pool of ONE connection: a handler that opens a second session waits
-for a connection that never frees, exactly as on the homelab, and fails.
+for a connection that never frees, exactly as on the reference K3s install, and fails.
 """
 from __future__ import annotations
 

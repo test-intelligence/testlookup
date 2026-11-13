@@ -1,7 +1,7 @@
 """Regression: BUG-002 — notification dispatch raised asyncpg
 ``InterfaceError: cannot perform operation: another operation is in progress``.
 
-Bug pinned (live homelab run 493d5c1f, 2026-06-06):
+Bug pinned (live reference K3s install run 493d5c1f, 2026-06-06):
 
     Notification dispatch failed: (sqlalchemy...asyncpg.InterfaceError)
     <class 'asyncpg.exceptions._base.InterfaceError'>: cannot perform

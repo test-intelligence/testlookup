@@ -34,7 +34,7 @@ async def test_memory_expiry_supersession_and_rollback_are_concurrent_safe():
                 )
             ).first()
             if row is None:
-                pytest.skip("homelab database has no test run fixture")
+                pytest.skip("reference K3s install database has no test run fixture")
             run_id, project_id = row
 
             now = datetime.now(timezone.utc)

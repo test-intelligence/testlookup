@@ -7,7 +7,7 @@ this module's own engine (``get_db`` / ``get_current_active_user`` overridden; t
 * filing → ONE request, ONE ``erasure_request_filed`` row and a bell row for every OTHER active human administrator
   (never the requester, an inactive, erased, service or synthetic admin); the bell rows are ``status="sent"``,
   so the delivery relay's own claim (``claim_pending_notification_deliveries``) never selects them, no row of ours
-  is ``pending`` and ``aiosmtplib.send`` is never called — the structural no-mail proof (the homelab SMTP is real);
+  is ``pending`` and ``aiosmtplib.send`` is never called — the structural no-mail proof (the reference K3s install SMTP is real);
 * two concurrent filings by one person → one row + 409 ``request_pending`` naming it; two administrators filing at
   the same moment (both holding their own row) → no deadlock, each notifies the other;
 * withdraw, then file again; decline → the person's bell, read through ``GET /api/v1/notifications/history`` with

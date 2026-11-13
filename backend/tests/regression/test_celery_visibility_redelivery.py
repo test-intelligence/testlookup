@@ -41,7 +41,7 @@ def _worker_process(redis, marker: str) -> tuple[subprocess.Popen, str, str]:
     env = os.environ.copy()
     # Keep the checkout on the path while retaining the deployed image's
     # application root.  The latter matters when this test is copied into a
-    # temporary directory inside a backend pod for the homelab smoke run.
+    # temporary directory inside a backend pod for the reference K3s install smoke run.
     repo_root = str(Path(__file__).parents[2])
     env["PYTHONPATH"] = os.pathsep.join(
         path for path in (repo_root, env.get("PYTHONPATH"), "/app") if path
@@ -112,7 +112,7 @@ def test_late_ack_task_redelivers_with_same_id_after_worker_loss():
         from app.worker.celery_app import celery_app
         # Celery's pidbox is disabled by the disposable worker.  The worker
         # writes a short-lived Redis readiness marker after importing the app,
-        # avoiding a brittle fixed startup sleep in CI and homelab images.
+        # avoiding a brittle fixed startup sleep in CI and reference K3s install images.
         _wait_ready(first, redis, first_ready)
 
         task = celery_app.send_task(

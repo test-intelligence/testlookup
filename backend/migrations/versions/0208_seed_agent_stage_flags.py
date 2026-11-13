@@ -22,7 +22,7 @@ case-insensitive, the rule of ``feature_flags._legacy_env_fallback``). That
 variable was consulted only while no row existed, so seeding the row OFF would
 silently switch off a stage an operator had enabled through it.
 
-Homelab / existing installs: the four read-only rows arrive OFF (unless their
+Reference K3s install / existing installs: the four read-only rows arrive OFF (unless their
 legacy variable was on); the owner flips them ON during the deploy
 (``PATCH /api/v1/feature-flags/<key> {"enabled_global": true}``).
 

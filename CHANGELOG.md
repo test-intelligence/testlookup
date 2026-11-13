@@ -167,6 +167,7 @@ Everything under Added is new to the public. The other sections matter to anyone
 - Without `SMTP_FROM`, e-mail is sent from `noreply@example.com` (it was `noreply@testlookup.io`, a domain the project does not use); set `SMTP_FROM` to an address of your own.
 - The example release-test Jenkins pipeline moved to `e2e-runner/Jenkinsfile.release-e2e`; point an existing job's Script Path there.
 - `make build` tags images `ghcr.io/test-intelligence/testlookup/<image>:local` instead of `testlookup/<image>:latest`.
+- The single-node K3s path is `k3ssetup/` and `k8s/overlays/k3s/` (it was `homelabsetup/` and `k8s/overlays/homelab/`): run `./k3ssetup/deploy-k3s.sh` or `make k8s-deploy-k3s`. The old variable, site file and credentials file names are still read, and the rendered resources keep their names ([UPGRADING.md](UPGRADING.md)).
 
 ### Deprecated
 

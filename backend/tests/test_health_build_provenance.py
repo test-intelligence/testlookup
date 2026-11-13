@@ -140,8 +140,8 @@ def test_ci_backend_image_receives_exact_build_provenance():
     assert "BUILD_DATE=$BUILD_DATE" in dockerfile
 
 
-def test_homelab_backend_image_receives_exact_build_provenance():
-    """A homelab build must identify the commit that its image contains.
+def test_k3s_backend_image_receives_exact_build_provenance():
+    """A reference K3s install build must identify the commit that its image contains.
 
     The health endpoint cannot prove that the requested candidate is serving
     when the deploy script leaves both Docker build arguments empty.  Refuse a
@@ -149,7 +149,7 @@ def test_homelab_backend_image_receives_exact_build_provenance():
     backend production build.
     """
     root = Path(__file__).resolve().parents[2]
-    deploy = (root / "homelabsetup/deploy-homelab.sh").read_text(encoding="utf-8")
+    deploy = (root / "k3ssetup/deploy-k3s.sh").read_text(encoding="utf-8")
 
     assert 'BUILD_REVISION="$(git rev-parse HEAD)"' in deploy
     assert 'BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"' in deploy

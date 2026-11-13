@@ -3,7 +3,7 @@
 Both places that build commit links -- the commit range and the suspect
 ranking -- passed ``api_base=None``, so every link went to github.com even for
 a project whose GitHub integration names a GitHub Enterprise server
-(found re-testing the links on the homelab, 2026-10-13). They now read the
+(found re-testing the links on the reference K3s install, 2026-10-13). They now read the
 project's integration, enabled or not.
 
 The API base is free text and the link lands in an ``href``, so only an

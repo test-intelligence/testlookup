@@ -11,7 +11,7 @@ A 404/403/422 is a legitimate answer (an id the route does not know, a role
 it refuses). 502/503/504 mean a dependency the CI job does not run (an LLM, a
 vector store); they are listed in the failure message's tail but do not fail
 it. What must never happen is an unhandled exception -- the sweep found one on
-its first run: ``GET /training/status`` 500'd for every role on the homelab.
+its first run: ``GET /training/status`` 500'd for every role on the reference K3s install.
 """
 from __future__ import annotations
 

@@ -371,7 +371,7 @@ async def test_an_unknown_or_empty_operation_is_refused(operations):
 
 
 def test_the_dispatch_module_imports_no_notifier():
-    """Nothing here can send mail (the homelab's SMTP is live)."""
+    """Nothing here can send mail (the reference K3s install's SMTP is live)."""
     import inspect
 
     source = inspect.getsource(dispatch).lower()

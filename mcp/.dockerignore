@@ -1,6 +1,6 @@
 # Build-context exclusions for the MCP server image.
 #
-# Build context is ``mcp/`` (see homelabsetup/deploy-homelab.sh:361).
+# Build context is ``mcp/`` (see k3ssetup/deploy-k3s.sh:361).
 # Same shape as backend/.dockerignore but smaller — the MCP module
 # doesn't carry SDK staging or large test fixtures.
 
@@ -42,7 +42,7 @@ README.md
 # image build reading their extended attributes:
 #   copier: get: getting extended attributes for "/.pytest-cache-m10":
 #   permission denied
-# That failure cost a homelab deploy from backend/, whose ignore covered
+# That failure cost a reference K3s install deploy from backend/, whose ignore covered
 # the underscore spelling but not the hyphenated one. Both separators are
 # matched here so this context cannot repeat it.
 # Every pytest scratch root, whatever the session named it. The three

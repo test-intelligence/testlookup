@@ -237,7 +237,7 @@ spec:
 ---
 # ChromaDB: in-cluster only, reachable by the backend + Celery workers on its
 # container port. Selects nothing where Chroma runs outside the namespace; the
-# homelab and openshift-artifactory overlays run it here (infra-chromadb.yaml).
+# reference K3s install and openshift-artifactory overlays run it here (infra-chromadb.yaml).
 #
 # Narrower than the other data stores on purpose. The chromadb/chroma 1.x
 # server has no authentication, and the backend's Python client builds each

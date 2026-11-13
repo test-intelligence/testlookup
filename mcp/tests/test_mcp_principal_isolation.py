@@ -531,12 +531,12 @@ def test_packaged_network_endpoints_use_safe_exposure_defaults():
     assert "name: testlookup-mcp" in ingress
     assert "path: /" in ingress
 
-    homelab = (REPO_ROOT / "k8s" / "overlays" / "homelab" / "kustomization.yaml").read_text(
+    k3s_overlay = (REPO_ROOT / "k8s" / "overlays" / "k3s" / "kustomization.yaml").read_text(
         encoding="utf-8"
     )
-    assert "name: testlookup-mcp-ingress" in homelab
-    assert "$patch: delete" in homelab
-    assert 'value: "127.0.0.1:*,localhost:*,[::1]:*"' in homelab
+    assert "name: testlookup-mcp-ingress" in k3s_overlay
+    assert "$patch: delete" in k3s_overlay
+    assert 'value: "127.0.0.1:*,localhost:*,[::1]:*"' in k3s_overlay
 
     hpa = (REPO_ROOT / "k8s" / "base" / "hpa.yaml").read_text(encoding="utf-8")
     mcp_hpa = hpa.split("name: testlookup-mcp-hpa", maxsplit=1)[1]

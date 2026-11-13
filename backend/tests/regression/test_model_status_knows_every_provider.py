@@ -1,6 +1,6 @@
 """Regression: the readiness page must know every provider the app permits.
 
-Bug (homelab, 2026-08-16): with ``LLM_PROVIDER=openrouter`` fully working —
+Bug (reference K3s install, 2026-08-16): with ``LLM_PROVIDER=openrouter`` fully working —
 verified end to end against OpenRouter's own billing counter — the AI settings
 page reported::
 

@@ -1,4 +1,4 @@
-# MongoDB 7 — deployed inside the K3s cluster for homelab
+# MongoDB 7 — deployed inside the K3s cluster for reference K3s install
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

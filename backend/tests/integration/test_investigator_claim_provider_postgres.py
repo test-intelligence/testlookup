@@ -71,7 +71,7 @@ async def test_claimed_child_startup_failure_is_finalized_without_provider_call(
                 )
             ).mappings().first()
             if authority is None:
-                pytest.skip("homelab database has no failed test authority fixture")
+                pytest.skip("reference K3s install database has no failed test authority fixture")
             run_id = authority["run_id"]
             project_id = authority["project_id"]
             test_case_id = authority["test_case_id"]

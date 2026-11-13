@@ -85,7 +85,7 @@ class TestAgreesWithTheHeadlineFormula:
     @pytest.mark.parametrize(
         "passed,failed,broken,expected",
         [
-            (47, 9, 2, 81.0),    # the live homelab window: was 83.9
+            (47, 9, 2, 81.0),    # a live reference K3s install window: was 83.9
             (10, 0, 2, 83.3),    # the original #464 repro
             (12, 0, 0, 100.0),
             (0, 0, 5, 0.0),      # an all-broken day is 0%, not a flat 100%

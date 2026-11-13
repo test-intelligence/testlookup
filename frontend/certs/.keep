@@ -1,5 +1,5 @@
 # Sentinel so `COPY certs/` always has a populated dir in the build context.
 # To build behind a TLS-intercepting corporate proxy, put its root CA here as
 # *.crt (gitignored) and build with --build-arg INSTALL_EXTRA_CA=1; the build
-# then trusts it. homelabsetup/deploy-homelab.sh does both for you. With only
+# then trusts it. k3ssetup/deploy-k3s.sh does both for you. With only
 # this file, or without the build arg, the build uses the public roots.

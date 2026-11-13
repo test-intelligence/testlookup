@@ -233,7 +233,7 @@ def test_compose_startup_gate_uses_the_same_override_values() -> None:
 @pytest.mark.parametrize(
     "manifest",
     [
-        "k8s/overlays/homelab/infra-postgres.yaml",
+        "k8s/overlays/k3s/infra-postgres.yaml",
         "k8s/overlays/openshift-artifactory/infra-postgres.yaml",
     ],
 )

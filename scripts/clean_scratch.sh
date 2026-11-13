@@ -3,7 +3,7 @@
 # Remove pytest scratch roots and tool caches from the working tree.
 #
 # Why this exists: on 2026-09-20 the main tree held 186 `.pytest*` roots at the
-# repo root alone, and homelabsetup/deploy-homelab.sh's require_clean_build_inputs
+# repo root alone, and k3ssetup/deploy-k3s.sh's require_clean_build_inputs
 # refused to deploy from it — 200 entries, so the deploy had to run from a
 # throwaway `git worktree add --detach`, a full 3463-file checkout.
 #

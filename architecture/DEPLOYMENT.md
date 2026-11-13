@@ -67,13 +67,13 @@ Overlays specialize it per target ([map of every overlay](../k8s/README.md)):
 | `dev`, `staging`, `prod` | environment tiers (`make k8s-deploy-<env>`) |
 | `self-hosted` | generic on-prem cluster built on `prod` (`scripts/deploy-k8s.sh --cloud=self-hosted`) |
 | `gcp-gke`, `aws-eks`, `azure-aks` | managed-cloud variants built on `prod` (`scripts/deploy-k8s.sh --cloud=gcp\|aws\|azure`) ([guide](../docs/operations/deploy-cloud.md)) |
-| `homelab` | single-node K3s with in-cluster datastores and a local registry; the deploy script, the registry and the kustomization must agree on the registry port or locally built images fail with ImagePullBackOff ([guide](../docs/operations/deploy-k3s.md)) |
+| `reference K3s install` | single-node K3s with in-cluster datastores and a local registry; the deploy script, the registry and the kustomization must agree on the registry port or locally built images fail with ImagePullBackOff ([guide](../docs/operations/deploy-k3s.md)) |
 | `openshift` / `openshift-artifactory` | OpenShift Routes with edge TLS; the `-artifactory` variant is fully **air-gapped** — its `images:` block re-points *every* image (app + infra) at one registry. Two ways in: registry-to-registry mirroring when the build host can reach both sides (`openshiftsetup/*.sh`), or the **offline bundle** when it cannot — [user-guide/air-gapped-install.md](../user-guide/air-gapped-install.md). The bundle renders this same overlay ([guide](../docs/operations/deploy-openshift.md)) |
 
 `k8s/monitoring` (PodMonitors + a PrometheusRule rendered from the Compose alert
 rules) and `k8s/components/backup` (daily dump CronJob + restore) are opt-in
 add-ons. `k8s/components/colocated-data-stores` holds the network policy that
-opens in-namespace datastores to the backend, workers and beat; `homelab` and
+opens in-namespace datastores to the backend, workers and beat; `reference K3s install` and
 `openshift-artifactory` include it.
 
 ## 4. CI/CD pipelines (`.github/workflows/`)

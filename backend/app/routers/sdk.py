@@ -94,7 +94,7 @@ _SDK_CONFIGS: dict[str, dict] = {
         "filename": "testlookup-js-sdk.zip",
     },
     # W17 DEV-02: the `testlookup` CLI as a wheel, built from cli/ while the
-    # image's build context is staged (CI and deploy-homelab.sh), so
+    # image's build context is staged (CI and deploy-k3s.sh), so
     # `pip install <deployment>/api/v1/sdk/cli/<wheel>` works without a clone.
     "cli": {
         "label": "CLI",

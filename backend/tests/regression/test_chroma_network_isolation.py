@@ -21,7 +21,7 @@ Before this change the reachable set was wider than the two callers:
 * ``docker-compose.yml`` and ``docker-compose.release.yml`` published Chroma
   as ``8001:8000``, i.e. on every host interface, and kept it on the shared
   ``testlookup_net`` with the frontend, MCP server, beat and seed jobs.
-* the homelab overlay listed ``testlookup-chromadb`` in ``allow-data-stores``,
+* the K3s overlay listed ``testlookup-chromadb`` in ``allow-data-stores``,
   which also admitted the MCP server and beat, on every port.
 
 These tests hold the narrowed set. They read the manifests directly rather than
@@ -45,7 +45,7 @@ from k8s_network_policy_contract import (
     yaml_docs as _yaml_docs,
 )
 
-OVERLAYS_WITH_CHROMA = ("homelab", "openshift-artifactory")
+OVERLAYS_WITH_CHROMA = ("k3s", "openshift-artifactory")
 CHROMA_PORT = 8000
 CHROMA_SERVICE = "chromadb"
 
@@ -79,7 +79,7 @@ def test_only_the_backend_and_workers_reach_chroma(overlay: str) -> None:
 
 @pytest.mark.parametrize("overlay", OVERLAYS_WITH_CHROMA)
 def test_the_mcp_server_and_beat_cannot_reach_chroma(overlay: str) -> None:
-    """The specific regression: homelab's allow-data-stores admitted both."""
+    """The specific regression: reference K3s install's allow-data-stores admitted both."""
     policies = _policies_for(overlay)
     chroma = _chroma_labels(overlay)
     pods = _app_pods()
@@ -120,7 +120,7 @@ def test_no_overlay_patches_allow_chromadb() -> None:
     assert offenders == []
 
 
-def test_the_evaluator_catches_the_old_homelab_policy() -> None:
+def test_the_evaluator_catches_the_old_k3s_policy() -> None:
     """Without this, an evaluator that admitted nothing would pass the tests above."""
     old = yaml.safe_load(
         """
@@ -139,8 +139,8 @@ spec:
         - podSelector: {matchLabels: {app: testlookup-beat}}
 """
     )
-    policies = _policies_for("homelab") + [old]
-    chroma = _chroma_labels("homelab")
+    policies = _policies_for("k3s") + [old]
+    chroma = _chroma_labels("k3s")
     pods = _app_pods()
     assert _admits(policies, chroma, pods["testlookup-mcp"], CHROMA_PORT)
     assert _admits(policies, chroma, pods["testlookup-beat"], 22)

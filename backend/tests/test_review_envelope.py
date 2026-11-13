@@ -51,7 +51,7 @@ async def test_a_pending_review_points_the_reader_at_it():
     assert envelope.state == "pending_review"
     # A program reaches the review by its id; a person by the review queue the
     # banner links. The copy used to read "Review at /api/v1/reviews/<id>" in
-    # every banner (route sweep, homelab 2026-10-10).
+    # every banner (route sweep, reference K3s install 2026-10-10).
     assert envelope.review_id == str(review.id)
     assert "review queue" in envelope.message
     assert "/api/" not in envelope.message

@@ -9,12 +9,12 @@ beyond exc_info/stack_info/stacklevel/extra, so the log call raised
 1. the diagnostic was never written — the real failure went unrecorded;
 2. ``raise RuntimeError(...) from None`` never ran, so the deliberate scrub
    was dead code and the original exception's full chained traceback escaped
-   (on the live homelab that meant an asyncpg trace carrying an internal
+   (on a live reference K3s install that meant an asyncpg trace carrying an internal
    host:port, which is exactly what ``from None`` was there to suppress);
 3. callers saw ``TypeError: Logger._log() got an unexpected keyword argument``
    instead of the failure that actually happened.
 
-Two of the four were firing continuously on the live homelab. A previous fix
+Two of the four were firing continuously on a live reference K3s install. A previous fix
 had already hit this trap in this same file and left a comment naming it, so
 the guard here is the class, not the instance:
 

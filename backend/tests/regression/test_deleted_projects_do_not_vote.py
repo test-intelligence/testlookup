@@ -10,7 +10,7 @@ This class has now been found three times in ONE file:
   * ``_period_stats``      — fixed earlier; its comment records 44,315
                              executions where only 192 belonged to live
                              projects (99.6% of the headline).
-  * ``new_failures_24h``   — measured live 2026-08-16 on the homelab:
+  * ``new_failures_24h``   — measured live 2026-08-16 on the reference K3s install:
                              **301 reported against a truth of 23**, with 93
                              soft-deleted projects supplying the rest.
   * ``_count_flaky_tests`` — same measurement: **27 against a truth of 24**.

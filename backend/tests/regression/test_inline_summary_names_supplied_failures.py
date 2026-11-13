@@ -1,7 +1,7 @@
 """W23c F-1, part 2 (F-OR07-1): an inline summary's data names the supplied failures and states no build pass rate.
 
 ``summary_system`` v2 (#324) tells the model that a ``<<data>>`` block's counts describe only the supplied
-failures. On the homelab (2026-11-04, invocation 35d5151d, live OpenRouter model) the draft STILL read "The test
+failures. On the reference K3s install (2026-11-04, invocation 35d5151d, live OpenRouter model) the draft STILL read "The test
 run had a 0.0% pass rate with 1 failed test out of 1 executed … the release is not ready": the context's first
 lines were ``Build: … Results: 1 tests — 1 failed. Pass rate 0.0%``, the inline seed's figures stated flatly as
 the build's result, and the small model followed the data over the rule. The fix is in the data: for an inline

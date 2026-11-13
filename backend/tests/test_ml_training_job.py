@@ -155,12 +155,12 @@ def _stub_trainer(monkeypatch, result=None, exc=None):
     return calls
 
 
-# ── a rare category does not sink the run (W04 homelab, 2026-10-15) ───────────
+# ── a rare category does not sink the run (W04 reference K3s install, 2026-10-15) ───────────
 
 
 @pytest.mark.asyncio
 async def test_a_category_with_one_or_two_labels_is_left_out_not_fatal(model_env, monkeypatch):
-    """The homelab's 298 labels held two categories with a single sample each: Train now
+    """The reference K3s install's 298 labels held two categories with a single sample each: Train now
     failed with sklearn's "The least populated classes in y have only 1 member" (the
     classifier's own stratified early-stopping split), so the ML tier could never activate."""
     pytest.importorskip("sklearn")

@@ -4,7 +4,7 @@ The source is G-A's ``seed_transfer_project(..., history=True, mongo=…, storag
 entity, ≥ 1 document of EVERY ``MongoSpec`` collection, objects under a run's ``minio_prefix`` + the ones that
 must not travel), exported WITH history through G-B's REAL runner; every import goes through the PARTED routes
 (``IMPORT_PART_MAX_BYTES`` patched to 64 KiB, so the archive needs ≥ 3 parts) or the single route, and G-B's
-REAL runner, on THIS module's engine (pool 1 + 1 — the homelab worker's). Proven:
+REAL runner, on THIS module's engine (pool 1 + 1 — the reference K3s install worker's). Proven:
 
 1. ROUND TRIP, every store — per history entity ``count(copy) == count(exported)`` (> 0); every FK of every
    imported history row points inside the copy; NO imported id equals a source id; id lists hold copy ids only;
@@ -300,7 +300,7 @@ async def env(tmp_path_factory):
     except Exception as exc:  # noqa: BLE001 - locally only; CI's postgres-integration job has the mongo service
         pytest.skip(f"MongoDB is not reachable: {type(exc).__name__}")
     redis_was_bound = redis_client._pool is not None
-    engine = create_async_engine(_dsn(), pool_size=1, max_overflow=1, pool_timeout=15)   # the homelab worker's pool
+    engine = create_async_engine(_dsn(), pool_size=1, max_overflow=1, pool_timeout=15)   # the reference K3s install worker's pool
     listener = _Statements()
     event.listen(engine.sync_engine, "before_cursor_execute", listener)
     sessions = async_sessionmaker(engine, expire_on_commit=False)

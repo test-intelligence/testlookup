@@ -55,7 +55,7 @@ async def test_concurrent_cancel_terminalizes_queued_and_cooperatively_marks_run
                 )
             ).first()
             if authority is None:
-                pytest.skip("homelab database has no failed test authority fixture")
+                pytest.skip("reference K3s install database has no failed test authority fixture")
             run_id, project_id, test_case_id = authority
 
             await db.execute(

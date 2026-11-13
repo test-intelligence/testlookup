@@ -390,7 +390,7 @@ async def test_a_review_whose_run_was_deleted_is_refused(transitions):
     It was also how the user hit BUG-012. ``review_requests.pipeline_run_id``
     is an FK with ``ON DELETE SET NULL`` while ``subject_id`` is a plain
     varchar with no FK, so deleting a pipeline run leaves the review behind
-    pointing at nothing. On the homelab deployment 12 of 118 pipeline-run
+    pointing at nothing. On the reference K3s install deployment 12 of 118 pipeline-run
     reviews were in that state, and the single review a human had accepted was
     one of them. The page promises "Accepting marks the pipeline run passed";
     for these there is no run to mark, so the accept reported success and

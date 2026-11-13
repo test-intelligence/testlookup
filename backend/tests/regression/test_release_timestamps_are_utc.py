@@ -9,7 +9,7 @@ a bare ``datetime.now()``:
 
 Measured before fixing, because the consequence decides how it is described:
 asyncpg does NOT reject a naive datetime for a timestamptz parameter -- it
-treats it as UTC. On the homelab the pod's clock is UTC, so the stored values
+treats it as UTC. On the reference K3s install the pod's clock is UTC, so the stored values
 were correct there by coincidence. On any host whose local time is not UTC (a
 developer laptop, a server set to local time) the release and phase dates were
 local wall-clock times labelled as UTC, shifted by the offset, with no error.

@@ -2,12 +2,12 @@
 FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS base
 WORKDIR /app
 
-# ── TLS-interception CA support (homelab builds behind an HTTPS-inspecting
+# ── TLS-interception CA support (reference K3s install builds behind an HTTPS-inspecting
 #    middlebox: a corporate proxy or endpoint-security TLS scanning) ──
 # Without this, `npm ci` can't verify registry.npmjs.org against the
 # public roots and fails with "unable to get local issuer certificate".
 # NODE_EXTRA_CA_CERTS *appends* the staged root CA to Node's built-in roots
-# (no apk / update-ca-certificates needed on Alpine). deploy-homelab.sh drops
+# (no apk / update-ca-certificates needed on Alpine). deploy-k3s.sh drops
 # the CA into frontend/certs/*.crt and builds with INSTALL_EXTRA_CA=1.
 # certs/ always exists (committed .keep); empty on CI → the conditional skips
 # and npm uses the public roots unchanged.
@@ -54,7 +54,7 @@ FROM nginx:1.31.8-alpine3.24@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1e
 #
 # apk reaches the mirror over HTTPS, so behind a TLS-intercepting middlebox it
 # needs the staged interception CA exactly like the node stage above
-# (R-B45-T-2): deploy-homelab.sh stages it in certs/*.crt with
+# (R-B45-T-2): deploy-k3s.sh stages it in certs/*.crt with
 # INSTALL_EXTRA_CA=1. It is appended to the system bundle apk verifies
 # against, BEFORE apk touches the network. Empty certs/ (CI) = no-op.
 ARG INSTALL_EXTRA_CA=0

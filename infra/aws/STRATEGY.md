@@ -51,7 +51,7 @@
 
 ## 3. Service mapping (compose/k8s → AWS)
 
-| TestLookup component | Today (compose/homelab) | AWS target |
+| TestLookup component | Today (compose/K3s) | AWS target |
 |---|---|---|
 | frontend, backend, mcp, 5 celery workers, beat | k8s Deployments | **EKS** managed node group (private subnets) |
 | PostgreSQL 16 | container | **RDS for PostgreSQL** (gp3, encrypted, Multi-AZ in prod) |

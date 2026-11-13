@@ -1,6 +1,6 @@
 """A session on a temporary password is refused by the API, not only the browser.
 
-Homelab sweep, 2026-10-10: ``must_change_password`` was a prompt on the login
+Reference K3s install sweep, 2026-10-10: ``must_change_password`` was a prompt on the login
 response and a redirect in the SPA; every API call served the token normally,
 so a user on an initial or admin-reset password could skip the change by
 calling the API. Owner decision: enforce it server-side.

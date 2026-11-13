@@ -43,7 +43,7 @@ python -m pip install -c e2e-runner/constraints.txt -r e2e-runner/requirements.t
 (cd frontend && npm ci && npx playwright install chromium)
 export TL_API=https://your-test-host.example
 export TL_WEB=https://your-test-host.example
-python e2e-runner/launch.py --env homelab --tier regression --manifest /path/to/release-manifest.json --out /path/to/results/homelab-rc
+python e2e-runner/launch.py --env k3s --tier regression --manifest /path/to/release-manifest.json --out /path/to/results/k3s-rc
 ```
 
 In PowerShell activate with `.\.venv\Scripts\Activate.ps1` and assign environment variables with `$env:TL_API` and `$env:TL_WEB`. For Compose use separate backend and frontend origins. For an external deployment use `--env external`. Supply TL_USER_VIEWER and TL_TOKEN_VIEWER, and corresponding pairs for TESTER, QA_ENGINEER, QA_LEAD and ADMIN via a credential manager. Values must identify dedicated test principals. The runner compares /auth/me to both the expected username and role. Missing values appear as BLOCKED. Shared runs use read-only requests and open the public login form.
@@ -64,7 +64,7 @@ For the in-cluster Job, build the image in this directory with repository root a
 
 ```sh
 envsubst < e2e-runner/job.yaml > /tmp/testlookup-release-job.yaml
-kubectl --context "$HOMELAB_KUBE_CONTEXT" -n "$HOMELAB_NAMESPACE" create -f /tmp/testlookup-release-job.yaml
+kubectl --context "$K3S_KUBE_CONTEXT" -n "$K3S_NAMESPACE" create -f /tmp/testlookup-release-job.yaml
 ```
 
 Template inputs are RUNNER_DIGEST_REF (repository@sha256:digest), TL_WEB, TL_API, MANIFEST_CONFIGMAP (contains release-manifest.json and the observed deployment-images.json), TEST_SECRET_NAME, RESULTS_PVC and a fresh RUN_ID. This template targets the persistent deployment's read-only lane.
@@ -72,13 +72,13 @@ Template inputs are RUNNER_DIGEST_REF (repository@sha256:digest), TL_WEB, TL_API
 For write journeys, give each concurrent release campaign its own disposable namespace and datastores. The AI test temporarily changes deployment-wide offline mode, and the private receiver exercises a one-shot Jira timeout. Configure the five test principals and allow `testlookup-mcp:8002` in the MCP service's host settings. Install fixtures once before starting the Job. Use the same namespace and UID that the deployment created. If a write Job is interrupted, recreate its disposable environment for the next run.
 
 ```sh
-python e2e-runner/fakes_k8s.py --context "$HOMELAB_KUBE_CONTEXT" --namespace "$HOMELAB_NAMESPACE" \
-  --namespace-uid "$HOMELAB_NAMESPACE_UID" --manifest "$VERIFIED_MANIFEST"
-test "$(kubectl --context "$HOMELAB_KUBE_CONTEXT" get ns "$HOMELAB_NAMESPACE" -o jsonpath='{.metadata.uid}')" = "$HOMELAB_NAMESPACE_UID" || exit 1
+python e2e-runner/fakes_k8s.py --context "$K3S_KUBE_CONTEXT" --namespace "$K3S_NAMESPACE" \
+  --namespace-uid "$K3S_NAMESPACE_UID" --manifest "$VERIFIED_MANIFEST"
+test "$(kubectl --context "$K3S_KUBE_CONTEXT" get ns "$K3S_NAMESPACE" -o jsonpath='{.metadata.uid}')" = "$K3S_NAMESPACE_UID" || exit 1
 export TL_WEB=http://testlookup-frontend TL_API=http://testlookup-backend:8000
 envsubst < e2e-runner/job.yaml | kubectl set env --local -f - TL_TARGET=ephemeral \
   TL_MCP=http://testlookup-mcp:8002 TL_FAKE_URL=http://release-fixture:8080 -o yaml | \
-  kubectl --context "$HOMELAB_KUBE_CONTEXT" -n "$HOMELAB_NAMESPACE" create -f -
+  kubectl --context "$K3S_KUBE_CONTEXT" -n "$K3S_NAMESPACE" create -f -
 ```
 
 The Job writes its results to the named PVC. Run the Kubernetes upgrade drill in its own disposable namespace and use `merge_upgrade.py` with `--platform kubernetes` to combine both results for the same candidate.

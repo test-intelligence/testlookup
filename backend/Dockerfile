@@ -26,12 +26,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # so file ownership of /app lines up with the runtime user in-cluster.
 RUN groupadd -r -g 1000 testlookup && useradd -r -u 1000 -g testlookup testlookup
 
-# ── TLS-interception CA support (homelab builds behind an HTTPS-inspecting
+# ── TLS-interception CA support (reference K3s install builds behind an HTTPS-inspecting
 #    middlebox: a corporate proxy or endpoint-security TLS scanning) ──
 # When the host re-signs TLS with a private root CA, in-container pip can't
 # verify pypi.org against the public roots and dies with
 #   "unable to get local issuer certificate".
-# deploy-homelab.sh exports that root CA into backend/certs/*.crt and builds
+# deploy-k3s.sh exports that root CA into backend/certs/*.crt and builds
 # with --build-arg INSTALL_EXTRA_CA=1, which merges it into the OS bundle.
 # certs/ always exists (committed .keep). On CI the dir holds only .keep,
 # INSTALL_EXTRA_CA defaults to 0, and pip uses the public roots unchanged.
@@ -91,7 +91,7 @@ COPY . .
 # ``COPY --from=builder /app/__client_sdks_staged ./client_sdks``.
 # That directory is populated by the caller's CI (``ci.yml`` job
 # ``build-images`` step "Stage client SDKs into backend context", and
-# ``homelabsetup/deploy-homelab.sh``). When a build skips the staging
+# ``k3ssetup/deploy-k3s.sh``). When a build skips the staging
 # step — e.g. a plain ``docker build ./backend`` — the path is
 # missing and BuildKit fails to compute a cache key for the COPY,
 # producing:
@@ -160,7 +160,7 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # Client SDK files served at /api/v1/sdk/{lang}. Staged into the build
 # context as backend/__client_sdks_staged/ by the deploy script (see
-# homelabsetup/deploy-homelab.sh). docker-compose dev path is unaffected —
+# k3ssetup/deploy-k3s.sh). docker-compose dev path is unaffected —
 # it targets the `development` stage and uses a host volume mount instead.
 COPY --from=builder /app/__client_sdks_staged ./client_sdks
 

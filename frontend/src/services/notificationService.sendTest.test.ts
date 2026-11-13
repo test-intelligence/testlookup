@@ -1,6 +1,6 @@
 /**
  * "Send test" showed every failure twice: the settings page toasts the outcome
- * itself, and the API client toasted the same refusal (homelab sweep,
+ * itself, and the API client toasted the same refusal (reference K3s install sweep,
  * 2026-10-10). The request opts out of the client's toast.
  */
 import { describe, expect, it, vi } from 'vitest'

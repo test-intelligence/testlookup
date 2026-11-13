@@ -8,7 +8,7 @@
   ONCE from a database migrated to 0249 by the real chain (``df_w25d_b``,
   PostgreSQL 16, read-only; W25d G-B's log ``w25d-gb-capture-0249.log``). The
   orchestrator compares the same reflection (``reflect_dead_table_shapes``)
-  in-pod on the homelab before the deploy: a difference is a STOP, because
+  in-pod on the reference K3s install before the deploy: a difference is a STOP, because
   that is the database this downgrade must restore.
 * ``upgrade()`` drops all four; ``downgrade()`` recreates them again (the round
   trip); the stub tables they reference are untouched.

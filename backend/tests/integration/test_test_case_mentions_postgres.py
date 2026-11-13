@@ -7,7 +7,7 @@ guard chain) against real rows:
   ledger row (``context.mentions == [alice.id]``) and ONE in-app
   ``NotificationLog`` for Alice, committed with the comment;
 * the delivery relay's own claim (``claim_pending_notification_deliveries``)
-  returns NOTHING for it -- the no-mail proof (the homelab SMTP is a live
+  returns NOTHING for it -- the no-mail proof (the reference K3s install SMTP is a live
   Gmail account), run inside a transaction that is rolled back;
 * Alice's bell (``GET /api/v1/notifications/history``) lists it with
   ``link == "/test-management?case=<id>"``;

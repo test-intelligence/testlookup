@@ -3,7 +3,7 @@
 ``scripts/seed_dev_data.py`` wrote each membership as ``str(UserRole.X)`` --
 ``'UserRole.QA_LEAD'`` -- which no membership check matches, so a seeded QA
 lead got 403 updating the triage status of a failure in their own Inbox (the
-UX redesign's browser E2E pass, 2026-10-07; every seeded install, the homelab
+UX redesign's browser E2E pass, 2026-10-07; every seeded install, the reference K3s install
 demo included). The seed writes ``.value`` now, and migration 0198 repairs the
 rows it already wrote, as 0045 did once.
 """
