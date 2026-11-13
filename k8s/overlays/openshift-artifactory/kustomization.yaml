@@ -76,18 +76,6 @@ patches:
   # ── Remove the base nginx Ingress — OpenShift uses Routes ─────────────────
   - path: remove-ingress.yaml
 
-  # ── Remove the base template Secret — the deploy script creates the real
-  #    Secret (random credentials) via ``oc create secret`` before apply. ────
-  - patch: |-
-      $patch: delete
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: testlookup-secrets
-    target:
-      kind: Secret
-      name: testlookup-secrets
-
   # ── Re-point the base Ollama PVC at the cluster's storage class ───────────
   # The 6 infra PVCs (postgres/mongo/redis/minio/chromadb + Ollama)
   # carry STORAGE_CLASS_PLACEHOLDER directly in their local manifests. The

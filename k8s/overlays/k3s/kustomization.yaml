@@ -71,17 +71,6 @@ patches:
       kind: Deployment
       name: testlookup-mcp
 
-  # ── Remove the base template Secret (the deploy script creates real secrets) ──
-  - patch: |-
-      $patch: delete
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: testlookup-secrets
-    target:
-      kind: Secret
-      name: testlookup-secrets
-
   # ── Force re-pull on pod start ────────────────────────────────────────────
   # Now that BUILD_TAG is immutable per deploy, kubectl apply -k normally
   # forces a rollout on its own. This patch is retained for the corner case

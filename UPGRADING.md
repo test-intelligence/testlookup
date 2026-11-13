@@ -220,6 +220,14 @@ point any script of your own at the new paths. Nothing else needs to change:
 - the rendered manifests keep every resource name, so the next deploy
   updates in place (only comments inside two ConfigMaps change).
 
+### Kubernetes, Terraform and dev-login defaults
+
+- **`testlookup-secrets` is no longer rendered** by `k8s/base` (it held placeholders). Create the Secret before `kubectl apply -k`, as the deploy guide and `scripts/deploy-k8s.sh` already required. The Secret in your cluster stays: `kubectl apply -k` deletes nothing it no longer renders unless you apply with `--prune`.
+- **Backend and worker egress excludes the cloud metadata service.** If those pods get cloud credentials from it (an EC2 instance role, GKE Workload Identity, an Azure IMDS managed identity), add an egress rule for it to `allow-backend` and `allow-workers` in your overlay; see [network policies](docs/operations/deploy-kubernetes.md#network-policies). IRSA, EKS Pod Identity and Azure Workload Identity are not affected.
+- **`public_access_cidrs` is required** by `infra/aws/terraform`: set your office or VPN CIDRs in your tfvars file (Terraform asks for it otherwise). To keep the old, internet-wide endpoint, set `["0.0.0.0/0"]` explicitly.
+- **`DEV_AUTO_LOGIN_ENABLED` defaults to `false`.** The development stacks write `true` to `.env`, so `make dev`, `make dev-lite` and Codespaces are unchanged. If you start the API another way and use Quick Login, set `DEV_AUTO_LOGIN_ENABLED=true` with `APP_ENV=development`.
+- **The dev-lite MongoDB requires a password** (`MONGO_USER`/`MONGO_PASSWORD` from `.env`, as in `docker-compose.yml`). MongoDB creates the user only on an empty volume, so remove the old MongoDB volume once, which deletes the local test logs (PostgreSQL's volume stays): `make dev-lite-stop`, `docker volume rm testlookup_lite_mongo_data`, then `make dev-lite`. An `.env` from before `MONGO_PASSWORD` existed needs it added (`scripts/gen-dev-env.sh` writes it for a new `.env`).
+
 ### Go reporter module path
 
 The Go reporter's module path is `github.com/test-intelligence/testlookup/client/go`; it was `github.com/testlookup/testlookup-go`, which nothing served, so every user had a `replace` directive pointing at a clone. Rename the path in your `go.mod` (`require` and `replace`) and in your imports:

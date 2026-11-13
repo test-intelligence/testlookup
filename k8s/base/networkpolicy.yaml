@@ -153,7 +153,24 @@ spec:
         - protocol: TCP
           port: 8000
   egress:
-    - {}   # allow all egress — data stores are external to this namespace
+    # Every pod in the cluster: the data stores (often in another namespace),
+    # Ollama, Chroma and MCP.
+    - to:
+        - namespaceSelector: {}
+    # Anything outside the cluster except the cloud metadata service, which
+    # hands the node's cloud credentials to any process that asks (OSS
+    # review 2026-11-12, L-8). Pods that get credentials from it on purpose
+    # (EC2 instance roles, GKE Workload Identity, Azure IMDS identities) need
+    # an overlay patch; see docs/operations/deploy-kubernetes.md.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fd00:ec2::254/128
 
 ---
 # Celery workers + the beat scheduler. Same network needs (Redis broker,
@@ -190,7 +207,24 @@ spec:
         - protocol: TCP
           port: 9100
   egress:
-    - {}
+    # Same as the backend: every pod in the cluster, then the outside world
+    # without the metadata service.
+    - to:
+        - namespaceSelector: {}
+    # Anything outside the cluster except the cloud metadata service, which
+    # hands the node's cloud credentials to any process that asks (OSS
+    # review 2026-11-12, L-8). Pods that get credentials from it on purpose
+    # (EC2 instance roles, GKE Workload Identity, Azure IMDS identities) need
+    # an overlay patch; see docs/operations/deploy-kubernetes.md.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fd00:ec2::254/128
 
 ---
 # MCP server: accept SSE ingress from backend and from outside the namespace

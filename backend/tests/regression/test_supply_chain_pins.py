@@ -115,6 +115,29 @@ def test_the_python_images_install_the_hashed_lock(dockerfile):
     assert not unlocked, f"{dockerfile} installs the unlocked requirements.txt: {unlocked}"
 
 
+@pytest.mark.parametrize("dockerfile", ["backend/Dockerfile", "mcp/Dockerfile"])
+def test_the_python_images_install_no_package_by_bare_name(dockerfile):
+    """`pip install --upgrade pip` and `pip install watchfiles` took whatever was newest at
+    build time (OSS review 2026-11-12, M-4); the lock already carries watchfiles. Only the
+    optional Ragas extra, off by default, installs from a requirements file of its own."""
+    text = (ROOT / dockerfile).read_text(encoding="utf-8").replace("\\\n", " ")
+    bare = []
+    for command in re.findall(r"pip install ([^\n&;]*)", text):
+        words = [w for w in command.split() if not w.startswith("-")]
+        if any(not w.endswith(".txt") for w in words):
+            bare.append(command.strip())
+    assert not bare, f"{dockerfile} installs packages outside a requirements file: {bare}"
+
+
+def test_ci_installs_the_frontend_from_its_lockfile():
+    """`npm install` quietly rewrites a lockfile `npm ci` would reject (W45), and Scorecard
+    flags it as an unpinned install. Every frontend job uses `npm ci`, as the image does."""
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    loose = [line.strip() for line in workflow.splitlines() if re.match(r"\s*run:\s*npm install\b", line)]
+    assert not loose, f"ci.yml installs with npm install: {loose}"
+    assert workflow.count("run: npm ci") >= 4
+
+
 def test_the_mcp_and_cli_floors_exclude_advised_releases():
     mcp = (ROOT / "mcp/requirements.txt").read_text(encoding="utf-8")
     floor = re.search(r"^PyJWT>=([\d.]+)", mcp, re.M)

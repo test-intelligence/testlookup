@@ -12,6 +12,10 @@ node_desired_size   = 3
 node_min_size       = 2
 node_max_size       = 6
 
+# Required, no default: the CIDRs that may reach the EKS API endpoint (your
+# office/VPN egress). Terraform asks for it when it is not set here.
+# public_access_cidrs = ["203.0.113.0/24"]
+
 rds_instance_class   = "db.t3.large"
 rds_multi_az         = false
 docdb_instance_count = 2

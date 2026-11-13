@@ -21,7 +21,7 @@ Kustomize base, overlays, an opt-in monitoring bundle and two components (backup
 
 Rules that apply to every overlay:
 
-- Create the `testlookup-secrets` Secret yourself before the first deploy; `base/secrets.yaml` holds placeholders only ([keys](../docs/operations/deploy-kubernetes.md#secret-testlookup-secrets)).
+- Create the `testlookup-secrets` Secret yourself before the first deploy; `base/secrets.yaml` holds placeholders only and is not applied ([keys](../docs/operations/deploy-kubernetes.md#secret-testlookup-secrets)).
 - Run database migrations with the new backend image before the new pods serve traffic: the Make targets and `scripts/deploy-k8s.sh` call `scripts/run-k8s-migrations.sh` for you.
 - `:latest` tags are rejected by CI; pin a release tag, commit SHA or digest.
 - Every image and tag is listed in `deploy/images.manifest.txt`; `make images-check` fails on drift.

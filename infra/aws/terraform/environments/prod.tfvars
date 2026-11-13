@@ -12,7 +12,8 @@ node_desired_size      = 4
 node_min_size          = 3
 node_max_size          = 10
 endpoint_public_access = true
-# Lock the API endpoint to your office/VPN CIDRs in prod:
+# Required, no default: the CIDRs that may reach the EKS API endpoint (your
+# office/VPN egress). Terraform asks for it when it is not set here.
 # public_access_cidrs  = ["203.0.113.0/24"]
 
 rds_instance_class    = "db.r6g.large"

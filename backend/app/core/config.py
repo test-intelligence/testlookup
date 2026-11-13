@@ -602,8 +602,10 @@ class Settings(BaseSettings):
     # When true AND APP_ENV=development, a /api/v1/auth/dev-login endpoint
     # is available that issues a JWT for the admin user without credentials.
     # This lets developers access the UI immediately if seed data has not
-    # been loaded yet.  Always false in staging/production.
-    DEV_AUTO_LOGIN_ENABLED: bool = True
+    # been loaded yet. Off unless set: the development stacks write
+    # DEV_AUTO_LOGIN_ENABLED=true to .env (scripts/gen-dev-env.sh), so a bare
+    # `uvicorn app.main:app` or a hand-written manifest never offers it.
+    DEV_AUTO_LOGIN_ENABLED: bool = False
 
     # ── Authentication & JWT ──────────────────────────────────
     JWT_SECRET_KEY: str = "change-me-jwt-secret"

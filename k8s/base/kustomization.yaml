@@ -6,7 +6,9 @@ namespace: testlookup
 resources:
   - namespace.yaml
   - configmap.yaml
-  - secrets.yaml
+  # secrets.yaml is a template only: create testlookup-secrets out of band
+  # (docs/operations/deploy-kubernetes.md). Rendering its placeholders made
+  # `kubectl apply -k` fail on them, or overwrite the real Secret.
   - rbac.yaml
   - backend-deployment.yaml
   - frontend-deployment.yaml

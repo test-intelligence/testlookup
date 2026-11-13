@@ -48,8 +48,9 @@ ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
 # release file whose hash changed, fails the build instead of installing.
 # requirements.txt is copied too: requirements-ragas.txt includes it.
 COPY requirements.txt requirements-lock.txt ./
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --require-hashes -r requirements-lock.txt
+# The base image's pip installs the lock; an unpinned `pip install --upgrade
+# pip` fetched whatever pip was newest at build time.
+RUN pip install --no-cache-dir --require-hashes -r requirements-lock.txt
 
 # Optional: the Ragas RAG-faithfulness evaluator (Settings > AI Configuration).
 # Off by default: it adds 26 packages (pandas, pyarrow, datasets; ~360 MB) and
@@ -68,8 +69,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     APP_ENV=development
 
-# Install development tools
-RUN pip install --no-cache-dir watchfiles
+# uvicorn's --reload uses watchfiles, which the lock already installs.
 
 COPY . .
 

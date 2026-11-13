@@ -183,7 +183,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `SEARCH_INDEX_INCREMENTAL_LIMIT` | `int` | `5000` |
 | `SEARCH_QUERY_TIMEOUT_MS` | `int` | `5000` |
 | `SEARCH_MAX_RESULTS` | `int` | `200` |
-| `DEV_AUTO_LOGIN_ENABLED` | `bool` | `True` |
+| `DEV_AUTO_LOGIN_ENABLED` | `bool` | `False` |
 | `JWT_SECRET_KEY` | `str` | `'change-me-jwt-secret'` |
 | `JWT_ALGORITHM` | `str` | `'HS256'` |
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `int` | `720` |

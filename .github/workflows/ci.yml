@@ -313,7 +313,7 @@ jobs:
           cache-dependency-path: frontend/package.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
@@ -361,7 +361,7 @@ jobs:
           cache-dependency-path: frontend/package.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
@@ -410,7 +410,7 @@ jobs:
           cache-dependency-path: frontend/package.json
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
