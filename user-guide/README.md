@@ -35,13 +35,13 @@ Several workflows are switched by feature flags (**Settings → System → Featu
 
 | Flag | Turns on |
 |---|---|
-| `flaky_auto_quarantine` | Quarantine proposals and the review workflow on **Flaky tests** |
-| `outbound_webhooks` | Outbound webhook subscriptions (**Settings → Integrations → Outbound webhooks**) |
+| `flaky_auto_quarantine` | Quarantine proposals and the review workflow on **Flaky tests** (on unless an administrator changed it) |
+| `outbound_webhooks` | Outbound webhook subscriptions (**Settings → Integrations → Outbound webhooks**) (on for a new install) |
 | `llm_cost_budget` | Enforcement of the per-project LLM cost budget (on for a new install) |
 | `release_phase_gate_enforcement` | Asking for a reason to complete a release phase without a GO verdict, or to skip one (on for a new install) |
 | `release_compliance_pack` | Compliance pack generation (on for a new install) |
-| `github_checks` | GitHub check runs and pull-request comments |
-| `gitlab` | GitLab merge-request notes and commit statuses |
+| `github_checks` | GitHub check runs and pull-request comments (on for a new install) |
+| `gitlab` | GitLab merge-request notes and commit statuses (on for a new install) |
 
 `manual_upload` (the **Upload** button on Runs) and `ask_ai_chat` (the Ask AI page) ship **on**. The full list, with what each flag gates and how flags are evaluated, is the [feature-flag reference](../docs/operations/feature-flags.md).
 

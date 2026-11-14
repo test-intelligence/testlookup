@@ -36,6 +36,9 @@ async def generate_mock_test_run(
 ):
     """
     Generates a synthetic test run and triggers the ingestion pipeline.
+
+    Development only: answers 404 unless `APP_ENV=development`, before any
+    authentication check.
     """
     # Re-audit N26: the project arrives as a query parameter, which the
     # architectural scan checks now that it reads this router too. An instance

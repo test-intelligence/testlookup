@@ -10,9 +10,12 @@ Generate Mock Test Run
 
 Generates a synthetic test run and triggers the ingestion pipeline.
 
+Development only: answers 404 unless `APP_ENV=development`, before any
+authentication check.
+
 Source: [backend/app/routers/debug.py:21](../../../backend/app/routers/debug.py#L21).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_development_environment`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
