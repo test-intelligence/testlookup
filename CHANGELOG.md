@@ -253,6 +253,7 @@ Everything under Added is new to the public. The other sections matter to anyone
 - **Cloud credentials:** on Kubernetes the backend and workers can no longer reach the cloud metadata service (`169.254.169.254`, and `fd00:ec2::254` on AWS), which hands out the node's cloud credentials; their egress allowed every address.
 - **EKS API endpoint:** the AWS Terraform has no default for `public_access_cidrs` (it was `0.0.0.0/0`), so the cluster API is open only to the CIDRs you set.
 - **Public bucket:** the unused, publicly readable `testlookup-attachments` bucket is no longer created.
+- **Synthetic-data endpoint:** `POST /api/v1/debug/generate-test-run` files generated results into any project an instance admin names. It now answers 404 outside development, as the dev seed endpoints already did; it was mounted in production too. Staging and production refuse before any credential check (`backend/tests/integration/test_debug_router_is_development_only.py`).
 - **Demo hardening:** `docker-compose.demo.yml` gives the app containers no route to the internet, memory, CPU and process ceilings, and `no-new-privileges`, and demo sign-in refuses admin, service and MFA accounts and is rate-limited.
 - **Supply chain:**
   - the backend and MCP images install hash-locked Python requirements (`--require-hashes`, every transitive package pinned; `make lock-python` regenerates them) and nothing else: the backend image no longer upgrades pip or installs watchfiles unpinned;

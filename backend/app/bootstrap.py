@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.core.deps import get_current_user_or_api_key
+from app.core.deps import get_current_user_or_api_key, require_development_environment
 from app.routers import (
     agent_configs,
     agent_investigations,
@@ -437,11 +437,16 @@ def register_routers(app: FastAPI) -> None:
     for router in PROTECTED_ROUTERS:
         app.include_router(router, dependencies=protected_deps)
 
+    # The debug router files synthetic results into a project: development only.
+    # Its environment gate runs BEFORE authentication, so staging and production
+    # answer 404 to every caller, signed in or not. It stays mounted (rather than
+    # left out outside development) so the authorization scans in
+    # tests/test_architectural_authorization.py still read its route.
     app.include_router(
         debug.router,
         prefix="/api/v1/debug",
         tags=["Debug"],
-        dependencies=protected_deps,
+        dependencies=[Depends(require_development_environment), *protected_deps],
     )
 
 
