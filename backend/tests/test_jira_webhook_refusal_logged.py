@@ -32,11 +32,18 @@ class _Request:
     (None, "missing"),
     ("1800000000000", "invalid"),
     ("nan", "invalid"),
-    (int((time.time() - fb.JIRA_REPLAY_WINDOW_SECONDS - 60) * 1000), "outside_window"),
-    (int((time.time() + 3600) * 1000), "outside_window"),
+    ("older_than_window", "outside_window"),
+    ("ahead_of_skew", "outside_window"),
 ])
 async def test_a_refused_delivery_is_logged_without_its_body(monkeypatch, stamp, kind):
     monkeypatch.setattr(fb, "_verify_jira_signature", lambda body, header: None)
+    # The relative stamps are taken when the test runs, not at collection: on a
+    # suite that takes over 45 minutes, "an hour ahead" taken at collection is
+    # inside the 15-minute clock skew by the time it is sent.
+    if stamp == "older_than_window":
+        stamp = int((time.time() - fb.JIRA_REPLAY_WINDOW_SECONDS - 60) * 1000)
+    elif stamp == "ahead_of_skew":
+        stamp = int((time.time() + fb.JIRA_CLOCK_SKEW_SECONDS + 3600) * 1000)
     secret_marker = "SECRET-ISSUE-CONTENT"
     issue = {"key": secret_marker}
     if stamp == "missing":

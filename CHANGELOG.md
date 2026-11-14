@@ -5,7 +5,9 @@ All notable changes to TestLookup are recorded here. The format follows
 [Semantic Versioning](https://semver.org/) (before 1.0, a minor version may
 contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
-## [Unreleased] — 0.1.0
+## [Unreleased]
+
+## [0.1.0] - 2026-11-14
 
 The first public release. TestLookup is a self-hosted test-intelligence platform for software development teams: it ingests test results from CI and from live test runs, explains failures, tracks flaky tests and decides whether a release is ready, with AI that runs locally by default.
 
