@@ -75,11 +75,11 @@ HEALTHCHECKS = list(_healthchecks())
 
 
 def test_the_model_reproduces_the_release_run_failure():
-    old_mcp_check = [
-        "CMD", "python", "-c",
+    probe = (
         "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen("
-        "'http://127.0.0.1:8002/health/live', timeout=5).status == 200 else 1)",
-    ]
+        + "'http://127.0.0.1:8002/health/live', timeout=5).status == 200 else 1)"
+    )
+    old_mcp_check = ["CMD", "python", "-c", probe]
     assert podman4_argv(old_mcp_check)[:3] == ["python", "-c", "import"]
     shell_check = ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U user -d db"]
     assert podman4_argv(shell_check) == ["/bin/sh", "-c", "pg_isready -h 127.0.0.1 -U user -d db"]
