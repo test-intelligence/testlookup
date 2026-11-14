@@ -36,7 +36,7 @@
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { answerConfirm, opened, openedByHeading } from '../lib/inPage'
-import type { MockedApi } from '../lib/production-pages'
+import { respond, type MockedApi } from '../lib/production-pages'
 import { assertHermetic, networkQuiet, observed, openRollout, requestsTo } from '../lib/rollout'
 import { BILLING_PROJECT, billingHandlers } from '../visual/production/fixtures-agents-billing-flags'
 import { PROJECT_ID, USER } from '../visual/production/fixtures'
@@ -386,6 +386,41 @@ test('U2 Add User: Cancel sends nothing; the POST (blank full name omitted), the
   expect(requestsTo(api, '/api/v1/users').length, 'the users re-read').toBeGreaterThan(users)
   await expect(userRow(page, 'jdoe'), 'the new user is listed').toBeVisible()
   await expectSecretKept(page, api, ONE_TIME.tempPassword)
+  assertHermetic(api, errors)
+})
+
+test('U2 Add User refused: an e-mail on a reserved domain reads as the server\'s reason in the form; no toast, nothing listed', async ({ page }) => {
+  // The body FastAPI / Pydantic / email-validator return for a `.local` address (2026-11-14: the owner could
+  // not create an account on a `.local` address and saw only a vanishing "Failed to create user").
+  const reason = 'The part after the @-sign is a special-use or reserved name that cannot be used with email.'
+  const refusal = { detail: [{ type: 'value_error', loc: ['body', 'email'], msg: `value is not a valid email address: ${reason}`, input: 'topu_admin@corp.local', ctx: { reason } }] }
+  const world = usersInPageWorld()
+  let posts = 0
+  const { api, errors } = await openRollout(page, '/users', {
+    handlers: [['/api/v1/users', () => { posts += 1; return respond(422, refusal) }, 'POST'], ...world.handlers],
+    ready: h1('User Management'),
+    user: ADMIN,
+  })
+  await expect(userRow(page, PRIYA.full_name ?? '')).toBeVisible()
+  await networkQuiet(page, api)
+
+  await page.getByRole('button', { name: 'Add User' }).click()
+  const form = opened(page, 'Add User')
+  await form.getByLabel('Email address').fill('topu_admin@corp.local')
+  await form.getByLabel('Username').fill('topu_admin')
+  await form.getByLabel('Role').selectOption('ADMIN')
+  await form.getByRole('button', { name: 'Create User' }).click()
+
+  await expect(form.getByRole('alert')).toHaveText(`Validation error: email — value is not a valid email address: ${reason}`)
+  await networkQuiet(page, api)
+  expect(posts, 'one POST').toBe(1)
+  // Said once, in the form: no generic toast, and no second copy of the reason in a toast.
+  await expect(page.getByText('Failed to create user')).toHaveCount(0)
+  await expect(page.getByText(reason, { exact: false })).toHaveCount(1)
+  await expect(form.getByLabel('Email address'), 'the form keeps what was typed').toHaveValue('topu_admin@corp.local')
+  await expect(form.getByRole('button', { name: 'Create User' })).toBeEnabled()
+  await expect(userRow(page, 'topu_admin')).toHaveCount(0)
+  expect(world.writes).toEqual([])
   assertHermetic(api, errors)
 })
 

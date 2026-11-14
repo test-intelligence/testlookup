@@ -222,6 +222,7 @@ Everything under Added is new to the public. The other sections matter to anyone
   - the K3s and OpenShift deploys create the object-store buckets when run from Git Bash on Windows, including with a Git Bash-style `KUBECONFIG=/c/...` (Git Bash rewrote the in-pod script path, so that step always failed there).
 - Documentation: THREAT_MODEL.md describes the system that ships, the guides now say SAML single logout, OIDC and Kubernetes backups work, and the compliance guide no longer claims a legal sign-off.
 - Documentation: the feature-flag reference and the guides now say that a new install has the GitHub and GitLab integrations switched on (migration 0234) and that quarantine proposals ship on; they listed all three as off. `backend/tests/regression/test_new_install_flag_defaults_are_documented.py` checks every flag a migration turns on for new installs.
+- Users: Add User, Invite User and Edit User show the server's reason in the form when it refuses, for example "Validation error: email — value is not a valid email address: The part after the @-sign is a special-use or reserved name…" for an address on `.local` or `.test`. Before, Add User answered "Failed to create user" beside the shared toast, both gone in seconds, and an administrator could not tell why the account was not created; Edit User handed a 422's list to the toast. The guides say an account's e-mail must be on an ordinary domain.
 
 ### Security
 
