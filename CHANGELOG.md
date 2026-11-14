@@ -221,6 +221,7 @@ Everything under Added is new to the public. The other sections matter to anyone
   - the OpenShift deploy makes a generated admin password one that must be changed at first sign-in, as the K3s and generic Kubernetes deploys already did;
   - the K3s and OpenShift deploys create the object-store buckets when run from Git Bash on Windows, including with a Git Bash-style `KUBECONFIG=/c/...` (Git Bash rewrote the in-pod script path, so that step always failed there).
 - Documentation: THREAT_MODEL.md describes the system that ships, the guides now say SAML single logout, OIDC and Kubernetes backups work, and the compliance guide no longer claims a legal sign-off.
+- Documentation: the feature-flag reference and the guides now say that a new install has the GitHub and GitLab integrations switched on (migration 0234) and that quarantine proposals ship on; they listed all three as off. `backend/tests/regression/test_new_install_flag_defaults_are_documented.py` checks every flag a migration turns on for new installs.
 
 ### Security
 
