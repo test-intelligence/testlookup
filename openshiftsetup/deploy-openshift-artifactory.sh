@@ -498,12 +498,15 @@ if [ "$SKIP_ADMIN" = false ]; then
   fi
   BACKEND_POD="$("$KCLI" -n "$NAMESPACE" get pod -l app=testlookup-backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")"
   if [ -n "$BACKEND_POD" ]; then
-    # createAdmin.py is idempotent (an existing admin is left untouched). Its
-    # output is filtered so the password is shown once, in the summary below.
-    if ADMIN_OUT="$("$KCLI" -n "$NAMESPACE" exec -i "$BACKEND_POD" -- env \
+    # The image's create_admin.py is idempotent (an existing admin is left
+    # untouched). Its output is filtered so the password is shown once, in the
+    # summary below. ADMIN_PASSWORD_GENERATED makes a generated password
+    # one the admin must change at first sign-in.
+    if ADMIN_OUT=$("$KCLI" -n "$NAMESPACE" exec "$BACKEND_POD" -- env \
           ADMIN_USERNAME="$ADMIN_USERNAME" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
           ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_FULL_NAME="$ADMIN_FULL_NAME" \
-          python < "$REPO_ROOT/scripts/createAdmin.py" 2>&1)"; then
+          ADMIN_PASSWORD_GENERATED="${ADMIN_PASSWORD_GENERATED:-false}" \
+          sh -c "python /app/scripts/create_admin.py" 2>&1); then
       printf '%s\n' "$ADMIN_OUT" | grep -iv 'password:' || true
       if printf '%s\n' "$ADMIN_OUT" | grep -q 'admin user created'; then
         ADMIN_CREATED=true
@@ -513,10 +516,11 @@ if [ "$SKIP_ADMIN" = false ]; then
       fi
     else
       printf '%s\n' "$ADMIN_OUT" | grep -iv 'password:' || true
-      warn "createAdmin.py failed — run it manually once the backend is healthy."
+      warn "create_admin.py failed — run it manually once the backend is healthy:"
+      warn "  $KCLI -n $NAMESPACE exec deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
     fi
   else
-    warn "Backend pod not found — create the admin user later with scripts/createAdmin.py."
+    warn "Backend pod not found — create the admin user later: $KCLI -n $NAMESPACE exec deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
   fi
 fi
 

@@ -285,19 +285,19 @@ BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend,app.kube
 ADMIN_RAN=0
 ADMIN_OUTPUT=""
 if [[ -n "$BACKEND_POD" ]]; then
-  ADMIN_OUTPUT=$(kubectl -n "$NAMESPACE" exec -i "$BACKEND_POD" -- \
+  ADMIN_OUTPUT=$(kubectl -n "$NAMESPACE" exec "$BACKEND_POD" -- \
     env \
       ADMIN_USERNAME="$ADMIN_USERNAME" \
       ADMIN_PASSWORD="$ADMIN_PASSWORD" \
       ADMIN_EMAIL="$ADMIN_EMAIL" \
       ADMIN_FULL_NAME="$ADMIN_FULL_NAME" \
       ADMIN_PASSWORD_GENERATED="$ADMIN_PASSWORD_GENERATED" \
-      python < scripts/createAdmin.py 2>&1) && ADMIN_RAN=1 || true
+      sh -c "python /app/scripts/create_admin.py" 2>&1) && ADMIN_RAN=1 || true
   echo "$ADMIN_OUTPUT"
   if [[ $ADMIN_RAN -ne 1 ]]; then
-    echo "WARN: createAdmin.py failed. Run it manually once the backend is ready" >&2
+    echo "WARN: create_admin.py failed. Run it manually once the backend is ready" >&2
     echo "      (it generates and prints a password when ADMIN_PASSWORD is unset):" >&2
-    echo "      kubectl -n $NAMESPACE exec -i deployment/testlookup-backend -- python < scripts/createAdmin.py" >&2
+    echo "      kubectl -n $NAMESPACE exec deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'" >&2
   fi
 else
   echo "WARN: backend pod not found — skipping admin user creation." >&2

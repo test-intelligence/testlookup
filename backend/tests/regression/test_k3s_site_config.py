@@ -107,10 +107,10 @@ def test_no_deploy_path_ships_a_default_admin_password():
         assert re.search(r'ADMIN_PASSWORD="\$\(openssl rand ', text), (
             f"{path.name} must generate the admin password when none is given"
         )
-    for path in (REPO / "scripts" / "createAdmin.py", REPO / "scripts" / "getUser.py"):
+    for path in (REPO / "backend" / "scripts" / "create_admin.py", REPO / "scripts" / "getUser.py"):
         text = path.read_text(encoding="utf-8")
-        assert re.search(r"\.get\('ADMIN_PASSWORD', ''\)", text), path.name
-        assert not re.search(r"\.get\('ADMIN_PASSWORD', '[^']", text), path.name
+        assert re.search(r"\.get\(['\"]ADMIN_PASSWORD['\"], ['\"]['\"]\)", text), path.name
+        assert not re.search(r"\.get\(['\"]ADMIN_PASSWORD['\"], ['\"][^'\"]", text), path.name
         assert "secrets.token_urlsafe(" in text, path.name
 
 
@@ -352,13 +352,29 @@ def test_bootstrap_parses_nodes_and_refuses_an_empty_layout(tmp_path: Path):
     assert "EMPTY_REFUSED" in lines and "BARE_REFUSED" in lines
 
 
-# ── createAdmin.py: no default password, never touches an existing admin ─────
+# ── create_admin.py: no default password, never touches an existing admin ────
+
+CREATE_ADMIN = REPO / "backend" / "scripts" / "create_admin.py"
+ADMIN_CALLERS = (DEPLOY, REPO / "openshiftsetup" / "deploy-openshift-artifactory.sh",
+                 REPO / "scripts" / "deploy-k8s.sh")
+
+
+def test_every_deploy_runs_the_image_s_admin_creator():
+    """One script, shipped in the image (OSS review 2026-11-12, L-3). The deploys piped a
+    second copy, scripts/createAdmin.py, over kubectl stdin."""
+    assert not (REPO / "scripts" / "createAdmin.py").exists()
+    for path in ADMIN_CALLERS:
+        text = path.read_text(encoding="utf-8")
+        assert 'sh -c "python /app/scripts/create_admin.py"' in text, path.name
+        assert "createAdmin.py" not in text, path.name
+        assert "admin user created" in text, f"{path.name} no longer reads the script's first line"
+    assert CREATE_ADMIN.read_text(encoding="utf-8").count('print("admin user created")') == 1
 
 def _load_create_admin():
     import sys
 
     spec = importlib.util.spec_from_file_location(
-        "create_admin_under_test", REPO / "scripts" / "createAdmin.py"
+        "create_admin_under_test", CREATE_ADMIN
     )
     module = importlib.util.module_from_spec(spec)
     sys.path.insert(0, str(REPO / "backend"))
@@ -383,13 +399,13 @@ def test_create_admin_uses_a_supplied_password_and_never_prints_it():
     assert module.resolve_password(
         {"ADMIN_PASSWORD": "generated-by-caller", "ADMIN_PASSWORD_GENERATED": "true"}
     ) == ("generated-by-caller", False, True)
-    source = (REPO / "scripts" / "createAdmin.py").read_text(encoding="utf-8")
-    printed = source[source.index("print('admin user created')"):]
+    source = CREATE_ADMIN.read_text(encoding="utf-8")
+    printed = source[source.index('print("admin user created")'):]
     assert "if generated_here:" in printed, "only a password generated here may be printed"
 
 
 def test_create_admin_leaves_an_existing_admin_alone():
-    source = (REPO / "scripts" / "createAdmin.py").read_text(encoding="utf-8")
+    source = CREATE_ADMIN.read_text(encoding="utf-8")
     existing = source[source.index("if existing is not None:"):]
     existing = existing[: existing.index("return") + len("return")]
     assert "hashed_password" not in existing and "commit" not in existing
