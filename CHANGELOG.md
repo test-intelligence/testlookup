@@ -221,6 +221,7 @@ Everything under Added is new to the public. The other sections matter to anyone
   - the OpenShift deploy makes a generated admin password one that must be changed at first sign-in, as the K3s and generic Kubernetes deploys already did;
   - the K3s and OpenShift deploys create the object-store buckets when run from Git Bash on Windows, including with a Git Bash-style `KUBECONFIG=/c/...` (Git Bash rewrote the in-pod script path, so that step always failed there).
 - Documentation: THREAT_MODEL.md describes the system that ships, the guides now say SAML single logout, OIDC and Kubernetes backups work, and the compliance guide no longer claims a legal sign-off.
+- Documentation: the feature-flag reference and the guides now say that a new install has the GitHub and GitLab integrations switched on (migration 0234) and that quarantine proposals ship on; they listed all three as off. `backend/tests/regression/test_new_install_flag_defaults_are_documented.py` checks every flag a migration turns on for new installs.
 
 ### Security
 
@@ -252,6 +253,7 @@ Everything under Added is new to the public. The other sections matter to anyone
 - **Cloud credentials:** on Kubernetes the backend and workers can no longer reach the cloud metadata service (`169.254.169.254`, and `fd00:ec2::254` on AWS), which hands out the node's cloud credentials; their egress allowed every address.
 - **EKS API endpoint:** the AWS Terraform has no default for `public_access_cidrs` (it was `0.0.0.0/0`), so the cluster API is open only to the CIDRs you set.
 - **Public bucket:** the unused, publicly readable `testlookup-attachments` bucket is no longer created.
+- **Synthetic-data endpoint:** `POST /api/v1/debug/generate-test-run` files generated results into any project an instance admin names. It now answers 404 outside development, as the dev seed endpoints already did; it was mounted in production too. Staging and production refuse before any credential check (`backend/tests/integration/test_debug_router_is_development_only.py`).
 - **Demo hardening:** `docker-compose.demo.yml` gives the app containers no route to the internet, memory, CPU and process ceilings, and `no-new-privileges`, and demo sign-in refuses admin, service and MFA accounts and is rate-limited.
 - **Supply chain:**
   - the backend and MCP images install hash-locked Python requirements (`--require-hashes`, every transitive package pinned; `make lock-python` regenerates them) and nothing else: the backend image no longer upgrades pip or installs watchfiles unpinned;

@@ -901,6 +901,20 @@ def ensure_ingest_role(user: User) -> None:
         )
 
 
+def require_development_environment() -> None:
+    """404 "Not found" unless ``APP_ENV`` is ``development``.
+
+    The gate for routes that write synthetic data and have no job in a real
+    installation: the dev seed router and the debug router. Staging and
+    production answer 404, the same as a route that does not exist. The seed
+    handlers call it first thing (after authentication). The debug router
+    mounts it as its first dependency, so there it answers before
+    authentication, and a caller without a token learns nothing either.
+    """
+    if not settings.is_development:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+
 def require_instance_admin() -> Callable:
     """ADMIN, and not through an API key bound to one project.
 

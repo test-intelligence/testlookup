@@ -65493,7 +65493,7 @@
     },
     "/api/v1/debug/generate-test-run": {
       "post": {
-        "description": "Generates a synthetic test run and triggers the ingestion pipeline.",
+        "description": "Generates a synthetic test run and triggers the ingestion pipeline.\n\nDevelopment only: answers 404 unless `APP_ENV=development`, before any\nauthentication check.",
         "operationId": "generate_mock_test_run_api_v1_debug_generate_test_run_post",
         "parameters": [
           {

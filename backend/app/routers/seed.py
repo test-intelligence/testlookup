@@ -12,8 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
-from app.core.deps import get_current_active_user, require_role
+from app.core.deps import get_current_active_user, require_development_environment, require_role
 from app.db.postgres import get_db
 from app.models.postgres import Project, User, UserRole
 
@@ -26,12 +25,6 @@ SEED_MARKER = "seed_dev_data_v1"
 _SEED_SCRIPT = str(
     Path(__file__).resolve().parent.parent.parent / "scripts" / "seed_dev_data.py"
 )
-
-
-def _require_dev() -> None:
-    """Raise 404 if not in development environment."""
-    if not settings.is_development:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
 async def _run_seed_script(*args: str) -> tuple[int, str, str]:
@@ -51,7 +44,7 @@ async def seed_status(
     _: User = Depends(get_current_active_user),
 ):
     """Check whether seed data is currently loaded."""
-    _require_dev()
+    require_development_environment()
     result = await db.execute(
         select(Project).where(Project.description.contains(SEED_MARKER)).limit(1)
     )
@@ -66,7 +59,7 @@ async def seed_status(
 )
 async def load_seed_data():
     """Load seed data (idempotent — skips if already seeded)."""
-    _require_dev()
+    require_development_environment()
     returncode, stdout, stderr = await _run_seed_script()
     if returncode != 0:
         logger.error("Seed script failed: %s", stderr)
@@ -85,7 +78,7 @@ async def load_seed_data():
 )
 async def reset_seed_data():
     """Wipe existing seed data and regenerate from scratch."""
-    _require_dev()
+    require_development_environment()
     returncode, stdout, stderr = await _run_seed_script("--reset")
     if returncode != 0:
         logger.error("Seed reset failed: %s", stderr)
@@ -104,7 +97,7 @@ async def reset_seed_data():
 )
 async def delete_seed_data():
     """Wipe seed data without re-seeding."""
-    _require_dev()
+    require_development_environment()
     returncode, stdout, stderr = await _run_seed_script("--wipe-only")
     if returncode != 0:
         logger.error("Seed wipe failed: %s", stderr)

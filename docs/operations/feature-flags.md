@@ -70,8 +70,8 @@ Default = the value on a fresh install after `alembic upgrade head`. "Not seeded
 | `playwright_ingest` | 0063 (off), 0099 (on) | on | project | Parsing Playwright JSON reports; same behaviour. |
 | `flaky_auto_quarantine` | 0065 (off); 0219 turns it on where the row was never touched | **on** for a new install and for an upgraded install whose row is still 0065's untouched seed; a row an admin changed keeps its value | global (the flaky page reads it per project) | The whole quarantine workflow: proposals, approvals, rechecks and the CI quarantine manifest (`GET /api/v1/projects/{project_id}/quarantine/manifest`, empty while off) that `testlookup ci-verdict` reads, so with the flag off every failure counts as real (`backend/app/services/flaky_quarantine_service.py`). On, nothing is quarantined until a QA lead approves a proposal. While off (or limited to other projects), the Flaky tests page says quarantine is off for the project and Failures' Mute is disabled. See [below](#flaky_auto_quarantine-on-unless-an-admin-changed-it). |
 | `outbound_webhooks` | 0068 (off); 0224 turns it on for new installs | **on** for a new install (no user and no project yet); an upgraded install keeps its stored value (off unless an admin changed it) | global | Outbound webhook deliveries, test sends and replays (`backend/app/services/webhook_service.py`). Also requires `AI_OFFLINE_MODE=false`. A subscription the circuit breaker paused gets no delivery while the flag is on (see [Outbound webhook circuit breaker](integrations.md#outbound-webhook-circuit-breaker)). On an upgraded install turn it on with the `PATCH` above. See [Outbound webhooks](integrations.md#outbound-webhooks). |
-| `github_checks` | 0067 | **off** | global | GitHub check runs and the sticky PR comment (`backend/app/services/github_checks_service.py`). Also requires `AI_OFFLINE_MODE=false`. Setup: the GitHub section of [user-guide/administration.md](../../user-guide/administration.md). |
-| `gitlab` | 0111 | **off** | global | GitLab merge-request notes and commit statuses (`backend/app/services/gitlab_integration_service.py`). Also requires `AI_OFFLINE_MODE=false`. Setup: the GitLab section of [user-guide/administration.md](../../user-guide/administration.md). |
+| `github_checks` | 0067 (off); 0234 turns it on for new installs | **on** for a new install (no user and no project yet); an upgraded install keeps its stored value (off unless an admin changed it) | global | GitHub check runs and the sticky PR comment (`backend/app/services/github_checks_service.py`). Also requires `AI_OFFLINE_MODE=false`. Setup: the GitHub section of [user-guide/administration.md](../../user-guide/administration.md). |
+| `gitlab` | 0111 (off); 0234 turns it on for new installs | **on** for a new install (no user and no project yet); an upgraded install keeps its stored value (off unless an admin changed it) | global | GitLab merge-request notes and commit statuses (`backend/app/services/gitlab_integration_service.py`). Also requires `AI_OFFLINE_MODE=false`. Setup: the GitLab section of [user-guide/administration.md](../../user-guide/administration.md). |
 | `release_compliance_pack` | 0066 (off); 0212 turns it on for new installs | **on** for a new install; an upgraded install keeps its stored value (off unless an admin changed it) | global (evaluated per project) | Release compliance-pack generation; 503 while off (`backend/app/services/compliance_pack_service.py`). Listing and downloading existing packs (including the releases page's side rail, `GET /api/v1/compliance-packs`) is never gated. See [below](#release-flags-on-new-installs-only) and [user-guide/compliance.md](../../user-guide/compliance.md). |
 | `release_phase_gate_enforcement` | 0158 (off); 0212 turns it on for new installs | **on** for a new install; an upgraded install keeps its stored value (off unless an admin changed it) | global (evaluated per project) | Completing a release phase consults the phase gate: anything but GO is refused with 409 and the gate's blocking reasons unless the caller supplies `gate_override_reason`; skipping a phase needs `skip_reason`. Both are recorded in the access audit log and as `release.phase_gate_overridden` / `release.phase_skipped` activity with the reason; the release page asks for the reason in a dialog (`backend/app/services/release_service.py`). Off: phases complete without the check. Reading the flag fails to off. See [below](#release-flags-on-new-installs-only). |
 | `weekly_retro_digest` | 0069 | **off** | global (the digests page reads it per project) | The "weekly retro" digest type (`backend/app/services/retro_digest_service.py`, `frontend/src/pages/settings/DigestsPage.tsx`). |
@@ -153,6 +153,18 @@ done
 ```
 
 `GET /api/v1/feature-flags/release_phase_gate_enforcement/status` then reports `enabled: true`. With enforcement on, a release manager moving a phase to Completed while its gate is not GO, or to Skipped, gets a dialog quoting the gate and asking for a reason; the reason is stored with the change.
+
+## Git-host flags on new installs only
+
+Migrations 0067 and 0111 seeded `github_checks` and `gitlab` off. Migration 0234 turns both on **only for a new install**, by the rule of [`manual_upload`](#manual_upload-on-new-installs-only): no users and no projects yet, and each row still holds its seed's off. An upgraded install keeps whatever it has. On either kind of install nothing is posted until a project configures its GitHub or GitLab integration, and nothing leaves the network while `AI_OFFLINE_MODE` is on. To turn them on for an existing install (ADMIN token):
+
+```bash
+for key in github_checks gitlab; do
+  curl -X PATCH "$TL_URL/api/v1/feature-flags/$key" \
+    -H "Authorization: Bearer $TL_TOKEN" -H 'Content-Type: application/json' \
+    -d '{"enabled_global": true}'
+done
+```
 
 ## `flaky_auto_quarantine` on unless an admin changed it
 

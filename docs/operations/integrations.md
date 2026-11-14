@@ -116,8 +116,8 @@ TestLookup can pull pod events from a cluster to correlate failures with restart
 
 ## GitHub and GitLab
 
-- **GitHub check runs and the sticky PR comment** (flag `github_checks`, off by default) are configured per project at `/settings/github` with a personal access token. Setup, token scopes and behaviour: the GitHub section of [user-guide/administration.md](../../user-guide/administration.md).
-- **GitLab merge-request notes and commit statuses** (flag `gitlab`, off by default) are configured per project at `/settings/gitlab`: the GitLab section of the same page, plus the CI template [user-guide/reference/testlookup-gitlab-ci.yml](../../user-guide/reference/testlookup-gitlab-ci.yml).
+- **GitHub check runs and the sticky PR comment** (flag `github_checks`, on for a new install; an upgraded install keeps its value until an admin changes it) are configured per project at `/settings/github` with a personal access token. Setup, token scopes and behaviour: the GitHub section of [user-guide/administration.md](../../user-guide/administration.md).
+- **GitLab merge-request notes and commit statuses** (flag `gitlab`, on for a new install; an upgraded install keeps its value until an admin changes it) are configured per project at `/settings/gitlab`: the GitLab section of the same page, plus the CI template [user-guide/reference/testlookup-gitlab-ci.yml](../../user-guide/reference/testlookup-gitlab-ci.yml).
 - Both need `AI_OFFLINE_MODE=false`. A GitHub Enterprise or self-hosted GitLab behind an internal CA needs `HTTP_CA_BUNDLE`.
 - **Commits between two runs** (the run's Changes tab, the regression diff, the build-changes agent tool and the Suspects panel) come from the project's own GitHub / GitHub Enterprise integration, offline-gated and behind the `github_checks` flag; the Changes tab says why when none can be listed. The instance-wide `GITHUB_TOKEN` and `GITHUB_REPO` are **no longer read** for commits (they bypassed the egress check and offline mode): `GITHUB_TOKEN` now feeds only the deployment-wide GitHub row of Integration health, and `GITHUB_REPO` has no reader.
 

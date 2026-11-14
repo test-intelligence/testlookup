@@ -10,7 +10,7 @@ Delete Seed Data
 
 Wipe seed data without re-seeding.
 
-Source: [backend/app/routers/seed.py:100](../../../backend/app/routers/seed.py#L100).
+Source: [backend/app/routers/seed.py:93](../../../backend/app/routers/seed.py#L93).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -93,7 +93,7 @@ Load Seed Data
 
 Load seed data (idempotent — skips if already seeded).
 
-Source: [backend/app/routers/seed.py:62](../../../backend/app/routers/seed.py#L62).
+Source: [backend/app/routers/seed.py:55](../../../backend/app/routers/seed.py#L55).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -176,7 +176,7 @@ Reset Seed Data
 
 Wipe existing seed data and regenerate from scratch.
 
-Source: [backend/app/routers/seed.py:81](../../../backend/app/routers/seed.py#L81).
+Source: [backend/app/routers/seed.py:74](../../../backend/app/routers/seed.py#L74).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -259,7 +259,7 @@ Seed Status
 
 Check whether seed data is currently loaded.
 
-Source: [backend/app/routers/seed.py:48](../../../backend/app/routers/seed.py#L48).
+Source: [backend/app/routers/seed.py:41](../../../backend/app/routers/seed.py#L41).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
