@@ -77,7 +77,7 @@ the adapter off with one warning; a network error is logged and never fails your
 | Runner | Entry point | What streams | Supported |
 |---|---|---|---|
 | Playwright Test | `testlookup-reporter/playwright-reporter` (in `reporter:`) | each attempt as it ends; a retry is `metadata.attempt` 2; one suite per Playwright project | `@playwright/test` >= 1.30 |
-| Vitest | `testlookup-reporter/vitest-reporter` (in `test.reporters`) | each test as it ends (Vitest 3 `onTestCaseResult`, Vitest 1/2 `onTaskUpdate`); skipped tests at the end | `vitest` >= 1 |
+| Vitest | `testlookup-reporter/vitest-reporter` (in `test.reporters`) | each test as it ends (Vitest 3+ `onTestCaseResult`, Vitest 1/2 `onTaskUpdate`); skipped tests at the end (`onTestRunEnd`, or `onFinished` before Vitest 4) | `vitest` >= 1 |
 | Cypress | `testlookup-reporter/cypress-plugin` (call it in `setupNodeEvents`) | per **spec**: Cypress hands results to Node at `after:spec`; the last attempt is the result | `cypress` >= 10, `cypress run` |
 | Cucumber JS | `testlookup-reporter/cucumber-formatter` (`--format`) | each scenario attempt; the worst step decides the status; the feature is the suite | `@cucumber/cucumber` >= 8 |
 

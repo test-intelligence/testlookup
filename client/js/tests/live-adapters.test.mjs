@@ -106,6 +106,51 @@ test('Vitest 3: onTestCaseResult streams each test once', async () => {
   assert.equal(ev[0].metadata.attempt, 2)
 })
 
+function vitestCase(id, name, state) {
+  return { id, name, fullName: `math > ${name}`, module: { moduleId: '/repo/math.test.ts' },
+    result: () => ({ state, errors: state === 'failed' ? [{ message: 'nope' }] : undefined }),
+    diagnostic: () => ({ duration: 2, retryCount: 0 }) }
+}
+
+test('Vitest 4+: no onFinished; onTestRunEnd adds the skipped and closes the session', async () => {
+  // Vitest 4 removed onFinished: onTestRunEnd is the only end-of-run hook (TL-SDK-002, Vitest 5.1).
+  const ok = vitestCase('t1', 'adds', 'passed')
+  const bad = vitestCase('t2', 'divides', 'failed')
+  const skip = vitestCase('t3', 'later', 'skipped')
+  // Checked before a session starts: without the hook the session's batch timer
+  // would keep the test process alive instead of failing.
+  assert.equal(typeof vitestModule.default.prototype.onTestRunEnd, 'function', 'Vitest 4+ calls only onTestRunEnd')
+  const server = await withServer(async () => {
+    const R = vitestModule.default
+    const r = new R(OPTS)
+    r.onInit({})
+    r.onTestCaseResult(ok)
+    r.onTestCaseResult(bad)
+    await r.onTestRunEnd([{ children: { *allTests() { yield ok; yield bad; yield skip } } }], [], 'failed')
+  })
+  assert.deepEqual(events(server).map((e) => `${e.test_name}:${e.status}`), [
+    'math > adds:PASSED', 'math > divides:FAILED', 'math > later:SKIPPED',
+  ])
+  assert.equal(events(server)[1].error_message, 'nope')
+  assert.equal(server.calls.filter((c) => c.method === 'DELETE').length, 1, 'the session is closed')
+})
+
+test('Vitest 3: onTestRunEnd and onFinished both fire, the session closes once', async () => {
+  const ok = vitestCase('t1', 'adds', 'passed')
+  const server = await withServer(async () => {
+    const R = vitestModule.default
+    const r = new R(OPTS)
+    r.onInit({})
+    r.onTestCaseResult(ok)
+    await r.onTestRunEnd([{ children: { *allTests() { yield ok } } }], [], 'passed')
+    await r.onFinished([{ id: 'f', name: 'math.test.ts', type: 'file', tasks: [
+      { id: 't1', name: 'adds', type: 'test', result: { state: 'pass' } },
+    ] }])
+  })
+  assert.equal(events(server).length, 1)
+  assert.equal(server.calls.filter((c) => c.method === 'DELETE').length, 1)
+})
+
 // ── Cypress ─────────────────────────────────────────────────────────────────
 
 test('Cypress: a spec\'s tests stream at after:spec, the last attempt counts', async () => {
