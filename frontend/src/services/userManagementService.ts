@@ -152,8 +152,10 @@ export const userManagementService = {
     api.patch<UserItem>(`/api/v1/users/${userId}/status`, { is_active }).then((r) => r.data),
 
   inviteUser: (email: string, role: UserRole, project_memberships: InviteProjectMembership[] = []) =>
+    // The Invite User form shows the refusal itself (an e-mail on a reserved domain such as .local is a
+    // 422 naming the field), so the global toast stays quiet: before, it raised a second, generic one.
     api
-      .post<InviteUserResponse>('/api/v1/users/invite', { email, role, project_memberships })
+      .post<InviteUserResponse>('/api/v1/users/invite', { email, role, project_memberships }, { suppressToast: true })
       .then((r) => r.data),
 
   listInvitations: () =>
@@ -168,9 +170,10 @@ export const userManagementService = {
   issuePasswordResetLink: (userId: string) =>
     api.post<PasswordResetLinkResponse>(`/api/v1/users/${userId}/password-reset-link`).then((r) => r.data),
 
+  // Add User and Edit User show the refusal in the form, as Invite User does.
   createUser: (email: string, username: string, role: UserRole, full_name?: string) =>
     api
-      .post<AdminCreateUserResponse>('/api/v1/users', { email, username, role, full_name })
+      .post<AdminCreateUserResponse>('/api/v1/users', { email, username, role, full_name }, { suppressToast: true })
       .then((r) => r.data),
 
   updateUserProfile: (userId: string, updates: {
@@ -180,7 +183,7 @@ export const userManagementService = {
     role?: UserRole
     is_active?: boolean
   }) =>
-    api.patch<UserItem>(`/api/v1/users/${userId}`, updates).then((r) => r.data),
+    api.patch<UserItem>(`/api/v1/users/${userId}`, updates, { suppressToast: true }).then((r) => r.data),
 
   // User memberships (aggregated — single call replaces N+1)
   getUserMemberships: (userId: string) =>

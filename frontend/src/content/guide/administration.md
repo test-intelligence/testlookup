@@ -84,7 +84,7 @@ Five roles, each including those below it:
 
 Users see only projects they are a member of. Project membership, not role alone, decides visibility.
 
-**Users** (`/users`): QA leads see the list. Administrators **Add User** (a temporary password is shown once, and the user must change it at first sign-in), change a user's role inline, edit, and activate or deactivate accounts.
+**Users** (`/users`): QA leads see the list. Administrators **Add User** (a temporary password is shown once, and the user must change it at first sign-in), change a user's role inline, edit, and activate or deactivate accounts. An account's e-mail must be on an ordinary domain: the server refuses reserved ones such as `.local`, `.test` and `.localhost`, and the form shows its reason.
 
 **Members & access** (`/users?tab=project-members`): pick a project to see its members and its **Default QA Lead**. Administrators add and remove members, set each member's project role, and change the default QA lead; **Reset QA Lead password** is available to QA leads.
 

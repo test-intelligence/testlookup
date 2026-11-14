@@ -35,6 +35,7 @@ import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInline
 import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { ProjectMembersTab } from './ProjectMembersTab'
 import { copyTextToClipboard } from '@/utils/clipboard'
+import { extractErrorMessage } from '@/services/apiErrors'
 import { OneTimeLinkBox, PendingInvitationsTab } from './PendingInvitationsTab'
 import { ErasureRequestsTab } from './ErasureRequestsTab'
 import { TAB_LABEL as ERASURE_REQUESTS_TAB_LABEL } from './erasureRequestsModel'
@@ -472,6 +473,26 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
   )
 }
 
+// ── The server's refusal, shown in the form ──────────────────
+// Add, Invite and Edit User send their requests with `suppressToast`, so this is the one message the admin
+// sees. It stays until the next submit: a toast that vanished, next to a second generic "Failed to create
+// user", left an admin unable to tell that the server refuses an e-mail on a reserved domain (.local, .test).
+
+function refusalMessage(err: unknown, fallback: string): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  // A 422 lists the field: "Validation error: email — value is not a valid email address: …".
+  return extractErrorMessage(detail, fallback)
+}
+
+function FormError({ message }: { message: string | null }) {
+  if (!message) return null
+  return (
+    <p role="alert" data-user-form-error="" className="text-sm text-[var(--ui-danger)] break-words">
+      {message}
+    </p>
+  )
+}
+
 // ── Edit User (in the page, under its row) ───────────────────
 
 function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () => void; slot?: InlineSlot }) {
@@ -481,6 +502,7 @@ function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () =>
   const [role, setRole] = useState<UserRole>(user.role)
   const [isActive, setIsActive] = useState(user.is_active)
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   // Project assignment
   const [projects, setProjects] = useState<Project[]>([])
@@ -503,6 +525,7 @@ function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () =>
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
     setSaving(true)
+    setError(null)
     try {
       const updates: Record<string, unknown> = {}
       if (email !== user.email) updates.email = email
@@ -527,8 +550,8 @@ function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () =>
       }
       onClose()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      toast.error(msg || 'Failed to update user')
+      // A 422's detail is a list: handing it to toast.error as it was did not read as a sentence.
+      setError(refusalMessage(err, 'Failed to update user'))
     } finally {
       setSaving(false)
     }
@@ -585,6 +608,7 @@ function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () =>
       }
     >
         <div className="max-w-2xl space-y-4">
+          <FormError message={error} />
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label htmlFor="user-field-0" className="block text-sm text-[var(--color-text-muted)] mb-1">Email</label>
@@ -708,6 +732,7 @@ function AddUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlo
   const [fullName, setFullName] = useState('')
   const [role, setRole] = useState<UserRole>('QA_ENGINEER')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<{ id: string; username: string; temp_password: string } | null>(null)
 
   // Project assignment after creation
@@ -727,13 +752,14 @@ function AddUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlo
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
+    setError(null)
     try {
       const res = await userManagementService.createUser(email, username, role, fullName || undefined)
       setResult({ id: res.id, username: res.username, temp_password: res.temp_password })
       refreshUsers()
       toast.success('User created')
-    } catch {
-      toast.error('Failed to create user')
+    } catch (err: unknown) {
+      setError(refusalMessage(err, 'Failed to create user'))
     } finally {
       setLoading(false)
     }
@@ -872,6 +898,7 @@ function AddUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlo
                 </select>
               </div>
             </div>
+            <FormError message={error} />
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">Cancel</button>
               <button type="submit" disabled={loading}
@@ -894,6 +921,7 @@ function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: Inline
   const [projects, setProjects] = useState<Project[]>([])
   const [projectIds, setProjectIds] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<InviteUserResponse | null>(null)
 
   // The invitation link is shown once, here: while it is, opening Add User in its place asks first.
@@ -910,6 +938,7 @@ function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: Inline
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
+    setError(null)
     try {
       // W17b ADM-01: the invitee joins the chosen projects, with the invited role, when they accept.
       const res = await userManagementService.inviteUser(
@@ -922,8 +951,7 @@ function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: Inline
       void refreshInvitations()
       toast.success(res.email_sent ? 'Invitation emailed' : 'Invitation created')
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      toast.error(typeof detail === 'string' && detail ? detail : 'Failed to create invitation')
+      setError(refusalMessage(err, 'Failed to create invitation'))
     } finally {
       setLoading(false)
     }
@@ -985,6 +1013,7 @@ function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: Inline
                 <p className="mt-1 text-xs text-[var(--color-text-faint)]">They join these projects as {role} when they accept.</p>
               </fieldset>
             )}
+            <FormError message={error} />
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">Cancel</button>
               <button type="submit" disabled={loading}
