@@ -36,7 +36,8 @@ def process_diagnostic(result, project):
             return f"{service} exited {exited[1]}"
         if re.search(rf'service ["\']{service}["\'] didn.t complete successfully', output):
             return f"{service} initialization failed"
-    status = re.search(r"httpx\.HTTPStatusError:[^\n]*?['\"]([1-5]\d\d) ", output)
+    status = (re.search(r"httpx\.HTTPStatusError:[^\n]*?['\"]([1-5]\d\d) ", output)
+              or re.search(r"urllib\.error\.HTTPError: HTTP Error ([1-5]\d\d)\b", output))
     if status:
         return f"HTTP {status[1]}"
     for error in ("httpx.ReadTimeout", "httpx.ConnectTimeout", "httpx.ConnectError",
@@ -46,8 +47,35 @@ def process_diagnostic(result, project):
     return f"process exit {result.returncode}"
 
 
+def ready_wait_script(url, seconds, interval=2.0):
+    """Python run inside the backend container: poll readiness until 200 or the deadline.
+
+    Prints one ``READY_WAIT=`` record holding only a boolean, a count and the
+    last HTTP status or exception class name.
+    """
+    return (
+        "import json,time,urllib.error,urllib.request\n"
+        f"deadline=time.monotonic()+{float(seconds)!r}\n"
+        "attempts,last=0,'none'\n"
+        "while True:\n"
+        "    attempts+=1\n"
+        "    try:\n"
+        f"        with urllib.request.urlopen({url!r},timeout=10) as response:\n"
+        "            last=str(response.status)\n"
+        "    except urllib.error.HTTPError as error:\n"
+        "        last=str(error.code)\n"
+        "    except (urllib.error.URLError,OSError) as error:\n"
+        "        last=type(getattr(error,'reason',error)).__name__\n"
+        "    if last=='200' or time.monotonic()>=deadline:\n"
+        "        break\n"
+        f"    time.sleep({float(interval)!r})\n"
+        "print('READY_WAIT='+json.dumps({'ready':last=='200','attempts':attempts,'last':last}))\n"
+    )
+
+
 class PodmanUpgrade:
     APP_SERVICES = ("backend", "frontend", "mcp", "worker", "worker-children")
+    READY_WAIT_SECONDS = 120
     STORES = {
         "postgres": "/tmp/tl-upgrade-postgres.dump",
         "mongo": "/tmp/tl-upgrade-mongo.archive.gz",
@@ -144,11 +172,46 @@ class PodmanUpgrade:
         if not self._quiesced:
             raise PodmanUpgradeError("Application must be quiesced for this operation.")
 
+    def wait_ready(self):
+        """Wait, bounded, until the backend's readiness probe answers 200.
+
+        ``compose up --wait`` waits for the backend's healthcheck, which is
+        ``/health/live``. A backend that has just started opens its first
+        PostgreSQL, MongoDB and Redis connections on the first ``/health/ready``
+        request, inside a 3 s budget, and on a busy host it can answer 503
+        until they are open. That is readiness working as designed, not a
+        failed upgrade: the harness's single strict read made TL-DEPLOY-001
+        intermittent (blocked twice in five runs, on either activation).
+        """
+        raw = self.exec_python(ready_wait_script(
+            "http://127.0.0.1:8000/health/ready", self.READY_WAIT_SECONDS))
+        lines = [line.split("READY_WAIT=", 1)[1] for line in raw.splitlines()
+                 if line.startswith("READY_WAIT=")]
+        try:
+            record = json.loads(lines[-1])
+            attempts, last = int(record["attempts"]), str(record["last"])
+        except (IndexError, ValueError, KeyError, TypeError):
+            raise PodmanUpgradeError("Readiness wait returned no record.",
+                                     diagnostic="readiness wait unavailable") from None
+        if not re.fullmatch(r"\d{3}|[A-Za-z]{1,40}", last):
+            last = "unknown"
+        self._write("readiness-" + uuid.uuid4().hex[:8] + ".json",
+                    {"ready": record.get("ready") is True, "attempts": attempts, "last": last,
+                     "bound_seconds": self.READY_WAIT_SECONDS})
+        if record.get("ready") is not True:
+            raise PodmanUpgradeError(
+                "Backend did not become ready within the bound.",
+                diagnostic=f"backend not ready after {attempts} attempts (last {last})",
+            )
+        return attempts
+
     def install(self):
         phase = "fresh service startup"
         try:
             self._run(["up", "-d", "--wait", "--wait-timeout", "300",
                        "frontend", "worker", "worker-children", "mcp"])
+            phase = "backend readiness"
+            self.wait_ready()
             phase = "admin first sign-in"
             self.exec_python((ROOT / "e2e-runner/bootstrap_admin.py").read_text(
                 encoding="utf-8"))
@@ -432,13 +495,15 @@ print(json.dumps({'sha256':hashlib.sha256(payload).hexdigest(),'entries':len(rec
             self._run(["up", "-d", "--no-deps", "--force-recreate", "--wait",
                        "--wait-timeout", "300", *self.APP_SERVICES])
             self._quiesced = False
+            phase = "backend readiness"
+            self.wait_ready()
             phase = "identity and readiness"
             self.observe(manifest)
         except Exception as error:
             detail = error.diagnostic if isinstance(error, PodmanUpgradeError) else "invalid observation"
             try:
                 states = self.container_states()
-            except Exception:
+            except Exception:  # noqa: BLE001 - a diagnostic must never replace the failure
                 states = "container states unavailable"
             print(f"Activation of the {build} build failed during {phase} ({detail}). "
                   f"Containers: {states}.", flush=True)

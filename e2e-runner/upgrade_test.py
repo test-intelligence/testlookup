@@ -20,6 +20,7 @@ CANDIDATE = {"source_sha": "b" * 40}
     ('service "db-migrate" didn\'t complete successfully', "db-migrate initialization failed"),
     ("httpx.ReadTimeout: private response", "httpx.ReadTimeout"),
     ("httpx.HTTPStatusError: Client error '403 Forbidden' for url 'private'", "HTTP 403"),
+    ("urllib.error.HTTPError: HTTP Error 503: Service Unavailable", "HTTP 503"),
     ("unexpected private service and arbitrary response", "process exit 1"),
 ])
 def test_install_diagnostic_does_not_expose_command_or_response(private_text, safe):
@@ -30,6 +31,7 @@ def test_install_diagnostic_does_not_expose_command_or_response(private_text, sa
 
 @pytest.mark.parametrize(("failed", "phase"), [
     ("_run", "fresh service startup"),
+    ("wait_ready", "backend readiness"),
     ("exec_python", "admin first sign-in"),
     ("observe", "previous build identity and readiness"),
 ])
@@ -41,19 +43,20 @@ def test_failed_install_reports_its_substep_without_private_output(monkeypatch, 
     def simulate_failure(*args):
         raise PodmanUpgradeError("private response", diagnostic="process exit 7")
 
-    for operation in ("_run", "exec_python", "observe"):
+    for operation in ("_run", "wait_ready", "exec_python", "observe"):
         monkeypatch.setattr(adapter, operation, simulate_failure if operation == failed else lambda *args: None)
     with pytest.raises(PodmanUpgradeError):
         adapter.install()
     assert capsys.readouterr().out == f"Previous-build install failed during {phase} (process exit 7).\n"
 
 
-@pytest.mark.parametrize(("manifest", "failed", "build", "phase"), [
-    (PRIOR, "up", "previous", "compose up --wait"),
-    (CANDIDATE, "observe", "candidate", "identity and readiness"),
+@pytest.mark.parametrize(("manifest", "failed", "build", "phase", "detail"), [
+    (PRIOR, "up", "previous", "compose up --wait", "frontend exited 1"),
+    (PRIOR, "wait_ready", "previous", "backend readiness", "backend not ready after 61 attempts (last 503)"),
+    (CANDIDATE, "observe", "candidate", "identity and readiness", "backend unready"),
 ])
 def test_failed_activation_reports_container_states_without_private_output(
-        monkeypatch, capsys, manifest, failed, build, phase):
+        monkeypatch, capsys, manifest, failed, build, phase, detail):
     from upgrade_podman import PodmanUpgrade, PodmanUpgradeError
     adapter = object.__new__(PodmanUpgrade)
     adapter.prior, adapter._failed_migration = PRIOR, False
@@ -72,10 +75,13 @@ def test_failed_activation_reports_container_states_without_private_output(
         {"Service": "private-sidecar", "State": "running", "Health": "healthy", "ExitCode": 0},
     ]
 
+    calls = []
+
     def run(arguments, **kwargs):
         if arguments[0] == "up":
+            calls.append("up")
             if failed == "up":
-                raise PodmanUpgradeError("private compose output", diagnostic="frontend exited 1")
+                raise PodmanUpgradeError("private compose output", diagnostic=detail)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
         if arguments[0] == "ps":
             return SimpleNamespace(returncode=0, stdout="\n".join(json.dumps(r) for r in rows), stderr="")
@@ -83,18 +89,97 @@ def test_failed_activation_reports_container_states_without_private_output(
         probes = "1 1 private-output 1 " if arguments[-1] == "c" * 64 else ""
         return SimpleNamespace(returncode=0, stdout=probes, stderr="")
 
-    def observe(_manifest):
-        raise PodmanUpgradeError("private response", diagnostic="backend unready")
+    def step(name):
+        def call(*_args):
+            calls.append(name)
+            if failed == name:
+                raise PodmanUpgradeError("private response", diagnostic=detail)
+        return call
 
     monkeypatch.setattr(adapter, "_run", run)
-    monkeypatch.setattr(adapter, "observe", observe)
+    monkeypatch.setattr(adapter, "wait_ready", step("wait_ready"))
+    monkeypatch.setattr(adapter, "observe", step("observe"))
     with pytest.raises(PodmanUpgradeError):
         adapter.activate(manifest)
-    detail = "frontend exited 1" if failed == "up" else "backend unready"
+    # Readiness is awaited after the containers start and before the strict observation.
+    assert calls == ["up", "wait_ready", "observe"][:["up", "wait_ready", "observe"].index(failed) + 1]
     assert capsys.readouterr().out == (
         f"Activation of the {build} build failed during {phase} ({detail}). Containers: "
         "backend running/healthy exit 0; frontend exited/- exit 1; "
         "mcp running/- exit 0 probes 1,1,1.\n")
+
+
+def _readiness_server(statuses):
+    """A local stand-in for /health/ready answering the given statuses, then the last one."""
+    import http.server
+    import threading
+
+    answers = list(statuses)
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            status = answers.pop(0) if len(answers) > 1 else answers[0]
+            body = json.dumps({"status": "ready" if status == 200 else "not_ready",
+                               "detail": "private dependency detail"}).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.mark.parametrize(("statuses", "seconds", "ready", "attempts", "last"), [
+    ([503, 503, 200], 30, True, 3, "200"),
+    ([503], 0.3, False, None, "503"),
+])
+def test_readiness_wait_retries_a_starting_backend_and_stays_bounded(statuses, seconds, ready, attempts, last):
+    import subprocess
+    import sys
+
+    from upgrade_podman import ready_wait_script
+
+    server = _readiness_server(statuses)
+    try:
+        url = f"http://127.0.0.1:{server.server_address[1]}/health/ready"
+        result = subprocess.run([sys.executable, "-I", "-c", ready_wait_script(url, seconds, interval=0.05)],
+                                check=False, capture_output=True, text=True, timeout=60)
+    finally:
+        server.shutdown()
+    assert result.returncode == 0, result.stderr
+    lines = [line for line in result.stdout.splitlines() if line.startswith("READY_WAIT=")]
+    record = json.loads(lines[-1].split("=", 1)[1])
+    assert record["ready"] is ready and record["last"] == last
+    assert record["attempts"] == attempts if attempts else record["attempts"] >= 2
+    assert "private" not in result.stdout
+
+
+@pytest.mark.parametrize(("stdout", "outcome"), [
+    ('noise\nREADY_WAIT={"ready": true, "attempts": 4, "last": "200"}\n', 4),
+    ('READY_WAIT={"ready": false, "attempts": 61, "last": "503"}\n',
+     "backend not ready after 61 attempts (last 503)"),
+    ('READY_WAIT={"ready": false, "attempts": 9, "last": "SECRET=hunter2"}\n',
+     "backend not ready after 9 attempts (last unknown)"),
+    ("private traceback\n", "readiness wait unavailable"),
+])
+def test_wait_ready_turns_the_record_into_a_fixed_category(monkeypatch, tmp_path, stdout, outcome):
+    from upgrade_podman import PodmanUpgrade, PodmanUpgradeError
+    adapter = object.__new__(PodmanUpgrade)
+    adapter.out = tmp_path
+    monkeypatch.setattr(adapter, "exec_python", lambda _source: stdout)
+    if isinstance(outcome, int):
+        assert adapter.wait_ready() == outcome
+        return
+    with pytest.raises(PodmanUpgradeError) as raised:
+        adapter.wait_ready()
+    assert raised.value.diagnostic == outcome
+    assert "hunter2" not in "".join(path.read_text() for path in tmp_path.iterdir())
 
 
 class Environment:
