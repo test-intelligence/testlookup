@@ -88,7 +88,8 @@ opens in-namespace datastores to the backend, workers and beat; `reference K3s i
   then verifies checksums, `docker load`, retag and an offline
   application-module import inside `--network none --pull=never` containers.
   Scope is deliberate: it proves **bundle integrity + offline import**, not a
-  full-stack end-to-end deployment.
+  full-stack end-to-end deployment. Dispatched with `version=X.Y.Z`, it
+  bundles that release's promoted image digests instead of building.
 - **`release.yml`** — on a `vX.Y.Z` tag that matches `VERSION` and is
   reachable from `main`: requires a verified CI run for that commit, scans the
   exact image digests with Trivy and keeps SBOM evidence, then promotes the
