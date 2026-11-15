@@ -30,6 +30,10 @@ def process_diagnostic(result, project):
         if re.search(rf"{re.escape(project)}-{service}-\d+[^\n]{{0,40}}unhealthy\b",
                      output, re.IGNORECASE):
             return f"{service} unhealthy"
+        exited = re.search(rf"{re.escape(project)}-{service}-\d+[^\n]{{0,40}}exited \((\d+)\)",
+                           output, re.IGNORECASE)
+        if exited:
+            return f"{service} exited {exited[1]}"
         if re.search(rf'service ["\']{service}["\'] didn.t complete successfully', output):
             return f"{service} initialization failed"
     status = re.search(r"httpx\.HTTPStatusError:[^\n]*?['\"]([1-5]\d\d) ", output)
@@ -379,17 +383,66 @@ print(json.dumps({'sha256':hashlib.sha256(payload).hexdigest(),'entries':len(rec
         })
         return succeeded
 
+    def container_states(self):
+        """Fixed-vocabulary state of each application container, for a failure line.
+
+        Only known service names, lower-case state words and integers leave this
+        method: never container output, health-probe output or configuration.
+        """
+        listing = self._run(["ps", "--all", "--format", "json", *self.APP_SERVICES],
+                            check=False, timeout=60).stdout.strip()
+        try:
+            rows = json.loads(listing) if listing.startswith("[") else [
+                json.loads(line) for line in listing.splitlines() if line.strip()]
+        except ValueError:
+            return "container states unavailable"
+        def word(value):
+            return value if isinstance(value, str) and re.fullmatch(r"[a-z]{1,20}", value) else "-"
+        states = []
+        for row in rows if isinstance(rows, list) else []:
+            service = row.get("Service") if isinstance(row, dict) else None
+            if service not in self.APP_SERVICES:
+                continue
+            exit_code = row.get("ExitCode")
+            state = f"{service} {word(row.get('State'))}/{word(row.get('Health'))}"
+            if isinstance(exit_code, int):
+                state += f" exit {exit_code}"
+            identifier = str(row.get("ID", ""))
+            if re.fullmatch(r"[0-9a-f]{12,64}", identifier):
+                probes = self._run(
+                    ["container", "inspect", "--format",
+                     "{{if .State.Health}}{{range .State.Health.Log}}{{.ExitCode}} {{end}}{{end}}",
+                     identifier], compose=False, check=False, timeout=30).stdout.split()
+                codes = [code for code in probes if re.fullmatch(r"-?\d{1,4}", code)][-3:]
+                if codes:
+                    state += " probes " + ",".join(codes)
+            states.append(state)
+        return "; ".join(states) or "no application containers"
+
     def activate(self, manifest):
         if self._failed_migration and manifest != self.prior:
             raise PodmanUpgradeError("Failed migration prevents candidate activation.")
+        build = "previous" if manifest == self.prior else "candidate"
         for service in self.APP_SERVICES:
             component = service if service in {"frontend", "mcp"} else "backend"
             self.config["services"][service]["image"] = manifest["images"][component]["source_ref"]
         self._save_config()
-        self._run(["up", "-d", "--no-deps", "--force-recreate", "--wait",
-                   "--wait-timeout", "300", *self.APP_SERVICES])
-        self._quiesced = False
-        self.observe(manifest)
+        phase = "compose up --wait"
+        try:
+            self._run(["up", "-d", "--no-deps", "--force-recreate", "--wait",
+                       "--wait-timeout", "300", *self.APP_SERVICES])
+            self._quiesced = False
+            phase = "identity and readiness"
+            self.observe(manifest)
+        except Exception as error:
+            detail = error.diagnostic if isinstance(error, PodmanUpgradeError) else "invalid observation"
+            try:
+                states = self.container_states()
+            except Exception:
+                states = "container states unavailable"
+            print(f"Activation of the {build} build failed during {phase} ({detail}). "
+                  f"Containers: {states}.", flush=True)
+            raise
 
     def restore(self):
         self._require_quiesced()

@@ -16,6 +16,7 @@ CANDIDATE = {"source_sha": "b" * 40}
 
 @pytest.mark.parametrize(("private_text", "safe"), [
     ("container tl-upgrade-owned-release-fixture-1 is unhealthy", "release-fixture unhealthy"),
+    ("container tl-upgrade-owned-frontend-1 exited (1)", "frontend exited 1"),
     ('service "db-migrate" didn\'t complete successfully', "db-migrate initialization failed"),
     ("httpx.ReadTimeout: private response", "httpx.ReadTimeout"),
     ("httpx.HTTPStatusError: Client error '403 Forbidden' for url 'private'", "HTTP 403"),
@@ -45,6 +46,55 @@ def test_failed_install_reports_its_substep_without_private_output(monkeypatch, 
     with pytest.raises(PodmanUpgradeError):
         adapter.install()
     assert capsys.readouterr().out == f"Previous-build install failed during {phase} (process exit 7).\n"
+
+
+@pytest.mark.parametrize(("manifest", "failed", "build", "phase"), [
+    (PRIOR, "up", "previous", "compose up --wait"),
+    (CANDIDATE, "observe", "candidate", "identity and readiness"),
+])
+def test_failed_activation_reports_container_states_without_private_output(
+        monkeypatch, capsys, manifest, failed, build, phase):
+    from upgrade_podman import PodmanUpgrade, PodmanUpgradeError
+    adapter = object.__new__(PodmanUpgrade)
+    adapter.prior, adapter._failed_migration = PRIOR, False
+    adapter.config = {"services": {name: {} for name in PodmanUpgrade.APP_SERVICES}}
+    images = {name: {"source_ref": "ghcr.io/x/" + name + "@sha256:" + "d" * 64}
+              for name in ("backend", "frontend", "mcp")}
+    manifest = {**manifest, "images": images}
+    if manifest["source_sha"] == PRIOR["source_sha"]:
+        adapter.prior = manifest
+    monkeypatch.setattr(adapter, "_save_config", lambda: None)
+    rows = [
+        {"Service": "backend", "State": "running", "Health": "healthy", "ExitCode": 0, "ID": "a" * 64},
+        {"Service": "frontend", "State": "exited", "Health": "", "ExitCode": 1, "ID": "b" * 64},
+        {"Service": "mcp", "State": "running", "Health": "unhealthy SECRET=hunter2", "ExitCode": 0,
+         "ID": "c" * 64},
+        {"Service": "private-sidecar", "State": "running", "Health": "healthy", "ExitCode": 0},
+    ]
+
+    def run(arguments, **kwargs):
+        if arguments[0] == "up":
+            if failed == "up":
+                raise PodmanUpgradeError("private compose output", diagnostic="frontend exited 1")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if arguments[0] == "ps":
+            return SimpleNamespace(returncode=0, stdout="\n".join(json.dumps(r) for r in rows), stderr="")
+        assert arguments[:2] == ["container", "inspect"]
+        probes = "1 1 private-output 1 " if arguments[-1] == "c" * 64 else ""
+        return SimpleNamespace(returncode=0, stdout=probes, stderr="")
+
+    def observe(_manifest):
+        raise PodmanUpgradeError("private response", diagnostic="backend unready")
+
+    monkeypatch.setattr(adapter, "_run", run)
+    monkeypatch.setattr(adapter, "observe", observe)
+    with pytest.raises(PodmanUpgradeError):
+        adapter.activate(manifest)
+    detail = "frontend exited 1" if failed == "up" else "backend unready"
+    assert capsys.readouterr().out == (
+        f"Activation of the {build} build failed during {phase} ({detail}). Containers: "
+        "backend running/healthy exit 0; frontend exited/- exit 1; "
+        "mcp running/- exit 0 probes 1,1,1.\n")
 
 
 class Environment:
