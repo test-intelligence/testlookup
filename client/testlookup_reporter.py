@@ -884,6 +884,7 @@ async def _stop_flusher(owner: Any, task: Optional[asyncio.Task]) -> None:
     try:
         await task
     except asyncio.CancelledError:
+        # Expected: the flusher was cancelled above, with no events taken.
         pass
 
 
@@ -1090,6 +1091,7 @@ class LiveSession:
                 for _ in range(self._batch_size):
                     batch.append(self._queue.get_nowait())
             except asyncio.QueueEmpty:
+                # Expected: fewer than a batch's worth of events were queued.
                 pass
 
             if not batch:
@@ -1106,6 +1108,7 @@ class LiveSession:
                     for _ in range(MAX_BATCH_SIZE):
                         batch.append(self._queue.get_nowait())
                 except asyncio.QueueEmpty:
+                    # Expected: the queue ran out before MAX_BATCH_SIZE events.
                     pass
                 if batch:
                     await self._post_batch(batch)
@@ -1585,6 +1588,7 @@ class LiveStream:
                 for _ in range(self._batch_size):
                     batch.append(self._queue.get_nowait())
             except asyncio.QueueEmpty:
+                # Expected: fewer than a batch's worth of events were queued.
                 pass
             if batch:
                 await self._post_batch(batch)
@@ -1597,6 +1601,7 @@ class LiveStream:
                     for _ in range(MAX_BATCH_SIZE):
                         batch.append(self._queue.get_nowait())
                 except asyncio.QueueEmpty:
+                    # Expected: the queue ran out before MAX_BATCH_SIZE events.
                     pass
                 if batch:
                     await self._post_batch(batch)
