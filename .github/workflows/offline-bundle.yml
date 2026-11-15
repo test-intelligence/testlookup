@@ -169,11 +169,13 @@ jobs:
         run: |
           set -euo pipefail
           tar -xzOf "dist/testlookup-offline-${BUNDLE_VERSION}.tar.gz" "testlookup-offline-${BUNDLE_VERSION}/MANIFEST.json" > bundle-manifest.json
+          # repo_digest is RepoDigests[0], which Docker may name after the
+          # local tag (testlookup/<name>@sha256:...); compare the digest only.
           while IFS=$'\t' read -r component expected; do
             recorded="$(jq -r --arg ref "testlookup/$component:$BUNDLE_VERSION" '.images[] | select(.ref == $ref) | .repo_digest' bundle-manifest.json)"
-            [ "$recorded" = "$expected" ] \
-              || { echo "::error::bundle records $component as '$recorded', expected $expected"; exit 1; }
-            echo "$component: $recorded"
+            [[ "$recorded" == *@sha256:* && "${recorded##*@}" == "${expected##*@}" ]] \
+              || { echo "::error::bundle records $component as '$recorded', expected digest ${expected##*@}"; exit 1; }
+            echo "$component: ${recorded##*@}"
           done < release-images.txt
 
       # M-14: checksums of install.sh and every file it downloads, from the
