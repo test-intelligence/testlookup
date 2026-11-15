@@ -99,6 +99,11 @@ MAX_RETRY_TOTAL_SECONDS = 300.0
 # HTTP status codes that count as transient server-side back-pressure.
 # 429 → admission-gate bucket exhausted; 503 → Redis/backpressure rejection.
 RETRYABLE_STATUS_CODES = frozenset({429, 503})
+# Closing a session answers 409 + Retry-After while a results batch is still
+# being admitted ("retry close"); that answer is retried, a bounded number of times.
+CLOSE_ATTEMPTS = 10
+CLOSE_RETRY_DELAY_SECONDS = 1.0
+CLOSE_MAX_DELAY_SECONDS = 5.0
 CONNECT_TIMEOUT    = 10.0
 READ_TIMEOUT       = 30.0
 # Emit a ``live_heartbeat`` event whenever the SDK has been silent this long.
@@ -796,12 +801,25 @@ class TestLookupReporter:
         )
 
     async def _close_session(self, session_id: str) -> None:
-        try:
-            resp = await self._http.delete(f"/api/v1/stream/sessions/{session_id}")
-            resp.raise_for_status()
-            logger.info("Session closed: %s", session_id)
-        except Exception as exc:
-            logger.warning("Failed to close session %s: %s", session_id, exc)
+        """Close the session; the server writes the run's totals only here.
+
+        While a results batch is still being admitted the server answers 409
+        with ``Retry-After`` ("retry close"), so that answer is retried, a
+        bounded number of times. Any other failure is logged once, never raised.
+        """
+        for attempt in range(1, CLOSE_ATTEMPTS + 1):
+            try:
+                resp = await self._http.delete(f"/api/v1/stream/sessions/{session_id}")
+                if resp.status_code == 409 and attempt < CLOSE_ATTEMPTS:
+                    retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
+                    delay = CLOSE_RETRY_DELAY_SECONDS if retry_after is None else retry_after
+                    await asyncio.sleep(min(delay, CLOSE_MAX_DELAY_SECONDS))
+                    continue
+                resp.raise_for_status()
+                logger.info("Session closed: %s", session_id)
+            except Exception as exc:
+                logger.warning("Failed to close session %s: %s", session_id, exc)
+            return
 
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
@@ -833,6 +851,41 @@ def _add_timing(
             event[key] = int(value)
     if worker_id:
         event["worker_id"] = str(worker_id)[:64]
+
+
+def _flush_lock(owner: Any) -> asyncio.Lock:
+    """The lock that serialises taking a batch off ``owner``'s queue and posting it.
+
+    Created on first use, inside the running loop: on Python 3.9 a lock made
+    outside it binds to another loop (``LiveStream`` is built before
+    ``async with``).
+    """
+    lock = getattr(owner, "_flush_lock_obj", None)
+    if lock is None:
+        lock = owner._flush_lock_obj = asyncio.Lock()
+    return lock
+
+
+async def _stop_flusher(owner: Any, task: Optional[asyncio.Task]) -> None:
+    """Stop a background flusher without dropping a batch it is sending.
+
+    Cancelling the task while it posted lost that batch: its events had
+    already left the queue, and ``CancelledError`` skips ``except Exception``.
+    A batch still on its way when the session then closed could also race
+    the close. Taking the flush lock first waits for a post in flight (its
+    retries included, within ``MAX_RETRY_TOTAL_SECONDS``); the flusher is
+    then asleep or waiting on the lock with no events taken, so cancelling it
+    loses nothing.
+    """
+    if task is None or task.done():
+        return
+    async with _flush_lock(owner):
+        task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        # Expected: the flusher was cancelled above, with no events taken.
+        pass
 
 
 class LiveSession:
@@ -1029,32 +1082,36 @@ class LiveSession:
 
     async def _flush_once(self) -> None:
         """Drain up to BATCH_SIZE events from the queue and POST them."""
-        if self._queue.empty():
-            return
+        async with _flush_lock(self):
+            if self._queue.empty():
+                return
 
-        batch: list[dict] = []
-        try:
-            for _ in range(self._batch_size):
-                batch.append(self._queue.get_nowait())
-        except asyncio.QueueEmpty:
-            pass
+            batch: list[dict] = []
+            try:
+                for _ in range(self._batch_size):
+                    batch.append(self._queue.get_nowait())
+            except asyncio.QueueEmpty:
+                # Expected: fewer than a batch's worth of events were queued.
+                pass
 
-        if not batch:
-            return
+            if not batch:
+                return
 
-        await self._post_batch(batch)
+            await self._post_batch(batch)
 
     async def _flush_all(self) -> None:
         """Drain all remaining events (called on shutdown)."""
-        while not self._queue.empty():
-            batch: list[dict] = []
-            try:
-                for _ in range(MAX_BATCH_SIZE):
-                    batch.append(self._queue.get_nowait())
-            except asyncio.QueueEmpty:
-                pass
-            if batch:
-                await self._post_batch(batch)
+        async with _flush_lock(self):
+            while not self._queue.empty():
+                batch: list[dict] = []
+                try:
+                    for _ in range(MAX_BATCH_SIZE):
+                        batch.append(self._queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    # Expected: the queue ran out before MAX_BATCH_SIZE events.
+                    pass
+                if batch:
+                    await self._post_batch(batch)
 
     async def _post_batch(self, events: list[dict]) -> None:
         """POST a batch to the server with retry on transient errors.
@@ -1147,21 +1204,17 @@ class LiveSession:
                 return
 
     async def _shutdown(self) -> None:
-        """Cancel the flusher task and drain any remaining events.
+        """Stop the flusher task and drain any remaining events.
 
         The final flush MUST happen here (in the non-cancelled caller coroutine),
         not inside the flusher task's CancelledError handler.  When a task is
         cancelled, asyncio's internal _must_cancel flag causes every subsequent
         await inside that task to be cancelled as well — so any HTTP call made
         from the CancelledError handler is dropped silently.  By flushing here
-        we avoid that pitfall entirely.
+        we avoid that pitfall entirely. ``_stop_flusher`` first waits for a
+        batch the flusher is already posting, so cancelling it drops nothing.
         """
-        if self._flusher_task and not self._flusher_task.done():
-            self._flusher_task.cancel()
-            try:
-                await self._flusher_task
-            except asyncio.CancelledError:
-                pass
+        await _stop_flusher(self, self._flusher_task)
 
         # Drain anything the flusher didn't send (runs in a non-cancelled context)
         await self._flush_all()
@@ -1384,12 +1437,8 @@ class LiveStream:
         pipelines. Without this the session stays ``active`` in the DB and the
         run never shows up in Runs / Overview / Coverage / Failures / Trends.
         """
-        if self._flusher_task and not self._flusher_task.done():
-            self._flusher_task.cancel()
-            try:
-                await self._flusher_task
-            except asyncio.CancelledError:
-                pass
+        # Waits for a batch the flusher is already posting before stopping it.
+        await _stop_flusher(self, self._flusher_task)
         if self._heartbeat_task and not self._heartbeat_task.done():
             self._heartbeat_task.cancel()
             try:
@@ -1531,27 +1580,31 @@ class LiveStream:
         return True
 
     async def _flush_once(self) -> None:
-        if self._queue.empty():
-            return
-        batch: list[dict] = []
-        try:
-            for _ in range(self._batch_size):
-                batch.append(self._queue.get_nowait())
-        except asyncio.QueueEmpty:
-            pass
-        if batch:
-            await self._post_batch(batch)
-
-    async def _flush_all(self) -> None:
-        while not self._queue.empty():
+        async with _flush_lock(self):
+            if self._queue.empty():
+                return
             batch: list[dict] = []
             try:
-                for _ in range(MAX_BATCH_SIZE):
+                for _ in range(self._batch_size):
                     batch.append(self._queue.get_nowait())
             except asyncio.QueueEmpty:
+                # Expected: fewer than a batch's worth of events were queued.
                 pass
             if batch:
                 await self._post_batch(batch)
+
+    async def _flush_all(self) -> None:
+        async with _flush_lock(self):
+            while not self._queue.empty():
+                batch: list[dict] = []
+                try:
+                    for _ in range(MAX_BATCH_SIZE):
+                        batch.append(self._queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    # Expected: the queue ran out before MAX_BATCH_SIZE events.
+                    pass
+                if batch:
+                    await self._post_batch(batch)
 
     async def _post_batch(self, events: list[dict]) -> None:
         """POST a batch to the API-key ingest endpoint with retry policy.

@@ -7,6 +7,10 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ## [Unreleased]
 
+### Fixed
+
+- Python SDK: closing a live session (`LiveSession`, the pytest plugin, or `LiveStream`) waits for a results batch the background flusher is already sending, then closes it, and retries the server's 409 "retry close". Before, closing cancelled the flusher, and a batch it was sending was lost: its results never reached the run.
+
 ## [0.1.0] - 2026-11-14
 
 The first public release. TestLookup is a self-hosted test-intelligence platform for software development teams: it ingests test results from CI and from live test runs, explains failures, tracks flaky tests and decides whether a release is ready, with AI that runs locally by default.

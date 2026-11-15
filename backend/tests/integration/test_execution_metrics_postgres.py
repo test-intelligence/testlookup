@@ -326,6 +326,13 @@ async def test_the_slowest_read_uses_the_run_duration_index(world):
     sql = str(svc._SLOWEST_SQL).replace(":run_id", f"'{world.par.id}'::uuid").replace(":limit", "20")
     async with world.sessions() as db:
         await db.execute(text("SET LOCAL enable_seqscan = off"))
+        # The fixture run has a handful of timed tests, and the CI database's
+        # statistics come from every module that shares it, so the planner may
+        # sort those few rows from another test_run_id index instead (PR #410's
+        # CI, 2026-11-15). What matters is that the index serves the ORDER BY
+        # without sorting the whole run, which a large run needs: price a full
+        # sort out. Without a matching index the plan still sorts, and fails.
+        await db.execute(text("SET LOCAL enable_sort = off"))
         plan = "\n".join(row[0] for row in (await db.execute(text("EXPLAIN " + sql))).all())
         await db.rollback()
     assert "ix_test_cases_run_duration" in plan, plan
