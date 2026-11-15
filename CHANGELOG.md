@@ -7,6 +7,10 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ## [Unreleased]
 
+### Changed
+
+- Releases: the "Offline bundle" workflow takes a release version (`gh workflow run offline-bundle.yml -f version=X.Y.Z`) and bundles the image digests that release promoted instead of rebuilding them, refusing if they are not CI's images of the tagged commit. Every bundle run also produces `SHA256SUMS` for `install.sh` and the files it downloads.
+
 ### Fixed
 
 - Python SDK: closing a live session (`LiveSession`, the pytest plugin, or `LiveStream`) waits for a results batch the background flusher is already sending, then closes it, and retries the server's 409 "retry close". Before, closing cancelled the flusher, and a batch it was sending was lost: its results never reached the run.

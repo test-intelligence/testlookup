@@ -56,9 +56,22 @@ How a maintainer cuts a release. Users upgrading an install want
    `gh attestation verify oci://ghcr.io/test-intelligence/testlookup/backend:vX.Y.Z --owner test-intelligence`
    (and `frontend`, `mcp`).
 6. **Build the offline bundle** for air-gapped users: run the "Offline bundle"
-   workflow (`.github/workflows/offline-bundle.yml`) with the release version,
-   or `make offline-bundle` locally; attach the archive and its checksum file to
-   the GitHub release.
+   workflow (`.github/workflows/offline-bundle.yml`) with the release version
+   (without the `v`):
+
+   ```bash
+   gh workflow run offline-bundle.yml -f version=X.Y.Z
+   ```
+
+   It checks out `vX.Y.Z`, pulls the image digests the release promoted
+   (refusing if `:vX.Y.Z` is missing or is not CI's image of the tagged
+   commit), bundles them without rebuilding, and checks the import with the
+   network blocked. The run's `offline-bundle` artifact (kept 30 days) holds
+   `testlookup-offline-X.Y.Z.tar.gz`, its `.sha256`, and `SHA256SUMS` for
+   `install.sh` and the files it downloads; attach all three to the GitHub
+   release. `make offline-bundle` builds the images from source, so use it for
+   testing, not for a release. Under Podman it also names the app images
+   `localhost/testlookup/...`, which a Docker host cannot import.
 7. **Publish the GitHub release** for the tag: the CHANGELOG section as the
    notes, the upgrade notes linked, the bundle attached.
 8. **Announce** breaking changes in the release notes' first paragraph.
