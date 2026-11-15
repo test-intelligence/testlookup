@@ -204,6 +204,12 @@ def exercise(environment, prior, candidate, report, persist=lambda: None):
             item["status"] = "FAILED"
             if isinstance(error, ProofFailure) and error.evidence is not None:
                 item["evidence"] = error.evidence
+            # Adapter diagnostics are fixed categories (service names, numeric
+            # codes); the job log is the only place an operator can read them.
+            diagnostic = getattr(error, "diagnostic", None)
+            if isinstance(diagnostic, str):
+                item["diagnostic"] = diagnostic
+                print(f"Upgrade stage failed: {name} ({diagnostic}).", flush=True)
             raise
         finally:
             item.update(ended=timestamp(), duration_seconds=round(time.monotonic() - started, 3))

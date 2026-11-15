@@ -40,6 +40,10 @@ const MAX_BATCH_SIZE     = 1_000     // hard cap per HTTP call
 const MAX_RETRIES        = 5
 const RETRY_BASE_DELAY_MS = 500
 const DEFAULT_TIMEOUT_MS  = 30_000
+// Closing a session answers 409 + Retry-After while a batch is still being admitted.
+const CLOSE_ATTEMPTS        = 10
+const CLOSE_RETRY_DELAY_MS  = 1_000
+const CLOSE_MAX_DELAY_MS    = 5_000
 
 // ── Public Types ───────────────────────────────────────────────────────────────
 
@@ -319,12 +323,28 @@ export class TestLookupReporter {
     })
   }
 
-  /** Mark a session as complete and trigger AI analysis pipeline. */
+  /**
+   * Mark a session as complete and trigger AI analysis pipeline.
+   *
+   * The server writes the run's totals only here. While a results batch is
+   * still being admitted it answers 409 with ``Retry-After`` ("retry close"),
+   * so that answer is retried, a bounded number of times; anything else is
+   * logged once and never thrown.
+   */
   async closeSession(sessionId: string): Promise<void> {
-    try {
-      await this._fetch<void>('DELETE', `/api/v1/stream/sessions/${sessionId}`)
-    } catch (err) {
-      console.warn(`[TestLookup] Failed to close session ${sessionId}:`, err)
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this._fetch<void>('DELETE', `/api/v1/stream/sessions/${sessionId}`)
+        return
+      } catch (err) {
+        const typed = err as Error & { status?: number; retryAfterMs?: number }
+        if (typed?.status !== 409 || attempt >= CLOSE_ATTEMPTS) {
+          console.warn(`[TestLookup] Failed to close session ${sessionId}:`, err)
+          return
+        }
+        const delay = Math.min(typed.retryAfterMs ?? CLOSE_RETRY_DELAY_MS, CLOSE_MAX_DELAY_MS)
+        await new Promise((resolve) => setTimeout(resolve, delay))
+      }
     }
   }
 
@@ -368,7 +388,14 @@ export class TestLookupReporter {
 
       if (!resp.ok) {
         const detail = await resp.text().catch(() => '')
-        throw new Error(`TestLookup HTTP ${resp.status} ${path}: ${detail}`)
+        const error = new Error(`TestLookup HTTP ${resp.status} ${path}: ${detail}`) as Error & {
+          status?: number
+          retryAfterMs?: number
+        }
+        error.status = resp.status
+        const retryAfter = resp.headers?.get('Retry-After')
+        if (retryAfter && /^\d+(\.\d+)?$/.test(retryAfter)) error.retryAfterMs = Number(retryAfter) * 1_000
+        throw error
       }
 
       if (resp.status === 204) return undefined as T
@@ -415,6 +442,8 @@ export class LiveSession {
   private readonly defaultSuiteName?: string
   private readonly buffer: LiveEvent[] = []
   private flushTimer: ReturnType<typeof setInterval> | null = null
+  /** Every batch POST runs on this chain, one at a time, so ``close()`` can wait for one in flight. */
+  private flushing: Promise<void> = Promise.resolve()
   private _stats = { sent: 0, failed: 0 }
 
   constructor(config: LiveSessionConfig) {
@@ -505,7 +534,14 @@ export class LiveSession {
     })
   }
 
-  /** Flush remaining events and stop the background timer. */
+  /**
+   * Stop the background timer, wait for a batch it already sent, then flush the rest.
+   *
+   * The caller closes the session next. A batch still in flight at that moment
+   * races the close: the server refuses the late batch, or answers the close
+   * with 409, and the run misses those results. Vitest ends its run right after
+   * its last result, which makes that window easy to hit.
+   */
   async close(): Promise<void> {
     if (this.flushTimer != null) {
       clearInterval(this.flushTimer)
@@ -523,17 +559,28 @@ export class LiveSession {
 
   // ── Internal ───────────────────────────────────────────────────────────────
 
-  private async _flushOnce(): Promise<void> {
-    if (this.buffer.length === 0) return
-    const batch = this.buffer.splice(0, this.batchSize)
-    await this._postBatch(batch)
+  /** Queue ``step`` behind every earlier flush; a failure never breaks the chain. */
+  private _serial(step: () => Promise<void>): Promise<void> {
+    const next = this.flushing.then(step)
+    this.flushing = next.catch(() => undefined)
+    return next
   }
 
-  private async _flushAll(): Promise<void> {
-    while (this.buffer.length > 0) {
-      const batch = this.buffer.splice(0, MAX_BATCH_SIZE)
-      if (batch.length > 0) await this._postBatch(batch)
-    }
+  private _flushOnce(): Promise<void> {
+    return this._serial(async () => {
+      if (this.buffer.length === 0) return
+      const batch = this.buffer.splice(0, this.batchSize)
+      await this._postBatch(batch)
+    })
+  }
+
+  private _flushAll(): Promise<void> {
+    return this._serial(async () => {
+      while (this.buffer.length > 0) {
+        const batch = this.buffer.splice(0, MAX_BATCH_SIZE)
+        if (batch.length > 0) await this._postBatch(batch)
+      }
+    })
   }
 
   private async _postBatch(events: LiveEvent[]): Promise<void> {
