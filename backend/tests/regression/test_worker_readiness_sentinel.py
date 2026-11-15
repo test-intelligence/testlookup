@@ -33,6 +33,7 @@ Liveness stays on ``pgrep`` and remains what catches a dead worker.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
@@ -148,5 +149,8 @@ def test_compose_beat_check_matches_beat_and_not_itself():
     assert test[:3] == ["CMD", "pgrep", "-f"], (
         "exec form: under CMD-SHELL the `sh -c` line contains the pattern, so pgrep always matches"
     )
-    assert test[3] in services["beat"]["command"], "the pattern must match beat's own command line"
-    assert test[3] not in services["worker"]["command"]
+    # pgrep reads the pattern as a POSIX extended regex; the spaces are written
+    # [[:space:]] for Podman 4 (test_compose_healthchecks_survive_podman_4.py).
+    pattern = re.compile(test[3].replace("[[:space:]]", r"\s"))
+    assert pattern.search(services["beat"]["command"]), "the pattern must match beat's own command line"
+    assert not pattern.search(services["worker"]["command"])

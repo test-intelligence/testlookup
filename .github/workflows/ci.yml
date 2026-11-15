@@ -982,6 +982,7 @@ jobs:
           tests/integration/test_migration_0222_postgres.py
           tests/integration/test_test_case_lifecycle_review_postgres.py
           tests/integration/test_test_case_editing_postgres.py
+          tests/integration/test_plan_counts_follow_the_change_postgres.py
           tests/integration/test_retired_cases_postgres.py
           tests/integration/test_test_case_execution_timing_postgres.py
           tests/integration/test_migration_0223_0224_postgres.py

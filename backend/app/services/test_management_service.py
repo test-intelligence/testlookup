@@ -1111,6 +1111,13 @@ async def recompute_plan_counts(db: AsyncSession, plan: TestPlan) -> None:
     # ``status not in ('not_run',)`` (None is "not not_run"); the column is
     # nullable. passed/failed/blocked use ``== X``, which excludes NULL in both
     # the SQL and the original Python, so they match exactly.
+    #
+    # The session does not autoflush, and the query counts rows in the
+    # database: flush first, or the count misses the caller's pending change.
+    # Recording an execution reported the plan's counts from before it, a
+    # removed item was still counted, and an AI-generated plan read 0 cases
+    # (release journey TL-TCM-001 saw executed/passed 0 after a passed run).
+    await db.flush()
     row = (
         await db.execute(
             select(

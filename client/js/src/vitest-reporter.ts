@@ -7,12 +7,16 @@
  * Vitest's reporter API moved across majors, so both shapes are handled:
  *   - Vitest >= 3: ``onTestCaseResult(testCase)`` streams each test as it finishes;
  *   - Vitest 1 / 2: ``onTaskUpdate(packs)`` streams finished tests by task id;
- *   - every major: ``onFinished(files)`` records whatever was not streamed yet
- *     (skipped tests, or an older Vitest that streams nothing), then closes.
+ *   - the end of the run records whatever was not streamed yet (skipped tests, or
+ *     an older Vitest that streams nothing), then closes the session:
+ *     ``onTestRunEnd(testModules)`` on Vitest >= 3, ``onFinished(files)`` on 1-3.
+ *     Vitest 4 removed ``onFinished``; with it alone the session was never closed
+ *     and the buffered results never sent (release journey TL-SDK-002, Vitest 5.1).
+ *     Vitest 3 calls both, so the session closes once.
  * A test is recorded once whichever path saw it first. Network errors are logged,
  * never thrown.
  *
- * Supported: vitest >= 1.0 (tested shapes: 1.x/2.x task packs, 3.x TestCase).
+ * Supported: vitest >= 1.0 (tested shapes: 1.x/2.x task packs, 3.x-5.x TestCase / TestModule).
  */
 import { LiveAdapter, type LiveAdapterOptions } from './live-adapter'
 import type { TestStatus } from './testlookup-reporter'
@@ -47,6 +51,10 @@ interface VTestCase {
   result: () => { state: 'passed' | 'failed' | 'skipped' | 'pending'; errors?: Array<{ message?: string; stack?: string }> }
   diagnostic?: () => { duration?: number; startTime?: number; retryCount?: number } | undefined
 }
+/** Vitest 3+'s reporter TestModule (the parts used). */
+interface VTestModule {
+  children?: { allTests?: () => Iterable<VTestCase> }
+}
 
 function statusOf(state?: string, mode?: string): TestStatus | null {
   if (state === 'pass' || state === 'passed') return 'PASSED'
@@ -76,6 +84,7 @@ class TestLookupVitestReporter {
   private readonly adapter: LiveAdapter
   private ctx: VContext | undefined
   private readonly recorded = new Set<string>()
+  private finished: Promise<void> | undefined
 
   constructor(options: LiveAdapterOptions = {}) {
     this.adapter = new LiveAdapter('vitest', options)
@@ -112,13 +121,28 @@ class TestLookupVitestReporter {
     }
   }
 
+  /** Vitest >= 3; from Vitest 4 on, the only end-of-run hook. */
+  async onTestRunEnd(testModules: ReadonlyArray<VTestModule> = []): Promise<void> {
+    for (const m of testModules ?? []) {
+      for (const testCase of m.children?.allTests?.() ?? []) this.onTestCaseResult(testCase)
+    }
+    await this._finish()
+  }
+
+  /** Vitest 1-3 (removed in Vitest 4). */
   async onFinished(files: VTask[] = []): Promise<void> {
     const walk = (t: VTask) => {
       if (t.type === 'test') this._recordTask(t)
       for (const c of t.tasks ?? []) walk(c)
     }
     for (const f of files) walk(f)
-    await this.adapter.finish()
+    await this._finish()
+  }
+
+  /** Closes the session once: Vitest 3 calls both ``onTestRunEnd`` and ``onFinished``. */
+  private _finish(): Promise<void> {
+    this.finished ??= this.adapter.finish()
+    return this.finished
   }
 
   private _recordTask(task: VTask): void {

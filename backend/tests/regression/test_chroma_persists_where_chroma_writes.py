@@ -58,8 +58,11 @@ def test_compose_drops_the_chroma_0x_persistence_settings(name):
 def test_compose_healthcheck_uses_only_what_the_image_ships(name):
     service, _ = _compose_chroma(name)
     test = service["healthcheck"]["test"]
-    assert test[:3] == ["CMD", "bash", "-c"], test
-    assert "/api/v2/heartbeat" in test[3] and "/dev/tcp/127.0.0.1/8000" in test[3]
+    # CMD-SHELL around bash: Podman 4 splits a CMD check's arguments at every
+    # space (test_compose_healthchecks_survive_podman_4.py); /dev/tcp is bash's.
+    assert test[0] == "CMD-SHELL" and len(test) == 2, test
+    assert test[1].startswith("bash -c '"), test
+    assert "/api/v2/heartbeat" in test[1] and "/dev/tcp/127.0.0.1/8000" in test[1]
     assert not any(tool in " ".join(test) for tool in ("curl", "wget", "python"))
 
 

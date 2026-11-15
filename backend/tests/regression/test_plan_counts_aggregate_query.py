@@ -40,11 +40,18 @@ async def test_recompute_plan_counts_one_query_and_null_counts_as_executed():
         id=uuid.uuid4(), total_cases=0, executed_cases=0,
         passed_cases=0, failed_cases=0, blocked_cases=0,
     )
-    db = SimpleNamespace(execute=AsyncMock(return_value=_Res(agg)))
+    calls = []
+    db = SimpleNamespace(
+        flush=AsyncMock(side_effect=lambda: calls.append("flush")),
+        execute=AsyncMock(side_effect=lambda *_a, **_k: calls.append("execute") or _Res(agg)),
+    )
 
     await svc.recompute_plan_counts(db, plan)
 
     assert db.execute.await_count == 1          # one aggregate, not fetch-all + 5 passes
+    # The session does not autoflush: the caller's pending change must reach the
+    # database before the aggregate reads it (test_plan_counts_follow_the_change_postgres.py).
+    assert calls == ["flush", "execute"]
     assert plan.total_cases == 5
     assert plan.executed_cases == 3             # total - not_run (NULL rows count as executed)
     assert plan.passed_cases == 1
@@ -61,7 +68,7 @@ async def test_recompute_plan_counts_empty_plan():
         id=uuid.uuid4(), total_cases=-1, executed_cases=-1,
         passed_cases=-1, failed_cases=-1, blocked_cases=-1,
     )
-    db = SimpleNamespace(execute=AsyncMock(return_value=_Res(agg)))
+    db = SimpleNamespace(flush=AsyncMock(), execute=AsyncMock(return_value=_Res(agg)))
 
     await svc.recompute_plan_counts(db, plan)
 
