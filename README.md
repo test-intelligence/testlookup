@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <b>Know why your software tests fail. Know when to ship.</b><br>
+  <b>Know why your software tests fail. Know when your release is ready.</b><br>
   Open-source software test intelligence: manage test reports and software test releases, find the issues behind failing tests, and decide each release with evidence.
 </p>
 
@@ -79,11 +79,11 @@ Nothing to install? Replay real screens in the browser with the [guided tours](h
 - **Integrations**: Jira, GitHub and GitLab (checks and merge-request notes), Slack, Microsoft Teams and email notifications, outbound webhooks, and knowledge sources for retrieval.
 - **Access control**: five roles (`VIEWER`, `TESTER`, `QA_ENGINEER`, `QA_LEAD`, `ADMIN`) plus project membership, API keys, MFA, SAML and OpenID Connect single sign-on, and SCIM provisioning.
 
-Some features ship turned off and are enabled per installation or project with feature flags; the in-app guide (`/docs` on your instance) describes each one.
+Some features are off by default and are turned on per installation or project with feature flags; the in-app guide (`/docs` on your instance) describes each one.
 
 ## Why TestLookup
 
-A CI system tells you that a build went red. It does not tell you whether the 37 failures are one broken service, a flaky test that has failed twice a week since spring, an expired test certificate, or a real regression in the code you are about to ship. Answering that usually means opening logs across several pipelines and keeping notes in a spreadsheet.
+A CI system tells you that a build went red. It does not tell you whether the 37 failures are one broken service, a flaky test that has failed twice a week since spring, an expired test certificate, or a real regression in the code you are about to release. Answering that usually means opening logs across several pipelines and keeping notes in a spreadsheet.
 
 TestLookup is built for the people who answer that question: **test and automation engineers** telling product bugs from test-data, automation, flaky and infrastructure failures; **QA leads** who sign off releases and need an evidence trail; **developers and service owners** investigating failures in the code they own; and **platform teams** who want one place for results from Jenkins, GitHub Actions, GitLab and anything else that produces a report.
 

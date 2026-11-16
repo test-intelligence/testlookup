@@ -29,7 +29,7 @@ function trend(overrides: Partial<ReleasePortfolioTrend> = {}): ReleasePortfolio
 }
 
 describe('captions', () => {
-  it('Ready to ship: GO on N of M evaluated, or that none was', () => {
+  it('Ready to release: GO on N of M evaluated, or that none was', () => {
     expect(readyCaption(TOTALS, 12)).toBe('GO on 3 of 4 evaluated (12 w)')
     expect(readyCaption({ ...TOTALS, evaluated: 0, go: 0 }, 12)).toBe('No releases evaluated in 12 weeks')
   })
@@ -45,7 +45,7 @@ describe('point titles', () => {
     expect(pointTitle('in_progress', '2026-10-13T00:00:00Z', 2, { approximated: true }))
       .toBe("Week to 13 Oct: 2 in progress (approximation: today's status)")
     expect(pointTitle('ready_to_ship', '2026-10-13T00:00:00Z', 1, { approximated: true, evaluatedInWeek: 3, goInWeek: 1 }))
-      .toBe("Week to 13 Oct: 1 ready to ship · GO 1 of 3 evaluated that week (approximation: today's status)")
+      .toBe("Week to 13 Oct: 1 ready to release · GO 1 of 3 evaluated that week (approximation: today's status)")
     expect(pointTitle('released_30d', '2026-10-13T00:00:00Z', 3)).toBe('Week to 13 Oct: 3 released in 30 days')
   })
   it('the last point is now, and says when the card has moved on since the read', () => {
@@ -63,9 +63,9 @@ describe('sparklineFor', () => {
     const line = sparklineFor(trend(), 'ready_to_ship', 1)
     expect(line.series).toEqual([null, 0, 1, 1, 1])
     expect(line.pointTitles[0]).toBeNull()
-    expect(line.pointTitles[2]).toBe("Week to 12 Oct: 1 ready to ship · GO 1 of 3 evaluated that week (approximation: today's status)")
-    expect(line.pointTitles[4]).toBe('Now: 1 ready to ship')
-    expect(line.label).toBe('Ready to ship, 4 weeks')
+    expect(line.pointTitles[2]).toBe("Week to 12 Oct: 1 ready to release · GO 1 of 3 evaluated that week (approximation: today's status)")
+    expect(line.pointTitles[4]).toBe('Now: 1 ready to release')
+    expect(line.label).toBe('Ready to release, 4 weeks')
     expect(line.drawable).toBe(true)
   })
   it('the card\'s own count differing from the trend\'s now point marks the title', () => {

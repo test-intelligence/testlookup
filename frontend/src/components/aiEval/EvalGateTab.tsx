@@ -126,7 +126,7 @@ export default function EvalGateTab({ baselines, loading, isAdmin, result, onRes
     <div className="space-y-4" data-testid="ai-eval-gate-tab">
       <Panel
         title="Run pre-release gate"
-        subtitle="Compare a candidate with the active baseline. Prompt, model or routing changes should not ship on FAIL."
+        subtitle="Compare a candidate with the active baseline. Prompt, model or routing changes should not be released on FAIL."
       >
         <div className="grid grid-cols-2 gap-3 p-4">
           {gates.map((gate) => (

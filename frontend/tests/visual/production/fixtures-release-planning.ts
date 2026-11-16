@@ -224,7 +224,7 @@ const LAST_MONDAY = Date.UTC(2026, 8, 14)
 /**
  * `ReleasePortfolioTrend` (§1.1, §2.5) for Checkout over 12 weeks: 13 points (12 Mondays, then NOW), `null` for the
  * two weeks before the first release existed, and a LAST point equal to each card's own count over this world
- * (In progress 1 · Ready to ship 0 · Blocked 1 · Released · 30d 1). Totals: 2 releases evaluated in the window (GO 1,
+ * (In progress 1 · Ready to release 0 · Blocked 1 · Released · 30d 1). Totals: 2 releases evaluated in the window (GO 1,
  * No-Go 1), 1 released, with a pack.
  */
 export function portfolioTrend() {

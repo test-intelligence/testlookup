@@ -94,7 +94,7 @@ Your administrator has made human review of AI reports mandatory. A QA lead acce
 ## Workflow pages that say they are off
 
 **"Quarantine is off for this project".**
-Quarantine proposals need the `flaky_auto_quarantine` feature flag, which ships off. An administrator turns it on under **Settings → System → Feature flags**.
+Quarantine proposals need the `flaky_auto_quarantine` feature flag. It is on by default; if an administrator turned it off, they turn it back on under **Settings → System → Feature flags**.
 
 **Outbound webhook "Test" says no delivery was enqueued.**
 Outbound webhooks need the `outbound_webhooks` flag on and offline mode off.

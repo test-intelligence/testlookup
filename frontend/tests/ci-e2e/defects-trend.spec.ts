@@ -111,7 +111,7 @@ test('Escape rate below its floor reads "Not measured" with the server\'s reason
   await expect(card.locator('[data-metric-trend="none"]')).toHaveText('Not measured')
   await expect(card).not.toContainText('0%')
   const hint = await card.locator('p[title]').first().getAttribute('title')
-  expect(hint).toContain('3 defect(s) reported in the last 30 days affect a release that has shipped; 5 are needed.')
+  expect(hint).toContain('3 defect(s) reported in the last 30 days affect a live release; 5 are needed.')
   await networkQuiet(page, api)
   assertHermetic(api, errors)
 })

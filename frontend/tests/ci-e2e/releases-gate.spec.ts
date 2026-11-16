@@ -7,7 +7,7 @@
  *    a failed phase); its phases are its OWN, none of the old Smoke / Regression / E2E template;
  *  - the hotfix (in progress, never evaluated) reads "Not evaluated yet"; a QA lead's Evaluate gate POSTs
  *    `.../gate/evaluate`, the badge moves to Go with the recorded numbers, the card does not open, and the
- *    banner's "Ready to ship" counts it;
+ *    banner's "Ready to release" counts it;
  *  - a blocker's "Open gate →" opens `/releases/{id}#gate` with the gate panel in view (scorecard, every
  *    reason, the baseline sentence) and each phase's live gate chip;
  *  - "Evaluate all in progress" evaluates both in-progress releases, one toast for all;
@@ -25,7 +25,7 @@ test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'e
 const ready = (p: Page) => p.getByRole('heading', { name: 'Releases', level: 1 })
 const card = (page: Page, name: string) => page.getByRole('article', { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `) })
 const badge = (page: Page, name: string) => card(page, name).locator('[data-gate-decision]').first()
-const readyToShip = (page: Page) => page.locator('[data-release-health] [data-banner-fact]').filter({ hasText: 'Ready to ship' })
+const readyToShip = (page: Page) => page.locator('[data-release-health] [data-banner-fact]').filter({ hasText: 'Ready to release' })
 
 test('Go and No-Go are the recorded verdicts; Evaluate gate records the hotfix and the banner counts it', async ({ page }) => {
   const { handlers, writes } = releasesHandlers({ hotfix: true })
@@ -56,7 +56,7 @@ test('Go and No-Go are the recorded verdicts; Evaluate gate records the hotfix a
   const hotfix = card(page, '2026.11.1')
   await expect(badge(page, '2026.11.1')).toHaveText('Not evaluated yet')
   await expect(hotfix.locator('[data-gate-tile]')).toHaveCount(0)
-  await expect(readyToShip(page)).toHaveText('Ready to ship 0')
+  await expect(readyToShip(page)).toHaveText('Ready to release 0')
 
   await hotfix.getByTestId('release-evaluate').click()
 
@@ -66,7 +66,7 @@ test('Go and No-Go are the recorded verdicts; Evaluate gate records the hotfix a
   await expect(hotfix.locator('[data-gate-tile="Runs"]')).toContainText('3')
   await expect(hotfix.locator('[data-gate-evaluated]')).toHaveText('Evaluated just now')
   await expect(hotfix.getByTestId('release-evaluate')).toHaveText('Re-evaluate')
-  await expect(readyToShip(page)).toHaveText('Ready to ship 1')
+  await expect(readyToShip(page)).toHaveText('Ready to release 1')
   // The button is not the card: no side panel opened.
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await networkQuiet(page, api)

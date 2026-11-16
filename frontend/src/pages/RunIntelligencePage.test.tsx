@@ -414,7 +414,7 @@ describe('RunIntelligencePage', () => {
     )
 
     const panel = screen.getByRole('status')
-    const verdict = screen.getByText(/ship blocked/i).closest('section')
+    const verdict = screen.getByText(/release blocked/i).closest('section')
     expect(panel.compareDocumentPosition(verdict as Node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getByText('Verified', { selector: 'span' })).toBeTruthy()
   })
@@ -1072,7 +1072,7 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
     // (W29b F3: the title repeated the decision word).
     expect(within(verdict).getAllByText('No-Go')).toHaveLength(1)
     expect(verdict.querySelector('[data-banner-pill]')).toHaveTextContent('No-Go')
-    expect(within(verdict).getByText('ship blocked')).toBeInTheDocument()
+    expect(within(verdict).getByText('release blocked')).toBeInTheDocument()
     const facts = Array.from(verdict.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
     expect(facts).toEqual(['Risk 68/100', 'Blocking issues 1', 'AI confidence 88%'])
     expect(within(verdict).getByText(/Resolve DB connection pool exhaustion/)).toBeInTheDocument()

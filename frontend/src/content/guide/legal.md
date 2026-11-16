@@ -27,7 +27,7 @@ The maintainer and contributors are not liable for damages from using TestLookup
 TestLookup is self-hosted. The project has no hosted service and no access to your instance or its data. Your team installs and runs it, including its security, backups and updates.
 
 - **What your data holds.** Test results often contain hostnames, internal URLs, credentials or personal data. [Security and privacy](/docs/security) covers what TestLookup stores and what can leave your network.
-- **Results are aids, not decisions.** Verdicts (GO, CONDITIONAL_GO, NO_GO), risk scores, failure categories, flaky scores and AI-written explanations can be wrong. A person on your team decides whether to ship. [How decisions are made](/docs/decisions) shows the evidence behind each result.
+- **Results are aids, not decisions.** Verdicts (GO, CONDITIONAL_GO, NO_GO), risk scores, failure categories, flaky scores and AI-written explanations can be wrong. A person on your team decides whether to release. [How decisions are made](/docs/decisions) shows the evidence behind each result.
 - **No certification.** TestLookup is not certified, audited or attested against any security, privacy or industry standard.
 
 ## The public demo

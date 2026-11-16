@@ -18,7 +18,7 @@ export const PORTFOLIO_SERIES: readonly PortfolioSeriesKey[] = ['in_progress', '
 /** What each count is, in a point's title ("2 in progress"). */
 const NOUN: Record<PortfolioSeriesKey, string> = {
   in_progress: 'in progress',
-  ready_to_ship: 'ready to ship',
+  ready_to_ship: 'ready to release',
   blocked: 'blocked',
   released_30d: 'released in 30 days',
 }
@@ -26,7 +26,7 @@ const NOUN: Record<PortfolioSeriesKey, string> = {
 /** The card a series belongs to, in the sparkline's accessible name. */
 const CARD: Record<PortfolioSeriesKey, string> = {
   in_progress: 'In progress',
-  ready_to_ship: 'Ready to ship',
+  ready_to_ship: 'Ready to release',
   blocked: 'Blocked',
   released_30d: 'Released · 30d',
 }
@@ -48,7 +48,7 @@ export interface PointTitleExtra {
   isNow?: boolean
   /** The series rests on today's status. */
   approximated?: boolean
-  /** Ready to ship: the releases evaluated in the 7 days before the point, and those whose latest call was GO. */
+  /** Ready to release: the releases evaluated in the 7 days before the point, and those whose latest call was GO. */
   evaluatedInWeek?: number
   goInWeek?: number
   /** The card's own client count differs from the trend's now point. */
@@ -57,7 +57,7 @@ export interface PointTitleExtra {
 
 /**
  * One point's hover text: `Week to 13 Oct: 2 in progress (approximation:
- * today's status)` / `Week to 13 Oct: 1 ready to ship · GO 1 of 3 evaluated
+ * today's status)` / `Week to 13 Oct: 1 ready to release · GO 1 of 3 evaluated
  * that week (…)` / `Now: 2 in progress` / `Now (as of the trend read): 2 in
  * progress`. `null` for a point that was not measured.
  */
@@ -109,7 +109,7 @@ export function sparklineFor(trend: ReleasePortfolioTrend, key: PortfolioSeriesK
   }
 }
 
-/** Ready to ship's caption: a count over its stated denominator, never a bare percentage. */
+/** Ready to release's caption: a count over its stated denominator, never a bare percentage. */
 export function readyCaption(totals: ReleasePortfolioTotals, weeks: number): string {
   return totals.evaluated > 0
     ? `GO on ${totals.go} of ${totals.evaluated} evaluated (${weeks} w)`

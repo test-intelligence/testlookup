@@ -25,7 +25,7 @@ It does not run your tests. Your CI system, your framework and your test code st
 ## What it does not do
 
 - It does not execute, retry, quarantine or modify your tests. Quarantine in TestLookup is a **recommendation and a record**, not an action taken against your suite.
-- It does not decide whether you ship. Release output is a recommendation with its reasoning attached.
+- It does not decide whether you release. Release output is a recommendation with its reasoning attached.
 - It does not guarantee a root cause. Root-cause text is a **suggestion to confirm**, never a finding.
 
 ## Four different kinds of output — and why the difference matters

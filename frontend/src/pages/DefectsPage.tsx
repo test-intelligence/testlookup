@@ -674,15 +674,15 @@ interface EscapeState {
 }
 
 /**
- * DEF-03's tile: the share of the window's defects that affect a shipped
- * release and were filed after it shipped. Below the server's sample floor it
+ * DEF-03's tile: the share of the window's defects that affect a live
+ * release and were filed after it went live. Below the server's sample floor it
  * reads "Not measured" with the server's reason — never 0 %.
  */
 function EscapeRateTile({ escape }: { escape: EscapeState }) {
   const data = escape.data
   let value = '—'
   let notMeasured = false
-  let hint = 'Defects filed after a release they affect had shipped.'
+  let hint = 'Defects filed after a release they affect went live.'
   if (data) {
     // "Not measured" is the tile's small line under a "—" value, not the 24 px
     // value itself: as the value it ran into the tile's padding at 1280 px on
@@ -690,8 +690,8 @@ function EscapeRateTile({ escape }: { escape: EscapeState }) {
     notMeasured = !(data.measured && data.rate != null)
     value = notMeasured ? '—' : `${(data.rate as number).toFixed(1)}%`
     const lead = data.measured
-      ? `Defects filed after a release they affect had shipped: ${data.escaped} of ${data.attributed} reported in the last ${data.window_days} days that affect a shipped release.`
-      : (data.reason ?? `Fewer than ${data.sample_floor} defects reported in the last ${data.window_days} days affect a shipped release.`)
+      ? `Defects filed after a release they affect went live: ${data.escaped} of ${data.attributed} reported in the last ${data.window_days} days that affect a live release.`
+      : (data.reason ?? `Fewer than ${data.sample_floor} defects reported in the last ${data.window_days} days affect a live release.`)
     hint = `${lead} Production outcomes in the window: ${data.outcomes.incidents} incident(s), ${data.outcomes.rollbacks} rollback(s).`
   } else if (escape.error) {
     hint = 'The escape rate could not be loaded.'

@@ -42,7 +42,7 @@ const CATEGORIES: { id: DefectIntakeCategory; label: string }[] = [
   { id: 'UNKNOWN',           label: 'Unknown' },
 ]
 
-/** `{name} {version}`, plus ` · shipped {date}` once the release has shipped. */
+/** `{name} {version}`, plus ` · released {date}` once the release has a release date. */
 function releaseOptionLabel(release: Release): string {
   const name = [release.name, release.version].filter((part) => part && part.trim()).join(' ')
   if (!release.released_at) return name
@@ -50,7 +50,7 @@ function releaseOptionLabel(release: Release): string {
   const date = Number.isNaN(shipped.getTime())
     ? release.released_at
     : formatDay(shipped)
-  return `${name} · shipped ${date}`
+  return `${name} · released ${date}`
 }
 
 interface DefectIntakeModalProps {
@@ -289,7 +289,7 @@ export default function DefectIntakeModal({
               ))}
             </select>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              A defect filed against a release that has already shipped counts toward the escape rate.
+              A defect filed against a release that is already live counts toward the escape rate.
             </p>
           </div>
 

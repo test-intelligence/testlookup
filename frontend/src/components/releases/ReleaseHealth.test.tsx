@@ -107,7 +107,7 @@ describe('ReleaseHealthBanner — one line above the list', () => {
     // The name once: a version equal to the name is not repeated.
     expect(screen.getByText('2026.11 is in progress, not evaluated yet')).toBeInTheDocument()
     // Counted from the list: one blocker open, one ready, one blocked, one shipped in 30 days.
-    expect(facts(container)).toEqual(['Open blockers 1', 'Ready to ship 1', 'Blocked 1', 'Released · 30d 1'])
+    expect(facts(container)).toEqual(['Open blockers 1', 'Ready to release 1', 'Blocked 1', 'Released · 30d 1'])
     // No KPI cards above the list.
     expect(screen.queryByText('In progress')).not.toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Release health' })).toBeInTheDocument()
@@ -134,7 +134,7 @@ describe('ReleaseHealthBanner — one line above the list', () => {
   it('puts the pass rate first when the recorded verdict was measured, still at most four facts', () => {
     const release = makeRelease({ blockers: [blocker('warn', 'A warning')] })
     const { container } = render(<ReleaseHealthBanner highlighted={release} inProgressReleases={[release]} releases={[release]} />)
-    expect(facts(container)).toEqual(['Pass rate 92.0%', 'Open blockers 1', 'Ready to ship 0', 'Blocked 0'])
+    expect(facts(container)).toEqual(['Pass rate 92.0%', 'Open blockers 1', 'Ready to release 0', 'Blocked 0'])
   })
 
   it('states no pass rate for a verdict below the evidence floor, nor for a release never evaluated', () => {
@@ -155,7 +155,7 @@ describe('ReleaseHealthBanner — one line above the list', () => {
       blockerCount: 25,
     })
     const { container } = render(<ReleaseHealthBanner highlighted={release} inProgressReleases={[release]} releases={[release]} />)
-    expect(facts(container)).toEqual(['Pass rate 92.0%', 'Open blockers 25', 'Ready to ship 0', 'Blocked 1'])
+    expect(facts(container)).toEqual(['Pass rate 92.0%', 'Open blockers 25', 'Ready to release 0', 'Blocked 1'])
   })
 
   it('"Open" opens the release that ships next; with no opener (its own page) there is no action', () => {
@@ -176,7 +176,7 @@ describe('ReleaseHealthBanner — one line above the list', () => {
     expect(
       screen.getByText('No release in flight — create a new release or move a Planning release into progress.'),
     ).toBeInTheDocument()
-    expect(facts(container)).toEqual(['Open blockers 0', 'Ready to ship 0', 'Blocked 0', 'Released · 30d 0'])
+    expect(facts(container)).toEqual(['Open blockers 0', 'Ready to release 0', 'Blocked 0', 'Released · 30d 0'])
   })
 })
 
@@ -214,7 +214,7 @@ describe('ReleaseHealthDetails — the rest, collapsed under the list', () => {
       'Flake rate 2.1% over cap· flake budget',
       'Coverage restored',
     ])
-    for (const label of ['In progress', 'Ready to ship', 'Blocked', 'Released · 30d']) {
+    for (const label of ['In progress', 'Ready to release', 'Blocked', 'Released · 30d']) {
       expect(screen.getByText(label)).toBeInTheDocument()
     }
   })
@@ -261,7 +261,7 @@ describe('the release-health words and counts (health.ts)', () => {
     expect(countReleases(all)).toEqual({ planning: 1, inProgress: 2, readyToShip: 1, blocked: 1, released30d: 1 })
     expect(releaseHealthFacts(next, all.filter((r) => r.stage === 'in_progress'), all).map((f) => [f.label, f.value])).toEqual([
       ['Open blockers', 1],
-      ['Ready to ship', 1],
+      ['Ready to release', 1],
       ['Blocked', 1],
       ['Released · 30d', 1],
     ])

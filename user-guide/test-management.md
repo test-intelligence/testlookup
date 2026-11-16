@@ -36,7 +36,7 @@ The API reports the actions available to the signed-in user (`allowed_actions` o
 - Deprecated and archived cases leave the duplicate review queue and its `open_count` (read-time: reinstating brings a pair back), both evidence-gap lists, and the **Suites** tab's manual counts. Listings (a suite's cases) keep them.
 - AI review is advisory evidence: it creates its own completed AI-review record and never counts as a human review. AI-generated cases arrive as `draft` with `ai_generated` set; the **AI drafts** view lists them.
 
-The lifecycle is controlled by the **`test_case_lifecycle_v2`** feature flag, which ships **on**. With it off for a project, the direct transition API is not exposed (it answers `404`, and so does a bulk `transition`), the **Lifecycle** tab and the status moves disappear, and the older request-review / review-action / **Delete** paths remain (Delete deprecates the case). Those older paths enforce the same row-locked policy with review required.
+The lifecycle is controlled by the **`test_case_lifecycle_v2`** feature flag, which is **on** by default. With it off for a project, the direct transition API is not exposed (it answers `404`, and so does a bulk `transition`), the **Lifecycle** tab and the status moves disappear, and the older request-review / review-action / **Delete** paths remain (Delete deprecates the case). Those older paths enforce the same row-locked policy with review required.
 
 ## Library health and the automation target
 

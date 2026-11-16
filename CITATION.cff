@@ -9,7 +9,7 @@ abstract: >-
   Self-hosted, offline-first test-result intelligence: collects results from
   test frameworks and CI systems, classifies and clusters failures, and turns
   the evidence into an auditable release recommendation (GO / CONDITIONAL_GO /
-  NO_GO). Ships a web app, REST API, CLI, client SDKs and an MCP server.
+  NO_GO). Includes a web app, REST API, CLI, client SDKs and an MCP server.
 authors:
   - name: "TestLookup Contributors"
 repository-code: "https://github.com/test-intelligence/testlookup"

@@ -8,7 +8,7 @@ bug reports, documentation fixes, sample data, tests and features.
 
 1. **Search the issues** first; the issue tracker is the live list of what is
    being worked on, planned and on hold.
-2. **Small PRs ship faster.** For a large change, open an issue to discuss the
+2. **Small PRs get merged faster.** For a large change, open an issue to discuss the
    approach before writing code.
 3. **Security issues go through a different channel**: GitHub private
    vulnerability reporting, as described in [SECURITY.md](SECURITY.md). Never

@@ -798,14 +798,14 @@ describe('DefectsPage — the Escape rate tile (DEF-03)', () => {
     expect(cell).toHaveTextContent(/^Escape rate41\.7%$/)
     expect(within(cell).getByText('Escape rate')).toHaveAttribute(
       'title',
-      'Defects filed after a release they affect had shipped: 5 of 12 reported in the last 30 days that affect a shipped release.'
+      'Defects filed after a release they affect went live: 5 of 12 reported in the last 30 days that affect a live release.'
         + ' Production outcomes in the window: 2 incident(s), 1 rollback(s).',
     )
     expect(cell.closest('[data-escape-measured]')).toHaveAttribute('data-escape-measured', 'true')
   })
 
   it('below the sample floor reads "Not measured" with the server\'s reason — never 0 %', async () => {
-    const reason = '3 defect(s) reported in the last 30 days affect a release that has shipped; 5 are needed.'
+    const reason = '3 defect(s) reported in the last 30 days affect a live release; 5 are needed.'
     const kpis = await renderEscape({
       data: escapeOf({ rate: null, measured: false, reason, escaped: 0, attributed: 3, outcomes: { incidents: 0, rollbacks: 0, releases: 1 } }),
       isLoading: false,

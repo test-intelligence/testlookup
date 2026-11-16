@@ -1596,7 +1596,7 @@ async def defect_trend(
 
 # ── Escape rate (W06 DEF-03) ─────────────────────────────────────────────────
 
-ESCAPE_UNATTRIBUTED_REASON = 'Escapes are counted against shipped releases; "Unattributed" has none.'
+ESCAPE_UNATTRIBUTED_REASON = 'Escapes are counted against releases that went live; "Unattributed" has none.'
 
 
 def escape_rate_reason(*, in_window: int, attributed: int, window_days: int) -> str | None:
@@ -1606,7 +1606,7 @@ def escape_rate_reason(*, in_window: int, attributed: int, window_days: int) -> 
     if in_window == 0:
         return f"No defects were reported in the last {window_days} days."
     return (
-        f"{attributed} defect(s) reported in the last {window_days} days affect a release that has shipped; "
+        f"{attributed} defect(s) reported in the last {window_days} days affect a live release; "
         f"{ESCAPE_RATE_MIN_SAMPLE} are needed."
     )
 

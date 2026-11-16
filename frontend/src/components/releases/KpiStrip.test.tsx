@@ -86,7 +86,7 @@ describe('KpiStrip states only what it counted', () => {
     // Two in progress (one at gate `go`), one blocked, one already released.
     //
     // The released one ALSO sits at gate `go`. That is deliberate: "ready to
-    // ship" counts in-progress releases at `go`, so a fixture whose only `go`
+    // release" counts in-progress releases at `go`, so a fixture whose only `go`
     // release is in progress cannot tell `inProgress.filter(go)` from
     // `releases.filter(go)`. The first version of this test could not, and a
     // mutation swapping one for the other passed it.
@@ -107,7 +107,7 @@ describe('KpiStrip states only what it counted', () => {
     const valueOf = (label: string) =>
       screen.getByText(label).closest('[data-metric-card]')?.querySelector('.tabular-nums')?.textContent
     expect(valueOf('In progress')).toBe('2')
-    expect(valueOf('Ready to ship')).toBe('1')
+    expect(valueOf('Ready to release')).toBe('1')
     expect(valueOf('Blocked')).toBe('1')
     expect(valueOf('Released · 30d')).toBe('1')
   })
@@ -138,7 +138,7 @@ describe('KpiStrip states only what it counted', () => {
       />,
     )
     expect(screen.getByText('In progress')).toBeInTheDocument()
-    expect(screen.getByText('Ready to ship')).toBeInTheDocument()
+    expect(screen.getByText('Ready to release')).toBeInTheDocument()
     expect(screen.getByText('Blocked')).toBeInTheDocument()
     expect(screen.getByText('Released · 30d')).toBeInTheDocument()
   })

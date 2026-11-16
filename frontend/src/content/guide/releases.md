@@ -2,7 +2,7 @@
 
 Grouping runs into a release, reading the readiness recommendation, and the policies behind it.
 
-> **Important.** TestLookup does not decide whether you ship. It produces a **recommendation** with its reasoning and evidence attached. The decision stays with you.
+> **Important.** TestLookup does not decide whether you release. It produces a **recommendation** with its reasoning and evidence attached. The decision stays with you.
 
 ## Releases
 
@@ -85,7 +85,7 @@ When every phase is completed or skipped, **Mark as Released** sets the release 
 
 - **Runs**, **Tests**, **Passed**, **Failed** and **Pass Rate** across its linked runs, and the **Linked Test Runs** list.
 - **Release gate**: the recorded verdict and its evidence (see [Evaluating the release gate](#evaluating-the-release-gate)).
-- **Production outcome**: after shipping, **Mark incident** or **Record rollback** with a reason, so the release's history records how it went.
+- **Production outcome**: after release, **Mark incident** or **Record rollback** with a reason, so the release's history records how it went.
 - **Compliance Pack**: **Generate pack** (`QA_LEAD` or higher) builds a downloadable ZIP of the evidence behind the release decision. Compliance packs are on by default on a new installation (`release_compliance_pack` flag); with the flag off, generating says the feature is disabled. The packs that exist are also listed beside the release list, with their size, checksum and a **Download**. Each new pack is **signed** by the deployment's key (`Signed · k-1a2b3c4d`); a pack generated before signing existed reads `Unsigned (tamper-evident only)`. **Verify** re-reads a stored pack and checks every file against its manifest, the manifest against the digest recorded when the pack was generated, and the signature: `Verified · 12 files · signed by key k-1a2b3c4d5e6f7a8b`, or the file that does not match (`Tampered: decision.json does not match the manifest`). **Public key** downloads the key that checks the signature. What signing does and does not prove, and verifying a pack offline with the CLI, are in the repository's compliance guide (`user-guide/compliance.md`).
 - **Release workflow**: the release's pipeline status.
 
@@ -97,18 +97,18 @@ When every phase is completed or skipped, **Mark as Released** sets the release 
 
 ### Release health trend
 
-Open **Release health · this week** above the list to see the four release counts (**In progress**, **Ready to ship**, **Blocked**, **Released · 30d**), each with a 12-week sparkline: one point at the end of each week (Monday 00:00 UTC) and a last point for now, which is the card's own number. Hover a point for its week and its count. The trend is read only when you open the section.
+Open **Release health · this week** above the list to see the four release counts (**In progress**, **Ready to release**, **Blocked**, **Released · 30d**), each with a 12-week sparkline: one point at the end of each week (Monday 00:00 UTC) and a last point for now, which is the card's own number. Hover a point for its week and its count. The trend is read only when you open the section.
 
 At each point:
 
 - **In progress**: releases that existed then and are in progress today, or that are released today but were not yet released then.
-- **Ready to ship**: of those, the ones whose latest release-level gate verdict at that time was **Go**.
+- **Ready to release**: of those, the ones whose latest release-level gate verdict at that time was **Go**.
 - **Blocked**: of those, the ones whose latest verdict at that time was **No-Go** or carried a blocking reason; at the last point (now), also any with a failed phase today.
 - **Released · 30d**: releases released in the 30 days before that point (and still released today).
 
-> **Note.** TestLookup does not keep a history of status changes, so **In progress**, **Ready to ship** and **Blocked** use **today's status** for every past week: a release that is still planning today counts nowhere in the past, and one cancelled today is never counted. Each of their points says `approximation: today's status`. A week before the first release existed has no point at all, which is not the same as zero; from then on, 0 is a measured zero.
+> **Note.** TestLookup does not keep a history of status changes, so **In progress**, **Ready to release** and **Blocked** use **today's status** for every past week: a release that is still planning today counts nowhere in the past, and one cancelled today is never counted. Each of their points says `approximation: today's status`. A week before the first release existed has no point at all, which is not the same as zero; from then on, 0 is a measured zero.
 
-Two captions sum up the 12 weeks, each a count over its own denominator: **Ready to ship** says `GO on 3 of 4 evaluated (12 w)`: of the releases with a release-level verdict in the window, how many were **Go** at their latest one (a **Conditional Go** or a **Not evaluated** counts among the 4, never as Go), or `No releases evaluated in 12 weeks`. **Released · 30d** says `2 of 3 released with a pack (12 w)`: of the releases released in the window, how many have a compliance pack that is not retired, or `No releases released in 12 weeks`. If the trend cannot be read, the cards keep their numbers and say `Could not load the 12-week trend.`
+Two captions sum up the 12 weeks, each a count over its own denominator: **Ready to release** says `GO on 3 of 4 evaluated (12 w)`: of the releases with a release-level verdict in the window, how many were **Go** at their latest one (a **Conditional Go** or a **Not evaluated** counts among the 4, never as Go), or `No releases evaluated in 12 weeks`. **Released · 30d** says `2 of 3 released with a pack (12 w)`: of the releases released in the window, how many have a compliance pack that is not retired, or `No releases released in 12 weeks`. If the trend cannot be read, the cards keep their numbers and say `Could not load the 12-week trend.`
 
 ## Gate policies
 

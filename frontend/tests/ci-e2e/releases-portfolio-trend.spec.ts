@@ -4,9 +4,9 @@
  *
  *  - the page's load asks NOTHING new: no `GET /api/v1/releases/portfolio-trend` until a reader opens **Release health
  *    · this week** (the disclosure mounts its content only while open), then exactly ONE, for the project;
- *  - the four KPI cards (In progress · Ready to ship · Blocked · Released · 30d) each draw a sparkline with its
+ *  - the four KPI cards (In progress · Ready to release · Blocked · Released · 30d) each draw a sparkline with its
  *    accessible name (`role="img"`), each MEASURED point a native `<title>` naming its week (the approximation said
- *    for the three status series); Ready to ship's caption `GO on 1 of 2 evaluated (12 w)` and Released · 30d's
+ *    for the three status series); Ready to release's caption `GO on 1 of 2 evaluated (12 w)` and Released · 30d's
  *    `1 of 1 released with a pack (12 w)`; the cards keep their numbers;
  *  - a failed trend read leaves the cards (no sparkline) and says `Could not load the 12-week trend.`;
  *  - `#main-content` never scrolls sideways with the strip open.
@@ -23,7 +23,7 @@ import { PORTFOLIO_CAPTIONS, QA_LEAD, releasePlanningWorld } from '../visual/pro
 test.use({ timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
 const TREND = '/api/v1/releases/portfolio-trend'
-const CARDS = ['In progress', 'Ready to ship', 'Blocked', 'Released · 30d'] as const
+const CARDS = ['In progress', 'Ready to release', 'Blocked', 'Released · 30d'] as const
 const ready = (p: Page) => p.getByRole('heading', { name: 'Releases', level: 1 })
 const health = (page: Page): Locator =>
   page.locator('section[data-disclosure]').filter({ has: page.getByRole('button', { name: /^Release health · this week/ }) })

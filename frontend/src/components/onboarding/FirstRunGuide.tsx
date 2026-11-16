@@ -111,7 +111,7 @@ export default function FirstRunGuide({
                     No <code className="font-mono">testlookup</code> command yet?{' '}
                     {s.cliFromDeployment
                       ? 'Install the CLI from this deployment once:'
-                      : 'The CLI ships in the repo — install it once from a clone:'}
+                      : 'The CLI is in the repo — install it once from a clone:'}
                   </p>
                   <CommandRow command={s.cliInstall} />
                 </>

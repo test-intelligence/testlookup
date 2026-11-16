@@ -3,7 +3,7 @@
  *
  *  - `releases-card-go`: a released release's recorded GO (tiles, pass/fail bar, "Evaluated 10d ago");
  *  - `releases-card-no-go`: the in-progress NO_GO, its own phases, three readable server blockers, "+23 more";
- *  - `releases-banner-ready`: the banner counting an in-progress GO ("Ready to ship 1");
+ *  - `releases-banner-ready`: the banner counting an in-progress GO ("Ready to release 1");
  *  - `releases-gate-panel`: a release's own page, the gate panel (scorecard, 25 reasons, the baseline) and the
  *    phase rows with their live gate chips;
  *  - `releases-rail`: the rail with the real pack (`412.3 KB · sha256:ab12cd34`) and the ledger's rows;
@@ -26,7 +26,7 @@ test.use(PINNED)
 const ready = (p: Page) => p.getByRole('heading', { name: 'Releases', level: 1 })
 const card = (page: Page, name: string) => page.getByRole('article', { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} `) })
 
-/** The list with the hotfix already GO: one in-progress release ready to ship. */
+/** The list with the hotfix already GO: one in-progress release ready to release. */
 function listWithReadyHotfix() {
   const opened = releasesHandlers({ hotfix: true })
   const hotfix = opened.world.rows.find((r) => r.id === RELEASE.hotfix)
@@ -40,7 +40,7 @@ for (const theme of THEMES_WITH_PAPER) {
     const { handlers } = listWithReadyHotfix()
     const { api, errors } = await openRollout(page, '/releases', { theme, handlers, ready })
     await expect(card(page, '2026.11').locator('[data-blockers-more]')).toHaveText('+23 more · open the release for the full list')
-    await expect(page.locator('[data-release-health] [data-banner-fact]').filter({ hasText: 'Ready to ship' })).toHaveText('Ready to ship 1')
+    await expect(page.locator('[data-release-health] [data-banner-fact]').filter({ hasText: 'Ready to release' })).toHaveText('Ready to release 1')
     const rail = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Compliance packs', level: 4 }) }).locator('xpath=..')
     await expect(rail.locator('[data-rail-pack]')).toContainText('412.3 KB · sha256:ab12cd34')
     await expect(rail.locator('[data-rail-activity-event]')).toHaveCount(3)

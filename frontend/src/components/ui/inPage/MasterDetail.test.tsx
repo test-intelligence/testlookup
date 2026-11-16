@@ -29,7 +29,7 @@ function Host({ rail }: { rail?: boolean }) {
         </aside>
       ) : null}
       expanded={expanded}
-      rail={rail ? <div data-testid="rail"><h3>Shipping this week</h3></div> : undefined}
+      rail={rail ? <div data-testid="rail"><h3>Due this week</h3></div> : undefined}
       railTrack="340px"
       gapClassName={rail ? 'gap-[18px]' : undefined}
     />
@@ -104,7 +104,7 @@ describe('MasterDetail', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Open item' }))
     expect(screen.queryByTestId('rail')).toBeNull()
-    expect(screen.queryByRole('heading', { name: 'Shipping this week' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Due this week' })).toBeNull()
     expect(row().className).toBe('grid gap-[18px] items-start')
     expect(row().style.gridTemplateColumns).toBe('minmax(0, 1fr) minmax(440px, 46%)')
 

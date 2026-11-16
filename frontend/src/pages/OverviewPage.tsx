@@ -79,10 +79,10 @@ type Verdict = 'GO' | 'WATCH' | 'CONDITIONAL' | 'NO_GO' | 'PENDING'
  * flag the caution zone.
  */
 const VERDICT_BANNER: Record<Verdict, { state: BannerState; headline: string; meterTone: GaugeTone }> = {
-  GO: { state: 'go', headline: 'ship cleared', meterTone: 'good' },
+  GO: { state: 'go', headline: 'release cleared', meterTone: 'good' },
   WATCH: { state: 'go', headline: 'go with watch', meterTone: 'watch' },
-  CONDITIONAL: { state: 'conditional', headline: 'review before shipping', meterTone: 'warn' },
-  NO_GO: { state: 'no_go', headline: 'ship blocked by unresolved failures', meterTone: 'bad' },
+  CONDITIONAL: { state: 'conditional', headline: 'review before release', meterTone: 'warn' },
+  NO_GO: { state: 'no_go', headline: 'release blocked by unresolved failures', meterTone: 'bad' },
   PENDING: { state: 'pending', headline: 'awaiting evidence', meterTone: 'neutral' },
 }
 

@@ -168,7 +168,7 @@ describe('/releases: a release opens beside the list', () => {
     // Closed: the cards beside the 340 px rail, exactly the old body grid.
     expect(row()).toHaveAttribute('data-master-detail', 'list')
     expect(row().style.gridTemplateColumns).toBe('minmax(0, 1fr) 340px')
-    expect(screen.getByRole('heading', { name: 'Shipping this week' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Due this week' })).toBeInTheDocument()
     expect(svc.get).not.toHaveBeenCalled()
 
     fireEvent.click(await card(/^Checkout 2\.5 2\.5\.0/))
@@ -181,7 +181,7 @@ describe('/releases: a release opens beside the list', () => {
     expect(row().style.gridTemplateColumns).toBe('minmax(0, 1fr) minmax(440px, 46%)')
     expect(row().contains(opened)).toBe(true)
     expect((document.querySelector('[data-primary]') as HTMLElement).contains(opened)).toBe(false)
-    expect(screen.queryByRole('heading', { name: 'Shipping this week' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Due this week' })).toBeNull()
     expect(screen.getAllByRole('article')).toHaveLength(2)
     expect(await within(opened).findByRole('heading', { name: 'Linked Test Runs (0)' })).toBeInTheDocument()
     expect(within(opened).getByText('Payment retries')).toBeInTheDocument()
@@ -192,7 +192,7 @@ describe('/releases: a release opens beside the list', () => {
     fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' })
     await expectAt(router, '/releases', '', 'POP')
     expect(screen.queryByRole('complementary')).toBeNull()
-    expect(screen.getByRole('heading', { name: 'Shipping this week' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Due this week' })).toBeInTheDocument()
   })
 
   it('another card switches the pane (replace); Back closes it; the URL alone reopens it', async () => {

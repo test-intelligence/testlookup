@@ -112,7 +112,7 @@ const GATE_THEME: Record<Gate, {
     banner: 'go',
     meter:  DECISION_TOKEN.go.hue,
     label:  DECISION_LABEL.go,
-    action: 'ship cleared',
+    action: 'release cleared',
   },
   CONDITIONAL_GO: {
     banner: 'conditional',
@@ -124,7 +124,7 @@ const GATE_THEME: Record<Gate, {
     banner: 'no_go',
     meter:  DECISION_TOKEN.no_go.hue,
     label:  DECISION_LABEL.no_go,
-    action: 'ship blocked',
+    action: 'release blocked',
   },
   PENDING: {
     banner: 'pending',

@@ -116,7 +116,7 @@ The MCP server holds **no privileges of its own** — every tool call becomes a 
 
 ## Recipe 4 — Release-readiness Q&A before a deploy
 
-> **Prompt:** "We want to ship 2.9.0 at 3pm. Is run #519 safe? If it's a conditional go, what exactly is the condition — and is anything in the failure list quarantined?"
+> **Prompt:** "We want to release 2.9.0 at 3pm. Is run #519 safe? If it's a conditional go, what exactly is the condition — and is anything in the failure list quarantined?"
 
 **What fires:**
 

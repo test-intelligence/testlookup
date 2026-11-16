@@ -220,7 +220,7 @@ def register(mcp) -> None:  # noqa: ANN001
             lines.append("✅ **Go** — the server's readiness verdict is GREEN.")
         elif readiness == "AMBER":
             lines.append(
-                "🟡 **Conditional Go** — review before shipping; deploy with monitoring "
+                "🟡 **Conditional Go** — review before release; deploy with monitoring "
                 "and a rollback plan ready."
             )
         else:

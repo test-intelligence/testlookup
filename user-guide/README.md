@@ -31,7 +31,7 @@ Four older pages moved into the in-app guide and now only point there: [dashboar
 
 ## Feature flags you will meet first
 
-Several workflows are switched by feature flags (**Settings → System → Feature flags**, administrators only). These ship **off** on a new install unless marked otherwise, so the pages behind them say so until you turn them on; an upgraded install keeps the value it had:
+Several workflows are switched by feature flags (**Settings → System → Feature flags**, administrators only). These are **off** on a new install unless marked otherwise, so the pages behind them say so until you turn them on; an upgraded install keeps the value it had:
 
 | Flag | Turns on |
 |---|---|
@@ -43,7 +43,7 @@ Several workflows are switched by feature flags (**Settings → System → Featu
 | `github_checks` | GitHub check runs and pull-request comments (on for a new install) |
 | `gitlab` | GitLab merge-request notes and commit statuses (on for a new install) |
 
-`manual_upload` (the **Upload** button on Runs) and `ask_ai_chat` (the Ask AI page) ship **on**. The full list, with what each flag gates and how flags are evaluated, is the [feature-flag reference](../docs/operations/feature-flags.md).
+`manual_upload` (the **Upload** button on Runs) and `ask_ai_chat` (the Ask AI page) are **on** by default. The full list, with what each flag gates and how flags are evaluated, is the [feature-flag reference](../docs/operations/feature-flags.md).
 
 ## Conventions in these guides
 

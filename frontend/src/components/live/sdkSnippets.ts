@@ -166,7 +166,7 @@ npx cucumber-js \\
   --format testlookup-reporter/cucumber-formatter \\
   --format-options '{"testlookupUrl":"${serverUrl}","testlookupProject":"${projectId}"}'`
     case 'robot':
-      return `# Robot Framework — the listener ships in the Python SDK ZIP
+      return `# Robot Framework — the listener is in the Python SDK ZIP
 export TESTLOOKUP_URL=${serverUrl}
 export TESTLOOKUP_API_KEY=<api-key>
 export TESTLOOKUP_PROJECT_ID=${projectId}

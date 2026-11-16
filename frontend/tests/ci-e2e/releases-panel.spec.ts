@@ -50,7 +50,7 @@ test('a release opens beside the list, in the rail\'s place, and the list does n
   await expect(page.getByText('(planned)')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /Export schedule|Calendar view|Clone from|Generate from PRD/ })).toHaveCount(0)
 
-  const shipping = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Shipping this week' }) })
+  const shipping = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Due this week' }) })
   const railLeft = (await shipping.boundingBox())?.x ?? 0
   await card(page, '2026.11').click()
   const panel = release(page, '2026.11')
@@ -78,7 +78,7 @@ test('a release opens beside the list, in the rail\'s place, and the list does n
   expect(Math.round(box?.x ?? 0), 'the pane starts no further right than the rail did').toBeLessThanOrEqual(Math.round(railLeft) + 1)
 
   // Escape (focus in the pane) closes it; the rail comes back and the release opens again from it
-  // ("Shipping this week": due in 5 days). W05: the rail's "View packs" rows are only the releases READY for a
+  // ("Due this week": due in 5 days). W05: the rail's "View packs" rows are only the releases READY for a
   // pack; this fixture's shipped release has one and its in-progress release is No-Go, so no such row.
   await panel.getByRole('button', { name: 'Close release' }).focus()
   await page.keyboard.press('Escape')

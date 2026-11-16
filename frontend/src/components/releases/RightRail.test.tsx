@@ -134,7 +134,7 @@ function event(id: string, overrides: Partial<ActivityEvent> = {}): ActivityEven
 
 const page = (items: ActivityEvent[]) => ({ items, next_cursor: null, ledger_started_at: '2026-09-01T00:00:00Z', window: { since: null, until: null } })
 
-// ── Shipping this week ─────────────────────────────────────────────────────
+// ── Due this week ──────────────────────────────────────────────────────────
 
 describe('ShippingThisWeek', () => {
   it('keeps in-progress releases with a due date inside the 7-day window', () => {

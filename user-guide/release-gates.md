@@ -103,6 +103,6 @@ If you only need "fail on real failures, ignore quarantined ones" rather than th
 
 ## Tips
 
-- **Read CONDITIONAL_GO, don't rubber-stamp it.** It exists for the "shippable but look first" case — the conditions list is the look.
+- **Read CONDITIONAL_GO, don't rubber-stamp it.** It exists for the "ready, but look first" case — the conditions list is the look.
 - **A permanent NO_GO usually means un-triaged flaky tests.** Turn quarantine on and quarantine the genuinely flaky ones rather than loosening thresholds.
 - **Keep INFO rules around.** They cost nothing and tell you how a rule would have behaved.

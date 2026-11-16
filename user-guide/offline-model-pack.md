@@ -4,7 +4,7 @@ TestLookup's AI triage runs on **local models** — an Ollama daemon you host, n
 
 This guide is the **model pack**: which models TestLookup needs, what each one costs in disk and latency, how to build a transferable archive on a connected machine, how to restore it into an air-gapped install, and how to verify it actually landed.
 
-> **Model files are not in the code bundle.** The release artifacts ship code and container images, not model weights — the default pair alone is ~5 GB, and the licences are the model publishers', not ours. Side-loading is the supported path, and it is a deliberate one-time step per environment.
+> **Model files are not in the code bundle.** The release artifacts contain code and container images, not model weights — the default pair alone is ~5 GB, and the licences are the model publishers', not ours. Side-loading is the supported path, and it is a deliberate one-time step per environment.
 
 ## What TestLookup needs
 
