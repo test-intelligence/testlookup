@@ -32,6 +32,8 @@ Open a failed test from a run (see [Runs and run detail](/docs/runs#one-test-res
 
 > **Important.** The suggested root cause is generated text. It is the first hypothesis a colleague would offer, not a finding. Check it against the evidence.
 
+The flakiness history in a suggestion's **Evidence** names a pattern (flaky, consistently failing, historically stable) only from 5 or more recorded executions; with fewer it gives the counts and says it is too early to tell.
+
 ## Separating what you are looking at
 
 | On screen | Kind | Weight |
