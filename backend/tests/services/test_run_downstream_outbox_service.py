@@ -100,6 +100,13 @@ async def test_finalize_operations_are_versioned_and_ai_is_optional(monkeypatch)
     ]
     assert all(call.kwargs["input_version"] for call in staged.await_args_list)
     assert all(call.kwargs["initial_status"] == "waiting" for call in staged.await_args_list)
+    # D-0006: a Skip-AI run tells the transition task not to start the Investigator.
+    skip_ai_transition = next(
+        call.kwargs["payload"]
+        for call in staged.await_args_list
+        if call.kwargs["operation"] == "transition_notifications"
+    )
+    assert skip_ai_transition == {"run_id": str(run.id), "run_ai": False}
     webhook_version = next(
         call.kwargs["input_version"]
         for call in staged.await_args_list
@@ -131,6 +138,16 @@ async def test_finalize_operations_are_versioned_and_ai_is_optional(monkeypatch)
         "run_completed_webhook",
         "agent_pipeline",
     ]
+    # An AI-on run stages the transition payload exactly as before the D-0006 flag.
+    ai_on_transition = next(
+        call
+        for call in staged.await_args_list
+        if call.kwargs["operation"] == "transition_notifications"
+    )
+    assert ai_on_transition.kwargs["payload"] == {"run_id": str(run.id)}
+    assert ai_on_transition.kwargs["input_version"] == service.operation_input_version(
+        "transition_notifications", {"run_id": str(run.id)}
+    )
 
 
 @pytest.mark.asyncio

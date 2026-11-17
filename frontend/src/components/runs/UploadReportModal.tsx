@@ -476,7 +476,7 @@ export default function UploadReportModal({
               </select>
             </div>
 
-            {/* Skip AI toggle (MRU-8) */}
+            {/* Skip AI toggle (MRU-8). D-0006: it also stops the automatic Investigator for this run; say so. */}
             <label className="flex items-center gap-2 text-sm text-[var(--color-text)] cursor-pointer">
               <input
                 type="checkbox"
@@ -486,7 +486,7 @@ export default function UploadReportModal({
                 className="h-3.5 w-3.5 accent-[var(--color-accent)]"
               />
               Skip AI analysis
-              <span className="text-xs text-[var(--color-text-muted)]">(faster — run it later from the run page)</span>
+              <span className="text-xs text-[var(--color-text-muted)]">(faster — no AI analysis, comparison report or automatic investigation for this run; you can start the analysis later from the run page)</span>
             </label>
 
             {/* Supported formats & how to export (MRU-16) */}

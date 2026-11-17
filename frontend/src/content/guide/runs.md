@@ -175,6 +175,8 @@ Open a test from the Tests tab (**Open full page**) to reach `/runs/<run id>/tes
 
 The result leads with what changed: **Pass rate**, **Failed tests**, **New failures** and **Duration** for each side, an **AI Comparison Report** (key differences, new risks, actions and, when the two runs' AI analyses differ, **AI analysis changes**), an **AI analysis** section, and **Status changes** — how many tests moved from one status to another.
 
+The AI Comparison Report is written by the language model the first time a QA engineer or above opens the comparison, and saved. A Viewer or Tester sees it once it exists; until then the page says that no report exists for these runs yet, and opening the comparison does not start a model call.
+
 **AI analysis** puts the two runs' AI analyses side by side (**Baseline** on the left, **Target** on the right): the verdict and risk, the engine and model that produced each (**deterministic** when no language model did), the failure categories and the top suggested root causes. Under them, what changed between the two analyses, the same way as the Analysis tab's **vs previous run**, and the label of the narrative (**AI narrative** or **deterministic summary**). Two runs of different projects are not compared. Click a flow to filter the table to those tests. Filter chips narrow the table to **New failures**, **Regressed**, **Still failing**, **Duration spikes**, **Fixed**, **New tests**, **Removed** or **Renamed**.
 
 The comparison is in the address (`/runs/compare?mode=manual&left=<run id>&right=<run id>&suite=<suite>`), so you can share it.

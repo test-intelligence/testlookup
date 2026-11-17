@@ -2185,9 +2185,15 @@ def dispatch_run_notifications(
     default_retry_delay=15,
     queue="default",
 )
-def dispatch_transition_notifications(self, run_id: str):
+def dispatch_transition_notifications(self, run_id: str, run_ai: bool = True):
     """Background task: evaluate transition events (PMF US-7.1/US-7.2) for a
     finalized run and send the batched, cluster-deduped notification.
+
+    ``run_ai`` is False for a run uploaded with "Skip AI analysis"
+    (``run_ai=false``, ``--no-ai``): its newly failing tests then do not start
+    the automatic Investigator (D-0006). Last and defaulted, because Celery
+    refuses a keyword its task does not take, so every payload staged before
+    this parameter existed still binds.
 
     Idempotent per run — the state store stamps each fingerprint with the
     run id, so a retry (or a re-finalized run) advances nothing and sends
@@ -2219,7 +2225,9 @@ def dispatch_transition_notifications(self, run_id: str):
         )
 
     try:
-        result = _run_async(evaluate_run_transitions(_uuid.UUID(run_id)))
+        result = _run_async(
+            evaluate_run_transitions(_uuid.UUID(run_id), auto_investigate=run_ai)
+        )
         logger.info("[Task %s] Transition evaluation done: %s", self.request.id, result)
         return result
     except TransitionOrderPending as exc:

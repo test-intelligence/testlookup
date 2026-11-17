@@ -767,10 +767,17 @@ async def _dispatch_transition_events(
 # ── Orchestrator (Celery entry point) ───────────────────────────────────────
 
 
-async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
+async def evaluate_run_transitions(
+    run_id: uuid.UUID, *, auto_investigate: bool = True
+) -> dict[str, Any]:
     """Evaluate transition events for a finalized run and dispatch the
     batched notification. Called from the
     ``dispatch_transition_notifications`` Celery task.
+
+    ``auto_investigate=False`` (a run uploaded with ``run_ai=false``) keeps
+    every notification, the state stamp and the quarantine tracking, but
+    does not start the automatic Investigator for newly failing tests: the
+    uploader opted out of AI analysis for this run (D-0006).
 
     Returns a small summary dict for task logging. Never intended to be
     called with an injected request session — it owns its transaction
@@ -988,7 +995,14 @@ async def evaluate_run_transitions(run_id: uuid.UUID) -> dict[str, Any]:
     # investigation for the run. Own try/except — a broken investigator
     # must NEVER affect the notification path. The service re-checks the
     # agent policy, one-active-per-run, and max_runs_per_day itself.
-    if newly_failing_detected:
+    # D-0006: never for a run uploaded with run_ai=false.
+    if newly_failing_detected and not auto_investigate:
+        logger.info(
+            "investigator_auto_trigger_skipped",
+            run_id=str(run_id),
+            reason="run_ai_false",
+        )
+    if newly_failing_detected and auto_investigate:
         try:
             from app.services.agent_investigation_service import maybe_auto_trigger
 
