@@ -128,6 +128,26 @@ class TestTheTwoQueriesCannotDisagree:
             "the count query does not, so total and items describe different sets"
         )
 
+    def test_rows_query_does_not_join_release_test_run_links(self):
+        """D-0011: a run linked to two releases listed each of its defects twice.
+
+        ``release_test_run_links`` is many-to-many (one ``is_primary`` per run);
+        joining it to read one label multiplied rows while the COUNT, which never
+        joins it, did not. The row query reads the run's denormalised
+        ``primary_release_id`` instead, like every other release read.
+        """
+        sql = _strip_sql_comments(_rows_sql())
+        assert "release_test_run_links" not in sql, (
+            "list_defects joins release_test_run_links: a run linked to two "
+            "releases lists its defect twice while total says 1"
+        )
+        assert re.search(r"releases\s+r\s+ON\s+r\.id\s*=\s*tr\.primary_release_id", sql, re.I), sql
+
+    def test_the_row_order_is_total(self):
+        """Pages of equal ``created_at`` must not overlap or skip: ``d.id`` breaks ties."""
+        sql = " ".join(_strip_sql_comments(_rows_sql()).split())
+        assert re.search(r"ORDER BY d\.created_at DESC, d\.id\b", sql, re.I), sql
+
     def test_test_cases_is_still_joined_at_all(self):
         """The fix must keep test_name/suite_name available, not drop the join."""
         assert re.search(r"LEFT\s+JOIN\s+test_cases", _strip_sql_comments(_rows_sql()), re.I), (

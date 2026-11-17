@@ -1371,15 +1371,19 @@ async def list_defects(
         -- reported a total it refused to list (measured: items=[], total=5).
         LEFT JOIN test_cases tc ON tc.id = d.test_case_id
         LEFT JOIN test_runs tr ON tr.id = tc.test_run_id
-        LEFT JOIN release_test_run_links rtrl ON rtrl.test_run_id = tr.id
-        LEFT JOIN releases r ON r.id = rtrl.release_id
+        -- D-0011: the run's PRIMARY release, never the many-to-many link
+        -- table: a run linked to two releases listed each of its defects
+        -- twice while the COUNT below said 1.
+        LEFT JOIN releases r ON r.id = tr.primary_release_id
         -- W06 DEF-01: the assignee's name (LEFT: most defects have none).
         LEFT JOIN users au ON au.id = d.assignee_user_id
         WHERE 1=1
         {project_filter}
         {status_filter}
         {scope_filter}
-        ORDER BY d.created_at DESC
+        -- A total order (d.id breaks ties): pages of equal created_at must
+        -- never overlap or skip when the page concatenates them (D-0011).
+        ORDER BY d.created_at DESC, d.id
         LIMIT :limit OFFSET :offset
         """,
         params,
