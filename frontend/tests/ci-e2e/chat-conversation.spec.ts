@@ -21,6 +21,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { SHELL_BASE, expectInventory, networkQuiet, openRollout } from '../lib/rollout'
 import { respondRaw, type ApiHandlers } from '../lib/production-pages'
 import { LAYOUT, PROJECT_ID } from '../visual/production/fixtures'
+import { VIEWER } from '../visual/production/fixtures-releases'
 
 const P = PROJECT_ID
 const SESSION = '99999999-9999-4999-8999-999999999999'
@@ -150,6 +151,60 @@ test('a conversation: a starter question, a follow-up, a failure and Retry', asy
     { message: 'Is it ready to release?' },
     { retry: true },
   ])
+  expect(errors).toEqual([])
+  expect(api.unhandled).toEqual([])
+})
+
+// D-0010 (GPT-6): a Viewer asked for "a link to the run and one link per failure"; the saved answer said it could not
+// give links and to search Runs, above the three links the app had attached. The model is now told those links exist
+// (`chat_system` v5, pinned in backend/tests/test_chat_agent_stream.py, where the system message is read); here, the
+// saved answer reopened shows the run and each failure it names as links, and reopening it generates nothing.
+const CASE_2 = '55555555-5555-4555-8555-555555555555'
+
+test('D-0010: a saved answer that names a build and its failures links each of them, for a Viewer', async ({ page }) => {
+  const question = "List build 105's failing tests with a link to the run and one link per failure."
+  const sources = [
+    { type: 'test_run', id: RUN, build: '105' },
+    { type: 'test_case', id: CASE, run_id: RUN, name: 'test_refund_flow' },
+    { type: 'test_case', id: CASE_2, run_id: RUN, name: 'test_tax_rounding' },
+  ]
+  const posted: string[] = []
+  const handlers: ApiHandlers = [
+    ['/api/v1/settings/ai/mode', () => ({ analysis_mode: 'llm' })],
+    ['/api/v1/chat/run-summaries', () => []],
+    ['/api/v1/chat/sessions', () => [{ id: SESSION, project_id: P, title: question, created_at: '2026-09-18T12:00:00Z', updated_at: '2026-09-18T12:01:00Z' }]],
+    [`/api/v1/chat/sessions/${SESSION}/messages`, () => [
+      { id: 'q-1', session_id: SESSION, role: 'user', content: question, sources: null, created_at: '2026-09-18T12:00:00Z' },
+      {
+        id: 'a-1', session_id: SESSION, role: 'assistant', created_at: '2026-09-18T12:00:30Z',
+        content: 'Build 105 has 2 failing tests: test_refund_flow and test_tax_rounding. The run and each test are linked under this answer.',
+        sources: [...sources, { type: 'meta', status: 'complete', model: 'anthropic/claude-haiku-5.5', first_token_ms: 900, total_ms: 3100, tool_calls: 1 }],
+      },
+    ]],
+    [`/api/v1/chat/sessions/${SESSION}/messages/stream`, ({ route }) => {
+      posted.push(route.request().url())
+      return sse([['error', { code: 'unexpected', message: 'no turn was asked for', retryable: false }]])
+    }, 'POST'],
+    ...LAYOUT,
+  ]
+  const { api, errors } = await openRollout(page, '/chat', { handlers, flags: { ask_ai_chat: true }, user: VIEWER, ready })
+  await networkQuiet(page, api)
+
+  await page.getByTestId('chat-session').filter({ hasText: question }).click()
+  const answer = page.getByTestId('chat-assistant-message')
+  await expect(answer).toHaveCount(1)
+  const links = answer.getByTestId('chat-sources').getByRole('link')
+  await expect(links).toHaveCount(3)
+  await expect(links.nth(0)).toHaveText('Build 105')
+  await expect(links.nth(0)).toHaveAttribute('href', `/runs/${RUN}`)
+  await expect(links.nth(1)).toHaveText('test_refund_flow')
+  await expect(links.nth(1)).toHaveAttribute('href', `/runs/${RUN}/tests/${CASE}`)
+  await expect(links.nth(2)).toHaveText('test_tax_rounding')
+  await expect(links.nth(2)).toHaveAttribute('href', `/runs/${RUN}/tests/${CASE_2}`)
+  await networkQuiet(page, api)
+
+  expect(posted, 'reopening a saved answer asks the model nothing').toEqual([])
+  expect(api.seen.filter((line) => line.startsWith('POST '))).toEqual([])
   expect(errors).toEqual([])
   expect(api.unhandled).toEqual([])
 })

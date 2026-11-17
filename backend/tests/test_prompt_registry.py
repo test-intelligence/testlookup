@@ -117,10 +117,11 @@ def test_summary_layers_are_deliberate_v2():
         assert anchors[pid] in p.text, f"{pid} lost a v1 structural anchor"
 
 
-# The ORIGINAL chat_system (v1) hash, v2's and v3's: v4 deliberately differs.
+# The ORIGINAL chat_system (v1) hash, v2's, v3's and v4's: v5 deliberately differs.
 _CHAT_SYSTEM_V1_HASH = "b52c5b2cf229"
 _CHAT_SYSTEM_V2_HASH = "5052234131d8"
 _CHAT_SYSTEM_V3_HASH = "22c78598851c"
+_CHAT_SYSTEM_V4_HASH = "fe1dec9d3a30"
 
 
 def test_summary_system_is_deliberate_v2():
@@ -152,16 +153,23 @@ def test_summary_executive_is_deliberate_v2():
     assert "{system}" in p.text and "{context}" in p.text
 
 
-def test_chat_system_is_deliberate_v4():
+def test_chat_system_is_deliberate_v5():
     """v3 (2026-10-09) is the prompt of a tool-calling chat agent: v2's
     single-shot path had no per-test history and invented one. v4
     (2026-10-10) adds one rule: earlier answers' lookups are not replayed, so
     their facts are not to be retracted without contrary data (measured: a
-    real 2026-08-25 analysis cited in turn 1 was "corrected" away in turn 2)."""
+    real 2026-08-25 analysis cited in turn 1 was "corrected" away in turn 2).
+    v5 (D-0010, GPT-6) adds one rule: the runs and tests an answer names are shown as links under it (asked for
+    links, the model said it could not give any and told the reader to search Runs, above the very links)."""
     p = pr.get_prompt("chat_system")
-    assert p.version == 4
-    assert p.content_hash not in (_CHAT_SYSTEM_V1_HASH, _CHAT_SYSTEM_V2_HASH, _CHAT_SYSTEM_V3_HASH)
+    assert p.version == 5
+    assert p.content_hash not in (
+        _CHAT_SYSTEM_V1_HASH, _CHAT_SYSTEM_V2_HASH, _CHAT_SYSTEM_V3_HASH, _CHAT_SYSTEM_V4_HASH,
+    )
     assert "do not retract or \"correct\" one unless the snapshot or a tool result now contradicts it" in p.text
+    assert "is shown as a link under your answer (up to eight)" in p.text
+    assert "never say you cannot provide links" in p.text
+    assert "never tell the reader to search for a build or test you named" in p.text
     # The slots the agent fills.
     for slot in ("{now}", "{project_scope}", "{snapshot}"):
         assert slot in p.text
