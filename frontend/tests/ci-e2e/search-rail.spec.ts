@@ -80,3 +80,55 @@ test('an index last written hours ago is idle, not down', async ({ page }) => {
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])
 })
+
+// ── D-0013 / D-0015 (GPT-6 exploratory, E2E-0015, E2E-0017): every number on /search names its population ──
+
+/** `/search` with these inventory counts, this semantic index, and this answer to `/search/global`. */
+function countedWorld(
+  counts: Record<string, number>,
+  indexStatus: Record<string, unknown>,
+  global: (url: URL) => Record<string, unknown> = (url) => ({
+    items: [], total: 0, query: url.searchParams.get('q') ?? '', search_type: 'keyword',
+    entity_counts: counts, page: 1, size: 25, pages: 0,
+  }),
+): ApiHandlers {
+  return [
+    ...SEARCH_LOAD_READS,
+    ...LAYOUT,
+    ['/api/v1/search/index-status', () => indexStatus],
+    ['/api/v1/search/entity-counts', () => counts],
+    ['/api/v1/search/global', ({ url }) => global(url)],
+  ]
+}
+
+const verdict = (page: Page) => page.getByRole('region', { name: 'Index verdict' })
+const scopeChip = (page: Page, name: string) =>
+  page.getByRole('radiogroup', { name: 'Entity scope' }).getByRole('radio', { name: new RegExp(`^${name}`) })
+
+test('D-0013: a Flaky search that finds a test never shows "Flaky 0" beside it', async ({ page }) => {
+  // The project has a flaky history but no open quarantine request: entity-counts says flaky_test 0.
+  const counts = { test_case: 84, test_run: 39, suite: 5, defect: 0, flaky_test: 0, release: 28 }
+  const flakyHit = {
+    entity_type: 'flaky_test', entity_id: 'p1:fp-gpt6', title: 'test_gpt6_alternate',
+    subtitle: '56% failure rate over 9 runs', project_id: null, project_name: null,
+    navigation_url: '/flaky', relevance_score: 0.6, match_reasons: ['Matched test name'], metadata: {},
+  }
+  const { api, errors } = await openRollout(page, '/search?mode=keyword&scope=flaky&q=GPT6', {
+    handlers: countedWorld(counts, { status: 'not_configured', document_count: 0, last_indexed_at: null }, (url) => ({
+      items: [flakyHit], total: 1, query: url.searchParams.get('q') ?? '', search_type: 'keyword',
+      entity_counts: { test_case: 0, test_run: 0, suite: 0, defect: 0, flaky_test: 1, release: 0 },
+      page: 1, size: 25, pages: 1,
+    })),
+    ready: (p) => p.getByText('test_gpt6_alternate').first(),
+  })
+  await networkQuiet(page, api)
+  // The narrowed scope shows the inventory, and Flaky has none of its own: no number, a reason.
+  await expect(scopeChip(page, 'Flaky')).toHaveText('Flaky')
+  await expect(scopeChip(page, 'Flaky')).toHaveAttribute('title', /run history/)
+  // All with the query: every chip is the per-type match count, Flaky's 1 included.
+  await scopeChip(page, 'All').click()
+  await expect(scopeChip(page, 'Flaky')).toHaveText(/^Flaky\s*1$/)
+  await networkQuiet(page, api)
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})

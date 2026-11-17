@@ -61,6 +61,9 @@ describe('SearchableDataCard — the rail (moved)', () => {
       expect(screen.getByLabelText(`${label}: keyword search`)).toHaveTextContent('Keyword')
     }
     expect(screen.getByText('84 rows · keyword match')).toBeInTheDocument()
+    // D-0013: the Flaky inventory is quarantine requests, a different population from what a Flaky search finds.
+    expect(screen.getByText('3 open quarantine requests · tests found by run history')).toBeInTheDocument()
+    expect(screen.queryByText('3 rows · keyword match')).toBeNull()
     expect(within(line()).getByLabelText('Semantic index: Ready')).toBeInTheDocument()
     expect(line()).toHaveTextContent(/140 docs · last indexed/)
   })

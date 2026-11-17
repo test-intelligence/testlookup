@@ -711,6 +711,28 @@ describe('SearchPage', () => {
     expect(screen.getByText(/^39$/, { exact: false })).toBeInTheDocument()
   })
 
+  // D-0013 (GPT-6): the Flaky scope finds tests by their run history; entity-counts' flaky_test counts quarantine
+  // requests. With no query (or a narrowed scope) the chip shows no number instead of that other population.
+  it('the Flaky chip shows no inventory number: it counts what a Flaky search finds only for a query (D-0013)', async () => {
+    mockGetEntityCounts.mockResolvedValue({
+      test_case: 84, test_run: 39, suite: 5, defect: 0, flaky_test: 0, release: 28,
+    })
+    mockGlobalSearch.mockResolvedValue({
+      items: [makeResult({ entity_type: 'flaky_test', title: 'test_gpt6_alternate', subtitle: '56% failure rate over 9 runs' })],
+      total: 1, query: 'GPT6', search_type: 'keyword',
+      entity_counts: { flaky_test: 1 } as Record<string, number>,
+      page: 1, size: 25, pages: 1,
+    } as unknown as GlobalSearchResponse)
+    renderAt('/search?mode=keyword&scope=flaky&q=GPT6')
+    const scopes = await screen.findByRole('radiogroup', { name: 'Entity scope' })
+    const flaky = within(scopes).getByRole('radio', { name: /^Flaky/ })
+    await waitFor(() => expect(within(scopes).getByRole('radio', { name: /^Tests/ })).toHaveTextContent('84'))
+    expect(flaky).toHaveTextContent(/^Flaky$/)
+    expect(flaky).toHaveAttribute('title', expect.stringContaining('run history'))
+    // All, in inventory mode, sums the chips it shows: 84 + 39 + 5 + 0 + 28.
+    expect(within(scopes).getByRole('radio', { name: /^All/ })).toHaveTextContent('156')
+  })
+
   // W12 SRCH-03 (fix after G-E's pass): a search that found nothing is still
   // worth saving (a query to re-run later), so No results offers Save search
   // too; a browse (no words) offers nothing to save.

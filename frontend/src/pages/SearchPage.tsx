@@ -124,7 +124,7 @@ function SearchCommandBar({
   onModeChange: (m: RetrievalMode) => void
   scope: EntityScope
   onScopeChange: (s: EntityScope) => void
-  scopeCounts: Record<EntityScope, number>
+  scopeCounts: Record<EntityScope, number | null>
   inputRef: React.RefObject<HTMLInputElement | null>
   /** The applied filters of the last search (absent for a plain query). */
   chips?: ReactNode
@@ -214,14 +214,17 @@ function SearchCommandBar({
               ariaChecked={scope === s.id}
               active={scope === s.id}
               onClick={() => onScopeChange(s.id)}
+              title={scopeCounts[s.id] === null ? FLAKY_NO_INVENTORY : undefined}
             >
               {s.label}
-              <span
-                className="font-mono text-2xs tabular-nums ml-1"
-                style={{ color: scope === s.id ? 'var(--ui-info-ink)' : 'var(--color-text-faint)' }}
-              >
-                {formatNumber(scopeCounts[s.id] ?? 0)}
-              </span>
+              {scopeCounts[s.id] !== null && (
+                <span
+                  className="font-mono text-2xs tabular-nums ml-1"
+                  style={{ color: scope === s.id ? 'var(--ui-info-ink)' : 'var(--color-text-faint)' }}
+                >
+                  {formatNumber(scopeCounts[s.id] ?? 0)}
+                </span>
+              )}
             </Chip>
           ))}
         </div>
@@ -264,6 +267,17 @@ function Chip({
     </button>
   )
 }
+
+/**
+ * D-0013: why the Flaky chip shows no number without a query. A Flaky search finds tests by their run history
+ * (5+ runs, 10-90 % failing); the inventory's `flaky_test` counts quarantine requests, a different population,
+ * and a history-wide count is too slow to run on every page load (P5). Searchable data names that count.
+ */
+const FLAKY_NO_INVENTORY =
+  'Flaky tests are found from their run history, so there is no stored count. Searchable data lists the open quarantine requests.'
+
+/** The kinds whose inventory is one row per item, the rows keyword search covers (D-0015); not Flaky (above). */
+const ROW_KINDS: SearchEntityType[] = ['test_case', 'test_run', 'suite', 'defect', 'release']
 
 // ── Verdict ribbon ──────────────────────────────────────────────────────
 // The three tiles that used to sit beside freshness (Latency p95, Queries
@@ -670,10 +684,11 @@ export default function SearchPage() {
   // user clicked between Tests and Runs. Confusing and the count
   // wouldn't match the table either since the browse adapters cap
   // their LIMIT below the real project total.
+  // Match counts (an All-scope query) vs the project inventory (everything else).
+  const useResponseCounts = !!response && scope === 'all' && query.trim() !== ''
   const entityCounts: Record<SearchEntityType, number> = useMemo(() => {
     const responseCounts = (response?.entity_counts ?? {}) as Partial<Record<SearchEntityType, number>>
     const fallback = (totalCounts ?? {}) as Partial<Record<SearchEntityType, number>>
-    const useResponseCounts = !!response && scope === 'all' && query.trim() !== ''
     const pick = (type: SearchEntityType): number => {
       if (useResponseCounts) return Number(responseCounts[type] ?? 0)
       return Number(fallback[type] ?? 0)
@@ -686,7 +701,7 @@ export default function SearchPage() {
       flaky_test: pick('flaky_test'),
       release:    pick('release'),
     }
-  }, [response, totalCounts, scope, query])
+  }, [response, totalCounts, useResponseCounts])
 
   // ``indexStatus.document_count`` reflects what's actually in the
   // BM25/embedding index. On a fresh deploy (or before the reindex
@@ -702,20 +717,25 @@ export default function SearchPage() {
   const totalIndexed = indexStatus?.document_count
     ? indexStatus.document_count
     : databaseTotal
-  const scopeCounts: Record<EntityScope, number> = useMemo(() => {
+  // D-0013: Flaky has no row inventory (a Flaky search groups run history); `flaky_test` here counts quarantine
+  // requests, so it is in neither the All inventory nor the Flaky chip, and Searchable data names it.
+  const keywordRowTotal = useMemo(
+    () => (totalCounts ? ROW_KINDS.reduce((s, kind) => s + Number(totalCounts[kind] ?? 0), 0) : null),
+    [totalCounts],
+  )
+  const scopeCounts: Record<EntityScope, number | null> = useMemo(() => {
     const summed = Object.values(entityCounts).reduce((s, n) => s + n, 0)
     return {
-      // "All" chip: sum of the entity counts. Same source as the
-      // individual chips so the numbers tally.
-      all:      summed || totalIndexed,
+      // "All": with a query, the per-type matches; otherwise the inventory the chips show.
+      all:      useResponseCounts ? summed : (keywordRowTotal ?? 0),
       tests:    entityCounts.test_case,
       runs:     entityCounts.test_run,
       suites:   entityCounts.suite,
       defects:  entityCounts.defect,
-      flaky:    entityCounts.flaky_test,
+      flaky:    useResponseCounts ? entityCounts.flaky_test : null,
       releases: entityCounts.release,
     }
-  }, [entityCounts, totalIndexed])
+  }, [entityCounts, keywordRowTotal, useResponseCounts])
 
   const projectLabel = project?.name ?? 'All Projects'
 
