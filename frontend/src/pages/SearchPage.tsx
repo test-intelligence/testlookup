@@ -286,7 +286,8 @@ const ROW_KINDS: SearchEntityType[] = ['test_case', 'test_run', 'suite', 'defect
 function VerdictRibbon({
   totalItems, typeCount, indexStatus,
 }: {
-  totalItems: number
+  /** The keyword rows of the ROW_KINDS (D-0015); null until the counts load. */
+  totalItems: number | null
   typeCount: number
   indexStatus: IndexStatus | null
 }) {
@@ -325,7 +326,9 @@ function VerdictRibbon({
           Index ready
         </span>
         <h2 className="font-bold m-0" style={{ fontSize: 'var(--text-display-sm)', lineHeight: 1.15, letterSpacing: '-0.02em', margin: '6px 0 6px' }}>
-          {formatNumber(totalItems)} item{totalItems === 1 ? '' : 's'} indexed across {typeCount} entity type{typeCount === 1 ? '' : 's'}
+          {/* D-0015: the rows keyword search covers. It printed the semantic index's TEST-document count here
+              under a six-kind claim; that count is now its own stat, named as tests. */}
+          {totalItems === null ? '—' : formatNumber(totalItems)} row{totalItems === 1 ? '' : 's'} searchable across {typeCount} entity type{typeCount === 1 ? '' : 's'}
         </h2>
         {/* Exactly the columns global_search_service.py matches with ILIKE. */}
         <p className="text-sm m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5, maxWidth: '80ch' }} data-testid="search-matched-fields">
@@ -339,7 +342,11 @@ function VerdictRibbon({
         className="flex items-stretch"
         style={{ borderLeft: '1px solid var(--color-border)' }}
       >
-        <VerdictStat label="Index freshness" value={freshLabel} sub={streaming ? 'streaming' : 'static'} />      </div>
+        <VerdictStat
+          label="Semantic index (tests)"
+          value={indexStatus ? `${formatNumber(indexStatus.document_count)} doc${indexStatus.document_count === 1 ? '' : 's'}` : '—'}
+          sub={freshAge == null ? undefined : `${freshLabel}${streaming ? ' · streaming' : ''}`}
+        />      </div>
     </section>
   )
 }
@@ -703,22 +710,10 @@ export default function SearchPage() {
     }
   }, [response, totalCounts, useResponseCounts])
 
-  // ``indexStatus.document_count`` reflects what's actually in the
-  // BM25/embedding index. On a fresh deploy (or before the reindex
-  // task fires for the first time) this is 0 even though the database
-  // is full of data. Falling back to the entity-counts sum keeps the
-  // headline honest about what the user can search across, since the
-  // database read paths still work even when the vector index is
-  // cold. Once reindex catches up, the indexStatus value wins.
-  const databaseTotal = useMemo(
-    () => Object.values(totalCounts ?? {}).reduce((s, n) => s + (n as number), 0),
-    [totalCounts],
-  )
-  const totalIndexed = indexStatus?.document_count
-    ? indexStatus.document_count
-    : databaseTotal
+  // D-0015: the headline counts the rows keyword search covers, the inventory of the ROW_KINDS. It used to take
+  // the semantic index's document count (TEST results only) whenever that was positive, under a six-kind claim.
   // D-0013: Flaky has no row inventory (a Flaky search groups run history); `flaky_test` here counts quarantine
-  // requests, so it is in neither the All inventory nor the Flaky chip, and Searchable data names it.
+  // requests, so it is in neither this total nor the Flaky chip, and Searchable data names it.
   const keywordRowTotal = useMemo(
     () => (totalCounts ? ROW_KINDS.reduce((s, kind) => s + Number(totalCounts[kind] ?? 0), 0) : null),
     [totalCounts],
@@ -743,9 +738,9 @@ export default function SearchPage() {
   // the compact header's one line.
   const subtitle = [
     `Find tests, runs, suites, defects, releases across ${projectLabel}`,
-    `${formatNumber(totalIndexed)} items indexed`,
+    keywordRowTotal === null ? null : `${formatNumber(keywordRowTotal)} rows searchable`,
     indexStatus?.last_indexed_at
-      ? `fresh ${relativeTime(new Date(indexStatus.last_indexed_at).getTime(), now)}`
+      ? `semantic index fresh ${relativeTime(new Date(indexStatus.last_indexed_at).getTime(), now)}`
       : null,
   ].filter(Boolean).join(' · ')
 
@@ -801,8 +796,8 @@ export default function SearchPage() {
       )}
 
       <VerdictRibbon
-        totalItems={totalIndexed}
-        typeCount={6}
+        totalItems={keywordRowTotal}
+        typeCount={ROW_KINDS.length}
         indexStatus={indexStatus}
       />
 

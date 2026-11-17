@@ -105,6 +105,28 @@ const verdict = (page: Page) => page.getByRole('region', { name: 'Index verdict'
 const scopeChip = (page: Page, name: string) =>
   page.getByRole('radiogroup', { name: 'Entity scope' }).getByRole('radio', { name: new RegExp(`^${name}`) })
 
+for (const docs of [37, 110]) {
+  test(`D-0015: a semantic index of ${docs} test documents leaves the headline on the keyword rows`, async ({ page }) => {
+    const counts = { test_case: 110, test_run: 40, suite: 18, defect: 1, flaky_test: 0, release: 2 }
+    const { api, errors } = await openRollout(page, '/search', {
+      handlers: countedWorld(counts, { status: 'healthy', document_count: docs, last_indexed_at: '2020-01-01T00:00:00Z' }),
+      ready,
+    })
+    await networkQuiet(page, api)
+    // 110 + 40 + 18 + 1 + 2: the rows keyword search covers. Never the semantic index's test documents.
+    await expect(verdict(page).getByRole('heading', { level: 2 })).toHaveText('171 rows searchable across 5 entity types')
+    await expect(scopeChip(page, 'All')).toContainText('171')
+    await expect(verdict(page)).toContainText('Semantic index (tests)')
+    await expect(verdict(page)).toContainText(`${docs} docs`)
+    await expect(page.getByTestId('semantic-index-line')).toContainText(`${docs} docs`)
+    // D-0013: the Flaky inventory names its population (quarantine requests), not "rows · keyword match".
+    await expect(page.getByText('0 open quarantine requests · tests found by run history', { exact: true })).toBeVisible()
+    await expect(scopeChip(page, 'Flaky')).toHaveText('Flaky')
+    expect(api.unhandled).toEqual([])
+    expect(errors).toEqual([])
+  })
+}
+
 test('D-0013: a Flaky search that finds a test never shows "Flaky 0" beside it', async ({ page }) => {
   // The project has a flaky history but no open quarantine request: entity-counts says flaky_test 0.
   const counts = { test_case: 84, test_run: 39, suite: 5, defect: 0, flaky_test: 0, release: 28 }

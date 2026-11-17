@@ -82,6 +82,8 @@ A failed or broken test result has a fourth tab, **Similar failures**, beside **
 
 The **Searchable data** card on the right lists the six kinds global search covers, each a keyword match over its own table with its row count (for **Flaky**, the open quarantine requests: flaky tests themselves are found from run history), and a separate line for the **semantic index**, which holds test results only: **Ready** with its document count and when it was last written, **Not configured** (no vector store answers here), **Unavailable** or **Unknown**.
 
+The headline above the results counts the rows keyword search covers in the five kinds stored one row per item (tests, runs, suites, defects and releases). The semantic index's document count, test results only, is shown beside it as **Semantic index (tests)** with when it was last written.
+
 A background job adds new test results to the semantic index every hour.
 
 > **Tip.** A newly ingested result may take a moment to appear in semantic search even though it is already visible under **Runs**. Keyword search reads the database; semantic search reads the index.
