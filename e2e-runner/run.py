@@ -293,6 +293,7 @@ def main():
             del inventory["TL-INGEST-001"]
             browser_cases = [
                 "TL-AUTH-001",
+                "TL-AUTH-003",
                 "TL-STREAM-001",
                 *("TL-INGEST-001 " + fmt for fmt in UPLOAD_FORMATS),
             ]

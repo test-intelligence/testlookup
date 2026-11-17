@@ -7,6 +7,10 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ## [Unreleased]
 
+### Added
+
+- Release verification: journey **TL-AUTH-003** (one account per browser profile, P1, disposable stack) checks the D-0019 fix on the live stack. In two tabs of one browser, a sign-in as a viewer moves the admin's tab onto the viewer with the note, a new tab opens as the viewer, and the viewer's sign-out signs the other tab out (`frontend/tests/release/session.spec.ts`, `e2e-runner/catalogue.yaml`).
+
 ### Changed
 
 - Wording: the app, the in-app guide, the README and the user guide say "release" where they said "ship". Home's verdict banner reads "release cleared", "review before release" or "release blocked by unresolved failures"; Run intelligence reads "release cleared" or "release blocked"; the Releases page counts "Ready to release", says a GO release "is ready to release", and its "Shipping this week" panel is "Due this week". The escape rate counts defects filed after a release "went live". The README tagline is "Know why your software tests fail. Know when your release is ready." API fields keep their names (`ready_to_ship` is unchanged).

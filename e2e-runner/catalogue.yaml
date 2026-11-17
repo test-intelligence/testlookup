@@ -245,6 +245,23 @@
     "status": "implemented"
   },
   {
+    "id": "TL-AUTH-003",
+    "title": "One account per browser profile",
+    "journey": "J01",
+    "priority": "P1",
+    "role": "viewer",
+    "use_case": "UC-001",
+    "area": "auth",
+    "layer": "live journey",
+    "eligibility": "ephemeral-only",
+    "status": "implemented",
+    "preconditions": "A disposable VIEWER account and the harness admin session, in two tabs of one browser profile",
+    "steps": "Tab A holds the admin session; tab B signs in as the viewer; a third tab opens; tab B signs out",
+    "oracle": "Tab A reloads onto the viewer with the note, the third tab opens as the viewer, and the viewer's sign-out in B signs A out (D-0019).",
+    "control": "Two separate browser profiles keep their own accounts (frontend/tests/ci-e2e/auth-account-switch-tabs.spec.ts).",
+    "source": "frontend/src/store/authCrossTab.ts:1"
+  },
+  {
     "id": "TL-ROLE-002",
     "title": "Session resolves to its configured principal and role",
     "journey": "J01",
