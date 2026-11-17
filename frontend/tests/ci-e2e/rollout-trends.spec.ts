@@ -23,7 +23,7 @@
  *     failures, the cut stated, no "Other" row).
  *
  * Each catalogue tab also asks the unfiltered "ever had a run?" probe
- * (`/runs?page=1&size=1`, no days) once. The four sections were one stack
+ * (`/runs?page=1&size=1&days=0`, all time) once. The four sections were one stack
  * before P3 (one load asked all of them); each tab's inventory is now that
  * stack's share. Fail-closed harness: `tests/lib/production-pages.ts`;
  * helpers: `rollout.ts`.
@@ -68,8 +68,8 @@ const P95_Q = `metric=duration_p95&group_by=day&project_id=${P}&days=14`
 const EXECUTION_Q = `project_id=${P}&days=14`
 /** The heatmap's own read (Wave 3): the page's 14 days, the page scope. */
 const HEATMAP_Q = `kind=suite_day&project_id=${P}&days=14`
-/** The existence probe: unfiltered, so no `days` (K6). */
-const PROBE = `GET /api/v1/runs?project_id=${P}&page=1&size=1`
+/** The existence probe: unfiltered and all time, `days=0` (K6; D-0002: an omitted `days` is 30 days). */
+const PROBE = `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=0`
 
 /**
  * One cold load on the default tab (Volume). The shell (`SHELL_BASE`: nothing

@@ -4377,7 +4377,7 @@ export const TRENDS_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...WAVE3
 /**
  * /coverage/suite with the catalogue: no new request (the overlays read the
  * page's points). Wave 3: the test x run heatmap, the scatter, their rows,
- * and the sections' unfiltered "ever had a run?" probe (`/runs?page=1&size=1`).
+ * and the sections' unfiltered "ever had a run?" probe (`/runs?page=1&size=1&days=0`).
  * EXEC-04b: "Suite execution time" and the Runs tab's wall clock.
  */
 export const SUITE_DETAIL_ON: ApiHandlers = [...RELEASES_LIST, ...WAVE3, ...EXECUTION, ...RUNS, ...SUITE_DETAIL]
