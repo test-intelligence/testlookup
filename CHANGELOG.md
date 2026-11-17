@@ -16,6 +16,7 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 - In-app guide: Troubleshooting said the `flaky_auto_quarantine` flag is off by default. It is on for a new install, as the feature-flag reference says.
 - Python SDK: closing a live session (`LiveSession`, the pytest plugin, or `LiveStream`) waits for a results batch the background flusher is already sending, then closes it, and retries the server's 409 "retry close". Before, closing cancelled the flusher, and a batch it was sending was lost: its results never reached the run.
+- Live-ingest stress test (`backend/scripts/stress_live_ingest.py`): the frames-per-second report counts a whole-second span as exactly that many 1 s windows. Before, a float rounding error in the span could add an extra window that was always empty, which lowered the reported frames-per-second p95 and made the script's unit test fail now and then in CI.
 
 ## [0.1.0] - 2026-11-14
 

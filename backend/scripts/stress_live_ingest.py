@@ -194,7 +194,11 @@ def frames_per_second_windows(timestamps: list[float], start: float, end: float)
     """Frames received in each whole 1 s window of ``[start, end)`` — empty windows included, as zeros."""
     if end <= start:
         return []
-    windows = [0] * max(1, math.ceil(end - start))
+    # A span less than a microsecond past a whole second is float error, not another window:
+    # ``(start + 4.0) - start`` is 4.000000000000227 at start = 2047.3074084986881, and ceil() of it
+    # would add a fifth window that is always empty. A microsecond (not a nanosecond) stays clear of
+    # that error for perf_counter values up to years of uptime.
+    windows = [0] * max(1, math.ceil(round(end - start, 6)))
     for ts in timestamps:
         if start <= ts < end:
             windows[min(int(ts - start), len(windows) - 1)] += 1
