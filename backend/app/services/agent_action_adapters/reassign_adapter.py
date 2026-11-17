@@ -120,7 +120,8 @@ class FailureReassignAdapter:
             # reassign_failure would answer a silent no-op: nothing to record or undo.
             raise ActionRefused("already_assigned")
         try:
-            await reassign_failure(db, test_case_id, assignee, approver)
+            # ledger=False: agent_action_ledger_service records this move as agent.action_executed (one feed row).
+            await reassign_failure(db, test_case_id, assignee, approver, ledger=False)
         except ReassignmentError as exc:
             raise ActionRefused(_refusal_for(exc)) from exc
         person = (

@@ -325,6 +325,9 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # owner team, or removed the Jira link (``changed`` names each part, in
     # labels and names, never user ids); a review rejection is a status change.
     _spec("defect.updated", "quality", "defect", "Defect {entity_label} changed: {changed}"),
+    # D-0021 (GPT-6): a person moved a failed test to another assignee by hand (the Inbox, the API, or MCP's
+    # assign_failure); names only, never user ids. An agent-executed move is ``agent.action_executed`` instead.
+    _spec("failure.reassigned", "quality", "run", "Failure {test_name} reassigned from {from_name} to {to_name}", "outcome", _HUMAN_OR_KEY),
     _spec("defect.ticket_linked", "quality", "defect", "Defect {entity_label} linked to Jira {ticket_key}"),
     # W36 STRAT-03: a person filed a Jira epic for a recurring systemic cluster
     # (cluster_epic_service.create_epic_for_cluster; outcome: it commits with the
