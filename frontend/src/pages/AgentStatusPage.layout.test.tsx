@@ -320,6 +320,15 @@ describe('Pipeline runs — the page template (P5, D3)', () => {
     expect(screen.getByText('Run #77')).toBeInTheDocument()
   })
 
+  it('a live run that has executed nothing shows no rate, not 0% (D-0005)', async () => {
+    await mockHooks({ liveRuns: [{ ...LIVE_RUN, passed: 0, failed: 0, broken: 0, skipped: 2, pass_rate: 0 }, { ...LIVE_RUN, run_id: 'live-2', run_seq: 78 }] })
+    renderAt('/agents?run=run-1')
+    await screen.findByRole('heading', { name: 'AI Report' })
+    fireEvent.click(screen.getByRole('button', { name: /^Live executions/ }))
+    const rates = Array.from(document.querySelectorAll('[data-live-pass-rate]'), (el) => el.textContent)
+    expect(rates).toEqual(['—', '80%'])
+  })
+
   it('shows no live-executions section when nothing is streaming', async () => {
     await renderWithPipeline()
     expect(screen.queryByRole('button', { name: /^Live executions/ })).toBeNull()

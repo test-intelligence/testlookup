@@ -141,6 +141,26 @@ describe('a QA lead', () => {
   })
 })
 
+describe('a linked run with no executed test (D-0005)', () => {
+  beforeEach(() => signInAs('QA_LEAD'))
+
+  it('shows no pass rate, not a red 0.0%', async () => {
+    const { useRelease } = await import('@/hooks/useReleases')
+    const skippedOnly = {
+      ...DETAIL.linked_runs[0], id: 'run-2', build_number: 'b43', status: 'STOPPED',
+      total_tests: 1, passed_tests: 0, failed_tests: 0, broken_tests: 0, skipped_tests: 1, pass_rate: 0,
+    }
+    vi.mocked(useRelease).mockImplementation(((id: string | null) => ({
+      data: id ? { ...DETAIL, linked_runs: [...DETAIL.linked_runs, skippedOnly] } : undefined, isLoading: false, mutate: vi.fn(),
+    })) as never)
+    const panel = openPanel()
+    const row = (build: string) => within(panel).getByRole('button', { name: `Unlink run ${build}` }).closest('tr') as HTMLElement
+    expect(row('b42')).toHaveTextContent('90.0%')
+    expect(row('b43')).not.toHaveTextContent('0.0%')
+    expect(within(row('b43')).getByTitle('No pass rate: no test was executed (every result was skipped)')).toHaveTextContent('—')
+  })
+})
+
 describe('an admin (the control)', () => {
   beforeEach(() => signInAs('ADMIN'))
 

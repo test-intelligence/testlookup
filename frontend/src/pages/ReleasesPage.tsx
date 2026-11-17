@@ -89,6 +89,7 @@ import PhaseGateChip from '@/components/releases/PhaseGateChip'
 import PhaseReasonDialog from '@/components/releases/PhaseReasonDialog'
 import SyncReleasesDialog from '@/components/releases/SyncReleasesDialog'
 import OwnerSelect from '@/components/releases/OwnerSelect'
+import { measuredRunPassRate, noPassRateReason } from '@/utils/runPassRate'
 import {
   evaluateAllPartialToast, evaluateAllToast, evaluationToast, verdictWord,
 } from '@/components/releases/gateCopy'
@@ -1048,7 +1049,8 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
                     <td className="td text-right tabular-nums text-[var(--status-passed)]">{run.passed_tests}</td>
                     <td className="td text-right tabular-nums text-[var(--status-failed)]">{run.failed_tests}</td>
                     <td className="td text-right tabular-nums text-[var(--color-text-secondary)]">
-                      {run.pass_rate != null ? `${Number(run.pass_rate).toFixed(1)}%` : '—'}
+                      {/* D-0005: no rate without evidence (an all-skipped run is "—", not 0.0%). */}
+                      <RunRate run={run} />
                     </td>
                     <td className="td text-right">
                       <button
@@ -1950,6 +1952,12 @@ export default function ReleasesPage() {
 }
 
 /** The pane's heading: the name, and the version when it says something the name does not. */
+/** A linked run's pass rate, or "—" with the reason when it has none (D-0005: no rate without evidence). */
+function RunRate({ run }: { run: Parameters<typeof measuredRunPassRate>[0] }) {
+  const pct = measuredRunPassRate(run)
+  return pct === null ? <span title={noPassRateReason(run) ?? undefined}>—</span> : <>{`${pct.toFixed(1)}%`}</>
+}
+
 function releaseTitle(release: { name: string; version: string }): string {
   return release.version && release.version !== release.name ? `${release.name} ${release.version}` : release.name
 }

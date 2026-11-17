@@ -136,3 +136,15 @@ describe('RunComparePage — no AI report for a Viewer (D-0003)', () => {
     expect(container.querySelector('[data-ai-report-not-generated]')).toBeNull()
   })
 })
+
+describe('RunComparePage — no pass rate without evidence (D-0005)', () => {
+  it('a side whose every result was skipped shows no pass rate, not 0.0%', () => {
+    state.compare = compare({
+      right: { ...side('right-run', 'p1', '240'), status: 'STOPPED', passed_tests: 0, failed_tests: 0, broken_tests: 0, skipped_tests: 3, total_tests: 3, pass_rate: 0 },
+    })
+    renderPage()
+    expect(screen.getByTitle('No pass rate: no test was executed (every result was skipped)')).toHaveTextContent('—')
+    // The other side keeps its measured rate.
+    expect(screen.getByText('80.0%')).toBeInTheDocument()
+  })
+})

@@ -108,7 +108,7 @@ import type { RunListFilters, TestRun, TestRunListResponse } from '@/types/runs'
 import { shortAgo } from '@/utils/formatters'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
 import { aiHistoryService } from '@/services/aiHistoryService'
-import { isRunInProgress, measuredRunPassRate } from '@/utils/runPassRate'
+import { isRunInProgress, measuredRunPassRate, noPassRateReason } from '@/utils/runPassRate'
 
 /** The page's help topic (the header's **?**). */
 const HELP_TOPIC = helpTopicParam('/runs')
@@ -904,8 +904,7 @@ const passRateColor = (pct: number) =>
 function RunPassRateValue({ run }: { run: TestRun }) {
   const pct = measuredRunPassRate(run)
   if (pct === null) {
-    const why = isRunInProgress(run.status) ? 'the run is still in progress' : 'the run reported no tests'
-    return <span className="text-[var(--color-text-muted)]" title={`No pass rate: ${why}`}>—</span>
+    return <span className="text-[var(--color-text-muted)]" title={noPassRateReason(run) ?? undefined}>—</span>
   }
   return <span style={{ color: passRateColor(pct) }}>{pct.toFixed(1)}%</span>
 }
