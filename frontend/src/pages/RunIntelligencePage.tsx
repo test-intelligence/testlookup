@@ -76,6 +76,7 @@ import { useDecisionReportVersions, useRunIntelligence } from '@/hooks/useRunInt
 import { usePermissions } from '@/hooks/usePermissions'
 import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
 import OverrideDecisionForm, { type OverrideRecommendation } from '@/components/release/OverrideDecisionForm'
+import { NO_STORED_DECISION } from '@/components/release/overridePrerequisite'
 import type { ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
 import ReviewBanner from '@/components/reviews/ReviewBanner'
@@ -1301,7 +1302,7 @@ function VerdictBanner({
     : councilError
       ? 'The stored release decision could not be loaded.'
       : !council || council.synthesized
-        ? 'Run deep investigation first: there is no stored release decision to override yet.'
+        ? NO_STORED_DECISION
         : null
   return (
     <section aria-label="Release verdict" aria-live="polite" className="space-y-1.5">

@@ -19,6 +19,7 @@ import Disclosure from '@/components/ui/Disclosure'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
 import OverrideDecisionForm from '@/components/release/OverrideDecisionForm'
+import { NO_STORED_DECISION } from '@/components/release/overridePrerequisite'
 import ShareReportDialog from '@/components/reports/ShareReportDialog'
 import { useAIConfig, isLLMAvailable } from '@/hooks/useAIConfig'
 import { usePermissions } from '@/hooks/usePermissions'
@@ -175,6 +176,9 @@ export default function ReleaseGatePage() {
   // (`POST /release-readiness/{run}/override`); every role was offered it.
   const { isQaLead: canOverride } = usePermissions()
   const [overrideMode, setOverrideMode] = useState(false)
+  // D-0007: an override needs a STORED decision (the API answers 404 without one); a quick-look
+  // (synthesized) view has none, so the control is withheld and says why, as on the Analysis tab.
+  const overrideBlocked = decision?.synthesized ? NO_STORED_DECISION : null
   // GATE-06: Share opens a dialog (layout, expiry, the run's links, revoke).
   const [shareOpen, setShareOpen] = useState(false)
   const workflow = decision ? buildReleaseGateWorkflow(decision) : null
@@ -548,12 +552,16 @@ export default function ReleaseGatePage() {
             <button
               type="button"
               onClick={() => setOverrideMode(true)}
-              disabled={!canOverride}
-              title={canOverride ? undefined : 'QA Lead role required'}
+              disabled={!canOverride || overrideBlocked !== null}
+              title={!canOverride ? 'QA Lead role required' : overrideBlocked ?? undefined}
               className="btn-secondary ml-auto text-xs disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Override decision
             </button>
+          )}
+          {/* D-0007: the prerequisite in words for a QA lead, as the run's Analysis tab says it. */}
+          {!overrideMode && canOverride && overrideBlocked && (
+            <span data-gate-blocked="" className="text-xs text-[var(--color-text-muted)]">{overrideBlocked}</span>
           )}
         </div>
 
@@ -568,7 +576,7 @@ export default function ReleaseGatePage() {
 
         {/* The shared override control (GATE-01): the run page's Analysis
             banner renders the same form, through the same endpoint. */}
-        {overrideMode && canOverride && (
+        {overrideMode && canOverride && !overrideBlocked && (
           <OverrideDecisionForm
             className="mt-3"
             runId={runId}

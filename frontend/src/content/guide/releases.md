@@ -211,7 +211,7 @@ Scoring is deterministic: dimensions are scored, combined into a risk score, and
 
 ## Overrides
 
-A recommendation can be overridden. On the release gate, **Override decision** opens **QA Lead Override**: choose **GO**, **CONDITIONAL GO** or **NO GO**, write the reason (required), and **Apply Override**. The override is recorded alongside the computed verdict, with who made it and why, and listed under **History** — the point is an auditable decision, not a silent one. A policy's **Override Restrictions** rule can forbid some overrides.
+A recommendation can be overridden. On the release gate, **Override decision** opens **QA Lead Override**: choose **GO**, **CONDITIONAL GO** or **NO GO**, write the reason (required), and **Apply Override**. The override is recorded alongside the computed verdict, with who made it and why, and listed under **History** — the point is an auditable decision, not a silent one. A policy's **Override Restrictions** rule can forbid some overrides. On a quick-look recommendation (no deep investigation has run for the run yet) **Override decision** is disabled and says to run deep investigation first: there is no stored decision to override.
 
 Required role: `QA_LEAD` or higher to override. If you override the same rule week after week, change the policy instead.
 
