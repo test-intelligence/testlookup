@@ -11,7 +11,7 @@ import io
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import cast
+from typing import Any, Callable
 
 from sqlalchemy import Float, cast as sa_cast, false as sa_false, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -74,8 +74,21 @@ async def query_unified_audit(
     Returns {total, items: [{source, action, actor_name, project_id, detail, created_at}]}
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-    items: list[dict] = []
     restricted = allowed_project_ids is not None
+    # D-0018: every matching row counts in ``total`` (one COUNT per source), and each source returns its first
+    # ``page * page_size`` rows, so the merged slice for page N is complete and the count is not a cap.
+    fetch = page * page_size
+    total = 0
+    # (created_at, source, row id, item): the row id breaks a tie in created_at, so pages are stable.
+    collected: list[tuple[str, str, str, dict]] = []
+
+    async def _collect(query, model, source: str, to_item: Callable[[Any], dict]) -> None:
+        nonlocal total
+        total += (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
+        result = await db.execute(query.order_by(model.created_at.desc(), model.id.desc()).limit(fetch))
+        for row in result.scalars().all():
+            item = to_item(row)
+            collected.append((item.get("created_at") or "", source, str(row.id), item))
 
     def _scope(query, column):
         """Restrict a project-scoped table to the caller's memberships.
@@ -90,28 +103,33 @@ async def query_unified_audit(
             return query.where(sa_false())
         return query.where(column.in_(allowed_project_ids))
 
+    # D-0018: each AccessAuditLog row is in exactly one category, so All is the disjoint union of the
+    # categories: an action starting with the literal ``report_`` is a report event, any other an access
+    # event. ``autoescape`` makes the ``_`` literal (LIKE with an ESCAPE character; it was a wildcard).
+    report_action = AccessAuditLog.action.startswith("report_", autoescape=True)
+
+    def _access_item(row: AccessAuditLog, source: str) -> dict:
+        return {
+            "source": source,
+            "action": row.action,
+            "actor_name": row.actor_name,
+            "actor_id": str(row.actor_user_id) if row.actor_user_id else None,
+            "project_id": str(row.project_id) if row.project_id else None,
+            "detail": redact_dict(row.after_value) if redact else row.after_value,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
     # ── Access audit ────────────────────────────────────────────────────
     if not category or category == "access":
         access_query = _scope(
-            select(AccessAuditLog).where(AccessAuditLog.created_at >= cutoff),
+            select(AccessAuditLog).where(AccessAuditLog.created_at >= cutoff).where(~report_action),
             AccessAuditLog.project_id,
         )
         if project_id:
             access_query = access_query.where(AccessAuditLog.project_id == project_id)
         if actor_id:
             access_query = access_query.where(AccessAuditLog.actor_user_id == actor_id)
-        access_result = await db.execute(access_query.order_by(AccessAuditLog.created_at.desc()).limit(page_size))
-        access_rows = cast(list[AccessAuditLog], access_result.scalars().all())
-        for access_row in access_rows:
-            items.append({
-                "source": "access",
-                "action": access_row.action,
-                "actor_name": access_row.actor_name,
-                "actor_id": str(access_row.actor_user_id) if access_row.actor_user_id else None,
-                "project_id": str(access_row.project_id) if access_row.project_id else None,
-                "detail": redact_dict(access_row.after_value) if redact else access_row.after_value,
-                "created_at": access_row.created_at.isoformat() if access_row.created_at else None,
-            })
+        await _collect(access_query, AccessAuditLog, "access", lambda row: _access_item(row, "access"))
 
     # ── Settings audit ──────────────────────────────────────────────────
     # Instance-wide source with no project column — ADMIN only (see docstring).
@@ -119,18 +137,15 @@ async def query_unified_audit(
         settings_query = select(SettingsAuditLog).where(SettingsAuditLog.created_at >= cutoff)
         if actor_id:
             settings_query = settings_query.where(SettingsAuditLog.actor_id == actor_id)
-        settings_result = await db.execute(settings_query.order_by(SettingsAuditLog.created_at.desc()).limit(page_size))
-        settings_rows = cast(list[SettingsAuditLog], settings_result.scalars().all())
-        for settings_row in settings_rows:
-            items.append({
-                "source": "settings",
-                "action": settings_row.action,
-                "actor_name": settings_row.actor_name,
-                "actor_id": str(settings_row.actor_id) if settings_row.actor_id else None,
-                "project_id": None,
-                "detail": {"setting_key": settings_row.setting_key, "changed_fields": settings_row.changed_fields},
-                "created_at": settings_row.created_at.isoformat() if settings_row.created_at else None,
-            })
+        await _collect(settings_query, SettingsAuditLog, "settings", lambda row: {
+            "source": "settings",
+            "action": row.action,
+            "actor_name": row.actor_name,
+            "actor_id": str(row.actor_id) if row.actor_id else None,
+            "project_id": None,
+            "detail": {"setting_key": row.setting_key, "changed_fields": row.changed_fields},
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        })
 
     # ── Test management audit ───────────────────────────────────────────
     if not category or category == "test_management":
@@ -142,18 +157,15 @@ async def query_unified_audit(
             test_mgmt_query = test_mgmt_query.where(TestCaseAuditLog.project_id == project_id)
         if actor_id:
             test_mgmt_query = test_mgmt_query.where(TestCaseAuditLog.actor_id == actor_id)
-        test_mgmt_result = await db.execute(test_mgmt_query.order_by(TestCaseAuditLog.created_at.desc()).limit(page_size))
-        test_mgmt_rows = cast(list[TestCaseAuditLog], test_mgmt_result.scalars().all())
-        for test_mgmt_row in test_mgmt_rows:
-            items.append({
-                "source": "test_management",
-                "action": test_mgmt_row.action,
-                "actor_name": test_mgmt_row.actor_name,
-                "actor_id": str(test_mgmt_row.actor_id) if test_mgmt_row.actor_id else None,
-                "project_id": str(test_mgmt_row.project_id) if test_mgmt_row.project_id else None,
-                "detail": {"entity_type": test_mgmt_row.entity_type, "entity_id": str(test_mgmt_row.entity_id)},
-                "created_at": test_mgmt_row.created_at.isoformat() if test_mgmt_row.created_at else None,
-            })
+        await _collect(test_mgmt_query, TestCaseAuditLog, "test_management", lambda row: {
+            "source": "test_management",
+            "action": row.action,
+            "actor_name": row.actor_name,
+            "actor_id": str(row.actor_id) if row.actor_id else None,
+            "project_id": str(row.project_id) if row.project_id else None,
+            "detail": {"entity_type": row.entity_type, "entity_id": str(row.entity_id)},
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        })
 
     # ── Identity events ─────────────────────────────────────────────────
     # Instance-wide source with no project column — ADMIN only (see docstring).
@@ -161,53 +173,33 @@ async def query_unified_audit(
         identity_query = select(IdentityEvent).where(IdentityEvent.created_at >= cutoff)
         if actor_id:
             identity_query = identity_query.where(IdentityEvent.actor_id == actor_id)
-        identity_result = await db.execute(identity_query.order_by(IdentityEvent.created_at.desc()).limit(page_size))
-        identity_rows = cast(list[IdentityEvent], identity_result.scalars().all())
-        for identity_row in identity_rows:
-            detail = redact_dict(identity_row.detail) if redact else identity_row.detail
-            items.append({
-                "source": "identity",
-                "action": str(identity_row.event_type),
-                "actor_name": identity_row.actor_name,
-                "actor_id": str(identity_row.actor_id) if identity_row.actor_id else None,
-                "project_id": None,
-                "detail": detail,
-                "created_at": identity_row.created_at.isoformat() if identity_row.created_at else None,
-                "success": identity_row.success,
-            })
+        await _collect(identity_query, IdentityEvent, "identity", lambda row: {
+            "source": "identity",
+            "action": str(row.event_type),
+            "actor_name": row.actor_name,
+            "actor_id": str(row.actor_id) if row.actor_id else None,
+            "project_id": None,
+            "detail": redact_dict(row.detail) if redact else row.detail,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+            "success": row.success,
+        })
 
-    # ── Report export/share events (from AccessAuditLog with report_ prefix) ─
+    # ── Report export/share events (AccessAuditLog rows whose action starts with ``report_``) ─
     if not category or category == "report":
         report_query = _scope(
-            select(AccessAuditLog)
-            .where(AccessAuditLog.created_at >= cutoff)
-            .where(AccessAuditLog.action.like("report_%")),
+            select(AccessAuditLog).where(AccessAuditLog.created_at >= cutoff).where(report_action),
             AccessAuditLog.project_id,
         )
         if project_id:
             report_query = report_query.where(AccessAuditLog.project_id == project_id)
-        report_result = await db.execute(report_query.order_by(AccessAuditLog.created_at.desc()).limit(page_size))
-        report_rows = cast(list[AccessAuditLog], report_result.scalars().all())
-        for report_row in report_rows:
-            items.append({
-                "source": "report",
-                "action": report_row.action,
-                "actor_name": report_row.actor_name,
-                "actor_id": str(report_row.actor_user_id) if report_row.actor_user_id else None,
-                "project_id": str(report_row.project_id) if report_row.project_id else None,
-                "detail": report_row.after_value,
-                "created_at": report_row.created_at.isoformat() if report_row.created_at else None,
-            })
+        if actor_id:
+            report_query = report_query.where(AccessAuditLog.actor_user_id == actor_id)
+        await _collect(report_query, AccessAuditLog, "report", lambda row: _access_item(row, "report"))
 
-    # Sort all items by created_at descending
-    items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
-
-    # Paginate
-    total = len(items)
+    # Newest first across the sources; equal times in a fixed order (source, then row id).
+    collected.sort(key=lambda entry: entry[:3], reverse=True)
     start = (page - 1) * page_size
-    items = items[start:start + page_size]
-
-    return {"total": total, "items": items}
+    return {"total": total, "items": [entry[3] for entry in collected[start:start + page_size]]}
 
 
 # ── Tenant-scoped observability ──────────────────────────────────────────────
