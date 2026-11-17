@@ -58,27 +58,27 @@ describe('useEverHadRun (K6)', () => {
     await waitFor(() => expect(result.current).toBe(false))
   })
 
-  it('is UNFILTERED: page 1, size 1, and no release even while one is selected', async () => {
+  it('is UNFILTERED: page 1, size 1, all time (days 0), and no release even while one is selected', async () => {
     releaseScope = 'R1'
     list.mockResolvedValue(page(1))
     renderHook(() => useEverHadRun(true), { wrapper })
     await waitFor(() => expect(list).toHaveBeenCalled())
-    expect(list).toHaveBeenCalledWith('proj-1', { page: 1, size: 1 }, { suppressToast: true })
-    expect(EVER_HAD_RUN_PARAMS).toEqual({ page: 1, size: 1 })
+    expect(list).toHaveBeenCalledWith('proj-1', { page: 1, size: 1, days: 0 }, { suppressToast: true })
+    expect(EVER_HAD_RUN_PARAMS).toEqual({ page: 1, size: 1, days: 0 })
   })
 
   it('All Projects: asks across every project (no project id)', async () => {
     activeProjectId = 'all'
     list.mockResolvedValue(page(1))
     renderHook(() => useEverHadRun(true), { wrapper })
-    await waitFor(() => expect(list).toHaveBeenCalledWith(null, { page: 1, size: 1 }, { suppressToast: true }))
+    await waitFor(() => expect(list).toHaveBeenCalledWith(null, { page: 1, size: 1, days: 0 }, { suppressToast: true }))
   })
 
   it('beside Overview’s own probe (same params), asks QUIETLY on its own key: one loud and one quiet request (R1B-7)', async () => {
     list.mockResolvedValue(page(1))
     const { result } = renderHook(
       () => ({
-        overview: useRuns({ page: 1, size: 1 }, { ignoreGlobalRelease: true }),
+        overview: useRuns({ page: 1, size: 1, days: 0 }, { ignoreGlobalRelease: true }),
         probe: useEverHadRun(true),
       }),
       { wrapper },
@@ -86,8 +86,8 @@ describe('useEverHadRun (K6)', () => {
     await waitFor(() => expect(result.current.probe).toBe(true))
     // A shared entry would let the first fetcher decide the other's toast rule.
     expect(list).toHaveBeenCalledTimes(2)
-    expect(list).toHaveBeenCalledWith('proj-1', { page: 1, size: 1 })
-    expect(list).toHaveBeenCalledWith('proj-1', { page: 1, size: 1 }, { suppressToast: true })
+    expect(list).toHaveBeenCalledWith('proj-1', { page: 1, size: 1, days: 0 })
+    expect(list).toHaveBeenCalledWith('proj-1', { page: 1, size: 1, days: 0 }, { suppressToast: true })
   })
 
   it('a failed probe never claims "no data yet": it answers true, so an empty chart says "nothing matches"', async () => {
@@ -129,13 +129,26 @@ describe('useEverHadRun (K6)', () => {
     }
   })
 
+  it('a project whose runs are all older than 30 days has had a run (D-0002)', async () => {
+    // Server semantics: an omitted `days` is a 30-day window, `days: 0` is all time.
+    const thirtySevenDaysAgo = Date.now() - 37 * 86_400_000
+    list.mockImplementation((_project: string | null, params: { days?: number }) => {
+      const runs = [{ id: 'run-old', created_at: new Date(thirtySevenDaysAgo).toISOString() }]
+      const days = params.days ?? 30
+      const items = days === 0 ? runs : runs.filter((r) => Date.parse(r.created_at) > Date.now() - days * 86_400_000)
+      return Promise.resolve({ items, total: items.length })
+    })
+    const { result } = renderHook(() => useEverHadRun(true), { wrapper })
+    await waitFor(() => expect(result.current).toBe(true))
+  })
+
   it('a different project asks again (the latch is per project)', async () => {
     list.mockResolvedValueOnce(page(1)).mockResolvedValueOnce(page(0))
     const { result, rerender } = renderHook(() => useEverHadRun(true), { wrapper })
     await waitFor(() => expect(result.current).toBe(true))
     activeProjectId = 'proj-2'
     rerender()
-    await waitFor(() => expect(list).toHaveBeenCalledWith('proj-2', { page: 1, size: 1 }, { suppressToast: true }))
+    await waitFor(() => expect(list).toHaveBeenCalledWith('proj-2', { page: 1, size: 1, days: 0 }, { suppressToast: true }))
     await waitFor(() => expect(result.current).toBe(false))
   })
 })

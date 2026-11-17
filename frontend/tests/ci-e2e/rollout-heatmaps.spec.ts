@@ -47,7 +47,9 @@ import {
   COVERAGE_ON,
   HEATMAP_PATH,
   HOSTILE_NAME,
+  NOW,
   PROJECT_ID,
+  runs,
   rowsTotal,
   TRENDS_ON,
 } from '../visual/production/fixtures'
@@ -272,6 +274,67 @@ test.describe('heatmaps, a short screen (1280 x 600)', () => {
       before: 0,
     })
     await expectDrawn(sectionFrame(page, TRENDS.id, TRENDS.title), TRENDS.id)
+    expect(api.unhandled).toEqual([])
+    expect(errors).toEqual([])
+  })
+})
+
+// D-0002 (GPT-6 exploratory, E2E-0002): a project whose runs are all older than 30 days, viewed at 14 days, gets an
+// empty heatmap that blames the window, never "No runs have been ingested for this project yet". The catalogue's
+// existence probe (`useEverHadRun`) asks ALL TIME (`days=0`); an omitted `days` is the server's 30-day window.
+test.describe('the existence probe asks all time (D-0002)', () => {
+  test.use({ viewport: { ...TALL_VIEWPORT }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
+
+  const DAY_MS = 86_400_000
+  const oldRun = (() => {
+    const at = new Date(NOW.getTime() - 36 * DAY_MS - 3 * 3_600_000).toISOString()
+    return { ...runs()[0], created_at: at, start_time: at, end_time: at }
+  })()
+
+  /** `GET /runs` as the server answers it: omitted `days` = 30, `0` = all time, `N` = the last N days. */
+  const serverRuns = (source: (typeof oldRun)[]) => ({ url }: ApiRequest) => {
+    const raw = url.searchParams.get('days')
+    const days = raw === null ? 30 : Number(raw)
+    const items = source.filter((run) => days === 0 || Date.parse(run.created_at) >= NOW.getTime() - days * DAY_MS)
+    return { items, total: items.length, page: 1, size: Number(url.searchParams.get('size') ?? 100), pages: items.length ? 1 : 0 }
+  }
+
+  /** The suite x day matrix with no rows: nothing ran in a window shorter than 37 days. */
+  const emptyHeatmap = (request: ApiRequest) => {
+    const full = heatmapFixture(request) as { meta: Record<string, unknown> }
+    // No rows, so nothing was cut: no `truncated_axes` (the contract refuses an empty one).
+    const { truncated_axes: _cut, ...meta } = full.meta
+    void _cut
+    return { ...full, y_labels: [], y_keys: [], cells: [], meta: { ...meta, truncated: false, truncated_total: null } }
+  }
+
+  const world = (source: (typeof oldRun)[]): ApiHandlers => [
+    ['/api/v1/runs', serverRuns(source)],
+    [HEATMAP_PATH, emptyHeatmap],
+    ...TRENDS_ON,
+  ]
+
+  test('runs older than 30 days: the empty 14-day heatmap blames the window, not the project', async ({ page }) => {
+    const { api, errors } = await openTrends(page, world([oldRun]))
+    const frame = sectionFrame(page, TRENDS.id, TRENDS.title)
+    await expect(frame).toContainText('No data matches the current filters')
+    await expect(frame).not.toContainText('No runs have been ingested for this project yet')
+    await expect(frame.getByText('Ingest test results')).toHaveCount(0)
+    await networkQuiet(page, api)
+    // The existence probe asks all time; no one-row read leaves `days` to the server's 30-day default.
+    // (Trends' own "latest run" read is one row too, over the page's window.)
+    const oneRow = queryOf(api, '/api/v1/runs', (q) => q.get('size') === '1')
+    expect(oneRow.some((q) => q.get('days') === '0')).toBe(true)
+    expect(oneRow.every((q) => q.has('days'))).toBe(true)
+    expect(api.unhandled).toEqual([])
+    expect(errors).toEqual([])
+  })
+
+  test('control: a project with no runs at all is told so', async ({ page }) => {
+    const { api, errors } = await openTrends(page, world([]))
+    const frame = sectionFrame(page, TRENDS.id, TRENDS.title)
+    await expect(frame).toContainText('No runs have been ingested for this project yet')
+    await networkQuiet(page, api)
     expect(api.unhandled).toEqual([])
     expect(errors).toEqual([])
   })

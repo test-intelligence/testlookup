@@ -146,7 +146,11 @@ export function daysOnTheWire(api: MockedApi): { line: string; days: number }[] 
   return observed(api).flatMap((line) => {
     const query = line.split('?')[1]
     if (!query) return []
-    return new URLSearchParams(query).getAll('days').map((value) => ({ line, days: Number(value) }))
+    const params = new URLSearchParams(query)
+    // The existence probe ("has this project ever had a run?", `ALL_TIME_PROBE`) asks one run of ALL time,
+    // `days=0`, on purpose: it is not a windowed read (D-0001, D-0002). Every other read is.
+    if (line.startsWith('GET /api/v1/runs?') && params.get('size') === '1' && params.get('days') === '0') return []
+    return params.getAll('days').map((value) => ({ line, days: Number(value) }))
   })
 }
 
@@ -360,8 +364,11 @@ export async function expectNoHorizontalOverflow(page: Page, where: string) {
 
 // ── Wave 3: the advanced sections ──────────────────────────────────────────
 
-/** The sections' unfiltered "ever had a run?" probe (`useEverHadRun`): no `days`, no filter. */
-export const RUN_PROBE = `GET /api/v1/runs?project_id=${P}&page=1&size=1`
+/**
+ * The sections' unfiltered "ever had a run?" probe (`useEverHadRun`): no filter, ALL time (`days=0`; an omitted
+ * `days` is the server's 30-day window, D-0002).
+ */
+export const RUN_PROBE = `GET /api/v1/runs?project_id=${P}&page=1&size=1&days=0`
 
 /**
  * The console errors a DEV server may print for a Wave 3 page: React's

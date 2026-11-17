@@ -17,11 +17,12 @@ interface UseRunsOptions {
    * project with runs but none in that bucket returned zero rows, and a
    * populated project was told "No test runs here yet" with setup instructions.
    *
-   * Note the shape of that bug: the same call already opts out of the `days`
-   * window, with a comment saying it must tell "no runs in the last 7 days"
-   * from "no runs at all". The release axis reintroduced the identical
-   * confusion through a different door, which is why this is a named option
-   * rather than another quietly-omitted parameter.
+   * Note the shape of that bug: the same call must also opt out of the `days`
+   * window, to tell "no runs in the last 7 days" from "no runs at all". It
+   * does so by passing `days: 0` (`ALL_TIME_PROBE`, `hooks/runProbes.ts`): an OMITTED `days` is the
+   * server's 30-day default, not all time (D-0001). The release axis is the
+   * same confusion through a different door, which is why it is a named
+   * option rather than another quietly-omitted parameter.
    */
   ignoreGlobalRelease?: boolean
   /**
