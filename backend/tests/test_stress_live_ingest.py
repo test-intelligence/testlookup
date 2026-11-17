@@ -204,11 +204,32 @@ def test_percentile_is_nearest_rank_and_none_for_nothing(stress):
     assert stress.percentile([], 95) is None
 
 
-def test_frames_are_counted_per_whole_second_including_empty_windows(stress):
-    start = time.perf_counter()
+# perf_counter() values where ``(start + 4.0) - start`` rounds to just above 4.0, so a plain ceil() of the
+# span counted a fifth, always-empty window. 2047.3074084986881 is the start CI hit on 2026-11-17 (PR #412);
+# the last is about 194 days of Linux uptime, where rounding the span to a nanosecond is still not enough.
+SPANS_THAT_ROUND_UP = [
+    pytest.param(2047.3074084986881, id="ci-2026-11-17"),
+    pytest.param(1023.9850012496876, id="below-2^10"),
+    pytest.param(4095.9890002499374, id="below-2^12"),
+    pytest.param(65535.98900024994, id="below-2^16"),
+    pytest.param(16777215.98500125, id="below-2^24"),
+]
+
+
+@pytest.mark.parametrize("start", [pytest.param(1000.0, id="exact"), *SPANS_THAT_ROUND_UP])
+def test_frames_are_counted_per_whole_second_including_empty_windows(stress, start):
     stamps = [start + 0.1, start + 0.2, start + 1.5, start + 3.9, start - 1.0, start + 4.0]
     assert stress.frames_per_second_windows(stamps, start, start + 4.0) == [2, 1, 0, 1]
     assert stress.frames_per_second_windows(stamps, start, start) == []
+    partial = stress.frames_per_second_windows(stamps, start, start + 4.5)
+    assert (len(partial), sum(partial)) == (5, 5)  # a part second is still a window of its own
+    assert stress.frames_per_second_windows([start], start, start + 1e-7) == [1]
+
+
+@pytest.mark.parametrize("start", SPANS_THAT_ROUND_UP)
+def test_the_regression_starts_still_round_the_span_up(start):
+    """Keeps the cases above honest: each start must still produce a 4 s span a rounding error above 4.0."""
+    assert (start + 4.0) - start > 4.0
 
 
 def test_the_batches_open_with_run_start_and_close_with_run_complete_alone(stress):
