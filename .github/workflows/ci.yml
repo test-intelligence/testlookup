@@ -880,10 +880,12 @@ jobs:
           tests/integration/test_activity_ledger_slice_a_postgres.py
           tests/integration/test_activity_ledger_slice_b_postgres.py
           tests/integration/test_activity_ledger_slice_c_postgres.py
+          tests/integration/test_activity_failure_reassign_postgres.py
           tests/integration/test_migration_0238_postgres.py
           tests/integration/test_activity_live_postgres_redis.py
           tests/integration/test_activity_stream_pool_postgres_redis.py
           tests/integration/test_activity_mine_postgres.py
+          tests/integration/test_audit_unified_feed_postgres.py
           tests/integration/test_test_case_mentions_postgres.py
           tests/integration/test_migrations_0239_0240_postgres.py
           tests/integration/test_retention_holds_postgres.py

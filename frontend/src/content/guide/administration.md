@@ -352,7 +352,7 @@ SSO also has to be enabled in the deployment's configuration; the operator guide
 
 ### Audit
 
-**Audit dashboard** (`/settings/audit`): who changed what — access, settings, test management, identity, notification, release and report events — filterable by category and by the last 7, 30 or 90 days, and a **Project Observability** tab. **Export CSV** needs an administrator. Audit rows are append-only by design: a correction adds a record rather than editing one.
+**Audit dashboard** (`/settings/audit`): who changed what — access, settings, test management, identity, notification, release and report events — filterable by category (each event is listed once, under one category: report exports and share-link views are under report) and by the last 7, 14, 30 or 90 days, and a **Project Observability** tab. **Export CSV** needs an administrator. Audit rows are append-only by design: a correction adds a record rather than editing one.
 
 ### Activity log
 

@@ -100,7 +100,7 @@ Assignment lands the failure in the assignee's **Inbox**. Two guarantees:
 - **It never overwrites a human decision.** Auto-assignment only fills rows that are currently unassigned — a failure you reassigned by hand is not taken back by a re-run or recovery pass.
 - **It cannot break ingestion.** Assignment runs as an isolated finalisation step; if it fails, the run still lands.
 
-Reassigning by hand (**Reassign** in the Inbox) needs `QA_LEAD` and can only target the suite owner or a `QA_ENGINEER` member of the project.
+Reassigning by hand (**Reassign** in the Inbox) needs `QA_LEAD` and can only target the suite owner or a `QA_ENGINEER` member of the project. Each reassignment is recorded in the project's Activity log as `failure.reassigned`.
 
 ### The default QA lead
 
