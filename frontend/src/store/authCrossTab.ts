@@ -60,6 +60,16 @@ export function consumeSessionNote(): string | null {
     : 'Another tab of this browser signed out, so this tab reloaded.'
 }
 
+/**
+ * A catch-up check (on install, back from the back-forward cache, made visible) for a change this tab missed. Only a
+ * tab that holds an account can be left on the wrong one; a signed-out tab (the sign-in page) stays put, so a session
+ * seeded into its storage does not reload it mid-navigation (the release harness's `authenticatePage`). The live
+ * `storage` listener acts for every tab.
+ */
+function catchUp(): void {
+  if (useAuthStore.getState().user) checkStoredAccount(false)
+}
+
 /** One set of listeners per window, whatever re-evaluates this module (HMR, `vi.resetModules`). */
 const AUTH_SYNC = Symbol.for('testlookup.auth.storage-sync')
 interface AuthSync {
@@ -80,15 +90,15 @@ export function installAuthCrossTab(): void {
   // A tab restored from the back-forward cache, or thawed, missed the events: compare once on its return.
   const sync: AuthSync = {
     storage: syncAuthFromStorage,
-    pageshow: (event) => { if (event.persisted) checkStoredAccount(false) },
-    visibility: () => { if (document.visibilityState === 'visible') checkStoredAccount(false) },
+    pageshow: (event) => { if (event.persisted) catchUp() },
+    visibility: () => { if (document.visibilityState === 'visible') catchUp() },
   }
   slot[AUTH_SYNC] = sync
   sessionHooks.superseded = onSessionSuperseded
   window.addEventListener('storage', sync.storage)
   window.addEventListener('pageshow', sync.pageshow)
   document.addEventListener('visibilitychange', sync.visibility)
-  checkStoredAccount(false)
+  catchUp()
   const note = consumeSessionNote()
   if (note) toast(note, { icon: 'ℹ️', duration: 8000 })
 }
