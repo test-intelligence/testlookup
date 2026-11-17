@@ -429,3 +429,88 @@ describe('InvestigatorCockpit — the type scale', () => {
     expect(cockpit.style.border).toBe('')
   })
 })
+
+// ── D-0009 (GPT-6): a selection belongs to the run it was made for ─────────────
+//
+// GPT-6 clicked run A's investigation under Past investigations (or started one), then picked run B: the panel
+// kept showing A's verdict, proposed actions and id under B. Only an EXPLICIT selection stuck; the automatic one
+// already fell through to B's own (empty) history.
+
+describe('InvestigatorCockpit — the selection follows the run (D-0009)', () => {
+  const summary = (id: string, runId: string, startedAt: string) => ({
+    id, run_id: runId, project_id: 'proj-1', status: 'completed', mode: 'shadow', triggered_by: 'manual',
+    started_at: startedAt, completed_at: startedAt, primary_cause: null,
+  })
+  const ITEMS = [
+    summary('inv-A-new', 'run-A', '2026-07-15T12:00:00Z'),
+    summary('inv-A-old', 'run-A', '2026-07-15T09:00:00Z'),
+  ]
+  const detailOf = (id: string): InvestigationDetail => ({ ...DETAIL, id, run_id: id.startsWith('inv-B') ? 'run-B' : 'run-A', status: 'completed' })
+
+  async function mockSwitchable(items: Array<Record<string, unknown>> = ITEMS) {
+    await mockHooks({ items })
+    const { useInvestigation } = await import('@/hooks/useInvestigation')
+    ;(useInvestigation as ReturnType<typeof vi.fn>).mockImplementation((id: string | null) => ({
+      data: id ? detailOf(id) : undefined,
+      mutate: vi.fn(),
+    }))
+    return useInvestigation as ReturnType<typeof vi.fn>
+  }
+
+  /** The `n`-th row under Past investigations (newest first). */
+  const pastRow = (n: number) =>
+    within(screen.getByText('Past investigations').parentElement as HTMLElement).getAllByRole('button')[n]
+
+  const cockpitFor = (runId: string) => (
+    <MemoryRouter>
+      <InvestigatorCockpit runId={runId} projectId="proj-1" />
+    </MemoryRouter>
+  )
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('an investigation clicked on run A is not shown after a switch to run B', async () => {
+    const useInvestigation = await mockSwitchable()
+    const { rerender } = render(cockpitFor('run-A'))
+    // Explicitly pick A's OLDER investigation (the automatic choice would be the newest).
+    fireEvent.click(pastRow(1))
+    expect(useInvestigation.mock.lastCall?.[0]).toBe('inv-A-old')
+    rerender(cockpitFor('run-B'))
+    expect(screen.getByText(/No investigations yet for this run/)).toBeInTheDocument()
+    expect(screen.queryByText('inv-A-ol')).toBeNull()
+    expect(useInvestigation.mock.lastCall?.[0]).toBeNull()
+  })
+
+  it('an investigation started on run A is not shown after a switch to run B', async () => {
+    const useInvestigation = await mockSwitchable([])
+    const { investigatorService } = await import('@/services/investigatorService')
+    ;(investigatorService.startInvestigation as ReturnType<typeof vi.fn>).mockResolvedValue({ investigation_id: 'inv-A-new' })
+    const { rerender } = render(cockpitFor('run-A'))
+    fireEvent.click(screen.getByTestId('investigate-run'))
+    await vi.waitFor(() => expect(useInvestigation.mock.lastCall?.[0]).toBe('inv-A-new'))
+    rerender(cockpitFor('run-B'))
+    expect(screen.getByText(/No investigations yet for this run/)).toBeInTheDocument()
+    expect(useInvestigation.mock.lastCall?.[0]).toBeNull()
+  })
+
+  it('control: the automatic choice already followed the run', async () => {
+    const useInvestigation = await mockSwitchable()
+    const { rerender } = render(cockpitFor('run-A'))
+    expect(useInvestigation.mock.lastCall?.[0]).toBe('inv-A-new')
+    rerender(cockpitFor('run-B'))
+    expect(screen.getByText(/No investigations yet for this run/)).toBeInTheDocument()
+  })
+
+  it('run B shows its own investigation after the switch', async () => {
+    const useInvestigation = await mockSwitchable([...ITEMS, summary('inv-B-1', 'run-B', '2026-07-15T13:00:00Z')])
+    const { rerender } = render(cockpitFor('run-A'))
+    fireEvent.click(pastRow(1))
+    rerender(cockpitFor('run-B'))
+    expect(useInvestigation.mock.lastCall?.[0]).toBe('inv-B-1')
+    // Back on A, the earlier pick there still stands.
+    rerender(cockpitFor('run-A'))
+    expect(useInvestigation.mock.lastCall?.[0]).toBe('inv-A-old')
+  })
+})
