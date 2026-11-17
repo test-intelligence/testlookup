@@ -137,7 +137,7 @@ The detail behind the analysis. Old links to `/agents/run/<id>` open here.
 - **Decision intelligence** — the agentic decision report, with a **Report version** picker when the run has been analysed more than once. The picker and the Analysis tab's [AI history](#ai-history) move together. Absent when no decision report exists for the run.
 - **The pipeline's AI report** — **View AI report** to read it, and **Agent stages** to see each stage the pipeline ran. When the run has several pipeline runs, a **Pipeline** picker chooses between them.
 
-"No agent pipeline has analysed this run yet." means no pipeline has run; **Trigger pipeline** in the ⋯ menu starts one.
+"No agent pipeline has analysed this run yet." means no pipeline has run; **Trigger pipeline** in the ⋯ menu starts one. The tab shows the run's own pipelines whichever of your projects is selected in the top bar. If the pipelines cannot be loaded, it says so instead.
 
 ### Timing
 

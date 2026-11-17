@@ -1012,6 +1012,7 @@ jobs:
           tests/integration/test_migration_0230_postgres.py
           tests/integration/test_workflow_default_service_postgres.py
           tests/integration/test_pipeline_compare_postgres.py
+          tests/integration/test_pipelines_list_run_scope_postgres.py
           tests/integration/test_workflow_defaults_postgres.py
           tests/integration/test_bulk_run_filter_postgres.py
           tests/integration/test_bulk_job_progress_postgres.py

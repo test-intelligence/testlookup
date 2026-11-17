@@ -371,6 +371,14 @@ describe('Run page — tabs', () => {
     expect(screen.getByText('No agent pipeline has analysed this run yet.')).toBeInTheDocument()
   })
 
+  // D-0020 (GPT-6): a failed read is not "never analysed".
+  it('a pipeline list that fails to load says so, not that the run was never analysed', () => {
+    hooks.usePipelines.mockReturnValue({ data: undefined, error: new Error('boom'), isLoading: false })
+    renderAt('/runs/run-1?tab=evidence')
+    expect(screen.getByText("Could not load this run's pipelines.")).toBeInTheDocument()
+    expect(screen.queryByText('No agent pipeline has analysed this run yet.')).toBeNull()
+  })
+
   it('switching tabs writes ?tab= and keeps the Tests filters; Tests is the clean URL', () => {
     renderAt('/runs/run-1?status=FAILED')
     fireEvent.click(within(pageTabs()).getByRole('tab', { name: 'Analysis' }))
