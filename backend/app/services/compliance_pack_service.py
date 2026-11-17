@@ -504,7 +504,7 @@ def _build_readme(
     lines.append(
         "| `release_gate_decision.json` | The RELEASE-level verdict and its full "
         "append-only history. Distinct from `decision.json`, which is one run's "
-        "decision: this is the shipping call for the release as a whole. |"
+        "decision: this is the go / no-go call for the release as a whole. |"
     )
     lines.append("| `policy_snapshot.json` | The exact `ReleaseGatePolicy` version in force at decision time. |")
     lines.append("| `decision_trail.json` | AI decision trail (stages + per-test routing + workflow events). |")

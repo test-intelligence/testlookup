@@ -1,7 +1,7 @@
 /**
  * REL-01: the release-health words and counts follow the RECORDED verdict.
  *
- * "Ready to ship" counted in-progress releases at gate `go`, and the gate was
+ * "Ready to release" counted in-progress releases at gate `go`, and the gate was
  * always `not_evaluated` (the browser decided it from numbers nothing
  * supplied), so the count was 0 on every project. The lede compared a
  * composite against "the 95% gate". These tests drive the real
@@ -59,7 +59,7 @@ function release(overrides: Partial<Release> = {}): Release {
   }
 }
 
-describe('Ready to ship counts an in-progress release whose recorded verdict is GO', () => {
+describe('Ready to release counts an in-progress release whose recorded verdict is GO', () => {
   it('a GO release is ready; a NO_GO, a never-evaluated and a released GO one are not', () => {
     const list = [
       release({ id: 'go', gate: gate() }),
@@ -73,10 +73,10 @@ describe('Ready to ship counts an in-progress release whose recorded verdict is 
     expect(counts.inProgress).toBe(3)
   })
 
-  it('the banner states the same Ready to ship', () => {
+  it('the banner states the same Ready to release', () => {
     const go = deriveRelease(release({ gate: gate() }))
     const facts = releaseHealthFacts(go, [go], [go])
-    expect(facts.find(f => f.label === 'Ready to ship')?.value).toBe(1)
+    expect(facts.find(f => f.label === 'Ready to release')?.value).toBe(1)
   })
 })
 
@@ -134,7 +134,7 @@ describe('the Pass rate fact appears only for a measured verdict', () => {
     for (const g of [gate({ verdict: 'NOT_EVALUATED', measured: false, pass_rate: 40 }), null]) {
       const r = deriveRelease(release({ gate: g }))
       const facts = releaseHealthFacts(r, [r], [r])
-      expect(facts.map(f => f.label)).toEqual(['Open blockers', 'Ready to ship', 'Blocked', 'Released · 30d'])
+      expect(facts.map(f => f.label)).toEqual(['Open blockers', 'Ready to release', 'Blocked', 'Released · 30d'])
     }
   })
 })

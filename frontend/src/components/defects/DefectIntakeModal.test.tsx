@@ -59,9 +59,9 @@ describe('DefectIntakeModal — Affects release', () => {
     renderModal()
     expect(releases.calls[0]).toEqual([undefined, { cached: true }])
     const labels = within(affects()).getAllByRole('option').map((o) => o.textContent)
-    expect(labels).toEqual(['Not specified', 'Checkout 2.4 · shipped Oct 1, 2026', 'Checkout 2.5'])
+    expect(labels).toEqual(['Not specified', 'Checkout 2.4 · released Oct 1, 2026', 'Checkout 2.5'])
     expect(affects()).toHaveValue('')
-    expect(screen.getByText('A defect filed against a release that has already shipped counts toward the escape rate.'))
+    expect(screen.getByText('A defect filed against a release that is already live counts toward the escape rate.'))
       .toBeInTheDocument()
   })
 

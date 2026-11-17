@@ -230,7 +230,7 @@ async def _create_auto_release(
         activated_at=now if activate else None,
         description=(
             "Auto-created so this project always has a release to attribute "
-            "runs to. Rename it when you know what you are shipping."
+            "runs to. Rename it when you know what you are releasing."
         ),
     )
     try:

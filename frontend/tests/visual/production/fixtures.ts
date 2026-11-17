@@ -1406,7 +1406,7 @@ export function defectTrendBody(days: number, totals: DefectTrendTotalsSpec = DE
 
 /**
  * `GET /analytics/defects/escape-rate?days=` (contract §2.7). Measured: 5 of
- * the 12 defects reported in the window that affect a shipped release were
+ * the 12 defects reported in the window that affect a live release were
  * filed after it shipped (41.7%). Below the floor: 3 attributed, so "Not
  * measured" with the server's reason (never 0%).
  */
@@ -1418,11 +1418,11 @@ export function defectEscapeBody(days: number, measured = true) {
       attributed: 3,
       in_window: 9,
       measured: false,
-      reason: `3 defect(s) reported in the last ${days} days affect a release that has shipped; 5 are needed.`,
+      reason: `3 defect(s) reported in the last ${days} days affect a live release; 5 are needed.`,
       sample_floor: 5,
       window_days: days,
       outcomes: { incidents: 0, rollbacks: 0, releases: 1 },
-      meta: { ...defectMeta(days), measured: false, reason: `3 defect(s) reported in the last ${days} days affect a release that has shipped; 5 are needed.` },
+      meta: { ...defectMeta(days), measured: false, reason: `3 defect(s) reported in the last ${days} days affect a live release; 5 are needed.` },
     }
   }
   return {

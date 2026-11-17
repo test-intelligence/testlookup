@@ -8,7 +8,7 @@
  * There are no thresholds in this file, on purpose. The former
  * ``decideGate`` judged a composite / coverage / flake triple against
  * 95/90 · 80/70 · 1.5/3 that nothing ever supplied, so every release read
- * "not evaluated" and "Ready to ship" was always 0; and a six-bucket phase
+ * "not evaluated" and "Ready to release" was always 0; and a six-bucket phase
  * template (Smoke … Sign & ship) painted placeholders over the release's real
  * phases. Both are gone (REL-01).
  *

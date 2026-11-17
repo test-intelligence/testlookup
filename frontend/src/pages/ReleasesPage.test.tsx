@@ -670,7 +670,7 @@ describe('ReleasesPage — one banner above the list, the rest under it (P6)', (
     expect(within(banner).getByText(/^2026\.11 is in progress, not evaluated yet/)).toBeInTheDocument()
     expect(Array.from(banner.querySelectorAll('[data-banner-fact]'), (f) => f.textContent)).toEqual([
       'Open blockers 1',
-      'Ready to ship 0',
+      'Ready to release 0',
       'Blocked 1',
       'Released · 30d 1',
     ])
@@ -689,7 +689,7 @@ describe('ReleasesPage — one banner above the list, the rest under it (P6)', (
     const blockers = screen.getByRole('list', { name: 'Top blockers on 2026.11' })
     expect(within(blockers).getByText('Regression failed')).toBeInTheDocument()
     const details = within(healthDisclosure())
-    for (const label of ['In progress', 'Ready to ship', 'Blocked', 'Released · 30d']) {
+    for (const label of ['In progress', 'Ready to release', 'Blocked', 'Released · 30d']) {
       expect(details.getByText(label), label).toBeInTheDocument()
     }
     // The In progress card's value is the count: one.

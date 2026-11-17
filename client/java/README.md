@@ -85,7 +85,7 @@ class CheckoutTest {
 }
 ```
 
-or register the extension for every class. The jar ships `META-INF/services/org.junit.jupiter.api.extension.Extension`, which JUnit loads only when automatic extension registration is on; add this to `src/test/resources/junit-platform.properties`:
+or register the extension for every class. The jar contains `META-INF/services/org.junit.jupiter.api.extension.Extension`, which JUnit loads only when automatic extension registration is on; add this to `src/test/resources/junit-platform.properties`:
 
 ```properties
 junit.jupiter.extensions.autodetection.enabled=true

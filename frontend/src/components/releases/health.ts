@@ -4,7 +4,7 @@
  * disclosure under the list and the count cards (`KpiStrip`) — so they can
  * never disagree. Pure: everything is counted from the `DerivedRelease` list,
  * whose gate is the server's recorded verdict (REL-01). No threshold lives
- * here: a release is "ready to ship" because its recorded verdict is GO.
+ * here: a release is "ready to release" because its recorded verdict is GO.
  */
 import type { BannerFact } from '@/components/ui/StatusBanner'
 import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
@@ -82,7 +82,7 @@ export function releaseHeadline(highlighted: DerivedRelease): string {
   const blockers = highlighted.blockerCount
   switch (highlighted.gate.decision) {
     case 'go':
-      return `${name} is ready to ship`
+      return `${name} is ready to release`
     case 'no_go':
       return `${name} is blocked${dueLabel ? ` — was due ${dueLabel}` : ''}`
     case 'conditional':
@@ -129,7 +129,7 @@ export function openBlockerCount(inProgressReleases: DerivedRelease[]): number {
 /**
  * The banner's facts, at most four, the most important first: the pass rate
  * (when the highlighted release's verdict was measured), the open blockers,
- * Ready to ship, Blocked, then Released · 30d. In progress is not among them:
+ * Ready to release, Blocked, then Released · 30d. In progress is not among them:
  * the header's subtitle and the status filter's "in progress" count already
  * say it above the list.
  */
@@ -145,7 +145,7 @@ export function releaseHealthFacts(
     facts.push({ label: 'Pass rate', value: passRateText(passRate) })
   }
   facts.push({ label: 'Open blockers', value: openBlockerCount(inProgressReleases) })
-  facts.push({ label: 'Ready to ship', value: counts.readyToShip })
+  facts.push({ label: 'Ready to release', value: counts.readyToShip })
   facts.push({ label: 'Blocked', value: counts.blocked })
   facts.push({ label: 'Released · 30d', value: counts.released30d })
   return facts.slice(0, 4)

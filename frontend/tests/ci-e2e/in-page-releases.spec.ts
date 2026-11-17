@@ -69,7 +69,7 @@ for (const width of [1280, 1440]) {
 
     test(`S1 @${width}: a release opens beside the cards, the rail folds, nothing scrolls sideways, five reads once`, async ({ page }) => {
       const { api, errors } = await openList(page)
-      await expect(page.getByRole('heading', { name: 'Shipping this week' })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Due this week' })).toBeVisible()
       await networkQuiet(page, api)
       expect(detailRequests(api.seen)).toEqual([])
 
@@ -80,7 +80,7 @@ for (const width of [1280, 1440]) {
       await expect(opened.getByRole('heading', { name: 'Linked Test Runs (2)' })).toBeVisible()
       await expect(pane(page)).toHaveCount(1)
       await expectNoOverlay(page)
-      await expect(page.getByRole('heading', { name: 'Shipping this week' }), 'the rail folds while a release is open').toHaveCount(0)
+      await expect(page.getByRole('heading', { name: 'Due this week' }), 'the rail folds while a release is open').toHaveCount(0)
 
       const [paneBox, cardsBox] = [await boxOf(opened), await boxOf(cardsColumn(page))]
       expect(paneBox.left, 'the pane starts at or right of the cards column').toBeGreaterThanOrEqual(cardsBox.right)
@@ -173,7 +173,7 @@ test.describe('1440 x 900', () => {
     await page.goBack()
     await expectUrl(page, '/releases')
     await expect(pane(page)).toHaveCount(0)
-    await expect(page.getByRole('heading', { name: 'Shipping this week' }), 'the rail is back').toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Due this week' }), 'the rail is back').toBeVisible()
 
     // Open, switch (replace), Back.
     await card(page, '2026.11').click()

@@ -63,7 +63,7 @@ The bread-and-butter CI pattern is in [Getting results in](getting-results-in.md
 
 ## The SDKs
 
-The `client/` directory ships reporters for **Python** (a pytest plugin, `LiveStream` and `TestLookupReporter`), **Java** (a TestNG listener and a JUnit 5 extension), **JavaScript/TypeScript** (Jest and Mocha reporters) and **Go** (a reporter with a helper for Go's `testing` package). They stream results to the live-stream API, so a run appears on **Runs → Live** (`/live`) while it is still executing.
+The `client/` directory has reporters for **Python** (a pytest plugin, `LiveStream` and `TestLookupReporter`), **Java** (a TestNG listener and a JUnit 5 extension), **JavaScript/TypeScript** (Jest and Mocha reporters) and **Go** (a reporter with a helper for Go's `testing` package). They stream results to the live-stream API, so a run appears on **Runs → Live** (`/live`) while it is still executing.
 
 Per-SDK installation and usage:
 
@@ -127,9 +127,9 @@ For compliance packs, `list_compliance_packs` and `generate_compliance_pack` lis
 
 For charts, `get_chart_data` returns the same series the report pages draw: a metric (executions by default), up to two grouping dimensions, and optional project, releases, suites and window. A point with no data comes back as `y: null` with `measured: false`, never 0, and a rate-limited call returns `retry_after` (chart reads allow 120 requests a minute per user).
 
-Beyond reads, the server ships **write-path tools** so an agent can close the triage loop: propose and release quarantines (approval stays with a QA Lead), bulk-promote recovered tests, file deduplicated Jira defects (with an optional `dry_run` preview the agent is told to show you first), correct AI classifications, reassign failures, and manage the notification transition policy. Stdio writes run under its configured login; network writes run under the presenting client's validated bearer token. Both are audit-logged with that identity.
+Beyond reads, the server has **write-path tools** so an agent can close the triage loop: propose and release quarantines (approval stays with a QA Lead), bulk-promote recovered tests, file deduplicated Jira defects (with an optional `dry_run` preview the agent is told to show you first), correct AI classifications, reassign failures, and manage the notification transition policy. Stdio writes run under its configured login; network writes run under the presenting client's validated bearer token. Both are audit-logged with that identity.
 
-Typical assistant workflows: "why did last night's run fail?" (runs and analysis tools), "is this build safe to ship?" (release tools), "which tests should we quarantine?" (quarantine and flakiness tools). The full tool, resource and prompt reference and the environment variables are in [mcp/README.md](../mcp/README.md); client setup (Claude Code, Claude Desktop, Cursor, SSE) and worked end-to-end recipes are in the **[Agent cookbook](agent-cookbook.md)**.
+Typical assistant workflows: "why did last night's run fail?" (runs and analysis tools), "is this build safe to release?" (release tools), "which tests should we quarantine?" (quarantine and flakiness tools). The full tool, resource and prompt reference and the environment variables are in [mcp/README.md](../mcp/README.md); client setup (Claude Code, Claude Desktop, Cursor, SSE) and worked end-to-end recipes are in the **[Agent cookbook](agent-cookbook.md)**.
 
 ## Invoke an agent with inline input
 

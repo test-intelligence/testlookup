@@ -309,7 +309,7 @@ export function buildDigestWorkflow(
       // Done once a digest was actually delivered, not merely subscribed to.
       status: lastDelivery ? 'completed' : 'pending',
       label: 'Delivery',
-      description: 'Ship digests to email, Slack, or Teams',
+      description: 'Send digests to email, Slack, or Teams',
       completed_at: lastDelivery,
       result_data: {
         channels: [...new Set(activeSubscriptions.map(sub => sub.channel))],

@@ -1,7 +1,7 @@
 /**
  * W11 REL-03: the four release cards with their measured trend. A sparkline
  * only for a series with two measured points or more (an all-`null` series
- * draws nothing: absence is not a flat line); Ready to ship and Released ·
+ * draws nothing: absence is not a flat line); Ready to release and Released ·
  * 30d carry the trend's captions; a failed read keeps the cards and says so;
  * while loading the cards show without sparklines.
  */
@@ -51,7 +51,7 @@ describe('PortfolioKpis', () => {
     hook.mockReturnValue({ data: TREND, error: undefined } as never)
     render(<PortfolioKpis releases={RELEASES} />)
     const lines = screen.getAllByTestId('sparkline')
-    expect(lines.map(l => l.getAttribute('aria-label')?.split(':')[0])).toEqual(['In progress, 12 weeks', 'Ready to ship, 12 weeks'])
+    expect(lines.map(l => l.getAttribute('aria-label')?.split(':')[0])).toEqual(['In progress, 12 weeks', 'Ready to release, 12 weeks'])
     expect(within(card('Blocked')).queryByTestId('sparkline')).toBeNull()
     expect(within(card('Released · 30d')).queryByTestId('sparkline')).toBeNull()
     // No empty aside either: the value keeps the tile's width.
@@ -62,10 +62,10 @@ describe('PortfolioKpis', () => {
     expect(titles[titles.length - 1]).toBe('Now: 2 in progress')
   })
 
-  it('Ready to ship and Released · 30d carry the trend\'s captions; In progress and Blocked keep theirs', () => {
+  it('Ready to release and Released · 30d carry the trend\'s captions; In progress and Blocked keep theirs', () => {
     hook.mockReturnValue({ data: TREND, error: undefined } as never)
     render(<PortfolioKpis releases={RELEASES} />)
-    expect(within(card('Ready to ship')).getByText('GO on 3 of 4 evaluated (12 w)')).toBeInTheDocument()
+    expect(within(card('Ready to release')).getByText('GO on 3 of 4 evaluated (12 w)')).toBeInTheDocument()
     expect(within(card('Released · 30d')).getByText('1 of 2 released with a pack (12 w)')).toBeInTheDocument()
     expect(within(card('Blocked')).getByText('no blockers')).toBeInTheDocument()
     // The card's own number stands (the list's count, not the trend's).
@@ -78,7 +78,7 @@ describe('PortfolioKpis', () => {
       error: undefined,
     } as never)
     render(<PortfolioKpis releases={RELEASES} />)
-    expect(within(card('Ready to ship')).getByText('No releases evaluated in 12 weeks')).toBeInTheDocument()
+    expect(within(card('Ready to release')).getByText('No releases evaluated in 12 weeks')).toBeInTheDocument()
     expect(within(card('Released · 30d')).getByText('No releases released in 12 weeks')).toBeInTheDocument()
   })
 
@@ -86,7 +86,7 @@ describe('PortfolioKpis', () => {
     hook.mockReturnValue({ data: undefined, error: new Error('503') } as never)
     render(<PortfolioKpis releases={RELEASES} />)
     expect(screen.getByText('Could not load the 12-week trend.')).toBeInTheDocument()
-    expect(screen.getAllByText(/In progress|Ready to ship|Blocked|Released · 30d/, { selector: 'p.eyebrow' })).toHaveLength(4)
+    expect(screen.getAllByText(/In progress|Ready to release|Blocked|Released · 30d/, { selector: 'p.eyebrow' })).toHaveLength(4)
     expect(screen.queryByTestId('sparkline')).toBeNull()
   })
 
@@ -95,6 +95,6 @@ describe('PortfolioKpis', () => {
     render(<PortfolioKpis releases={RELEASES} />)
     expect(screen.queryByTestId('sparkline')).toBeNull()
     expect(screen.queryByText('Could not load the 12-week trend.')).toBeNull()
-    expect(screen.getAllByText(/In progress|Ready to ship|Blocked|Released · 30d/, { selector: 'p.eyebrow' })).toHaveLength(4)
+    expect(screen.getAllByText(/In progress|Ready to release|Blocked|Released · 30d/, { selector: 'p.eyebrow' })).toHaveLength(4)
   })
 })

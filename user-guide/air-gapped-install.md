@@ -36,8 +36,8 @@ flowchart LR
 |---|---|
 | `docker` (or `podman`) | Podman works unchanged — the scripts only use flags both implement. `DOCKER=podman` if it isn't behind a `docker` shim. |
 | `bash`, `tar`, `gzip` | Git Bash is fine on Windows. |
-| `sha256sum` / `shasum` / `openssl` | Required. The build **fails** rather than shipping an unverifiable bundle. |
-| `kubectl` or `kustomize` | Optional — used to pre-render the Kubernetes manifests. Without it the bundle ships the raw Kustomize sources instead. |
+| `sha256sum` / `shasum` / `openssl` | Required. The build **fails** rather than producing an unverifiable bundle. |
+| `kubectl` or `kustomize` | Optional — used to pre-render the Kubernetes manifests. Without it the bundle contains the raw Kustomize sources instead. |
 | `syft` | Optional but **strongly recommended** — this is what puts real SBOMs in the bundle. See [§7](#7-sboms-what-you-actually-get). |
 | Disk | ~8 GB free (~3 GB bundle, plus the images in the engine's store). |
 
@@ -58,7 +58,7 @@ flowchart LR
 testlookup-offline-<version>/
 ├── README.md                  # a condensed copy of this procedure
 ├── MANIFEST.json              # images, sha256, image ids, per-image SBOM status,
-│                              #   external_prerequisites (images NOT shipped)
+│                              #   external_prerequisites (images NOT included)
 ├── images.manifest.txt        # the source-of-truth manifest it was built from
 ├── checksums.sha256           # every other file in the bundle
 ├── images.list                # "<tar>\t<image ref>" — what import-bundle.sh reads
@@ -155,7 +155,7 @@ Useful flags (`make offline-bundle ARGS="…"`):
 | `--skip-build` | Reuse app images already in the local engine. |
 | `--dry-run` | Print the plan (also `make offline-bundle-plan`). |
 
-Preview what would be shipped without building anything:
+Preview what the bundle would contain without building anything:
 
 ```bash
 make offline-bundle-plan

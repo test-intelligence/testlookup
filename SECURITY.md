@@ -9,7 +9,7 @@ system's trust boundaries and threat analysis are in
 ## Supported versions
 
 During the pre-1.0 period only the latest release line and `main` receive
-security fixes. Once v1.0.0 ships, this policy will list long-term support
+security fixes. Once v1.0.0 is released, this policy will list long-term support
 branches.
 
 | Version | Supported |
@@ -57,7 +57,7 @@ In scope:
   users' data)
 - CSRF, XSS, or clickjacking on the React frontend
 - Supply-chain issues in the declared dependencies or the published images
-- Insecure defaults in the shipped deployment assets (Compose files,
+- Insecure defaults in the included deployment assets (Compose files,
   Kubernetes overlays, install and deploy scripts)
 
 Out of scope:
@@ -73,7 +73,7 @@ Out of scope:
 
 We practice **coordinated disclosure**. When a vulnerability is confirmed, we
 will work with the reporter to agree on a disclosure timeline. Our default
-embargo is **90 days from confirmation** or until a fix ships, whichever comes
+embargo is **90 days from confirmation** or until a fix is released, whichever comes
 first. We will credit reporters in the release notes and the GitHub advisory
 unless they prefer to remain anonymous.
 

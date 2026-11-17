@@ -22,11 +22,11 @@ Same root cause as above: the shard-queue subscription on the workers. It is not
 
 ## The Upload button is missing on Runs
 
-The `manual_upload` feature flag is off. It ships on for a new install; an instance upgraded from an older version keeps its stored value. Turn it on under **Settings → System → Feature flags** (administrators only). See [Connecting CI and test frameworks](getting-results-in.md#1-upload-from-the-dashboard).
+The `manual_upload` feature flag is off. It is on for a new install; an instance upgraded from an older version keeps its stored value. Turn it on under **Settings → System → Feature flags** (administrators only). See [Connecting CI and test frameworks](getting-results-in.md#1-upload-from-the-dashboard).
 
 ## A workflow page says it is turned off
 
-Several workflows ship behind feature flags that are **off** on a new install: quarantine proposals (`flaky_auto_quarantine`), outbound webhooks (`outbound_webhooks`), GitHub checks (`github_checks`) and GitLab (`gitlab`). LLM cost-budget enforcement (`llm_cost_budget`), release phase enforcement (`release_phase_gate_enforcement`) and compliance packs (`release_compliance_pack`) are **on** for a new install but keep their stored value on an upgraded one, where they may still be off. The [feature-flag reference](../docs/operations/feature-flags.md) lists every flag and what it gates.
+Several workflows sit behind feature flags that are **off** on a new install: quarantine proposals (`flaky_auto_quarantine`), outbound webhooks (`outbound_webhooks`), GitHub checks (`github_checks`) and GitLab (`gitlab`). LLM cost-budget enforcement (`llm_cost_budget`), release phase enforcement (`release_phase_gate_enforcement`) and compliance packs (`release_compliance_pack`) are **on** for a new install but keep their stored value on an upgraded one, where they may still be off. The [feature-flag reference](../docs/operations/feature-flags.md) lists every flag and what it gates.
 
 A flag that "does nothing" after you set it is usually one of:
 

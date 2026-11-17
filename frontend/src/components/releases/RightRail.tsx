@@ -92,7 +92,7 @@ function EmptyRow({ children }: { children: React.ReactNode }) {
   return <div className="px-3.5 py-3 text-xs text-[var(--color-text-muted)]">{children}</div>
 }
 
-// ── Shipping this week ─────────────────────────────────────────────────────
+// ── Due this week ──────────────────────────────────────────────────────────
 
 interface ShippingItem { release: DerivedRelease; relDays: number; label: string }
 
@@ -110,7 +110,7 @@ export function ShippingThisWeek({ releases, onOpen }: { releases: DerivedReleas
     .sort((a, b) => a.relDays - b.relDays)
 
   return (
-    <PanelShell title="Shipping this week" count={items.length || undefined}>
+    <PanelShell title="Due this week" count={items.length || undefined}>
       {items.length === 0 ? (
         <EmptyRow>No releases due in the next 7 days.</EmptyRow>
       ) : (

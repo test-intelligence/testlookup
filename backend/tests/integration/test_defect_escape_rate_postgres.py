@@ -72,7 +72,7 @@ async def test_below_the_floor_it_is_not_measured_and_says_why(world):
     assert payload["attributed"] == 4
     assert payload["measured"] is False and payload["rate"] is None
     assert payload["reason"] == (
-        "4 defect(s) reported in the last 30 days affect a release that has shipped; 5 are needed."
+        "4 defect(s) reported in the last 30 days affect a live release; 5 are needed."
     )
 
 
@@ -97,7 +97,7 @@ async def test_a_selected_release_narrows_and_the_sentinel_measures_nothing(worl
     assert other["attributed"] == 0 and other["measured"] is False
     sentinel = await _rate(world, releases=["unattributed"])
     assert sentinel["attributed"] == 0 and sentinel["rate"] is None
-    assert sentinel["reason"] == 'Escapes are counted against shipped releases; "Unattributed" has none.'
+    assert sentinel["reason"] == 'Escapes are counted against releases that went live; "Unattributed" has none.'
 
 
 async def test_no_defect_in_the_window_has_its_own_reason(world):

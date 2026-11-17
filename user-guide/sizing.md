@@ -2,7 +2,7 @@
 
 How much machine does TestLookup need? Short answer: **one modest host runs most teams** — the stack is designed to be operable without a dedicated DevOps specialist. This guide gives three reference profiles, per-service breakdowns, and the disk-growth math to plan retention.
 
-**How to read the numbers.** Figures marked **(measured/configured)** come from the shipped configuration — the Compose resource limits in `docker-compose.yml` and the ingestion constants in `backend/app/core/config.py` (the admission-gate design behind them is [architecture/INGESTION_SCALE.md](../architecture/INGESTION_SCALE.md)). Figures marked **(estimate)** are engineering estimates from the schema shape — validate them against your own data after a week of real traffic (`make preflight` prints your live volume sizes).
+**How to read the numbers.** Figures marked **(measured/configured)** come from the default configuration — the Compose resource limits in `docker-compose.yml` and the ingestion constants in `backend/app/core/config.py` (the admission-gate design behind them is [architecture/INGESTION_SCALE.md](../architecture/INGESTION_SCALE.md)). Figures marked **(estimate)** are engineering estimates from the schema shape — validate them against your own data after a week of real traffic (`make preflight` prints your live volume sizes).
 
 ## The three profiles
 
@@ -16,14 +16,14 @@ How much machine does TestLookup need? Short answer: **one modest host runs most
 | RAM | 8 GB | 16 GB | 32+ GB (estimate) |
 | Disk (1-year retention, no LLM) | 100 GB SSD | 500 GB SSD | 1+ TB NVMe (estimate) |
 | Postgres growth | ~100 MB/day (estimate) | ~1 GB/day (estimate) | ~2+ GB/day (estimate) |
-| Celery workers | 1 worker container, concurrency 4 (default) | 2 worker containers or concurrency 8 | dedicated worker deployments per queue + HPA (the k8s base ships this) |
+| Celery workers | 1 worker container, concurrency 4 (default) | 2 worker containers or concurrency 8 | dedicated worker deployments per queue + HPA (the k8s base includes this) |
 | Local LLM add-on | +4 vCPU / +8 GB RAM / +10 GB disk | same | same, ideally a GPU node (8 GB+ VRAM) |
 
-All three run the same images — scaling is replicas and resources, not architecture. The medium→large jump is where Kubernetes pays for itself: the ingestion path is already sharded into 8 queues **(configured: `LIVE_INGEST_SHARD_COUNT=8`)** and the k8s base ships per-queue worker deployments with HPAs ([architecture/DEPLOYMENT.md §3](../architecture/DEPLOYMENT.md#3-kubernetes--one-base-many-overlays)).
+All three run the same images — scaling is replicas and resources, not architecture. The medium→large jump is where Kubernetes pays for itself: the ingestion path is already sharded into 8 queues **(configured: `LIVE_INGEST_SHARD_COUNT=8`)** and the k8s base includes per-queue worker deployments with HPAs ([architecture/DEPLOYMENT.md §3](../architecture/DEPLOYMENT.md#3-kubernetes--one-base-many-overlays)).
 
 ## Per-service breakdown
 
-The dev/self-host Compose stack ships these limits **(configured — `deploy.resources` in `docker-compose.yml`)**; they are a sane baseline for the **small** profile. For medium/large, raise the ones marked ↑.
+The dev/self-host Compose stack sets these limits **(configured — `deploy.resources` in `docker-compose.yml`)**; they are a sane baseline for the **small** profile. For medium/large, raise the ones marked ↑.
 
 | Service | CPU limit | Mem limit | Mem reservation | Notes |
 |---|---|---|---|---|

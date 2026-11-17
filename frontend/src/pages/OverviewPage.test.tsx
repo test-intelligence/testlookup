@@ -351,7 +351,7 @@ describe('OverviewPage', () => {
     // pill (W29a: sentence case) and its words — with the way to the failures.
     expect(banner).toHaveAttribute('data-status-banner', 'go')
     expect(within(banner).getByText('Go')).toBeInTheDocument()
-    expect(banner).toHaveTextContent('ship cleared')
+    expect(banner).toHaveTextContent('release cleared')
     expect(within(banner).getByRole('link', { name: /Open failures/ })).toHaveAttribute('href', '/failures')
     // What the verdict IS generated from (the readiness band) and the window it
     // covers — not "generated just now" (the render time) — sit in the
@@ -741,7 +741,7 @@ describe('OverviewPage — the 24-hour new failures describe their own metric', 
 
     const banner = await findBanner()
     expect(banner).toHaveAttribute('data-status-banner', 'no_go')
-    expect(banner).toHaveTextContent('ship blocked by unresolved failures')
+    expect(banner).toHaveTextContent('release blocked by unresolved failures')
     expect(banner).toHaveTextContent(/New failures · 24h 0/)
     expect(screen.queryByText('Nothing is blocking release.')).toBeNull()
     expect(await openVerdictDetails()).toHaveTextContent(/No new failures in the last 24 h, but the readiness band for the last [0-9]+ days still reads No-Go/i)

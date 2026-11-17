@@ -47,7 +47,7 @@ def test_below_the_floor_is_not_measured_and_never_zero(attributed):
     payload = _payload(attributed=attributed, escaped=0)
     assert payload["measured"] is False and payload["rate"] is None
     assert payload["reason"] == (
-        f"{attributed} defect(s) reported in the last 30 days affect a release that has shipped; 5 are needed."
+        f"{attributed} defect(s) reported in the last 30 days affect a live release; 5 are needed."
     )
 
 
@@ -64,7 +64,7 @@ def test_no_defect_in_the_window():
 def test_the_unattributed_sentinel_reason_wins():
     payload = _payload(attributed=0, escaped=0, reason=ESCAPE_UNATTRIBUTED_REASON)
     assert payload["measured"] is False and payload["rate"] is None
-    assert payload["reason"] == 'Escapes are counted against shipped releases; "Unattributed" has none.'
+    assert payload["reason"] == 'Escapes are counted against releases that went live; "Unattributed" has none.'
 
 
 def test_missing_outcome_counts_read_zero():

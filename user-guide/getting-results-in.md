@@ -19,7 +19,7 @@ Every path lands in the same place: a **run** in your project, with per-test row
 
 ### Format switches
 
-Cypress and Playwright parsing each sit behind a feature flag (`cypress_ingest`, `playwright_ingest`). Both ship on; with one turned off, that format is refused with `503`.
+Cypress and Playwright parsing each sit behind a feature flag (`cypress_ingest`, `playwright_ingest`). Both are on by default; with one turned off, that format is refused with `503`.
 
 ### Timing captured per format
 
@@ -211,7 +211,7 @@ If none of these resolve, **nothing is sent**. An absent range is honest; a wron
 
 Collection **cannot fail your test run**. Any git problem (no git binary, not a repository, a timeout, unreadable history) omits the range rather than raising, and nothing is written to stdout, so `testlookup upload ... --output json | jq` stays clean. Ordinary "nothing to send" cases are logged at debug level; a git that answered and then failed (a timeout, a `fatal:`) is logged as a warning with git's own message. `commit_range.diagnose_commit_range(...)` returns the range with a `reason` and `detail` explaining it.
 
-Collection ships in the **CLI** and the **Python SDK**. The JavaScript, Java and Go SDKs send CI context but not the commit range; upload through the CLI if you need it.
+Collection is built into the **CLI** and the **Python SDK**. The JavaScript, Java and Go SDKs send CI context but not the commit range; upload through the CLI if you need it.
 
 How the server uses a range (the `source` and `base_source` it records, and the GitHub connector fallback) is described in [Administration → Commit attribution & TIA readiness](administration.md#commit-attribution--tia-readiness).
 

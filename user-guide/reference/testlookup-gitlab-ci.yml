@@ -40,7 +40,7 @@ testlookup_upload:
     # failures are exactly what TestLookup analyzes.
     - pip install pytest
     - pytest --junitxml=results.xml || true
-    # git is required for the pip git+https install below (slim images ship
+    # git is required for the pip git+https install below (slim images come
     # without it).
     - apt-get update -qq && apt-get install -y -qq git
     # >>> REPLACE THIS URL <<< with the repo your team mirrors TestLookup

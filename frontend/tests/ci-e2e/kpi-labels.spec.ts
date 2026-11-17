@@ -171,7 +171,7 @@ for (const width of [1280, 1440]) {
 
 // HON-07 relabelled the share of defects with no Jira issue, which was called
 // "Escape rate", "Unlinked to Jira". W06 DEF-03 measures the real escape rate
-// (defects filed after a release they affect had shipped) and its tile REPLACES
+// (defects filed after a release they affect went live) and its tile REPLACES
 // that one (the strip holds five tiles); the unlinked count stays in the
 // banner's "No Jira ticket" fact. The label fits at 1280 px (the loop above).
 test('/defects shows the real "Escape rate" from its endpoint, and no "Unlinked to Jira" tile', async ({ page }) => {

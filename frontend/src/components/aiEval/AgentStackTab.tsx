@@ -269,7 +269,7 @@ export default function AgentStackTab({ isAdmin }: { isAdmin: boolean }) {
     <div className="space-y-4" data-testid="ai-eval-stack-tab">
       <Panel
         title="Agent-stack release gate"
-        subtitle="Run every required gate against its baseline before a prompt, model or routing change ships."
+        subtitle="Run every required gate against its baseline before a prompt, model or routing change is released."
       >
         <div className="flex flex-wrap items-end gap-3 p-4">
           <label className="flex flex-col gap-1 text-xs text-[var(--color-text-secondary)]">

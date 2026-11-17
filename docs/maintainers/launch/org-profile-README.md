@@ -14,7 +14,7 @@
   </picture>
 </p>
 
-<p align="center"><b>Know why your software tests fail. Know when to ship.</b></p>
+<p align="center"><b>Know why your software tests fail. Know when your release is ready.</b></p>
 
 **TestLookup** is free, open-source software test intelligence for software teams. It collects the test reports your CI already produces, groups failures by cause, scores flaky tests, and gives each release a GO or NO-GO recommendation with the evidence behind it. It runs on your own servers and works offline: AI analysis uses a local model unless an administrator allows a hosted one.
 

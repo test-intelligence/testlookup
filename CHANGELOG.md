@@ -9,10 +9,12 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ### Changed
 
+- Wording: the app, the in-app guide, the README and the user guide say "release" where they said "ship". Home's verdict banner reads "release cleared", "review before release" or "release blocked by unresolved failures"; Run intelligence reads "release cleared" or "release blocked"; the Releases page counts "Ready to release", says a GO release "is ready to release", and its "Shipping this week" panel is "Due this week". The escape rate counts defects filed after a release "went live". The README tagline is "Know why your software tests fail. Know when your release is ready." API fields keep their names (`ready_to_ship` is unchanged).
 - Releases: the "Offline bundle" workflow takes a release version (`gh workflow run offline-bundle.yml -f version=X.Y.Z`) and bundles the image digests that release promoted instead of rebuilding them, refusing if they are not CI's images of the tagged commit. Every bundle run also produces `SHA256SUMS` for `install.sh` and the files it downloads.
 
 ### Fixed
 
+- In-app guide: Troubleshooting said the `flaky_auto_quarantine` flag is off by default. It is on for a new install, as the feature-flag reference says.
 - Python SDK: closing a live session (`LiveSession`, the pytest plugin, or `LiveStream`) waits for a results batch the background flusher is already sending, then closes it, and retries the server's 409 "retry close". Before, closing cancelled the flusher, and a batch it was sending was lost: its results never reached the run.
 
 ## [0.1.0] - 2026-11-14

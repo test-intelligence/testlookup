@@ -1,7 +1,7 @@
 /**
  * GateBadge — small pill rendering the release gate decision. Shows up in
  * the release-card identity row, the verdict band, and the right-rail
- * "shipping this week" cards. The three decided states take the one decision
+ * "due this week" cards. The three decided states take the one decision
  * vocabulary (W29a UIX-03): its words (Go / Conditional / No-Go, sentence
  * case, never `uppercase`), its tint and border, and its legible `-ink` text;
  * Conditional is the warning hue, never skipped-gold. "Not evaluated" (a

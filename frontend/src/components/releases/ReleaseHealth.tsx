@@ -10,7 +10,7 @@
  *   title  the band's sentence about it ("2026.11 is blocked — was due …");
  *   facts  the pass rate when the release's recorded verdict was measured,
  *          the open blockers across in-progress releases, and the counts
- *          Ready to ship, Blocked and Released · 30d (at most four:
+ *          Ready to release, Blocked and Released · 30d (at most four:
  *          `releaseHealthFacts`);
  *   action opens that release in the side panel.
  *

@@ -1,5 +1,5 @@
 /**
- * KpiStrip — the release counts, four cards: In progress · Ready to ship ·
+ * KpiStrip — the release counts, four cards: In progress · Ready to release ·
  * Blocked · Released (30d). Since UX redesign P6 it sits in the collapsed
  * "Release health" disclosure under the list (`ReleaseHealth.tsx`): above the
  * list the page has ONE StatusBanner, which carries the most important of
@@ -14,7 +14,7 @@
  *
  * W11 REL-03: the trend is now MEASURED on the server (`release_portfolio_service`: each card's own rule at twelve
  * Monday week ends and now), and `PortfolioKpis` passes it as `trend`. With it, a card draws a `Sparkline` of that
- * series (none below two measured points) and Ready to ship / Released · 30d take the trend's two captions. Without
+ * series (none below two measured points) and Ready to release / Released · 30d take the trend's two captions. Without
  * it (`trend` absent, or the read still loading) the strip is exactly what it was.
  */
 import type { ReactNode } from 'react'
@@ -69,7 +69,7 @@ interface KpiStripProps {
 /** Card label → the trend series it draws, and the line's tone. */
 const TREND_SERIES: Record<string, { key: PortfolioSeriesKey; tone: SparklineTone }> = {
   'In progress': { key: 'in_progress', tone: 'neutral' },
-  'Ready to ship': { key: 'ready_to_ship', tone: 'good' },
+  'Ready to release': { key: 'ready_to_ship', tone: 'good' },
   Blocked: { key: 'blocked', tone: 'bad' },
   'Released · 30d': { key: 'released_30d', tone: 'good' },
 }
@@ -134,7 +134,7 @@ function deriveKpis(releases: DerivedRelease[]): KpiCardProps[] {
       sub: inProgressSub,
     },
     {
-      label: 'Ready to ship',
+      label: 'Ready to release',
       value: readyToShip,
       tone: 'good',
       sub: readyToShip > 0
