@@ -208,7 +208,7 @@ def upload_file(
     runtime: Optional[List[str]] = typer.Option(None, "--runtime", help=_RUNTIME_HELP),
     image_digest: Optional[List[str]] = typer.Option(None, "--image-digest", help=_IMAGE_DIGEST_HELP),
     no_ai: bool = typer.Option(
-        False, "--no-ai", help="Skip the AI analysis of this run (sends run_ai=false)",
+        False, "--no-ai", help="Skip the AI analysis, suite comparison and automatic investigation of this run (sends run_ai=false)",
     ),
     format: str = typer.Option(
         "auto",

@@ -193,6 +193,18 @@ describe('UploadReportModal', () => {
     expect(screen.getByRole('button', { name: 'Close' }), 'the X waits too').toBeDisabled()
   })
 
+  it('says that Skip AI analysis also skips the automatic investigation, and sends run_ai=false (D-0006)', async () => {
+    const { input, uploadBtn } = setup()
+    const skip = screen.getByRole('checkbox', { name: /Skip AI analysis/ })
+    const label = skip.closest('label') as HTMLElement
+    expect(label.textContent).toContain('no AI analysis, comparison report or automatic investigation for this run')
+    selectFile(input, new File(['<testsuite/>'], 'junit.xml', { type: 'text/xml' }))
+    fireEvent.click(skip)
+    fireEvent.click(uploadBtn())
+    await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(1))
+    expect(mockUpload.mock.calls[0][0]).toMatchObject({ runAi: false })
+  })
+
   it('gives each optional field its own label (they all once pointed at the Build label input)', () => {
     setup()
     fireEvent.click(screen.getByRole('button', { name: 'Optional metadata' }))

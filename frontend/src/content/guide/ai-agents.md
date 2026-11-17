@@ -206,7 +206,7 @@ Only a fork of the same project can be its default, and only for its own base: a
 
 ## The Investigator and the Fixer
 
-Two further agents can act on a project's failures beyond the analysis pipeline: the **Investigator** (reasons about clusters of failures) and the **Fixer** (proposes validated fixes for flaky tests as draft pull requests). Their policies, autonomy levels and budgets are per project under **Admin → AI → AI agents**, and what they did is under **Agent activity**; see [Settings and administration](/docs/administration#ai).
+Two further agents can act on a project's failures beyond the analysis pipeline: the **Investigator** (reasons about clusters of failures) and the **Fixer** (proposes validated fixes for flaky tests as draft pull requests). The Investigator also starts on its own when a test newly fails, except for a run uploaded with **Skip AI analysis**. Their policies, autonomy levels and budgets are per project under **Admin → AI → AI agents**, and what they did is under **Agent activity**; see [Settings and administration](/docs/administration#ai).
 
 ### The trust ladder in practice
 

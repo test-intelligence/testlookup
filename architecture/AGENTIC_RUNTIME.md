@@ -56,6 +56,14 @@ pipeline database model.
 
 ## Investigator aggregate budget authority
 
+- The automatic newly-failing trigger (`auto:newly_failing`, from
+  `evaluate_run_transitions`) honours the run's upload choice: a run
+  ingested with `run_ai=false` ("Skip AI analysis", `--no-ai`) stages its
+  `transition_notifications` outbox payload with `run_ai: false`, and the
+  task then sends every notification but starts no investigation (D-0006).
+  An AI-on payload is unchanged (`{"run_id": ...}`). Pinned by
+  `tests/regression/test_skip_ai_does_not_auto_investigate.py` and
+  `tests/test_transition_payload_binds.py`.
 - Every optional hypothesis and synthesis LLM call must acquire a row-locked
   reservation on its `AgentInvestigation` before provider invocation.
 - Ledger schema version 2 validates receipt numbers, timestamps, status and

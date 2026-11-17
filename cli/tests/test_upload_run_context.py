@@ -266,6 +266,16 @@ def test_the_six_flags_reach_the_upload(clean_env, report, captured):
     assert ctx["image_digests"] == {"app": _DIGEST}
 
 
+def test_the_no_ai_help_names_everything_it_skips():
+    """D-0006: --no-ai also stops the automatic Investigator run; the help says so."""
+    import inspect
+
+    help_text = inspect.signature(upload.upload_file).parameters["no_ai"].default.help
+    assert "automatic investigation" in help_text
+    assert "suite comparison" in help_text
+    assert "run_ai=false" in help_text
+
+
 def test_no_run_context_sends_none_and_the_defaults_keep_ai_on(clean_env, report, captured):
     result = runner.invoke(app, ["upload", "file", str(report), "-p", "proj", "-b", "b1", "--no-run-context"])
     assert result.exit_code == 0, result.output
