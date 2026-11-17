@@ -454,6 +454,40 @@ describe('Run page — one header', () => {
     expect(screen.queryByRole('link', { name: /Run Intelligence/ })).toBeNull()
   })
 
+  // D-0023 (GPT-6): a run the user cannot open (another project's, or none: the server's one 404) offered enabled
+  // AI actions under "Could not load Run Intelligence". An action needs a loaded run; a settled 404 is Run not found.
+  it('a run that answers 404 shows Run not found, with no tabs and no actions (D-0023)', () => {
+    hooks.useRun.mockReturnValue({ data: undefined, error: Object.assign(new Error('Not Found'), { response: { status: 404 } }) })
+    renderAt('/runs/run-1?tab=analysis')
+    expect(screen.getByText('Run not found')).toBeInTheDocument()
+    expect(screen.getByText('It may have been deleted, or it belongs to a project you are not a member of.')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Run' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'More actions' })).toBeNull()
+    expect(screen.queryByRole('tablist', { name: 'Run sections' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Deep investigation' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Analyze failures/ })).toBeNull()
+    expect(askedFor(hooks.useRunIntelligence, 'run-1')).toBe(false)
+  })
+
+  it('while the run is loading, the run\'s actions are disabled (D-0023)', () => {
+    hooks.useRun.mockReturnValue({ data: undefined, error: undefined, isLoading: true })
+    renderAt('/runs/run-1')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    for (const name of ['Trigger pipeline', 'Deep investigation', 'Refresh AI analysis', 'Export PDF', 'Download evidence bundle', 'Export AI history']) {
+      expect(screen.getByRole('menuitem', { name })).toBeDisabled()
+    }
+    expect(screen.queryByRole('menuitem', { name: 'Release gate' })).toBeNull()
+  })
+
+  it('a run read that fails another way keeps the page, its actions waiting for the run (D-0023)', () => {
+    hooks.useRun.mockReturnValue({ data: undefined, error: Object.assign(new Error('Server Error'), { response: { status: 500 } }) })
+    renderAt('/runs/run-1')
+    expect(screen.queryByText('Run not found')).toBeNull()
+    expect(screen.getByRole('tablist', { name: 'Run sections' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Trigger pipeline' })).toBeDisabled()
+  })
+
   it('"Deep investigation" queues the investigation and opens the Analysis tab (not /deep-investigate/:id)', async () => {
     const agentService = (await import('@/services/agentService')).default
     const trigger = vi.spyOn(agentService, 'triggerDeepPipeline').mockResolvedValue({ task_id: 't', pipeline_run_id: 'p', message: 'ok', run_id: 'run-1' })

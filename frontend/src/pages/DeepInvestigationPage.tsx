@@ -1364,13 +1364,16 @@ export function RunDeepClusters({ runId, run }: { runId: string; run: TestRun | 
   )
   const running = isPipelineInProgress(pipelineStatus?.status)
   const failures = (run?.failed_tests ?? 0) + (run?.broken_tests ?? 0)
+  // D-0023: no run yet (loading, or one the user cannot open) is no action; the role reason stays first.
   const blocked = !isQaEngineer
     ? 'QA Engineer role required'
-    : run && failures === 0
-      ? 'This run has no failures to analyze'
-      : running
-        ? 'An investigation of this run is already running'
-        : null
+    : !run
+      ? 'Waiting for the run to load'
+      : failures === 0
+        ? 'This run has no failures to analyze'
+        : running
+          ? 'An investigation of this run is already running'
+          : null
 
   async function onAnalyze() {
     setQueuing(true)
