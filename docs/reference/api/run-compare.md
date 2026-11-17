@@ -20,14 +20,14 @@ Args:
     left: UUID of the baseline ("before") run.
     right: UUID of the target ("after") run.
 
-Source: [backend/app/routers/run_compare.py:34](../../../backend/app/routers/run_compare.py#L34).
+Source: [backend/app/routers/run_compare.py:36](../../../backend/app/routers/run_compare.py#L36).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-left: uuid.UUID, right: uuid.UUID, suite_name: Optional[str]=Query(None, description='Optional suite scope; matched case-insensitively'), include_ai_report: bool=Query(True, description='Attach cached or generated AI comparison report'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+left: uuid.UUID, right: uuid.UUID, suite_name: Optional[str]=Query(None, description='Optional suite scope; matched case-insensitively'), include_ai_report: bool=Query(True, description='Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -86,13 +86,13 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
-      "description": "Attach cached or generated AI comparison report",
+      "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
       "in": "query",
       "name": "include_ai_report",
       "required": false,
       "schema": {
         "default": true,
-        "description": "Attach cached or generated AI comparison report",
+        "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
         "title": "Include Ai Report",
         "type": "boolean"
       }
@@ -151,14 +151,14 @@ Compare Latest Suite Runs
 Compare the latest completed run for a suite against the previous latest
 completed run for the same suite and branch.
 
-Source: [backend/app/routers/run_compare.py:124](../../../backend/app/routers/run_compare.py#L124).
+Source: [backend/app/routers/run_compare.py:132](../../../backend/app/routers/run_compare.py#L132).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-suite_name: str=Query(..., min_length=1, description='Suite name; matched case-insensitively'), project_id: Optional[uuid.UUID]=Query(None), include_ai_report: bool=Query(True, description='Attach cached or generated AI comparison report'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+suite_name: str=Query(..., min_length=1, description='Suite name; matched case-insensitively'), project_id: Optional[uuid.UUID]=Query(None), include_ai_report: bool=Query(True, description='Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -207,13 +207,13 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       }
     },
     {
-      "description": "Attach cached or generated AI comparison report",
+      "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
       "in": "query",
       "name": "include_ai_report",
       "required": false,
       "schema": {
         "default": true,
-        "description": "Attach cached or generated AI comparison report",
+        "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
         "title": "Include Ai Report",
         "type": "boolean"
       }

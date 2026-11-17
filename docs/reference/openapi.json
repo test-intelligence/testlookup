@@ -89649,13 +89649,13 @@
             }
           },
           {
-            "description": "Attach cached or generated AI comparison report",
+            "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
             "in": "query",
             "name": "include_ai_report",
             "required": false,
             "schema": {
               "default": true,
-              "description": "Attach cached or generated AI comparison report",
+              "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
               "title": "Include Ai Report",
               "type": "boolean"
             }
@@ -89745,13 +89745,13 @@
             }
           },
           {
-            "description": "Attach cached or generated AI comparison report",
+            "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
             "in": "query",
             "name": "include_ai_report",
             "required": false,
             "schema": {
               "default": true,
-              "description": "Attach cached or generated AI comparison report",
+              "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
               "title": "Include Ai Report",
               "type": "boolean"
             }

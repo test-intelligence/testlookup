@@ -17,11 +17,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    _ROLE_ORDER,
+    _normalize_user_role,
     get_current_active_user,
     get_db,
     resolve_project_scope,
 )
-from app.models.postgres import TestRun, User
+from app.models.postgres import TestRun, User, UserRole
 from app.models.schemas import RunCompareResponse
 from app.services import run_compare_ai_service, run_compare_service
 
@@ -36,7 +38,13 @@ async def compare_two_runs(
     left: uuid.UUID,
     right: uuid.UUID,
     suite_name: Optional[str] = Query(None, description="Optional suite scope; matched case-insensitively"),
-    include_ai_report: bool = Query(True, description="Attach cached or generated AI comparison report"),
+    include_ai_report: bool = Query(
+        True,
+        description=(
+            "Attach the cached AI comparison report; on a miss, generate one "
+            "(QA_ENGINEER and above only, otherwise ai_report is null)"
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -116,7 +124,7 @@ async def compare_two_runs(
             left_run_id=left,
             right_run_id=right,
             suite_name=suite_name,
-            user_id=current_user.id,
+            current_user=current_user,
         )
     return result
 
@@ -125,7 +133,13 @@ async def compare_two_runs(
 async def compare_latest_suite_runs(
     suite_name: str = Query(..., min_length=1, description="Suite name; matched case-insensitively"),
     project_id: Optional[uuid.UUID] = Query(None),
-    include_ai_report: bool = Query(True, description="Attach cached or generated AI comparison report"),
+    include_ai_report: bool = Query(
+        True,
+        description=(
+            "Attach the cached AI comparison report; on a miss, generate one "
+            "(QA_ENGINEER and above only, otherwise ai_report is null)"
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -185,9 +199,18 @@ async def compare_latest_suite_runs(
             left_run_id=previous.id,
             right_run_id=latest.id,
             suite_name=suite_name,
-            user_id=current_user.id,
+            current_user=current_user,
         )
     return result
+
+
+def _may_generate_report(user: User) -> bool:
+    """QA_ENGINEER and above, by global role, like every other LLM-triggering route."""
+    try:
+        idx = _ROLE_ORDER.index(_normalize_user_role(user.role))
+    except ValueError:
+        return False
+    return idx >= _ROLE_ORDER.index(UserRole.QA_ENGINEER)
 
 
 async def _resolve_ai_report(
@@ -198,8 +221,16 @@ async def _resolve_ai_report(
     left_run_id: uuid.UUID,
     right_run_id: uuid.UUID,
     suite_name: Optional[str],
-    user_id: uuid.UUID,
-) -> dict:
+    current_user: User,
+) -> Optional[dict]:
+    """The cached report for every role; on a miss, a new one only for QA_ENGINEER+.
+
+    Generating a report is a paid model call charged to the project and a saved
+    ``run_comparison_reports`` row. Every other route that starts AI requires
+    QA_ENGINEER (``require_role``; ``canTriggerLlm`` in the SPA), so a VIEWER or
+    TESTER on a miss gets ``None`` and nothing is generated, queued or enqueued
+    (D-0003). They see the report once a QA engineer has opened the comparison.
+    """
     cached = await run_compare_ai_service.get_cached_report(
         db,
         project_id=project_id,
@@ -209,7 +240,10 @@ async def _resolve_ai_report(
     )
     if cached:
         return cached
+    if not _may_generate_report(current_user):
+        return None
 
+    user_id = current_user.id
     try:
         return await asyncio.wait_for(
             run_compare_ai_service.generate_and_save_report(

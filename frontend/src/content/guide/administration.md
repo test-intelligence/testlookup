@@ -76,7 +76,7 @@ Five roles, each including those below it:
 
 | Role | Can |
 |---|---|
-| `VIEWER` | Read dashboards and reports |
+| `VIEWER` | Read dashboards and reports, including AI reports that already exist (creating one needs `QA_ENGINEER`) |
 | `TESTER` | Read runs and failures; write, edit and comment on test cases and change their status (not deprecate, archive or reinstate) |
 | `QA_ENGINEER` | Send results, own API keys, triage, correct classifications, file defects, manage suites and test cases |
 | `QA_LEAD` | Everything above, plus releases, ownership, quarantine and AI-report decisions, overrides, deprecating, archiving and reinstating test cases, and most settings pages |

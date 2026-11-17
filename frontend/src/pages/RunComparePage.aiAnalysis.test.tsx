@@ -10,13 +10,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RunComparePage from './RunComparePage'
 import type { RunCompareResponse } from '@/services/runCompareService'
 
-const state = vi.hoisted(() => ({ compare: undefined as unknown, sectionProps: [] as unknown[] }))
+const state = vi.hoisted(() => ({ compare: undefined as unknown, sectionProps: [] as unknown[], canTriggerLlm: true }))
 
 vi.mock('@/hooks/useRunCompare', () => ({
   useRunCompare: () => ({ compare: state.compare, isLoading: false, isError: false, error: undefined }),
   useLatestSuiteCompare: () => ({ compare: undefined, isLoading: false, isError: false, error: undefined }),
   extractCompareErrorMessage: () => 'Could not load compare',
 }))
+// D-0003: the "no report yet" note depends on whether the reader may trigger AI.
+vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ canTriggerLlm: state.canTriggerLlm }) }))
 vi.mock('@/hooks/useRuns', () => ({ useRuns: () => ({ data: { items: [] }, isLoading: false }) }))
 // FAIL-06: the run pickers' reads (the deep link's two labels, the suite summary).
 vi.mock('@/hooks/useRunSearch', () => ({
@@ -67,6 +69,7 @@ function compare(overrides: Partial<RunCompareResponse> = {}): RunCompareRespons
 beforeEach(() => {
   state.compare = compare()
   state.sectionProps = []
+  state.canTriggerLlm = true
 })
 
 const renderPage = () =>
@@ -105,5 +108,31 @@ describe('RunComparePage — AI analysis (W03)', () => {
     state.compare = compare({ ai_report: base.ai_report ? { ...base.ai_report, ai_changes: undefined } : null })
     const v1 = renderPage()
     expect(v1.container.querySelector('[data-ai-report-changes]')).toBeNull()
+  })
+})
+
+describe('RunComparePage — no AI report for a Viewer (D-0003)', () => {
+  it('tells a Viewer or Tester that no report exists yet, instead of a report', () => {
+    state.canTriggerLlm = false
+    state.compare = compare({ ai_report: null })
+    const { container } = renderPage()
+    const note = container.querySelector('[data-ai-report-not-generated]') as HTMLElement
+    expect(note).not.toBeNull()
+    expect(note.textContent).toContain('No AI comparison report exists for these runs yet')
+    expect(note.textContent).toContain('QA engineer or above')
+    expect(screen.queryByText('AI Comparison Report')).toBeNull()
+  })
+
+  it('shows a Viewer an existing report and no note', () => {
+    state.canTriggerLlm = false
+    const { container } = renderPage()
+    expect(screen.getByText('AI Comparison Report')).toBeInTheDocument()
+    expect(container.querySelector('[data-ai-report-not-generated]')).toBeNull()
+  })
+
+  it('shows no note to a QA engineer, whose request generates the report', () => {
+    state.compare = compare({ ai_report: null })
+    const { container } = renderPage()
+    expect(container.querySelector('[data-ai-report-not-generated]')).toBeNull()
   })
 })
