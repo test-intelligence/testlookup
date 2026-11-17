@@ -14,7 +14,7 @@
  */
 import { expect, test, type Page } from '@playwright/test'
 import { assertHermetic, networkQuiet, observed, openRollout, requestsTo } from '../lib/rollout'
-import { RUN_ID } from '../visual/production/fixtures'
+import { RUN_ID, runs } from '../visual/production/fixtures'
 import { INVESTIGATION_ID, investigationWorld, REVIEW_HREF } from '../visual/production/fixtures-investigator-proposals'
 
 test.use({ viewport: { width: 1280, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
@@ -95,5 +95,31 @@ test('Do it myself opens the in-page Propose quarantine form under its row — n
 
   await networkQuiet(page, api)
   expectReadsOnly(api)
+  assertHermetic(api, errors)
+})
+
+// D-0009 (GPT-6 exploratory, E2E-0010): an investigation picked under Past investigations belongs to that run.
+// After a switch to another run (Recent runs), the cockpit shows the new run's investigations or its empty state,
+// never the previous run's verdict, actions and id.
+test('an investigation picked on one run is not shown after switching to another run', async ({ page }) => {
+  const { handlers } = investigationWorld({ mode: 'suggest' })
+  const { api, errors } = await openRollout(page, PAGE, { handlers, ready: verdict })
+  const past = cockpit(page).getByText('Past investigations').locator('..')
+  // The explicit pick (the automatic choice already followed the run).
+  await past.getByRole('button').first().click()
+  await expect(rows(page)).toHaveCount(3)
+  await expect(cockpit(page)).toContainText(INVESTIGATION_ID.slice(0, 8))
+
+  // Another run from Recent runs: the world has no investigation for it.
+  const other = runs()[1].id
+  await page.getByTestId('deep-history-table').locator('tbody tr').nth(1).click()
+  await expect(page).toHaveURL(new RegExp(`run=${other}`))
+  await expect(cockpit(page)).toContainText('No investigations yet for this run')
+  await expect(cockpit(page)).not.toContainText(INVESTIGATION_ID.slice(0, 8))
+  await expect(rows(page)).toHaveCount(0)
+  await expect(verdict(page)).toHaveCount(0)
+
+  await networkQuiet(page, api)
+  expect(observed(api).filter((line) => !line.startsWith('GET ')), 'nothing written').toEqual([])
   assertHermetic(api, errors)
 })

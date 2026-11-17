@@ -981,6 +981,21 @@ describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
     override.mockRestore()
   })
 
+  it('a quick-look decision disables Override for a QA lead and says why (D-0007)', async () => {
+    // A synthesized (quick-look) view has no stored decision; the API answers 404 to an override.
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
+    const override = vi.spyOn(releaseCouncilService, 'override')
+    await renderAt('/release-gate/run-1', flooredDecision({ synthesized: true }))
+    const button = within(primary()).getByRole('button', { name: 'Override decision' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', 'Run deep investigation first: there is no stored release decision to override yet.')
+    expect(within(primary()).getByText('Run deep investigation first: there is no stored release decision to override yet.')).toBeInTheDocument()
+    fireEvent.click(button)
+    expect(within(primary()).queryByRole('heading', { name: 'QA Lead Override' })).toBeNull()
+    expect(override).not.toHaveBeenCalled()
+    override.mockRestore()
+  })
+
   it.each(['VIEWER', 'TESTER', 'QA_ENGINEER'])(
     'Override is disabled for a %s, naming the role the API requires',
     async (role) => {

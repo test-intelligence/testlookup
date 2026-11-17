@@ -461,7 +461,11 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
   const { isQaEngineer, isQaLead } = usePermissions()
   const { investigatorPolicy } = useAgentPolicies(projectId)
   const { data: listData, mutate: mutateList } = useInvestigations(projectId)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // D-0009: a selection belongs to the run it was made for. Kept run-agnostic, a
+  // clicked (or just-started) investigation of run A outranked run B's own
+  // history after a run switch, and the panel showed A's verdict and actions
+  // under B. A selection made for another run reads as no selection.
+  const [selection, setSelection] = useState<{ runId: string | null; id: string } | null>(null)
   const [starting, setStarting] = useState(false)
 
   // Newest-first history, scoped to the focused run when one is in scope.
@@ -472,6 +476,12 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
   }, [listData, runId])
 
   const activeForRun = history.find((i) => isInvestigationActive(i.status))
+  const selectedForRun = selection !== null && selection.runId === runId ? selection.id : null
+  // Defensive: an id the list knows to belong to another run is never shown for this one.
+  const selectedId = runId && selectedForRun
+    && (listData?.items ?? []).some((i) => i.id === selectedForRun && i.run_id !== runId)
+    ? null
+    : selectedForRun
   const effectiveId = selectedId ?? activeForRun?.id ?? history[0]?.id ?? null
 
   const { data: detail, mutate: mutateDetail } = useInvestigation(effectiveId)
@@ -487,10 +497,12 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
 
   const onInvestigate = async () => {
     if (!runId || disabledReason || starting) return
+    // The run this start is for: a start that resolves after a run switch must not attach to the new run.
+    const startedFor = runId
     setStarting(true)
     try {
-      const { investigation_id } = await investigatorService.startInvestigation(runId)
-      setSelectedId(investigation_id)
+      const { investigation_id } = await investigatorService.startInvestigation(startedFor)
+      setSelection({ runId: startedFor, id: investigation_id })
       toast.success('Investigation queued')
       void mutateList()
     } catch (err) {
@@ -498,7 +510,7 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
         // Shared interceptor already toasted the server's "already running"
         // detail — attach the cockpit to the in-flight investigation.
         toast('Attaching to the investigation already running for this run', { icon: 'ℹ️' })
-        setSelectedId(null)
+        setSelection(null)
         void mutateList()
       }
       // 403 (policy disabled) and other errors: the shared axios interceptor
@@ -675,7 +687,7 @@ export default function InvestigatorCockpit({ runId, projectId }: { runId: strin
           </>
         )}
 
-        <HistoryList items={history.slice(0, 5)} activeId={effectiveId} onSelect={setSelectedId} />
+        <HistoryList items={history.slice(0, 5)} activeId={effectiveId} onSelect={(id) => setSelection({ runId, id })} />
       </div>
     </section>
   )
