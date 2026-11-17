@@ -52,7 +52,7 @@ Reports reflect the run they were generated from. Re-running analysis produces a
 
 Its **aggregation** setting decides what is counted:
 
-- **Latest run per suite** (the default) — only each suite's most recent run in the window. Totals are deliberately smaller.
+- **Latest run per suite** (the default) — only each suite's most recent run in the window. Totals count every test result in those runs (**per test execution**), so a test run by two suites counts twice and the total can be larger than **All runs in window**.
 - **All runs in window** — unique tests across every run in the window. Totals match **Coverage**.
 
 If the summary "does not match" another page, it is almost always the aggregation or the window; both are shown on the page. **Views** saves the window, release, suite and aggregation as a named view.

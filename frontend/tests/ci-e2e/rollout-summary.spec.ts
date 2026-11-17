@@ -138,10 +138,15 @@ test.describe('Summary report, everything on screen (1280 x 2400)', () => {
     await expect(suiteCells(bars, 'Payments').nth(1)).toHaveText('11')
     const kpis = page.getByRole('region', { name: 'Summary KPIs' })
     await expect(kpis).toContainText('186')
+    // D-0012 (E2E-0013): latest mode sums the latest runs' counters, so its pass rate is per test execution.
+    await expect(kpis).toContainText('per test execution')
+    await expect(kpis).not.toContainText('per unique test')
     await page.getByRole('radio', { name: 'All runs in window' }).click()
     await expect(page.getByRole('radio', { name: 'All runs in window' })).toHaveAttribute('aria-checked', 'true')
     await expect(kpis).toContainText('532')
     await expect(kpis).not.toContainText('186')
+    await expect(kpis).toContainText('per unique test')
+    await expect(kpis).not.toContainText('per test execution')
     // Window counts of the fixture: every suite's latest counts x its runs (2 + i % 3); Payments is i = 2.
     await openTable()
     await expect(suiteCells(bars, 'Payments').nth(0)).toHaveText('80')

@@ -34,6 +34,7 @@ import type {
 } from '@/services/runCompareService'
 import type { TestRun } from '@/types/runs'
 import { runIdent } from '@/utils/runOption'
+import { measuredRunPassRate, noPassRateReason } from '@/utils/runPassRate'
 
 /**
  * Two-run compare page — Tier 2 item 8.
@@ -547,7 +548,11 @@ function SideCard({
           </span>
         )}
         <span className="ml-auto text-[var(--color-text-faint)]">
-          {run.pass_rate != null ? `${run.pass_rate.toFixed(1)}%` : '—'}
+          {/* D-0005: no rate without evidence (an all-skipped run is "—", not 0.0%). */}
+          {(() => {
+            const pct = measuredRunPassRate(run)
+            return pct === null ? <span title={noPassRateReason(run) ?? undefined}>—</span> : `${pct.toFixed(1)}%`
+          })()}
         </span>
       </div>
     </div>

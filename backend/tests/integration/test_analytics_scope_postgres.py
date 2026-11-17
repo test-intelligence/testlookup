@@ -398,6 +398,12 @@ def _leaf_diffs(expected, actual, path: str = "", out: list | None = None, cap: 
 #: ``test_tied_counts_keep_one_order_whatever_the_plan``), and the six cases
 #: holding such ties were re-taken; a script checked that no other value moved.
 #:
+#: A third edit (2026-11-17, D-0012): three ``summary_latest/*`` cases (none,
+#: release, unattributed; the member's empty "select a project" body keeps its default) now
+#: declare ``pass_rate_basis: "executions"`` / "per test execution" -- latest
+#: mode sums the latest run's counters, one per test result; it said "unique
+#: tests". Only those two fields were edited by hand; no number moved.
+#:
 #: Captured as FastAPI's default 422 list before VIZ-210; now the contract body.
 INTENDED_ERROR_BODY_CHANGES = frozenset({
     "flaky_scores/member_all_projects",

@@ -18,7 +18,7 @@ A **run** is one execution of a suite: a CI job, a local `pytest`, a TestNG sess
 | **Signature** | For a failed build, a short chip naming the error most of its failing tests share (hover for the error's first line): builds with the same chip failed the same way. **—** for a passed or in-progress run, and for a failed build older than the newest 50 failed builds of the window |
 | **Status** | Passed, failed or in progress |
 | **AI verdict** | **Go**, **Conditional** or **No-Go** from the run's analysis (the page reads them all in one request), or **—** when there is none (hover for why: the run has not been analysed, or it was analysed but its summary is not built yet, which opening the run's analysis does). Click it to open the run's **Analysis** tab |
-| **Tests** / **Pass rate** | The run's counts |
+| **Tests** / **Pass rate** | The run's counts. A run that is still in progress, reported no tests, or executed none (every result skipped) shows **—** instead of a pass rate (hover for why), and the banner's **Avg pass rate** leaves it out. Releases, Run compare and the live executions on the Agents page show **—** the same way |
 | **Timing** | When it ran and how long it took: the **wall clock** ("9.0s wall") when the run reported one, otherwise the **summed** test time ("17.4s summed"); hover for both. Click the header to sort |
 | **Actions** | Icon buttons: **Re-trigger standard pipeline**, **Trigger deep investigation**, and **Compare to the previous run** of the same suite |
 

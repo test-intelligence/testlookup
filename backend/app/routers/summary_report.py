@@ -79,7 +79,11 @@ async def get_summary_report(
             reason="The summary report is per project: select a project.",
         )
     else:
-        meta = await build_meta(db, scope, pass_rate_basis=PASS_RATE_BASIS_UNIQUE_TESTS)
+        # D-0012: meta agrees with the body (executions in latest mode and the aggregate fallback).
+        meta = await build_meta(
+            db, scope,
+            pass_rate_basis=payload.get("totals", {}).get("pass_rate_basis", PASS_RATE_BASIS_UNIQUE_TESTS),
+        )
     return SummaryReportResponse(**with_meta(payload, meta))
 
 

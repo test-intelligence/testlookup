@@ -2085,8 +2085,9 @@ export function summaryReport(request: ApiRequest) {
       broken,
       evaluated,
       pass_rate_pct: pct1(passed, total),
-      pass_rate_basis: 'unique_tests',
-      pass_rate_basis_label: 'per unique test',
+      // D-0012: the server's basis per mode (latest sums the latest run's counters: executions).
+      pass_rate_basis: mode === 'latest' ? 'executions' : 'unique_tests',
+      pass_rate_basis_label: mode === 'latest' ? 'per test execution' : 'per unique test',
       fail_rate_pct: pct1(failed, total),
       skip_rate_pct: pct1(skipped, total),
       broken_rate_pct: pct1(broken, total),
