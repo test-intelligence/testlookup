@@ -49,3 +49,7 @@ ReactDOM.createRoot(rootElement).render(
     </ErrorBoundary>
   </React.StrictMode>
 )
+
+// D-0019: one account per browser profile. The cross-tab listeners (and the note saying why a tab reloaded) load
+// after the first render, off the eager bundle; the write guard is already in the auth store.
+void import('./store/authCrossTab').then(({ installAuthCrossTab }) => installAuthCrossTab())

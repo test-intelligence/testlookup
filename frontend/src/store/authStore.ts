@@ -1,7 +1,51 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware';
 import { api } from '../services/api';
 import { resetReportScopeOnLogout } from './logoutReset';
+
+/** The session's `localStorage` key: one entry shared by every tab of this browser profile. */
+export const AUTH_STORAGE_KEY = 'auth-storage';
+
+// ── One account per browser profile (D-0019) ───────────────────────────────
+// Every tab hydrates `auth-storage` once and then works from its own copy in memory. A sign-in as someone else,
+// or a sign-out, in another tab applies to this tab too: it reloads, and until then it never writes its old
+// account back over the new one (the next tab or reload would hydrate it). Another tab refreshing the same
+// account's tokens is adopted without a reload. Only the write guard is here (it must be in place before the
+// store's first write); the reload, the listeners and the note are `authCrossTab.ts`, loaded after the first
+// render (the eager bundle budget), which takes `sessionHooks.superseded` and, on install, catches up on a write
+// the guard skipped before it loaded.
+
+/** The user id this tab last read from or wrote to `auth-storage`; `null` when signed out. */
+let tabUserId: string | null = null;
+/** True only during `setAuth`'s write when it brings a new token: a sign-in here, which replaces any account. */
+let signingIn = false;
+/** What the guard calls when it skips a write: `authCrossTab` reloads the tab. */
+export const sessionHooks: { superseded?: () => void } = {};
+
+/** The user id an `auth-storage` value names; `null` when signed out, empty or unreadable. */
+export function storedUserId(raw: string | null): string | null {
+  try {
+    return (raw && JSON.parse(raw).state?.user?.id) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** `auth-storage`, guarded: a tab never writes over an entry another tab gave to a different account. */
+const guardedLocalStorage: StateStorage = {
+  getItem: (name) => {
+    const raw = localStorage.getItem(name);
+    tabUserId = storedUserId(raw);
+    return raw;
+  },
+  setItem: (name, value) => {
+    const current = localStorage.getItem(name);
+    if (!signingIn && current !== null && storedUserId(current) !== tabUserId) return sessionHooks.superseded?.();
+    localStorage.setItem(name, value);
+    tabUserId = storedUserId(value);
+  },
+  removeItem: (name) => localStorage.removeItem(name),
+};
 
 export interface User {
   id: string;
@@ -92,8 +136,13 @@ export const useAuthStore = create<AuthState>()(
 
       setHasHydrated: (v) => set({ _hasHydrated: v }),
 
-      setAuth: (token, refreshToken, user, options) =>
-        set((state) => ({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1, lastVerifiedAt: Date.now(), demoSession: options?.demo === true })),
+      setAuth: (token, refreshToken, user, options) => {
+        // D-0019: a new token is a sign-in here, which replaces whatever account is stored; the same token (a profile
+        // save re-storing the user) stays under the guard.
+        signingIn = token !== get().token;
+        set((state) => ({ token, refreshToken, user: normalizeUser(user), isAuthenticated: true, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false, sessionGeneration: state.sessionGeneration + 1, lastVerifiedAt: Date.now(), demoSession: options?.demo === true }));
+        signingIn = false;
+      },
 
       clearMustChangePassword: () =>
         set((state) =>
@@ -200,7 +249,8 @@ export const useAuthStore = create<AuthState>()(
       },
     }),
     {
-      name: 'auth-storage',
+      name: AUTH_STORAGE_KEY,
+      storage: createJSONStorage(() => guardedLocalStorage),
       // Persist user + isAuthenticated alongside tokens so that a hard page
       // refresh never clears auth state while valid tokens are still present.
       // fetchUser() still runs in the background on every protected mount to
