@@ -17,9 +17,10 @@ export const SETTINGS_ROOT = '/settings'
 
 /**
  * `engineer`: QA engineer and above (`usePermissions().canGenerateApiKeys`), on a route every role can open.
- * `admin`: a management route whose whole content is admin-only — its API answers anyone else 403, so a
- * QA lead offered it opened "Admin access required" (Feature flags) or a 403 over "No SSO configurations"
- * (SSO; the UX redesign's browser E2E pass).
+ * `admin`: a management route whose page shows a non-admin nothing but the refusal, whatever its GET allows
+ * (SSO, Feature flags, Review gate, MFA & lockout, Retention & purge). A QA lead offered one opened only
+ * "Admin access required" (the UX redesign's browser E2E pass; D-0017: MFA's GET answers a QA lead, and a
+ * project's retention policy any member, yet both pages refuse them).
  */
 export type SettingsAccess = 'all' | 'engineer' | 'management' | 'admin'
 
@@ -63,7 +64,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
       { id: 'ownership', label: 'Ownership', description: 'Which team owns which suites and tests', to: '/ownership', requires: 'management' },
       { id: 'team-channels', label: 'Team channels', description: "Each team's alerts sent to the team's own channel", to: '/settings/team-channels', requires: 'management' },
       { id: 'api-keys', label: 'Streaming API keys', description: "The project's keys for CI result streaming", to: '/settings/api-keys', requires: 'management' },
-      { id: 'retention', label: 'Retention & purge', description: 'How long runs and artifacts are kept', to: '/settings/retention', requires: 'management' },
+      { id: 'retention', label: 'Retention & purge', description: 'How long runs and artifacts are kept', to: '/settings/retention', requires: 'admin' },
       // W23a TRND-03: a QA lead's tool, so the item is QA lead+; its route is open to every role (anyone who
       // has the URL reads the table, without actions) — the one item stricter than its route, on purpose.
       { id: 'expected-runs', label: 'Expected runs', description: 'When a run is expected, so a missing one is noticed', to: '/settings/expected-runs', requires: 'management' },
@@ -110,7 +111,7 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = [
     items: [
       { id: 'users', label: 'Users', description: 'Accounts and their roles', to: '/users', requires: 'management' },
       { id: 'sso', label: 'SSO & identity', description: 'Single sign-on providers', to: '/settings/sso', requires: 'admin' },
-      { id: 'mfa-policy', label: 'MFA & lockout', description: 'Second factor and failed-login lockout', to: '/settings/mfa-policy', requires: 'management' },
+      { id: 'mfa-policy', label: 'MFA & lockout', description: 'Second factor and failed-login lockout', to: '/settings/mfa-policy', requires: 'admin' },
       { id: 'audit', label: 'Audit dashboard', description: 'Who changed what', to: '/settings/audit', requires: 'management' },
       { id: 'activity', label: 'Activity log', description: 'Everything that happened, in order', to: '/activity', requires: 'management' },
     ],

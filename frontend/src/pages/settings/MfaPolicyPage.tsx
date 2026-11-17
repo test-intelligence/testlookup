@@ -43,9 +43,9 @@ function toDraft(policy: MfaPolicy): Draft {
 
 export default function MfaPolicyPage() {
   const { isAdmin } = usePermissions()
-  // QA_LEAD can read the policy, so the fetch is not gated on isAdmin — only
-  // the controls are. The backend is the real boundary on both reads and writes.
-  const { data: policy, error, isLoading, mutate } = useMfaPolicy()
+  // The page is admin-only (the early return below). A QA lead may read the policy through the API, but this page
+  // asks nothing for them (D-0017).
+  const { data: policy, error, isLoading, mutate } = useMfaPolicy(isAdmin)
 
   const [draft, setDraft] = useState<Draft | null>(null)
   const [saving, setSaving] = useState(false)

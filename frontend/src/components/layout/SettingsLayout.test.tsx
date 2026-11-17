@@ -50,15 +50,14 @@ describe('SettingsLayout', () => {
     expect(current(nav)).toEqual(['Profile'])
   })
 
-  it('SSO and Feature flags for an admin only: a QA lead got 403s there (browser E2E pass)', () => {
+  it('SSO, Feature flags, MFA & lockout and Retention & purge for an admin only (browser E2E pass; D-0017)', () => {
     const links = () => within(renderAt('/settings/profile')).getAllByRole('link').map((a) => a.textContent)
     const lead = links()
-    expect(lead).toContain('MFA & lockout')
-    expect(lead).not.toContain('SSO & identity')
-    expect(lead).not.toContain('Feature flags')
+    for (const label of ['SSO & identity', 'Feature flags', 'MFA & lockout', 'Retention & purge']) expect(lead).not.toContain(label)
+    expect(lead).toContain('Team channels')
     cleanup()
     perms.value = { ...perms.value, isAdmin: true }
-    expect(links()).toEqual(expect.arrayContaining(['SSO & identity', 'Feature flags']))
+    expect(links()).toEqual(expect.arrayContaining(['SSO & identity', 'Feature flags', 'MFA & lockout', 'Retention & purge']))
   })
 
   it('the sub-nav scrolls on its own: seven groups are taller than the window', () => {

@@ -100,15 +100,37 @@ describe('settings sub-nav: who sees what', () => {
     }
   })
 
-  it('SSO and Feature flags are admin-only: their API answers a QA lead 403 (browser E2E pass)', () => {
+  it('pages a non-admin can only be refused on are admin-only (browser E2E pass; D-0017)', () => {
     const ids = (isAdmin: boolean) =>
       settingsGroupsFor({ canAccessManagement: true, isAdmin, canOwnApiKeys: true, isDev: false }).flatMap((g) => g.items.map((i) => i.id))
-    // W23c AGT-10: Review gate too (its GET / PUT answer a QA lead 403) — see the case below.
-    expect(ITEMS.filter((i) => i.requires === 'admin').map((i) => i.id)).toEqual(['review-gate', 'sso', 'feature-flags'])
-    expect(ids(false)).not.toContain('sso')
-    expect(ids(false)).not.toContain('feature-flags')
-    expect(ids(false)).toContain('mfa-policy')
-    expect(ids(true)).toEqual(expect.arrayContaining(['sso', 'feature-flags', 'mfa-policy']))
+    // W23c AGT-10: Review gate too (its GET / PUT answer a QA lead 403) — see the case below. D-0017 (GPT-6): MFA &
+    // lockout and Retention & purge show a non-admin only "Admin access required", whatever their GET allows.
+    expect(ITEMS.filter((i) => i.requires === 'admin').map((i) => i.id)).toEqual(['retention', 'review-gate', 'sso', 'mfa-policy', 'feature-flags'])
+    for (const id of ['sso', 'feature-flags', 'mfa-policy', 'retention']) expect(ids(false)).not.toContain(id)
+    // A QA lead keeps the management pages it can use.
+    expect(ids(false)).toEqual(expect.arrayContaining(['team-channels', 'users', 'audit']))
+    expect(ids(true)).toEqual(expect.arrayContaining(['sso', 'feature-flags', 'mfa-policy', 'retention']))
+  })
+
+  // D-0017 (GPT-6): a management route whose page shows a non-admin nothing but "Admin access required" is an
+  // admin item, whatever its GET allows (MFA's GET answers a QA lead 200, retention's any project member): a QA
+  // lead offered MFA & lockout and Retention & purge opened only the refusal.
+  it('every settings page that refuses a non-admin outright is an admin-only item (D-0017)', () => {
+    const PAGES = import.meta.glob('../../pages/settings/*.tsx', { query: '?raw', import: 'default', eager: true }) as Record<string, string>
+    const start = APP.indexOf('const managementRoutes: AppRoute[] = [')
+    const block = APP.slice(start, APP.indexOf('\n]\n', start))
+    const refusing = Array.from(block.matchAll(/path:\s*'([^']+)',\s*component:\s*(\w+)/g)).flatMap(([, path, component]) => {
+      const file = APP.match(new RegExp(`const ${component} = lazy\\(\\(\\) => import\\('@/pages/settings/(\\w+)'\\)`))?.[1]
+      const source = file ? PAGES[`../../pages/settings/${file}.tsx`] : undefined
+      return source?.includes('title="Admin access required"') ? [`/${path}`] : []
+    })
+    // Feature flags, SSO, MFA & lockout, Retention & purge (Review gate refuses in its own words).
+    expect(refusing.sort()).toEqual(['/settings/feature-flags', '/settings/mfa-policy', '/settings/retention', '/settings/sso'])
+    for (const to of refusing) {
+      const item = ITEMS.find((i) => i.to === to)
+      expect(item, `${to} is listed`).toBeDefined()
+      expect(item?.requires, `${to} refuses a non-admin outright`).toBe('admin')
+    }
   })
 
   it('Review gate is the AI group\'s admin-only item after AI agents (W23c AGT-10)', () => {
