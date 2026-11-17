@@ -33,7 +33,7 @@ Under every answer:
 
 - **AI-suggested** — a reminder that the text is model-written. No confidence score is shown.
 - **How I looked this up** — the lookups the assistant made and what each one found. Read this when an answer surprises you.
-- **Links** to every build and test the answer names, so you can open the evidence.
+- **Links** to every build and test the answer names (up to eight), so you can open the evidence. The assistant does not write links itself; when you ask for links, it points you to these.
 - The model used, how long the first words took, and how long the whole answer took.
 
 The assistant can look up, for the selected project only: the recent runs, a run's failures, one test's history across runs, a comparison between two builds, the flaky-test list and quarantine state, failure clusters, the release-gate verdict, what earlier analyses found, and counts of failure kinds. All lookups are read-only.

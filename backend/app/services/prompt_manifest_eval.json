@@ -1,8 +1,8 @@
 {
-  "attested_at": "2026-11-05T01:40:29.488636+00:00",
-  "change_id": "F-OR07-2",
+  "attested_at": "2026-11-17T16:24:54.004667+00:00",
+  "change_id": "GPT6-D-0010",
   "eval_gate_run_id": null,
-  "eval_manifest_checksum": "732aa92dd0d839bf834c17e0dc95756d315d7efceaecb394368bd4d4564c71c8",
+  "eval_manifest_checksum": "3d2a80f15635b4f21fdc8c08700c1b42f147c8b20e4138e2ee4efdf4c8a8ff65",
   "gate_results": [
     {
       "agent_name": "AnalysisAgent",
@@ -93,13 +93,13 @@
       "task_type": "release_decision"
     }
   ],
-  "manifest_digest": "cd15b7ee8db46a0ada0c50ad81ff3aca7bcc4b24f7d4f2c290411892630e9a29",
+  "manifest_digest": "7fa198b1eec6e5ffe3dc7ecd200b2d00f69037d9f043fccc1f3a7e376d08cb56",
   "mode": "source_review",
-  "notes": "summary_executive v1 -> v2 (owner-approved 2026-11-05): one exception sentence - when the data names supplied failures instead of the run's results it has no pass rate and no release readiness signal, so the 3 sentences give the supplied count, the most critical category and the next action. The prompt feeds no scored task and is not gated in prompt_eval_recordings (the W11-REL-07 / W23c-F-1 precedent): reviewed from source; the gate results are the real offline run. The live-model check is the homelab inline-summary re-walk after deploy (or07a_homelab_walk.mjs: no release-readiness conclusion). Offline golden verdict as computed: insufficient_samples.",
+  "notes": "chat_system v4 -> v5 (D-0010, GPT-6 exploratory round, owner plan P6): one rule - each build and test the answer names from the snapshot or a tool result is shown as a link under the answer (up to eight), so the model never writes URLs, never says it cannot provide links and never tells the reader to search for a build or test it named. GPT-6 asked for links and the model said it could not give any, above the three links the app rendered. The prompt feeds no scored task and is not gated in prompt_eval_recordings (the W11-REL-07 / W23c-F-1 / F-OR07-2 precedent): reviewed from source, pinned by test_chat_system_is_deliberate_v5 and the chat-turn test that reads the system message; the gate results are the real offline run (classification, root_cause, release_decision pass; duplicate_detection insufficient_samples as on main). No model choice, routing or watched source changed. The live-model check is the homelab re-test (at most 3 paid calls). Offline golden verdict as computed: insufficient_samples.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
-    "chat_system": "v4:fe1dec9d3a30",
+    "chat_system": "v5:df750f2fccfa",
     "defect_promotion_ticket": "v1:45d88cc4d33b",
     "fast_classifier_system": "v1:9d46ffbbed7b",
     "finetune_reasoning_system": "v1:3ea37c087b6b",
