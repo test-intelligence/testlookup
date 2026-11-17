@@ -84,7 +84,10 @@ export const api = axios.create({
 // leak the JWT to third parties.
 api.interceptors.request.use((config) => {
   const token = useAuthStore.getState().token
-  if (token && isSameOriginRequest(config)) {
+  // A request that names its own bearer keeps it: a sign-in fetches the new account's user with the new token while
+  // the store still holds the previous session's (D-0019: the tab kept the new token with the old user). The
+  // refresh-and-retry paths below set the new token explicitly too.
+  if (token && isSameOriginRequest(config) && !config.headers.Authorization) {
     config.headers.Authorization = `Bearer ${token}`
   }
   return config
