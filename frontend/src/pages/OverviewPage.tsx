@@ -339,6 +339,15 @@ function runHasSuite(run: TestRun, suiteName: string): boolean {
   return names.some((suite) => suite?.trim().toLowerCase() === target)
 }
 
+/** The run received last (greatest `created_at`; the Runs table's order), or undefined. */
+function newestReceived(runs: readonly TestRun[]): TestRun | undefined {
+  let newest: TestRun | undefined
+  for (const run of runs) {
+    if (!newest || Date.parse(run.created_at) > Date.parse(newest.created_at)) newest = run
+  }
+  return newest
+}
+
 /** The newest run's suite(s), as words: "Checkout", or "Checkout +2". */
 function suiteWords(run: TestRun | undefined): string | null {
   if (!run) return null
@@ -401,7 +410,10 @@ export default function OverviewPage() {
   const retryCategories = useCallback(() => {
     void mutateCategories()
   }, [mutateCategories])
-  const { data: recentRuns } = useRuns({ page: 1, size: 100, days })
+  // D-0022: newest RECEIVED first, as the Runs table lists them. The server's
+  // default is the highest build label first, which compares labels across
+  // suites and named an older suite "latest".
+  const { data: recentRuns } = useRuns({ page: 1, size: 100, days, order: 'newest' })
   // The newest run IGNORING the window. Without this the page cannot tell
   // "no runs in the last 7 days" from "no runs at all", and it rendered the
   // same silent 0/— for both. One row, and SWR keys on the params so it does
@@ -436,11 +448,14 @@ export default function OverviewPage() {
   const latestRun = useMemo(
     // OR within the suite dimension: the newest run carrying ANY selected
     // suite. With none selected `runHasSuite(run, '')` is true, as before.
+    // D-0022: the newest by when it was received, never by list position.
     () =>
-      recentRunItems.find((run) =>
-        suiteNames.length <= 1
-          ? runHasSuite(run, suiteNames[0] ?? '')
-          : suiteNames.some((name) => runHasSuite(run, name)),
+      newestReceived(
+        recentRunItems.filter((run) =>
+          suiteNames.length <= 1
+            ? runHasSuite(run, suiteNames[0] ?? '')
+            : suiteNames.some((name) => runHasSuite(run, name)),
+        ),
       ),
     [recentRunItems, suiteNames],
   )
@@ -449,10 +464,10 @@ export default function OverviewPage() {
     () =>
       describeEmptyWindow({
         totalInWindow: summary?.total_executions_7d?.value as number | undefined,
-        // Same ordering as the probe's single row, so the first windowed row
-        // is the answer whenever there is one.
+        // The newest windowed run by when it was received (D-0022); the probe's
+        // single row answers only when the window is empty.
         newestRunAt: windowHasRuns
-          ? recentRunItems[0]?.created_at ?? null
+          ? newestReceived(recentRunItems)?.created_at ?? null
           : newestRunPage?.items?.[0]?.created_at ?? null,
         days,
         options: TIME_OPTIONS,

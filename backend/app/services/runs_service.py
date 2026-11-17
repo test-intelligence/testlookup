@@ -377,6 +377,30 @@ MAX_BRANCH_LENGTH = 255
 BRANCH_INVALID_DETAIL = "branch: at most 20 names of 1-255 characters."
 
 
+#: D-0022: the run list's two orders. ``build`` (the default, UI-003): the highest
+#: build label first, the right order WITHIN one CI series. ``newest``: the run
+#: TestLookup received last first (``created_at``), the order that compares runs
+#: ACROSS suites -- the Runs table's, the Dashboard's "latest suite", Summary's.
+RUN_LIST_ORDERS = ("build", "newest")
+RUN_ORDER_INVALID_DETAIL = "order must be one of build, newest."
+
+
+def parse_run_list_order(order: str | None) -> str:
+    """``order`` before any database access: absent = ``build``; else one fixed 422 text."""
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    if order is None:
+        return "build"
+    if order not in RUN_LIST_ORDERS:
+        raise HTTPException(status_code=422, detail=RUN_ORDER_INVALID_DETAIL)
+    return order
+
+
+def run_list_newest_order_keys() -> tuple:
+    """``order=newest``: the run received last first; ``id`` breaks a tie so pages never overlap."""
+    return (TestRun.created_at.desc(), TestRun.id.desc())
+
+
 def parse_run_list_toolbar(
     q: str | None, branch: list[str] | None, recommendation: str | None,
 ) -> dict:
@@ -552,8 +576,12 @@ async def list_project_runs(
     q: str | None = None,
     branches: tuple[str, ...] = (),
     recommendation: str | None = None,
+    order: str = "build",
 ):
     """Paginated test run listing, enriched with release + project_name.
+
+    ``order`` (D-0022): ``build`` (default) lists the highest build label
+    first; ``newest`` lists the run received last first (``created_at``).
 
     ``release_id`` and ``suite_name`` take one value (the legacy call, whose
     statements are unchanged) or a tuple of several: OR within each, AND
@@ -676,6 +704,10 @@ async def list_project_runs(
         TestRun.created_at.desc(),
         TestRun.id.desc(),
     )
+    if order == "newest":
+        # D-0022: build labels mean something only within one CI series; the
+        # newest run across suites is the one received last.
+        order_keys = run_list_newest_order_keys()
     items_stmt = (
         select(TestRun, Project.name.label("project_name"))
         .outerjoin(Project, Project.id == TestRun.project_id)

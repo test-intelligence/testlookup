@@ -89401,6 +89401,24 @@
             }
           },
           {
+            "description": "build (default): the highest build label first. newest: the run received last first (created_at).",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "build (default): the highest build label first. newest: the run received last first (created_at).",
+              "title": "Order"
+            }
+          },
+          {
             "in": "header",
             "name": "X-API-Key",
             "required": false,

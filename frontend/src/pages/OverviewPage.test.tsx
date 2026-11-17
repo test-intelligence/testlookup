@@ -1749,3 +1749,63 @@ describe('OverviewPage — the Insights card (W23a FAIL-11)', () => {
     }
   })
 })
+
+// D-0022 (GPT-6): the header's "latest suite" is the suite of the run received last, the first row on Runs. The
+// server lists by highest build label by default, and `GPT6-IT01-W4-CF06` (received 14 h ago) sorts above
+// `GPT6-IT01-W3-*` (received 30 min and 2 h ago), so the first row named the older suite.
+describe("OverviewPage — the latest suite is the newest run's (D-0022)", () => {
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString()
+  const run = (id: string, build: string, suite: string, h: number) => ({
+    id, build_number: build, created_at: hoursAgo(h), primary_suite_name: suite, suite_names: [suite],
+  })
+  /** In the server's default (build label) order: CF06 first, though it is the oldest. */
+  const buildOrdered = () => [
+    run('r-cf06', 'GPT6-IT01-W4-CF06', 'GPT6 CF06 review', 14),
+    run('r-after', 'GPT6-IT01-W3-quarantine-after', 'GPT6 W3 synthetic', 0.5),
+    run('r-during', 'GPT6-IT01-W3-quarantine-during', 'GPT6 W3 synthetic', 2),
+  ]
+
+  beforeEach(async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    runsState.windowed = buildOrdered()
+    runsState.newest = runsState.windowed
+    runsState.everHad = undefined
+  })
+
+  function renderPage() {
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('names the suite of the run received last, whatever the list order', async () => {
+    const { useRuns } = await import('@/hooks/useRuns')
+    renderPage()
+    expect(await screen.findByText(/latest suite GPT6 W3 synthetic/)).toBeInTheDocument()
+    expect(screen.queryByText(/latest suite GPT6 CF06 review/)).toBeNull()
+    // The window's list asks the server for the newest received first.
+    const windowed = (useRuns as ReturnType<typeof vi.fn>).mock.calls
+      .map(([params]) => params as { size?: number } | undefined)
+      .filter((params) => params?.size === 100)
+    expect(windowed.length).toBeGreaterThan(0)
+    for (const params of windowed) expect(params).toMatchObject({ size: 100, order: 'newest' })
+  })
+
+  it('with a suite selected, names that suite', async () => {
+    renderPage()
+    const select = (await screen.findByTitle('Filter dashboard metrics by test suite')) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'GPT6 CF06 review' } })
+    expect(await screen.findByText(/latest suite GPT6 CF06 review/)).toBeInTheDocument()
+  })
+
+  it('control: when the labels agree with time, the answer is the same', async () => {
+    runsState.windowed = [...buildOrdered()].reverse()
+    renderPage()
+    expect(await screen.findByText(/latest suite GPT6 W3 synthetic/)).toBeInTheDocument()
+  })
+})

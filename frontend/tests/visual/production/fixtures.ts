@@ -344,6 +344,11 @@ export function runListOf(
         if (recommendation && recommendation !== 'none' && run.ai_recommendation !== recommendation) return false
         return true
       })
+    // D-0022: `order=newest` is the run received last first; otherwise the source's own order (newest build
+    // first: in `runs()` the build labels fall as time falls, so both orders agree there).
+    if (params.get('order') === 'newest') {
+      all.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || (a.id < b.id ? 1 : -1))
+    }
     const items = all.slice((pageNo - 1) * size, pageNo * size)
     return { items, total: all.length, page: pageNo, size, pages: all.length > 0 ? Math.ceil(all.length / size) : 0 }
   }

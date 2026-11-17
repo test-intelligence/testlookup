@@ -39,9 +39,9 @@ def wired(monkeypatch):
     calls: list[dict] = []
 
     async def _list(db, project_id, page, size, status=None, release_id=None, accessible_project_ids=None,
-                    days=6, suite_name=None, *, q=None, branches=(), recommendation=None):
+                    days=6, suite_name=None, *, q=None, branches=(), recommendation=None, order="build"):
         calls.append({"project_id": project_id, "q": q, "branches": branches, "recommendation": recommendation,
-                      "days": days})
+                      "days": days, "order": order})
         return [], 0, 0
 
     monkeypatch.setattr(runs_router, "list_project_runs", _list)
@@ -98,6 +98,26 @@ async def test_a_bad_value_is_a_422_before_any_database_access(wired, params, de
     response = await _get(app, params)
     assert response.status_code == 422
     assert response.json() == {"detail": detail}
+    assert calls == []
+
+
+@pytest.mark.parametrize("with_project", [False, True])
+async def test_order_reaches_the_service_on_both_branches(wired, with_project):
+    """D-0022: ``order`` is forwarded on both handler branches; omitted it is ``build`` (today's order)."""
+    app, calls = wired
+    project = [("project_id", str(MINE))] if with_project else []
+    assert (await _get(app, project)).status_code == 200
+    assert (await _get(app, [*project, ("order", "newest")])).status_code == 200
+    assert (await _get(app, [*project, ("order", "build")])).status_code == 200
+    assert [c["order"] for c in calls] == ["build", "newest", "build"]
+
+
+@pytest.mark.parametrize("value", ["bogus", "NEWEST", "", "created_at"])
+async def test_a_bad_order_is_a_422_before_any_database_access(wired, value):
+    app, calls = wired
+    response = await _get(app, [("order", value)])
+    assert response.status_code == 422
+    assert response.json() == {"detail": "order must be one of build, newest."}
     assert calls == []
 
 

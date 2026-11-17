@@ -685,7 +685,7 @@ describe('RunsPage — the page template (P3)', () => {
     expect(within(picker).getByRole('radio', { name: '30d' })).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(within(picker).getByRole('radio', { name: '7d' }))
     expect(useTimeWindowStore.getState().days).toBe(7)
-    expect(vi.mocked(useRuns).mock.lastCall?.[0]).toMatchObject({ days: 7, size: 500 })
+    expect(vi.mocked(useRuns).mock.lastCall?.[0]).toMatchObject({ days: 7, size: 500, order: 'newest' })
     expect(screen.getByRole('combobox', { name: 'Run status' })).toBeInTheDocument()
   })
 })

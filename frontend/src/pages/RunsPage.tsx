@@ -1559,6 +1559,9 @@ export default function RunsPage() {
     page: 1,
     size: ANALYTICS_FETCH_SIZE,
     days,
+    // D-0022: the newest 500 by when they were received, the order the table
+    // shows (the server's default is the highest build label first).
+    order: 'newest',
     ...(statusFilter && { status: statusFilter }),
     ...(pageSuiteFilter && { suite_name: pageSuiteFilter }),
     ...(urlQ && { q: urlQ }),
@@ -1597,8 +1600,8 @@ export default function RunsPage() {
   const fetchedAt = useDataFreshness(data)
   const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
   const runs = useMemo<TestRun[]>(() => (shownData?.items ?? []) as TestRun[], [shownData?.items])
-  // Client-side sort by run datetime (created_at). The backend already returns
-  // desc order, so 'desc' here is a no-op until the user clicks. Sorting is
+  // Client-side sort by run datetime (created_at). The list is asked for
+  // `order: 'newest'` (created_at desc), so 'desc' here is a no-op until the user clicks. Sorting is
   // applied to the full fetched page set *before* table-pagination, so
   // toggling the direction reorders every row currently in scope.
   const [datetimeSortDir, setDatetimeSortDir] = useState<'asc' | 'desc'>('desc')

@@ -10,7 +10,7 @@ A **run** is one execution of a suite: a CI job, a local `pytest`, a TestNG sess
 
 **The status banner** sums up the window: **Pipeline broken**, **Mixed**, **Pipeline healthy** or **Pending**, with the **Last green** run, the **Red streak** (how many runs in a row have failed) and the **Avg pass rate**. When the window holds a failing run, the banner offers **Bisect from last green** (**Bisect the latest failure** when the window has no green run; see [Bisect from last green](#bisect-from-last-green)).
 
-**The table** shows 25 runs per page, newest first:
+**The table** shows 25 runs per page, newest first (by when TestLookup received each run):
 
 | Column | Shows |
 |---|---|
