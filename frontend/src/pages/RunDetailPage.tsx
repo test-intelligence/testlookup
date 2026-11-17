@@ -27,6 +27,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Check, FileDown, GitCompare, MessageSquare, Package, PencilLine, RefreshCw, ShieldCheck, Stethoscope, X, Zap } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { appMutate } from '@/utils/swrCacheMutate'
+import EmptyState from '@/components/ui/EmptyState'
 import PageHeader from '@/components/ui/PageHeader'
 import Tabs, { type TabItem } from '@/components/ui/Tabs'
 import { useTabParam } from '@/components/ui/useTabParam'
@@ -46,7 +47,6 @@ import RunTimingFigures from '@/components/runs/RunTimingFigures'
 import { runsService } from '@/services/runsService'
 import agentService from '@/services/agentService'
 import WorkflowPicker from '@/components/agents/WorkflowPicker'
-import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
 import { formatDateTime } from '@/utils/formatters'
 import { RunDeepClusters } from './DeepInvestigationPage'
@@ -190,7 +190,10 @@ export default function RunDetailPage() {
 
   useProjectChangeRedirect('/runs', Boolean(runId))
 
-  const { data: run } = useRun(runId)
+  const { data: run, error: runError } = useRun(runId)
+  // D-0023: the server answers a run that does not exist and a run in a project the user is not a member of with
+  // the same 404 (no existence oracle). Such a run opens as Run not found: no tabs, no actions.
+  const runNotFound = !run && (runError as { response?: { status?: number } } | undefined)?.response?.status === 404
 
   // "Compare to previous run" opens the SERVER's previous run (W03, D42: same
   // suite and branch, the newest that finished before this one) — the same
@@ -239,9 +242,8 @@ export default function RunDetailPage() {
   // picker under the header (the same strip as /agents' Choose workflow);
   // queuing happens there.
   const [pickerOpen, setPickerOpen] = useState(false)
-  const activeProjectId = useProjectStore(state => state.activeProjectId)
-  const pickerProjectId =
-    run?.project_id ?? (activeProjectId && activeProjectId !== ALL_PROJECTS_ID ? activeProjectId : null)
+  // The picker opens only for a loaded run (D-0023), so it lists that run's project's workflows.
+  const pickerProjectId = run?.project_id ?? null
   const [triggeringDeep, setTriggeringDeep] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -299,14 +301,14 @@ export default function RunDetailPage() {
             label: 'Trigger pipeline',
             icon: <Zap className="h-3.5 w-3.5" />,
             onClick: () => setPickerOpen(true),
-            disabled: busy || !runId,
+            disabled: busy || !run,
           },
           ...(deepAvailable
             ? [{
                 label: triggeringDeep ? 'Queuing investigation…' : 'Deep investigation',
                 icon: <Stethoscope className="h-3.5 w-3.5" />,
                 onClick: () => void handleTriggerDeep(),
-                disabled: busy,
+                disabled: busy || !run,
               }]
             : []),
         ]
@@ -315,26 +317,26 @@ export default function RunDetailPage() {
       label: refreshing ? 'Refreshing AI analysis…' : 'Refresh AI analysis',
       icon: <RefreshCw className="h-3.5 w-3.5" />,
       onClick: () => void handleRefreshAnalysis(),
-      disabled: refreshing || !runId,
+      disabled: refreshing || !run,
     },
     {
       label: 'Export PDF',
       icon: <FileDown className="h-3.5 w-3.5" />,
       onClick: () => { if (runId) void downloadRunPdf(runId) },
-      disabled: !runId,
+      disabled: !run,
     },
     {
       label: 'Download evidence bundle',
       icon: <Package className="h-3.5 w-3.5" />,
       onClick: () => { if (runId) void downloadRunEvidenceBundle(runId) },
-      disabled: !runId,
+      disabled: !run,
     },
     // W03 AIH-06: every stored AI version of the run, as one JSON file.
     {
       label: 'Export AI history',
       icon: <FileDown className="h-3.5 w-3.5" />,
       onClick: () => { if (runId) void downloadAIHistory(runId, run?.build_number ?? null) },
-      disabled: !runId,
+      disabled: !run,
     },
     {
       label: 'Compare to previous run',
@@ -342,7 +344,7 @@ export default function RunDetailPage() {
       onClick: () => void handleCompareWithPrevious(),
       disabled: !run?.primary_suite_name,
     },
-    ...(runId
+    ...(run && runId
       ? [{ label: 'Release gate', icon: <ShieldCheck className="h-3.5 w-3.5" />, href: `/release-gate/${runId}` }]
       : []),
     // Ask AI, with the question about this run already written (the reader
@@ -368,6 +370,18 @@ export default function RunDetailPage() {
     ? // The Jenkins job when there is one; never a guessed "Jenkins" (a GitLab or GitHub run said Jenkins, W19 demo).
       [run.jenkins_job, run.branch, formatDateTime(run.created_at)].filter(Boolean).join(' · ')
     : undefined
+
+  if (runNotFound) {
+    return (
+      <div className="space-y-4">
+        <PageHeader compact title="Run" helpTopic={HELP_TOPIC} />
+        <EmptyState
+          title="Run not found"
+          description="It may have been deleted, or it belongs to a project you are not a member of."
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">

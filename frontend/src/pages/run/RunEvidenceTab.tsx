@@ -12,7 +12,7 @@
  *      Agent Pipeline page).
  */
 import { useState } from 'react'
-import { Bot } from 'lucide-react'
+import { AlertTriangle, Bot } from 'lucide-react'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import { useAIConfig } from '@/hooks/useAIConfig'
 import { usePipelines } from '@/hooks/useAgentRuns'
@@ -32,7 +32,8 @@ export default function RunEvidenceTab({ runId }: { runId: string }) {
   const analysisMode = aiConfig?.analysis_mode ?? 'auto'
   const showLLMMetrics = analysisMode !== 'rules' && analysisMode !== 'ml'
 
-  const { data: rawPipelines = [], isLoading } = usePipelines(runId)
+  const { data, error, isLoading } = usePipelines(runId)
+  const rawPipelines = data ?? []
   // Newest first: a run carries 0, 2 or 13 pipelines; the newest is the one
   // its report describes, as on the Agent Pipeline page.
   const pipelines = [...rawPipelines].sort(
@@ -64,6 +65,15 @@ export default function RunEvidenceTab({ runId }: { runId: string }) {
         )}
         {isLoading && pipelines.length === 0 ? (
           <div className="flex justify-center py-8"><LoadingSpinner /></div>
+        ) : error && pipelines.length === 0 ? (
+          // D-0020: a failed read is not "never analysed" (the poll tries again).
+          <div className="card flex items-start gap-3 text-sm">
+            <AlertTriangle aria-hidden className="h-5 w-5 flex-shrink-0 text-[var(--ui-warning)]" />
+            <div>
+              <p className="m-0 font-medium text-[var(--color-text)]">Could not load this run&apos;s pipelines.</p>
+              <p className="m-0 mt-1 text-xs text-[var(--color-text-muted)]">This page tries again every few seconds.</p>
+            </div>
+          </div>
         ) : !selected ? (
           <div className="card flex items-start gap-3 text-sm">
             <Bot aria-hidden className="h-5 w-5 flex-shrink-0 text-[var(--color-text-muted)]" />

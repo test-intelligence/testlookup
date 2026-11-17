@@ -56,6 +56,8 @@ Only the person who started a job, or an administrator, can open or cancel it. S
 
 Click a build to open `/runs/<run id>`, titled **Run #<build number>**. Under the title: the run's status, suite and release, and its timing: **Wall clock** (or **not reported** when the report carried no timestamps), **Test time (summed)** and, when both are known, **Parallelism**. See [Concepts](/docs/concepts#definitions) for the three terms. A run that no release claims reads **Unattributed** where the release would be: the [attribution ladder](/docs/releases#getting-runs-into-a-release) did not link it (hover for why). Click **Unattributed** to give the run a release by name, creating the release if it does not exist yet; the pencil next to an existing release (**Change release**) moves the run to another. Both need the `QA_LEAD` role.
 
+A run that does not exist, or that is in a project you are not a member of, opens as **Run not found**, with no tabs and no actions; the two cases look the same on purpose. While the run is still loading, the ⋯ menu's actions are disabled.
+
 The **⋯** menu:
 
 | Action | Does |
@@ -89,7 +91,7 @@ The run's AI analysis report. Old links to `/runs/<id>/intelligence` and `/deep-
 - **The verdict banner**: **Go · release cleared**, **Conditional Go · proceed with mitigation**, **No-Go · release blocked** or **Pending · awaiting evidence**, with the risk score, the number of blocking issues and the AI confidence. **Decision trail** shows how the verdict was reached, step by step.
 - **The review banner**, when the report is waiting for or has had a human review. See [Your inbox and approvals](/docs/inbox#approvals).
 - **What failed**: each failure, with **Open test case**, **Decision trail** and **File defect** (`QA_ENGINEER` or above).
-- **Proposed clusters**: the run's failures grouped by likely shared cause. **Analyze failures** starts a deep investigation of this run; it is disabled when the run has no failures, when one is already running, or for roles below `QA_ENGINEER`. See [Root cause (AI)](/docs/failure-analysis#root-cause-ai-deep-investigation).
+- **Proposed clusters**: the run's failures grouped by likely shared cause. **Analyze failures** starts a deep investigation of this run; it is disabled until the run itself has loaded, when the run has no failures, when one is already running, or for roles below `QA_ENGINEER`. See [Root cause (AI)](/docs/failure-analysis#root-cause-ai-deep-investigation).
 - Two collapsed sections: **How this score is computed**, and **Evidence behind the verdict** (the pipeline stages that ran, the test outcome, recommended actions by role with your own role's row first and marked **· your role** — QA for testers, QA engineers and QA leads, Release Manager for administrators — the AI confidence, failure categories, step flips and provenance).
 
 The verdict is computed, not written by a model; see [Releases and gates](/docs/releases#how-it-is-produced). The stages behind it are described in [AI agents and the pipeline](/docs/ai-agents).
@@ -137,7 +139,7 @@ The detail behind the analysis. Old links to `/agents/run/<id>` open here.
 - **Decision intelligence** — the agentic decision report, with a **Report version** picker when the run has been analysed more than once. The picker and the Analysis tab's [AI history](#ai-history) move together. Absent when no decision report exists for the run.
 - **The pipeline's AI report** — **View AI report** to read it, and **Agent stages** to see each stage the pipeline ran. When the run has several pipeline runs, a **Pipeline** picker chooses between them.
 
-"No agent pipeline has analysed this run yet." means no pipeline has run; **Trigger pipeline** in the ⋯ menu starts one.
+"No agent pipeline has analysed this run yet." means no pipeline has run; **Trigger pipeline** in the ⋯ menu starts one. The tab shows the run's own pipelines whichever of your projects is selected in the top bar. If the pipelines cannot be loaded, it says so instead.
 
 ### Timing
 
