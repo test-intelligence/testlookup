@@ -811,9 +811,11 @@ export function DefectKpiStrip({
 type SortKey = 'age' | 'severity' | 'status'
 
 function DefectsTable({
-  rows, search, setSearch, sortKey, setSortKey, statusFilter, emptyQueue, highlightId, onUpdated, rowRef,
+  rows, filterLabel, search, setSearch, sortKey, setSortKey, statusFilter, emptyQueue, highlightId, onUpdated, rowRef,
 }: {
   rows: DefectRow[]
+  /** D-0014: the active status tab's label ("All", "Closed", …): the heading names the population it counts. */
+  filterLabel: string
   search: string
   setSearch: (s: string) => void
   sortKey: SortKey
@@ -870,8 +872,11 @@ function DefectsTable({
       nowrapTitle
       title={
         <>
-          All defects <span className="text-xs text-[var(--color-text-muted)] font-normal ml-2">
-            <strong>{rows.length}</strong> · sorted by {sortKey === 'age' ? 'Age ↓' : sortKey === 'severity' ? 'Severity ↑' : 'Status ↑'}
+          {/* D-0014: the heading names the tab's population and counts the rows the body shows ("3 of 12"
+              under a search). It read "All defects 0" under the Closed tab while the All tab said 2. */}
+          {filterLabel === 'All' ? 'All defects' : `${filterLabel} defects`}{' '}
+          <span className="text-xs text-[var(--color-text-muted)] font-normal ml-2">
+            <strong data-defects-shown="">{sorted.length === rows.length ? rows.length : `${sorted.length} of ${rows.length}`}</strong> · sorted by {sortKey === 'age' ? 'Age ↓' : sortKey === 'severity' ? 'Severity ↑' : 'Status ↑'}
           </span>
         </>
       }
@@ -1612,6 +1617,7 @@ export default function DefectsPage() {
       <section data-primary="" aria-label="All defects">
         <DefectsTable
           rows={visibleRows}
+          filterLabel={STATUS_TABS.find((t) => t.id === activeTab)?.label ?? 'All'}
           search={search}
           setSearch={setSearch}
           sortKey={sortKey}

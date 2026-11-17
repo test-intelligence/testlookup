@@ -19,7 +19,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { opened } from '../lib/inPage'
 import { landmark } from '../lib/production-pages'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
-import { PROJECT_ID } from '../visual/production/fixtures'
+import { defectRows, PROJECT_ID } from '../visual/production/fixtures'
 import { DEFECT_ID, defectsWorld, QA_ENGINEER, RELEASE_PEOPLE, TESTER, VIEWER } from '../visual/production/fixtures-defects'
 
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
@@ -187,3 +187,35 @@ for (const user of [VIEWER, TESTER]) {
     assertHermetic(api, errors)
   })
 }
+
+// D-0014 (GPT-6 exploratory, E2E-0016): the table panel's heading names the status tab and counts the rows the
+// body shows. It read "All defects 0" under the Closed tab while the All tab said 2.
+test('the table heading names the status tab and counts what the table shows', async ({ page }) => {
+  // Three distinct rows: two Open, one Closed (a distinct-id world, so D-0011 plays no part).
+  const base = defectRows()
+  const rows = [base[0], base[4], { ...base[5], resolution_status: 'CLOSED' }]
+  const world = defectsWorld({ rows })
+  const { api, errors } = await openRollout(page, '/defects', { handlers: world.handlers, ready, user: VIEWER })
+  const heading = page.getByRole('region', { name: 'All defects' }).getByRole('heading', { level: 3 })
+  await expect(statusTab(page, 'All')).toContainText('3')
+  await expect(table(page).locator('tbody tr')).toHaveCount(3)
+  await expect(heading).toHaveText(/^All defects\s*3 · sorted by/)
+
+  await statusTab(page, 'Closed').click()
+  await expect(table(page).locator('tbody tr')).toHaveCount(1)
+  await expect(heading).toHaveText(/^Closed defects\s*1 · sorted by/)
+
+  await statusTab(page, 'Resolved').click()
+  await expect(page.getByText('No defects in this filter.')).toBeVisible()
+  await expect(heading).toHaveText(/^Resolved defects\s*0 · sorted by/)
+
+  await statusTab(page, 'All').click()
+  await expect(table(page).locator('tbody tr')).toHaveCount(3)
+  await expect(heading).toHaveText(/^All defects\s*3 · sorted by/)
+  await page.getByLabel('Search defects').fill('refund webhook')
+  await expect(heading).toHaveText(/^All defects\s*1 of 3 · sorted by/)
+
+  await networkQuiet(page, api)
+  expect(world.writes, 'reading writes nothing').toEqual([])
+  assertHermetic(api, errors)
+})
