@@ -219,11 +219,15 @@ describe('SummaryCatalogue — the status donut is the report’s own totals', (
     expect(section('summary-donut').textContent).toMatch(/per unique test · all runs in the window/)
   })
 
-  it('still names the population when an older payload omits the basis label', () => {
+  it('still names the population when an older payload omits the basis label, by mode (D-0012)', () => {
     const report = makeReport()
     report.totals = { ...report.totals, pass_rate_basis_label: undefined }
-    render(<SummaryCatalogue part="headline" report={report} days={1} mode="latest" />)
-    expect(section('summary-donut').textContent).toMatch(/per unique test · latest run per suite/)
+    // Latest mode sums the latest runs' counters: never "per unique test" there.
+    const { unmount } = render(<SummaryCatalogue part="headline" report={report} days={1} mode="latest" />)
+    expect(section('summary-donut').textContent).toMatch(/per test execution · latest run per suite/)
+    unmount()
+    render(<SummaryCatalogue part="headline" report={report} days={1} mode="window" />)
+    expect(section('summary-donut').textContent).toMatch(/per unique test · all runs in the window/)
   })
 })
 

@@ -52,6 +52,7 @@ from app.services.analytics_scope import (
     suite_keys,
 )
 from app.services.metrics_service import (  # F-067: one vocabulary, two surfaces
+    PASS_RATE_BASIS_EXECUTIONS,
     PASS_RATE_BASIS_LABELS,
     PASS_RATE_BASIS_UNIQUE_TESTS,
     _count_flaky_tests,
@@ -84,6 +85,10 @@ class _Totals:
     failed: int
     skipped: int
     broken: int
+    #: What one count is (D-0012): window mode counts each distinct test once
+    #: (``unique_tests``); latest mode and the window's aggregate fallback sum
+    #: run counters, one per test result (``executions``).
+    basis: str = PASS_RATE_BASIS_UNIQUE_TESTS
 
     @property
     def evaluated(self) -> int:
@@ -274,13 +279,15 @@ async def build_summary_report(
             "broken": totals.broken,
             "evaluated": totals.evaluated,
             "pass_rate_pct": totals.pct(totals.passed),
-            # F-067: declare the population. This report counts each distinct
-            # test once (which is what makes its counts agree with Coverage),
-            # while the dashboard counts every execution — 83.3% here vs 81.0%
-            # there on the same window. Both are correct; publishing the basis
-            # is what stops them reading as a contradiction.
-            "pass_rate_basis": PASS_RATE_BASIS_UNIQUE_TESTS,
-            "pass_rate_basis_label": PASS_RATE_BASIS_LABELS[PASS_RATE_BASIS_UNIQUE_TESTS],
+            # F-067: declare the population. Window mode counts each distinct
+            # test once (UNIQUE TESTS, which is what makes its counts agree with
+            # Coverage), while the dashboard counts every execution — 83.3% here
+            # vs 81.0% there on the same window. Latest mode and the window's
+            # aggregate fallback sum run counters: EXECUTIONS (D-0012; it said
+            # "per unique test" for every mode). Publishing the basis is what
+            # stops two correct numbers reading as a contradiction.
+            "pass_rate_basis": totals.basis,
+            "pass_rate_basis_label": PASS_RATE_BASIS_LABELS[totals.basis],
             "fail_rate_pct": totals.pct(totals.failed),
             "skip_rate_pct": totals.pct(totals.skipped),
             "broken_rate_pct": totals.pct(totals.broken),
@@ -527,6 +534,7 @@ async def _window_totals(
             failed=int(run_row.agg_failed or 0),
             skipped=int(run_row.agg_skipped or 0),
             broken=int(run_row.agg_broken or 0),
+            basis=PASS_RATE_BASIS_EXECUTIONS,
         )
     return (
         totals,
@@ -604,6 +612,8 @@ async def _latest_totals(
             failed=int(row.failed or 0),
             skipped=int(row.skipped or 0),
             broken=int(row.broken or 0),
+            # Latest mode sums the latest run's counters: executions (D-0012).
+            basis=PASS_RATE_BASIS_EXECUTIONS,
         ),
         int(row.runs or 0),
         int(row.avg_duration_ms or 0),
@@ -870,6 +880,8 @@ async def _latest_scoped_totals(
             failed=int(row.failed or 0),
             skipped=int(row.skipped or 0),
             broken=int(row.broken or 0),
+            # Latest mode sums the latest run's counters: executions (D-0012).
+            basis=PASS_RATE_BASIS_EXECUTIONS,
         ),
         int(row.runs or 0),
         int(row.avg_duration_ms or 0),

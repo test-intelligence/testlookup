@@ -22,7 +22,7 @@ Project summary has two populations. `window` counts each non-null test fingerpr
 |---|---|---|
 | `totals.pass_rate_pct` | passed / total × 100 | UI **Pass %** headline; total includes skipped and any unknown outcomes |
 | `totals.weighted_pass_rate_pct` | passed / (passed + failed + broken) × 100 | Evaluated-only percentage; skips and unknowns are excluded |
-| `totals.pass_rate_basis` | Currently always `unique_tests` | Describes the usual window path, but is misleading for `latest` and the aggregate fallback |
+| `totals.pass_rate_basis` | `unique_tests` in `window` mode; `executions` in `latest` mode and the window's run-aggregate fallback (D-0012) | `meta.pass_rate_basis` carries the same value |
 
 Both percentages round to one decimal and return zero for a zero denominator. For 70 passed, 15 failed, 5 broken and 10 skipped, the headline is **70.0%** and the weighted field is **77.8%**. [Service assembly](../../backend/app/services/summary_report_service.py#L176), [UI tiles](../../frontend/src/pages/SummaryReportPage.tsx#L335), [behavior tests](../../backend/tests/test_summary_report_service.py#L310).
 
