@@ -304,7 +304,9 @@ const ageDays = (run: { created_at: string }) => Math.floor((NOW.getTime() - Dat
 /**
  * `GET /runs?days=&status=&suite_name=&q=&branch=&recommendation=&page=&size=` over
  * `source` (newest first), as `list_project_runs` answers it: `days` (0 = all
- * time), `status`, `suite_name` (the run's suite; only with `bySuite`: the
+ * time; OMITTED = the server's 30-day default, P11 / D-0001: this fixture used
+ * to read an omitted `days` as all time, which hid a probe that forgot it),
+ * `status`, `suite_name` (the run's suite; only with `bySuite`: the
  * shared list ignored it before W07 and the committed baselines were shot
  * that way), W07 FAIL-05's `q` (case-insensitive contains on build number,
  * branch and CI job; prefix on the commit hash), `branch` (repeatable, exact)
@@ -320,7 +322,7 @@ export function runListOf(
     const params = request.url.searchParams
     const size = intParam(request, 'size', 100)
     const pageNo = Math.max(1, intParam(request, 'page', 1))
-    const days = intParam(request, 'days', 0)
+    const days = intParam(request, 'days', 30)
     const status = params.get('status')
     const q = (params.get('q') ?? '').trim().toLowerCase()
     const branches = params.getAll('branch')

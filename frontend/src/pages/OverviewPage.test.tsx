@@ -92,16 +92,32 @@ const runsState: {
    *  on a project that does have runs. */
   everHad?: unknown[] | null
 } = { windowed: [], newest: [] }
+/** `GET /runs`' `days`: omitted = the last 30 days, 0 = all time, N = the last N days. */
+function inServerWindow(items: unknown[] | null | undefined, days: number | undefined): unknown[] | null {
+  if (items === null || items === undefined) return items ?? null
+  const window = days ?? 30
+  if (window === 0) return items
+  const since = Date.now() - window * 86_400_000
+  return items.filter((run) => {
+    const at = (run as { created_at?: string }).created_at
+    return at === undefined || Date.parse(at) >= since
+  })
+}
 vi.mock('@/hooks/useRuns', () => ({
   // Three shapes now: the windowed list, the release-scoped newest run, and
   // the unfiltered lifetime probe. The first two are told apart by `size`,
   // exactly as the page does; the third by its explicit opt-out.
-  useRuns: vi.fn((params?: { size?: number }, opts?: { ignoreGlobalRelease?: boolean }) => {
+  //
+  // D-0001: the two probes answer the way the server does. An OMITTED `days`
+  // is the server's 30-day window (`routers/runs.py`), `days: 0` is all time.
+  // The mock used to ignore `days`, which is how a probe that omitted it
+  // passed here while it hid every run older than 30 days on a real server.
+  useRuns: vi.fn((params?: { size?: number; days?: number }, opts?: { ignoreGlobalRelease?: boolean }) => {
     let items: unknown[] | null
     if (opts?.ignoreGlobalRelease) {
-      items = runsState.everHad !== undefined ? runsState.everHad : runsState.newest
+      items = inServerWindow(runsState.everHad !== undefined ? runsState.everHad : runsState.newest, params?.days)
     } else {
-      items = params?.size === 1 ? runsState.newest : runsState.windowed
+      items = params?.size === 1 ? inServerWindow(runsState.newest, params?.days) : runsState.windowed
     }
     // `null` models a fetch SWR has not resolved yet (`data: undefined`). That
     // is not the same as an empty list, and the page must not read it as one.
@@ -898,6 +914,31 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
     expect(banner.textContent).toMatch(/16 days ago/i)
     // And a way out.
     expect(banner.textContent).toMatch(/Show last 90 days/i)
+  })
+
+  it('a project whose newest run is 36 days old gets the dashboard and its age, not the first-run guide (D-0001)', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    emptySummary(useDashboardSummary, useTrendData)
+    const thirtySixDaysAgo = new Date(Date.now() - 36 * 24 * 60 * 60 * 1000).toISOString()
+    runsState.windowed = []
+    runsState.newest = [{ id: 'r-old', created_at: thirtySixDaysAgo }]
+    runsState.everHad = undefined
+    ;(useRuns as ReturnType<typeof vi.fn>).mockClear()
+
+    renderPage()
+
+    const banner = await screen.findByTestId('overview-empty-window')
+    expect(banner.textContent).toMatch(/36 days ago/i)
+    expect(banner.textContent).toMatch(/Show last 90 days/i)
+    expect(screen.queryByText(/Welcome to TestLookup/i)).toBeNull()
+    expect(screen.queryByText(/No test runs here yet/i)).toBeNull()
+    // Both probes ask all time.
+    const probes = (useRuns as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([params]) => (params as { size?: number } | undefined)?.size === 1,
+    )
+    expect(probes.length).toBeGreaterThanOrEqual(2)
+    for (const [params] of probes) expect(params).toMatchObject({ days: 0 })
   })
 
   it('does NOT tell a project with no runs at all to widen the window', async () => {

@@ -21,6 +21,7 @@ import { useTabParam } from '@/components/ui/useTabParam'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { useDashboardSummary, useFailureCategories, useTrendData } from '@/hooks/useMetrics'
 import { useRuns } from '@/hooks/useRuns'
+import { ALL_TIME_PROBE } from '@/hooks/runProbes'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { useReleaseScope } from '@/hooks/useReleaseScope'
@@ -414,7 +415,10 @@ export default function OverviewPage() {
   // Not on a failed or pending windowed fetch: that is not "empty".
   const windowHasRuns = recentRuns ? recentRuns.items.length > 0 : undefined
   const needProbes = windowHasRuns === false
-  const { data: newestRunPage } = useRuns({ page: 1, size: 1 }, { enabled: needProbes })
+  // D-0001: `days: 0` = all time. Omitted, the server applies its 30-day
+  // default, and a project whose newest run is older than that was told it
+  // never had one (the first-run guide replaced the dashboard).
+  const { data: newestRunPage } = useRuns(ALL_TIME_PROBE, { enabled: needProbes })
   // "Has this project EVER had a run?" — a question about the project, not
   // about what the reader is currently filtered to. Separate from the query
   // above because that one feeds the empty-window message, which SHOULD stay
@@ -424,7 +428,7 @@ export default function OverviewPage() {
   // With no release selected both calls carry identical params and SWR serves
   // them from one request.
   const { data: everHadRunPage } = useRuns(
-    { page: 1, size: 1 },
+    ALL_TIME_PROBE,
     { ignoreGlobalRelease: true, enabled: needProbes },
   )
   const recentRunItems = useMemo<TestRun[]>(() => recentRuns?.items ?? [], [recentRuns?.items])
