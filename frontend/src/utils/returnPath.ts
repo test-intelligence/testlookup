@@ -19,12 +19,29 @@ interface SavedLocation {
   hash?: unknown
 }
 
+const APP_BASE = 'https://app.invalid'
+
+// A URL parser deletes tab/CR/LF anywhere and trims other control characters,
+// so `/\t/evil.example` passes a prefix check yet resolves to `//evil.example`.
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARACTER = /[\u0000-\u001F\u007F]/
+
+function resolvesInApp(pathname: string): boolean {
+  try {
+    return new URL(pathname, APP_BASE).origin === APP_BASE
+  } catch {
+    return false
+  }
+}
+
 export function returnPathFrom(from: SavedLocation | null | undefined): string {
   const pathname = typeof from?.pathname === 'string' ? from.pathname : ''
   if (!pathname || pathname === '/reset-password') return DEFAULT_RETURN_PATH
   if (!pathname.startsWith('/') || pathname.startsWith('//') || pathname.includes('\\')) {
     return DEFAULT_RETURN_PATH
   }
+  // Found by returnPath.property.test.ts: `/\t/` passed the checks above.
+  if (CONTROL_CHARACTER.test(pathname) || !resolvesInApp(pathname)) return DEFAULT_RETURN_PATH
   const search = typeof from?.search === 'string' && from.search.startsWith('?') ? from.search : ''
   const hash = typeof from?.hash === 'string' && from.hash.startsWith('#') ? from.hash : ''
   return `${pathname}${search}${hash}`
@@ -39,9 +56,8 @@ export function returnPathFrom(from: SavedLocation | null | undefined): string {
 export function returnPathFromString(raw: string | null | undefined): string {
   if (typeof raw !== 'string' || !raw.startsWith('/')) return DEFAULT_RETURN_PATH
   try {
-    const base = 'https://app.invalid'
-    const url = new URL(raw, base)
-    if (url.origin !== base) return DEFAULT_RETURN_PATH
+    const url = new URL(raw, APP_BASE)
+    if (url.origin !== APP_BASE) return DEFAULT_RETURN_PATH
     return returnPathFrom({ pathname: url.pathname, search: url.search, hash: url.hash })
   } catch {
     return DEFAULT_RETURN_PATH

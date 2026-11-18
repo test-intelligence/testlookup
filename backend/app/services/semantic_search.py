@@ -24,9 +24,10 @@ Phase 3 / code-reviewer gate (c) — ACCEPTED DEVIATIONS (documented, not silent
 * **Offline-safe, but not "by construction" — by a guard.** The semantic path
   is *opt-in* (``search_type=semantic``/``hybrid``; the router defaults to
   keyword) and *fails back to keyword* on any ChromaDB error.
-  ``_get_or_create_collection`` passes NO explicit ``embedding_function``, so
-  ChromaDB uses its default local ONNX all-MiniLM model and there is no cloud
-  *inference* on this path.
+  On the bundled embedder ``_get_or_create_collection`` passes
+  ``local_embedding_function()`` (``chroma_collections.ResolvedCollection
+  .create_kwargs``), ChromaDB's local ONNX all-MiniLM model, so there is no
+  cloud *inference* on this path.
 
   This comment previously concluded from that "and therefore no
   ``AI_OFFLINE_MODE`` early-return is required". **That was wrong, and it was

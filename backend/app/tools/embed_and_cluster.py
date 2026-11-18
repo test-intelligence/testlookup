@@ -117,7 +117,7 @@ async def embed_and_cluster(error_messages_json: str) -> str:
         from app.services import chroma_collections
 
         # W12: the ACTIVE generation's name (``failure_clusters`` on the legacy
-        # generation) and embedding function (none passed on the legacy one).
+        # generation) and embedding function (the local bundled one on the legacy one).
         target = await chroma_collections.resolve(_COLLECTION)
         client = await _get_chroma_client()
         collection = await asyncio.to_thread(

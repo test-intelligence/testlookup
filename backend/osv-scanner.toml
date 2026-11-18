@@ -1,0 +1,117 @@
+# Accepted OSV findings for backend/requirements*.txt (osv-scanner reads this
+# file for the lockfiles in this directory; OpenSSF Scorecard's Vulnerabilities
+# check runs osv-scanner over the repository).
+#
+# Each entry is a finding with NO fixed release whose vulnerable code the app
+# does not run. Every entry names the evidence and expires after at most 90
+# days, so it comes back for review instead of staying hidden
+# (scripts/test_ci_security.py enforces both). Each advisory is listed under
+# all of its IDs (PYSEC, GHSA, CVE) because OSV reports it under more than one.
+# Dependabot alerts for the same advisories are triaged separately on GitHub.
+
+# ── chromadb 1.5.9 (newest release; no fix) ─────────────────────────────────
+# The four advisories sit in chromadb's Python HTTP server, its FastAPI app and
+# its auth providers. The app uses only the client: HttpClient to the Rust
+# chromadb/chroma server image, and an in-process EphemeralClient with no
+# server and no auth. backend/tests/regression/
+# test_chromadb_server_code_is_never_used.py fails the day app code imports
+# the server, the FastAPI app or an auth provider, or passes
+# trust_remote_code=True. The Dependabot alerts were dismissed on the same
+# basis (OSS repo review 2026-11-12, H-7).
+[[IgnoredVulns]]
+id = "PYSEC-2026-311"
+ignoreUntil = 2027-02-16
+reason = "chromadb server endpoint (collection create with trust_remote_code); app runs only the client - see test_chromadb_server_code_is_never_used.py"
+
+[[IgnoredVulns]]
+id = "GHSA-f4j7-r4q5-qw2c"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-311 (chromadb server endpoint; app runs only the client)"
+
+[[IgnoredVulns]]
+id = "CVE-2026-45829"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-311 (chromadb server endpoint; app runs only the client)"
+
+[[IgnoredVulns]]
+id = "PYSEC-2026-3813"
+ignoreUntil = 2027-02-16
+reason = "chromadb server tenant authorization; app runs no chromadb server or auth provider - see test_chromadb_server_code_is_never_used.py"
+
+[[IgnoredVulns]]
+id = "GHSA-2wm9-hf6c-p5cr"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-3813 (chromadb server tenant authorization; not run by the app)"
+
+[[IgnoredVulns]]
+id = "CVE-2026-45830"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-3813 (chromadb server tenant authorization; not run by the app)"
+
+[[IgnoredVulns]]
+id = "PYSEC-2026-3814"
+ignoreUntil = 2027-02-16
+reason = "chromadb server endpoint (collection update with trust_remote_code); app runs only the client - see test_chromadb_server_code_is_never_used.py"
+
+[[IgnoredVulns]]
+id = "GHSA-36p7-vc44-83pf"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-3814 (chromadb server endpoint; app runs only the client)"
+
+[[IgnoredVulns]]
+id = "CVE-2026-45833"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-3814 (chromadb server endpoint; app runs only the client)"
+
+[[IgnoredVulns]]
+id = "PYSEC-2026-3815"
+ignoreUntil = 2027-02-16
+reason = "chromadb SimpleRBACAuthorizationProvider (server auth); app runs no chromadb auth provider - see test_chromadb_server_code_is_never_used.py"
+
+[[IgnoredVulns]]
+id = "GHSA-xph7-9rjv-w5fr"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-3815 (chromadb server auth provider; not run by the app)"
+
+[[IgnoredVulns]]
+id = "CVE-2026-45831"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-3815 (chromadb server auth provider; not run by the app)"
+
+# ── Optional Ragas extra (requirements-ragas.txt; not installed by default) ──
+# ragas 0.4.3 is the newest release. The advisory is in the multi-modal
+# faithfulness collection module; rag_faithfulness_service.py imports only the
+# text Faithfulness metric (ragas.metrics.Faithfulness).
+[[IgnoredVulns]]
+id = "PYSEC-2026-3046"
+ignoreUntil = 2027-02-16
+reason = "ragas multi-modal faithfulness module; the optional extra uses only the text Faithfulness metric"
+
+[[IgnoredVulns]]
+id = "GHSA-95ww-475f-pr4f"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-3046 (ragas multi-modal faithfulness; not used)"
+
+[[IgnoredVulns]]
+id = "CVE-2026-6587"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-3046 (ragas multi-modal faithfulness; not used)"
+
+# diskcache 5.6.3 (newest release; no fix), pulled in by ragas only (it is in
+# requirements-ragas-lock.txt, not requirements-lock.txt): exploiting its
+# pickle cache needs an attacker who can already write to the cache directory
+# inside the backend container.
+[[IgnoredVulns]]
+id = "PYSEC-2026-2447"
+ignoreUntil = 2027-02-16
+reason = "diskcache pickle cache: needs write access to the cache dir inside the container; only with the optional Ragas extra"
+
+[[IgnoredVulns]]
+id = "GHSA-w8v5-vhqr-4h9v"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-2447 (diskcache; optional Ragas extra only)"
+
+[[IgnoredVulns]]
+id = "CVE-2025-69872"
+ignoreUntil = 2027-02-16
+reason = "alias of PYSEC-2026-2447 (diskcache; optional Ragas extra only)"

@@ -251,10 +251,21 @@ quality-gate-test: ## Run the unit tests for the quality-gate script itself
 # run this (needs uv) and commit both. An existing pin stays put unless the
 # input changed; UPGRADE="--upgrade-package <name>" moves one on purpose.
 LOCK_PYTHON = uv pip compile requirements.txt --universal --python-version 3.14 --generate-hashes --quiet --custom-compile-command "make lock-python" -o requirements-lock.txt $(UPGRADE)
+# Every other `pip install` in CI and the Dockerfiles reads a hashed lock too
+# (OpenSSF Scorecard Pinned-Dependencies; scripts/test_ci_security.py fails an
+# unhashed one): the optional Ragas extra, the CLI's extra package for the
+# backend tests (pinned to the backend lock's versions), the release runner
+# image, and the test tools of the guard-test and SDK jobs.
+UV_LOCK = uv pip compile --universal --generate-hashes --quiet --custom-compile-command "make lock-python" $(UPGRADE)
 
-lock-python: ## Re-lock backend/ and mcp/ requirements-lock.txt from requirements.txt (needs uv)
+lock-python: ## Re-lock every hashed requirements lock (backend, mcp, e2e-runner, scripts) (needs uv)
 	cd backend && $(LOCK_PYTHON)
+	cd backend && $(UV_LOCK) --python-version 3.14 requirements-ragas.txt -o requirements-ragas-lock.txt
+	cd backend && $(UV_LOCK) --python-version 3.14 ../cli/pyproject.toml -c requirements-lock.txt -o requirements-cli-test.txt
 	cd mcp && $(LOCK_PYTHON)
+	cd e2e-runner && $(UV_LOCK) --python-version 3.12 requirements.txt ../mcp/requirements.txt ../cli/pyproject.toml -o requirements-lock.txt
+	cd scripts && $(UV_LOCK) --python-version 3.12 requirements-ci.in -o requirements-ci.txt
+	cd scripts && $(UV_LOCK) --python-version 3.11 requirements-sdk-test.in ../client/pyproject.toml ../cli/pyproject.toml -o requirements-sdk-test.txt
 
 # ── Build ─────────────────────────────────────────────────────
 

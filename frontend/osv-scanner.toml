@@ -1,0 +1,19 @@
+# Accepted OSV findings for frontend/package-lock.json (osv-scanner reads this
+# file for the lockfile in this directory; OpenSSF Scorecard's Vulnerabilities
+# check runs osv-scanner over the repository). Every entry names the evidence
+# and expires after at most 90 days (scripts/test_ci_security.py enforces both).
+
+# minimatch 10.2.6 is a dev dependency only (eslint 10.14, @eslint/config-array
+# and @typescript-eslint/typescript-estree, which all require ^10.2): it is not
+# in the production bundle or the image. The fix is minimatch 11.0.1, outside
+# those packages' ranges. The advisory needs attacker-controlled glob patterns;
+# the linter matches the repository's own config patterns.
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2027-02-16
+reason = "minimatch via eslint tooling only (dev, not shipped); patterns are the repo's own lint config, not attacker input"
+
+[[IgnoredVulns]]
+id = "CVE-2026-118764"
+ignoreUntil = 2027-02-16
+reason = "alias of GHSA-g3hv-75wg-m249 (minimatch via eslint tooling only)"
