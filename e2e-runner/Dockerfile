@@ -42,8 +42,15 @@ RUN cd frontend && npm ci --no-audit --no-fund && npm cache clean --force \
     && rm -rf /usr/lib/node_modules/npm && rm -f /usr/bin/npm /usr/bin/npx
 COPY cli ./cli
 COPY mcp ./mcp
-COPY e2e-runner/requirements.txt e2e-runner/constraints.txt ./e2e-runner/
-RUN pip install --no-cache-dir -c e2e-runner/constraints.txt -r e2e-runner/requirements.txt -r mcp/requirements.txt ./cli
+COPY e2e-runner/requirements-lock.txt ./e2e-runner/
+# Hashed lock (`make lock-python`, from e2e-runner/requirements.txt,
+# mcp/requirements.txt and cli/pyproject.toml); the CLI goes in as its own
+# wheel with --no-deps, and `pip check` fails the build if it needs a package
+# the lock does not hold.
+RUN pip install --no-cache-dir --require-hashes -r e2e-runner/requirements-lock.txt \
+    && pip wheel --no-cache-dir --no-deps --wheel-dir /tmp/cli-wheel ./cli \
+    && pip install --no-cache-dir --no-deps /tmp/cli-wheel/*.whl \
+    && rm -rf /tmp/cli-wheel && pip check
 COPY e2e-runner ./e2e-runner
 COPY samples ./samples
 COPY client/*.py ./client/

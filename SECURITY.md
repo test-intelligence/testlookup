@@ -27,10 +27,11 @@ to the response targets below.
 **Please do not open a public GitHub issue, discussion or pull request for a
 security report.**
 
-Report it privately through **GitHub private vulnerability reporting**: on the
-repository page open the **Security** tab and click **Report a vulnerability**.
-This creates a private advisory that only the maintainers can see, and it is
-where we will talk with you about the fix and its disclosure.
+Report it privately through **GitHub private vulnerability reporting**:
+<https://github.com/test-intelligence/testlookup/security/advisories/new>
+(or, on the repository page, open the **Security** tab and click **Report a
+vulnerability**). This creates a private advisory that only the maintainers can
+see, and it is where we will talk with you about the fix and its disclosure.
 
 Please include:
 

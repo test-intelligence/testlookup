@@ -39,7 +39,8 @@ Install the matching client and browser dependencies first. Use a virtual enviro
 ```sh
 python -m venv .venv
 . .venv/bin/activate
-python -m pip install -c e2e-runner/constraints.txt -r e2e-runner/requirements.txt -r mcp/requirements.txt ./cli
+python -m pip install --require-hashes -r e2e-runner/requirements-lock.txt
+python -m pip install --no-deps ./cli
 (cd frontend && npm ci && npx playwright install chromium)
 export TL_API=https://your-test-host.example
 export TL_WEB=https://your-test-host.example

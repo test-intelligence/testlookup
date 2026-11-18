@@ -57,10 +57,12 @@ RUN pip install --no-cache-dir --require-hashes -r requirements-lock.txt
 # moves fsspec, jiter, openai and rich to lower versions (requirements-ragas.txt says
 # why). --build-arg INSTALL_RAGAS=1 adds it. Without it, choosing Ragas runs
 # the single-prompt judge and the settings page says why. Copied after the
-# main install so editing it keeps that layer.
+# main install so editing it keeps that layer. requirements-ragas-lock.txt is
+# the hashed lock `make lock-python` compiles from requirements-ragas.txt, so
+# the optional extra installs reviewed versions too, not whatever PyPI serves.
 ARG INSTALL_RAGAS=0
-COPY requirements-ragas.txt .
-RUN if [ "$INSTALL_RAGAS" = "1" ]; then pip install --no-cache-dir -r requirements-ragas.txt; fi
+COPY requirements-ragas.txt requirements-ragas-lock.txt ./
+RUN if [ "$INSTALL_RAGAS" = "1" ]; then pip install --no-cache-dir --require-hashes -r requirements-ragas-lock.txt; fi
 
 # ── Development stage ────────────────────────────────────────
 FROM base AS development

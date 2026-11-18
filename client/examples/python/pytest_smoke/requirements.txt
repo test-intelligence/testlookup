@@ -1,4 +1,4 @@
-pytest>=7.0
+pytest>=9.0.3  # 9.0.3 fixes PYSEC-2026-1845 (tmpdir handling)
 # Installs the reporter from this repository (client/pyproject.toml); it is
 # not published to a package registry.
 -e ../../..

@@ -77,6 +77,14 @@ jobs:
   build-bundle:
     name: Build bundle (online)
     runs-on: ubuntu-latest
+    # id-token, attestations and artifact-metadata are for the signed build
+    # provenance of a release run's files (the attest step runs only when
+    # `version` is given); everything else stays read-only.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Check the release version
         if: env.RELEASE_TAG != ''
@@ -188,6 +196,35 @@ jobs:
           done > dist/SHA256SUMS
           cat dist/SHA256SUMS
 
+      # Signed SLSA build provenance for the three release files, recorded in
+      # Sigstore's public log and this repository's attestations. The bundle is
+      # also kept as testlookup-offline-<version>.intoto.jsonl so it can be
+      # attached to the GitHub release with the files it covers: OpenSSF
+      # Scorecard's Signed-Releases check reads the release assets, and a user
+      # can verify a download with
+      #   gh attestation verify testlookup-offline-<version>.tar.gz \
+      #     --repo test-intelligence/testlookup \
+      #     --bundle testlookup-offline-<version>.intoto.jsonl
+      # Releases are immutable once published, so it must go on the draft.
+      - name: Attest the release files' build provenance
+        id: attest
+        if: env.RELEASE_TAG != ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz
+            dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz.sha256
+            dist/SHA256SUMS
+
+      - name: Keep the provenance bundle with the release files
+        if: env.RELEASE_TAG != ''
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          test -s "$BUNDLE_PATH"
+          cp "$BUNDLE_PATH" "dist/testlookup-offline-${BUNDLE_VERSION}.intoto.jsonl"
+
       - name: Bundle summary
         run: |
           set -euo pipefail
@@ -215,7 +252,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       # A release run keeps the files 30 days so they can be attached to the
-      # GitHub release; a CI check build keeps them 5.
+      # GitHub release (with the .intoto.jsonl provenance, which only a
+      # release run writes); a CI check build keeps them 5.
       - name: Upload bundle for the offline verifier
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -224,6 +262,7 @@ jobs:
             dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz
             dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz.sha256
             dist/SHA256SUMS
+            dist/*.intoto.jsonl
           retention-days: ${{ env.RELEASE_TAG && 30 || 5 }}
           if-no-files-found: error
 
