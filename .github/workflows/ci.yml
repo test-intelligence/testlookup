@@ -1068,6 +1068,19 @@ jobs:
           tests/integration/test_value_metrics_member_scope_postgres.py
           tests/integration/test_cluster_epic_postgres.py
           tests/integration/test_likely_affected_tests_postgres.py
+          tests/integration/test_attribution_baseline_postgres.py
+          tests/integration/test_suite_trend_postgres.py
+          tests/integration/test_skip_ai_no_investigation_postgres.py
+          tests/integration/test_flaky_scores_store_postgres.py
+          tests/integration/test_live_finalise_postgres.py
+          tests/integration/test_failed_run_ids_postgres.py
+          tests/test_release_activation_event.py
+          tests/test_release_phase_ledger_events.py
+          tests/integration/test_security_api_key_lifecycle_postgres.py
+          tests/integration/test_security_cross_tenant_sweep_postgres.py
+          tests/integration/test_perf_runs_statement_counts_postgres.py
+          tests/integration/test_perf_search_count_shortcut_postgres.py
+          tests/integration/test_perf_same_build_concurrent_ingest_postgres.py
 
       - name: Validate Compose queue delivery evidence
         if: steps.compose-queue-scope.outputs.run == 'true'
