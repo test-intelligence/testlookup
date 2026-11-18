@@ -533,13 +533,55 @@ def _shell_commands(script: str) -> list[list[str]]:
     for line in script.replace("\\\n", " ").splitlines():
         for segment in _COMMAND_SPLIT.split(line):
             segment = _LEADING_KEYWORD.sub("", segment.strip())
-            if "pip" not in segment:
-                continue
-            try:
-                commands.append(shlex.split(segment))
-            except ValueError:
-                commands.append(segment.split())
+            if "pip" in segment:
+                commands.append(_shell_words(segment))
     return commands
+
+
+def _shell_words(segment: str) -> list[str]:
+    """Split on unquoted whitespace and KEEP the quotes, so `"$X"/w.whl` stays one
+    word and _scorecard_word can tell which words Scorecard's parser keeps.
+    (shlex drops the quotes, and its non-POSIX mode splits after a closing quote.)"""
+    words: list[str] = []
+    current: list[str] = []
+    quote = ""
+    started = False
+    for ch in segment:
+        if quote:
+            current.append(ch)
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"":
+            quote, started = ch, True
+            current.append(ch)
+        elif ch.isspace():
+            if started:
+                words.append("".join(current))
+                current, started = [], False
+        else:
+            current.append(ch)
+            started = True
+    if started:
+        words.append("".join(current))
+    return words
+
+
+def _scorecard_word(token: str) -> str | None:
+    """The word as Scorecard's extractCommand sees it, or None when it drops it.
+
+    It keeps a word only when the shell parses it as ONE part: a plain literal,
+    or a single- or double-quoted literal (kept with its quotes). A word holding
+    a variable or command substitution, or mixing quoted and unquoted text, is
+    dropped, so `pip install --no-deps "$RUNNER_TEMP"/w/*.whl` reads as a bare
+    `pip install --no-deps` and counts as unpinned (alert #199 on 86e53ba6)."""
+    if len(token) >= 2 and token[0] == token[-1] == "'" and "'" not in token[1:-1]:
+        return token
+    if (len(token) >= 2 and token[0] == token[-1] == '"' and '"' not in token[1:-1]
+            and "$" not in token and "`" not in token):
+        return token
+    if any(c in token for c in "'\"$`"):
+        return None
+    return token
 
 
 def _pip_install_args(argv: list[str]) -> list[str] | None:
@@ -559,7 +601,7 @@ def _scorecard_reads_as_pinned(args: list[str]) -> bool:
     others: list[str] = []
     editable_sources: list[str] = []
     take_source = False
-    for arg in args:
+    for arg in (w for w in map(_scorecard_word, args) if w is not None):
         if take_source:
             editable_sources.append(arg)
             take_source = False
@@ -626,7 +668,7 @@ def test_the_pin_rule_matches_scorecards_reading() -> None:
         ["--require-hashes", "-r", "requirements-lock.txt"],
         ["--no-cache-dir", "--require-hashes", "-r", "a.txt", "-r", "b.txt"],
         ["--no-deps", "-e", "../cli"],
-        ["--no-deps", "$RUNNER_TEMP/sdk-wheels/*.whl"],
+        ["--no-deps", "/tmp/sdk-wheels/*.whl"],
     ]
     unpinned = [
         ["pytest"],
@@ -636,9 +678,17 @@ def test_the_pin_rule_matches_scorecards_reading() -> None:
         ["-c", "constraints.txt", "-r", "requirements.txt", "./cli"],
         ["--no-deps", "-e", "git+https://example.invalid/x.git"],
         [],
+        # Words with a variable are dropped, leaving a bare `pip install --no-deps`.
+        ["--no-deps", '"$RUNNER_TEMP"/sdk-wheels/*.whl'],
+        ["--no-deps", "$RUNNER_TEMP/sdk-wheels/*.whl"],
+        # A quoted literal keeps its quotes, so it no longer ends in .whl.
+        ["--no-deps", '"/tmp/sdk-wheels/x.whl"'],
     ]
     assert all(_scorecard_reads_as_pinned(a) for a in pinned)
     assert not any(_scorecard_reads_as_pinned(a) for a in unpinned)
+    # The line Scorecard flagged on 86e53ba6 (alert #199), end to end.
+    [argv] = _shell_commands('pip install --no-deps "$RUNNER_TEMP"/sdk-wheels/*.whl')
+    assert not _scorecard_reads_as_pinned(_pip_install_args(argv) or [])
     assert _pip_install_args(["python", "-m", "pip", "install", "x"]) == ["x"]
     assert _pip_install_args(["pip", "wheel", "--no-deps", "./cli"]) is None
 
