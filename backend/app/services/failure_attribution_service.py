@@ -127,6 +127,10 @@ class AttributionInputs:
     # 1. Did this test just turn red, or was it already failing?
     is_new_failure: bool = False
     last_green_run_id: Optional[str] = None
+    #: D-0004: what the test did in the project's previous run, so "not new"
+    #: names its basis: ``no_previous_run``, ``not_in_previous_run``,
+    #: ``passed``, ``failed`` or ``skipped`` (``None``: unknown, older inputs).
+    previous_outcome: Optional[str] = None
     # 2. flaky_score_service.
     flaky_score: Optional[float] = None
     flaky_confidence: str = "none"
@@ -145,6 +149,7 @@ class AttributionInputs:
         return {
             "is_new_failure": self.is_new_failure,
             "last_green_run_id": self.last_green_run_id,
+            "previous_outcome": self.previous_outcome,
             "flaky_score": self.flaky_score,
             "flaky_confidence": self.flaky_confidence,
             "cluster_key": self.cluster_key,
@@ -195,21 +200,56 @@ def _clamp(value: Any) -> float:
     return max(0.0, min(1.0, number))
 
 
+#: D-0004: why a failing test has no transition to attribute, by what it did in
+#: the project's previous run. ``failed`` (and an unknown outcome) keep the
+#: original wording.
+_NOT_NEW_RATIONALE: dict[Optional[str], str] = {
+    "failed": (
+        "Not a new failure — this test was already failing before this "
+        "run, so there is no transition to attribute."
+    ),
+    "no_previous_run": (
+        "No transition to attribute — this is the first recorded run in this "
+        "project, so there is no earlier result to compare against."
+    ),
+    "not_in_previous_run": (
+        "No transition to attribute — this test did not run in the previous run "
+        "of this project, so there is no earlier result to compare against."
+    ),
+    "skipped": (
+        "No transition to attribute — this test was skipped in the previous run "
+        "of this project, so there is no earlier result to compare against."
+    ),
+}
+
+
+def _previous_outcome(previous_exists: bool, status_by_fp: dict[str, str], fingerprint: str) -> str:
+    """What a test did in the project's previous run (D-0004). Pure."""
+    if not previous_exists:
+        return "no_previous_run"
+    status = str(status_by_fp.get(fingerprint) or "").upper()
+    if not status:
+        return "not_in_previous_run"
+    if status == "PASSED":
+        return "passed"
+    if status in ("FAILED", "BROKEN"):
+        return "failed"
+    return "skipped"
+
+
 def compose(inputs: AttributionInputs) -> Attribution:
     """Compose the five signals into one verdict. Pure; never raises."""
     votes: dict[str, float] = {}
 
     # A test that was already failing is not a new regression to attribute.
     # Saying so is more useful than attributing an ongoing failure to whoever
-    # happened to push next.
+    # happened to push next. D-0004: say WHY there is no transition; a first
+    # run or a test absent from the previous run is not "already failing".
     if not inputs.is_new_failure:
         return Attribution(
             verdict=AttributionVerdict.UNCERTAIN,
             confidence=0.0,
-            rationale=(
-                "Not a new failure — this test was already failing before this "
-                "run, so there is no transition to attribute."
-            ),
+            rationale=_NOT_NEW_RATIONALE.get(inputs.previous_outcome, _NOT_NEW_RATIONALE["failed"]),
             inputs=inputs,
             votes=votes,
         )
@@ -423,18 +463,21 @@ async def attribute_run(
             .limit(1)
         )
     ).scalar_one_or_none()
-    previously_green: set = set()
+    # D-0004: every row of the previous run, not only the PASSED ones, so a
+    # "not new" verdict can say whether the test failed, was skipped or did
+    # not run there (or whether there was no previous run at all).
+    previous_status: dict[str, str] = {}
     if previous is not None:
-        previously_green = {
-            fingerprint
-            for (fingerprint,) in (
+        previous_status = {
+            fingerprint: str(status)
+            for (fingerprint, status) in (
                 await db.execute(
-                    select(TestCase.test_fingerprint).where(
+                    select(TestCase.test_fingerprint, TestCase.status).where(
                         TestCase.test_run_id == previous.id,
-                        TestCase.status == "PASSED",
                     )
                 )
             ).all()
+            if fingerprint
         }
 
     # 4. Commit-range overlap for this run, computed once.
@@ -487,11 +530,14 @@ async def attribute_run(
             except Exception:  # noqa: BLE001
                 overlap = None
 
+        outcome = _previous_outcome(previous is not None, previous_status, fingerprint)
         results.append((
             case,
             compose(AttributionInputs(
-                is_new_failure=bool(previous is not None and fingerprint in previously_green),
-                last_green_run_id=str(previous.id) if previous is not None else None,
+                is_new_failure=outcome == "passed",
+                # P10: the previous run is the last GREEN run only if the test passed there.
+                last_green_run_id=str(previous.id) if outcome == "passed" and previous is not None else None,
+                previous_outcome=outcome,
                 flaky_score=getattr(score_row, "score", None),
                 flaky_confidence=getattr(score_row, "confidence", "none") or "none",
                 cluster_key=getattr(cluster, "cluster_key", None),

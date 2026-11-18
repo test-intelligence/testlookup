@@ -246,10 +246,11 @@ describe('SearchPage', () => {
     renderAt('/search')
 
     const verdict = await screen.findByRole('region', { name: 'Index verdict' })
+    // D-0015: the keyword rows of the five kinds that store one row per item (flaky tests come from run history).
     await waitFor(() => {
-      expect(verdict).toHaveTextContent('76 items indexed across 6 entity types')
+      expect(verdict).toHaveTextContent('75 rows searchable across 5 entity types')
     })
-    expect(verdict).toHaveTextContent(/Index freshness/i)
+    expect(verdict).toHaveTextContent(/Semantic index \(tests\)/i)
     for (const gone of [/Queries today/i, /Zero-result rate/i, /Latency p95/i, /target ≤ 5%/, /no data/i]) {
       expect(screen.queryByText(gone)).toBeNull()
     }
@@ -268,15 +269,19 @@ describe('SearchPage', () => {
       document_count: 76,
       last_indexed_at: new Date(Date.now() - 5 * 60_000).toISOString(),
     }))
+    mockGetEntityCounts.mockResolvedValue({
+      test_case: 47, test_run: 20, suite: 5, defect: 0, flaky_test: 1, release: 3,
+    })
     renderAt('/search')
 
+    // D-0015: the subtitle counts the keyword rows (75), not the semantic index's 76 test documents.
     const header = await waitFor(() => {
       const el = document.querySelector('[data-page-header]') as HTMLElement
-      expect(el).toHaveTextContent('76 items indexed')
+      expect(el).toHaveTextContent('75 rows searchable')
       return el
     })
     expectTemplateHeader('Search', '/search')
-    expect(header).toHaveTextContent('Find tests, runs, suites, defects, releases across One · 76 items indexed · fresh 5m ago')
+    expect(header).toHaveTextContent('Find tests, runs, suites, defects, releases across One · 75 rows searchable · semantic index fresh 5m ago')
     // The search box is the hero below the header, not a header action.
     expect(header.querySelector('input')).toBeNull()
   })
@@ -709,6 +714,42 @@ describe('SearchPage', () => {
     await screen.findByText(/^84$/, { exact: false })
     // Runs chip stays on 39 (the project total), not 0.
     expect(screen.getByText(/^39$/, { exact: false })).toBeInTheDocument()
+  })
+
+  // D-0015 (GPT-6): the headline is the keyword inventory, never the semantic index's test-document count.
+  it.each([37, 110, 0])('a semantic index of %i test documents does not change the headline (D-0015)', async (docs) => {
+    mockGetEntityCounts.mockResolvedValue({
+      test_case: 110, test_run: 40, suite: 18, defect: 1, flaky_test: 0, release: 2,
+    })
+    mockGetIndexStatus.mockResolvedValue(makeIndexStatus({ document_count: docs, last_indexed_at: new Date().toISOString() }))
+    renderAt('/search')
+    const verdict = await screen.findByRole('region', { name: 'Index verdict' })
+    await waitFor(() => expect(verdict).toHaveTextContent('171 rows searchable across 5 entity types'))
+    expect(verdict).not.toHaveTextContent(/indexed across 6/)
+    const semantic = within(verdict).getByText(/Semantic index \(tests\)/i).parentElement as HTMLElement
+    expect(semantic).toHaveTextContent(`${docs} doc`)
+  })
+
+  // D-0013 (GPT-6): the Flaky scope finds tests by their run history; entity-counts' flaky_test counts quarantine
+  // requests. With no query (or a narrowed scope) the chip shows no number instead of that other population.
+  it('the Flaky chip shows no inventory number: it counts what a Flaky search finds only for a query (D-0013)', async () => {
+    mockGetEntityCounts.mockResolvedValue({
+      test_case: 84, test_run: 39, suite: 5, defect: 0, flaky_test: 0, release: 28,
+    })
+    mockGlobalSearch.mockResolvedValue({
+      items: [makeResult({ entity_type: 'flaky_test', title: 'test_gpt6_alternate', subtitle: '56% failure rate over 9 runs' })],
+      total: 1, query: 'GPT6', search_type: 'keyword',
+      entity_counts: { flaky_test: 1 } as Record<string, number>,
+      page: 1, size: 25, pages: 1,
+    } as unknown as GlobalSearchResponse)
+    renderAt('/search?mode=keyword&scope=flaky&q=GPT6')
+    const scopes = await screen.findByRole('radiogroup', { name: 'Entity scope' })
+    const flaky = within(scopes).getByRole('radio', { name: /^Flaky/ })
+    await waitFor(() => expect(within(scopes).getByRole('radio', { name: /^Tests/ })).toHaveTextContent('84'))
+    expect(flaky).toHaveTextContent(/^Flaky$/)
+    expect(flaky).toHaveAttribute('title', expect.stringContaining('run history'))
+    // All, in inventory mode, sums the chips it shows: 84 + 39 + 5 + 0 + 28.
+    expect(within(scopes).getByRole('radio', { name: /^All/ })).toHaveTextContent('156')
   })
 
   // W12 SRCH-03 (fix after G-E's pass): a search that found nothing is still

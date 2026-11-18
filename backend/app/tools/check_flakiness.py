@@ -3,7 +3,13 @@ from langchain_core.tools import tool
 from sqlalchemy import text
 
 from app.db.postgres import AsyncSessionLocal
+from app.services.flaky_score_service import MIN_OBSERVATIONS
 from app.tools.investigation_context import get_investigation_context
+
+#: D-0008: the fewest recorded executions that may be called a pattern (flaky,
+#: consistently failing, historically stable): the Flaky score's own floor, so
+#: one failed execution never reads like an established history.
+MIN_EXECUTIONS_FOR_PATTERN = MIN_OBSERVATIONS
 
 
 @tool
@@ -11,13 +17,14 @@ async def check_test_flakiness(test_name: str) -> str:
     """
     Query the PostgreSQL database for the historical pass/fail pattern of a test.
     This reveals whether the test is intermittently failing (flaky) or has a
-    consistent new failure pattern.
+    consistent failure pattern, once enough executions are recorded.
 
     Args:
         test_name: The exact test case name to look up.
 
     Returns:
-        A summary of the test's history over the last 10 runs.
+        A summary of the test's recorded history in this project. With fewer
+        than 5 recorded executions it names no pattern: too early to tell.
     """
     context = get_investigation_context()
     if context is None:
@@ -61,7 +68,13 @@ async def check_test_flakiness(test_name: str) -> str:
             f"Passed: {passed} | Failed/Broken: {failed} | Skipped: {skipped}",
             f"Failure rate: {fail_pct}%",
         ]
-        if is_flaky:
+        if total < MIN_EXECUTIONS_FOR_PATTERN:
+            # D-0008: counts and rate stay; a pattern label needs a sample.
+            lines.append(
+                f"ℹ️  TOO FEW EXECUTIONS — {total} recorded; too early to tell a consistent "
+                "failure from a one-off or flakiness."
+            )
+        elif is_flaky:
             lines.append(f"⚠️  FLAKY — test has intermittent failure pattern ({fail_pct}% failure rate)")
         elif fail_pct >= 90:
             lines.append("🔴 CONSISTENTLY FAILING — likely a genuine product bug or broken test")

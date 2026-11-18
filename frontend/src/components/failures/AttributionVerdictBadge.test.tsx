@@ -86,6 +86,31 @@ describe('AttributionVerdictBadge', () => {
     expect(screen.getByText('Classifier calibration')).toBeInTheDocument()
   })
 
+  // D-0004 (GPT-6): "not new" names its basis; a first run is not "already failing".
+  it.each([
+    ['no_previous_run', 'unknown — first run in this project'],
+    ['not_in_previous_run', 'unknown — not in the previous run'],
+    ['skipped', 'no — skipped in the previous run'],
+    ['failed', 'no — already failing'],
+    ['passed', 'yes — passed in the previous run'],
+  ] as const)('labels New failure by the previous outcome %s (D-0004)', (outcome, label) => {
+    const base = item('UNCERTAIN')
+    render(<AttributionVerdictBadge attribution={{
+      ...base, inputs: { ...base.inputs, is_new_failure: outcome === 'passed', previous_outcome: outcome },
+    }} />)
+    fireEvent.click(screen.getByRole('button', { name: /why/i }))
+    const dd = screen.getByText('New failure').nextElementSibling as HTMLElement
+    expect(dd).toHaveTextContent(label)
+    if (outcome !== 'failed') expect(dd).not.toHaveTextContent('already failing')
+  })
+
+  it('falls back to the boolean when an older payload has no previous outcome (D-0004)', () => {
+    const base = item('UNCERTAIN')
+    render(<AttributionVerdictBadge attribution={{ ...base, inputs: { ...base.inputs, is_new_failure: false } }} />)
+    fireEvent.click(screen.getByRole('button', { name: /why/i }))
+    expect(screen.getByText('New failure').nextElementSibling).toHaveTextContent('no — already failing')
+  })
+
   it('names the changed files rather than saying "your change"', () => {
     // Practitioners reject generic factor-level explanations.
     render(<AttributionVerdictBadge attribution={item('LIKELY_YOUR_CHANGE')} />)

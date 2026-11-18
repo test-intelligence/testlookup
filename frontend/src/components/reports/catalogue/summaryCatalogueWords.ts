@@ -46,7 +46,8 @@ export const MODE_WORDS: Record<SummaryReportMode, string> = {
 
 /** "per unique test · latest run per suite": the population, as the tiles name it, and the toggle. */
 export function populationWords(report: SummaryReport, mode: SummaryReportMode): string {
-  const basis = report.totals.pass_rate_basis_label?.trim() || 'per unique test'
+  // D-0012: a payload with no label must not claim unique tests in latest mode (it counts executions there).
+  const basis = report.totals.pass_rate_basis_label?.trim() || (mode === 'latest' ? 'per test execution' : 'per unique test')
   return `${basis} · ${MODE_WORDS[mode]}`
 }
 

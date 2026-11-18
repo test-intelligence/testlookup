@@ -255,7 +255,17 @@ async def stage_finalize_operations(
             "default",
             5,
         ),
-        ("transition_notifications", {"run_id": str(run.id)}, "default", 5),
+        (
+            "transition_notifications",
+            # D-0006: an upload with run_ai=false ("Skip AI analysis", --no-ai)
+            # must not start the automatic Investigator either. The flag rides
+            # the payload only when false, so an AI-on intent keeps its exact
+            # payload and input_version (the same "omit while True" rule as
+            # IngestPayload.run_ai).
+            {"run_id": str(run.id)} if run_ai else {"run_id": str(run.id), "run_ai": False},
+            "default",
+            5,
+        ),
         (
             "run_completed_webhook",
             {

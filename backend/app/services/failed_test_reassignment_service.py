@@ -48,6 +48,8 @@ from app.models.postgres import (
 
 logger = structlog.get_logger(__name__)
 
+UNASSIGNED_LABEL = "Unassigned"
+
 # Roles authorised to perform a reassignment. Mirrors the assigner's
 # ACTIONABLE_STATUSES philosophy — the rule is "you can move tickets if
 # you're either responsible for triage or above it".
@@ -185,12 +187,19 @@ async def reassign_failure(
     test_case_id: uuid.UUID,
     new_assignee_user_id: uuid.UUID,
     actor_user: User,
+    *,
+    ledger: bool = True,
 ) -> TestCase:
     """Move a FAILED/BROKEN TestCase to a new assignee.
 
     Enforces the full authorisation contract documented at module top.
     Caller owns the transaction (single-owner rule: services flush,
     routers commit) — this function flushes but does not commit.
+
+    A real change is recorded in the project's Activity log as
+    ``failure.reassigned`` in the same transaction (D-0021), unless
+    ``ledger=False``: the agent path, whose ``agent.action_executed`` row
+    already records the move.
     """
     tc = (
         await db.execute(
@@ -242,6 +251,7 @@ async def reassign_failure(
     if tc.assigned_to_user_id == new_assignee_user_id:
         return tc
 
+    previous_assignee_user_id = tc.assigned_to_user_id
     tc.assigned_to_user_id = new_assignee_user_id
     await db.flush()
     logger.info(
@@ -252,7 +262,45 @@ async def reassign_failure(
         actor_user_id=str(actor_user.id),
         actor_role=actor_user.role,
     )
+    if ledger:
+        await _record_reassignment(db, tc, project_id, previous_assignee_user_id, new_assignee_user_id, actor_user)
     return tc
+
+
+async def _assignee_name(db: AsyncSession, user_id: Optional[uuid.UUID]) -> str:
+    """The name the feed shows for an assignee: the person, else "Unassigned"."""
+    if user_id is None:
+        return UNASSIGNED_LABEL
+    user = await db.get(User, user_id)
+    return (getattr(user, "full_name", None) or getattr(user, "username", None) or UNASSIGNED_LABEL) if user else UNASSIGNED_LABEL
+
+
+async def _record_reassignment(
+    db: AsyncSession,
+    tc: TestCase,
+    project_id: uuid.UUID,
+    previous_assignee_user_id: Optional[uuid.UUID],
+    new_assignee_user_id: uuid.UUID,
+    actor_user: User,
+) -> None:
+    """``failure.reassigned`` on the run (there is no page for one occurrence), in the caller's transaction."""
+    from app.services.activity.service import ActorRef, record as record_activity
+
+    from_name = await _assignee_name(db, previous_assignee_user_id)
+    to_name = await _assignee_name(db, new_assignee_user_id)
+    await record_activity(
+        db,
+        project_id=project_id,
+        event_type="failure.reassigned",
+        actor=ActorRef.from_user(actor_user),
+        entity_type="run",
+        entity_id=tc.test_run_id,
+        entity_label=f"run {str(tc.test_run_id)[:8]}",
+        context={"test_case_id": str(tc.id), "test_name": tc.test_name, "from_name": from_name, "to_name": to_name},
+        before={"assignee": from_name},
+        after={"assignee": to_name},
+        changed_fields=["assigned_to_user_id"],
+    )
 
 
 async def _is_eligible_assignee(

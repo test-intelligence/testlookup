@@ -85,7 +85,7 @@ function useSuiteBody(suiteName: string, days: number) {
   // shows the same numbers. Keyed on (suiteName, activeProjectId, days) so
   // the chart refreshes in lockstep with the days selector and the active
   // project, without driving state from an effect.
-  const { points: trendPoints } = useSuiteTrend(suiteName || null, days)
+  const { points: trendPoints, isLoading: trendLoading } = useSuiteTrend(suiteName || null, days)
   const trendHasRuns = trendPoints.some((p) => p.run_count > 0)
 
   const summary: Partial<SuiteDetailSummary> = data?.summary ?? {}
@@ -106,7 +106,10 @@ function useSuiteBody(suiteName: string, days: number) {
     || recentRuns.length > 0
     || trendHasRuns
 
-  return { isLoading, error, summary, testCases, recentRuns, trendPoints, trendHasRuns, hasAnyData }
+  // Loading until BOTH reads settle. With the trend still out the charts are not drawn yet, so the Wave 3 sections
+  // would first mount where the charts are about to go: the heatmap's lazy box sat inside the near margin, mounted
+  // and asked at once, and the charts then pushed it down (a failed trend read settles too: the charts stay hidden).
+  return { isLoading: isLoading || trendLoading, error, summary, testCases, recentRuns, trendPoints, trendHasRuns, hasAnyData }
 }
 
 type SuiteBody = ReturnType<typeof useSuiteBody>

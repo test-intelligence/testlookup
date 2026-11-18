@@ -86,7 +86,7 @@ curl -X POST "http://localhost:8000/api/v1/ingest" \
   }'
 ```
 
-Optional JSON fields include `run_ai` (default `true`): `false` stores the run without staging the AI analysis, the JSON twin of the upload's `run_ai` form field and the CLI's `--no-ai`. Each result may also carry `http_exchanges` (see [Capturing HTTP exchanges](#capturing-http-exchanges)).
+Optional JSON fields include `run_ai` (default `true`): `false` stores the run without the AI analysis, the suite comparison or an automatic Investigator run, the JSON twin of the upload's `run_ai` form field and the CLI's `--no-ai`. Each result may also carry `http_exchanges` (see [Capturing HTTP exchanges](#capturing-http-exchanges)).
 
 Both endpoints answer `202 Accepted` with `run_id`, `task_id` and `total_results`. `GET /api/v1/ingest/uploads/{task_id}` reports how processing of an uploaded file ended (`pending`, `parsing`, `ingesting`, `succeeded` or `failed`). Sending the same `project_id` and `build_number` again updates that run instead of creating a second one.
 
@@ -241,7 +241,7 @@ A test that starts failing without a code change often failed because something 
 **Options**:
 
 - **Python SDK**: `collect_run_context=False` and `run_context_root="services/payments"` on `TestLookupReporter` and `LiveStream`; the environment variables `TESTLOOKUP_RUN_CONTEXT=0` (also `false`, `no`), `TESTLOOKUP_RUN_CONTEXT_ROOT`, `TESTLOOKUP_RUNTIME` and `TESTLOOKUP_IMAGE_DIGESTS`; `testlookup.run_context` and `testlookup.run_context_root` in `testlookup.properties`.
-- **CLI**: `--no-run-context`, `--run-context-root PATH`, `--runtime KEY=VERSION` and `--image-digest NAME=sha256:...` (both repeatable), `--environment TEXT`, and `--no-ai` (uploads without the AI analysis, for a CI step that wants no AI cost). `TESTLOOKUP_RUN_CONTEXT`, `TESTLOOKUP_RUN_CONTEXT_ROOT`, `TESTLOOKUP_RUNTIME` and `TESTLOOKUP_IMAGE_DIGESTS` work as for the SDK.
+- **CLI**: `--no-run-context`, `--run-context-root PATH`, `--runtime KEY=VERSION` and `--image-digest NAME=sha256:...` (both repeatable), `--environment TEXT`, and `--no-ai` (uploads without the AI analysis, the suite comparison or an automatic Investigator run, for a CI step that wants no AI cost). `TESTLOOKUP_RUN_CONTEXT`, `TESTLOOKUP_RUN_CONTEXT_ROOT`, `TESTLOOKUP_RUNTIME` and `TESTLOOKUP_IMAGE_DIGESTS` work as for the SDK.
 
 ```bash
 testlookup upload file results.xml --project "$PROJECT_ID" --build "$BUILD_ID" \

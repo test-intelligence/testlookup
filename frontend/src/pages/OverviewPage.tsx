@@ -21,6 +21,7 @@ import { useTabParam } from '@/components/ui/useTabParam'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { useDashboardSummary, useFailureCategories, useTrendData } from '@/hooks/useMetrics'
 import { useRuns } from '@/hooks/useRuns'
+import { ALL_TIME_PROBE } from '@/hooks/runProbes'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { useReleaseScope } from '@/hooks/useReleaseScope'
@@ -338,6 +339,15 @@ function runHasSuite(run: TestRun, suiteName: string): boolean {
   return names.some((suite) => suite?.trim().toLowerCase() === target)
 }
 
+/** The run received last (greatest `created_at`; the Runs table's order), or undefined. */
+function newestReceived(runs: readonly TestRun[]): TestRun | undefined {
+  let newest: TestRun | undefined
+  for (const run of runs) {
+    if (!newest || Date.parse(run.created_at) > Date.parse(newest.created_at)) newest = run
+  }
+  return newest
+}
+
 /** The newest run's suite(s), as words: "Checkout", or "Checkout +2". */
 function suiteWords(run: TestRun | undefined): string | null {
   if (!run) return null
@@ -400,7 +410,10 @@ export default function OverviewPage() {
   const retryCategories = useCallback(() => {
     void mutateCategories()
   }, [mutateCategories])
-  const { data: recentRuns } = useRuns({ page: 1, size: 100, days })
+  // D-0022: newest RECEIVED first, as the Runs table lists them. The server's
+  // default is the highest build label first, which compares labels across
+  // suites and named an older suite "latest".
+  const { data: recentRuns } = useRuns({ page: 1, size: 100, days, order: 'newest' })
   // The newest run IGNORING the window. Without this the page cannot tell
   // "no runs in the last 7 days" from "no runs at all", and it rendered the
   // same silent 0/— for both. One row, and SWR keys on the params so it does
@@ -414,7 +427,10 @@ export default function OverviewPage() {
   // Not on a failed or pending windowed fetch: that is not "empty".
   const windowHasRuns = recentRuns ? recentRuns.items.length > 0 : undefined
   const needProbes = windowHasRuns === false
-  const { data: newestRunPage } = useRuns({ page: 1, size: 1 }, { enabled: needProbes })
+  // D-0001: `days: 0` = all time. Omitted, the server applies its 30-day
+  // default, and a project whose newest run is older than that was told it
+  // never had one (the first-run guide replaced the dashboard).
+  const { data: newestRunPage } = useRuns(ALL_TIME_PROBE, { enabled: needProbes })
   // "Has this project EVER had a run?" — a question about the project, not
   // about what the reader is currently filtered to. Separate from the query
   // above because that one feeds the empty-window message, which SHOULD stay
@@ -424,7 +440,7 @@ export default function OverviewPage() {
   // With no release selected both calls carry identical params and SWR serves
   // them from one request.
   const { data: everHadRunPage } = useRuns(
-    { page: 1, size: 1 },
+    ALL_TIME_PROBE,
     { ignoreGlobalRelease: true, enabled: needProbes },
   )
   const recentRunItems = useMemo<TestRun[]>(() => recentRuns?.items ?? [], [recentRuns?.items])
@@ -432,11 +448,14 @@ export default function OverviewPage() {
   const latestRun = useMemo(
     // OR within the suite dimension: the newest run carrying ANY selected
     // suite. With none selected `runHasSuite(run, '')` is true, as before.
+    // D-0022: the newest by when it was received, never by list position.
     () =>
-      recentRunItems.find((run) =>
-        suiteNames.length <= 1
-          ? runHasSuite(run, suiteNames[0] ?? '')
-          : suiteNames.some((name) => runHasSuite(run, name)),
+      newestReceived(
+        recentRunItems.filter((run) =>
+          suiteNames.length <= 1
+            ? runHasSuite(run, suiteNames[0] ?? '')
+            : suiteNames.some((name) => runHasSuite(run, name)),
+        ),
       ),
     [recentRunItems, suiteNames],
   )
@@ -445,10 +464,10 @@ export default function OverviewPage() {
     () =>
       describeEmptyWindow({
         totalInWindow: summary?.total_executions_7d?.value as number | undefined,
-        // Same ordering as the probe's single row, so the first windowed row
-        // is the answer whenever there is one.
+        // The newest windowed run by when it was received (D-0022); the probe's
+        // single row answers only when the window is empty.
         newestRunAt: windowHasRuns
-          ? recentRunItems[0]?.created_at ?? null
+          ? newestReceived(recentRunItems)?.created_at ?? null
           : newestRunPage?.items?.[0]?.created_at ?? null,
         days,
         options: TIME_OPTIONS,

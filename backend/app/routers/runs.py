@@ -45,6 +45,7 @@ from app.services.runs_service import (
     list_project_runs,
     list_run_test_cases,
     natural_build_number_key,
+    parse_run_list_order,
     parse_run_list_toolbar,
 )
 
@@ -123,6 +124,15 @@ async def list_runs(
     recommendation: Optional[str] = Query(
         None, description="The AI verdict column: GO | CONDITIONAL_GO | NO_GO | none."
     ),
+    # D-0022: the Dashboard's "latest suite" and the Runs table compare runs
+    # across suites, where only the time a run was received means anything.
+    order: Optional[str] = Query(
+        None,
+        description=(
+            "build (default): the highest build label first. newest: the run "
+            "received last first (created_at)."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -133,6 +143,7 @@ async def list_runs(
     suites = parse_suite_filter(suite_name)
     # The toolbar's values, also before any database access (one 422 text each).
     toolbar = _parse_toolbar(q, branch, recommendation)
+    run_order = parse_run_list_order(order)
     # Verify the PROVIDED release(s). This route was the only one accepting
     # ``release_id`` that skipped the check: a malformed value reached
     # ``uuid.UUID()`` in the service and raised ValueError -> 500 rather than
@@ -160,6 +171,7 @@ async def list_runs(
             days=effective_days,
             suite_name=suites,
             **toolbar,
+            order=run_order,
         )
     else:
         # Explicit project_id: verify the caller can read it (closes the
@@ -176,6 +188,7 @@ async def list_runs(
             days=effective_days,
             suite_name=suites,
             **toolbar,
+            order=run_order,
         )
     return {"items": items, "total": total, "page": page, "size": size, "pages": pages}
 

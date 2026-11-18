@@ -291,6 +291,8 @@ const ROUTES: FoldRoute[] = [
     // nothing else, in ONE column since the P5 baselines (two columns beside
     // the sub-nav cut every description to ten characters; they measured 1,288).
     // W23a: 1,651 — Settings › Project gained "Expected runs" (TRND-03).
+    // D-0017: a QA lead no longer has MFA & lockout or Retention & purge (an admin's, like SSO and Feature flags):
+    // two rows shorter.
     budget: 1_700,
     target: 1_100,
     table: false,

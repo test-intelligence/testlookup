@@ -90,11 +90,23 @@ def test_main_run_listing_uses_reverse_canonical_order():
         if isinstance(node, ast.Assign)
         and any(isinstance(t, ast.Name) and t.id == "order_keys" for t in node.targets)
     ]
-    assert len(assignments) == 1
+    # The default (``order="build"``) keeps the UI-003 keys; D-0022's ``order="newest"``
+    # replaces them, under that condition only, with the run received last first.
+    assert len(assignments) == 2
     assert ast.unparse(assignments[0].value) == (
         "(natural_build_number_key().desc().nulls_first(), "
         "TestRun.build_number.desc(), TestRun.created_at.desc(), TestRun.id.desc())"
     )
+    assert ast.unparse(assignments[1].value) == "run_list_newest_order_keys()"
+    guards = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.If) and assignments[1] in node.body
+    ]
+    assert [ast.unparse(g.test) for g in guards] == ["order == 'newest'"]
+    assert inspect.signature(runs_service.list_project_runs).parameters["order"].default == "build"
+    assert [str(k) for k in runs_service.run_list_newest_order_keys()] == [
+        "test_runs.created_at DESC", "test_runs.id DESC",
+    ]
     order_calls = [
         node for node in ast.walk(tree)
         if isinstance(node, ast.Call)

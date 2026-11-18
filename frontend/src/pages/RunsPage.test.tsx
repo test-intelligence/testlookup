@@ -649,6 +649,23 @@ describe('RunsPage — the page template (P3)', () => {
     expect(cell.firstElementChild).toHaveAttribute('title', 'No pass rate: the run reported no tests')
   })
 
+  it('a run whose every result was skipped has no pass rate and stays out of the average (D-0005)', () => {
+    renderRunsPage(newestFirst([
+      run(1, { status: 'PASSED', passed_tests: 1, failed_tests: 0, skipped_tests: 1, total_tests: 2, pass_rate: 100, created_at: hoursAgo(30) }),
+      run(2, { status: 'FAILED', passed_tests: 1, failed_tests: 1, skipped_tests: 0, total_tests: 2, pass_rate: 50, created_at: hoursAgo(20) }),
+      run(3, { status: 'FAILED', passed_tests: 0, failed_tests: 1, skipped_tests: 0, total_tests: 1, pass_rate: 0, created_at: hoursAgo(10) }),
+      // GPT-6's run: one test, skipped; the API stores pass_rate 0 for "nothing executed".
+      run(4, { status: 'STOPPED', passed_tests: 0, failed_tests: 0, broken_tests: 0, skipped_tests: 1, total_tests: 1, pass_rate: 0, created_at: hoursAgo(1) }),
+    ]))
+    const rate = (id: string) => primary().querySelector(`#run-row-${id} [data-run-pass-rate]`) as HTMLElement
+    expect(rate('run-4')).toHaveTextContent(/^—$/)
+    expect(rate('run-4').firstElementChild).toHaveAttribute('title', 'No pass rate: no test was executed (every result was skipped)')
+    expect(rate('run-3')).toHaveTextContent(/^0\.0%$/)
+    const facts = Array.from(banner().querySelectorAll('[data-banner-fact]'), (f) => f.textContent)
+    // (100 + 50 + 0) / 3, never (100 + 50 + 0 + 0) / 4 = 37.5.
+    expect(facts).toContain('Avg pass rate 50.0%')
+  })
+
   it('a green window: OK, no Bisect, no signatures button', () => {
     renderRunsPage(greenWindow())
     expect(banner()).toHaveAttribute('data-status-banner', 'ok')
@@ -685,7 +702,7 @@ describe('RunsPage — the page template (P3)', () => {
     expect(within(picker).getByRole('radio', { name: '30d' })).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(within(picker).getByRole('radio', { name: '7d' }))
     expect(useTimeWindowStore.getState().days).toBe(7)
-    expect(vi.mocked(useRuns).mock.lastCall?.[0]).toMatchObject({ days: 7, size: 500 })
+    expect(vi.mocked(useRuns).mock.lastCall?.[0]).toMatchObject({ days: 7, size: 500, order: 'newest' })
     expect(screen.getByRole('combobox', { name: 'Run status' })).toBeInTheDocument()
   })
 })

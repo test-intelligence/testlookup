@@ -57,6 +57,7 @@ import {
 import Tabs, { type TabItem } from '@/components/ui/Tabs'
 import { useTabParam } from '@/components/ui/useTabParam'
 import { useAgenticRuntime } from '@/hooks/useAgentOps'
+import { measuredRunPassRate } from '@/utils/runPassRate'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { useProjectChangeRedirect, useProjectChangeReset } from '@/hooks/useProjectChange'
 
@@ -653,6 +654,11 @@ function PipelineRow({
 function LiveRunCard({ run }: { run: ActiveLiveRun }) {
   const completed = run.passed + run.failed + run.broken
   const progress = run.total > 0 ? (completed / run.total) * 100 : 0
+  // D-0005: no rate before a test has been executed (skips alone are not a measurement).
+  const liveRate = measuredRunPassRate({
+    total_tests: run.total, pass_rate: run.pass_rate,
+    passed_tests: run.passed, failed_tests: run.failed, broken_tests: run.broken,
+  })
 
   return (
     <div className="card border border-[var(--color-border-light)] bg-[var(--color-bg-secondary)]/30">
@@ -688,7 +694,7 @@ function LiveRunCard({ run }: { run: ActiveLiveRun }) {
         <div><div className="text-[var(--status-passed)] font-mono">{run.passed}</div><div className="text-[var(--color-text-muted)]">Pass</div></div>
         <div><div className="text-[var(--status-failed)] font-mono">{run.failed}</div><div className="text-[var(--color-text-muted)]">Fail</div></div>
         <div><div className="text-[var(--status-skipped)] font-mono">{run.skipped}</div><div className="text-[var(--color-text-muted)]">Skip</div></div>
-        <div><div className="text-[var(--color-text)] font-mono">{run.pass_rate}%</div><div className="text-[var(--color-text-muted)]">Rate</div></div>
+        <div><div className="text-[var(--color-text)] font-mono" data-live-pass-rate="">{liveRate === null ? '—' : `${liveRate}%`}</div><div className="text-[var(--color-text-muted)]">Rate</div></div>
       </div>
       <div className="w-full h-1.5 bg-[var(--color-bg-secondary)] rounded-full overflow-hidden">
         <div

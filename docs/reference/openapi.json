@@ -20418,7 +20418,7 @@
           },
           "run_ai": {
             "default": true,
-            "description": "False skips the AI analysis and the suite comparison for this run.",
+            "description": "False skips the AI analysis, the suite comparison and the automatic Investigator run for this run.",
             "title": "Run Ai",
             "type": "boolean"
           },
@@ -89401,6 +89401,24 @@
             }
           },
           {
+            "description": "build (default): the highest build label first. newest: the run received last first (created_at).",
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "build (default): the highest build label first. newest: the run received last first (created_at).",
+              "title": "Order"
+            }
+          },
+          {
             "in": "header",
             "name": "X-API-Key",
             "required": false,
@@ -89649,13 +89667,13 @@
             }
           },
           {
-            "description": "Attach cached or generated AI comparison report",
+            "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
             "in": "query",
             "name": "include_ai_report",
             "required": false,
             "schema": {
               "default": true,
-              "description": "Attach cached or generated AI comparison report",
+              "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
               "title": "Include Ai Report",
               "type": "boolean"
             }
@@ -89745,13 +89763,13 @@
             }
           },
           {
-            "description": "Attach cached or generated AI comparison report",
+            "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
             "in": "query",
             "name": "include_ai_report",
             "required": false,
             "schema": {
               "default": true,
-              "description": "Attach cached or generated AI comparison report",
+              "description": "Attach the cached AI comparison report; on a miss, generate one (QA_ENGINEER and above only, otherwise ai_report is null)",
               "title": "Include Ai Report",
               "type": "boolean"
             }

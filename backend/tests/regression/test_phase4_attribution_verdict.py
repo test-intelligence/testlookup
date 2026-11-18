@@ -306,3 +306,57 @@ def test_an_unknown_commit_range_does_not_vote_against_the_change():
     overlap. It must leave the verdict uncertain, not exonerate the change."""
     result = compose(_inputs(change_overlap=None, changed_files=()))
     assert result.verdict is AttributionVerdict.UNCERTAIN
+
+
+# ── D-0004: the history behind "not a new failure" is named, not assumed ────
+#
+# GPT-6 (2026-11-14): a test failing in a project's FIRST run read "Not a new
+# failure — this test was already failing before this run". Three histories
+# collapsed into one False: no earlier run, the test absent from (or skipped
+# in) the earlier run, and a failure in it. Each now says which.
+
+
+@pytest.mark.parametrize("outcome, says, never", [
+    ("no_previous_run", "first recorded run", "already failing"),
+    ("not_in_previous_run", "did not run in the previous run", "already failing"),
+    ("skipped", "skipped in the previous run", "already failing"),
+    ("failed", "already failing", None),
+])
+def test_the_rationale_names_the_previous_outcome(outcome, says, never):
+    result = compose(_inputs(is_new_failure=False, previous_outcome=outcome))
+    assert result.verdict is AttributionVerdict.UNCERTAIN
+    assert says in result.rationale.lower()
+    if never:
+        assert never not in result.rationale.lower()
+    assert result.to_dict()["inputs"]["previous_outcome"] == outcome
+
+
+def test_an_unspecified_outcome_keeps_the_old_wording():
+    """Stored or older inputs carry no outcome: today's text, unchanged."""
+    result = compose(_inputs(is_new_failure=False))
+    assert "already failing" in result.rationale.lower()
+    assert result.to_dict()["inputs"]["previous_outcome"] is None
+
+
+@pytest.mark.parametrize("previous_exists, statuses, expected", [
+    (False, {}, "no_previous_run"),
+    (True, {}, "not_in_previous_run"),
+    (True, {"fp": "PASSED"}, "passed"),
+    (True, {"fp": "FAILED"}, "failed"),
+    (True, {"fp": "BROKEN"}, "failed"),
+    (True, {"fp": "SKIPPED"}, "skipped"),
+])
+def test_the_previous_outcome_classifier(previous_exists, statuses, expected):
+    from app.services.failure_attribution_service import _previous_outcome
+
+    assert _previous_outcome(previous_exists, statuses, "fp") == expected
+
+
+def test_last_green_is_set_only_when_the_test_passed_in_the_previous_run():
+    """P10: ``last_green_run_id`` named the previous run even when the test failed there."""
+    import inspect as _inspect
+
+    from app.services import failure_attribution_service as svc
+
+    source = _inspect.getsource(svc.attribute_run)
+    assert 'last_green_run_id=str(previous.id) if outcome == "passed"' in " ".join(source.split())

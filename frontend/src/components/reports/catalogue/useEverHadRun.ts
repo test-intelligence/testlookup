@@ -9,8 +9,8 @@
  * under a release that has none, would be told it has never run anything
  * (lesson: a global filter poisons an existence probe).
  *
- * The params are EXACTLY Overview's own probe (`OverviewPage`: `useRuns({ page:
- * 1, size: 1 }, { ignoreGlobalRelease: true })`), but this read is QUIET, and a
+ * The params are EXACTLY Overview's own probe (`OverviewPage`:
+ * `useRuns(ALL_TIME_PROBE, { ignoreGlobalRelease: true })`), but this read is QUIET, and a
  * quiet read is its own SWR entry (R1B-7): sharing Overview's would let
  * whichever fetcher fired first decide whether a failure toasts, for both. On
  * Overview with the catalogue on that is one more small request; on every
@@ -30,10 +30,15 @@
  */
 import { useState } from 'react'
 import { useRuns } from '@/hooks/useRuns'
+import { ALL_TIME_PROBE } from '@/hooks/runProbes'
 import { useActiveProjectId } from '@/hooks/useProjectScopedSWR'
 
-/** Overview's probe parameters, verbatim (module-level: one identity, a stable SWR key). */
-export const EVER_HAD_RUN_PARAMS = { page: 1, size: 1 } as const
+/**
+ * Overview's probe parameters, verbatim (one identity, a stable SWR key):
+ * `days: 0` is all time. Omitted, the server's 30-day default applied and a
+ * project quiet for a month read as never having run (D-0002).
+ */
+export const EVER_HAD_RUN_PARAMS = ALL_TIME_PROBE
 
 export function useEverHadRun(enabled: boolean): boolean | null {
   const projectId = useActiveProjectId()

@@ -59,13 +59,16 @@ describe('MfaPolicyPage', () => {
     mockGetPolicy.mockResolvedValue({ ...LIVE_DEFAULTS })
   })
 
-  it('shows an access-denied empty state and no controls for non-admins', () => {
+  it('shows an access-denied empty state and no controls for non-admins, and reads no policy (D-0017)', async () => {
     permissions.isAdmin = false
     renderPage()
 
     expect(screen.getByText(/admin access required/i)).toBeInTheDocument()
     expect(screen.queryByRole('checkbox', { name: /require mfa/i })).toBeNull()
     expect(screen.queryByRole('button', { name: /save policy/i })).toBeNull()
+    // After a settled tick: an immediate assertion would pass before any fetch could start.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await waitFor(() => expect(mockGetPolicy).not.toHaveBeenCalled())
   })
 
   it('loads the live policy into the form', async () => {

@@ -452,6 +452,8 @@ async def test_reassign_execute_records_the_previous_assignee(r_fake):
     call = r_fake.calls[0].arguments
     assert call["db"] is db and call["test_case_id"] == tc.id
     assert call["new_assignee_user_id"] == owner and call["actor_user"] is approver
+    # D-0021: agent.action_executed records this move; the service writes no second feed row.
+    assert call["ledger"] is False
     assert "FOR UPDATE" in str(db.statements[0].compile(dialect=_pg()))
     assert action.project_id in _params(db.statements[0])
     facts = {

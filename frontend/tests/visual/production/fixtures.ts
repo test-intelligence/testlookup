@@ -304,7 +304,9 @@ const ageDays = (run: { created_at: string }) => Math.floor((NOW.getTime() - Dat
 /**
  * `GET /runs?days=&status=&suite_name=&q=&branch=&recommendation=&page=&size=` over
  * `source` (newest first), as `list_project_runs` answers it: `days` (0 = all
- * time), `status`, `suite_name` (the run's suite; only with `bySuite`: the
+ * time; OMITTED = the server's 30-day default, P11 / D-0001: this fixture used
+ * to read an omitted `days` as all time, which hid a probe that forgot it),
+ * `status`, `suite_name` (the run's suite; only with `bySuite`: the
  * shared list ignored it before W07 and the committed baselines were shot
  * that way), W07 FAIL-05's `q` (case-insensitive contains on build number,
  * branch and CI job; prefix on the commit hash), `branch` (repeatable, exact)
@@ -320,7 +322,7 @@ export function runListOf(
     const params = request.url.searchParams
     const size = intParam(request, 'size', 100)
     const pageNo = Math.max(1, intParam(request, 'page', 1))
-    const days = intParam(request, 'days', 0)
+    const days = intParam(request, 'days', 30)
     const status = params.get('status')
     const q = (params.get('q') ?? '').trim().toLowerCase()
     const branches = params.getAll('branch')
@@ -342,6 +344,11 @@ export function runListOf(
         if (recommendation && recommendation !== 'none' && run.ai_recommendation !== recommendation) return false
         return true
       })
+    // D-0022: `order=newest` is the run received last first; otherwise the source's own order (newest build
+    // first: in `runs()` the build labels fall as time falls, so both orders agree there).
+    if (params.get('order') === 'newest') {
+      all.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || (a.id < b.id ? 1 : -1))
+    }
     const items = all.slice((pageNo - 1) * size, pageNo * size)
     return { items, total: all.length, page: pageNo, size, pages: all.length > 0 ? Math.ceil(all.length / size) : 0 }
   }
@@ -2078,8 +2085,9 @@ export function summaryReport(request: ApiRequest) {
       broken,
       evaluated,
       pass_rate_pct: pct1(passed, total),
-      pass_rate_basis: 'unique_tests',
-      pass_rate_basis_label: 'per unique test',
+      // D-0012: the server's basis per mode (latest sums the latest run's counters: executions).
+      pass_rate_basis: mode === 'latest' ? 'executions' : 'unique_tests',
+      pass_rate_basis_label: mode === 'latest' ? 'per test execution' : 'per unique test',
       fail_rate_pct: pct1(failed, total),
       skip_rate_pct: pct1(skipped, total),
       broken_rate_pct: pct1(broken, total),
@@ -4375,7 +4383,7 @@ export const TRENDS_ON: ApiHandlers = [...RELEASES_LIST, ...CHART_DATA, ...WAVE3
 /**
  * /coverage/suite with the catalogue: no new request (the overlays read the
  * page's points). Wave 3: the test x run heatmap, the scatter, their rows,
- * and the sections' unfiltered "ever had a run?" probe (`/runs?page=1&size=1`).
+ * and the sections' unfiltered "ever had a run?" probe (`/runs?page=1&size=1&days=0`).
  * EXEC-04b: "Suite execution time" and the Runs tab's wall clock.
  */
 export const SUITE_DETAIL_ON: ApiHandlers = [...RELEASES_LIST, ...WAVE3, ...EXECUTION, ...RUNS, ...SUITE_DETAIL]

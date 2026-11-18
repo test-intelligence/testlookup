@@ -263,6 +263,34 @@ async def test_a_turn_streams_text_and_saves_question_and_answer(monkeypatch, ga
 
 
 @pytest.mark.asyncio
+async def test_a_link_request_gets_the_links_rule_and_the_sources(monkeypatch, gates):
+    """D-0010 (GPT-6): asked for "a link to the run and each failure", the model said it could not give links and
+    told the reader to search Runs, while the app rendered the three links under the answer. The system prompt now
+    tells the model those links exist (chat_system v5); the chips are the run and the cases the reply names."""
+    h = Harness(monkeypatch, [
+        AIMessage(content="", tool_calls=[call("list_run_failures", build_number="105")]),
+        AIMessage(content="Build 105 has 2 failing tests: test_refund_flow and test_tax_rounding."),
+    ])
+
+    async def failures(state, build):
+        state.add_ref({"type": "test_run", "id": "run-105", "build": "105"})
+        for case_id, name in (("case-1", "test_refund_flow"), ("case-2", "test_tax_rounding")):
+            state.add_ref({"type": "test_case", "id": case_id, "run_id": "run-105", "name": name})
+        return "Failing tests in build 105:\n- test_refund_flow\n- test_tax_rounding", "listed 2 failing tests in build 105"
+
+    monkeypatch.setattr(crt, "_fetch_run_failures", failures)
+    events = await h.turn("List build 105's failing tests with a link to the run and one link per failure.")
+
+    system = h.model.calls[0]["messages"][0]
+    assert "shown as a link under your answer" in system.content
+    assert "never say you cannot provide links" in system.content
+    done = data(events, "done")[0]
+    assert {(s["type"], s["id"]) for s in done["sources"]} >= {
+        ("test_run", "run-105"), ("test_case", "case-1"), ("test_case", "case-2"),
+    }
+
+
+@pytest.mark.asyncio
 async def test_a_tool_call_runs_and_its_result_reaches_the_model(monkeypatch, gates):
     """Regression: the tool loop runs through BudgetedLLM (it never had)."""
     h = Harness(monkeypatch, [

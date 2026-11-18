@@ -36,7 +36,7 @@ Each row shows the test (with its error, the step it failed at, and why it was a
 
 Notes are optional (up to 2,000 characters). The assignee, or a QA lead or administrator in the project, can update a failure's status.
 
-**Reassign** (QA leads and administrators) moves a failure to the suite owner or to a QA engineer in the project. If neither exists, add a QA engineer to the project first (**Admin → Project → Members & access**).
+**Reassign** (QA leads and administrators) moves a failure to the suite owner or to a QA engineer in the project. If neither exists, add a QA engineer to the project first (**Admin → Project → Members & access**). Each reassignment is recorded in the project's [Activity log](/docs/administration#activity-log) (`Failure <test> reassigned from <A> to <B>`); choosing the person it is already assigned to changes nothing and records nothing.
 
 ## Approvals
 

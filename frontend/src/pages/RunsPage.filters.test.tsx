@@ -111,8 +111,10 @@ describe('RunsPage — the toolbar filters (FAIL-05)', () => {
     const toolbar = document.querySelector('[data-runs-toolbar]') as HTMLElement
     expect(within(toolbar).getByRole('searchbox', { name: 'Search runs' })).toHaveAttribute('placeholder', 'Build, branch, job or commit…')
     expect(Array.from(verdictSelect().options, (o) => o.textContent)).toEqual(['Any verdict', 'Go', 'Conditional', 'No-Go', 'No verdict'])
-    // An unfiltered page asks exactly what it asked before: no q / branch / recommendation key at all.
-    expect(Object.keys(lastParams()).sort()).toEqual(['days', 'page', 'size'])
+    // An unfiltered page asks no q / branch / recommendation key at all; `order: 'newest'` (D-0022) is the table's
+    // own order, the run received last first.
+    expect(Object.keys(lastParams()).sort()).toEqual(['days', 'order', 'page', 'size'])
+    expect(lastParams().order).toBe('newest')
   })
 
   it('typing asks ONCE after the pause, not once per key, and the URL gains q', async () => {

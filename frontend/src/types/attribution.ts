@@ -38,6 +38,8 @@ export const ATTRIBUTION_VERDICTS: readonly AttributionVerdict[] = [
 export interface AttributionInputs {
   is_new_failure: boolean
   last_green_run_id: string | null
+  /** D-0004: what the test did in the project's previous run (absent on older payloads). */
+  previous_outcome?: 'no_previous_run' | 'not_in_previous_run' | 'passed' | 'failed' | 'skipped' | null
   flaky_score: number | null
   flaky_confidence: string
   cluster_key: string | null

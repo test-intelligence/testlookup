@@ -177,8 +177,12 @@ export default function SearchableDataCard({
               </span>
               <div className="min-w-0">
                 <div className="text-sm font-medium text-[var(--color-text)]">{r.label}</div>
-                <div className="truncate text-2xs text-[var(--color-text-muted)]">
-                  {count === null ? '— rows' : `${formatNumber(count)} row${count === 1 ? '' : 's'}`} · keyword match
+                {/* Wraps, never truncates: the Flaky row's second half says which tests a Flaky search finds (D-0013). */}
+                <div className="text-2xs text-[var(--color-text-muted)]">
+                  {r.entity === 'flaky_test'
+                    // D-0013: entity-counts' flaky_test counts quarantine requests; a Flaky search groups run history.
+                    ? `${count === null ? '—' : formatNumber(count)} open quarantine request${count === 1 ? '' : 's'} · tests found by run history`
+                    : `${count === null ? '— rows' : `${formatNumber(count)} row${count === 1 ? '' : 's'}`} · keyword match`}
                 </div>
               </div>
               <StatusPill label="Keyword" tone="passed" ariaLabel={`${r.label}: keyword search`} />

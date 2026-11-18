@@ -161,7 +161,7 @@ file, and exits 1 if any file fails.
 | `--runtime <KEY=VERSION>` | A runtime the tests ran on, e.g. `--runtime java=21.0.2`; repeatable. Beats `TESTLOOKUP_RUNTIME` per key |
 | `--image-digest <NAME=sha256:...>` | An image the tests ran in, with its 64-hex digest; repeatable. Replaces `TESTLOOKUP_IMAGE_DIGESTS` |
 | `--no-run-context` | Send no run context at all (same as `TESTLOOKUP_RUN_CONTEXT=0`) |
-| `--no-ai` | Skip the AI analysis of the uploaded run (sends `run_ai=false`) |
+| `--no-ai` | Skip the AI analysis, the suite comparison and the automatic Investigator run of the uploaded run (sends `run_ai=false`) |
 | `--wait` / `--no-wait` | Wait until the server has ingested the report and exit non-zero if it refuses it (over the result cap, unparseable, empty). Default `--no-wait`: the command returns once the upload is accepted. |
 | `--wait-timeout <seconds>` | How long `--wait` waits (default 600; for `upload dir` one budget covers every file) |
 | `--profile`, `-o`/`--output` | Profile to use; `table`, `json` or `yaml` output |

@@ -53,6 +53,20 @@ function formatPercent(value: number | null): string {
   return `${Math.round(value * 100)}%`
 }
 
+/** D-0004: "New failure", by what the test did in the previous run; the boolean for older payloads. */
+const PREVIOUS_OUTCOME_LABELS = {
+  passed: 'yes — passed in the previous run',
+  failed: 'no — already failing',
+  skipped: 'no — skipped in the previous run',
+  no_previous_run: 'unknown — first run in this project',
+  not_in_previous_run: 'unknown — not in the previous run',
+} as const
+
+function newFailureLabel(inputs: AttributionItem['inputs']): string {
+  if (inputs.previous_outcome) return PREVIOUS_OUTCOME_LABELS[inputs.previous_outcome]
+  return inputs.is_new_failure ? PREVIOUS_OUTCOME_LABELS.passed : PREVIOUS_OUTCOME_LABELS.failed
+}
+
 /**
  * The five composed signals, shown together because the verdict is only as
  * trustworthy as the inputs a reader can check.
@@ -67,7 +81,7 @@ export function AttributionEvidence({ attribution }: { attribution: AttributionI
         <div>
           <dt className="text-[var(--color-text-muted)]">New failure</dt>
           <dd className="text-[var(--color-text)]">
-            {inputs.is_new_failure ? 'yes — passed in the previous run' : 'no — already failing'}
+            {newFailureLabel(inputs)}
           </dd>
         </div>
         <div>

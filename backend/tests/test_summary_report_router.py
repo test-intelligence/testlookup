@@ -102,6 +102,23 @@ async def test_get_summary_report_returns_service_envelope():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("basis", ["executions", "unique_tests"])
+async def test_meta_declares_the_basis_the_totals_declare(_stub_envelope, basis):
+    """D-0012: ``meta.pass_rate_basis`` follows ``totals.pass_rate_basis`` (it was hard-coded unique_tests)."""
+    from app.routers.summary_report import get_summary_report
+
+    project_id = uuid.uuid4()
+    envelope = _envelope(project_id, mode="latest")
+    envelope["totals"]["pass_rate_basis"] = basis
+    with patch(
+        "app.services.summary_report_service.build_summary_report",
+        new=AsyncMock(return_value=envelope),
+    ):
+        await get_summary_report(mode="latest", scope=_scope(project_id), db=AsyncMock())
+    assert _stub_envelope.await_args.kwargs["pass_rate_basis"] == basis
+
+
+@pytest.mark.asyncio
 async def test_get_summary_report_preserves_phase5_step_fields():
     """Regression: the Phase 5 granular step enrichment must SURVIVE the
     ``SummaryReportResponse`` round-trip the router performs.

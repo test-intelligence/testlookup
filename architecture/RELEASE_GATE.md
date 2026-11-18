@@ -144,7 +144,7 @@ consumes.
 
 - `assemble_input_snapshot(run_id)` captures every input the decision reads — pass rates, dimension scores, policy result, flaky/quarantine state — as one deterministic snapshot stored with the decision.
 - `_synthesize_release_council` combines the policy recommendation, dimension scores, and band floor into the composite verdict with its evidence; `_worse_verdict` is the combining operator.
-- `apply_override` is the human escape hatch: a permitted user can override the verdict **with a reason**, and the override is recorded alongside the original computed verdict — the gate never silently loses the machine's opinion.
+- `apply_override` is the human escape hatch: a permitted user can override the verdict **with a reason**, and the override is recorded alongside the original computed verdict — the gate never silently loses the machine's opinion. It needs a stored `ReleaseDecision` (404 without one); a synthesized quick-look view has none, so both hosts (`/release-gate/:run` and the run's Analysis tab) withhold the control and say why, with one shared sentence (`NO_STORED_DECISION` in `components/release/overridePrerequisite.ts`, D-0007).
 
 Quarantined tests (see [FLAKY_INTELLIGENCE.md](./FLAKY_INTELLIGENCE.md)) are excluded from the failure signal while quarantine is active, which is the mechanism that stops known-flaky tests from permanently pinning a project at `NO_GO`.
 

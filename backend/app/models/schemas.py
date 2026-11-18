@@ -6009,7 +6009,10 @@ class IngestPayload(_NulFreeInput):
     # that does not send it dumps exactly as before; the worker reads payload.get("run_ai", True).
     run_ai: bool = Field(
         True,
-        description="False skips the AI analysis and the suite comparison for this run.",
+        description=(
+            "False skips the AI analysis, the suite comparison and the automatic "
+            "Investigator run for this run."
+        ),
         exclude_if=lambda value: value is True,
     )
 

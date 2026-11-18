@@ -124,7 +124,7 @@ function SearchCommandBar({
   onModeChange: (m: RetrievalMode) => void
   scope: EntityScope
   onScopeChange: (s: EntityScope) => void
-  scopeCounts: Record<EntityScope, number>
+  scopeCounts: Record<EntityScope, number | null>
   inputRef: React.RefObject<HTMLInputElement | null>
   /** The applied filters of the last search (absent for a plain query). */
   chips?: ReactNode
@@ -214,14 +214,17 @@ function SearchCommandBar({
               ariaChecked={scope === s.id}
               active={scope === s.id}
               onClick={() => onScopeChange(s.id)}
+              title={scopeCounts[s.id] === null ? FLAKY_NO_INVENTORY : undefined}
             >
               {s.label}
-              <span
-                className="font-mono text-2xs tabular-nums ml-1"
-                style={{ color: scope === s.id ? 'var(--ui-info-ink)' : 'var(--color-text-faint)' }}
-              >
-                {formatNumber(scopeCounts[s.id] ?? 0)}
-              </span>
+              {scopeCounts[s.id] !== null && (
+                <span
+                  className="font-mono text-2xs tabular-nums ml-1"
+                  style={{ color: scope === s.id ? 'var(--ui-info-ink)' : 'var(--color-text-faint)' }}
+                >
+                  {formatNumber(scopeCounts[s.id] ?? 0)}
+                </span>
+              )}
             </Chip>
           ))}
         </div>
@@ -265,6 +268,17 @@ function Chip({
   )
 }
 
+/**
+ * D-0013: why the Flaky chip shows no number without a query. A Flaky search finds tests by their run history
+ * (5+ runs, 10-90 % failing); the inventory's `flaky_test` counts quarantine requests, a different population,
+ * and a history-wide count is too slow to run on every page load (P5). Searchable data names that count.
+ */
+const FLAKY_NO_INVENTORY =
+  'Flaky tests are found from their run history, so there is no stored count. Searchable data lists the open quarantine requests.'
+
+/** The kinds whose inventory is one row per item, the rows keyword search covers (D-0015); not Flaky (above). */
+const ROW_KINDS: SearchEntityType[] = ['test_case', 'test_run', 'suite', 'defect', 'release']
+
 // ── Verdict ribbon ──────────────────────────────────────────────────────
 // The three tiles that used to sit beside freshness (Latency p95, Queries
 // today, Zero-result rate) had no metric behind them and were always "—".
@@ -272,7 +286,8 @@ function Chip({
 function VerdictRibbon({
   totalItems, typeCount, indexStatus,
 }: {
-  totalItems: number
+  /** The keyword rows of the ROW_KINDS (D-0015); null until the counts load. */
+  totalItems: number | null
   typeCount: number
   indexStatus: IndexStatus | null
 }) {
@@ -311,7 +326,9 @@ function VerdictRibbon({
           Index ready
         </span>
         <h2 className="font-bold m-0" style={{ fontSize: 'var(--text-display-sm)', lineHeight: 1.15, letterSpacing: '-0.02em', margin: '6px 0 6px' }}>
-          {formatNumber(totalItems)} item{totalItems === 1 ? '' : 's'} indexed across {typeCount} entity type{typeCount === 1 ? '' : 's'}
+          {/* D-0015: the rows keyword search covers. It printed the semantic index's TEST-document count here
+              under a six-kind claim; that count is now its own stat, named as tests. */}
+          {totalItems === null ? '—' : formatNumber(totalItems)} row{totalItems === 1 ? '' : 's'} searchable across {typeCount} entity type{typeCount === 1 ? '' : 's'}
         </h2>
         {/* Exactly the columns global_search_service.py matches with ILIKE. */}
         <p className="text-sm m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5, maxWidth: '80ch' }} data-testid="search-matched-fields">
@@ -325,7 +342,11 @@ function VerdictRibbon({
         className="flex items-stretch"
         style={{ borderLeft: '1px solid var(--color-border)' }}
       >
-        <VerdictStat label="Index freshness" value={freshLabel} sub={streaming ? 'streaming' : 'static'} />      </div>
+        <VerdictStat
+          label="Semantic index (tests)"
+          value={indexStatus ? `${formatNumber(indexStatus.document_count)} doc${indexStatus.document_count === 1 ? '' : 's'}` : '—'}
+          sub={freshAge == null ? undefined : `${freshLabel}${streaming ? ' · streaming' : ''}`}
+        />      </div>
     </section>
   )
 }
@@ -670,10 +691,11 @@ export default function SearchPage() {
   // user clicked between Tests and Runs. Confusing and the count
   // wouldn't match the table either since the browse adapters cap
   // their LIMIT below the real project total.
+  // Match counts (an All-scope query) vs the project inventory (everything else).
+  const useResponseCounts = !!response && scope === 'all' && query.trim() !== ''
   const entityCounts: Record<SearchEntityType, number> = useMemo(() => {
     const responseCounts = (response?.entity_counts ?? {}) as Partial<Record<SearchEntityType, number>>
     const fallback = (totalCounts ?? {}) as Partial<Record<SearchEntityType, number>>
-    const useResponseCounts = !!response && scope === 'all' && query.trim() !== ''
     const pick = (type: SearchEntityType): number => {
       if (useResponseCounts) return Number(responseCounts[type] ?? 0)
       return Number(fallback[type] ?? 0)
@@ -686,36 +708,29 @@ export default function SearchPage() {
       flaky_test: pick('flaky_test'),
       release:    pick('release'),
     }
-  }, [response, totalCounts, scope, query])
+  }, [response, totalCounts, useResponseCounts])
 
-  // ``indexStatus.document_count`` reflects what's actually in the
-  // BM25/embedding index. On a fresh deploy (or before the reindex
-  // task fires for the first time) this is 0 even though the database
-  // is full of data. Falling back to the entity-counts sum keeps the
-  // headline honest about what the user can search across, since the
-  // database read paths still work even when the vector index is
-  // cold. Once reindex catches up, the indexStatus value wins.
-  const databaseTotal = useMemo(
-    () => Object.values(totalCounts ?? {}).reduce((s, n) => s + (n as number), 0),
+  // D-0015: the headline counts the rows keyword search covers, the inventory of the ROW_KINDS. It used to take
+  // the semantic index's document count (TEST results only) whenever that was positive, under a six-kind claim.
+  // D-0013: Flaky has no row inventory (a Flaky search groups run history); `flaky_test` here counts quarantine
+  // requests, so it is in neither this total nor the Flaky chip, and Searchable data names it.
+  const keywordRowTotal = useMemo(
+    () => (totalCounts ? ROW_KINDS.reduce((s, kind) => s + Number(totalCounts[kind] ?? 0), 0) : null),
     [totalCounts],
   )
-  const totalIndexed = indexStatus?.document_count
-    ? indexStatus.document_count
-    : databaseTotal
-  const scopeCounts: Record<EntityScope, number> = useMemo(() => {
+  const scopeCounts: Record<EntityScope, number | null> = useMemo(() => {
     const summed = Object.values(entityCounts).reduce((s, n) => s + n, 0)
     return {
-      // "All" chip: sum of the entity counts. Same source as the
-      // individual chips so the numbers tally.
-      all:      summed || totalIndexed,
+      // "All": with a query, the per-type matches; otherwise the inventory the chips show.
+      all:      useResponseCounts ? summed : (keywordRowTotal ?? 0),
       tests:    entityCounts.test_case,
       runs:     entityCounts.test_run,
       suites:   entityCounts.suite,
       defects:  entityCounts.defect,
-      flaky:    entityCounts.flaky_test,
+      flaky:    useResponseCounts ? entityCounts.flaky_test : null,
       releases: entityCounts.release,
     }
-  }, [entityCounts, totalIndexed])
+  }, [entityCounts, keywordRowTotal, useResponseCounts])
 
   const projectLabel = project?.name ?? 'All Projects'
 
@@ -723,9 +738,9 @@ export default function SearchPage() {
   // the compact header's one line.
   const subtitle = [
     `Find tests, runs, suites, defects, releases across ${projectLabel}`,
-    `${formatNumber(totalIndexed)} items indexed`,
+    keywordRowTotal === null ? null : `${formatNumber(keywordRowTotal)} rows searchable`,
     indexStatus?.last_indexed_at
-      ? `fresh ${relativeTime(new Date(indexStatus.last_indexed_at).getTime(), now)}`
+      ? `semantic index fresh ${relativeTime(new Date(indexStatus.last_indexed_at).getTime(), now)}`
       : null,
   ].filter(Boolean).join(' · ')
 
@@ -781,8 +796,8 @@ export default function SearchPage() {
       )}
 
       <VerdictRibbon
-        totalItems={totalIndexed}
-        typeCount={6}
+        totalItems={keywordRowTotal}
+        typeCount={ROW_KINDS.length}
         indexStatus={indexStatus}
       />
 

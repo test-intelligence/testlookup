@@ -280,6 +280,62 @@ async def test_latest_mode_uses_per_suite_snapshot_and_sets_no_runs_per_day():
 
 
 @pytest.mark.asyncio
+async def test_latest_mode_declares_it_counts_executions():
+    """D-0012: latest mode sums the latest run per suite's counters -- executions, not unique tests."""
+    from app.services import summary_report_service as svc
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _scalar("P"),
+        _one(_totals_row(runs=2, total=53, passed=24, failed=16, skipped=11, broken=2, latest=None)),
+        _all([_suite_row(suite_name="smoke", total=53, passed=24, failed=16, skipped=11, broken=2)]),
+        _scalar(0),
+        _all([]),
+        _all([]),
+    ])
+    result = await svc.build_summary_report(db, project_id=uuid.uuid4(), days=7, mode="latest")
+    assert result["totals"]["pass_rate_basis"] == "executions"
+    assert result["totals"]["pass_rate_basis_label"] == "per test execution"
+
+
+def _window_db(*, unique_total: int):
+    """A window-mode report whose fingerprint pass finds ``unique_total`` tests (0 forces the aggregate fallback)."""
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _scalar("P"),
+        _one(_totals_row(runs=4, total=60, passed=50, failed=8, skipped=2, broken=0, latest=None)),
+        _one(_uniq_row(total=unique_total, passed=unique_total, failed=0, skipped=0, broken=0)),
+        _all([]),
+        _scalar(0),
+        _all([]),
+        _all([]),
+        _all([]),
+    ])
+    return db
+
+
+@pytest.mark.asyncio
+async def test_window_mode_declares_unique_tests():
+    from app.services import summary_report_service as svc
+
+    result = await svc.build_summary_report(db=_window_db(unique_total=47), project_id=uuid.uuid4(), days=7, mode="window")
+    assert result["totals"]["total_test_cases"] == 47
+    assert result["totals"]["pass_rate_basis"] == "unique_tests"
+    assert result["totals"]["pass_rate_basis_label"] == "per unique test"
+
+
+@pytest.mark.asyncio
+async def test_window_mode_aggregate_fallback_declares_executions():
+    """No fingerprinted rows: the headline is the summed run aggregates -- executions (D-0012)."""
+    from app.services import summary_report_service as svc
+
+    result = await svc.build_summary_report(db=_window_db(unique_total=0), project_id=uuid.uuid4(), days=7, mode="window")
+    assert result["totals"]["total_test_cases"] == 60
+    assert result["totals"]["pass_rate_basis"] == "executions"
+    assert result["totals"]["pass_rate_basis_label"] == "per test execution"
+
+
+@pytest.mark.asyncio
 async def test_zero_totals_produce_safe_pct_math():
     """No runs in window → percentages are 0.0, not NaN/ZeroDivisionError."""
     from app.services import summary_report_service as svc

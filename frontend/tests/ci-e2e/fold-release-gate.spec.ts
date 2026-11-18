@@ -202,6 +202,55 @@ test('How this was decided shows the decision and the override at their recorded
   expect(errors).toEqual([])
 })
 
+// D-0007 (GPT-6 exploratory, E2E-0007): Override needs a STORED decision (the API answers 404 without one). On a
+// quick-look (synthesized) recommendation a QA lead sees the button disabled with the reason, as on the run's
+// Analysis tab; nothing is posted. With a stored decision the same button opens the form (positive control).
+function gateDecision(synthesized: boolean) {
+  return {
+    run_id: RUN_ID, recommendation: 'NO_GO', risk_score: 60, composite_risk: 60, dimension_scores: [],
+    blocking_issues: ['Checkout suite failing'], conditions_for_go: [], reasoning: synthesized ? 'Quick look' : 'Stored decision',
+    score_model_version: 1, input_snapshot: null, cluster_insights: [], baseline_diff: null, open_defects_by_component: [],
+    human_override: null, overridden_by: null, original_recommendation: null, original_risk_score: null, override_audit: [],
+    pass_rate: 44.4, build_number: '240', policy_id: null, policy_version: 1, policy_level: 'project', rule_evaluations: [],
+    synthesized, created_at: '2026-09-10T08:30:00Z', updated_at: '2026-09-10T08:30:00Z',
+  }
+}
+
+const NO_STORED_DECISION = 'Run deep investigation first: there is no stored release decision to override yet.'
+
+test('a quick-look decision: Override is disabled for a QA lead and says why; nothing is posted', async ({ page }) => {
+  const { api, errors } = await openRollout(page, PATH, {
+    handlers: [[/^\/api\/v1\/release-readiness\/[^/]+$/, () => gateDecision(true)], ...releaseGateOn({ clusters: GATE_CLUSTERS })],
+    ready,
+  })
+  const card = page.locator('[data-primary]')
+  await expect(page.getByText('Quick-look decision')).toBeVisible()
+  const button = card.getByRole('button', { name: 'Override decision' })
+  await expect(button).toBeDisabled()
+  await expect(button).toHaveAttribute('title', NO_STORED_DECISION)
+  await expect(card.locator('[data-gate-blocked]')).toHaveText(NO_STORED_DECISION)
+  await button.click({ force: true })
+  await expect(card.getByRole('heading', { name: 'QA Lead Override' })).toHaveCount(0)
+  await networkQuiet(page, api)
+  expect(requestsTo(api, /\/release-readiness\/[^/]+\/override$/)).toEqual([])
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
+test('a stored decision: the same QA lead opens the override form', async ({ page }) => {
+  const { api, errors } = await openRollout(page, PATH, {
+    handlers: [[/^\/api\/v1\/release-readiness\/[^/]+$/, () => gateDecision(false)], ...releaseGateOn({ clusters: GATE_CLUSTERS })],
+    ready,
+  })
+  const card = page.locator('[data-primary]')
+  await expect(card.locator('[data-gate-blocked]')).toHaveCount(0)
+  await card.getByRole('button', { name: 'Override decision' }).click()
+  await expect(card.getByRole('heading', { name: 'QA Lead Override' })).toBeVisible()
+  await networkQuiet(page, api)
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
 /**
  * GATE-06: Share report chooses the layout and the expiry, lists the run's
  * links (created by, expiry, views) and revokes one. It used to mint an

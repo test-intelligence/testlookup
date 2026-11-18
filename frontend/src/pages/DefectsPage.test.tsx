@@ -1164,6 +1164,29 @@ describe('DefectsPage — row actions and the status vocabulary (DEF-01)', () =>
     expect(insights.refresh).toHaveBeenCalledTimes(1)
   })
 
+  it('the table heading names the status tab and counts the rows it shows (D-0014)', async () => {
+    await mockRows([
+      defect('alpha'),
+      defect('bravo'),
+      defect('charlie', { resolution_status: 'CLOSED' }),
+    ])
+    renderDefects()
+    const tablePanel = await screen.findByRole('region', { name: 'All defects' })
+    const heading = () => within(tablePanel).getByRole('heading', { level: 3 })
+    const filter = screen.getByRole('tablist', { name: 'Status filter' })
+    expect(heading()).toHaveTextContent(/^All defects\s*3 · sorted by/)
+    fireEvent.click(within(filter).getByRole('tab', { name: /^Closed/ }))
+    expect(heading()).toHaveTextContent(/^Closed defects\s*1 · sorted by/)
+    expect(heading()).not.toHaveTextContent(/^All defects/)
+    // The All tab still counts everything.
+    expect(within(filter).getByRole('tab', { name: /^All/ }).querySelector('[data-tab-count]')?.textContent).toBe('3')
+    fireEvent.click(within(filter).getByRole('tab', { name: /^Resolved/ }))
+    expect(heading()).toHaveTextContent(/^Resolved defects\s*0 · sorted by/)
+    fireEvent.click(within(filter).getByRole('tab', { name: /^All/ }))
+    fireEvent.change(screen.getByLabelText('Search defects'), { target: { value: 'bravo' } })
+    expect(heading()).toHaveTextContent(/^All defects\s*1 of 3 · sorted by/)
+  })
+
   it('files INVALID under Closed as "Invalid", the legacy CLOSED as "Closed", and an unknown word under Open', async () => {
     await mockRows([
       defect('invalid', { resolution_status: 'INVALID', resolved_at: ago(1) }),

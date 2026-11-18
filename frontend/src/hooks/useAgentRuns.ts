@@ -16,7 +16,10 @@ export function usePipelines(runId?: string, limit = 100) {
       : `/pipelines?limit=${limit}`
   return useSWR<AgentPipelineRun[]>(
     key,
-    () => agentService.listPipelines(runId, fetchProjectId, undefined, limit),
+    // D-0020: one run's pipelines are read by run alone, like every other read on the run page; the server's
+    // membership filter decides access. With the selected project as well, a member's run opened under another of
+    // their projects intersected to `200 []` ("No agent pipeline has analysed this run yet").
+    () => agentService.listPipelines(runId, runId ? undefined : fetchProjectId, undefined, limit),
     { refreshInterval: REFRESH_INTERVALS.REALTIME, revalidateOnFocus: false },
   )
 }

@@ -21916,7 +21916,7 @@ These are the full generated JSON Schema definitions, including required fields,
     },
     "run_ai": {
       "default": true,
-      "description": "False skips the AI analysis and the suite comparison for this run.",
+      "description": "False skips the AI analysis, the suite comparison and the automatic Investigator run for this run.",
       "title": "Run Ai",
       "type": "boolean"
     },

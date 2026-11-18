@@ -857,6 +857,18 @@ describe('SummaryReportPage — the page template (P3)', () => {
     expect(screen.queryByText('Evaluated')).toBeNull()
   })
 
+  it("the Pass % tile names the latest mode's population, per test execution (D-0012)", async () => {
+    mockGet.mockResolvedValue(makeReport({
+      mode: 'latest',
+      totals: { ...makeReport().totals, pass_rate_basis: 'executions', pass_rate_basis_label: 'per test execution' },
+    }))
+    renderPage()
+    const row = await screen.findByRole('region', { name: 'Summary KPIs' })
+    const pass = Array.from(row.querySelectorAll('[data-metric-card]')).find((tile) => tile.textContent?.startsWith('Pass %'))
+    expect(pass?.textContent).toContain('180 passed · per test execution')
+    expect(row.textContent).not.toContain('per unique test')
+  })
+
   it('keeps the counts strip\'s footer on screen: the run facts are the header\'s subtitle', async () => {
     mockGet.mockResolvedValue(makeReport())
     renderPage()

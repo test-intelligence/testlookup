@@ -28,6 +28,13 @@ jobs:
           python-version: '3.14'
       - name: Run repository quality guards
         run: python scripts/quality_gate.py
+      - name: Install pytest for the self-test
+        # The gate is stdlib file IO, but scripts/test_quality_gate.py is a
+        # pytest module and setup-python ships no pytest. Same step as ci.yml's
+        # quality-gate job. Without it this gate failed on its first run (#414).
+        # Hash-locked like ci.yml (scripts/requirements-ci.txt, `make lock-python`):
+        # a bare `pip install pytest` takes whatever PyPI serves that minute.
+        run: pip install --require-hashes -r scripts/requirements-ci.txt
       - name: Test repository quality guards
         run: python -m pytest scripts/test_quality_gate.py -q
       - name: Set up Node.js 26

@@ -108,7 +108,7 @@ import type { RunListFilters, TestRun, TestRunListResponse } from '@/types/runs'
 import { shortAgo } from '@/utils/formatters'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
 import { aiHistoryService } from '@/services/aiHistoryService'
-import { isRunInProgress, measuredRunPassRate } from '@/utils/runPassRate'
+import { isRunInProgress, measuredRunPassRate, noPassRateReason } from '@/utils/runPassRate'
 
 /** The page's help topic (the header's **?**). */
 const HELP_TOPIC = helpTopicParam('/runs')
@@ -904,8 +904,7 @@ const passRateColor = (pct: number) =>
 function RunPassRateValue({ run }: { run: TestRun }) {
   const pct = measuredRunPassRate(run)
   if (pct === null) {
-    const why = isRunInProgress(run.status) ? 'the run is still in progress' : 'the run reported no tests'
-    return <span className="text-[var(--color-text-muted)]" title={`No pass rate: ${why}`}>—</span>
+    return <span className="text-[var(--color-text-muted)]" title={noPassRateReason(run) ?? undefined}>—</span>
   }
   return <span style={{ color: passRateColor(pct) }}>{pct.toFixed(1)}%</span>
 }
@@ -1559,6 +1558,9 @@ export default function RunsPage() {
     page: 1,
     size: ANALYTICS_FETCH_SIZE,
     days,
+    // D-0022: the newest 500 by when they were received, the order the table
+    // shows (the server's default is the highest build label first).
+    order: 'newest',
     ...(statusFilter && { status: statusFilter }),
     ...(pageSuiteFilter && { suite_name: pageSuiteFilter }),
     ...(urlQ && { q: urlQ }),
@@ -1597,8 +1599,8 @@ export default function RunsPage() {
   const fetchedAt = useDataFreshness(data)
   const refreshedAt = fetchedAt ? shortAgo(fetchedAt) : 'just now'
   const runs = useMemo<TestRun[]>(() => (shownData?.items ?? []) as TestRun[], [shownData?.items])
-  // Client-side sort by run datetime (created_at). The backend already returns
-  // desc order, so 'desc' here is a no-op until the user clicks. Sorting is
+  // Client-side sort by run datetime (created_at). The list is asked for
+  // `order: 'newest'` (created_at desc), so 'desc' here is a no-op until the user clicks. Sorting is
   // applied to the full fetched page set *before* table-pagination, so
   // toggling the direction reorders every row currently in scope.
   const [datetimeSortDir, setDatetimeSortDir] = useState<'asc' | 'desc'>('desc')

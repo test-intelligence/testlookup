@@ -6,7 +6,7 @@ Finding a run, a test, a defect or a release you have seen before.
 
 Type in the search box in the top bar and press Enter (or press `/` anywhere to jump to it). Results open on the **Search** page (`/search`), where you can refine the query. It matches test names, suites, error messages, build numbers, branches, jobs, Jira IDs and release names.
 
-The **Entity scope** chips narrow the results to one kind: **All**, **Tests**, **Runs**, **Suites**, **Defects**, **Flaky** or **Releases**, each with its count. The query, mode and scope are in the page address, so you can share a search.
+The **Entity scope** chips narrow the results to one kind: **All**, **Tests**, **Runs**, **Suites**, **Defects**, **Flaky** or **Releases**, each with its count. With a query on **All**, each count is that kind's matches. Otherwise it is the kind's total, except **Flaky**: flaky tests are found from their run history (5 or more runs, 10–90 % failing), so there is no stored total and the chip shows no number. The query, mode and scope are in the page address, so you can share a search.
 
 **As you type** in the top bar, after two characters a short list opens under the box with up to five matches (the kind of each is on the right). Click one to open it; the last row, **Search everything for "…"**, or **Enter** opens the Search page with your words. Escape or clicking elsewhere closes the list.
 
@@ -80,7 +80,9 @@ A failed or broken test result has a fourth tab, **Similar failures**, beside **
 
 ## Index status
 
-The **Searchable data** card on the right lists the six kinds global search covers, each a keyword match over its own table with its row count, and a separate line for the **semantic index**, which holds test results only: **Ready** with its document count and when it was last written, **Not configured** (no vector store answers here), **Unavailable** or **Unknown**.
+The **Searchable data** card on the right lists the six kinds global search covers, each a keyword match over its own table with its row count (for **Flaky**, the open quarantine requests: flaky tests themselves are found from run history), and a separate line for the **semantic index**, which holds test results only: **Ready** with its document count and when it was last written, **Not configured** (no vector store answers here), **Unavailable** or **Unknown**.
+
+The headline above the results counts the rows keyword search covers in the five kinds stored one row per item (tests, runs, suites, defects and releases). The semantic index's document count, test results only, is shown beside it as **Semantic index (tests)** with when it was last written.
 
 A background job adds new test results to the semantic index every hour.
 

@@ -134,6 +134,17 @@ describe('RunDeepClusters — the run\'s clusters on the Analysis tab', () => {
     expect(screen.getByRole('button', { name: /Analyze failures/ })).toBeDisabled()
     expect(screen.getByText('investigation running')).toBeInTheDocument()
   })
+
+  // D-0023 (GPT-6): with no run (still loading, or refused) the button was enabled and queued for a run the user
+  // could not open; the role reason still comes first.
+  it('is disabled until the run has loaded, and a click queues nothing (D-0023)', () => {
+    renderClusters(null)
+    const button = screen.getByRole('button', { name: /Analyze failures/ })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', 'Waiting for the run to load')
+    fireEvent.click(button)
+    expect(triggerDeep).not.toHaveBeenCalled()
+  })
 })
 
 describe('/deep-investigate keeps its focused run in ?run=', () => {

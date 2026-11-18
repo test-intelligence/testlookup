@@ -23,6 +23,7 @@ import AIAnalysisCompareSection from '@/components/ai/AIAnalysisCompareSection'
 import SuiteBadge from '@/components/ui/SuiteBadge'
 import RunPicker from '@/components/runs/RunPicker'
 import { extractCompareErrorMessage, useLatestSuiteCompare, useRunCompare } from '@/hooks/useRunCompare'
+import { usePermissions } from '@/hooks/usePermissions'
 import { useRuns } from '@/hooks/useRuns'
 import { useRunSearch } from '@/hooks/useRunSearch'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
@@ -33,6 +34,7 @@ import type {
 } from '@/services/runCompareService'
 import type { TestRun } from '@/types/runs'
 import { runIdent } from '@/utils/runOption'
+import { measuredRunPassRate, noPassRateReason } from '@/utils/runPassRate'
 
 /**
  * Two-run compare page — Tier 2 item 8.
@@ -55,6 +57,7 @@ export default function RunComparePage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const activeProjectId = useProjectStore((state) => state.activeProjectId)
   const activeProject = useProjectStore((state) => state.activeProject)
+  const { canTriggerLlm } = usePermissions()
   const [leftInput, setLeftInput] = useState(searchParams.get('left') ?? '')
   const [rightInput, setRightInput] = useState(searchParams.get('right') ?? '')
   const [manualSuiteInput, setManualSuiteInput] = useState(searchParams.get('suite') ?? '')
@@ -268,6 +271,13 @@ export default function RunComparePage() {
           <SummaryTiles compare={compare} />
           {compare.selection && <SelectionNotice compare={compare} />}
           {compare.ai_report && <AIReportPanel report={compare.ai_report} />}
+          {/* D-0003: on a cache miss the server generates the paid report only for QA_ENGINEER and above. */}
+          {!compare.ai_report && !canTriggerLlm && (
+            <p data-ai-report-not-generated="" className="text-xs text-[var(--color-text-muted)] m-0 flex items-center gap-1.5">
+              <Info className="h-3.5 w-3.5 shrink-0" />
+              No AI comparison report exists for these runs yet. One is created when a QA engineer or above opens this comparison.
+            </p>
+          )}
           {/* W03 AIH-03/04: both runs' AI analyses side by side and what changed between them. */}
           <AIAnalysisCompareSection
             leftRunId={compare.left.id}
@@ -538,7 +548,11 @@ function SideCard({
           </span>
         )}
         <span className="ml-auto text-[var(--color-text-faint)]">
-          {run.pass_rate != null ? `${run.pass_rate.toFixed(1)}%` : '—'}
+          {/* D-0005: no rate without evidence (an all-skipped run is "—", not 0.0%). */}
+          {(() => {
+            const pct = measuredRunPassRate(run)
+            return pct === null ? <span title={noPassRateReason(run) ?? undefined}>—</span> : `${pct.toFixed(1)}%`
+          })()}
         </span>
       </div>
     </div>

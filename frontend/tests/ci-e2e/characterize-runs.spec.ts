@@ -95,7 +95,13 @@ test('U1 with nothing typed: the default build label, run_ai=false when AI is sk
   await uploadButton(page).click()
   const form = opened(page, 'Upload test report')
   await form.locator('input[type="file"]').setInputFiles(FILE)
-  await form.getByRole('checkbox', { name: /Skip AI analysis/ }).check()
+  // D-0006 (E2E-0006): the box says what it skips, the automatic investigation included; the server
+  // honours run_ai=false for it (backend/tests/regression/test_skip_ai_does_not_auto_investigate.py).
+  const skipAi = form.getByRole('checkbox', { name: /Skip AI analysis/ })
+  await expect(form.locator('label').filter({ hasText: 'Skip AI analysis' })).toContainText(
+    'no AI analysis, comparison report or automatic investigation for this run',
+  )
+  await skipAi.check()
   await form.getByRole('button', { name: 'Upload', exact: true }).click()
   await expect(form.getByText('Processed 3 tests')).toBeVisible({ timeout: 10_000 })
 

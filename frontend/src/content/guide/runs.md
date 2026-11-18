@@ -10,7 +10,7 @@ A **run** is one execution of a suite: a CI job, a local `pytest`, a TestNG sess
 
 **The status banner** sums up the window: **Pipeline broken**, **Mixed**, **Pipeline healthy** or **Pending**, with the **Last green** run, the **Red streak** (how many runs in a row have failed) and the **Avg pass rate**. When the window holds a failing run, the banner offers **Bisect from last green** (**Bisect the latest failure** when the window has no green run; see [Bisect from last green](#bisect-from-last-green)).
 
-**The table** shows 25 runs per page, newest first:
+**The table** shows 25 runs per page, newest first (by when TestLookup received each run):
 
 | Column | Shows |
 |---|---|
@@ -18,7 +18,7 @@ A **run** is one execution of a suite: a CI job, a local `pytest`, a TestNG sess
 | **Signature** | For a failed build, a short chip naming the error most of its failing tests share (hover for the error's first line): builds with the same chip failed the same way. **—** for a passed or in-progress run, and for a failed build older than the newest 50 failed builds of the window |
 | **Status** | Passed, failed or in progress |
 | **AI verdict** | **Go**, **Conditional** or **No-Go** from the run's analysis (the page reads them all in one request), or **—** when there is none (hover for why: the run has not been analysed, or it was analysed but its summary is not built yet, which opening the run's analysis does). Click it to open the run's **Analysis** tab |
-| **Tests** / **Pass rate** | The run's counts |
+| **Tests** / **Pass rate** | The run's counts. A run that is still in progress, reported no tests, or executed none (every result skipped) shows **—** instead of a pass rate (hover for why), and the banner's **Avg pass rate** leaves it out. Releases, Run compare and the live executions on the Agents page show **—** the same way |
 | **Timing** | When it ran and how long it took: the **wall clock** ("9.0s wall") when the run reported one, otherwise the **summed** test time ("17.4s summed"); hover for both. Click the header to sort |
 | **Actions** | Icon buttons: **Re-trigger standard pipeline**, **Trigger deep investigation**, and **Compare to the previous run** of the same suite |
 
@@ -56,6 +56,8 @@ Only the person who started a job, or an administrator, can open or cancel it. S
 
 Click a build to open `/runs/<run id>`, titled **Run #<build number>**. Under the title: the run's status, suite and release, and its timing: **Wall clock** (or **not reported** when the report carried no timestamps), **Test time (summed)** and, when both are known, **Parallelism**. See [Concepts](/docs/concepts#definitions) for the three terms. A run that no release claims reads **Unattributed** where the release would be: the [attribution ladder](/docs/releases#getting-runs-into-a-release) did not link it (hover for why). Click **Unattributed** to give the run a release by name, creating the release if it does not exist yet; the pencil next to an existing release (**Change release**) moves the run to another. Both need the `QA_LEAD` role.
 
+A run that does not exist, or that is in a project you are not a member of, opens as **Run not found**, with no tabs and no actions; the two cases look the same on purpose. While the run is still loading, the ⋯ menu's actions are disabled.
+
 The **⋯** menu:
 
 | Action | Does |
@@ -89,7 +91,7 @@ The run's AI analysis report. Old links to `/runs/<id>/intelligence` and `/deep-
 - **The verdict banner**: **Go · release cleared**, **Conditional Go · proceed with mitigation**, **No-Go · release blocked** or **Pending · awaiting evidence**, with the risk score, the number of blocking issues and the AI confidence. **Decision trail** shows how the verdict was reached, step by step.
 - **The review banner**, when the report is waiting for or has had a human review. See [Your inbox and approvals](/docs/inbox#approvals).
 - **What failed**: each failure, with **Open test case**, **Decision trail** and **File defect** (`QA_ENGINEER` or above).
-- **Proposed clusters**: the run's failures grouped by likely shared cause. **Analyze failures** starts a deep investigation of this run; it is disabled when the run has no failures, when one is already running, or for roles below `QA_ENGINEER`. See [Root cause (AI)](/docs/failure-analysis#root-cause-ai-deep-investigation).
+- **Proposed clusters**: the run's failures grouped by likely shared cause. **Analyze failures** starts a deep investigation of this run; it is disabled until the run itself has loaded, when the run has no failures, when one is already running, or for roles below `QA_ENGINEER`. See [Root cause (AI)](/docs/failure-analysis#root-cause-ai-deep-investigation).
 - Two collapsed sections: **How this score is computed**, and **Evidence behind the verdict** (the pipeline stages that ran, the test outcome, recommended actions by role with your own role's row first and marked **· your role** — QA for testers, QA engineers and QA leads, Release Manager for administrators — the AI confidence, failure categories, step flips and provenance).
 
 The verdict is computed, not written by a model; see [Releases and gates](/docs/releases#how-it-is-produced). The stages behind it are described in [AI agents and the pipeline](/docs/ai-agents).
@@ -137,7 +139,7 @@ The detail behind the analysis. Old links to `/agents/run/<id>` open here.
 - **Decision intelligence** — the agentic decision report, with a **Report version** picker when the run has been analysed more than once. The picker and the Analysis tab's [AI history](#ai-history) move together. Absent when no decision report exists for the run.
 - **The pipeline's AI report** — **View AI report** to read it, and **Agent stages** to see each stage the pipeline ran. When the run has several pipeline runs, a **Pipeline** picker chooses between them.
 
-"No agent pipeline has analysed this run yet." means no pipeline has run; **Trigger pipeline** in the ⋯ menu starts one.
+"No agent pipeline has analysed this run yet." means no pipeline has run; **Trigger pipeline** in the ⋯ menu starts one. The tab shows the run's own pipelines whichever of your projects is selected in the top bar. If the pipelines cannot be loaded, it says so instead.
 
 ### Timing
 
@@ -174,6 +176,8 @@ Open a test from the Tests tab (**Open full page**) to reach `/runs/<run id>/tes
 - **Manual historical comparison** — choose **Left run (baseline)** and **Right run (target)**, optionally limited to one suite, then **Compare**. Each picker searches every run you can see, in every release, by build number, branch, CI job or the start of a commit hash, newest first and 20 at a time (**Load older** for more); or **Paste run ID** and **Use**. A pasted ID that is not a run you can open reads **Run not found or not accessible.**
 
 The result leads with what changed: **Pass rate**, **Failed tests**, **New failures** and **Duration** for each side, an **AI Comparison Report** (key differences, new risks, actions and, when the two runs' AI analyses differ, **AI analysis changes**), an **AI analysis** section, and **Status changes** — how many tests moved from one status to another.
+
+The AI Comparison Report is written by the language model the first time a QA engineer or above opens the comparison, and saved. A Viewer or Tester sees it once it exists; until then the page says that no report exists for these runs yet, and opening the comparison does not start a model call.
 
 **AI analysis** puts the two runs' AI analyses side by side (**Baseline** on the left, **Target** on the right): the verdict and risk, the engine and model that produced each (**deterministic** when no language model did), the failure categories and the top suggested root causes. Under them, what changed between the two analyses, the same way as the Analysis tab's **vs previous run**, and the label of the narrative (**AI narrative** or **deterministic summary**). Two runs of different projects are not compared. Click a flow to filter the table to those tests. Filter chips narrow the table to **New failures**, **Regressed**, **Still failing**, **Duration spikes**, **Fixed**, **New tests**, **Removed** or **Renamed**.
 

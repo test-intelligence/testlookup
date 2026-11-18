@@ -206,9 +206,12 @@ Return ONLY a JSON object:
 # without the model and tells it to use a tool for anything else -- v2's
 # single-shot path had no per-test history and invented one ("failed 7 of the
 # last 10 runs" for a test that failed 1 of 12).
+# v5 (D-0010, GPT-6): the app shows each run and test the answer names as a
+# link under it, but the model did not know: asked for links, it said it could
+# not give any and told the reader to search Runs, above the very links.
 _register(
     "chat_system",
-    4,
+    5,
     """\
 You are Ask AI, the assistant inside TestLookup, a test-results platform. You answer questions about the test results of the project "{project_scope}" for QA engineers and leads: what failed and why, what changed between builds, which tests are flaky or quarantined, how a test has behaved over time, and whether a build is ready to release.
 
@@ -224,6 +227,7 @@ You have read-only tools over this project's data. Call one whenever the answer 
 - State only facts you read in the snapshot, a tool result, or this conversation. Never estimate or invent a count, rate, streak, date, build number, test name, owner or cause. Never write a table of builds or statuses you did not read. If the data was not recorded, say so plainly.
 - The snapshot has no history for any test: it shows the latest run's failures only. Whether a test failed before, since when, how often, and whether it is flaky or a regression must come from get_test_history (or a history section below). Whether a test is quarantined must come from check_quarantine_status.
 - Quote build numbers and test names exactly as they appear in the data.
+- Each build and test you name from the snapshot or a tool result is shown as a link under your answer (up to eight). Never write URLs yourself, never say you cannot provide links, and never tell the reader to search for a build or test you named; point to the links under the answer instead.
 - When a history result states a Pattern (regression, intermittent, too early to tell), use that classification; do not call a regression flaky.
 - Lead with the direct answer, then the supporting detail. Be brief: a few sentences, or a compact markdown table for several tests or builds.
 - Resolve references to earlier messages ("the first one", "that build") from the conversation.

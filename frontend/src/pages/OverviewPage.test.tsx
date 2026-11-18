@@ -92,16 +92,32 @@ const runsState: {
    *  on a project that does have runs. */
   everHad?: unknown[] | null
 } = { windowed: [], newest: [] }
+/** `GET /runs`' `days`: omitted = the last 30 days, 0 = all time, N = the last N days. */
+function inServerWindow(items: unknown[] | null | undefined, days: number | undefined): unknown[] | null {
+  if (items === null || items === undefined) return items ?? null
+  const window = days ?? 30
+  if (window === 0) return items
+  const since = Date.now() - window * 86_400_000
+  return items.filter((run) => {
+    const at = (run as { created_at?: string }).created_at
+    return at === undefined || Date.parse(at) >= since
+  })
+}
 vi.mock('@/hooks/useRuns', () => ({
   // Three shapes now: the windowed list, the release-scoped newest run, and
   // the unfiltered lifetime probe. The first two are told apart by `size`,
   // exactly as the page does; the third by its explicit opt-out.
-  useRuns: vi.fn((params?: { size?: number }, opts?: { ignoreGlobalRelease?: boolean }) => {
+  //
+  // D-0001: the two probes answer the way the server does. An OMITTED `days`
+  // is the server's 30-day window (`routers/runs.py`), `days: 0` is all time.
+  // The mock used to ignore `days`, which is how a probe that omitted it
+  // passed here while it hid every run older than 30 days on a real server.
+  useRuns: vi.fn((params?: { size?: number; days?: number }, opts?: { ignoreGlobalRelease?: boolean }) => {
     let items: unknown[] | null
     if (opts?.ignoreGlobalRelease) {
-      items = runsState.everHad !== undefined ? runsState.everHad : runsState.newest
+      items = inServerWindow(runsState.everHad !== undefined ? runsState.everHad : runsState.newest, params?.days)
     } else {
-      items = params?.size === 1 ? runsState.newest : runsState.windowed
+      items = params?.size === 1 ? inServerWindow(runsState.newest, params?.days) : runsState.windowed
     }
     // `null` models a fetch SWR has not resolved yet (`data: undefined`). That
     // is not the same as an empty list, and the page must not read it as one.
@@ -898,6 +914,31 @@ describe('OverviewPage — a KPI caption must not deny its own value', () => {
     expect(banner.textContent).toMatch(/16 days ago/i)
     // And a way out.
     expect(banner.textContent).toMatch(/Show last 90 days/i)
+  })
+
+  it('a project whose newest run is 36 days old gets the dashboard and its age, not the first-run guide (D-0001)', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    const { useRuns } = await import('@/hooks/useRuns')
+    emptySummary(useDashboardSummary, useTrendData)
+    const thirtySixDaysAgo = new Date(Date.now() - 36 * 24 * 60 * 60 * 1000).toISOString()
+    runsState.windowed = []
+    runsState.newest = [{ id: 'r-old', created_at: thirtySixDaysAgo }]
+    runsState.everHad = undefined
+    ;(useRuns as ReturnType<typeof vi.fn>).mockClear()
+
+    renderPage()
+
+    const banner = await screen.findByTestId('overview-empty-window')
+    expect(banner.textContent).toMatch(/36 days ago/i)
+    expect(banner.textContent).toMatch(/Show last 90 days/i)
+    expect(screen.queryByText(/Welcome to TestLookup/i)).toBeNull()
+    expect(screen.queryByText(/No test runs here yet/i)).toBeNull()
+    // Both probes ask all time.
+    const probes = (useRuns as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([params]) => (params as { size?: number } | undefined)?.size === 1,
+    )
+    expect(probes.length).toBeGreaterThanOrEqual(2)
+    for (const [params] of probes) expect(params).toMatchObject({ days: 0 })
   })
 
   it('does NOT tell a project with no runs at all to widen the window', async () => {
@@ -1706,5 +1747,65 @@ describe('OverviewPage — the Insights card (W23a FAIL-11)', () => {
     } finally {
       if (original) mocked.mockImplementation(original)
     }
+  })
+})
+
+// D-0022 (GPT-6): the header's "latest suite" is the suite of the run received last, the first row on Runs. The
+// server lists by highest build label by default, and `GPT6-IT01-W4-CF06` (received 14 h ago) sorts above
+// `GPT6-IT01-W3-*` (received 30 min and 2 h ago), so the first row named the older suite.
+describe("OverviewPage — the latest suite is the newest run's (D-0022)", () => {
+  const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString()
+  const run = (id: string, build: string, suite: string, h: number) => ({
+    id, build_number: build, created_at: hoursAgo(h), primary_suite_name: suite, suite_names: [suite],
+  })
+  /** In the server's default (build label) order: CF06 first, though it is the oldest. */
+  const buildOrdered = () => [
+    run('r-cf06', 'GPT6-IT01-W4-CF06', 'GPT6 CF06 review', 14),
+    run('r-after', 'GPT6-IT01-W3-quarantine-after', 'GPT6 W3 synthetic', 0.5),
+    run('r-during', 'GPT6-IT01-W3-quarantine-during', 'GPT6 W3 synthetic', 2),
+  ]
+
+  beforeEach(async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    runsState.windowed = buildOrdered()
+    runsState.newest = runsState.windowed
+    runsState.everHad = undefined
+  })
+
+  function renderPage() {
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+  }
+
+  it('names the suite of the run received last, whatever the list order', async () => {
+    const { useRuns } = await import('@/hooks/useRuns')
+    renderPage()
+    expect(await screen.findByText(/latest suite GPT6 W3 synthetic/)).toBeInTheDocument()
+    expect(screen.queryByText(/latest suite GPT6 CF06 review/)).toBeNull()
+    // The window's list asks the server for the newest received first.
+    const windowed = (useRuns as ReturnType<typeof vi.fn>).mock.calls
+      .map(([params]) => params as { size?: number } | undefined)
+      .filter((params) => params?.size === 100)
+    expect(windowed.length).toBeGreaterThan(0)
+    for (const params of windowed) expect(params).toMatchObject({ size: 100, order: 'newest' })
+  })
+
+  it('with a suite selected, names that suite', async () => {
+    renderPage()
+    const select = (await screen.findByTitle('Filter dashboard metrics by test suite')) as HTMLSelectElement
+    fireEvent.change(select, { target: { value: 'GPT6 CF06 review' } })
+    expect(await screen.findByText(/latest suite GPT6 CF06 review/)).toBeInTheDocument()
+  })
+
+  it('control: when the labels agree with time, the answer is the same', async () => {
+    runsState.windowed = [...buildOrdered()].reverse()
+    renderPage()
+    expect(await screen.findByText(/latest suite GPT6 W3 synthetic/)).toBeInTheDocument()
   })
 })

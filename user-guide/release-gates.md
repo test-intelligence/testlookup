@@ -53,7 +53,7 @@ Daily and weekly digests, and the per-release digest emails, include the release
 
 ## Overrides
 
-A QA lead or administrator can override a verdict from the release gate (**Override decision** → choose GO, CONDITIONAL GO or NO GO → a written reason → **Apply Override**; API: `POST /api/v1/release-readiness/{run_id}/override`). The override:
+A QA lead or administrator can override a verdict from the release gate (**Override decision** → choose GO, CONDITIONAL GO or NO GO → a written reason → **Apply Override**; API: `POST /api/v1/release-readiness/{run_id}/override`). It needs a stored decision, so on a quick-look recommendation (no deep investigation yet) the button is disabled and says so. The override:
 
 - requires a **written reason**,
 - is recorded **alongside** the computed verdict (the machine's opinion is never erased), listed in the gate's **History** tab, and audit-logged,

@@ -49,11 +49,20 @@ def _user(*, uid=None, role=UserRole.QA_LEAD.value):
 def _test_case(*, suite_name="Smoke", status=TestStatus.FAILED.value, assignee=None):
     return SimpleNamespace(
         id=uuid.uuid4(),
+        test_name="test_checkout_total",
         suite_name=suite_name,
         status=status,
         test_run_id=uuid.uuid4(),
         assigned_to_user_id=assignee,
     )
+
+
+@pytest.fixture(autouse=True)
+def record(monkeypatch):
+    """D-0021: a real change records ``failure.reassigned`` through the activity service, faked here."""
+    fake = AsyncMock()
+    monkeypatch.setattr("app.services.activity.service.record", fake)
+    return fake
 
 
 # ── reassign_failure ────────────────────────────────────────────────────────
@@ -133,7 +142,7 @@ async def test_reassign_rejects_ineligible_new_assignee():
 
 
 @pytest.mark.asyncio
-async def test_reassign_accepts_qa_engineer_member():
+async def test_reassign_accepts_qa_engineer_member(record):
     from app.services.failed_test_reassignment_service import reassign_failure
 
     tc = _test_case(suite_name="Smoke")
@@ -150,10 +159,44 @@ async def test_reassign_accepts_qa_engineer_member():
         _scalar(UserRole.QA_ENGINEER.value),     # candidate is a QA_ENGINEER → eligible
     ])
     db.flush = AsyncMock()
+    db.get = AsyncMock(side_effect=lambda model, uid: SimpleNamespace(full_name="Quinn Engineer", username="quinn"))
 
     result = await reassign_failure(db, tc.id, qa_engineer_id, actor)
     assert result.assigned_to_user_id == qa_engineer_id
     db.flush.assert_awaited_once()
+    # D-0021: the move is in the project's Activity log, on the run, by names (changed on purpose).
+    record.assert_awaited_once()
+    kw = record.await_args.kwargs
+    assert kw["event_type"] == "failure.reassigned" and kw["project_id"] == project_id
+    assert kw["entity_type"] == "run" and kw["entity_id"] == tc.test_run_id
+    assert kw["changed_fields"] == ["assigned_to_user_id"]
+    assert kw["context"] == {
+        "test_case_id": str(tc.id), "test_name": "test_checkout_total",
+        "from_name": "Unassigned", "to_name": "Quinn Engineer",
+    }
+    assert kw["before"] == {"assignee": "Unassigned"} and kw["after"] == {"assignee": "Quinn Engineer"}
+
+
+@pytest.mark.asyncio
+async def test_reassign_with_ledger_off_records_nothing(record):
+    """D-0021: the agent path passes ledger=False (agent.action_executed records its move)."""
+    from app.services.failed_test_reassignment_service import reassign_failure
+
+    tc = _test_case(suite_name="Smoke")
+    qa_engineer_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=[
+        _scalar(tc),
+        _scalar(uuid.uuid4()),
+        _scalar(UserRole.QA_LEAD.value),
+        _scalar(None),
+        _scalar(UserRole.QA_ENGINEER.value),
+    ])
+    db.flush = AsyncMock()
+
+    result = await reassign_failure(db, tc.id, qa_engineer_id, _user(role=UserRole.QA_LEAD.value), ledger=False)
+    assert result.assigned_to_user_id == qa_engineer_id
+    record.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -206,7 +249,7 @@ async def test_reassign_instance_admin_bypasses_project_membership():
 
 
 @pytest.mark.asyncio
-async def test_reassign_to_existing_owner_is_noop():
+async def test_reassign_to_existing_owner_is_noop(record):
     """Idempotent: setting the same owner doesn't flush."""
     from app.services.failed_test_reassignment_service import reassign_failure
 
@@ -227,6 +270,7 @@ async def test_reassign_to_existing_owner_is_noop():
     result = await reassign_failure(db, tc.id, existing, actor)
     assert result.assigned_to_user_id == existing
     db.flush.assert_not_awaited()
+    record.assert_not_awaited()  # D-0021: nothing changed, nothing recorded
 
 
 # ── get_reassignment_options ────────────────────────────────────────────────
