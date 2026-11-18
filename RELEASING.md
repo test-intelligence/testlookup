@@ -67,9 +67,15 @@ How a maintainer cuts a release. Users upgrading an install want
    (refusing if `:vX.Y.Z` is missing or is not CI's image of the tagged
    commit), bundles them without rebuilding, and checks the import with the
    network blocked. The run's `offline-bundle` artifact (kept 30 days) holds
-   `testlookup-offline-X.Y.Z.tar.gz`, its `.sha256`, and `SHA256SUMS` for
-   `install.sh` and the files it downloads; attach all three to the GitHub
-   release. `make offline-bundle` builds the images from source, so use it for
+   `testlookup-offline-X.Y.Z.tar.gz`, its `.sha256`, `SHA256SUMS` for
+   `install.sh` and the files it downloads, and
+   `testlookup-offline-X.Y.Z.intoto.jsonl`, the signed SLSA build provenance of
+   those three files. Attach all four to the **draft** GitHub release: releases
+   are immutable once published, so a file left off cannot be added later.
+   OpenSSF Scorecard's Signed-Releases check reads the `.intoto.jsonl` asset,
+   and anyone can check a download with
+   `gh attestation verify testlookup-offline-X.Y.Z.tar.gz --repo test-intelligence/testlookup`.
+   `make offline-bundle` builds the images from source, so use it for
    testing, not for a release. Under Podman it also names the app images
    `localhost/testlookup/...`, which a Docker host cannot import.
 7. **Publish the GitHub release** for the tag: the CHANGELOG section as the
@@ -100,5 +106,5 @@ assembled release. Branch protection should require the lightweight check on
 - [ ] `CITATION.cff` has the same `version` and the release's `date-released`
 - [ ] `THIRD_PARTY_NOTICES.md` regenerated (`--check` passes)
 - [ ] "Promote verified release" succeeded; `:vX.Y.Z` exists for backend, frontend and mcp
-- [ ] Offline bundle built and attached (with checksums)
+- [ ] Offline bundle built and attached to the draft (with checksums and the `.intoto.jsonl` provenance)
 - [ ] GitHub release published

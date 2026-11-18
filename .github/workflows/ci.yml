@@ -134,7 +134,9 @@ jobs:
         run: python scripts/release/check_image_drift.py
 
       - name: Install pytest for the guard's own tests
-        run: pip install pytest
+        # Hash-locked (scripts/requirements-ci.txt, `make lock-python`): a bare
+        # `pip install pytest` takes whatever PyPI serves that minute.
+        run: pip install --require-hashes -r scripts/requirements-ci.txt
 
       - name: Self-test the drift guard
         # Pins that the guard actually FAILS on drift — a guard that can only
@@ -187,8 +189,9 @@ jobs:
       - name: Install pytest for the self-test
         # The gate itself is pure stdlib file IO, but scripts/test_quality_gate.py
         # is a pytest module. This job installs nothing else, so pytest must be
-        # added explicitly here (the backend test job has its own deps).
-        run: pip install pytest pyyaml
+        # added explicitly here (the backend test job has its own deps), from
+        # the hashed lock scripts/requirements-ci.txt.
+        run: pip install --require-hashes -r scripts/requirements-ci.txt
 
       - name: Self-test the quality-gate script
         # Pins the ratchet semantics so a careless edit to quality_gate.py
@@ -220,7 +223,9 @@ jobs:
         with:
           go-version: "1.27.4"
           cache: false
-      - run: python -m pip install pytest PyYAML httpx==0.28.1
+      # The release runner image's own hashed lock (pytest, PyYAML, httpx and
+      # the rest of what e2e-runner/Dockerfile installs).
+      - run: python -m pip install --require-hashes -r e2e-runner/requirements-lock.txt
       - name: Verify release job and upgrade decision
         run: python -m pytest e2e-runner/test_policy.py e2e-runner/test_merge_upgrade.py e2e-runner/upgrade_test.py e2e-runner/test_release_campaign.py e2e-runner/test_fixture_probe.py e2e-runner/test_bootstrap_admin.py
       - name: Build the reporter loaded by the Playwright fixture config
@@ -498,11 +503,15 @@ jobs:
           cache-dependency-path: backend/requirements-lock.txt
 
       # The hashed lock the backend image installs (make lock-python), so the
-      # suite runs on exactly the packages that ship.
+      # suite runs on exactly the packages that ship. requirements-cli-test.txt
+      # adds what the CLI needs on top (platformdirs), at the lock's versions;
+      # the CLI itself goes in with --no-deps and `pip check` fails the job if
+      # cli/pyproject.toml gains a dependency the two locks do not hold.
       - name: Install dependencies
         run: |
-          pip install --require-hashes -r requirements-lock.txt
-          pip install -e ../cli
+          pip install --require-hashes -r requirements-lock.txt -r requirements-cli-test.txt
+          pip install --no-deps -e ../cli
+          pip check
 
       - name: Lint with ruff
         run: ruff check app/ tests/
@@ -1318,7 +1327,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --require-hashes -r requirements-lock.txt
-          pip install pytest pytest-cov pyyaml
+          pip install --require-hashes -r ../scripts/requirements-ci.txt
 
       - name: Syntax check all Python files
         run: |
@@ -1498,15 +1507,20 @@ jobs:
 
       - name: Install SDK + CLI with their real dependencies
         # Install both packages rather than hand-picking imports: the reporter
-        # needs httpx and the CLI needs typer/rich/pydantic. Pinning that list
-        # here would silently rot the moment either pyproject.toml changes.
-        # Non-editable on purpose: it exercises the same wheel build a user
-        # gets from `pip install ./cli`, and hatchling's editable (PEP 660)
-        # hook is not available on every pinned version.
+        # needs httpx and the CLI needs typer/rich/pydantic. Their dependencies
+        # come from scripts/requirements-sdk-test.txt, a hashed lock compiled
+        # FROM client/pyproject.toml and cli/pyproject.toml for Python 3.11
+        # (`make lock-python`); `pip check` fails the job when either
+        # pyproject.toml gains a dependency the lock does not hold, so the list
+        # cannot rot in silence.
+        # Wheels, not editable installs, on purpose: it exercises the same
+        # wheel build a user gets from `pip install ./cli`, and hatchling's
+        # editable (PEP 660) hook is not available on every pinned version.
         run: |
-          pip install pytest pytest-cov
-          pip install ./client
-          pip install ./cli
+          pip install --require-hashes -r scripts/requirements-sdk-test.txt
+          pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/sdk-wheels" ./client ./cli
+          pip install --no-deps "$RUNNER_TEMP"/sdk-wheels/*.whl
+          pip check
 
       - name: Configure git identity (tests create real repos)
         run: |
