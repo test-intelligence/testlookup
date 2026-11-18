@@ -1519,10 +1519,13 @@ jobs:
         # Wheels, not editable installs, on purpose: it exercises the same
         # wheel build a user gets from `pip install ./cli`, and hatchling's
         # editable (PEP 660) hook is not available on every pinned version.
+        # The wheel path is a literal on purpose: Scorecard drops any shell word
+        # that holds a variable, so `"$RUNNER_TEMP"/...whl` read as a bare
+        # `pip install --no-deps` and counted as unpinned (alert #199).
         run: |
           pip install --require-hashes -r scripts/requirements-sdk-test.txt
-          pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/sdk-wheels" ./client ./cli
-          pip install --no-deps "$RUNNER_TEMP"/sdk-wheels/*.whl
+          pip wheel --no-deps --wheel-dir /tmp/sdk-wheels ./client ./cli
+          pip install --no-deps /tmp/sdk-wheels/*.whl
           pip check
 
       - name: Configure git identity (tests create real repos)
