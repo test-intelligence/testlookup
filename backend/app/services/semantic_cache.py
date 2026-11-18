@@ -52,8 +52,8 @@ async def _get_or_create_collection(project_id: Optional[str] = None):
     from app.services import chroma_collections
 
     # W12: the ACTIVE generation's name (``ai_analysis_cache_<project_id>`` on
-    # the legacy generation, exactly as before) and embedding function (none
-    # passed on the legacy generation).
+    # the legacy generation, exactly as before) and embedding function (the
+    # local bundled one on the legacy generation).
     target = await chroma_collections.resolve(_COLLECTION_NAME, project_id=project_id)
     client = await _get_chroma_client()
     return await asyncio.to_thread(
@@ -380,6 +380,9 @@ async def get_semantic_cache_stats() -> dict:
     those entries may belong to any tenant, so a non-zero count is a prompt to
     purge it rather than a number to ignore.
     """
+    from app.services.embedding_function import local_embedding_function
+
+    # Count only, but never the server's embedding function: every opener names its own.
     try:
         client = await _get_chroma_client()
         await asyncio.to_thread(client.heartbeat)
@@ -394,7 +397,7 @@ async def get_semantic_cache_stats() -> dict:
                 handle = (
                     collection
                     if not isinstance(collection, str)
-                    else await asyncio.to_thread(client.get_collection, name)
+                    else await asyncio.to_thread(client.get_collection, name, embedding_function=local_embedding_function())
                 )
                 legacy_documents = await asyncio.to_thread(handle.count)
             elif _is_cache_collection(name):
@@ -402,7 +405,7 @@ async def get_semantic_cache_stats() -> dict:
                 handle = (
                     collection
                     if not isinstance(collection, str)
-                    else await asyncio.to_thread(client.get_collection, name)
+                    else await asyncio.to_thread(client.get_collection, name, embedding_function=local_embedding_function())
                 )
                 project_count += 1
                 document_count += await asyncio.to_thread(handle.count)

@@ -7,14 +7,17 @@ and its auth providers. The deployments run the ``chromadb/chroma`` image, a
 Rust binary with no Python and no authentication of its own, so the control
 that is left is who can connect to it.
 
-That matters for more than the server. The backend's Python client builds each
+That mattered for more than the server. The backend's Python client builds a
 collection's embedding function from the configuration Chroma returns
 (``Collection._embed`` -> ``load_collection_configuration_from_json`` ->
 ``build_from_config``) whenever the caller passes no embedding function of its
-own, which is every call site here. A peer that can write a collection's
-configuration can name the ``openai`` embedding function with its own
-``api_base`` and any ``api_key_env_var``, and the backend then posts the
-documents, with that environment variable as the bearer token, to the peer.
+own, which every call site did on the bundled embedder until 2026-11-17. A peer
+that could write a collection's configuration could name the ``openai``
+embedding function with its own ``api_base`` and any ``api_key_env_var``, and
+the backend would post the documents, with that environment variable as the
+bearer token, to the peer. Every opener now names its own function
+(test_chroma_collections_ignore_the_servers_embedder.py); a peer that can
+connect can still read, change or delete every collection.
 
 Before this change the reachable set was wider than the two callers:
 

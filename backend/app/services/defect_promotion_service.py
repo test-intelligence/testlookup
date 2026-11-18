@@ -738,7 +738,7 @@ async def _find_duplicate_semantic(
         #
         # W12: the ACTIVE generation's name (``open_defects_<project_id>`` on
         # the legacy generation, exactly as before) and embedding function,
-        # resolved BEFORE the thread (no kwargs on the legacy generation).
+        # resolved BEFORE the thread (the local bundled one on the legacy generation).
         target = await chroma_collections.resolve("open_defects", project_id=str(project_id))
 
         def _chroma_dedup() -> Optional[str]:

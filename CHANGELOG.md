@@ -18,6 +18,10 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 - Python SDK: closing a live session (`LiveSession`, the pytest plugin, or `LiveStream`) waits for a results batch the background flusher is already sending, then closes it, and retries the server's 409 "retry close". Before, closing cancelled the flusher, and a batch it was sending was lost: its results never reached the run.
 - Live-ingest stress test (`backend/scripts/stress_live_ingest.py`): the frames-per-second report counts a whole-second span as exactly that many 1 s windows. Before, a float rounding error in the span could add an extra window that was always empty, which lowered the reported frames-per-second p95 and made the script's unit test fail now and then in CI.
 
+### Security
+
+- ChromaDB: the backend always tells the Chroma client which embedding function a collection uses. Before, on the default embedder (the bundled MiniLM model), it passed none, and the client then built whatever function the collection's settings on the Chroma server named. Chroma has no login of its own, so anything able to write to it could have made the backend send search text, and the value of any of its environment variables, to a server of its choosing. Existing collections open as before and nothing is stored differently, so no reindex is needed. Chroma stays reachable only by the backend and the workers (compose's internal network, the `allow-chromadb` network policy), because the four ChromaDB advisories still have no fixed release.
+
 ## [0.1.0] - 2026-11-14
 
 The first public release. TestLookup is a self-hosted test-intelligence platform for software development teams: it ingests test results from CI and from live test runs, explains failures, tracks flaky tests and decides whether a release is ready, with AI that runs locally by default.

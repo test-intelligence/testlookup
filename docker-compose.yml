@@ -261,9 +261,9 @@ services:
     container_name: testlookup_chroma
     profiles: ["local-llm"]
     restart: unless-stopped
-    # Chroma has no authentication, and the backend builds each collection's
-    # embedding function from the configuration Chroma hands back, so anyone
-    # who can write to it can steer the backend's embedding calls. Loopback
+    # Chroma has no authentication, so anyone who can connect can read, change
+    # or delete the stored vectors (the backend names its own embedding
+    # function and never uses one from Chroma's collection settings). Loopback
     # only (a backend run on the host still reaches it on localhost:8001), and
     # on its own network shared only with the services that use it.
     ports:
