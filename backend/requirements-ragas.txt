@@ -53,10 +53,10 @@
 # 1.12 only because langchain-openai 0.2.12 capped openai <2). Resolved with uv
 # for Python 3.11 and 3.14, wheels only.
 -r requirements.txt
-ragas==0.4.3
-datasets==5.1.0
+ragas==0.4.4
+datasets==5.2.0
 langchain-community==0.4.2
 instructor==1.17.0
-fsspec==2026.7.0
-jiter==0.14.0
+fsspec==2026.9.0
+jiter==0.19.0
 rich==14.3.4
