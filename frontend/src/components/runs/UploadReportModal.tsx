@@ -485,7 +485,8 @@ export default function UploadReportModal({
                 onChange={(e) => setRunAi(!e.target.checked)}
                 className="h-3.5 w-3.5 accent-[var(--color-accent)]"
               />
-              Skip AI analysis
+              {/* Its own box that does not shrink: beside the D-0006 hint, a bare text item wrapped onto two lines. */}
+              <span className="shrink-0">Skip AI analysis</span>
               <span className="text-xs text-[var(--color-text-muted)]">(faster — no AI analysis, comparison report or automatic investigation for this run; you can start the analysis later from the run page)</span>
             </label>
 
