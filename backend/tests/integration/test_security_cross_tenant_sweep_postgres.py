@@ -8,12 +8,13 @@ behavioural harness, ``test_every_get_route_answers_without_500_postgres.py``,
 never swaps in another project's id.
 
 Two projects, each with a run, a result, a suite, a release, a managed case,
-a plan, a strategy, a shared saved view, a suite owner and a suite review,
-all carrying the project's own marker string. A VIEWER and a QA_LEAD belong
-to project A only. Then, through the real app (real auth, real guards):
+a plan, a strategy, a shared saved view, a suite owner, a suite review and an
+AI generation batch holding one draft case, all carrying the project's own
+marker string. A VIEWER and a QA_LEAD belong to project A only. Then, through
+the real app (real auth, real guards):
 
 * every GET route with a project / run / release / case / plan / strategy /
-  suite / view id in its PATH, filled with B's ids;
+  suite / view / batch id in its PATH, filled with B's ids;
 * every GET route with such an id in its QUERY, filled with B's ids while
   the path carries A's (the mixed case);
 
@@ -25,7 +26,9 @@ so an empty answer is never read as a pass. Then the POST routes that take a
 ``project_id`` in the BODY (cases, plans, suites, releases, saved views, chat
 sessions, and the two async AI routes of GAP-B11) are sent B's id by A's
 QA_LEAD: refused, no row lands in B, nothing is queued for B -- while the
-same body naming A succeeds.
+same body naming A succeeds. Last (GAP-B09), a batch accept through A's batch
+naming B's generated case is refused atomically, B's batch in the path is
+refused, and A's own case is accepted.
 
 Scoped to stay well under two minutes: the three SSE routes are skipped
 (they would stream), Mongo gets a client with a short server-selection
@@ -80,6 +83,7 @@ PATH_IDS = {
     "suite_id": "suite",
     "view_id": "view",
     "suite_name": "suite_name",
+    "batch_id": "batch",
 }
 #: query parameter -> the seeded entity it names
 QUERY_IDS = {
@@ -130,12 +134,14 @@ async def _seed(
     db, side: str, ids: dict, mark: str, member_id: uuid.UUID, now: datetime
 ) -> None:
     from app.models.postgres import (
+        GenerationBatch,
         ManagedTestCase,
         Project,
         Release,
         SavedView,
         SuiteRunReview,
         TestCase,
+        TestCaseLifecycleState,
         TestPlan,
         TestRun,
         TestStrategy,
@@ -191,6 +197,27 @@ async def _seed(
     )
     db.add(
         ManagedTestCase(id=ids["case"], project_id=ids["project"], title=f"case {mark}")
+    )
+    # GAP-B09: an AI generation batch holding one generated case, still a draft.
+    db.add(
+        GenerationBatch(
+            id=ids["batch"],
+            project_id=ids["project"],
+            created_by_id=member_id,
+            generation_mode="raw",
+            status="completed",
+            cases_generated=1,
+        )
+    )
+    await db.flush()
+    db.add(
+        ManagedTestCase(
+            id=ids["gen_case"],
+            project_id=ids["project"],
+            title=f"generated case {mark}",
+            generation_batch_id=ids["batch"],
+            status=TestCaseLifecycleState.DRAFT.value,
+        )
     )
     db.add(TestPlan(id=ids["plan"], project_id=ids["project"], name=f"plan {mark}"))
     db.add(
@@ -281,6 +308,8 @@ async def world():
                     "plan",
                     "strategy",
                     "view",
+                    "batch",
+                    "gen_case",
                 )
             },
             "suite_name": f"suite-{marks[side]}",
@@ -439,6 +468,8 @@ def _b_secrets(world, sent: set[str]) -> set[str]:
             "plan",
             "strategy",
             "view",
+            "batch",
+            "gen_case",
         )
     }
     return {world.marks["b"]} | (entity_ids - sent)
@@ -591,3 +622,77 @@ async def test_post_bodies_naming_project_b_are_refused_and_leave_nothing_in_b(w
     assert await leftover_rows(world.sessions, project_ids=[b]) == rows_before
     named_b = [q for q in world.queued if str(b) in repr(q)]
     assert named_b == [], f"queued against project B: {named_b}"
+
+
+# ── GAP-B09: a batch accept with another project's case id ──────────────────
+
+
+async def _accepted(world, side: str) -> int:
+    from sqlalchemy import select
+
+    from app.models.postgres import GenerationBatch
+
+    async with world.sessions() as db:
+        return (
+            await db.execute(
+                select(GenerationBatch.cases_accepted).where(
+                    GenerationBatch.id == world.ids[side]["batch"]
+                )
+            )
+        ).scalar_one()
+
+
+async def test_a_batch_accept_never_takes_a_case_of_another_project(world):
+    """``POST /batches/{batch_id}/accept`` binds every body case id to the path's batch.
+
+    A QA_LEAD of A sends A's batch with A's generated case AND B's: refused,
+    and atomically (A's case is not accepted half-way); B's batch in the path
+    is refused; nothing of B changes. A's batch with A's case alone succeeds.
+    """
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    a, b = world.ids["a"], world.ids["b"]
+    headers = {"Authorization": f"Bearer {world.tokens['lead']}"}
+    rows_a = await leftover_rows(world.sessions, project_ids=[a["project"]])
+    rows_b = await leftover_rows(world.sessions, project_ids=[b["project"]])
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://sweep.test",
+        timeout=60,
+    ) as client:
+        mixed = await client.post(
+            f"/api/v1/test-management/batches/{a['batch']}/accept",
+            json={"case_ids": [str(a["gen_case"]), str(b["gen_case"])]},
+            headers=headers,
+        )
+        foreign = await client.post(
+            f"/api/v1/test-management/batches/{b['batch']}/accept",
+            json={"case_ids": [str(b["gen_case"])]},
+            headers=headers,
+        )
+        untouched = {
+            "a rows": await leftover_rows(world.sessions, project_ids=[a["project"]]),
+            "b rows": await leftover_rows(world.sessions, project_ids=[b["project"]]),
+            "a accepted": await _accepted(world, "a"),
+            "b accepted": await _accepted(world, "b"),
+        }
+        own = await client.post(
+            f"/api/v1/test-management/batches/{a['batch']}/accept",
+            json={"case_ids": [str(a["gen_case"])]},
+            headers=headers,
+        )
+
+    assert mixed.status_code == 404, mixed.text
+    assert foreign.status_code in (403, 404), foreign.text
+    assert untouched == {
+        "a rows": rows_a,
+        "b rows": rows_b,
+        "a accepted": 0,
+        "b accepted": 0,
+    }
+    # Control: the same caller accepts A's own case through A's batch.
+    assert own.status_code == 200, own.text
+    assert [case["id"] for case in own.json()] == [str(a["gen_case"])]
+    assert await _accepted(world, "a") == 1
