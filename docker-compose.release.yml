@@ -237,9 +237,9 @@ services:
     profiles: ["local-llm"]
     restart: unless-stopped
     # No published port, and only chroma_net (internal: backend + workers).
-    # Chroma has no authentication, and the backend builds each collection's
-    # embedding function from the configuration Chroma hands back, so anyone
-    # who can write to it can steer the backend's embedding calls.
+    # Chroma has no authentication, so anyone who can connect can read, change
+    # or delete the stored vectors (the backend names its own embedding
+    # function and never uses one from Chroma's collection settings).
     # Chroma 1.x persists to /data (its /config.yaml); the 0.x settings
     # IS_PERSISTENT / PERSIST_DIRECTORY are ignored. A fresh volume: the old
     # chroma_data (mounted at /chroma/chroma, never written by 1.x) is left

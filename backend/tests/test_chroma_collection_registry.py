@@ -4,7 +4,8 @@ registry (``chroma_collections.COLLECTION_FAMILIES``, contract §2.4, §0.16).
 (a) The registry lists exactly the SEVEN families; each family's helper, driven
     with a recording fake client, opens ``collection_name(...)`` with the
     generation's ``embedding_function=`` -- and on the legacy generation today's
-    name with NO ``embedding_function`` kwarg (the dupdetect helper: only the
+    name with the local bundled function (``LocalMiniLMEmbeddingFunction``),
+    never no ``embedding_function`` at all (the dupdetect helper: only the
     embedding function, on an in-memory random name).
 (b) A source scan over ``backend/app/**/*.py``: every
     ``get_or_create_collection`` / ``create_collection`` / ``get_collection`` /
@@ -30,7 +31,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services import chroma_collections as cc
-from app.services.embedding_function import DEFAULT_EMBEDDER, EmbedderSpec
+from app.services.embedding_function import DEFAULT_EMBEDDER, EmbedderSpec, LocalMiniLMEmbeddingFunction
 
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 REGISTRY_MODULE = "app.services.chroma_collections"
@@ -209,11 +210,12 @@ async def test_on_the_legacy_generation_the_helper_makes_todays_call(base, monke
     await DRIVERS[base](monkeypatch, client)
     assert len(client.calls) == 1, client.calls
     method, name, kwargs = client.calls[0]
-    assert "embedding_function" not in kwargs
+    # Never no embedding function: chromadb would build the server's (create_kwargs).
+    assert isinstance(kwargs.get("embedding_function"), LocalMiniLMEmbeddingFunction)
     if base == "dupdetect":
         assert method == "create_collection"
         assert re.fullmatch(r"dupdetect_[0-9a-f]{32}", name)
-        assert kwargs == {}
+        assert list(kwargs) == ["embedding_function"]
     else:
         assert method == "get_or_create_collection"
         legacy = f"{base}_{PROJECT}" if cc.family(base).per_project else base
@@ -238,11 +240,13 @@ async def test_on_another_generation_the_helper_passes_its_name_and_embedding_fu
         assert kwargs.get("metadata") == {"hnsw:space": space}
 
 
-async def test_a_prefix_only_generation_renames_without_an_embedding_function(monkeypatch, generation):
+async def test_a_prefix_only_generation_renames_with_the_local_embedding_function(monkeypatch, generation):
     client = _RecordingClient()
     generation["active"] = cc.Generation("demo", DEFAULT_EMBEDDER)
     await _drive_test_case_search(monkeypatch, client)
-    assert client.calls == [("get_or_create_collection", "demo_test_case_search", {})]
+    [(method, name, kwargs)] = client.calls
+    assert (method, name, list(kwargs)) == ("get_or_create_collection", "demo_test_case_search", ["embedding_function"])
+    assert isinstance(kwargs["embedding_function"], LocalMiniLMEmbeddingFunction)
 
 
 # ── (b) the source scan: an eighth collection site fails ─────────────────────

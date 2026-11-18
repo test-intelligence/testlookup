@@ -614,10 +614,10 @@ async def _semantic_neighbours(
     try:
         from app.services import chroma_collections
 
-        # W12: only the ACTIVE generation's embedding function (none for the
-        # bundled embedder, so the call is exactly as before); the collection
-        # is in-memory with a random name.
-        ef = (await chroma_collections.resolve("dupdetect")).embedding_function
+        # W12: only the ACTIVE generation's embedding function, named explicitly
+        # like every other collection's (create_kwargs: the local bundled one
+        # on the default embedder); the collection is in-memory with a random name.
+        resolved = await chroma_collections.resolve("dupdetect")
 
         # Per-project, ephemeral in-memory collection so we never pollute the
         # shared search index and tenant isolation is total by construction.
@@ -627,7 +627,7 @@ async def _semantic_neighbours(
             client = chromadb.EphemeralClient()
             coll = client.create_collection(
                 name=f"dupdetect_{uuid.uuid4().hex}",
-                **({"embedding_function": ef} if ef is not None else {}),
+                **resolved.create_kwargs(),
             )
             docs = [v.norm_text or v.norm_title or str(v.id) for v in views]
             ids = [str(v.id) for v in views]

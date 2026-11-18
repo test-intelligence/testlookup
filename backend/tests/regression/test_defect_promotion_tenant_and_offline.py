@@ -67,7 +67,7 @@ async def test_chroma_dedup_collection_is_per_project():
             return {"ids": [[]], "distances": [[]]}
 
     class _FakeClient:
-        def get_or_create_collection(self, name):
+        def get_or_create_collection(self, name, **kwargs):  # embedding_function: every opener names one
             captured["collection"] = name
             return _FakeColl()
 

@@ -3,10 +3,12 @@
 Three embedders, keyed by ``EmbedderSpec.key``:
 
 * ``default`` -- ChromaDB's bundled all-MiniLM-L6-v2 ONNX model. The factory
-  answers ``None`` and every call site OMITS ``embedding_function=`` exactly as
-  before W12, so the model still loads through ChromaDB's own
-  ``DefaultEmbeddingFunction`` and its download chokepoint stays behind
-  ``services/local_embedder_guard.py`` (the offline weight ceiling).
+  answers ``None`` ("the bundled one"), and ``ResolvedCollection.create_kwargs``
+  then passes :func:`local_embedding_function` -- never nothing. Passing
+  nothing let ChromaDB build the function from the configuration its server
+  hands back (see :class:`LocalMiniLMEmbeddingFunction`). The model still loads
+  through ChromaDB's ``ONNXMiniLM_L6_V2``, so its download chokepoint stays
+  behind ``services/local_embedder_guard.py`` (the offline weight ceiling).
 * ``ollama:<model>`` -- ChromaDB's ``OllamaEmbeddingFunction``. The provider
   policy (``llm_policy_service.enforce_provider_policy``) runs BEFORE the
   function is built, and under ``AI_OFFLINE_MODE`` its one sync ``httpx``
@@ -28,7 +30,17 @@ from __future__ import annotations
 import hmac
 import threading
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping, cast
+
+if TYPE_CHECKING:
+    from chromadb.api.types import Documents, Embeddable, EmbeddingFunction, Embeddings, Space
+
+    _EmbeddingFunctionBase = EmbeddingFunction[Documents]
+else:
+    # chromadb is imported only when an embedding runs: this module must import
+    # where the client is mocked, and chromadb checks no dense embedding
+    # function's class, only its methods.
+    _EmbeddingFunctionBase = object
 
 EMBEDDING_PROVIDERS = ("default", "ollama", "openai")
 EMBEDDING_PROVIDER_LABELS = {"default": "Bundled MiniLM", "ollama": "Ollama", "openai": "OpenAI"}
@@ -274,3 +286,85 @@ def get_chroma_embedding_function(
     with _memo_lock:
         _memo[key] = (openai_api_key or "", ef)
     return ef
+
+
+class LocalMiniLMEmbeddingFunction(_EmbeddingFunctionBase):
+    """ChromaDB's bundled all-MiniLM-L6-v2, passed so the server's copy is never used.
+
+    chromadb 1.x embeds with the caller's function only when it is not a
+    ``DefaultEmbeddingFunction`` (``CollectionCommon._embed``), which is also
+    what the client uses when the caller passes nothing. Otherwise it builds the
+    function from the collection configuration the Chroma server returns. The
+    server has no authentication, so anything that can write to it could name,
+    say, the ``openai`` function with its own ``api_base`` and
+    ``api_key_env_var``, and the backend would post documents and queries, with
+    that environment variable as the bearer token, to an endpoint of its choosing.
+
+    This class does what ``DefaultEmbeddingFunction`` does, with the same name
+    (``default``), configuration (``{}``) and distance space, so existing
+    collections still open (chromadb accepts a function named ``default`` against
+    any stored one) and new ones are stored exactly as before. It is not a
+    ``DefaultEmbeddingFunction``, so ``_embed`` uses it and never reads the
+    server's configuration. ``ONNXMiniLM_L6_V2`` itself would not do: its name
+    differs from the ``default`` every existing collection stores, and chromadb
+    refuses that on open.
+
+    Creating a collection with it also registers it under ``default`` in
+    chromadb's process-wide table of known functions, so a stored ``default``
+    configuration elsewhere builds this class, which embeds the same way.
+    """
+
+    def __init__(self) -> None:
+        pass
+
+    def __call__(self, input: Documents) -> Embeddings:
+        from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+
+        # Through ONNXMiniLM_L6_V2, so the offline weight guard still applies, and
+        # a new instance per call as DefaultEmbeddingFunction does, so no Celery
+        # fork holds an ONNX session between calls.
+        return ONNXMiniLM_L6_V2()(input)
+
+    def embed_query(self, input: Documents) -> Embeddings:
+        return self(input)
+
+    @staticmethod
+    def name() -> str:
+        return "default"
+
+    def default_space(self) -> Space:
+        return "l2"
+
+    def supported_spaces(self) -> list[Space]:
+        return ["cosine", "l2", "ip"]
+
+    @staticmethod
+    def build_from_config(config: dict[str, Any]) -> LocalMiniLMEmbeddingFunction:
+        return LocalMiniLMEmbeddingFunction()
+
+    def get_config(self) -> dict[str, Any]:
+        return {}
+
+    def validate_config_update(self, old_config: dict[str, Any], new_config: dict[str, Any]) -> None:
+        return None
+
+    @staticmethod
+    def validate_config(config: dict[str, Any]) -> None:
+        return None
+
+    def is_legacy(self) -> bool:
+        return False
+
+    def max_tokens(self) -> int:
+        return 256
+
+
+def local_embedding_function() -> EmbeddingFunction[Embeddable]:
+    """The ``embedding_function`` a collection on the bundled embedder is opened with.
+
+    Typed as the client API's parameter: it takes a function over documents *or*
+    images, and the generic is invariant, so mypy rejects a documents-only
+    function (chromadb's own ``ONNXMiniLM_L6_V2`` included) at every typed call.
+    No collection here embeds images.
+    """
+    return cast("EmbeddingFunction[Embeddable]", LocalMiniLMEmbeddingFunction())

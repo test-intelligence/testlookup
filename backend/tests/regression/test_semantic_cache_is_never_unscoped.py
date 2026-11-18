@@ -53,7 +53,7 @@ class _Client:
         self.opened: list[str] = []
         self.collection = _Collection()
 
-    def get_or_create_collection(self, name, metadata=None):
+    def get_or_create_collection(self, name, metadata=None, **kwargs):  # embedding_function: every opener names one
         self.opened.append(name)
         return self.collection
 
