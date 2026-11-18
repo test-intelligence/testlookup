@@ -44,10 +44,8 @@ STEP = "- name: Run protected PostgreSQL integration suite"
 #: Listed files that importorskip a package the lock does not ship. This list
 #: may only shrink: a new entry fails the ratchet below, and an entry that no
 #: longer offends fails the exact-match check, so fixing one means deleting it.
-KNOWN_UNLOCKED_IMPORTORSKIP = {
-    "tests/integration/test_chart_data_comparability_postgres.py": "GAP-F01, owner decision pending",
-}
-KNOWN_UNLOCKED_IMPORTORSKIP_MAX = 1
+KNOWN_UNLOCKED_IMPORTORSKIP: dict[str, str] = {}
+KNOWN_UNLOCKED_IMPORTORSKIP_MAX = 0
 
 #: DSN test files that run in another named step of the same job instead of
 #: the list (checked: the step must exist and its pytest line must name the file).

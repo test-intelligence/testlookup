@@ -49,6 +49,19 @@ def _env(name: str) -> str:
     return value
 
 
+def _redis_client():
+    # The Postgres CI job sets REDIS_URL (a real Valkey) and the hashed lock
+    # ships no fakeredis, so an unconditional importorskip("fakeredis") skipped
+    # every test here in CI. Same pattern as test_analytics_scope_postgres.py.
+    url = os.environ.get("REDIS_URL", "").strip()
+    if url:
+        import redis.asyncio as redis_asyncio
+
+        return redis_asyncio.Redis.from_url(url, decode_responses=True)
+    fakeredis = pytest.importorskip("fakeredis")
+    return fakeredis.aioredis.FakeRedis(decode_responses=True)
+
+
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def cmp_world():
     from httpx import ASGITransport, AsyncClient
@@ -70,11 +83,10 @@ async def cmp_world():
     )
 
     dsn = _env("TESTLOOKUP_POSTGRES_TEST_DSN")
-    fakeredis = pytest.importorskip("fakeredis")
     await app_postgres.dispose_engine_for_loop()
     engine = create_async_engine(dsn, pool_size=4, max_overflow=0)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
-    redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    redis = _redis_client()
 
     async def _get_db():
         async with sessions() as session:
