@@ -746,3 +746,35 @@ def test_a_release_bundle_run_attaches_signed_provenance() -> None:
     assert "dist/*.intoto.jsonl" in upload["with"]["path"]
     sums = next(i for i, s in enumerate(steps) if "> dist/SHA256SUMS" in s.get("run", ""))
     assert sums < steps.index(attest) < steps.index(keep) < steps.index(upload)
+
+
+def test_every_osv_acceptance_says_why_and_expires() -> None:
+    """Scorecard Vulnerabilities runs osv-scanner, which honours an
+    osv-scanner.toml beside a lockfile. Each accepted finding must say why and
+    expire within 90 days (the .trivyignore.yaml rule), so it comes back."""
+    import tomllib
+
+    files = [p for p in _tracked_files() if p.rsplit("/", 1)[-1] == "osv-scanner.toml"]
+    assert files, "no osv-scanner.toml found"
+    today = dt.datetime.now(dt.timezone.utc).date()
+    ids = set()
+    for rel in files:
+        doc = tomllib.loads((ROOT / rel).read_text(encoding="utf-8"))
+        assert set(doc) == {"IgnoredVulns"}, f"{rel}: only IgnoredVulns entries belong here"
+        for entry in doc["IgnoredVulns"]:
+            assert re.fullmatch(r"(CVE-\d{4}-\d{4,}|GHSA(-[23456789cfghjmpqrvwx]{4}){3}|PYSEC-\d{4}-\d+)",
+                                entry["id"]), f"{rel}: {entry}"
+            assert len(str(entry.get("reason", "")).strip()) >= 20, f"{rel}: {entry['id']}: say WHY"
+            until = entry["ignoreUntil"]
+            until = until if isinstance(until, dt.date) else dt.date.fromisoformat(str(until))
+            assert until <= today + dt.timedelta(days=MAX_ACCEPTANCE_DAYS), (
+                f"{rel}: {entry['id']}: acceptance longer than {MAX_ACCEPTANCE_DAYS} days"
+            )
+            ids.add(entry["id"])
+        siblings = {p.rsplit("/", 1)[-1] for p in _tracked_files() if p.rsplit("/", 1)[0] == rel.rsplit("/", 1)[0]}
+        assert siblings & {"package-lock.json", "requirements-lock.txt", "requirements.txt"}, (
+            f"{rel}: osv-scanner reads it only beside a lockfile"
+        )
+    # The chromadb acceptances rest on this guard; it must exist while they do.
+    if ids & {"PYSEC-2026-311", "PYSEC-2026-3813", "PYSEC-2026-3814", "PYSEC-2026-3815"}:
+        assert (ROOT / "backend" / "tests" / "regression" / "test_chromadb_server_code_is_never_used.py").is_file()
