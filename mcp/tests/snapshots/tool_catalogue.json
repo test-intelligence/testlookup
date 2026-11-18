@@ -1,0 +1,763 @@
+{
+  "approve_quarantine": {
+    "params": [
+      "notes",
+      "quarantine_duration_days",
+      "request_id"
+    ],
+    "required": [
+      "request_id"
+    ]
+  },
+  "assign_failure": {
+    "params": [
+      "new_assignee_user_id",
+      "test_case_id"
+    ],
+    "required": [
+      "new_assignee_user_id",
+      "test_case_id"
+    ]
+  },
+  "check_feature_flag": {
+    "params": [
+      "key",
+      "project_id"
+    ],
+    "required": [
+      "key"
+    ]
+  },
+  "check_release_readiness": {
+    "params": [
+      "days",
+      "project_id",
+      "release_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "check_run_release_readiness": {
+    "params": [
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "compare_ai_with_previous": {
+    "params": [
+      "baseline_run_id",
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "correct_classification": {
+    "params": [
+      "comment",
+      "corrected_category",
+      "corrected_root_cause",
+      "fingerprint",
+      "project_id"
+    ],
+    "required": [
+      "corrected_category",
+      "fingerprint",
+      "project_id"
+    ]
+  },
+  "create_defect": {
+    "params": [
+      "assignee",
+      "cluster_id",
+      "dry_run",
+      "extra_comment",
+      "fingerprint",
+      "issue_type",
+      "jira_project_key",
+      "project_id",
+      "target"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "create_project": {
+    "params": [
+      "description",
+      "jenkins_job_pattern",
+      "jira_project_key",
+      "name",
+      "ocp_namespace",
+      "slug",
+      "splunk_index"
+    ],
+    "required": [
+      "name",
+      "slug"
+    ]
+  },
+  "create_share_link": {
+    "params": [
+      "expires_days",
+      "layout",
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "diff_ai_versions": {
+    "params": [
+      "from_version",
+      "run_id",
+      "to_version"
+    ],
+    "required": [
+      "from_version",
+      "run_id"
+    ]
+  },
+  "generate_compliance_pack": {
+    "params": [
+      "notes",
+      "release_id",
+      "retention_days"
+    ],
+    "required": [
+      "release_id"
+    ]
+  },
+  "get_activity_event": {
+    "params": [
+      "event_id",
+      "project_id"
+    ],
+    "required": [
+      "event_id",
+      "project_id"
+    ]
+  },
+  "get_agent": {
+    "params": [
+      "agent_id"
+    ],
+    "required": [
+      "agent_id"
+    ]
+  },
+  "get_agent_invocation": {
+    "params": [
+      "invocation_id"
+    ],
+    "required": [
+      "invocation_id"
+    ]
+  },
+  "get_ai_analysis_summary": {
+    "params": [
+      "days",
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_ai_history": {
+    "params": [
+      "limit",
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "get_assignment_options": {
+    "params": [
+      "test_case_id"
+    ],
+    "required": [
+      "test_case_id"
+    ]
+  },
+  "get_billing_overview": {
+    "params": [],
+    "required": []
+  },
+  "get_chart_data": {
+    "params": [
+      "days",
+      "facet_dimension",
+      "facet_value",
+      "group_by",
+      "metric",
+      "project_id",
+      "release_id",
+      "suite_name",
+      "top_n"
+    ],
+    "required": [
+      "group_by"
+    ]
+  },
+  "get_coverage_report": {
+    "params": [
+      "days",
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_dashboard_metrics": {
+    "params": [
+      "days",
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_decision_trail": {
+    "params": [
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "get_deep_findings": {
+    "params": [
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "get_defects": {
+    "params": [
+      "page",
+      "project_id",
+      "resolution_status",
+      "size"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_execution_metrics": {
+    "params": [
+      "branch",
+      "days",
+      "project_id",
+      "release_id",
+      "suite_name",
+      "top"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_failure_categories": {
+    "params": [
+      "days",
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_failure_clusters": {
+    "params": [
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "get_flaky_tests": {
+    "params": [
+      "days",
+      "limit",
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_investigation": {
+    "params": [
+      "investigation_id"
+    ],
+    "required": [
+      "investigation_id"
+    ]
+  },
+  "get_managed_test_case": {
+    "params": [
+      "case_id",
+      "include_history"
+    ],
+    "required": [
+      "case_id"
+    ]
+  },
+  "get_pipeline_status": {
+    "params": [
+      "run_id",
+      "workflow_type"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "get_project": {
+    "params": [
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_project_llm_quota": {
+    "params": [
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_project_llm_usage": {
+    "params": [
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_quarantine_stats": {
+    "params": [
+      "project_id"
+    ],
+    "required": []
+  },
+  "get_release_gate": {
+    "params": [
+      "evaluate",
+      "project",
+      "release"
+    ],
+    "required": [
+      "release"
+    ]
+  },
+  "get_run_details": {
+    "params": [
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "get_run_intelligence": {
+    "params": [
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "get_run_summary": {
+    "params": [
+      "mode",
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "get_run_timing": {
+    "params": [
+      "run_id",
+      "slowest"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "get_test_case": {
+    "params": [
+      "include_steps",
+      "run_id",
+      "test_id"
+    ],
+    "required": [
+      "run_id",
+      "test_id"
+    ]
+  },
+  "get_test_step_flips": {
+    "params": [
+      "run_id",
+      "test_id"
+    ],
+    "required": [
+      "run_id",
+      "test_id"
+    ]
+  },
+  "get_test_trends": {
+    "params": [
+      "days",
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_top_failing_tests": {
+    "params": [
+      "days",
+      "limit",
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "get_transition_policy": {
+    "params": [
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "global_search": {
+    "params": [
+      "entity_types",
+      "project_id",
+      "query"
+    ],
+    "required": [
+      "query"
+    ]
+  },
+  "health_check": {
+    "params": [],
+    "required": []
+  },
+  "invoke_agent": {
+    "params": [
+      "agent_id",
+      "config_overrides",
+      "idempotency_key",
+      "mode",
+      "payload",
+      "project_id",
+      "test_run_id"
+    ],
+    "required": [
+      "agent_id",
+      "project_id",
+      "test_run_id"
+    ]
+  },
+  "list_agent_actions": {
+    "params": [
+      "limit",
+      "project_id",
+      "view"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "list_agents": {
+    "params": [],
+    "required": []
+  },
+  "list_compliance_packs": {
+    "params": [
+      "release_id"
+    ],
+    "required": [
+      "release_id"
+    ]
+  },
+  "list_defects": {
+    "params": [
+      "limit",
+      "project_id",
+      "resolution_status"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "list_digest_subscriptions": {
+    "params": [
+      "project_id"
+    ],
+    "required": []
+  },
+  "list_feature_flags": {
+    "params": [],
+    "required": []
+  },
+  "list_investigations": {
+    "params": [
+      "limit",
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "list_managed_test_cases": {
+    "params": [
+      "automation",
+      "include_archived",
+      "owner",
+      "page",
+      "priority",
+      "project_id",
+      "requirement",
+      "search",
+      "size",
+      "status",
+      "suite_name",
+      "test_type"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "list_ownership_rules": {
+    "params": [
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "list_pending_reviews": {
+    "params": [
+      "limit",
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "list_project_activity": {
+    "params": [
+      "category",
+      "cursor",
+      "limit",
+      "project_id",
+      "since"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "list_projects": {
+    "params": [],
+    "required": []
+  },
+  "list_quarantine_requests": {
+    "params": [
+      "limit",
+      "live_only",
+      "project_id",
+      "status"
+    ],
+    "required": []
+  },
+  "list_release_gate_policies": {
+    "params": [
+      "project_id"
+    ],
+    "required": []
+  },
+  "list_saved_views": {
+    "params": [
+      "page",
+      "project_id"
+    ],
+    "required": []
+  },
+  "list_test_cases": {
+    "params": [
+      "page",
+      "run_id",
+      "size",
+      "status",
+      "suite"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "list_test_runs": {
+    "params": [
+      "days",
+      "page",
+      "project_id",
+      "size",
+      "status"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "login": {
+    "params": [
+      "password",
+      "username"
+    ],
+    "required": [
+      "password",
+      "username"
+    ]
+  },
+  "promote_ready_quarantines": {
+    "params": [
+      "dry_run",
+      "project_id"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "propose_quarantine": {
+    "params": [
+      "fingerprint",
+      "project_id",
+      "quarantine_duration_days",
+      "reason",
+      "suite_name",
+      "test_name"
+    ],
+    "required": [
+      "fingerprint",
+      "project_id",
+      "reason"
+    ]
+  },
+  "record_fix_outcome": {
+    "params": [
+      "comment",
+      "fingerprint",
+      "outcome",
+      "project_id",
+      "reference"
+    ],
+    "required": [
+      "fingerprint",
+      "outcome",
+      "project_id"
+    ]
+  },
+  "refresh_intelligence": {
+    "params": [
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "reject_quarantine": {
+    "params": [
+      "notes",
+      "request_id"
+    ],
+    "required": [
+      "request_id"
+    ]
+  },
+  "release_quarantine": {
+    "params": [
+      "reason",
+      "request_id"
+    ],
+    "required": [
+      "reason",
+      "request_id"
+    ]
+  },
+  "search_test_cases": {
+    "params": [
+      "project_id",
+      "query"
+    ],
+    "required": [
+      "query"
+    ]
+  },
+  "search_tests": {
+    "params": [
+      "days",
+      "page",
+      "project_id",
+      "query",
+      "size",
+      "status"
+    ],
+    "required": [
+      "query"
+    ]
+  },
+  "set_transition_policy": {
+    "params": [
+      "consecutive_failure_threshold",
+      "enabled_events",
+      "per_run_events_enabled",
+      "project_id",
+      "transitions_enabled"
+    ],
+    "required": [
+      "project_id"
+    ]
+  },
+  "start_investigation": {
+    "params": [
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "trigger_ai_analysis": {
+    "params": [
+      "ocp_namespace",
+      "ocp_pod_name",
+      "run_id",
+      "service_name",
+      "test_case_id"
+    ],
+    "required": [
+      "test_case_id"
+    ]
+  },
+  "trigger_deep_analysis": {
+    "params": [
+      "run_id"
+    ],
+    "required": [
+      "run_id"
+    ]
+  },
+  "verify_compliance_pack": {
+    "params": [
+      "pack_id"
+    ],
+    "required": [
+      "pack_id"
+    ]
+  }
+}
