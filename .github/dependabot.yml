@@ -47,6 +47,16 @@ updates:
       minor-and-patch:
         update-types: ["minor", "patch"]
 
+  # The hashed test-tool locks CI installs (requirements-ci.txt for the
+  # guard-test jobs, requirements-sdk-test.txt for the SDK/CLI job).
+  - package-ecosystem: "pip"
+    directory: "/scripts"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
   # ── JavaScript ────────────────────────────────────────────────────────────
   - package-ecosystem: "npm"
     directory: "/frontend"

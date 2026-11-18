@@ -11,8 +11,11 @@ existed before W12.
 **Names.** The legacy generation keeps today's names BYTE-IDENTICAL
 (``test_case_search``, ``knowledge_chunks``, ``agent_memory_vectors``,
 ``failure_clusters``, ``ai_analysis_cache_<project id as given>``,
-``open_defects_<project id as given>``), and its ``create_kwargs()`` is ``{}``,
-so every call site makes exactly the call it made before. Any other generation
+``open_defects_<project id as given>``). Every call site opens with
+``create_kwargs()``, which always names the embedding function: the bundled
+one is ``local_embedding_function()``, never "nothing", so chromadb never
+builds a function from the configuration the server returns (it has the
+bundled function's name and configuration, so nothing stored changes). Any other generation
 is ``[<prefix>_]`` + ``<base>`` (global family) or ``<code>_<uuid hex32>``
 (per-project family) + ``""`` (bundled embedder) or ``__e`` + 8 hex of
 ``sha256(embedder key)``, within ChromaDB's rule (3-63 characters of
@@ -42,6 +45,7 @@ import structlog
 from app.services.embedding_function import (
     DEFAULT_EMBEDDER,
     EmbedderSpec,
+    local_embedding_function,
 )
 
 logger = structlog.get_logger("services.chroma_collections")
@@ -414,10 +418,17 @@ class ResolvedCollection:
     metadata: dict[str, str] | None = field(default=None)
 
     def create_kwargs(self) -> dict[str, Any]:
-        """``{}`` for the bundled embedder (the legacy generation's calls are
-        byte-identical); ``{"embedding_function": ef}`` otherwise."""
+        """``{"embedding_function": ef}``, ALWAYS -- the bundled embedder included.
+
+        For the bundled embedder (``embedding_function is None``) that is
+        ``local_embedding_function()``: passing nothing let chromadb build the
+        function from the configuration the Chroma server returns, which anything
+        able to write to the unauthenticated server controls. The local function
+        has the bundled one's name and configuration, so the legacy generation's
+        collections open and are stored exactly as before.
+        """
         if self.embedding_function is None:
-            return {}
+            return {"embedding_function": local_embedding_function()}
         return {"embedding_function": self.embedding_function}
 
 
@@ -501,10 +512,10 @@ async def open_existing(client: Any, resolved: ResolvedCollection) -> Any | None
 
 
 async def _open_target(client: Any, resolved: ResolvedCollection) -> Any:
-    kwargs: dict[str, Any] = dict(resolved.create_kwargs())
-    if resolved.metadata:
-        kwargs["metadata"] = dict(resolved.metadata)
-    return await asyncio.to_thread(client.get_or_create_collection, resolved.name, **kwargs)
+    metadata: dict[str, Any] = {"metadata": dict(resolved.metadata)} if resolved.metadata else {}
+    return await asyncio.to_thread(
+        client.get_or_create_collection, resolved.name, **metadata, **resolved.create_kwargs()
+    )
 
 
 def _page_items(payload: Mapping[str, Any], *, with_embeddings: bool) -> list[dict[str, Any]]:

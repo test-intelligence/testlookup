@@ -1,0 +1,34 @@
+# Accepted OSV findings for e2e-runner/reporters/js/package-lock.json
+# (osv-scanner reads this file for the lockfile in this directory; OpenSSF
+# Scorecard's Vulnerabilities check runs osv-scanner over the repository).
+# Every entry names the evidence and expires after at most 90 days
+# (scripts/test_ci_security.py enforces both).
+#
+# This package is the release runner's private test harness: it installs the
+# real Jest / Mocha / Cypress / Playwright reporters so the release job can
+# produce native results from the repository's own fixtures. It is not
+# published and not part of the product images. glob and minimatch arrive
+# through jest 30 (glob ^13), mocha 12 (glob ^13, minimatch ^10) and
+# test-exclude 7 (glob ^10, minimatch ^9/^10); the fixes (glob 14.0.2,
+# minimatch 11.0.1) are outside those ranges. Both advisories need
+# attacker-controlled patterns or an AbortSignal-timed traversal; the harness
+# globs its own fixture paths.
+[[IgnoredVulns]]
+id = "GHSA-3g3m-2fjr-6pw4"
+ignoreUntil = 2027-02-16
+reason = "glob via jest/mocha/test-exclude in the private release-runner harness; globs only its own fixture paths"
+
+[[IgnoredVulns]]
+id = "CVE-2026-118773"
+ignoreUntil = 2027-02-16
+reason = "alias of GHSA-3g3m-2fjr-6pw4 (glob in the private release-runner harness)"
+
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2027-02-16
+reason = "minimatch via mocha/glob/test-exclude in the private release-runner harness; patterns are its own"
+
+[[IgnoredVulns]]
+id = "CVE-2026-118764"
+ignoreUntil = 2027-02-16
+reason = "alias of GHSA-g3hv-75wg-m249 (minimatch in the private release-runner harness)"

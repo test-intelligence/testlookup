@@ -104,7 +104,7 @@ def test_publishing_waits_for_the_dependency_scan() -> None:
 
 def test_mcp_coverage_has_its_own_measured_floor() -> None:
     script = "\n".join(_runs(_jobs()["mcp-test"]))
-    assert "pip install pytest pytest-cov pyyaml" in script
+    assert "pip install --require-hashes -r ../scripts/requirements-ci.txt" in script
     for target in (
         "client", "config", "prompts", "resources", "review_notice",
         "server", "token_verifier", "tools",
@@ -116,7 +116,8 @@ def test_mcp_coverage_has_its_own_measured_floor() -> None:
 
 def test_cli_coverage_has_an_independent_measured_floor() -> None:
     script = "\n".join(_runs(_jobs()["sdk-cli-test"]))
-    assert "pip install pytest pytest-cov" in script
+    assert "pip install --require-hashes -r scripts/requirements-sdk-test.txt" in script
+    assert "pip check" in script
     assert "python -m pytest client/tests -q" in script
     assert "python -m pytest cli/tests -q" in script
     assert "--cov=testlookup_cli" in script
@@ -497,3 +498,283 @@ def test_the_third_party_scan_uses_the_pinned_trivy_and_covers_every_infra_row()
     assert len(images) >= 8 and any(i.startswith("ollama/ollama:") for i in images), images
     [scan] = [line for line in text.replace("\\\n", " ").splitlines() if line.strip().startswith("if trivy image")]
     assert "--severity HIGH,CRITICAL" in scan and "--ignore-unfixed" in scan, scan
+
+
+# ── 2026-11-18 OpenSSF Scorecard hardening ───────────────────────────────────
+# Scorecard v5.6.0 (api.securityscorecards.dev) scored main 90f6baf3 at 5.5/10.
+# These pin what the fix PR changed, so each signal fails here before it can
+# quietly regress on the public score.
+
+OFFLINE_BUNDLE = WORKFLOWS / "offline-bundle.yml"
+_LOCK_BLOCK = re.compile(r"^[A-Za-z0-9][^\n]*(?:\n[ \t]+[^\n]*)*", re.MULTILINE)
+_LOCK_PIN = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==([^\s;\\]+)")
+_REQ_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+_COMMAND_SPLIT = re.compile(r"&&|\|\||;|\|")
+_LEADING_KEYWORD = re.compile(r"^(?:RUN|then|do|else)\s+")
+_PYTHON = re.compile(r"python(?:3(?:\.\d+)?)?")
+_FAST_CHECK = re.compile(
+    r"""(from\s+['"](fast-check|@fast-check/(ava|jest|vitest))['"]"""
+    r"""|require\(\s*['"](fast-check|@fast-check/(ava|jest|vitest))['"]\s*\))"""
+)
+
+
+def _tracked_files() -> list[str]:
+    return subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,
+                          check=True).stdout.splitlines()
+
+
+def _norm(name: str) -> str:
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _shell_commands(script: str) -> list[list[str]]:
+    """Simple commands in a run: / RUN script, split the way a shell would chain them."""
+    commands = []
+    for line in script.replace("\\\n", " ").splitlines():
+        for segment in _COMMAND_SPLIT.split(line):
+            segment = _LEADING_KEYWORD.sub("", segment.strip())
+            if "pip" not in segment:
+                continue
+            try:
+                commands.append(shlex.split(segment))
+            except ValueError:
+                commands.append(segment.split())
+    return commands
+
+
+def _pip_install_args(argv: list[str]) -> list[str] | None:
+    if len(argv) >= 2 and argv[0] in ("pip", "pip3") and argv[1] == "install":
+        return argv[2:]
+    if len(argv) >= 4 and _PYTHON.fullmatch(argv[0]) and argv[1:4] == ["-m", "pip", "install"]:
+        return argv[4:]
+    return None
+
+
+def _scorecard_reads_as_pinned(args: list[str]) -> bool:
+    """Scorecard's Pinned-Dependencies rule for one `pip install` (its
+    checks/raw/shell_download_validate.go): --require-hashes, only .whl files, or
+    `--no-deps -e <local path>`. A `-r <file>` without --require-hashes is
+    unpinned even when the file carries hashes: Scorecard does not open it."""
+    hashes = no_deps = editable = wheel = False
+    others: list[str] = []
+    editable_sources: list[str] = []
+    take_source = False
+    for arg in args:
+        if take_source:
+            editable_sources.append(arg)
+            take_source = False
+        elif arg == "--require-hashes":
+            hashes = True
+            break
+        elif arg == "--no-deps":
+            no_deps = True
+        elif arg in ("-e", "--editable"):
+            editable = take_source = True
+        elif arg.startswith("-"):
+            continue
+        elif arg.endswith(".whl"):
+            wheel = True
+        else:
+            others.append(arg)
+    if editable:
+        remote = any(s.startswith(("git", "svn", "hg", "bzr")) for s in editable_sources)
+        return no_deps and not remote and not others
+    return hashes or (wheel and not others)
+
+
+def _pip_installs() -> list[tuple[str, list[str]]]:
+    """Every `pip install` Scorecard parses: workflow run: steps and Dockerfile RUNs."""
+    found = []
+    for path in sorted(WORKFLOWS.glob("*.y*ml")):
+        for job in (_workflow(path).get("jobs") or {}).values():
+            for step in job.get("steps") or []:
+                for argv in _shell_commands(step.get("run", "")):
+                    args = _pip_install_args(argv)
+                    if args is not None:
+                        found.append((f"{path.name}: {step.get('name') or ' '.join(argv)}", args))
+    for rel in _tracked_files():
+        name = rel.rsplit("/", 1)[-1]
+        if rel.startswith("client/examples/") or not (name == "Dockerfile" or name.startswith("Dockerfile.")):
+            continue
+        if name.endswith(".dockerignore"):
+            continue
+        text = (ROOT / rel).read_text(encoding="utf-8").replace("\\\n", " ")
+        for line in text.splitlines():
+            if line.lstrip().startswith("RUN "):
+                for argv in _shell_commands(line.strip()):
+                    args = _pip_install_args(argv)
+                    if args is not None:
+                        found.append((rel, args))
+    return found
+
+
+def test_every_pip_install_is_hash_pinned_the_way_scorecard_reads_it() -> None:
+    """Scorecard Pinned-Dependencies (8/10 on 2026-11-18): ten installs in ci.yml,
+    backend/Dockerfile and e2e-runner/Dockerfile took whatever PyPI served. They
+    now read hashed locks (`make lock-python`) or install local wheels --no-deps."""
+    installs = _pip_installs()
+    assert len(installs) >= 12, f"only {len(installs)} pip installs found; the scan cannot have looked"
+    unpinned = [f"{where}: pip install {' '.join(args)}" for where, args in installs
+                if not _scorecard_reads_as_pinned(args)]
+    assert not unpinned, "pip installs Scorecard reads as unpinned:\n  " + "\n  ".join(unpinned)
+
+
+def test_the_pin_rule_matches_scorecards_reading() -> None:
+    """The helper above must agree with Scorecard on the shapes this repo uses,
+    or the previous test proves nothing."""
+    pinned = [
+        ["--require-hashes", "-r", "requirements-lock.txt"],
+        ["--no-cache-dir", "--require-hashes", "-r", "a.txt", "-r", "b.txt"],
+        ["--no-deps", "-e", "../cli"],
+        ["--no-deps", "$RUNNER_TEMP/sdk-wheels/*.whl"],
+    ]
+    unpinned = [
+        ["pytest"],
+        ["-r", "requirements-lock.txt"],  # hashes in the file are invisible to Scorecard
+        ["-e", "../cli"],
+        ["--no-deps", "./cli"],
+        ["-c", "constraints.txt", "-r", "requirements.txt", "./cli"],
+        ["--no-deps", "-e", "git+https://example.invalid/x.git"],
+        [],
+    ]
+    assert all(_scorecard_reads_as_pinned(a) for a in pinned)
+    assert not any(_scorecard_reads_as_pinned(a) for a in unpinned)
+    assert _pip_install_args(["python", "-m", "pip", "install", "x"]) == ["x"]
+    assert _pip_install_args(["pip", "wheel", "--no-deps", "./cli"]) is None
+
+
+def _lock_pins(path: Path) -> dict[str, str]:
+    pins = {}
+    for block in _LOCK_BLOCK.findall(path.read_text(encoding="utf-8")):
+        match = _LOCK_PIN.match(block)
+        assert match, f"{path.name}: {block.splitlines()[0]!r} is not pinned with =="
+        assert "--hash=sha256:" in block, f"{path.name}: {match.group(1)} has no hash"
+        pins[_norm(match.group(1))] = match.group(2)
+    assert pins, f"{path.name} holds no pins"
+    return pins
+
+
+def _declared(pyproject: Path) -> set[str]:
+    import tomllib
+
+    deps = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["dependencies"]
+    return {_norm(_REQ_NAME.match(d).group(1)) for d in deps}
+
+
+def _required(requirements: Path) -> set[str]:
+    names = set()
+    for line in requirements.read_text(encoding="utf-8").splitlines():
+        if line.strip() and not line.lstrip().startswith(("#", "-")):
+            names.add(_norm(_REQ_NAME.match(line).group(1)))
+    return names
+
+
+def test_the_ci_locks_hold_what_their_jobs_install() -> None:
+    """The new locks replace `pip install ./cli` style resolution, so each must
+    hold every dependency its job relies on (`pip check` re-checks it in CI)."""
+    cli = _declared(ROOT / "cli" / "pyproject.toml")
+    client = _declared(ROOT / "client" / "pyproject.toml")
+
+    sdk = _lock_pins(ROOT / "scripts" / "requirements-sdk-test.txt")
+    assert cli | client | {"pytest", "pytest-cov"} <= set(sdk), (cli | client) - set(sdk)
+
+    tools = _lock_pins(ROOT / "scripts" / "requirements-ci.txt")
+    assert {"pytest", "pytest-cov", "pyyaml"} <= set(tools)
+
+    runner = _lock_pins(ROOT / "e2e-runner" / "requirements-lock.txt")
+    wanted = cli | _required(ROOT / "e2e-runner" / "requirements.txt") | _required(ROOT / "mcp" / "requirements.txt")
+    assert wanted <= set(runner), wanted - set(runner)
+
+    _lock_pins(ROOT / "backend" / "requirements-ragas-lock.txt")
+
+
+def test_the_backend_cli_extras_agree_with_the_backend_lock() -> None:
+    """backend-test installs requirements-lock.txt and requirements-cli-test.txt
+    in ONE pip call; a package both pin must be pinned to the same version, or
+    the job fails to resolve. `make lock-python` keeps them in step."""
+    backend = _lock_pins(ROOT / "backend" / "requirements-lock.txt")
+    extras = _lock_pins(ROOT / "backend" / "requirements-cli-test.txt")
+    drift = {name: (backend[name], version) for name, version in extras.items()
+             if name in backend and backend[name] != version}
+    assert not drift, f"re-run `make lock-python`: {drift}"
+    missing = _declared(ROOT / "cli" / "pyproject.toml") - set(backend) - set(extras)
+    assert not missing, missing
+
+
+def test_the_security_policy_links_the_private_reporting_form() -> None:
+    """Scorecard Security-Policy (4/10 on 2026-11-18) gives 6 of its points to a
+    URL or e-mail address for reports; the policy only described the button."""
+    text = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+    assert "https://github.com/test-intelligence/testlookup/security/advisories/new" in text
+
+
+def test_a_typescript_property_test_keeps_the_fuzzing_signal() -> None:
+    """Scorecard Fuzzing (0/10 on 2026-11-18) recognises fast-check imports in a
+    TypeScript file. The property tests fuzz the open-redirect and javascript:
+    URL guards; the first run found a tab that turned a saved path into
+    `//host` (returnPath.ts)."""
+    package = json.loads((ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
+    assert "fast-check" in package["devDependencies"]
+    tests = [p for p in _tracked_files() if p.startswith("frontend/src/") and p.endswith((".test.ts", ".test.tsx"))]
+    fuzzed = {p for p in tests if _FAST_CHECK.search((ROOT / p).read_text(encoding="utf-8"))}
+    assert {
+        "frontend/src/utils/returnPath.property.test.ts",
+        "frontend/src/utils/safeUrl.property.test.ts",
+    } <= fuzzed, fuzzed
+
+
+def test_a_release_bundle_run_attaches_signed_provenance() -> None:
+    """Scorecard Signed-Releases (0/10 on 2026-11-18) reads the release assets for
+    *.intoto.jsonl / *.sig files. A release run of offline-bundle.yml now attests
+    the three files it publishes and keeps the Sigstore bundle beside them."""
+    job = _workflow(OFFLINE_BUNDLE)["jobs"]["build-bundle"]
+    assert job["permissions"] == {
+        "contents": "read", "id-token": "write", "attestations": "write", "artifact-metadata": "write",
+    }
+    steps = job["steps"]
+    [attest] = [s for s in steps if "attest-build-provenance" in s.get("uses", "")]
+    assert attest["if"] == "env.RELEASE_TAG != ''"
+    assert [p.strip() for p in attest["with"]["subject-path"].splitlines() if p.strip()] == [
+        "dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz",
+        "dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz.sha256",
+        "dist/SHA256SUMS",
+    ]
+    [keep] = [s for s in steps if ".intoto.jsonl" in s.get("run", "")]
+    assert keep["if"] == "env.RELEASE_TAG != ''"
+    assert keep["env"]["BUNDLE_PATH"] == "${{ steps.attest.outputs.bundle-path }}"
+    [upload] = [s for s in steps if "upload-artifact" in s.get("uses", "")]
+    assert "dist/*.intoto.jsonl" in upload["with"]["path"]
+    sums = next(i for i, s in enumerate(steps) if "> dist/SHA256SUMS" in s.get("run", ""))
+    assert sums < steps.index(attest) < steps.index(keep) < steps.index(upload)
+
+
+def test_every_osv_acceptance_says_why_and_expires() -> None:
+    """Scorecard Vulnerabilities runs osv-scanner, which honours an
+    osv-scanner.toml beside a lockfile. Each accepted finding must say why and
+    expire within 90 days (the .trivyignore.yaml rule), so it comes back."""
+    import tomllib
+
+    files = [p for p in _tracked_files() if p.rsplit("/", 1)[-1] == "osv-scanner.toml"]
+    assert files, "no osv-scanner.toml found"
+    today = dt.datetime.now(dt.timezone.utc).date()
+    ids = set()
+    for rel in files:
+        doc = tomllib.loads((ROOT / rel).read_text(encoding="utf-8"))
+        assert set(doc) == {"IgnoredVulns"}, f"{rel}: only IgnoredVulns entries belong here"
+        for entry in doc["IgnoredVulns"]:
+            assert re.fullmatch(r"(CVE-\d{4}-\d{4,}|GHSA(-[23456789cfghjmpqrvwx]{4}){3}|PYSEC-\d{4}-\d+)",
+                                entry["id"]), f"{rel}: {entry}"
+            assert len(str(entry.get("reason", "")).strip()) >= 20, f"{rel}: {entry['id']}: say WHY"
+            until = entry["ignoreUntil"]
+            until = until if isinstance(until, dt.date) else dt.date.fromisoformat(str(until))
+            assert until <= today + dt.timedelta(days=MAX_ACCEPTANCE_DAYS), (
+                f"{rel}: {entry['id']}: acceptance longer than {MAX_ACCEPTANCE_DAYS} days"
+            )
+            ids.add(entry["id"])
+        siblings = {p.rsplit("/", 1)[-1] for p in _tracked_files() if p.rsplit("/", 1)[0] == rel.rsplit("/", 1)[0]}
+        assert siblings & {"package-lock.json", "requirements-lock.txt", "requirements.txt"}, (
+            f"{rel}: osv-scanner reads it only beside a lockfile"
+        )
+    # The chromadb acceptances rest on this guard; it must exist while they do.
+    if ids & {"PYSEC-2026-311", "PYSEC-2026-3813", "PYSEC-2026-3814", "PYSEC-2026-3815"}:
+        assert (ROOT / "backend" / "tests" / "regression" / "test_chromadb_server_code_is_never_used.py").is_file()

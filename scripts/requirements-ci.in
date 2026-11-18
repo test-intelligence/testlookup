@@ -1,0 +1,12 @@
+# Test tools for the CI jobs that run the repository's own guard tests:
+# image-manifest-drift, quality-gate and mcp-test in .github/workflows/ci.yml.
+#
+# Those jobs used to run `pip install pytest pyyaml`, which installs whatever
+# PyPI serves that minute (OpenSSF Scorecard Pinned-Dependencies). They now
+# install requirements-ci.txt with --require-hashes. `make lock-python`
+# regenerates it; Dependabot (pip, /scripts) proposes the bumps.
+#
+# pytest floor: PYSEC-2026-1845 (tmpdir handling) is fixed in 9.0.3.
+pytest>=9.0.3
+pytest-cov
+pyyaml

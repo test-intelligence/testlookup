@@ -1,0 +1,15 @@
+# The Python SDK and CLI test job (sdk-cli-test in .github/workflows/ci.yml).
+#
+# The lock is compiled from this file plus client/pyproject.toml and
+# cli/pyproject.toml, so it holds every runtime dependency the two packages
+# declare, resolved for Python 3.11 (the CLI's floor). The job installs it with
+# --require-hashes, installs the two packages' own wheels with --no-deps and
+# then runs `pip check`: a dependency added to either pyproject.toml without a
+# re-lock fails there instead of being fetched unpinned.
+#
+# `make lock-python` regenerates requirements-sdk-test.txt; Dependabot (pip,
+# /scripts) proposes the bumps.
+#
+# pytest floor: PYSEC-2026-1845 (tmpdir handling) is fixed in 9.0.3.
+pytest>=9.0.3
+pytest-cov

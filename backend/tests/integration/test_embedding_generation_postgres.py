@@ -153,7 +153,8 @@ async def test_the_build_claims_its_own_job_checkpoints_and_resumes_after_the_de
     assert job.cursor_id is not None and job.project_id is None
     assert job.lease_expires_at is not None and job.lease_expires_at.timestamp() <= time.time() + 1
     collection = client.collections[job.collection]
-    assert client.kwargs == [{}]                         # the bundled embedder: no embedding_function kwarg
+    # The bundled embedder: the local function, never "nothing" (the server's configuration).
+    assert [type(kw.get("embedding_function")).__name__ for kw in client.kwargs] == ["LocalMiniLMEmbeddingFunction"]
     first = list(collection.ids)
     assert len(first) == PAGE
 

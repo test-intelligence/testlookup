@@ -108,13 +108,15 @@ def test_the_refusal_sentences_are_the_contract_text():
     assert ef_mod.EMBED_TIMEOUT_SECONDS == 30
 
 
-# ── default: no embedding function, no kwarg ─────────────────────────────────
+# ── default: no function to build; collections open with the local one ──────
 
 @pytest.mark.parametrize("offline", [True, False])
-def test_default_answers_none_so_the_call_sites_omit_the_kwarg(offline, events):
+def test_default_answers_none_and_collections_open_with_the_local_function(offline, events):
     assert get_chroma_embedding_function(DEFAULT_EMBEDDER, offline=offline, ollama_base_url=OFF_BOX) is None
     resolved = ResolvedCollection(name="test_case_search", embedding_function=None, generation=LEGACY_GENERATION)
-    assert resolved.create_kwargs() == {}
+    kwargs = resolved.create_kwargs()
+    assert list(kwargs) == ["embedding_function"]
+    assert isinstance(kwargs["embedding_function"], ef_mod.LocalMiniLMEmbeddingFunction)
     # The bundled embedder needs no policy decision and builds no client.
     assert events == []
 
