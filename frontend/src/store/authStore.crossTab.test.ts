@@ -209,6 +209,22 @@ describe('authStore across tabs: a tab that missed the events checks on its retu
     expect(visible.reload).toHaveBeenCalledTimes(1)
   })
 
+  // Phase 3 (the TL-AUTH-003 release journey): the release harness seeds a session into a signed-out tab's storage
+  // (`authenticatePage`) and then navigates; a catch-up reload of that tab aborted the navigation. A signed-out tab
+  // holds no account that could be stale, so the catch-up checks leave it alone (the live listener still acts).
+  it('a signed-out tab is not reloaded by a catch-up check when a session appears in its storage', async () => {
+    localStorage.clear()
+    vi.resetModules()
+    await import('./authStore')
+    const crossTab = await import('./authCrossTab')
+    const reload = vi.spyOn(crossTab.sessionReload, 'reload').mockImplementation(() => {})
+    localStorage.setItem(KEY, entry(ADMIN, 'admin-access'))  // seeded in this document: no storage event
+    crossTab.installAuthCrossTab()
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(reload).not.toHaveBeenCalled()
+  })
+
   it('with the same account stored: nothing', async () => {
     const { reload } = await loadAs(ADMIN)
     window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }))
@@ -224,8 +240,9 @@ describe('authStore across tabs: the module installed after the first render (D-
     const { useAuthStore } = await import('./authStore')
     otherTabWrites(entry(VIEWER, 'viewer-access'), { event: false })
     // Before the module loads, the guard still keeps the old account out of storage (and cannot reload yet).
-    useAuthStore.getState().logout()
+    useAuthStore.getState().clearMustChangePassword()
     expect(storedUsername()).toBe('viewer')
+    expect(useAuthStore.getState().user?.username).toBe('admin')
     const crossTab = await import('./authCrossTab')
     const reload = vi.spyOn(crossTab.sessionReload, 'reload').mockImplementation(() => {})
     crossTab.installAuthCrossTab()

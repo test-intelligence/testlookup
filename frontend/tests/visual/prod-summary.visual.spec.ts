@@ -59,7 +59,8 @@ for (const theme of THEMES) {
     const kpis = landmark(page, 'Summary KPIs')
     await expect(kpis).toContainText('186')
     await expect(kpis).toContainText('80.1%')
-    await expect(kpis).toContainText('per unique test')
+    // D-0012: Latest run per suite sums the latest runs' results, so its pass rate is per test execution.
+    await expect(kpis).toContainText('per test execution')
     // The counts strip's numbers, on the row: 180 evaluated, 149 passed.
     await expect(kpis).toContainText('180 evaluated')
     await expect(kpis).toContainText('149 passed')

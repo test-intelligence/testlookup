@@ -290,6 +290,27 @@ describe('SuiteChartsPanel — Wave 3 advanced sections', () => {
     const passRate = await screen.findByRole('heading', { level: 3, name: 'Pass rate trend — last 14 days' })
     expect(passRate.compareDocumentPosition(advanced) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
+
+  it('waits for the trend read too: the sections first mount below both charts, never straight under the header', async () => {
+    // The detail read has answered and the trend has not. Mounted now, the sections would sit where the charts are
+    // about to go: the heatmap's lazy box inside the near margin mounts and asks at once, then the charts push it down.
+    let answer: (value: unknown) => void = () => undefined
+    mockGetSuiteTrend.mockReturnValue(new Promise((resolve) => { answer = resolve }))
+    renderPanel(14)
+    expect(screen.queryByTestId('suite-advanced')).toBeNull()
+    expect(screen.queryByText('No data for this suite')).toBeNull()
+    answer({ suite_name: 'Auth', days: 14, points: WEEK })
+    const advanced = await screen.findByTestId('suite-advanced')
+    const passRate = screen.getByRole('heading', { level: 3, name: 'Pass rate trend — last 14 days' })
+    expect(passRate.compareDocumentPosition(advanced) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('a failed trend read still mounts the sections, without the two charts', async () => {
+    mockGetSuiteTrend.mockRejectedValue(new Error('trend down'))
+    renderPanel()
+    expect(await screen.findByTestId('suite-advanced')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { level: 3, name: /^Run history/ })).toBeNull()
+  })
 })
 
 // ── UX redesign P4: the body, extracted ─────────────────────────────────────

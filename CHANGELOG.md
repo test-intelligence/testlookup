@@ -7,6 +7,10 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ## [Unreleased]
 
+### Added
+
+- Release verification: journey **TL-AUTH-003** (one account per browser profile, P1, disposable stack) checks the D-0019 fix on the live stack. In two tabs of one browser, a sign-in as a viewer moves the admin's tab onto the viewer with the note, a new tab opens as the viewer, and the viewer's sign-out signs the other tab out (`frontend/tests/release/session.spec.ts`, `e2e-runner/catalogue.yaml`).
+
 ### Changed
 
 - Wording: the app, the in-app guide, the README and the user guide say "release" where they said "ship". Home's verdict banner reads "release cleared", "review before release" or "release blocked by unresolved failures"; Run intelligence reads "release cleared" or "release blocked"; the Releases page counts "Ready to release", says a GO release "is ready to release", and its "Shipping this week" panel is "Due this week". The escape rate counts defects filed after a release "went live". The README tagline is "Know why your software tests fail. Know when your release is ready." API fields keep their names (`ready_to_ship` is unchanged).
@@ -14,6 +18,7 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ### Fixed
 
+- Suites: a suite's **Charts** tab waits for both of its reads before drawing. When the per-day trend answered after the suite's details, the test-by-run heatmap loaded at once, before you scrolled near it, and the two charts then appeared above it and pushed it down the page. It now loads when you scroll near it, below the charts.
 - Signing in as a different user, or signing out, in one tab now applies to every open tab of the same browser. A tab left on the previous account reloads (with a note saying why, and losing any unsaved edits of that account) instead of showing that account and sending its requests, and it can no longer put the previous account back for the next tab or reload. Signing in on a browser that already holds a session now loads the new account's details, not the previous account's. (D-0019, `frontend/src/store/authStore.crossTab.test.ts`, `frontend/src/services/api.explicitBearer.test.ts`, `frontend/tests/ci-e2e/auth-account-switch-tabs.spec.ts`)
 - Settings no longer lists **MFA & lockout** and **Retention & purge** for a QA lead. Both pages are for administrators, and a QA lead who followed either link saw only "Admin access required". The MFA page also no longer reads the policy for a non-administrator. (D-0017, `frontend/src/components/layout/settingsNav.test.ts`, `frontend/tests/ci-e2e/settings-admin-only-items.spec.ts`)
 - Inbox: reassigning a failure by hand (in the Inbox, through the API or the MCP `assign_failure` tool) is now recorded in the project's Activity log, as `Failure <test> reassigned from <A> to <B>`. Re-choosing the current assignee records nothing, and an agent's reassignment stays one `agent.action_executed` entry. (D-0021, `backend/tests/regression/test_failure_reassign_writes_activity.py`, `backend/tests/integration/test_activity_failure_reassign_postgres.py`, `frontend/tests/ci-e2e/inbox-reassign-activity.spec.ts`)
