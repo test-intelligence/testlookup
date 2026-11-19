@@ -16,13 +16,13 @@ token and showed them in the reporter's project.
 """
 from __future__ import annotations
 
+import contextlib
 import inspect
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import structlog
 
 from app.core.config import settings
 from app.models.postgres import Project, TestRun
@@ -33,6 +33,27 @@ from app.services.integration_config_service import (
     clear_runtime_integration_cache,
 )
 from app.tools.investigation_context import InvestigationContext
+
+
+@contextlib.contextmanager
+def _captured_logs():
+    """What the two modules log, as ``{"event", "log_level", **fields}`` entries.
+
+    Their loggers are swapped for a recorder. ``structlog.testing.capture_logs``
+    is not used: a logger that was already used earlier in the session is cached
+    with its old processors and is not captured, so the test passed alone and
+    failed in the full suite.
+    """
+    entries: list[dict] = []
+
+    class _Recorder:
+        def __getattr__(self, level):
+            def _log(event, **fields):
+                entries.append({"event": event, "log_level": level, **fields})
+            return _log
+
+    with patch.object(ingestion, "logger", _Recorder()), patch.object(ocp_enrichment, "logger", _Recorder()):
+        yield entries
 
 pytestmark = pytest.mark.regression
 
@@ -115,7 +136,7 @@ async def _new_run(project, sentinel) -> TestRun:
 
 @pytest.mark.asyncio
 async def test_a_report_naming_another_namespace_stores_neither_pod_nor_namespace():
-    with structlog.testing.capture_logs() as logs:
+    with _captured_logs() as logs:
         run = await _new_run(_project(OWN), _sentinel(OTHER))
 
     assert run.ocp_namespace is None, "the other team's namespace was stored"
@@ -129,7 +150,7 @@ async def test_a_report_naming_another_namespace_stores_neither_pod_nor_namespac
 
 @pytest.mark.asyncio
 async def test_a_report_naming_the_projects_namespace_is_stored_as_before():
-    with structlog.testing.capture_logs() as logs:
+    with _captured_logs() as logs:
         run = await _new_run(_project(OWN), _sentinel(OWN))
 
     assert (run.ocp_pod_name, run.ocp_namespace) == (POD, OWN)
@@ -246,7 +267,7 @@ async def test_the_worker_skips_a_stored_run_whose_namespace_is_not_the_projects
     lookup = _stored_run(monkeypatch, OTHER, _cfg(OWN, "project"))
     run_id = uuid.uuid4()
 
-    with structlog.testing.capture_logs() as logs:
+    with _captured_logs() as logs:
         assert await ocp_enrichment.pod_metadata_for_run(run_id) is None
 
     lookup.assert_not_awaited()
