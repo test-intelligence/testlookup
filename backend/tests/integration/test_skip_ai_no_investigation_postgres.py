@@ -280,21 +280,21 @@ def _scripted_model(monkeypatch) -> dict[str, int]:
     from app.core.config import settings
     from app.services import llm_circuit_breaker
     from app.services import llm_cost_reservation as cost
-    from app.services.llm_cost_reservation import Reservation
-    from app.services.llm_factory import BudgetedLLM
 
     calls = {"get_llm": 0, "reserve": 0}
     scripted = FakeListChatModel(responses=[MODEL_REPLY] * 20)
 
     async def _get_llm(*_a: Any, **_kw: Any) -> Any:
         calls["get_llm"] += 1
-        return BudgetedLLM(scripted, provider="ollama", model="scripted-test-only")
+        return llm_factory.BudgetedLLM(
+            scripted, provider="ollama", model="scripted-test-only"
+        )
 
     async def _reserve(
         provider: Any, model: Any, *, input_tokens: Any, max_output_tokens: Any
     ) -> Any:
         calls["reserve"] += 1
-        return Reservation(
+        return cost.Reservation(
             key=f"ci-reservation-test-only-{calls['reserve']}",
             project_id="p",
             estimated_usd=0.0,
