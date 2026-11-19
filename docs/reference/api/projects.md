@@ -483,6 +483,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=404, detail='Project not found')
+HTTPException(status_code=409, detail="This project's default QA lead is a personal account, not the shared QA-lead account, so its password cannot be reset here. The person changes it from their own profile or with the forgot-password link.")
 ```
 
 ### Declared wire contract
