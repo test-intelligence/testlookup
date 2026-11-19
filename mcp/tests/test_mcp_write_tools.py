@@ -64,7 +64,7 @@ class TestWriteToolRegistration:
         """propose_quarantine must hit the proposal endpoint (POST /quarantine),
         never approve in the same call — human review stays in the loop."""
         content = (MCP_DIR / "tools" / "quarantine.py").read_text(encoding="utf-8")
-        assert '"/api/v1/quarantine", json_body=body' in content
+        assert 'api.path("/api/v1/quarantine"), json_body=body' in content
         # It must not chain into the approve endpoint.
         start = content.index("async def propose_quarantine")
         end = content.index("async def release_quarantine")

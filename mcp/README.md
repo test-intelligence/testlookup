@@ -22,7 +22,11 @@ pip install -r mcp/requirements.txt      # or: make mcp-install
 | `python mcp/server.py --transport sse --port 8002` or `make mcp-sse` | SSE transport on `0.0.0.0:8002` (`--port` defaults to 8002) |
 | `make mcp-sse-docker` (`docker compose up -d mcp`) | The `mcp` Compose service: SSE on port 8002, published on `127.0.0.1:8002`, talking to the `backend` service |
 
-The server reads its settings from `TESTLOOKUP_*` environment variables and from a `.env` file in the working directory; [mcp/.env.example](.env.example) is a template.
+The server reads its settings from `TESTLOOKUP_*` environment variables and from one env file: `.env` next to `server.py`, or the file named by `TESTLOOKUP_ENV_FILE` when that variable is set (a relative path is taken from the server's directory). It never reads a `.env` from the working directory, and real environment variables win over the file. [mcp/.env.example](.env.example) is a template.
+
+Use an `https://` API address. Over plain `http` to a host other than this machine the sign-in is sent unencrypted; the server logs a warning once and still signs in.
+
+**Ids and test output.** An id argument must be the UUID a list tool returned; anything else is refused by the MCP server ("`<argument>` must be a UUID") before any request is sent, and other path values are percent-encoded. Text copied from test reports (test names, error messages, stack traces, step names) is shown between `<test-output>` and `</test-output>` with a line saying it is data, not instructions. Eight resources return `{"untrusted_content_notice": ..., "data": ...}` and five structured tools carry a `content_notice` key.
 
 ## Authentication
 

@@ -130,7 +130,7 @@ def register(mcp) -> None:  # noqa: ANN001
         `suite_name` and reads the endpoint the UI's charts read.
         """
         data = await api.get(
-            "/api/v1/analytics/flaky-tests",
+            api.path("/api/v1/analytics/flaky-tests"),
             params={"project_id": project_id, "days": days, "limit": limit},
         )
 
@@ -176,7 +176,7 @@ def register(mcp) -> None:  # noqa: ANN001
         `suite_name` and reads the endpoint the UI's charts read.
         """
         data = await api.get(
-            "/api/v1/analytics/failure-categories",
+            api.path("/api/v1/analytics/failure-categories"),
             params={"project_id": project_id, "days": days},
         )
 
@@ -232,7 +232,7 @@ def register(mcp) -> None:  # noqa: ANN001
         `suite_name` and reads the endpoint the UI's charts read.
         """
         data = await api.get(
-            "/api/v1/analytics/top-failing",
+            api.path("/api/v1/analytics/top-failing"),
             params={"project_id": project_id, "days": days, "limit": limit},
         )
 
@@ -276,7 +276,7 @@ def register(mcp) -> None:  # noqa: ANN001
         `suite_name` and reads the endpoint the UI's charts read.
         """
         data = await api.get(
-            "/api/v1/analytics/coverage",
+            api.path("/api/v1/analytics/coverage"),
             params={"project_id": project_id, "days": days},
         )
 
@@ -330,7 +330,7 @@ def register(mcp) -> None:  # noqa: ANN001
             size: Results per page.
         """
         data = await api.get(
-            "/api/v1/analytics/defects",
+            api.path("/api/v1/analytics/defects"),
             params={
                 "project_id": project_id,
                 "resolution_status": resolution_status,
@@ -382,7 +382,7 @@ def register(mcp) -> None:  # noqa: ANN001
             days: Analysis window in days (1-365, default 30).
         """
         data = await api.get(
-            "/api/v1/analytics/ai-summary",
+            api.path("/api/v1/analytics/ai-summary"),
             params={"project_id": project_id, "days": days},
         )
 
@@ -507,7 +507,7 @@ def register(mcp) -> None:  # noqa: ANN001
             "facet_value": facet_value,
         }
         try:
-            return await api.get("/api/v1/analytics/chart-data", params=params)
+            return await api.get(api.path("/api/v1/analytics/chart-data"), params=params)
         except Exception as exc:
             return _analytics_error(exc)
 
@@ -565,7 +565,7 @@ def register(mcp) -> None:  # noqa: ANN001
             "top": top,
         }
         try:
-            body = await api.get("/api/v1/analytics/execution-metrics", params=params)
+            body = await api.get(api.path("/api/v1/analytics/execution-metrics"), params=params)
         except Exception as exc:
             return _analytics_error(exc)
         if not isinstance(body, dict):

@@ -44,7 +44,7 @@ async def _release_gate(release_id: str) -> str:
     except ValueError:
         return f"`{release_id}` is not a release UUID."
     try:
-        gate = await api.get(f"/api/v1/releases/{release_id}/gate")
+        gate = await api.get(api.path("/api/v1/releases/{release_id}/gate", release_id=release_id))
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
             return (
@@ -112,9 +112,9 @@ def register(mcp) -> None:  # noqa: ANN001
             return api.error_payload(exc)
         try:
             if evaluate:
-                gate = await api.post(f"/api/v1/releases/{rid}/gate/evaluate")
+                gate = await api.post(api.path("/api/v1/releases/{release_id}/gate/evaluate", release_id=rid))
             else:
-                gate = await api.get(f"/api/v1/releases/{rid}/gate")
+                gate = await api.get(api.path("/api/v1/releases/{release_id}/gate", release_id=rid))
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404 and not evaluate:
                 return {"ok": True, "release_id": rid, "evaluated": False,
@@ -164,7 +164,7 @@ def register(mcp) -> None:  # noqa: ANN001
             return await _release_gate(release_id)
 
         data: dict[str, Any] = await api.get(
-            "/api/v1/metrics/summary",
+            api.path("/api/v1/metrics/summary"),
             params={"project_id": project_id, "days": days},
         ) or {}
 

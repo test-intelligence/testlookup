@@ -28,7 +28,7 @@ def register(mcp) -> None:  # noqa: ANN001
         For a project-level rollup over a time window, use
         ``check_release_readiness`` instead.
         """
-        data = await api.get(f"/api/v1/release-readiness/{run_id}")
+        data = await api.get(api.path("/api/v1/release-readiness/{run_id}", run_id=api.uuid_id(run_id)))
 
         lines = [
             f"## Release Readiness — Run {run_id}",
@@ -89,7 +89,7 @@ def register(mcp) -> None:  # noqa: ANN001
                 run_id=run_id, expires_days=expires_days, layout=layout
             )
         data = await api.post(
-            f"/api/v1/reports/runs/{run_id}/share",
+            api.path("/api/v1/reports/runs/{run_id}/share", run_id=api.uuid_id(run_id)),
             json_body={"expiry_days": expires_days, "layout": layout},
         )
         return (

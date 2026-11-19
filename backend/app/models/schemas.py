@@ -5515,6 +5515,26 @@ class RunContext(BaseModel):
 
 # ── Live Stream Schemas ───────────────────────────────────────────────────────
 
+_HTTP_URL = re.compile(r"https?://\S", re.IGNORECASE)
+
+
+def http_ci_run_url(value: Optional[str]) -> Optional[str]:
+    """``value`` when it is an http(s) URL, else ``None`` (the CI job link is dropped, not refused).
+
+    The value is printed as a link in the run-report e-mail and the app, and whoever
+    holds an ingest key chooses it. Anything else (``javascript:``, ``data:``, a bare
+    path) is stored as "no link" with one log line; the upload still succeeds, so a CI
+    job that sends an odd value keeps working.
+    """
+    if value is None or _HTTP_URL.match(value):
+        return value
+    if value.strip():
+        import structlog  # noqa: PLC0415
+
+        structlog.get_logger("schemas.ingest").warning("ci_run_url_dropped_not_http", length=len(value))
+    return None
+
+
 class _NulFreeInput(BaseModel):
     """Strips U+0000 from every string of an ingestion request body.
 
@@ -5580,6 +5600,7 @@ class LiveSessionCreate(_NulFreeInput):
     pr_number: Optional[int] = Field(None, ge=1)
     ci_actor: Optional[str] = Field(None, max_length=120)
     ci_run_url: Optional[str] = Field(None, max_length=1000)
+    _ci_run_url_http_only = field_validator("ci_run_url")(http_ci_run_url)
     # Commit attribution (US-8.1, air-gapped path) — optional pushed commit
     # list so air-gapped callers get suspect ranking with no VCS call. Accepts
     # either the legacy bare list or the boundary-carrying
@@ -6026,6 +6047,7 @@ class IngestPayload(_NulFreeInput):
     pr_number: Optional[int] = Field(None, ge=1)
     ci_actor: Optional[str] = Field(None, max_length=120)
     ci_run_url: Optional[str] = Field(None, max_length=1000)
+    _ci_run_url_http_only = field_validator("ci_run_url")(http_ci_run_url)
     jenkins_job: Optional[str] = Field(None, max_length=500)
     # Environment this run executed against (roadmap Phase 0, migration 0129).
     # Optional: omitting it means "not recorded", and readers derive a
@@ -8957,12 +8979,38 @@ class MemoryTimelineResponse(BaseModel):
 # ── Knowledge Source Schemas (RAG-1 / RAG-2 / RAG-3) ─────────────────────────
 
 
+# The id shapes the Jira and Confluence knowledge connectors accept (they hold
+# the same patterns; tests/regression/test_atlassian_source_ids_are_pattern_checked.py
+# keeps them equal). ASCII only, matched against the whole value.
+KNOWLEDGE_JIRA_ISSUE_KEY_PATTERN = r"[A-Z][A-Z0-9_]+-[0-9]+"
+KNOWLEDGE_CONFLUENCE_PAGE_ID_PATTERN = r"[0-9]+"
+_KNOWLEDGE_EXTERNAL_ID_RULES: Dict[str, tuple[str, str]] = {
+    "jira_issue": (KNOWLEDGE_JIRA_ISSUE_KEY_PATTERN, "a Jira issue key such as ABC-123"),
+    "jira_epic": (KNOWLEDGE_JIRA_ISSUE_KEY_PATTERN, "a Jira issue key such as ABC-123"),
+    "confluence_page": (KNOWLEDGE_CONFLUENCE_PAGE_ID_PATTERN, "a numeric Confluence page id such as 123456"),
+}
+
+
 class KnowledgeSourceCreate(BaseModel):
     source_type: str = Field(..., max_length=30)
     title: str = Field(..., min_length=1, max_length=500)
     canonical_url: str = Field(..., min_length=1, max_length=2000)
     external_id: Optional[str] = Field(None, max_length=500)
     classification: str = Field("internal", max_length=20)
+
+    @model_validator(mode="after")
+    def _external_id_matches_the_source_type(self) -> "KnowledgeSourceCreate":
+        # For a Jira or Confluence source the id becomes part of a request path
+        # (and a JQL string) sent with the deployment's credential, so only the
+        # exact id shape is accepted. Empty means "not given": the connector
+        # then takes the id from the URL. Other source types are not checked.
+        rule = _KNOWLEDGE_EXTERNAL_ID_RULES.get(self.source_type)
+        if rule and self.external_id and not re.fullmatch(rule[0], self.external_id):
+            raise ValueError(
+                f"external_id for a {self.source_type} source must be {rule[1]}. "
+                "Leave it empty to take the id from the URL."
+            )
+        return self
 
 
 class KnowledgeSourceUpdate(BaseModel):

@@ -71,6 +71,9 @@ _cached_mode_ts: float = 0
 _effective_provider: str | None = None
 _effective_model: str | None = None
 _effective_base_url: str | None = None
+# The EFFECTIVE offline switch (environment OR Settings > AI) from the same
+# refresh. None = not refreshed yet; the probe then goes by the environment.
+_effective_offline: bool | None = None
 
 # Ollama model availability probe result. None = not probed yet, True/False = last result.
 # Refreshed asynchronously by refresh_analysis_mode_from_cache() to avoid blocking the
@@ -410,10 +413,31 @@ async def _probe_ollama_model_async(
     base_url = base_url or _effective_base_url or settings.OLLAMA_BASE_URL
     if provider != "ollama":
         return None
+    # The probe obeys the same rules as a model call: the provider policy
+    # first, and with offline mode on (environment or Settings > AI) only an
+    # on-box base URL, through the client that pins the connection on-box.
+    # Without this, offline mode refused the model call but the probe still
+    # sent a GET to whatever base URL an ADMIN had saved.
+    offline = bool(settings.AI_OFFLINE_MODE) or bool(_effective_offline)
     try:
-        import httpx
-        from app.core.http_client import http_verify
-        async with httpx.AsyncClient(verify=http_verify(), timeout=3.0) as client:
+        from app.services.llm_policy_service import enforce_provider_policy_async
+
+        await enforce_provider_policy_async("ollama", offline=offline, base_url=str(base_url))
+    except Exception as exc:  # LLMPolicyViolation, or the check itself failing
+        logger.debug("ollama_probe_refused", error=type(exc).__name__)
+        return None
+    try:
+        client_cm: Any
+        if offline:
+            from app.services import llm_egress
+
+            client_cm = llm_egress.local_only_async_client(timeout=3.0)
+        else:
+            import httpx
+            from app.core.http_client import http_verify
+
+            client_cm = httpx.AsyncClient(verify=http_verify(), timeout=3.0)
+        async with client_cm as client:
             resp = await client.get(f"{str(base_url).rstrip('/')}/api/tags")
         if resp.status_code != 200:
             return None
@@ -424,7 +448,7 @@ async def _probe_ollama_model_async(
             for name in installed
         )
     except Exception as exc:
-        logger.debug("ollama_probe_failed", error=str(exc))
+        logger.debug("ollama_probe_failed", error=type(exc).__name__)
         return None
 
 
@@ -632,7 +656,7 @@ async def refresh_analysis_mode_from_cache(db: "AsyncSession | None" = None) -> 
     connection (the 2+1 pool stall). The worker (``db=None``) still syncs at
     every pipeline start, and so does the ML status route.
     """
-    global _effective_provider, _effective_model, _effective_base_url
+    global _effective_provider, _effective_model, _effective_base_url, _effective_offline
     global _ollama_model_available, _ollama_probe_ts, _ollama_probe_target
     import time
 
@@ -653,6 +677,7 @@ async def refresh_analysis_mode_from_cache(db: "AsyncSession | None" = None) -> 
         _effective_provider = cfg.get("provider")
         _effective_model = cfg.get("model")
         _effective_base_url = cfg.get("base_url")
+        _effective_offline = bool(cfg.get("offline_mode"))
     except Exception as exc:  # pragma: no cover — the resolver degrades to env itself
         logger.debug("effective_llm_target_refresh_failed", error=str(exc))
 

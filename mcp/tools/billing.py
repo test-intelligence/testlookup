@@ -25,7 +25,7 @@ def register(mcp) -> None:  # noqa: ANN001
         Use this to answer "what's our LLM bill looking like this
         month?" and "which projects are close to their cap?"
         """
-        data = await api.get("/api/v1/billing/overview")
+        data = await api.get(api.path("/api/v1/billing/overview"))
         if not data:
             return "No billing data available."
 
@@ -89,7 +89,7 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             project_id: The project UUID to query.
         """
-        data = await api.get(f"/api/v1/projects/{project_id}/llm-usage")
+        data = await api.get(api.path("/api/v1/projects/{project_id}/llm-usage", project_id=api.uuid_id(project_id)))
         if not data:
             return "No usage data returned."
 
@@ -125,7 +125,7 @@ def register(mcp) -> None:  # noqa: ANN001
             project_id: The project UUID to query.
         """
         try:
-            data = await api.get(f"/api/v1/projects/{project_id}/llm-quota")
+            data = await api.get(api.path("/api/v1/projects/{project_id}/llm-quota", project_id=api.uuid_id(project_id)))
         except Exception as exc:
             # 404 is expected when no quota exists — render a clean message.
             if "404" in str(exc):

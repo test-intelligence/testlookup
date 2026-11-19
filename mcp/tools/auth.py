@@ -54,6 +54,7 @@ def register(mcp) -> None:  # noqa: ANN001
             )
         _api._stdio_access_token = None
 
+        _api.warn_if_credentials_leave_in_plain_http()
         # Backend expects OAuth2 form-encoded data, not JSON
         resp = await _api._get_client().post(
             "/api/v1/auth/login",
@@ -77,7 +78,7 @@ def register(mcp) -> None:  # noqa: ANN001
         version, environment, uptime, and per-dependency health.
         """
         try:
-            data = await api.get("/health/details")
+            data = await api.get(api.path("/health/details"))
         except Exception as exc:
             return f"Backend unreachable at {settings.api_url}: {exc}"
 

@@ -10,6 +10,7 @@ timeline is tested on what the analysis really stores, not on a hand-written gue
 """
 from __future__ import annotations
 
+import dataclasses
 import ipaddress
 import json
 import socket
@@ -94,12 +95,18 @@ async def splunk_text(cfg: IntegrationRuntimeConfig, service: str = "checkout") 
     return await query_splunk.splunk_correlation(cfg, service, TS)
 
 
+def _project_of(cfg: IntegrationRuntimeConfig, namespace: str) -> IntegrationRuntimeConfig:
+    """``cfg`` as the project whose saved namespace is ``namespace``: a project
+    that saved its namespace is only ever looked up in it."""
+    return dataclasses.replace(cfg, ocp_default_namespace=namespace)
+
+
 async def ocp_text(cfg: IntegrationRuntimeConfig, pod: str = POD, namespace: str = NAMESPACE) -> str:
-    return await ocp_client.analyze_pod_events(pod, namespace, TS, config=cfg)
+    return await ocp_client.analyze_pod_events(pod, namespace, TS, config=_project_of(cfg, namespace))
 
 
 async def ocp_metadata(cfg: IntegrationRuntimeConfig, pod: str = POD, namespace: str = NAMESPACE) -> dict:
-    meta = await ocp_client.get_pod_metadata(pod, namespace, config=cfg)
+    meta = await ocp_client.get_pod_metadata(pod, namespace, config=_project_of(cfg, namespace))
     assert meta is not None, "the fake did not answer the pod lookup"
     return meta
 

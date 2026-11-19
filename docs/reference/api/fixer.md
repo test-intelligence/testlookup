@@ -10,7 +10,7 @@ Get Fixer Attempt
 
 A single FixAttempt with patch + runner_log_digest + ledger_run_id.
 
-Source: [backend/app/routers/fixer.py:276](../../../backend/app/routers/fixer.py#L276).
+Source: [backend/app/routers/fixer.py:278](../../../backend/app/routers/fixer.py#L278).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_attempt_access.<locals>._check`.
 
@@ -99,7 +99,7 @@ List Fixer Attempts
 
 Paged FixAttempt list, newest first.
 
-Source: [backend/app/routers/fixer.py:245](../../../backend/app/routers/fixer.py#L245).
+Source: [backend/app/routers/fixer.py:247](../../../backend/app/routers/fixer.py#L247).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -391,7 +391,7 @@ Direct handler error branches (dependency/service errors can add others):
 ```python
 HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f'The Fixer is disabled for this project. A QA Lead can enable it via PUT /api/v1/projects/{project_id}/agent-configs/fixer.')
 HTTPException(status_code=status.HTTP_409_CONFLICT, detail='A fixer run is already in flight for this project.')
-HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Suggest mode requires a runner (docker or workflow_dispatch). Configure fixer.runner.type before running in suggest mode.')
+HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='Suggest mode requires a runner, and it opens a pull request only with the docker runner (workflow_dispatch reruns the unpatched branch and records a baseline-only result). Set fixer.runner.type to docker before running in suggest mode.')
 HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='The fixer run could not be queued (task broker unavailable). Try again shortly.')
 ```
 

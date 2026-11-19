@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Optional
-from urllib.parse import urljoin
+from typing import Optional, Sequence
+from urllib.parse import urljoin, urlparse
 
 import httpx
 import structlog
@@ -51,6 +51,38 @@ async def _assert_fetchable(url: str) -> None:
         raise ConnectorFetchError(f"Refusing to fetch unsafe URL ({reason}): {url}")
 
 
+def url_host_on_allowlist(url: str, allowlist: Optional[Sequence[str]]) -> bool:
+    """Whether the URL's host is on the ADMIN domain allow-list.
+
+    An empty (or absent) list allows every host. Otherwise the host must equal
+    a listed domain or be a subdomain of one. The one rule for both places the
+    list is applied: creating a URL knowledge source, and fetching it.
+    """
+    if not allowlist:
+        return True
+    hostname = (urlparse(url).hostname or "").lower()
+    return any(hostname == d or hostname.endswith(f".{d}") for d in allowlist)
+
+
+def _assert_domain_allowed(
+    url: str, allowlist: Optional[Sequence[str]], *, redirect: bool = False
+) -> None:
+    """Refuse (not retryable) a URL whose host is not on the domain allow-list."""
+    if url_host_on_allowlist(url, allowlist):
+        return
+    hostname = urlparse(url).hostname or ""
+    if redirect:
+        raise ConnectorFetchError(
+            f"Refusing to follow a redirect to '{hostname}': the domain is not on "
+            "the approved domain allow-list. Ask an administrator to add it, or "
+            "use a URL that does not redirect there."
+        )
+    raise ConnectorFetchError(
+        f"Refusing to fetch from '{hostname}': the domain is not on the approved "
+        "domain allow-list. Ask an administrator to add it."
+    )
+
+
 async def _read_response_bounded(response: httpx.Response) -> bytes:
     """Read a response without allowing decompressed bytes to exceed the cap."""
     declared = response.headers.get("content-length")
@@ -92,12 +124,22 @@ class URLConnector(KnowledgeConnectorBase):
         self,
         canonical_url: str,
         external_id: Optional[str] = None,
+        *,
+        allowed_domains: Optional[Sequence[str]] = None,
     ) -> FetchedContent:
+        """Fetch a URL source.
+
+        ``allowed_domains`` is the ADMIN domain allow-list (empty or ``None``:
+        every public host is allowed). It applies to both URL source types, to
+        the stored URL and to every redirect target, so a listed host cannot
+        send the fetch on to a host that is not listed.
+        """
         url = canonical_url
 
         # RAG-13 + SSRF guard: validate scheme AND reject non-public targets
         # before fetching.
         await _assert_fetchable(url)
+        _assert_domain_allowed(url, allowed_domains)
 
         try:
             # NB: we deliberately disable httpx auto-redirect following and walk
@@ -122,6 +164,7 @@ class URLConnector(KnowledgeConnectorBase):
                         if resp.is_redirect and location:
                             nxt = urljoin(current, location)
                             await _assert_fetchable(nxt)  # re-resolve every hop
+                            _assert_domain_allowed(nxt, allowed_domains, redirect=True)
                             current = nxt
                             continue
 

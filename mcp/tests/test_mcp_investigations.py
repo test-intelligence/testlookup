@@ -38,9 +38,9 @@ class TestInvestigationRegistration:
         """The tools must hit the #383 wire contract paths verbatim."""
         content = (MCP_DIR / "tools" / "investigations.py").read_text(encoding="utf-8")
         assert "/investigations" in content
-        assert 'f"/api/v1/runs/{run_id}/investigations"' in content
-        assert 'f"/api/v1/investigations/{investigation_id}"' in content
-        assert 'f"/api/v1/projects/{project_id}/investigations"' in content
+        assert '"/api/v1/runs/{run_id}/investigations"' in content
+        assert '"/api/v1/investigations/{investigation_id}"' in content
+        assert '"/api/v1/projects/{project_id}/investigations"' in content
 
     def test_start_docstring_declares_shadow_mode(self):
         """start_investigation is a safe write — its docstring must say the

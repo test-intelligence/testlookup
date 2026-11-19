@@ -9,7 +9,7 @@ import json
 import structlog
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, cast
+from typing import Any, Optional, cast
 
 from sqlalchemy import Integer, func, select, update
 
@@ -435,6 +435,33 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             raise
 
 
+def _pod_scope_from_report(project: Any, sentinel: SentinelFile) -> tuple[Optional[str], Optional[str]]:
+    """The ``(pod, namespace)`` a report may store on a new run.
+
+    A project with its own saved OpenShift namespace accepts only that
+    namespace. A report naming another one has BOTH values dropped: the pod
+    belongs to the namespace it was named with, so keeping it would have the
+    server look up a pod of the same name in the project's namespace instead.
+    The refusal is logged; nothing is stored and no lookup is queued.
+
+    A project with no saved namespace keeps the earlier behaviour.
+    """
+    from app.services.ocp_enrichment import NAMESPACE_REFUSED_EVENT, outside_saved_namespace
+
+    saved = getattr(project, "ocp_namespace", None)
+    if outside_saved_namespace(saved, sentinel.ocp_namespace):
+        logger.warning(
+            NAMESPACE_REFUSED_EVENT,
+            project_id=str(project.id),
+            build_number=str(sentinel.build_number)[:255],
+            reported_namespace=str(sentinel.ocp_namespace).strip()[:255],
+            project_namespace=str(saved).strip(),
+            action="pod and namespace not stored; no OpenShift lookup for this run",
+        )
+        return None, None
+    return sentinel.ocp_pod_name, sentinel.ocp_namespace
+
+
 async def _upsert_test_run(db, sentinel: SentinelFile, minio_prefix: str) -> TestRun:
     """Idempotent upsert of a test run record."""
     from app.models.postgres import Project
@@ -474,6 +501,7 @@ async def _upsert_test_run(db, sentinel: SentinelFile, minio_prefix: str) -> Tes
     run = result.scalar_one_or_none()
 
     if not run:
+        ocp_pod_name, ocp_namespace = _pod_scope_from_report(project, sentinel)
         run = TestRun(
             project_id=project.id,
             build_number=sentinel.build_number,
@@ -482,8 +510,8 @@ async def _upsert_test_run(db, sentinel: SentinelFile, minio_prefix: str) -> Tes
             ingestion_source="file",
             branch=sentinel.branch,
             commit_hash=sentinel.commit_hash,
-            ocp_pod_name=sentinel.ocp_pod_name,
-            ocp_namespace=sentinel.ocp_namespace,
+            ocp_pod_name=ocp_pod_name,
+            ocp_namespace=ocp_namespace,
             minio_prefix=minio_prefix,
             status=LaunchStatus.IN_PROGRESS,
             start_time=datetime.now(timezone.utc),

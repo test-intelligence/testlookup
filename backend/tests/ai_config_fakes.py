@@ -176,6 +176,7 @@ def reset_analysis_router_state() -> None:
     analysis_router._effective_provider = None
     analysis_router._effective_model = None
     analysis_router._effective_base_url = None
+    analysis_router._effective_offline = None
     analysis_router._ollama_model_available = None
     analysis_router._ollama_probe_ts = 0
     analysis_router._ollama_probe_target = None

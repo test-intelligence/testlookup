@@ -32,7 +32,7 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             release_id: The release UUID to list packs for.
         """
-        data = await api.get(f"/api/v1/releases/{release_id}/compliance-packs")
+        data = await api.get(api.path("/api/v1/releases/{release_id}/compliance-packs", release_id=api.uuid_id(release_id)))
         if not data:
             return f"No compliance packs found for release `{release_id}`."
 
@@ -95,7 +95,7 @@ def register(mcp) -> None:  # noqa: ANN001
 
         try:
             pack = await api.post(
-                f"/api/v1/releases/{release_id}/compliance-pack",
+                api.path("/api/v1/releases/{release_id}/compliance-pack", release_id=api.uuid_id(release_id)),
                 json_body=body,
             )
         except Exception as exc:
@@ -138,7 +138,7 @@ def register(mcp) -> None:  # noqa: ANN001
             pack_id: The compliance pack UUID (from list_compliance_packs).
         """
         try:
-            result = await api.post(f"/api/v1/compliance-packs/{pack_id}/verify")
+            result = await api.post(api.path("/api/v1/compliance-packs/{pack_id}/verify", pack_id=api.uuid_id(pack_id)))
         except Exception as exc:
             return f"❌ Failed to verify compliance pack: {exc}"
         if not result:

@@ -109,6 +109,16 @@ Members below QA_LEAD see a webhook's target URL as `https://host/...`.
 
 Existing usernames that contain `@` keep working for sign-in.
 
+### Outbound calls, MCP and the Fixer
+
+- **Custom LLM endpoint.** If `openai` or `openrouter` points at a gateway (a base URL that is not the provider's own) and the key is only in the environment, store the key in Settings > AI Configuration, or set `OPENAI_API_BASE` / `OPENROUTER_BASE_URL` in the environment to the gateway. Otherwise model calls to that endpoint are refused.
+- **Knowledge sources.** `internal_url` sources stop syncing in offline mode and must be on the domain allow-list when one is set. Removing a domain from the allow-list now also stops existing sources on it. A Jira or Confluence source whose stored `external_id` is not an issue key or page id takes the id from its URL, and fails to sync if the URL has none.
+- **Fixer.** Suggest mode opens pull requests only with the `docker` runner. With `workflow_dispatch`, attempts end as errors marked "baseline only". Docker command templates that write outside `/work` and `/tmp` fail under the read-only root filesystem.
+- **OpenShift.** For a project with a saved namespace, reports naming another namespace are no longer enriched with pod data.
+- **CI job link.** A `ci_run_url` that is not an http(s) address is dropped. Runs are then matched by job and build number, as they are when no link is sent.
+- **MCP.** Put the MCP env file next to `server.py` or name it in `TESTLOOKUP_ENV_FILE`; a `.env` in the working directory is no longer read. Clients that parse resource bodies read the previous body under `data`. Ids passed to tools must be the UUIDs the list tools return.
+- **`GET /settings/ai/model-status`.** `ollama_error` is one of `refused_by_policy`, `unreachable`, `unexpected_status`, `invalid_response`.
+
 ### Development starts need real secrets
 
 With `APP_ENV=development` (the default when the variable is unset) the API

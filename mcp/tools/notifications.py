@@ -45,7 +45,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         try:
             data = await api.get(
-                f"/api/v1/notifications/projects/{project_id}/transition-policy"
+                api.path("/api/v1/notifications/projects/{project_id}/transition-policy", project_id=api.uuid_id(project_id))
             )
         except Exception as exc:
             return api.error_payload(exc)
@@ -101,7 +101,7 @@ def register(mcp) -> None:  # noqa: ANN001
             body["enabled_events"] = enabled_events
         try:
             data = await api.put(
-                f"/api/v1/notifications/projects/{project_id}/transition-policy",
+                api.path("/api/v1/notifications/projects/{project_id}/transition-policy", project_id=api.uuid_id(project_id)),
                 json_body=body,
             )
         except Exception as exc:

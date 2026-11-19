@@ -18,6 +18,7 @@ import {
   type GitHubAuthKind,
 } from '@/services/githubIntegrationService'
 import { extractErrorMessage } from '@/services/apiErrors'
+import { isSafeExternalUrl } from '@/utils/safeUrl'
 
 function detailOf(err: unknown, fallback: string): string {
   return extractErrorMessage((err as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail, fallback)
@@ -44,6 +45,12 @@ export function GitHubAuthMethod({
     setOpening(true)
     try {
       const { url } = await githubAppService.installUrl(projectId)
+      // The browser leaves the app for this address, so it must be a web link.
+      if (!isSafeExternalUrl(url)) {
+        toast.error('The install address from the server is not a secure web link. Check the GitHub App settings.')
+        setOpening(false)
+        return
+      }
       window.location.assign(url)
     } catch (err) {
       toast.error(detailOf(err, 'Could not start the GitHub App installation'))

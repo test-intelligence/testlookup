@@ -245,7 +245,7 @@ async def test_knowledge_source_added_synced_removed(world, monkeypatch):
         ), project_id=w.project.id, db=db, current_user=w.admin)
 
     class _Connector:
-        async def fetch_content(self, *_a):
+        async def fetch_content(self, *_a, **_k):
             return SimpleNamespace(content_hash="h-" + w.marker)
 
     async def _bind(connector, _db):

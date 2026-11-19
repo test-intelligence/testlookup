@@ -111,7 +111,7 @@ def register(mcp) -> None:  # noqa: ANN001
             days: Analysis window in days (1-90, default 7).
         """
         data: dict[str, Any] = await api.get(
-            "/api/v1/metrics/summary",
+            api.path("/api/v1/metrics/summary"),
             params={"project_id": project_id, "days": days},
         ) or {}
 
@@ -163,7 +163,7 @@ def register(mcp) -> None:  # noqa: ANN001
             days: Number of days of history (7, 14, 30, 60, or 90).
         """
         data = await api.get(
-            "/api/v1/metrics/trends",
+            api.path("/api/v1/metrics/trends"),
             params={"project_id": project_id, "days": days},
         )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import client as api  # type: ignore[import]
+import untrusted  # type: ignore[import]
 
 
 def _step_match_note(result: dict, query: str) -> str:
@@ -55,10 +56,11 @@ def _render_global_search(data: dict, query: str) -> str:
         lines.append("**Entity counts:** " + ", ".join(f"{k}: {v}" for k, v in counts.items()))
     for result in items[:10]:
         lines.append(
-            f"- [{result.get('entity_type', '?')}] **{result.get('title', '?')}** "
-            f"— {result.get('subtitle', '')}"
+            f"- [{untrusted.short(result.get('entity_type'), missing='?')}] "
+            f"**{untrusted.inline(result.get('title'), missing='?')}** "
+            f"— {untrusted.inline(result.get('subtitle'), missing='')}"
         )
-    return "\n".join(lines)
+    return "\n".join(untrusted.with_notice(lines))
 
 
 def register(mcp) -> None:  # noqa: ANN001
@@ -82,7 +84,7 @@ def register(mcp) -> None:  # noqa: ANN001
         params = {"q": query, "search_type": "keyword", "size": 15}
         if project_id:
             params["project_id"] = project_id
-        data = await api.get("/api/v1/search", params=params)
+        data = await api.get(api.path("/api/v1/search"), params=params)
         items = data.get("items", [])
         if not items:
             return f"No test case results for '{query}'."
@@ -91,10 +93,11 @@ def register(mcp) -> None:  # noqa: ANN001
         for r in items[:10]:
             note = _step_match_note(r, query)
             lines.append(
-                f"- **{r.get('test_name', '?')}** — {r.get('suite_name', 'no suite')} "
-                f"[{r.get('status', '?')}]{note}"
+                f"- **{untrusted.inline(r.get('test_name'), missing='?')}** "
+                f"— {untrusted.inline(r.get('suite_name'), missing='no suite')} "
+                f"[{untrusted.short(r.get('status'), missing='?')}]{note}"
             )
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def global_search(query: str, entity_types: str | None = None, project_id: str | None = None) -> str:
@@ -119,5 +122,5 @@ def register(mcp) -> None:  # noqa: ANN001
         if project_id:
             params["project_id"] = project_id
 
-        data = await api.get("/api/v1/search/global", params=params)
+        data = await api.get(api.path("/api/v1/search/global"), params=params)
         return _render_global_search(data, query)

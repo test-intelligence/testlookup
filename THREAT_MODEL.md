@@ -32,7 +32,7 @@ Test Runner --> Ingest API (REST) --> Backend
 | **Backend to Valkey** | Cache reads/writes, Celery task dispatch, token denylist | Password-authenticated, private network only |
 | **Backend to object storage** (versitygw, or any S3-compatible store) | Reports, attachments, exports, compliance packs, RAG documents | Authenticated via access key, bucket policy, private network |
 | **Backend to Ollama** | LLM inference prompts | Private network only, no auth (Ollama doesn't support it), PII-redacted input |
-| **Backend to External LLMs** | LLM inference prompts | API key auth, HTTPS, PII-redacted input, gated by `AI_OFFLINE_MODE` |
+| **Backend to External LLMs** | LLM inference prompts | API key auth, HTTPS, PII-redacted input, gated by `AI_OFFLINE_MODE`; a provider key from the environment is sent only to the provider's own endpoint, and a custom base URL needs a key stored in Settings > AI Configuration |
 | **Backend to GitHub** | Check run posts | PAT auth, HTTPS, gated by `AI_OFFLINE_MODE` + `github_checks` flag |
 | **Backend to Webhook receivers** | Event payloads | HMAC-SHA256 signed, HTTPS recommended, gated by `AI_OFFLINE_MODE` + `outbound_webhooks` flag |
 | **Backend to Slack / Teams** | Notification title, body and failure metadata | Webhook URL held per deployment, per user or per team, gated by `AI_OFFLINE_MODE` (destination residency; `OFFLINE_NOTIFICATION_ALLOWED_HOSTS` names exceptions for the deployment's own webhooks only) |
@@ -42,7 +42,7 @@ Test Runner --> Ingest API (REST) --> Backend
 | **SAML identity provider to Backend** (SSO) | Sign-in responses and logout requests | Signatures verified against the configured IdP certificate (signxml over lxml with entity resolution and network access off; defusedxml for the other SAML parsing); a response must answer a request TestLookup issued (`InResponseTo`), and replayed or unsolicited messages are refused; the relay state is burned before use |
 | **SCIM client to Backend** (provisioning) | User and group create/update/deactivate | Bearer tokens issued by an ADMIN at `/api/v1/scim-tokens`, stored as hashes, checked on every `/scim` call |
 | **Anyone holding a share link** | One shared run report (HTML), no JWT | 64-character random token, only its hash stored; default expiry 7 days; every view audited with an 8-character token hint. Creating a link needs the QA_LEAD role in the run's project. Treat the link as a bearer credential |
-| **Backend to knowledge sources** (RAG connectors) | Fetches of external documents | Only while the `knowledge_rag` flag is on; external URLs must pass a scheme check and the deployment-wide domain allow-list an ADMIN maintains, so the allow-list is the server-side request forgery (SSRF) control |
+| **Backend to knowledge sources** (RAG connectors) | Fetches of external documents | Only while the `knowledge_rag` flag is on; URL sources of both kinds (`external_url` and `internal_url`) must pass a scheme check and the deployment-wide domain allow-list an ADMIN maintains, on create, on every sync and for each redirect target, and neither is fetched in offline mode; the allow-list is the server-side request forgery (SSRF) control. Jira and Confluence ids must match the exact id shape before they go into a request path |
 | **Backend to Jira, GitLab, Splunk, OpenShift** | Issue creation, comments, log searches, pod lookups | Admin-configured credentials over HTTPS; Splunk and OpenShift lookups are no-ops under `AI_OFFLINE_MODE`, and integration-health probes never dial these services while it is on |
 | **Test runners and users to the upload endpoints** | Result files and ZIP archives | 50 MB per file, read in bounded 1 MB chunks; archives capped at 200 MB uncompressed, 5,000 entries, 50 MB per entry and a 100:1 compression ratio (`MAX_ARCHIVE_*` settings); XML formats (TestNG, NUnit, TRX, xUnit, Robot) parsed with defusedxml; ingest rate limits of 200 batches and 20,000 events per project per minute |
 
@@ -65,6 +65,8 @@ When `AI_OFFLINE_MODE=true`:
 | **Ingestion** | Fully functional. No network calls. |
 | **Analysis (rules/ML)** | Fully functional. No network calls. |
 | **Dashboard / API / CLI / MCP** | Fully functional. All traffic is local. |
+
+**The switch in Settings > AI covers LLM calls only.** Every guarantee in this table is tied to `AI_OFFLINE_MODE` in the deployment's environment. The "Offline Mode" switch on the Settings > AI page can turn offline mode on for LLM calls (model inference and the Ollama availability probes) when the environment leaves it off, but it does not stop Slack, Teams, email, webhooks, GitHub, GitLab, Jira, Splunk, OpenShift or knowledge-source requests: those read the environment variable only. For a deployment that must make no outbound requests, set `AI_OFFLINE_MODE=true` in the environment.
 
 **What CAN still egress when offline mode is on:**
 - Docker image pulls (if the images aren't pre-cached)

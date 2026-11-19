@@ -7,6 +7,7 @@ from typing import Optional
 
 import client as api  # type: ignore[import]
 import execution_format  # type: ignore[import]
+import untrusted  # type: ignore[import]
 
 #: ``get_run_timing``: slowest tests listed by default, and the route's cap.
 RUN_TIMING_DEFAULT_SLOWEST = 10
@@ -40,11 +41,11 @@ def _render_step_rows(nodes: list, out: list, depth: int = 0) -> None:
     """
     for node in nodes or []:
         indent = "··" * depth
-        name = (node.get("name") or "(unnamed)").replace("\n", " ")[:60]
+        # Step names and assertion messages come from the test report: marked as data.
+        name = untrusted.inline(node.get("name"), limit=60, missing="(unnamed)")
         dur_ms = node.get("duration_ms") or 0
-        msg = (node.get("assertion_message") or "").replace("\n", " ").strip()
-        if len(msg) > 60:
-            msg = msg[:60] + "…"
+        raw_msg = " ".join(str(node.get("assertion_message") or "").split())
+        msg = untrusted.inline(raw_msg[:60] + ("…" if len(raw_msg) > 60 else ""), missing="")
         out.append(
             f"| {len(out) + 1} "
             f"| {indent}{name} "
@@ -104,20 +105,21 @@ def _render_step_flips(payload: dict) -> str:
     lines = [
         f"{title} — {report.get('total_flips', 0)} total flips across {runs_analyzed} runs",
         "",
-        report.get("summary") or "",
+        # The summary sentence quotes step names from the report.
+        untrusted.inline(report.get("summary"), missing=""),
         "",
         "| Step | Flips | Runs Observed | Current |",
         "|------|-------|---------------|---------|",
     ]
     for s in report.get("flipping_steps") or []:
-        label = s.get("step_name") or f"step #{s.get('ordinal', '?')}"
+        label = untrusted.inline(s.get("step_name"), limit=60, missing=f"step #{s.get('ordinal', '?')}")
         lines.append(
-            f"| {str(label)[:60]} "
+            f"| {label} "
             f"| {s.get('flip_count', 0)} "
             f"| {s.get('runs_observed', 0)} "
             f"| {_status(s.get('last_status') or 'UNKNOWN')} |"
         )
-    return "\n".join(lines)
+    return "\n".join(untrusted.with_notice(lines))
 
 
 def register(mcp) -> None:  # noqa: ANN001
@@ -141,7 +143,7 @@ def register(mcp) -> None:  # noqa: ANN001
             size: Results per page (1-100, default 20).
         """
         data = await api.get(
-            "/api/v1/runs",
+            api.path("/api/v1/runs"),
             params={
                 "project_id": project_id,
                 "status": status,
@@ -166,18 +168,18 @@ def register(mcp) -> None:  # noqa: ANN001
         for r in items:
             duration_s = (r.get("duration_ms") or 0) / 1000
             lines.append(
-                f"| #{r.get('build_number', '?')} `{r['id'][:8]}` "
-                f"| {r.get('branch', 'N/A')} "
+                f"| #{untrusted.short(r.get('build_number'), missing='?')} `{r['id'][:8]}` "
+                f"| {untrusted.inline(r.get('branch'))} "
                 f"| {_status(r.get('status'))} "
                 f"| {r.get('pass_rate', 0):.1f}% "
                 f"| {r.get('total_tests', 0)} "
                 f"| {duration_s:.0f}s "
-                f"| {r.get('trigger_source', 'N/A')} "
+                f"| {untrusted.short(r.get('trigger_source'))} "
                 f"| {(r.get('start_time') or '')[:16]} |"
             )
 
         lines.append(f"\n*Use `get_run_details` with a run ID for full details.*")
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def get_run_details(run_id: str) -> str:
@@ -187,7 +189,7 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             run_id: Test run UUID (from list_test_runs).
         """
-        r = await api.get(f"/api/v1/runs/{run_id}")
+        r = await api.get(api.path("/api/v1/runs/{run_id}", run_id=api.uuid_id(run_id)))
 
         duration_s = (r.get("duration_ms") or 0) / 1000
         total = r.get("total_tests", 0)
@@ -197,13 +199,13 @@ def register(mcp) -> None:  # noqa: ANN001
         broken = r.get("broken_tests", 0)
 
         lines = [
-            f"## Run #{r.get('build_number', '?')} — {_status(r.get('status'))}",
+            f"## Run #{untrusted.short(r.get('build_number'), missing='?')} — {_status(r.get('status'))}",
             f"- **Run ID:** `{r['id']}`",
             f"- **Project:** `{r.get('project_id', 'N/A')}`",
-            f"- **Branch:** {r.get('branch', 'N/A')}",
-            f"- **Commit:** `{(r.get('commit_hash') or 'N/A')[:12]}`",
-            f"- **Trigger:** {r.get('trigger_source', 'N/A')}",
-            f"- **Jenkins Job:** {r.get('jenkins_job', 'N/A')}",
+            f"- **Branch:** {untrusted.inline(r.get('branch'))}",
+            f"- **Commit:** `{untrusted.short(r.get('commit_hash'), limit=12)}`",
+            f"- **Trigger:** {untrusted.short(r.get('trigger_source'))}",
+            f"- **Jenkins Job:** {untrusted.inline(r.get('jenkins_job'))}",
             "",
             "### Test Results",
             f"| Metric | Value |",
@@ -225,12 +227,12 @@ def register(mcp) -> None:  # noqa: ANN001
             lines += [
                 "",
                 "### OpenShift Context",
-                f"- **Pod:** {r['ocp_pod_name']}",
-                f"- **Node:** {r.get('ocp_node', 'N/A')}",
-                f"- **Namespace:** {r.get('ocp_namespace', 'N/A')}",
+                f"- **Pod:** {untrusted.inline(r['ocp_pod_name'])}",
+                f"- **Node:** {untrusted.inline(r.get('ocp_node'))}",
+                f"- **Namespace:** {untrusted.inline(r.get('ocp_namespace'))}",
             ]
 
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def list_test_cases(
@@ -251,7 +253,7 @@ def register(mcp) -> None:  # noqa: ANN001
             size: Results per page (1-200, default 50).
         """
         data = await api.get(
-            f"/api/v1/runs/{run_id}/tests",
+            api.path("/api/v1/runs/{run_id}/tests", run_id=api.uuid_id(run_id)),
             params={"status": status, "suite": suite, "page": page, "size": size},
         )
 
@@ -268,21 +270,21 @@ def register(mcp) -> None:  # noqa: ANN001
             f"|-----------|-------|--------|----------|----------|-------|",
         ]
         for t in items:
-            error_snippet = (t.get("error_message") or "")[:60].replace("\n", " ")
-            if error_snippet:
-                error_snippet = f"`{error_snippet}...`"
+            error_snippet = (t.get("error_message") or "")[:60]
+            if error_snippet.strip():
+                error_snippet = untrusted.inline(error_snippet + "...")
             lines.append(
-                f"| {t.get('test_name', 'N/A')[:50]} "
-                f"| {(t.get('suite_name') or 'N/A')[:30]} "
+                f"| {untrusted.inline(t.get('test_name'), limit=50)} "
+                f"| {untrusted.inline(t.get('suite_name'), limit=30)} "
                 f"| {_status(t.get('status'))} "
                 f"| {(t.get('duration_ms') or 0) / 1000:.1f}s "
                 f"| {t.get('failure_category') or '-'} "
-                f"| {error_snippet or '-'} |"
+                f"| {error_snippet.strip() or '-'} |"
             )
             # Append test_id as a subtle row annotation for follow-up tool calls
             lines.append(f"> ID: `{t['id']}`")
 
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def get_test_case(
@@ -301,41 +303,36 @@ def register(mcp) -> None:  # noqa: ANN001
                 LATEST-RUN-ONLY snapshot. Best-effort — older runs have no steps and
                 the default output is unchanged when omitted.
         """
-        t = await api.get(f"/api/v1/runs/{run_id}/tests/{test_id}")
+        t = await api.get(api.path("/api/v1/runs/{run_id}/tests/{test_id}", run_id=api.uuid_id(run_id), test_id=api.uuid_id(test_id)))
 
         lines = [
-            f"## Test: {t.get('test_name', 'N/A')}",
+            f"## Test: {untrusted.inline(t.get('test_name'))}",
             f"- **ID:** `{t['id']}`",
             f"- **Status:** {_status(t.get('status'))}",
-            f"- **Suite:** {t.get('suite_name', 'N/A')}",
-            f"- **Full Name:** `{t.get('full_name', 'N/A')}`",
-            f"- **Class:** `{t.get('class_name', 'N/A')}`",
-            f"- **Package:** `{t.get('package_name', 'N/A')}`",
+            f"- **Suite:** {untrusted.inline(t.get('suite_name'))}",
+            f"- **Full Name:** {untrusted.inline(t.get('full_name'))}",
+            f"- **Class:** {untrusted.inline(t.get('class_name'))}",
+            f"- **Package:** {untrusted.inline(t.get('package_name'))}",
             f"- **Duration:** {(t.get('duration_ms') or 0) / 1000:.2f}s",
             f"- **Failure Category:** {t.get('failure_category') or 'Not categorised'}",
             "",
             "### Allure Labels",
-            f"- **Severity:** {t.get('severity') or 'N/A'}",
-            f"- **Feature:** {t.get('feature') or 'N/A'}",
-            f"- **Story:** {t.get('story') or 'N/A'}",
-            f"- **Epic:** {t.get('epic') or 'N/A'}",
-            f"- **Owner:** {t.get('owner') or 'N/A'}",
-            f"- **Tags:** {', '.join(t.get('tags') or []) or 'None'}",
+            f"- **Severity:** {untrusted.inline(t.get('severity'))}",
+            f"- **Feature:** {untrusted.inline(t.get('feature'))}",
+            f"- **Story:** {untrusted.inline(t.get('story'))}",
+            f"- **Epic:** {untrusted.inline(t.get('epic'))}",
+            f"- **Owner:** {untrusted.inline(t.get('owner'))}",
+            f"- **Tags:** {untrusted.inline(', '.join(str(tag) for tag in t.get('tags') or []), missing='None')}",
             f"- **Has Attachments:** {t.get('has_attachments', False)}",
         ]
 
         if t.get("error_message"):
-            lines += [
-                "",
-                "### Error Message",
-                f"```",
-                t["error_message"][:3000],
-                f"```",
-            ]
+            # Not a code fence: a message holding three backticks used to close it.
+            lines += ["", "### Error Message", *untrusted.block(t["error_message"], limit=3000)]
 
         if include_steps:
             try:
-                tree = await api.get(f"/api/v1/runs/{run_id}/tests/{test_id}/steps")
+                tree = await api.get(api.path("/api/v1/runs/{run_id}/tests/{test_id}/steps", run_id=api.uuid_id(run_id), test_id=api.uuid_id(test_id)))
                 if isinstance(tree, dict):
                     lines += _render_step_tree(tree)
             except Exception:
@@ -347,7 +344,7 @@ def register(mcp) -> None:  # noqa: ANN001
             "",
             f"*Use `trigger_ai_analysis` with test_case_id `{t['id']}` for root-cause analysis.*",
         ]
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def get_test_step_flips(run_id: str, test_id: str) -> str:
@@ -364,7 +361,7 @@ def register(mcp) -> None:  # noqa: ANN001
             run_id: Test run UUID (from list_test_runs).
             test_id: Test case UUID (from list_test_cases).
         """
-        payload = await api.get(f"/api/v1/runs/{run_id}/tests/{test_id}/step-flips")
+        payload = await api.get(api.path("/api/v1/runs/{run_id}/tests/{test_id}/step-flips", run_id=api.uuid_id(run_id), test_id=api.uuid_id(test_id)))
         if not isinstance(payload, dict):
             return "No step-flip report available for this test."
         return _render_step_flips(payload)
@@ -400,7 +397,7 @@ def register(mcp) -> None:  # noqa: ANN001
         slowest = max(1, min(int(slowest), RUN_TIMING_MAX_SLOWEST))
         try:
             body = await api.get(
-                f"/api/v1/runs/{run_id}/timing",
+                api.path("/api/v1/runs/{run_id}/timing", run_id=api.uuid_id(run_id)),
                 params={"slowest": slowest, "timeline_limit": 1},
             )
         except Exception as exc:
@@ -414,6 +411,7 @@ def register(mcp) -> None:  # noqa: ANN001
         }
         return {
             "ok": True,
+            "content_notice": untrusted.DATA_NOTICE,
             "summary": execution_format.run_timing_markdown(body),
             "has_duration_regressions": execution_format.has_duration_findings(
                 body.get("duration_findings")

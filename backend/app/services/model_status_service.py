@@ -83,9 +83,40 @@ _CLOUD_KEY_SOURCES: dict[str, tuple[str, str]] = {
 }
 
 
+# Why a probe failed, as one fixed word. The base URL is something an ADMIN
+# saves, so the text of the exception, or of whatever answered at that URL,
+# would let the probe be used to read things about hosts on the inside.
+PROBE_REFUSED = "refused_by_policy"        # the provider policy forbids this base URL
+PROBE_UNREACHABLE = "unreachable"          # no answer (connection, timeout, TLS)
+PROBE_UNEXPECTED_STATUS = "unexpected_status"  # answered, but not 200
+PROBE_INVALID_RESPONSE = "invalid_response"    # 200, but not Ollama's /api/tags shape
+
+# Bounds on what a probe hands back from the answer it got.
+_PROBE_MAX_MODELS = 500
+_PROBE_MAX_NAME_CHARS = 200
+
+
+def _probe_failure(word: str) -> dict[str, Any]:
+    return {"reachable": False, "models": [], "error": word}
+
+
+async def _effective_offline() -> bool:
+    """Offline as a model call sees it: the environment, or Settings > AI."""
+    if settings.AI_OFFLINE_MODE:
+        return True
+    try:
+        from app.services.ai_config_resolver import get_effective_ai_config  # noqa: PLC0415
+
+        return bool((await get_effective_ai_config()).get("offline_mode"))
+    except Exception:  # noqa: BLE001 — the resolver degrades to env itself
+        return bool(settings.AI_OFFLINE_MODE)
+
+
 async def probe_ollama(
     base_url: str | None = None,
     timeout: Any = None,
+    *,
+    offline: bool | None = None,
 ) -> dict[str, Any]:
     """Ask Ollama which models are installed. Never raises.
 
@@ -94,27 +125,53 @@ async def probe_ollama(
     an empty ``models`` list on a reachable daemon means "Ollama is up and
     has nothing installed", which is a completely different operator
     problem from "Ollama is down". Callers must not collapse the two.
+
+    The probe obeys the same rules as a model call. The provider policy is
+    applied to the base URL first; with offline mode on, a URL that is not
+    on-box gets no request, and an on-box one is reached through the client
+    that pins the connection to on-box addresses. ``offline`` is the
+    effective switch when the caller already has it; left out, it is read
+    here. ``error`` is one of the ``PROBE_*`` words, never the error text.
     """
     url = (base_url or settings.OLLAMA_BASE_URL or "").rstrip("/")
+    if offline is None:
+        offline = await _effective_offline()
     try:
-        from app.core.http_client import get_http_client  # noqa: PLC0415
+        from app.services.llm_policy_service import enforce_provider_policy_async  # noqa: PLC0415
 
-        client = get_http_client()
+        await enforce_provider_policy_async("ollama", offline=bool(offline), base_url=url)
+    except Exception as exc:  # noqa: BLE001 — LLMPolicyViolation, or the check itself failing
+        logger.info("ollama_probe_refused", error=type(exc).__name__)
+        return _probe_failure(PROBE_REFUSED)
+    try:
+        if offline:
+            from app.services.llm_egress import get_local_only_http_client  # noqa: PLC0415
+
+            client = get_local_only_http_client()
+        else:
+            from app.core.http_client import get_http_client  # noqa: PLC0415
+
+            client = get_http_client()
         resp = await client.get(
             f"{url}/api/tags",
             timeout=timeout if timeout is not None else PROBE_TIMEOUT_SECONDS,
         )
-        if resp.status_code != 200:
-            return {"reachable": False, "models": [], "error": f"HTTP {resp.status_code}"}
+    except Exception as exc:  # noqa: BLE001 — a probe must never propagate
+        logger.debug("ollama_probe_failed", error=type(exc).__name__)
+        return _probe_failure(PROBE_UNREACHABLE)
+    if resp.status_code != 200:
+        return _probe_failure(PROBE_UNEXPECTED_STATUS)
+    try:
         payload = resp.json() or {}
+        listed = payload.get("models") or []
         models = [
-            str(m.get("name"))
-            for m in (payload.get("models") or [])
+            str(m.get("name"))[:_PROBE_MAX_NAME_CHARS]
+            for m in listed[:_PROBE_MAX_MODELS]
             if isinstance(m, dict) and m.get("name")
         ]
-        return {"reachable": True, "models": models, "error": None}
-    except Exception as exc:  # noqa: BLE001 — a probe must never propagate
-        return {"reachable": False, "models": [], "error": str(exc)[:200]}
+    except Exception:  # noqa: BLE001 — not Ollama's answer
+        return _probe_failure(PROBE_INVALID_RESPONSE)
+    return {"reachable": True, "models": models, "error": None}
 
 
 def _normalise_tag(name: str) -> str:
@@ -314,7 +371,7 @@ async def build_model_status(
     else:
         uses_ollama = provider == "ollama" or bool(ollama_embedders)
     if uses_ollama:
-        probe = await probe_ollama(base_url)
+        probe = await probe_ollama(base_url, offline=offline_mode)
     else:
         probe = {
             "reachable": False,

@@ -32,7 +32,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         try:
             data = await api.get(
-                f"/api/v1/me/assigned-failures/{test_case_id}/reassign-options"
+                api.path("/api/v1/me/assigned-failures/{test_case_id}/reassign-options", test_case_id=api.uuid_id(test_case_id))
             )
         except Exception as exc:
             return api.error_payload(exc)
@@ -58,7 +58,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         try:
             item = await api.put(
-                f"/api/v1/me/assigned-failures/{test_case_id}/reassign",
+                api.path("/api/v1/me/assigned-failures/{test_case_id}/reassign", test_case_id=api.uuid_id(test_case_id)),
                 json_body={"new_assignee_user_id": new_assignee_user_id},
             )
         except Exception as exc:

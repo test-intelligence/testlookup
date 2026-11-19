@@ -696,7 +696,7 @@ export default function AIConfigPage() {
                 <input type="checkbox" checked={form.ai_offline_mode ?? true} disabled={!isAdmin || offlinePinned}
                   onChange={e => upd('ai_offline_mode', e.target.checked)}
                   className="rounded bg-[var(--color-bg-secondary)] border-[var(--color-border-light)]" />
-                Offline Mode (air-gapped, Ollama only)
+                Offline Mode for LLM calls (local models only)
                 {offlinePinned && (
                   <span className={`text-2xs font-medium px-1.5 py-0.5 rounded border ${OK_CLS}`}>
                     Pinned by environment

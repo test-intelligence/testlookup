@@ -19,6 +19,9 @@ Runners (behind the common interface):
   string. This is security-critical (see :func:`build_command_tokens`).
 * :class:`WorkflowDispatchRunner` — GitHub ``workflow_dispatch`` + poll the
   run conclusion, reusing the GitHub integration's PAT/SSRF/error patterns.
+  BASELINE ONLY: the dispatched workflow runs the default branch and is not
+  given the patch, so every result carries ``patch_applied=False`` and the
+  Fixer never opens a pull request from it.
 * :class:`FakeRunner` — deterministic in-memory runner for tests.
 
 NOTE (quality gate ``agents.base-agent-subclass``): this module is listed in
@@ -151,6 +154,17 @@ def build_docker_run_argv(
     ONLY the cloned workspace (no secret/DB mounts), and an in-container
     ``timeout`` wrapper so a hung test cannot outlive its budget.
 
+    Hardening: every capability dropped, ``no-new-privileges`` (a setuid
+    binary in the image cannot raise privileges), and a read-only root
+    filesystem. The clone, checkout and ``git apply`` all happen on the worker
+    BEFORE the container starts, so the container only needs to write where
+    the test run writes: ``/work`` (the bind-mounted workspace, still
+    read-write — pytest caches, ``__pycache__``, build output) and ``/tmp``
+    (a tmpfs that disappears with the container). A command that writes
+    anywhere else in the image (for example a tool cache under the image
+    user's home directory) now fails; point that tool at ``/tmp`` or
+    ``/work`` in the command template.
+
     ``image`` is re-validated here (defense in depth — the config write path
     already validates): a value like ``--privileged`` would otherwise land in
     docker run's flag position and break the sandbox.
@@ -168,6 +182,10 @@ def build_docker_run_argv(
         "--cpus", str(cpus),
         "--memory", memory,
         "--pids-limit", "512",
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+        "--read-only",
+        "--tmpfs", "/tmp",
         "--user", user,
         "--workdir", "/work",
         # Bind ONLY the workspace.
@@ -387,7 +405,15 @@ class WorkflowDispatchRunner(ValidationRunner):
     """GitHub ``workflow_dispatch`` v1: dispatch a reference validation workflow
     and poll its run conclusion. Reuses the GitHub integration's PAT/SSRF/
     error patterns. When the integration is missing/offline, returns
-    ``error`` — never a spurious ``validated``."""
+    ``error`` — never a spurious ``validated``.
+
+    Baseline only. The workflow is dispatched on ``spec.ref`` (the default
+    branch) and ``spec.patch`` is not sent anywhere, so the run reruns the
+    UNPATCHED test. Every result that carries a run therefore sets
+    ``patch_applied=False``; the workflow records it as "baseline only" and
+    opens no pull request. Validating the patch itself needs the fix branch
+    pushed first and the workflow dispatched on that branch — not built yet.
+    """
 
     type = "workflow_dispatch"
 
@@ -478,6 +504,8 @@ class WorkflowDispatchRunner(ValidationRunner):
             status=RESULT_VALIDATED if passed else RESULT_FAILED,
             runs=[RunAttempt(n=1, passed=passed, duration_ms=0, log_digest=_digest(conclusion))],
             logs_ref=None,
+            # The dispatched run never saw spec.patch — see the class docstring.
+            patch_applied=False,
         )
 
     @staticmethod

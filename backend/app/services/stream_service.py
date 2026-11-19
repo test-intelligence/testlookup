@@ -604,12 +604,28 @@ def _is_uuid(value: object) -> bool:
 _CI_CONTEXT_FIELDS =("ci_provider", "ci_repo", "pr_number", "ci_actor", "ci_run_url")
 
 
+def _http_only_ci_link(metadata: dict) -> dict:
+    """``metadata`` with a caller-supplied ``ci_context.ci_run_url`` held to the
+    typed field's rule: an http(s) URL, or no link. The caller's ``ci_context``
+    wins over the typed fields and is read back at persist time, so without
+    this it was a second way to store a ``javascript:`` job link."""
+    ci_context = metadata.get("ci_context") if isinstance(metadata, dict) else None
+    if not isinstance(ci_context, dict) or "ci_run_url" not in ci_context:
+        return metadata
+    from app.models.schemas import http_ci_run_url  # noqa: PLC0415
+
+    raw_link = ci_context["ci_run_url"]
+    cleaned = http_ci_run_url(raw_link if isinstance(raw_link, str) else None)
+    return {**metadata, "ci_context": {**ci_context, "ci_run_url": cleaned}}
+
+
 def _with_ci_context(metadata: dict, payload) -> dict:
     """Fold the payload's CI-context fields (US-4.3) into the session's
     extra_metadata under ``ci_context`` — LiveSession has no dedicated
     columns; ``upsert_test_run`` reads this back at persist time and stamps
     the TestRun. Explicit ``metadata['ci_context']`` keys from the caller
     win over the typed fields."""
+    metadata = _http_only_ci_link(metadata)
     ci = {
         f: getattr(payload, f, None)
         for f in _CI_CONTEXT_FIELDS
