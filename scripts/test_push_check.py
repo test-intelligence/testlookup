@@ -636,8 +636,15 @@ class TestDocsOnlyPushesSkipTheGate:
                             lambda: (True, ["README.md"]))
         monkeypatch.setattr(push_check, "run", lambda *a, **k: pytest.fail(
             "a check ran on a docs-only push"))
+        # The one check a docs-only push keeps is the secret scan, and it is
+        # called directly, not through the check list. Stub it: on a machine
+        # with gitleaks installed it would otherwise reach ``run`` above.
+        scans: list[bool] = []
+        monkeypatch.setattr(push_check, "check_gitleaks",
+                            lambda: (scans.append(True) or True, "stubbed"))
         monkeypatch.setattr("sys.argv", ["push_check.py", "--no-colour"])
         assert push_check._main() == 0
+        assert scans == [True], "a docs-only push must still run the secret scan"
 
     def test_full_runs_the_checks_anyway(self, monkeypatch):
         ran = []
