@@ -59,6 +59,23 @@ def _warn_buffer_cap_disabled() -> None:
 SESSION_TTL = 86_400
 SESSION_TOKEN_KEY = "live:session:{token}"
 
+#: A session accepts events for at most this long after it was created, however
+#: many batches keep arriving. The batch route trusts the session token alone,
+#: so without a ceiling a token whose key was revoked (or whose owner left)
+#: could be kept alive forever by sending a batch a day. A run longer than this
+#: has to open a new session.
+SESSION_MAX_AGE_SECONDS = 86_400
+
+# Which session tokens a credential opened, so they can be deleted when that
+# credential stops being valid. Each is a Redis SET of session tokens; a member
+# whose token has already expired is harmless (deleting it is a no-op).
+_TOKENS_BY_API_KEY = "live:session-tokens:key:{api_key_id}"
+_TOKENS_BY_USER = "live:session-tokens:user:{user_id}"
+_TOKENS_BY_MEMBER = "live:session-tokens:member:{project_id}:{user_id}"
+# The index must outlive every token in it. A token lives at most
+# SESSION_MAX_AGE_SECONDS; the hour is slack for clock differences.
+_TOKEN_INDEX_TTL = SESSION_MAX_AGE_SECONDS + 3_600
+
 _LIVE_LEGACY_BUFFER_TTL_SECONDS = 90_000
 _DEDUPE_CLOSED_FIELD = "__closed__"
 _CLOSED_DEDUPE_RETENTION_SECONDS = 15 * 24 * 60 * 60
@@ -386,6 +403,92 @@ return {'reconciled', tostring(receipt['count'])}
 """
 
 
+def _utcnow() -> datetime:
+    """Now, timezone-aware. A seam so tests can move the clock."""
+    return datetime.now(timezone.utc)
+
+
+async def _register_session_token(
+    redis, session_token: str, session_id: str, *, project_id, opened_by=None,
+) -> None:
+    """Store a new session token, indexed by the credential that opened it.
+
+    The index entries are written BEFORE the token itself, so a token that
+    works is always one that revocation can find.
+    """
+    index_keys: list[str] = []
+    opener_id = getattr(opened_by, "id", None)
+    if opener_id is not None:
+        index_keys.append(_TOKENS_BY_USER.format(user_id=opener_id))
+        index_keys.append(_TOKENS_BY_MEMBER.format(project_id=project_id, user_id=opener_id))
+        from app.core.deps import api_key_grant  # noqa: PLC0415
+
+        grant = api_key_grant(opened_by)
+        if grant is not None:
+            index_keys.append(_TOKENS_BY_API_KEY.format(api_key_id=grant.key_id))
+    for index_key in index_keys:
+        await redis.sadd(index_key, session_token)
+        await redis.expire(index_key, _TOKEN_INDEX_TTL)
+    await redis.setex(SESSION_TOKEN_KEY.format(token=session_token), SESSION_TTL, session_id)
+
+
+async def _revoke_indexed_session_tokens(index_key: str, reason: str) -> int:
+    """Delete every session token listed under ``index_key``. Never raises.
+
+    Best effort: the revocation that calls this has already been committed, so
+    a Redis failure is logged and the tokens then stop at the session age limit
+    (``SESSION_MAX_AGE_SECONDS``) instead of now.
+    """
+    try:
+        redis = get_redis()
+        members = await redis.smembers(index_key)
+        tokens = [m.decode() if isinstance(m, bytes) else str(m) for m in (members or ())]
+        removed = 0
+        if tokens:
+            removed = int(
+                await redis.delete(*(SESSION_TOKEN_KEY.format(token=t) for t in tokens)) or 0
+            )
+        await redis.delete(index_key)
+    except Exception as exc:  # noqa: BLE001 -- must not fail the revocation
+        logger.warning(
+            "live_session_token_revocation_failed reason=%s error=%r "
+            "(open sessions stay valid until the %s-second age limit)",
+            reason, exc, SESSION_MAX_AGE_SECONDS,
+        )
+        return 0
+    if removed:
+        logger.info("live_session_tokens_revoked reason=%s count=%s", reason, removed)
+    return removed
+
+
+async def revoke_session_tokens_for_api_key(api_key_id) -> int:
+    """End the open live sessions an API key opened. Call after revoking the key."""
+    if not api_key_id:
+        return 0
+    return await _revoke_indexed_session_tokens(
+        _TOKENS_BY_API_KEY.format(api_key_id=api_key_id), "api_key_revoked",
+    )
+
+
+async def revoke_session_tokens_for_user(user_id) -> int:
+    """End every open live session a user opened. Call after deactivating them."""
+    if not user_id:
+        return 0
+    return await _revoke_indexed_session_tokens(
+        _TOKENS_BY_USER.format(user_id=user_id), "user_deactivated",
+    )
+
+
+async def revoke_session_tokens_for_project_member(project_id, user_id) -> int:
+    """End a user's open live sessions in one project. Call after removing them from it."""
+    if not project_id or not user_id:
+        return 0
+    return await _revoke_indexed_session_tokens(
+        _TOKENS_BY_MEMBER.format(project_id=project_id, user_id=user_id),
+        "project_member_removed",
+    )
+
+
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -676,7 +779,9 @@ async def create_session(
         )
 
     redis = get_redis()
-    await redis.setex(SESSION_TOKEN_KEY.format(token=session_token), SESSION_TTL, session_id)
+    await _register_session_token(
+        redis, session_token, session_id, project_id=project_uuid, opened_by=user,
+    )
 
     from app.streams.live_run_state import RedisLiveRunState
 
@@ -1374,6 +1479,29 @@ async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchRespo
     if session.run_id != batch.run_id:
         raise LiveBatchConflictError("run_id does not belong to this live session")
 
+    # Hard age limit, measured from the session's creation and not from the
+    # last batch. A session with no readable start time is treated as too old.
+    token_key = SESSION_TOKEN_KEY.format(token=x_session_token)
+    started_at = getattr(session, "started_at", None)
+    if isinstance(started_at, datetime):
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        remaining = SESSION_MAX_AGE_SECONDS - (_utcnow() - started_at).total_seconds()
+    else:
+        remaining = 0.0
+    if remaining <= 0:
+        try:
+            await redis.delete(token_key)
+        except Exception as exc:  # noqa: BLE001 -- the refusal below stands either way
+            logger.warning("live_session_token_delete_failed error=%r", exc)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "This live session is older than 24 hours and no longer accepts "
+                "events. Open a new session and send the remaining results there."
+            ),
+        )
+
     accepted = await _persist_event_batch(
         session_id=batch.session_id,
         run_id=str(session.id),
@@ -1381,7 +1509,8 @@ async def ingest_event_batch(batch, x_session_token: str) -> LiveEventBatchRespo
         batch_id=getattr(batch, "batch_id", None),
     )
 
-    await redis.expire(SESSION_TOKEN_KEY.format(token=x_session_token), SESSION_TTL)
+    # Slide the token's lifetime, but never past the age limit.
+    await redis.expire(token_key, max(1, min(SESSION_TTL, int(remaining))))
     return LiveEventBatchResponse(accepted=accepted, run_id=batch.run_id, session_id=batch.session_id)
 
 

@@ -3,12 +3,17 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, resolve_project_scope
+from app.core.deps import (
+    get_current_active_user,
+    holds_role_for_project_write,
+    require_role,
+    resolve_project_scope,
+)
 from app.db.postgres import get_db
-from app.models.postgres import User
+from app.models.postgres import User, UserRole
 from app.models.schemas import (
     AIGenerateStrategyRequest,
     AITaskEnqueueResponse,
@@ -25,6 +30,18 @@ from app.services.test_management_ai_service import (
 )
 
 router = APIRouter()
+
+# Role floors (instance role, taken as a route PARAMETER so the decorator lines
+# and their activity-coverage baseline keys are unchanged). These routes checked
+# project membership only: a VIEWER rewrote a strategy, set it to "approved"
+# and started AI generation charged to the project. Editing: TESTER, like a
+# test-case write. Changing the status is a sign-off: QA_LEAD. The two AI
+# routes spend model budget: QA_ENGINEER. Reads stay open to every member.
+
+STRATEGY_STATUS_CHANGE_REFUSED = (
+    "Changing a strategy's status requires at least QA_LEAD role. Ask a QA lead to "
+    "change the status, or save your other edits without it."
+)
 
 
 @router.get("/strategies", response_model=list[TestStrategyResponse])
@@ -54,7 +71,7 @@ async def list_strategies(
 async def ai_generate_strategy(
     payload: AIGenerateStrategyRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     # Tenant guard — caller must be a member of the target project before we
     # persist an AI-generated strategy into it (matches /plans/ai-create).
@@ -69,7 +86,7 @@ async def ai_generate_strategy(
 async def ai_generate_strategy_async(
     payload: AIGenerateStrategyRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     # Verify access before queueing — the worker runs without request context.
     await resolve_project_scope(db, current_user, str(payload.project_id))
@@ -97,10 +114,21 @@ async def update_strategy(
     strategy_id: uuid.UUID,
     payload: TestStrategyUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
 ):
     existing = await get_strategy_or_404(db, strategy_id)
     await resolve_project_scope(db, current_user, str(existing.project_id))
+    # A status the caller merely sends back unchanged is not a status change, so
+    # a client that saves the whole strategy keeps working for a TESTER. The
+    # whole request is refused, not just the status: no partial save.
+    changes_status = "status" in payload.model_fields_set and payload.status != existing.status
+    if changes_status and not await holds_role_for_project_write(
+        db, current_user, existing.project_id, UserRole.QA_LEAD
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=STRATEGY_STATUS_CHANGE_REFUSED,
+        )
     strategy = await update_strategy_model(db, strategy_id, payload, current_user)
     await db.commit()
     await db.refresh(strategy)

@@ -409,9 +409,12 @@ def _stored_run(*, kind="replay", status="completed") -> AIEvalRun:
     )
 
 
-async def test_list_runs_answers_items_and_total_and_judges_its_filters(client):
+async def test_list_runs_answers_items_and_total_and_judges_its_filters(client, monkeypatch):
     make, state = client
     state["user"] = _user("QA_LEAD")
+    # The list asks which projects the caller can access (a run made for a
+    # project is listed only to them); the scripted session cannot answer that.
+    monkeypatch.setattr(router, "get_accessible_project_ids", AsyncMock(return_value={PROJECT}))
     session = Session(_Rows([_stored_run()]), _Rows([7]))
     async with make(session) as http:
         resp = await http.get("/api/v1/ai-eval/runs", params={"metric_kind": "replay", "status": "completed"})
@@ -424,6 +427,7 @@ async def test_list_runs_answers_items_and_total_and_judges_its_filters(client):
     page, count = (_sql(s) for s in session.statements)
     for sql in (page, count):  # the total counts the SAME filtered set
         assert "metric_kind = 'replay'" in sql and "status = 'completed'" in sql
+        assert "ai_eval_runs.project_id IS NULL OR ai_eval_runs.project_id IN" in sql and str(PROJECT) in sql
     assert bad_kind.json()["detail"] == {
         "code": "metric_kind_invalid", "message": "metric_kind must be label_agreement or replay."}
     assert bad_status.json()["detail"] == {

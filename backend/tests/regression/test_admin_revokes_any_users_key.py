@@ -108,6 +108,11 @@ async def world(session_factory, monkeypatch):
     # UPDATE ... RETURNING through table aliases, which SQLite cannot run);
     # it has its own Postgres test (test_key_revoke_cascade_postgres.py).
     monkeypatch.setattr(router, "forget_streaming_key_hash", AsyncMock())
+    # Revocation also ends the live sessions the key opened (Redis again);
+    # that has its own test (test_live_session_token_revocation.py).
+    monkeypatch.setattr(
+        "app.services.stream_service.revoke_session_tokens_for_api_key", AsyncMock()
+    )
     monkeypatch.setattr(router, "_revoke_subtree", AsyncMock(return_value=[]))
     return SimpleNamespace(project=project, admin=admin, owner=owner, other=other, key=key)
 

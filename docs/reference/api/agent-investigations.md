@@ -14,7 +14,7 @@ InvestigationDetail (pinned wire shape). The UI polls this.
 filed, read by its pipeline id AND the investigation's own project (a row of
 another project under the same pipeline id is never returned). Read-only.
 
-Source: [backend/app/routers/agent_investigations.py:219](../../../backend/app/routers/agent_investigations.py#L219).
+Source: [backend/app/routers/agent_investigations.py:222](../../../backend/app/routers/agent_investigations.py#L222).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_investigation_access.<locals>._check`.
 
@@ -104,7 +104,7 @@ Cancel Investigation
 Request cooperative cancellation (QA_ENGINEER+). The workflow checks
 the flag between nodes and finalizes the row as ``cancelled``.
 
-Source: [backend/app/routers/agent_investigations.py:254](../../../backend/app/routers/agent_investigations.py#L254).
+Source: [backend/app/routers/agent_investigations.py:257](../../../backend/app/routers/agent_investigations.py#L257).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_investigation_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -194,7 +194,7 @@ List Agent Policies
 
 Every known agent's effective policy (defaults when no row exists).
 
-Source: [backend/app/routers/agent_investigations.py:323](../../../backend/app/routers/agent_investigations.py#L323).
+Source: [backend/app/routers/agent_investigations.py:326](../../../backend/app/routers/agent_investigations.py#L326).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -278,7 +278,7 @@ Update Agent Policy
 
 Retired write alias; agent-configs is the single writable resource.
 
-Source: [backend/app/routers/agent_investigations.py:338](../../../backend/app/routers/agent_investigations.py#L338).
+Source: [backend/app/routers/agent_investigations.py:341](../../../backend/app/routers/agent_investigations.py#L341).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
 
@@ -377,7 +377,7 @@ List Agent Runs
 
 Paged AgentRunEntry ledger, newest first (AI-3).
 
-Source: [backend/app/routers/agent_investigations.py:357](../../../backend/app/routers/agent_investigations.py#L357).
+Source: [backend/app/routers/agent_investigations.py:360](../../../backend/app/routers/agent_investigations.py#L360).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -496,7 +496,7 @@ List Investigations
 
 Paged InvestigationSummary list, newest first.
 
-Source: [backend/app/routers/agent_investigations.py:284](../../../backend/app/routers/agent_investigations.py#L284).
+Source: [backend/app/routers/agent_investigations.py:287](../../../backend/app/routers/agent_investigations.py#L287).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -599,7 +599,7 @@ Start Investigation
 
 Trigger a manual investigation for a run (QA_ENGINEER+).
 
-Source: [backend/app/routers/agent_investigations.py:163](../../../backend/app/routers/agent_investigations.py#L163).
+Source: [backend/app/routers/agent_investigations.py:166](../../../backend/app/routers/agent_investigations.py#L166).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 

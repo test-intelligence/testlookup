@@ -61,7 +61,11 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 Get Feedback Stats
 
+Feedback counts by rating, plus the total and the not-yet-exported count.
 
+The counts are instance-wide (every project's feedback together, no
+per-project breakdown and no feedback text) and are visible to every
+signed-in user, whatever their role or project membership.
 
 Source: [backend/app/routers/feedback.py:439](../../../backend/app/routers/feedback.py#L439).
 
@@ -639,16 +643,16 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 Trigger Export
 
+Queue an export of every project's reviewed feedback as training data (ADMIN).
 
-
-Source: [backend/app/routers/feedback.py:449](../../../backend/app/routers/feedback.py#L449).
+Source: [backend/app/routers/feedback.py:460](../../../backend/app/routers/feedback.py#L460).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-_=Depends(require_role(UserRole.QA_LEAD))
+_=Depends(require_role(UserRole.ADMIN))
 ```
 
 ### Declared wire contract
@@ -716,16 +720,16 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 Trigger Finetune
 
+Queue a fine-tune run for one track over the instance's training data (ADMIN).
 
-
-Source: [backend/app/routers/feedback.py:456](../../../backend/app/routers/feedback.py#L456).
+Source: [backend/app/routers/feedback.py:468](../../../backend/app/routers/feedback.py#L468).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-track: str=Body(..., embed=True), _=Depends(require_role(UserRole.QA_LEAD))
+track: str=Body(..., embed=True), _=Depends(require_role(UserRole.ADMIN))
 ```
 
 ### Declared wire contract
@@ -805,7 +809,7 @@ Promote Model
 
 
 
-Source: [backend/app/routers/feedback.py:464](../../../backend/app/routers/feedback.py#L464).
+Source: [backend/app/routers/feedback.py:477](../../../backend/app/routers/feedback.py#L477).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -890,9 +894,13 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 Get Training Status
 
+Whether fine-tuning is enabled, the model registry state and feedback totals.
 
+The counts are instance-wide (every project's feedback together) and, with
+the rest of this answer, are visible to every signed-in user, whatever
+their role or project membership.
 
-Source: [backend/app/routers/feedback.py:475](../../../backend/app/routers/feedback.py#L475).
+Source: [backend/app/routers/feedback.py:488](../../../backend/app/routers/feedback.py#L488).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

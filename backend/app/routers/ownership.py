@@ -528,14 +528,27 @@ async def resolve_cluster_ownership_endpoint(
     current_user: User = Depends(require_project_access()),
 ):
     """Resolve the probable owner for a specific failure cluster."""
-    from app.models.postgres import FailureCluster
+    from app.models.postgres import FailureCluster, TestRun
+    from app.services.cluster_snapshot import is_current_snapshot
     from app.services.ownership_resolver_service import resolve_cluster_ownership
 
-    # Find the cluster
+    # ``cluster_id`` is a label such as "cl_001": unique per pipeline run, and
+    # repeated across runs and projects. Look it up through its run, in THIS
+    # project only, or the answer is computed from another project's tests.
+    # Several runs of the project can carry the label, so take the newest
+    # cluster (the id breaks a tie) instead of whichever row comes back first.
     result = await db.execute(
-        select(FailureCluster).where(
+        select(FailureCluster)
+        .join(TestRun, TestRun.id == FailureCluster.test_run_id)
+        .where(
             FailureCluster.cluster_id == cluster_id,
-        ).limit(1)
+            TestRun.project_id == project_id,
+            # A re-analysed run keeps its older cluster rows: read the run's
+            # current snapshot only.
+            is_current_snapshot(),
+        )
+        .order_by(FailureCluster.created_at.desc(), FailureCluster.id.desc())
+        .limit(1)
     )
     cluster = result.scalar_one_or_none()
     if not cluster:

@@ -275,7 +275,13 @@ async def test_a_probe_timeout_is_timeout(world, monkeypatch):
 async def test_the_on_demand_probe_resolves_the_saved_block(world):
     world.secrets["prometheus_bearer_token"] = TOKEN
     db = _Db({"prometheus_enabled": True, "prometheus_base_url": FAKE_BASE})
+    # A probe that names no project dials a deployment-wide integration, so it
+    # needs ADMIN (it was QA_LEAD); a QA lead is refused before any probe runs.
     async with _client(db, role=UserRole.QA_LEAD) as client:
+        refused = await client.post(PROBE, params={"provider": "prometheus"})
+    assert refused.status_code == 403, refused.text
+    world.persist.assert_not_awaited()
+    async with _client(db, role=UserRole.ADMIN) as client:
         response = await client.post(PROBE, params={"provider": "prometheus"})
         unknown = await client.post(PROBE, params={"provider": "prometheuss"})
     assert response.status_code == 200, response.text

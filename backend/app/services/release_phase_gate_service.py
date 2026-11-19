@@ -30,6 +30,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,13 +49,23 @@ async def evaluate_phase(
     record: bool = True,
     created_by_id: uuid.UUID | str | None = None,
 ) -> dict[str, Any]:
-    """Roll one phase up and decide whether it may be exited."""
-    phase = (
-        await db.execute(select(ReleasePhase).where(ReleasePhase.id == phase_id))
-    ).scalar_one_or_none()
-    if phase is None:
-        return {"phase_id": str(phase_id), "verdict": "NOT_EVALUATED",
-                "blocking_reasons": ["no such phase"], "scorecard": None, "recorded": False}
+    """Roll one phase up and decide whether it may be exited.
+
+    The phase must be a phase of ``release_id``. A caller is checked against
+    the release only, so a phase loaded by its id alone could belong to a
+    release in a project the caller cannot read, and its name and exit criteria
+    would be returned. A phase of another release and an id that does not exist
+    both raise 404 "Phase not found", so the answer does not say which ids are
+    real.
+    """
+    # Imported here: release_service imports this module for phase enforcement.
+    from app.services.release_service import get_phase_or_404
+
+    try:
+        phase = await get_phase_or_404(db, str(release_id), str(phase_id))
+    except ValueError:
+        # An id that is not a UUID cannot name a phase.
+        raise HTTPException(status_code=404, detail="Phase not found") from None
 
     rollup = await rollup_svc.build_rollup(db, release_id, phase_id=phase_id)
     verdict, blocking = rollup_svc.decide(rollup)

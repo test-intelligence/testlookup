@@ -9,7 +9,10 @@ Authorization summary:
   * ``GET`` endpoints: any authenticated user with project access.
   * ``PUT /suite-owners/{suite_name}``: ``QA_LEAD`` or higher (assigning
     suite ownership is a project-wide configuration change).
-  * ``PUT /suite-reviews/...``: any authenticated user; the recorded
+  * ``PUT /suite-reviews/...``: ``QA_ENGINEER`` or higher with project
+    access, the same floor as a per-test review verdict
+    (``test_execution_reviews.py``). It was open to every member, so a
+    VIEWER set or overwrote a suite's verdict for a run. The recorded
     ``reviewer_user_id`` is whoever submits the review, regardless of
     whether they're the resolved owner. The UI surfaces non-owner reviews
     for transparency rather than blocking them.
@@ -231,7 +234,7 @@ async def upsert_review_for_run_suite(
     suite_name: str,
     payload: SuiteReviewUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     """Set the review state for (run, suite). Creates the row on first call.
 

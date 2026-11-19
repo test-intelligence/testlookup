@@ -21,7 +21,7 @@ from app.services.test_management_ai_service import (
     analyze_case_coverage,
     enqueue_ai_case_generation,
     generate_ai_cases,
-    get_ai_task_status as get_ai_task_status_result,
+    get_ai_task_status_for_caller,
     review_test_case_with_ai,
 )
 
@@ -61,9 +61,12 @@ async def ai_generate_cases_async(
 @router.get("/cases/ai-task/{task_id}", response_model=AITaskStatusResponse)
 async def get_ai_task_status(
     task_id: str,
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return get_ai_task_status_result(task_id)
+    # 404 unless an AI enqueue recorded this id and the caller queued it or
+    # can access its project: the result backend holds every task's result.
+    return await get_ai_task_status_for_caller(db, task_id, current_user)
 
 
 @router.post("/cases/{case_id}/ai-review", response_model=AIReviewTestCaseResponse)
@@ -81,7 +84,9 @@ async def ai_review_case(
 async def ai_coverage_analysis(
     payload: AICoverageAnalysisRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    # It writes nothing, but it is a model call charged to the project, so it
+    # takes the QA_ENGINEER floor (a VIEWER started it before).
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     # Tenant guard — coverage analysis reads the project's existing cases and
     # sends their titles/objectives to the LLM; block cross-project access.

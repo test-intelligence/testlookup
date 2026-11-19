@@ -51,7 +51,10 @@ async def world(monkeypatch):
             w.gone_id = await w.user(db, role=UserRole.QA_ENGINEER.value, is_active=False)
             w.svc_id = await w.user(db, role=UserRole.QA_ENGINEER.value, is_service_account=True)
             for uid in (w.lead_id, w.viewer_id, w.ana_id, w.bob_id, w.gone_id, w.svc_id):
-                db.add(ProjectMember(project_id=w.P, user_id=uid, role=UserRole.QA_ENGINEER.value))
+                # The lead is a QA lead in the project too: a write needs the
+                # route's role on the instance AND in the project.
+                member_role = UserRole.QA_LEAD if uid == w.lead_id else UserRole.QA_ENGINEER
+                db.add(ProjectMember(project_id=w.P, user_id=uid, role=member_role.value))
             now = datetime.now(timezone.utc)
             for days_ago, suite, release in ((1, SUITE, w.R), (2, SUITE, w.R), (2, "other", w.R), (3, SUITE, None)):
                 run_id = uuid.uuid4()

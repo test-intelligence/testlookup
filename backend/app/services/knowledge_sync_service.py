@@ -113,7 +113,12 @@ async def run_sync(
 
         # Fetch content via connector
         connector = await bind_to_deployment(get_connector(source.source_type), db)
-        content = await connector.fetch_content(source.canonical_url, source.external_id)
+        fetch_kwargs = {}
+        if source.source_type == KnowledgeSourceType.UPLOADED_DOC.value:
+            # The object key must sit under the source's own project; the
+            # document connector refuses any other key before reading storage.
+            fetch_kwargs["project_id"] = source.project_id
+        content = await connector.fetch_content(source.canonical_url, source.external_id, **fetch_kwargs)
 
         # Check for unchanged content (skip if not initial sync)
         if content.content_hash == previous_hash and trigger != "on_create":

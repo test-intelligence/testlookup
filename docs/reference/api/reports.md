@@ -389,16 +389,16 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 Create Share Link Endpoint
 
-Create a time-limited share link for the run report.
+Create a time-limited, public share link for the run report (QA_LEAD).
 
 Source: [backend/app/routers/reports.py:443](../../../backend/app/routers/reports.py#L443).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, body: CreateShareLinkRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_run_access())
+run_id: uuid.UUID, body: CreateShareLinkRequest, db: AsyncSession=Depends(get_db), _role: User=Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)), current_user: User=Depends(require_run_access())
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -488,7 +488,7 @@ List Share Links Endpoint
 
 List all share links for a run.
 
-Source: [backend/app/routers/reports.py:538](../../../backend/app/routers/reports.py#L538).
+Source: [backend/app/routers/reports.py:544](../../../backend/app/routers/reports.py#L544).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -573,7 +573,7 @@ Revoke Share Link Endpoint
 
 Revoke a share link. Creator, project members, and admins can revoke.
 
-Source: [backend/app/routers/reports.py:565](../../../backend/app/routers/reports.py#L565).
+Source: [backend/app/routers/reports.py:571](../../../backend/app/routers/reports.py#L571).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_link_access.<locals>._check`.
 

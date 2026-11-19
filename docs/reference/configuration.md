@@ -184,10 +184,12 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `SEARCH_QUERY_TIMEOUT_MS` | `int` | `5000` |
 | `SEARCH_MAX_RESULTS` | `int` | `200` |
 | `DEV_AUTO_LOGIN_ENABLED` | `bool` | `False` |
+| `ALLOW_INSECURE_DEV_SECRETS` | `bool` | `False` |
 | `JWT_SECRET_KEY` | `str` | `'change-me-jwt-secret'` |
 | `JWT_ALGORITHM` | `str` | `'HS256'` |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `int` | `720` |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `int` | `30` |
 | `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `int` | `7` |
+| `JWT_REFRESH_REUSE_LEEWAY_SECONDS` | `int` | `Field(default=10, ge=0, le=60)` |
 | `AUTH_REVOCATION_FAIL_OPEN` | `bool` | `False` |
 | `REGISTRATION_ENABLED` | `bool` | `False` |
 | `DEMO_MODE` | `bool` | `False` |

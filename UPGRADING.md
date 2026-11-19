@@ -31,6 +31,92 @@ latest patch release of the target line.
 Database migrations only move forward in production. To roll back, restore the
 backup taken in step 2 together with the previous version's images.
 
+## After 0.1.0 (the next release)
+
+Security fixes in this release change what some roles may do and what some API
+calls answer. Nothing in the database changes and there is no migration.
+
+### Project roles decide writes together with the instance role
+
+A user has a role on the instance and a role in each project. A write into a
+project now needs the route's role in both; before, the instance role and any
+membership were enough. An instance ADMIN is not affected, and reads are
+unchanged. A member whose project role is lower than their instance role gets
+403 "Requires at least <role> role for this project" on actions their project
+role does not cover.
+
+Before upgrading, list those members and raise the project role where needed:
+
+```sql
+SELECT u.username, u.role AS instance_role, p.slug, m.role AS project_role
+FROM project_members m
+JOIN users u ON u.id = m.user_id
+JOIN projects p ON p.id = m.project_id
+WHERE u.role <> 'ADMIN' AND m.role <> u.role;
+```
+
+People added through the app normally have the same role in both places: a
+project's creator and service accounts get their instance role, and an invited
+member gets the role chosen in the invitation.
+
+### Actions that now need a role
+
+| Action | Needs | Before |
+|---|---|---|
+| Create or edit a test plan, add or remove items, record an execution; edit a test strategy | TESTER | any member |
+| Set a suite-review verdict; start AI plan, strategy or coverage generation; run the duplicate-case sweep; recover a live run | QA_ENGINEER | any member |
+| Change a strategy's status; create a public share link; read a webhook's delivery history | QA_LEAD | any member |
+| Queue the training export or a fine-tune; probe the deployment-wide integrations | ADMIN | QA_LEAD |
+
+Members below QA_LEAD see a webhook's target URL as `https://host/...`.
+
+### Sessions
+
+- Access tokens last 30 minutes by default (`JWT_ACCESS_TOKEN_EXPIRE_MINUTES`,
+  was 720). A value set in your `.env` or manifests stays as it is; the 0.1.0
+  `.env.example` set 720, so check it. `expires_in` in token responses follows
+  the setting.
+- The web app, the CLI and the MCP server renew on their own. The Python, JS
+  and Go SDKs do not refresh a password sign-in: a run longer than the token
+  lifetime should use an API key.
+- A refresh token used again more than 10 seconds after it was rotated
+  (`JWT_REFRESH_REUSE_LEEWAY_SECONDS`) signs the user out of every device.
+- The SSE and WebSocket live streams refuse a logged-out token, a refresh
+  token and an account on a temporary password, and an SSE stream ends when
+  its token expires. Clients reconnect with a fresh access token.
+- A live ingestion session ends 24 hours after it was opened, and at once when
+  its API key is revoked or its owner is deactivated or removed from the
+  project. A run longer than 24 hours opens a new session.
+
+### API answers that changed
+
+| Call | Now | Before |
+|---|---|---|
+| Sign-in on a locked account, wrong password | 429 with `Retry-After` | 401 |
+| `POST /auth/change-password`, `/auth/mfa/disable`, `/auth/mfa/recovery-codes` after repeated wrong guesses | 429 | 400 without limit |
+| `POST /auth/first-time-reset`, `/auth/change-password`, `/auth/logout` with an API key | 403 | accepted |
+| Create a user, register or accept an invitation with a username containing other than letters, digits, `.`, `_`, `-` | 422 | accepted |
+| Gate evaluate with an unknown phase id | 404 | 200 "no such phase" |
+| Link a run, or evaluate a gate, with a phase of another release | 404 | accepted |
+| `GET .../ownership/resolve/{cluster_id}` when the project has no such cluster | 404 | answered from another project's cluster |
+| `POST /search/reindex?project_id=` as QA_LEAD | 403 | queued an instance-wide reindex |
+| `GET /test-management/cases/ai-task/{task_id}` for a task that is not yours | 404 | the task's result |
+| `GET /webhooks/{id}/deliveries?limit=` above 200 | 422 | accepted |
+| Create an `uploaded_document` knowledge source with a key outside the project | 422 | accepted |
+| `GET /ai-eval/runs/{id}` for another project's run, as QA_LEAD | 404 | 200 |
+| A second project's `run_start` on `/ws/events` with a run id another project uses (project-bound keys) | 202 | 409 |
+| MCP `create_share_link` without `confirm=true` | returns a notice, creates nothing | created the link |
+
+Existing usernames that contain `@` keep working for sign-in.
+
+### Development starts need real secrets
+
+With `APP_ENV=development` (the default when the variable is unset) the API
+refuses to start while `JWT_SECRET_KEY` is the placeholder from the source.
+`scripts/gen-dev-env.sh` writes generated secrets; `ALLOW_INSECURE_DEV_SECRETS=true`
+starts anyway and is only for a machine nobody else can reach. Production and
+staging already refused placeholder secrets.
+
 ## 0.1.0 — the first public release
 
 0.1.0 is the first tagged release. If you run a snapshot built from the
@@ -64,7 +150,7 @@ the durable records live in PostgreSQL and MongoDB. Before switching:
 
 Starting empty means: access tokens revoked by a logout or a password change
 are accepted again until they expire (`JWT_ACCESS_TOKEN_EXPIRE_MINUTES`,
-default 720) — rotate `JWT_SECRET_KEY` during the upgrade to force everyone to
+720 by default in 0.1.0) — rotate `JWT_SECRET_KEY` during the upgrade to force everyone to
 sign in again if that matters; a promoted fine-tuned model falls back to
 `LLM_MODEL` until it is promoted again; the next search-index pass re-scans from
 the start; live sessions that were open must reconnect.

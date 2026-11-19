@@ -40,6 +40,14 @@ class _Result:
     def scalar_one_or_none(self):
         return self._value
 
+    # The login lookup takes the first row of an ordered query (an e-mail match
+    # wins over a username match): ``result.scalars().first()``.
+    def scalars(self):
+        return self
+
+    def first(self):
+        return self._value
+
     def scalar_one(self):
         return datetime.now(UTC)
 

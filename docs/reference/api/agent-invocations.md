@@ -10,7 +10,7 @@ Get Invocation
 
 Poll one invocation: status, attempts, output and review state, read from its run.
 
-Source: [backend/app/routers/agent_invoke.py:727](../../../backend/app/routers/agent_invoke.py#L727).
+Source: [backend/app/routers/agent_invoke.py:730](../../../backend/app/routers/agent_invoke.py#L730).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_invocation_access.<locals>._check`.
 
@@ -96,7 +96,7 @@ terminalises at its next stage boundary. Cancellation is sticky: an
 automatic retry never brings it back. Cancellation before the worker
 creates a run is stored on the invocation and rechecked under a row lock.
 
-Source: [backend/app/routers/agent_invoke.py:948](../../../backend/app/routers/agent_invoke.py#L948).
+Source: [backend/app/routers/agent_invoke.py:951](../../../backend/app/routers/agent_invoke.py#L951).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_invocation_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -184,7 +184,7 @@ Stream Invocation Events
 
 Progress of one invocation as server-sent events, until its run finishes.
 
-Source: [backend/app/routers/agent_invoke.py:758](../../../backend/app/routers/agent_invoke.py#L758).
+Source: [backend/app/routers/agent_invoke.py:761](../../../backend/app/routers/agent_invoke.py#L761).
 
 Dependency chain: `require_invocation_stream_ticket.<locals>._check`.
 
@@ -261,7 +261,7 @@ Issue Invocation Stream Ticket
 
 A single-use ticket for ``GET .../events`` (EventSource cannot send Authorization).
 
-Source: [backend/app/routers/agent_invoke.py:739](../../../backend/app/routers/agent_invoke.py#L739).
+Source: [backend/app/routers/agent_invoke.py:742](../../../backend/app/routers/agent_invoke.py#L742).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_invocation_access.<locals>._check`.
 
@@ -360,7 +360,7 @@ configuration, and a rerun needs a new run -- which is a new invocation --
 so that is 409 with ``links.rerun`` too. An invocation whose run never
 started is dispatched again.
 
-Source: [backend/app/routers/agent_invoke.py:772](../../../backend/app/routers/agent_invoke.py#L772).
+Source: [backend/app/routers/agent_invoke.py:775](../../../backend/app/routers/agent_invoke.py#L775).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_invocation_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -473,7 +473,7 @@ the stored run in ``input.payload`` anchors it and must belong to
 bytes is 413; secrets are redacted before it is stored; the output is a
 draft kept out of the run's report, gates, notifications and digests.
 
-Source: [backend/app/routers/agent_invoke.py:1047](../../../backend/app/routers/agent_invoke.py#L1047).
+Source: [backend/app/routers/agent_invoke.py:1050](../../../backend/app/routers/agent_invoke.py#L1050).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

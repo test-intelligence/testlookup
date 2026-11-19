@@ -93,7 +93,9 @@ class WorldSession:
         if "FROM review_requests" in sql:
             return _Result(self.world.review)
         if "FROM project_members" in sql:
-            return _Result(uuid.uuid4() if self.world.member else None)
+            # The approver's role in the project (load_approver reads the role,
+            # not just the row: the lower of the two roles decides).
+            return _Result("QA_LEAD" if self.world.member else None)
         if "FROM users" in sql:
             return _Result(self.world.approver)
         raise AssertionError(f"unscripted statement: {sql}")

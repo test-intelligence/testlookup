@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import require_role
+from app.core.deps import get_accessible_project_ids, require_role
 from app.db.postgres import get_db
 from app.models.postgres import (
     AIEvalBaseline,
@@ -223,6 +223,10 @@ async def list_eval_runs(
 
     W16: ``{items, total}`` (was a bare list no client read); ``metric_kind``
     (legacy label agreement / replay) and ``status`` filter. Writes nothing.
+
+    A run made for a project (a candidate replay) is listed only to callers
+    who can access that project; runs with no project are listed to every QA
+    lead, and an instance admin sees all of them.
     """
     from sqlalchemy import func  # noqa: PLC0415
 
@@ -248,6 +252,11 @@ async def list_eval_runs(
     if status_filter:
         query = query.where(AIEvalRun.status == status_filter)
         count = count.where(AIEvalRun.status == status_filter)
+    accessible = await get_accessible_project_ids(db, current_user)
+    if accessible is not None:  # None is an instance admin: no project filter
+        in_reach = _eval_run_in_reach(accessible)
+        query = query.where(in_reach)
+        count = count.where(in_reach)
     rows = (await db.execute(query)).scalars().all()
     total = (await db.execute(count)).scalar_one()
     return AIEvalRunListResponse(
@@ -427,6 +436,15 @@ async def get_candidate_options(
     return await ai_eval_runner.candidate_options(db)
 
 
+def _eval_run_in_reach(accessible: set[uuid.UUID]) -> Any:
+    """The SQL condition for "this run has no project, or one the caller can access"."""
+    from sqlalchemy import or_  # noqa: PLC0415
+
+    if not accessible:
+        return AIEvalRun.project_id.is_(None)
+    return or_(AIEvalRun.project_id.is_(None), AIEvalRun.project_id.in_(accessible))
+
+
 async def _load_eval_run(db: AsyncSession, eval_run_id: uuid.UUID) -> AIEvalRun:
     run = (await db.execute(select(AIEvalRun).where(AIEvalRun.id == eval_run_id))).scalar_one_or_none()
     if run is None:
@@ -440,8 +458,17 @@ async def get_eval_run(
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
 ):
-    """One evaluation run (legacy or replay) with its aggregate scores. Writes nothing."""
-    return AIEvalRunResponse.model_validate(await _load_eval_run(db, eval_run_id))
+    """One evaluation run (legacy or replay) with its aggregate scores. Writes nothing.
+
+    A run of a project the caller cannot access answers the same 404 as a run
+    that does not exist; a run with no project is readable by every QA lead.
+    """
+    run = await _load_eval_run(db, eval_run_id)
+    if run.project_id is not None:
+        accessible = await get_accessible_project_ids(db, current_user)
+        if accessible is not None and run.project_id not in accessible:
+            raise _refusal(404, "eval_run_not_found", "Evaluation run not found.")
+    return AIEvalRunResponse.model_validate(run)
 
 
 def _clean_payload(value: Any) -> Any:

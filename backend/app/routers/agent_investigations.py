@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
     _enforce_api_key_project_binding,
+    enforce_project_role_floor,
     get_current_active_user,
     get_db,
     require_project_access,
@@ -111,6 +112,8 @@ def require_investigation_access():
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this investigation's project",
             )
+        # A write needs the route's role in this project too (core/deps.py).
+        await enforce_project_role_floor(db, current_user, project_id)
         return current_user
 
     return _check

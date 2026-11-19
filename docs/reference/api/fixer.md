@@ -10,7 +10,7 @@ Get Fixer Attempt
 
 A single FixAttempt with patch + runner_log_digest + ledger_run_id.
 
-Source: [backend/app/routers/fixer.py:273](../../../backend/app/routers/fixer.py#L273).
+Source: [backend/app/routers/fixer.py:276](../../../backend/app/routers/fixer.py#L276).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_attempt_access.<locals>._check`.
 
@@ -99,7 +99,7 @@ List Fixer Attempts
 
 Paged FixAttempt list, newest first.
 
-Source: [backend/app/routers/fixer.py:242](../../../backend/app/routers/fixer.py#L242).
+Source: [backend/app/routers/fixer.py:245](../../../backend/app/routers/fixer.py#L245).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -202,7 +202,7 @@ Get Fixer Config
 
 The project's effective FixerConfig (defaults when unconfigured).
 
-Source: [backend/app/routers/fixer.py:161](../../../backend/app/routers/fixer.py#L161).
+Source: [backend/app/routers/fixer.py:164](../../../backend/app/routers/fixer.py#L164).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -286,7 +286,7 @@ Put Fixer Config
 
 Retired write alias; agent-configs is the single writable resource.
 
-Source: [backend/app/routers/fixer.py:172](../../../backend/app/routers/fixer.py#L172).
+Source: [backend/app/routers/fixer.py:175](../../../backend/app/routers/fixer.py#L175).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
 
@@ -376,7 +376,7 @@ Start Fixer Run
 
 Trigger a manual fixer run (project QA_ENGINEER+).
 
-Source: [backend/app/routers/fixer.py:190](../../../backend/app/routers/fixer.py#L190).
+Source: [backend/app/routers/fixer.py:193](../../../backend/app/routers/fixer.py#L193).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
 

@@ -90,7 +90,13 @@ async def _reindex(user, project_id=None, full=False, accessible=None):
         "app.core.deps.get_accessible_project_ids", AsyncMock(return_value=accessible)
     ):
         result = await search_router.trigger_reindex(
-            project_id=str(project_id) if project_id else None,
+            # A string goes through exactly as a client sent it, the empty
+            # string included: ``?project_id=`` arrives as "" and not as None.
+            project_id=(
+                project_id
+                if project_id is None or isinstance(project_id, str)
+                else str(project_id)
+            ),
             full=full,
             db=AsyncMock(),
             current_user=user,
@@ -167,3 +173,80 @@ class TestTheLegitimatePathsStillWork:
         )
         assert result["status"] == "queued"
         assert queued and queued[0]["project_id"] == str(_THEIRS)
+
+
+class TestAnEmptyProjectIdIsNoProjectAtAll:
+    """``?project_id=`` is the instance-wide reindex, so it is ADMIN-only.
+
+    The handler chose the ADMIN-only branch with ``project_id is None``. An
+    empty query value arrives as ``""``: it took the QA_LEAD branch, the scope
+    helper treated it as "nothing requested" and checked nothing, and the task
+    was queued with ``project_id=""`` -- which both indexers read as "every
+    project". A QA lead with no memberships could rebuild every tenant's index.
+
+    The task also receives only what the caller was checked against: the
+    canonical id of the verified project, or ``None`` on the ADMIN path.
+    """
+
+    @pytest.mark.asyncio
+    async def test_lead_cannot_reach_the_instance_wide_reindex_with_an_empty_id(self):
+        queued: list = []
+        with pytest.raises(HTTPException) as excinfo:
+            _, queued = await _reindex(_user("QA_LEAD"), project_id="", accessible={_MINE})
+        assert excinfo.value.status_code == 403
+        assert "instance ADMIN" in excinfo.value.detail
+        assert queued == []
+
+    @pytest.mark.asyncio
+    async def test_nothing_is_queued_for_a_lead_sending_an_empty_id(self):
+        """The first test cannot see the queue once the handler raises."""
+        dispatched: list = []
+        fake_tasks = MagicMock()
+        fake_tasks.reindex_search.apply_async = lambda kwargs=None, **_: dispatched.append(kwargs)
+
+        with patch.dict("sys.modules", {"app.worker.tasks": fake_tasks}), patch(
+            "app.core.deps.get_accessible_project_ids", AsyncMock(return_value=set())
+        ):
+            with pytest.raises(HTTPException):
+                await search_router.trigger_reindex(
+                    project_id="", full=True, db=AsyncMock(), current_user=_user("QA_LEAD"),
+                )
+
+        assert dispatched == [], f"an instance-wide reindex was queued: {dispatched}"
+
+    @pytest.mark.asyncio
+    async def test_project_bound_admin_key_cannot_use_an_empty_id(self):
+        """A project-bound key is not an instance admin, whatever its owner is."""
+        from app.core import deps
+
+        user = _user("ADMIN")
+        setattr(user, deps._API_KEY_BOUND_PROJECT_ATTR, _MINE)
+        assert deps._api_key_bound_project(user) == _MINE
+
+        with pytest.raises(HTTPException) as excinfo:
+            await _reindex(user, project_id="", accessible={_MINE})
+        assert excinfo.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_admin_sending_an_empty_id_queues_none_not_the_empty_string(self):
+        result, queued = await _reindex(_user("ADMIN"), project_id="", accessible=None)
+        assert result["status"] == "queued"
+        assert queued == [{"project_id": None, "full": False}]
+
+    @pytest.mark.asyncio
+    async def test_the_task_gets_the_canonical_id_of_the_verified_project(self):
+        """Upper case and braces parse to the same project; the task must get
+        the one spelling the membership check was made against."""
+        spelled = "{" + str(_MINE).upper() + "}"
+        result, queued = await _reindex(
+            _user("QA_LEAD"), project_id=spelled, accessible={_MINE}
+        )
+        assert result["status"] == "queued"
+        assert queued == [{"project_id": str(_MINE), "full": False}]
+
+    @pytest.mark.asyncio
+    async def test_a_value_that_is_not_a_project_id_is_refused(self):
+        for junk in (" ", "not-a-uuid"):
+            with pytest.raises(HTTPException) as excinfo:
+                await _reindex(_user("QA_LEAD"), project_id=junk, accessible={_MINE})
+            assert excinfo.value.status_code == 400

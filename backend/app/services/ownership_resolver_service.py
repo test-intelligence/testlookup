@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.postgres import Project, ServiceOwnershipRule, TestCase
+from app.models.postgres import Project, ServiceOwnershipRule, TestCase, TestRun
 
 logger = logging.getLogger("services.ownership_resolver")
 
@@ -177,8 +177,16 @@ async def resolve_cluster_ownership(
     if not test_uuids:
         return OwnershipResult(confidence="none", fallback_reason="No valid test IDs in cluster")
 
+    # Only tests of THIS project. The ids come from the caller, and a test of
+    # another project must not vote: its owner label would be returned, and
+    # this project's rules would work as a probe for its suite names.
     result = await db.execute(
-        select(TestCase).where(TestCase.id.in_(test_uuids))
+        select(TestCase)
+        .join(TestRun, TestRun.id == TestCase.test_run_id)
+        .where(
+            TestCase.id.in_(test_uuids),
+            TestRun.project_id == project_id,
+        )
     )
     tests = result.scalars().all()
 
@@ -204,6 +212,15 @@ async def resolve_cluster_ownership(
     best_team = max(team_votes, key=lambda k: len(team_votes[k]))
     best_results = team_votes[best_team]
     best = best_results[0]
+    if best.team_name is None and best.service_name is None:
+        # The winning bucket is "nobody owns these tests". That is the fallback
+        # answer, not a confident one: without this, a cluster with no owner at
+        # all was reported as confidence "high" with every field empty.
+        return OwnershipResult(
+            confidence="none",
+            fallback_reason=best.fallback_reason
+            or "No ownership rule matched. Configure rules in the Ownership Editor.",
+        )
     vote_pct = len(best_results) / len(tests) if tests else 0
 
     # Confidence based on vote concentration

@@ -86,6 +86,9 @@ def make_user(
         role=role_value,
         is_active=is_active,
         must_change_password=must_change_password,
+        # The lockout fields the signed-in password routes read and count on.
+        locked_until=None,
+        failed_login_attempts=0,
         avatar_color=None,
         created_at=now,
         updated_at=now,
@@ -266,6 +269,12 @@ def auth_as(monkeypatch):
 
             _bind_api_key_project(user, bound_project_id)
             _bind_credential_kind(user, CREDENTIAL_KIND_API_KEY)
+        else:
+            # A signed-in person, as get_current_user marks one: the password
+            # routes and logout refuse a credential of any other (or unknown) kind.
+            from app.core.deps import CREDENTIAL_KIND_JWT, _bind_credential_kind
+
+            _bind_credential_kind(user, CREDENTIAL_KIND_JWT)
 
         async def _current():
             return user

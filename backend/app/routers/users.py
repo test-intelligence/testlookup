@@ -251,6 +251,11 @@ async def update_user_status(
     await log_access_change(db, "status_changed", current_user, target_user_id=user_id,
                             before_value={"is_active": old_active}, after_value={"is_active": payload.is_active})
     await db.commit()
+    if payload.is_active is False:
+        # A live session the user opened is authorised by its session token
+        # alone: end those sessions now (best effort, never raises).
+        from app.services import stream_service
+        await stream_service.revoke_session_tokens_for_user(user_id)
     await db.refresh(user)
     return user
 
@@ -276,8 +281,14 @@ async def update_user_profile(
 
     # Check email uniqueness if changing
     if payload.email is not None and payload.email != user.email:
-        existing = await db.execute(select(User).where(User.email == payload.email))
-        if existing.scalar_one_or_none():
+        # Without regard to case, and never against the user's own row (so a
+        # user's own address may change case).
+        existing = await db.execute(
+            select(User.id)
+            .where(func.lower(User.email) == str(payload.email).lower(), User.id != user.id)
+            .limit(1)
+        )
+        if existing.first() is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already in use")
         user.email = payload.email
 
@@ -306,6 +317,10 @@ async def update_user_profile(
         user.is_active = payload.is_active
 
     await db.commit()
+    if payload.is_active is False:
+        # Same as update_user_status: end the live sessions this user opened.
+        from app.services import stream_service
+        await stream_service.revoke_session_tokens_for_user(user_id)
     await db.refresh(user)
     logger.info("user_profile_updated", user_id=str(user_id), by=str(current_user.id))
     return user
@@ -319,12 +334,14 @@ async def admin_create_user(
 ):
     """Admin creates a user directly with a temporary password. Requires ADMIN."""
     refuse_reserved_username(username=payload.username, email=payload.email)  # W31 E-4
+    # E-mail without regard to case; ``first()`` because the e-mail and the
+    # username may clash with two different accounts (one 409, not a 500).
     existing = await db.execute(
-        select(User).where(
-            (User.email == payload.email) | (User.username == payload.username)
-        )
+        select(User.id).where(
+            (func.lower(User.email) == str(payload.email).lower()) | (User.username == payload.username)
+        ).limit(1)
     )
-    if existing.scalar_one_or_none():
+    if existing.first() is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email or username already registered",
@@ -814,5 +831,10 @@ async def remove_project_member(
     # P3-2: Invalidate membership cache for the removed user
     from app.core.deps import invalidate_membership_cache
     await invalidate_membership_cache(user_id)
+
+    # End the live sessions the removed user opened in this project: their
+    # session tokens are not re-checked against membership (best effort).
+    from app.services import stream_service
+    await stream_service.revoke_session_tokens_for_project_member(project_id, user_id)
 
     return None

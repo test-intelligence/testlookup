@@ -122,7 +122,7 @@ async def test_register_creates_a_viewer_with_must_change_password(
 async def test_register_rejects_duplicate_email(client, override_db, fake_db, registration_open):
     """If a user already exists with the same email/username, return 409."""
     existing = make_user()
-    fake_db.set_execute_results([fake_execute_result(scalar=existing)])
+    fake_db.set_execute_results([fake_execute_result(scalar=existing, first=(existing.id,))])
 
     payload = {
         "email": existing.email,
@@ -247,6 +247,10 @@ async def test_first_time_reset_revokes_bootstrap_token(client, override_db):
     from app.main import app as fastapi_app
 
     user = make_user(must_change_password=True)
+    # A signed-in person: the password routes refuse an API key or an unknown credential.
+    from app.core.deps import CREDENTIAL_KIND_JWT, _bind_credential_kind
+
+    _bind_credential_kind(user, CREDENTIAL_KIND_JWT)
 
     async def _current():
         return user
