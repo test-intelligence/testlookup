@@ -840,7 +840,7 @@ describe('AIConfigPage — fine-tuning is operator-only (STRAT-10)', () => {
     // The row keeps exactly the two toggles that remain.
     const toggles = Array.from(pipeline.querySelectorAll('input[type="checkbox"]'))
       .map(c => c.closest('label')?.textContent?.trim())
-    expect(toggles).toEqual(['Offline Mode for LLM calls (local models only)', 'Deep Investigation'])
+    expect(toggles).toEqual(['Offline Mode (air-gapped, Ollama only)', 'Deep Investigation'])
     expect(screen.queryByRole('checkbox', { name: /fine[- ]?tun/i })).not.toBeInTheDocument()
     expect(container.textContent).not.toMatch(/fine[- ]?tun/i)
   })
