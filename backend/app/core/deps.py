@@ -296,6 +296,177 @@ def _route_takes_scoped_key_writes(request) -> bool:
     return getattr(endpoint, _TAKES_SCOPED_KEY_WRITES_ATTR, False) is True
 
 
+# ── The role a write needs in the project it names ───────────────────────────
+#
+# A user has a role on the instance (``users.role``) and a role in each project
+# they belong to (``project_members.role``). ``require_role(X)`` reads the
+# first; the project guards used to check only that a membership row exists.
+# So an instance QA lead who was added to one project as a viewer wrote to that
+# project as a lead (security audit 2026-11-18).
+#
+# The rule: on a write, the LOWER of the two roles decides. A route's
+# ``require_role`` minimum must also be held in the project the request names.
+# An instance ADMIN passes. Reads, and routes with no ``require_role``, are
+# unchanged.
+#
+# It is applied here, once, not route by route. ``get_current_active_user``
+# reads the route's highest ``require_role`` minimum off the route's own
+# dependency tree and records it on the request's user object; every project
+# guard then holds the caller to it. Reading it from the route (not from
+# ``require_role`` as it runs) makes the answer independent of the order in
+# which FastAPI resolves a route's dependencies.
+
+_MIN_ROLE_ATTR = "_testlookup_min_role"
+_ROUTE_ROLE_FLOOR_ATTR = "_testlookup_route_role_floor"
+_PROJECT_ROLE_FLOOR_ATTR = "_testlookup_project_role_floor"
+_NOT_COMPUTED = object()
+
+
+def _route_role_floor(request) -> UserRole | None:
+    """The highest ``require_role`` minimum among the matched route's dependencies."""
+    scope = getattr(request, "scope", None)
+    route = scope.get("route") if isinstance(scope, dict) else None
+    if route is None:
+        return None
+    cached = getattr(route, _ROUTE_ROLE_FLOOR_ATTR, _NOT_COMPUTED)
+    if cached is not _NOT_COMPUTED:
+        return cached if isinstance(cached, UserRole) else None
+    floor_idx = -1
+    seen: set[int] = set()
+    pending = [getattr(route, "dependant", None)]
+    while pending:
+        dependant = pending.pop()
+        if dependant is None or id(dependant) in seen:
+            continue
+        seen.add(id(dependant))
+        role = getattr(getattr(dependant, "call", None), _MIN_ROLE_ATTR, None)
+        if isinstance(role, UserRole):
+            floor_idx = max(floor_idx, _ROLE_ORDER.index(role))
+        pending.extend(getattr(dependant, "dependencies", None) or ())
+    floor = _ROLE_ORDER[floor_idx] if floor_idx >= 0 else None
+    try:
+        setattr(route, _ROUTE_ROLE_FLOOR_ATTR, floor)
+    except Exception:  # a route object that takes no attributes: recompute next time
+        pass
+    return floor
+
+
+def _bind_project_role_floor(user: User, request) -> User:
+    """Record on the request's user the role its writes need in a project."""
+    floor = _route_role_floor(request) if _is_write(request) else None
+    # Not guarded: if the minimum could not be recorded the project guards
+    # would not apply it, so a failure here must fail the request, not pass.
+    setattr(user, _PROJECT_ROLE_FLOOR_ATTR, floor)
+    return user
+
+
+def _project_role_floor(user: User) -> UserRole | None:
+    """The role this request needs in a project, or ``None`` for no extra check.
+
+    ``None`` for a read, for a route with no ``require_role``, and for a user
+    object that did not come through ``get_current_active_user`` (a row a
+    service loaded, a test double).
+    """
+    value = getattr(user, _PROJECT_ROLE_FLOOR_ATTR, None)
+    return value if isinstance(value, UserRole) else None
+
+
+def _is_instance_admin(user: User) -> bool:
+    try:
+        return _normalize_user_role(user.role) == UserRole.ADMIN
+    except ValueError:
+        return False
+
+
+def _role_at_least(role: object, floor: UserRole) -> bool:
+    try:
+        normalized = _normalize_user_role(role if isinstance(role, UserRole) else str(role))
+        return _ROLE_ORDER.index(normalized) >= _ROLE_ORDER.index(floor)
+    except ValueError:
+        return False
+
+
+def _project_role_refusal(floor: UserRole) -> HTTPException:
+    _count_auth_failure("insufficient_role")
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            f"Requires at least {floor.value} role for this project. Your role in this "
+            "project is lower; ask a project QA lead or an administrator to raise it."
+        ),
+    )
+
+
+async def enforce_project_role_floor(db: AsyncSession, user: User, project_id: uuid.UUID | None) -> None:
+    """403 when this request is a write whose route minimum the caller does not
+    hold in ``project_id``. A caller with no membership row is left to the
+    calling guard, which already answers for that in its own words."""
+    floor = _project_role_floor(user)
+    if floor is None or project_id is None or _is_instance_admin(user):
+        return
+    from app.models.postgres import ProjectMember
+
+    result = await db.execute(
+        select(ProjectMember.role).where(
+            ProjectMember.user_id == user.id,
+            ProjectMember.project_id == project_id,
+        )
+    )
+    role = result.scalar_one_or_none()
+    if role is None:
+        return
+    if not _role_at_least(role, floor):
+        raise _project_role_refusal(floor)
+
+
+async def holds_role_for_project_write(
+    db: AsyncSession, user: User, project_id: uuid.UUID | None, min_role: UserRole
+) -> bool:
+    """Whether ``user`` holds ``min_role`` on the instance AND in ``project_id``.
+
+    For a handler whose minimum depends on the request body, so it cannot be a
+    ``require_role`` dependency (a strategy edit needs TESTER, but changing its
+    status needs QA_LEAD). Same rule as the guards apply: the lower of the two
+    roles decides, and an instance ADMIN passes. A key with a scope list needs
+    ``project:admin`` at QA_LEAD and above, as on a ``require_role`` route.
+    """
+    if not _role_at_least(user.role, min_role):
+        return False
+    if _ROLE_ORDER.index(min_role) >= _ROLE_ORDER.index(UserRole.QA_LEAD):
+        grant = api_key_grant(user)
+        if grant is not None and not grant.allows(PROJECT_ADMIN_SCOPE):
+            return False
+    if _is_instance_admin(user):
+        return True
+    if project_id is None:
+        return False
+    from app.models.postgres import ProjectMember
+
+    role = (
+        await db.execute(
+            select(ProjectMember.role).where(
+                ProjectMember.user_id == user.id,
+                ProjectMember.project_id == project_id,
+            )
+        )
+    ).scalar_one_or_none()
+    return role is not None and _role_at_least(role, min_role)
+
+
+async def _project_ids_with_role(db: AsyncSession, user: User, floor: UserRole) -> set[uuid.UUID]:
+    """The caller's projects in which their membership role is at least ``floor``."""
+    from app.models.postgres import ProjectMember
+
+    roles = [role.value for role in _ROLE_ORDER[_ROLE_ORDER.index(floor):]]
+    result = await db.execute(
+        select(ProjectMember.project_id).where(
+            ProjectMember.user_id == user.id,
+            ProjectMember.role.in_(roles),
+        )
+    )
+    return {row[0] for row in result.all()}
+
+
 def _bind_api_key_grant(user: User, grant: ApiKeyGrant | None) -> User:
     setattr(user, _API_KEY_GRANT_ATTR, grant)
     return user
@@ -635,6 +806,9 @@ async def get_current_active_user(
     refuse_until_password_changed(current_user, routed_path(request))
     if _is_write(request) and not _route_takes_scoped_key_writes(request):
         _refuse_scoped_key_without_write_scope(current_user)
+    # A write also needs the route's role in the project it names; the project
+    # guards read this (see "The role a write needs in the project it names").
+    _bind_project_role_floor(current_user, request)
     return current_user
 
 
@@ -872,6 +1046,9 @@ def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Call
             _refuse_scoped_key_without_project_admin(current_user)
         return current_user
 
+    # Read by ``_route_role_floor``: on a write the project guards hold the
+    # caller to this role in the project the request names as well.
+    setattr(_check, _MIN_ROLE_ATTR, min_role)
     return _check
 
 
@@ -961,6 +1138,17 @@ def require_project_role(min_role: UserRole) -> Callable:
                 membership = result.scalar_one_or_none()
                 if membership:
                     effective_role = _normalize_user_role(membership.role)
+                    # On a write the lower of the two roles decides (see "The
+                    # role a write needs in the project it names"): a project
+                    # lead whose instance role is lower does not write as a
+                    # lead. An instance ADMIN is not held to a membership role.
+                    instance_role = _normalize_user_role(current_user.role)
+                    if instance_role == UserRole.ADMIN:
+                        effective_role = instance_role
+                    elif _is_write(request) and (
+                        _ROLE_ORDER.index(instance_role) < _ROLE_ORDER.index(effective_role)
+                    ):
+                        effective_role = instance_role
                 else:
                     effective_role = _normalize_user_role(current_user.role)
             except ValueError:
@@ -1001,11 +1189,23 @@ async def get_accessible_project_ids(
     from app.models.postgres import ProjectMember
 
     bound_project_id = _api_key_bound_project(user)
+    floor = _project_role_floor(user)
     if bound_project_id is not None:
-        return {bound_project_id}
+        if floor is None or _is_instance_admin(user):
+            return {bound_project_id}
+        # A write through a key whose owner is not an ADMIN: the owner must
+        # hold the route's role in the key's project too.
+        return {bound_project_id} & await _project_ids_with_role(db, user, floor)
 
     if _normalize_user_role(user.role) == UserRole.ADMIN:
         return None  # ADMIN sees everything
+
+    if floor is not None:
+        # A write on a route with a role minimum reaches only the projects in
+        # which the caller holds that role. Asked of the database each time:
+        # the cache below holds membership, not roles, and writes are rare
+        # next to reads.
+        return await _project_ids_with_role(db, user, floor)
 
     # P3-2: Check Redis cache first. A persistent Redis failure would silently
     # cascade into every request hitting the DB; log the first occurrence per
@@ -1156,6 +1356,9 @@ async def resolve_project_scope(
     # Non-admin
     if parsed is not None:
         if parsed not in accessible:
+            # A member whose role in this project is below the route's minimum
+            # is told so; anyone else gets the access refusal as before.
+            await enforce_project_role_floor(db, user, parsed)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this project",
@@ -1226,6 +1429,7 @@ def require_project_access(project_id_param: str = "project_id"):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this project",
             )
+        await enforce_project_role_floor(db, current_user, project_uuid)
         return current_user
 
     return _check
@@ -1283,6 +1487,7 @@ def require_run_access():
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Test run not found",
             )
+        await enforce_project_role_floor(db, current_user, project_id)
         return current_user
 
     return _check
@@ -1326,6 +1531,7 @@ async def resolve_authorized_test_case(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this test case''s project",
             )
+        await enforce_project_role_floor(db, current_user, project_id)
     return AuthorizedTestCaseContext(
         test_case=test_case,
         test_run=test_run,
@@ -1403,6 +1609,7 @@ def _make_project_scoped_guard(
         )
         if membership.scalar_one_or_none() is None:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=deny_detail)
+        await enforce_project_role_floor(db, current_user, project_id)
         return current_user
 
     # Make the guard identifiable by name in the architectural ratchet,
@@ -1666,6 +1873,7 @@ def require_link_access():
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have access to this share link",
             )
+        await enforce_project_role_floor(db, current_user, link.project_id)
         return link
 
     return _check
@@ -1844,3 +2052,38 @@ async def resolve_release_query_scopes(
         if resolved not in out:
             out.append(resolved)
     return out
+
+
+# ── Interactive sessions only ───────────────────────────────────────────────
+
+
+async def require_interactive_session(
+    request: Request,
+    current_user: User = Depends(get_current_active_user),
+) -> User:
+    """A signed-in session (password or SSO), never an API key.
+
+    For routes that change how the account itself signs in: setting or
+    changing the password, and signing out. An API key is a credential for
+    automation and is exempt from the forced-password-change gate, so without
+    this a leaked key could set its owner's password on
+    ``/auth/first-time-reset`` and become a full interactive login.
+
+    Written as ``== CREDENTIAL_KIND_JWT`` so an unknown credential kind
+    (``None``: a user object that did not come through the auth dependencies)
+    is refused rather than assumed interactive. The MFA routes apply the same
+    test through ``mfa_service.mfa_gate_applies``.
+    """
+    if credential_kind(current_user) != CREDENTIAL_KIND_JWT:
+        if routed_path(request).endswith("/auth/logout"):
+            detail = (
+                "Signing out is only for an interactive session. "
+                "An API key has no session to end: revoke the key instead."
+            )
+        else:
+            detail = (
+                "Password settings can only be changed from an interactive session. "
+                "Sign in with your password instead of an API key."
+            )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
+    return current_user

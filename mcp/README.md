@@ -32,7 +32,7 @@ The MCP server authenticates to the TestLookup API as a user, with a JWT access 
 
 **SSE.** There is no server-wide identity. Every request (the `/sse` stream and each `/messages/` post) must carry `Authorization: Bearer <access token>`, where the token is a TestLookup JWT access token. The server checks it against `GET /api/v1/auth/me` on every request, with no caching, so revocation and deactivation take effect at once. The token's `jti` owns the SSE session: a refreshed token has to reconnect. `TESTLOOKUP_USERNAME` / `TESTLOOKUP_PASSWORD` are never used as a network identity, and the `login` tool refuses to run on a network session.
 
-To get an access token for an SSE client, log in as the user the agent should act as (access tokens last 12 hours unless the server's `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` says otherwise):
+To get an access token for an SSE client, log in as the user the agent should act as (access tokens last 30 minutes unless the server's `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` says otherwise):
 
 ```bash
 curl -s -X POST http://localhost:8000/api/v1/auth/login \
@@ -265,7 +265,7 @@ touched a suite whole, so under a suite filter it differs from
 | `check_release_readiness` | `project_id`, `days?`, `release_id?` | Project GREEN/AMBER/RED from the server's policy verdict over a time window, or a release's stored gate decision when `release_id` is given |
 | `get_release_gate` | `release`, `project?`, `evaluate?` | A release's gate verdict as data (verdict, pass rate, evidence, blockers, decided_at); `release` is an id or a name / version (an ambiguous name lists the candidates); `evaluate=true` records a fresh verdict (QA lead); never evaluated is `evaluated: false` |
 | `check_run_release_readiness` | `run_id` | Single-run GO/CONDITIONAL_GO/NO_GO with risk score and blocking issues |
-| `create_share_link` | `run_id`, `expires_days?`, `layout?` | Time-limited share URL for a run report |
+| `create_share_link` | `run_id`, `expires_days?`, `layout?`, `confirm?` | Public, time-limited share URL for a run report (QA_LEAD). Sends nothing until `confirm` is true |
 
 ### Activity ledger
 

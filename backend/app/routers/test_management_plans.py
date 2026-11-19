@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user
+from app.core.deps import get_current_active_user, require_role
 from app.db.postgres import get_db
-from app.models.postgres import ManagedTestCase, TestPlanItem, User
+from app.models.postgres import ManagedTestCase, TestPlanItem, User, UserRole
 from app.models.schemas import (
     AIOptimizePlanRequest,
     AITaskEnqueueResponse,
@@ -35,6 +35,14 @@ from app.services.test_management_service import (
 )
 
 router = APIRouter()
+
+# Role floors (instance role, taken as a route PARAMETER so the decorator lines
+# and their activity-coverage baseline keys are unchanged). These routes checked
+# project membership only, so a VIEWER created and edited plans and recorded
+# executions under their own name, while a test-case write already needed
+# TESTER. Plan writes and executions: TESTER. The two AI routes spend the
+# project's model budget: QA_ENGINEER, like the run-compare narrative. Reads
+# stay open to every member.
 
 
 @router.get("/plans", response_model=TestPlanListResponse)
@@ -67,7 +75,7 @@ async def list_plans(
 async def create_plan(
     payload: TestPlanCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
 ):
     plan = await create_test_plan(db, payload, current_user)
     await db.commit()
@@ -90,7 +98,7 @@ async def update_plan(
     plan_id: uuid.UUID,
     payload: TestPlanUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
     _plan=Depends(require_plan_access),
 ):
     plan = await update_test_plan(db, plan_id, payload, current_user)
@@ -128,7 +136,7 @@ async def add_plan_item(
     plan_id: uuid.UUID,
     payload: TestPlanItemCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
     _plan=Depends(require_plan_access),
 ):
     item = await add_test_plan_item(db, plan_id, payload, current_user)
@@ -142,7 +150,7 @@ async def remove_plan_item(
     plan_id: uuid.UUID,
     item_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
     _plan=Depends(require_plan_access),
 ):
     await remove_test_plan_item(db, plan_id, item_id, current_user)
@@ -155,7 +163,7 @@ async def record_execution(
     item_id: uuid.UUID,
     payload: ExecuteTestPlanItemRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.TESTER)),
     _plan=Depends(require_plan_access),
 ):
     item = await record_test_plan_execution(
@@ -176,7 +184,7 @@ async def record_execution(
 async def ai_create_plan(
     payload: AIOptimizePlanRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     from app.core.deps import resolve_project_scope
     from app.services.test_case_ai_agent import ai_optimize_plan
@@ -226,7 +234,7 @@ async def ai_create_plan(
 async def ai_create_plan_async(
     payload: AIOptimizePlanRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
     # Tenant guard — caller must be a member of the target project before we
     # enqueue a worker task that builds a plan in it.
@@ -241,9 +249,14 @@ async def ai_create_plan_async(
             payload.plan_name,
             payload.constraints,
         )
+        # The status route serves a task only to whoever queued it or to a
+        # member of its project; without this record it answers 404.
+        from app.services.test_management_ai_service import record_ai_task_owner
+
+        await record_ai_task_owner(task.id, user_id=current_user.id, project_id=payload.project_id)
         return {"task_id": task.id, "status": "queued"}
     except Exception as exc:
-        logger.error("Failed to enqueue create_ai_test_plan_task: %s", exc)
+        logger.error("ai_task_enqueue_failed", task="create_ai_test_plan_task", error=str(exc))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI task queue unavailable. Check that the Celery worker and Redis are running.",

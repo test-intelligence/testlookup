@@ -606,12 +606,30 @@ class Settings(BaseSettings):
     # DEV_AUTO_LOGIN_ENABLED=true to .env (scripts/gen-dev-env.sh), so a bare
     # `uvicorn app.main:app` or a hand-written manifest never offers it.
     DEV_AUTO_LOGIN_ENABLED: bool = False
+    # Development only. The API refuses to start in development while
+    # JWT_SECRET_KEY is still a placeholder (the value in the source or in
+    # .env.example), because anyone who read the source could then sign an
+    # access token for any user. Set this to true to start anyway, for a
+    # throwaway local run or a test process; the placeholder warnings are still
+    # logged. It has no effect in staging or production, where a placeholder
+    # secret always refuses the start. scripts/gen-dev-env.sh writes generated
+    # secrets, so a generated .env never needs it.
+    ALLOW_INSECURE_DEV_SECRETS: bool = False
 
     # ── Authentication & JWT ──────────────────────────────────
     JWT_SECRET_KEY: str = "change-me-jwt-secret"
     JWT_ALGORITHM: str = "HS256"
-    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 720
+    # Short on purpose: an access token cannot be withdrawn one by one (only by
+    # the per-user cutoff), so its lifetime is how long a stolen one works.
+    # Clients keep a session going with the refresh token. It was 720.
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Two tabs of one browser can send the same refresh token at the same
+    # moment; the second arrives just after the first rotated it. For this many
+    # seconds after a rotation the old token is answered with a new pair, not
+    # treated as a stolen token (which signs the user out of every device).
+    # 0 turns the leeway off: every reuse of a rotated token is then a replay.
+    JWT_REFRESH_REUSE_LEEWAY_SECONDS: int = Field(default=10, ge=0, le=60)
     # Escape hatch for the fail-CLOSED token-revocation check. Default False:
     # when the revocation store (Redis) is unreachable, authenticated requests
     # get 503 rather than being honoured unchecked. Setting this True restores
@@ -1061,10 +1079,54 @@ class Settings(BaseSettings):
         CRITICAL-severity subset of validate_production_secrets().
 
         Drives the startup fail-fast guard. Returns [] outside production/staging
-        (validate_production_secrets only emits there), so booting dev is never blocked.
+        (validate_production_secrets only emits there). Development has its own,
+        narrower guard: see development_startup_refusal().
         Staging is treated like production: a CRITICAL default secret refuses startup.
         """
         return [w for w in self.validate_production_secrets() if w.startswith("CRITICAL")]
+
+    def development_secret_warnings(self) -> list[str]:
+        """One message per signing/encryption secret that is still a placeholder, in development.
+
+        ``APP_ENV`` defaults to development, so a process started with no
+        environment at all lands here with the three secrets published in the
+        source. That used to be silent. Returns [] outside development (staging
+        and production are covered by validate_production_secrets()).
+        """
+        if self.APP_ENV != "development":
+            return []
+        consequences = (
+            ("JWT_SECRET_KEY", "anyone who read the source can sign an access token for any user"),
+            ("APP_SECRET_KEY", "stored secrets are encrypted with a published key"),
+            ("WEBHOOK_SECRET", "the live-event and webhook endpoints accept anyone who read the source"),
+        )
+        return [
+            f"{name} is a placeholder (APP_ENV=development): {consequence}. "
+            "Generate one with `openssl rand -hex 32`, or run scripts/gen-dev-env.sh."
+            for name, consequence in consequences
+            if _is_placeholder_secret(getattr(self, name))
+        ]
+
+    def development_startup_refusal(self) -> Optional[str]:
+        """Why a development start must be refused, or ``None`` when it may go ahead.
+
+        Only a placeholder ``JWT_SECRET_KEY`` refuses, and only without
+        ``ALLOW_INSECURE_DEV_SECRETS=true``. Read by the startup path
+        (``main.lifespan``), never while building ``Settings``: importing the
+        application, the test suite and one-off scripts must keep working with
+        no environment variables.
+        """
+        if self.APP_ENV != "development" or self.ALLOW_INSECURE_DEV_SECRETS:
+            return None
+        if not _is_placeholder_secret(self.JWT_SECRET_KEY):
+            return None
+        return (
+            "Refusing to start in development: JWT_SECRET_KEY is a placeholder, so anyone "
+            "who read the source could sign in as any user. Set JWT_SECRET_KEY to a generated "
+            "value (`openssl rand -hex 32`, or run scripts/gen-dev-env.sh), or set "
+            "ALLOW_INSECURE_DEV_SECRETS=true to start anyway on a machine nobody else can reach. "
+            "If this is a real deployment, set APP_ENV=production as well."
+        )
 
 
 @lru_cache()

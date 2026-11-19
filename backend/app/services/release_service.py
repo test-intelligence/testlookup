@@ -1302,6 +1302,14 @@ async def link_test_run(
     if run.project_id != release.project_id:
         raise HTTPException(status_code=404, detail="Test run not found")
 
+    # A phase named in the body must be a phase of THIS release. The access
+    # guard covers the release only, so without this a caller could store the
+    # id of a phase from a project they cannot read on a link in their own.
+    # 404 for a foreign and an unknown id alike.
+    phase_uuid = None
+    if body.phase_id:
+        phase_uuid = (await get_phase_or_404(db, release_id, body.phase_id)).id
+
     existing = (
         await db.execute(
             select(ReleaseTestRunLink).where(
@@ -1329,7 +1337,7 @@ async def link_test_run(
     link = ReleaseTestRunLink(
         release_id=uuid.UUID(release_id),
         test_run_id=run_uuid,
-        phase_id=uuid.UUID(body.phase_id) if body.phase_id else None,
+        phase_id=phase_uuid,
         # A human chose this. It is the strongest provenance there is, and the
         # scorecard counts it as asserted rather than inferred.
         link_source=LinkSource.MANUAL_UI.value,

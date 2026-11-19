@@ -86,6 +86,9 @@ def _make_user(role: UserRole = UserRole.QA_ENGINEER, is_active: bool = True) ->
 def _execute_result(scalar_value=None, all_value=None) -> MagicMock:
     r = MagicMock()
     r.scalar_one_or_none.return_value = scalar_value
+    # The e-mail / username uniqueness checks read ``result.first()`` (one 409
+    # even when the e-mail and the username clash with two different accounts).
+    r.first.return_value = scalar_value
     r.scalars.return_value.all.return_value = all_value or []
     return r
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import time
+import uuid
 from typing import Optional
 
 import structlog
@@ -15,6 +16,34 @@ from app.services.connectors.base import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def uploaded_document_key_error(storage_key: str, project_id: uuid.UUID | str | None) -> Optional[str]:
+    """Why ``storage_key`` may not be read for ``project_id``; None when it may.
+
+    The knowledge bucket is shared: every project's objects live under
+    ``<project id>/``. A key is the project's own only when it starts with
+    that prefix, names an object below it, and has no ``.`` / ``..`` segment
+    or backslash (a filesystem-backed store resolves those, so
+    ``<A>/../<B>/file`` would land in project B).
+    """
+    if project_id is None:
+        return "The document's project was not given, so its storage key cannot be checked."
+    prefix = f"{project_id}/"
+    key = storage_key or ""
+    segments = key.split("/")
+    if (
+        not key.startswith(prefix)
+        or len(key) == len(prefix)
+        or "\\" in key
+        or any(segment in ("", ".", "..") for segment in segments)
+    ):
+        return (
+            f"An uploaded document's storage key must start with its project's id ('{prefix}') "
+            "and must not contain '.', '..' or empty path segments or backslashes. "
+            "Use the key of a document uploaded to this project."
+        )
+    return None
 
 
 class DocumentConnector(KnowledgeConnectorBase):
@@ -51,12 +80,20 @@ class DocumentConnector(KnowledgeConnectorBase):
         self,
         canonical_url: str,
         external_id: Optional[str] = None,
+        *,
+        project_id: uuid.UUID | str | None = None,
     ) -> FetchedContent:
         """Download file from MinIO and extract text content.
 
         canonical_url is the MinIO object key for uploaded documents.
+        ``project_id`` is the source's project: the key must sit under it.
+        Checked here as well as on create so a row stored before the create
+        check existed is refused at sync, before storage is read.
         """
         storage_key = canonical_url
+        key_error = uploaded_document_key_error(storage_key, project_id)
+        if key_error is not None:
+            raise ConnectorFetchError(key_error)
         filename = storage_key.rsplit("/", 1)[-1] if "/" in storage_key else storage_key
 
         try:

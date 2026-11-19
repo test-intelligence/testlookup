@@ -9,6 +9,12 @@ either half: no behavioural test of the two branches (a QA_LEAD of project A
 administering project B happened, ``test_reviewer_quality_router.py:84``), and
 no ratchet that the 12 uses keep their ``require_project_access`` partner.
 
+On a WRITE the lower of the two roles decides (security audit 2026-11-18,
+``tests/regression/test_project_writes_need_the_role_in_that_project.py``): a
+project QA lead whose instance role is lower does not write as a lead, and an
+instance ADMIN is never held to a membership role. On a read the membership
+role decides, as before.
+
 The dependency is called directly, with a database fake that answers the
 membership lookup from the ids bound into the real statement, so a lookup
 that loses its project (or user) filter answers wrongly here. The ratchet
@@ -85,10 +91,10 @@ def _request(project_id: uuid.UUID, method: str = "PUT") -> Request:
     )
 
 
-async def _check(min_role: UserRole, user: User, memberships: dict, project=PROJECT):
+async def _check(min_role: UserRole, user: User, memberships: dict, project=PROJECT, method: str = "PUT"):
     db = _MembershipDb(memberships)
     result = await require_project_role(min_role)(
-        request=_request(project), db=db, current_user=user
+        request=_request(project, method), db=db, current_user=user
     )
     return result, db
 
@@ -106,15 +112,34 @@ async def test_a_viewer_member_is_refused_even_with_a_global_qa_lead_role():
     assert refused.value.detail == "Requires at least QA_LEAD role for this project"
 
 
-async def test_a_qa_lead_member_passes_even_with_a_global_viewer_role():
+async def test_a_qa_lead_member_reads_even_with_a_global_viewer_role():
     user = _user(UserRole.VIEWER)
 
     result, db = await _check(
-        UserRole.QA_LEAD, user, {(user.id, PROJECT): UserRole.QA_LEAD}
+        UserRole.QA_LEAD, user, {(user.id, PROJECT): UserRole.QA_LEAD}, method="GET"
     )
 
     assert result is user
     assert db.lookups == [(user.id, PROJECT)]
+
+
+async def test_a_qa_lead_member_with_a_global_viewer_role_does_not_write_as_a_lead():
+    """On a write the lower of the two roles decides."""
+    user = _user(UserRole.VIEWER)
+
+    with pytest.raises(HTTPException) as refused:
+        await _check(UserRole.QA_LEAD, user, {(user.id, PROJECT): UserRole.QA_LEAD})
+
+    assert refused.value.status_code == 403
+    assert refused.value.detail == "Requires at least QA_LEAD role for this project"
+
+
+async def test_an_instance_admin_is_not_held_to_a_membership_role():
+    user = _user(UserRole.ADMIN)
+
+    result, _db = await _check(UserRole.QA_LEAD, user, {(user.id, PROJECT): UserRole.VIEWER})
+
+    assert result is user
 
 
 async def test_a_membership_in_another_project_does_not_count():
@@ -137,16 +162,17 @@ async def test_a_membership_in_another_project_does_not_count():
         (UserRole.ADMIN, True),
     ],
 )
-async def test_the_membership_role_is_compared_against_the_floor(membership, allowed):
-    user = _user(UserRole.VIEWER)
+@pytest.mark.parametrize("global_role, method", [(UserRole.QA_LEAD, "PUT"), (UserRole.VIEWER, "GET")])
+async def test_the_membership_role_is_compared_against_the_floor(membership, allowed, global_role, method):
+    user = _user(global_role)
     memberships = {(user.id, PROJECT): membership}
 
     if allowed:
-        result, _db = await _check(UserRole.QA_ENGINEER, user, memberships)
+        result, _db = await _check(UserRole.QA_ENGINEER, user, memberships, method=method)
         assert result is user
     else:
         with pytest.raises(HTTPException) as refused:
-            await _check(UserRole.QA_ENGINEER, user, memberships)
+            await _check(UserRole.QA_ENGINEER, user, memberships, method=method)
         assert refused.value.status_code == 403
 
 

@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.deps import (
     _enforce_api_key_project_binding,
+    enforce_project_role_floor,
     get_current_active_user,
     require_role,
     resolve_project_scope,
@@ -265,6 +266,8 @@ def require_invocation_access():
         ).scalar_one_or_none()
         if member is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invocation not found")
+        # A write needs the route's role in this project too (core/deps.py).
+        await enforce_project_role_floor(db, current_user, project_id)
         return current_user
 
     return _check

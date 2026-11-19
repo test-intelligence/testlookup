@@ -801,10 +801,14 @@ async def set_run_release(
 async def recover_live_run_from_buffer(
     run_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
+    # QA_ENGINEER, the role every other write of test results needs
+    # (``ensure_ingest_role``): recovery queues a worker job that writes, or
+    # synthesises, the run's test rows. Membership alone let a VIEWER start it.
+    _role: User = Depends(require_role(UserRole.QA_ENGINEER)),
     current_user: User = Depends(require_run_access()),
 ):
     """Re-enqueue ``persist_live_session`` for a live-stream run whose
-    per-test rows never landed in PostgreSQL.
+    per-test rows never landed in PostgreSQL (QA_ENGINEER+).
 
     Looks up the run, checks that it's a ``live_stream`` run with zero
     ``test_cases`` rows, then fires the persistence task with the buffered

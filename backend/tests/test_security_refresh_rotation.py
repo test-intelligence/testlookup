@@ -113,6 +113,17 @@ def _redis(monkeypatch, fake_redis):
 
 
 @pytest.fixture(autouse=True)
+def _no_reuse_leeway(monkeypatch):
+    """These tests replay a token at once and mean it as theft: turn off the
+    short window in which a second browser tab may reuse a rotated token
+    (``JWT_REFRESH_REUSE_LEEWAY_SECONDS``; covered in
+    ``tests/regression/test_refresh_replay_and_sign_out_everywhere_end_access_tokens.py``)."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "JWT_REFRESH_REUSE_LEEWAY_SECONDS", 0)
+
+
+@pytest.fixture(autouse=True)
 def _session_issuer_clock(monkeypatch):
     """Access tokens read their ``iat`` from PostgreSQL's ``clock_timestamp()``; SQLite has none."""
     from app.services import auth_session_tokens

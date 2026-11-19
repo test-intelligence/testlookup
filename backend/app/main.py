@@ -111,6 +111,15 @@ async def lifespan(app: FastAPI):
             f"security issue(s): {'; '.join(critical_warnings)}"
         )
 
+    # Development (the default when APP_ENV is unset) must not accept the
+    # published placeholder secrets silently: name each one, and refuse to
+    # start on a placeholder JWT_SECRET_KEY unless the operator opted in.
+    for warning in settings.development_secret_warnings():
+        logger.warning("insecure_development_secret", message=warning)
+    development_refusal = settings.development_startup_refusal()
+    if development_refusal:
+        raise RuntimeError(development_refusal)
+
     if settings.APP_ENV == "production":
         capacity = await verify_server_connection_budget()
         logger.info("PostgreSQL fleet connection budget verified", **capacity)
@@ -249,8 +258,9 @@ _AUTH_RATE_LIMITS: dict[str, tuple[str, str]] = {
     # S4-audit S7: the refresh endpoint mints new access tokens from a refresh
     # token, so an unthrottled it is a refresh-token-grinding / token-mint
     # amplification vector. 30/min is well above any legitimate client's
-    # refresh cadence (access tokens live for minutes) while still blocking
-    # automated abuse.
+    # refresh cadence (an access token lives JWT_ACCESS_TOKEN_EXPIRE_MINUTES,
+    # 30 minutes by default, so a client refreshes about twice an hour) while
+    # still blocking automated abuse.
     "/api/v1/auth/refresh": (
         "30/minute",
         "Too many token refresh attempts. Try again in a minute.",
@@ -272,6 +282,22 @@ _AUTH_RATE_LIMITS: dict[str, tuple[str, str]] = {
     "/api/v1/auth/mfa/enroll/confirm": (
         "8/minute",
         "Too many enrollment attempts. Try again in a minute.",
+    ),
+    # ── Signed-in routes that check the password or a second factor ────────
+    # A stolen access token must not turn these into an unlimited password or
+    # 6-digit-code oracle. Wrong guesses also count toward the per-account
+    # lockout (see the handlers); this is the per-address ceiling.
+    "/api/v1/auth/change-password": (
+        "10/minute",
+        "Too many password change attempts. Try again in a minute.",
+    ),
+    "/api/v1/auth/mfa/disable": (
+        "10/minute",
+        "Too many attempts to turn off MFA. Try again in a minute.",
+    ),
+    "/api/v1/auth/mfa/recovery-codes": (
+        "10/minute",
+        "Too many recovery code requests. Try again in a minute.",
     ),
     # ── Invitations + password reset (W17b ADM-01/02) ──────────────────────
     # New unauthenticated routes: account creation and password replacement by

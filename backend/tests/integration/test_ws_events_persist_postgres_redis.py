@@ -184,7 +184,11 @@ async def test_another_projects_key_cannot_append_to_the_run(infra, monkeypatch)
     )
     with pytest.raises(HTTPException) as exc:
         await _post(infra, slug, {"type": "test_result", "test_name": "t", "status": "PASSED"})
-    assert exc.value.status_code == 403
+    # Run ids are per project for a project-bound key: the other key's event is
+    # looked up under ITS project, never under the run's. That project does not
+    # exist here, so the answer is 404; it used to be a 403 that also told the
+    # caller the run id was in use by someone else.
+    assert exc.value.status_code == 404
 
 
 async def test_an_event_after_the_run_completed_is_refused_not_lost(infra):

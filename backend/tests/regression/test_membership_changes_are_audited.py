@@ -147,6 +147,11 @@ async def test_a_revocation_records_what_was_revoked(monkeypatch):
     db.delete = AsyncMock()
     db.execute = AsyncMock(return_value=_Result(scalar=member))
     monkeypatch.setattr("app.core.deps.invalidate_membership_cache", AsyncMock())
+    # Removal also ends the member's live sessions in the project (Redis);
+    # that has its own test (test_live_session_token_revocation.py).
+    monkeypatch.setattr(
+        "app.services.stream_service.revoke_session_tokens_for_project_member", AsyncMock()
+    )
 
     project_id, user_id = uuid.uuid4(), uuid.uuid4()
 
@@ -184,6 +189,9 @@ async def test_the_audit_row_is_staged_before_the_commit(monkeypatch):
     db.commit = AsyncMock(side_effect=lambda: order.append("commit"))
     db.execute = AsyncMock(return_value=_Result(scalar=member))
     monkeypatch.setattr("app.core.deps.invalidate_membership_cache", AsyncMock())
+    monkeypatch.setattr(
+        "app.services.stream_service.revoke_session_tokens_for_project_member", AsyncMock()
+    )
 
     await users.remove_project_member(
         project_id=uuid.uuid4(), user_id=uuid.uuid4(),

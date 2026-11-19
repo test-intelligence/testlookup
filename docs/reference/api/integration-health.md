@@ -12,7 +12,7 @@ Probe history for a provider: the deployment-wide history, or -- with
 ``project_id`` (checked by ``resolve_project_scope`` first) -- that
 project's integration.
 
-Source: [backend/app/routers/integration_health.py:323](../../../backend/app/routers/integration_health.py#L323).
+Source: [backend/app/routers/integration_health.py:348](../../../backend/app/routers/integration_health.py#L348).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -125,15 +125,17 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 Trigger Probe
 
-Trigger an on-demand health probe for all or a specific provider (QA_LEAD+).
+Trigger an on-demand health probe: one project's integration (QA_LEAD+)
+or the deployment-wide integrations (ADMIN).
 
 ``project_id`` probes that project's GitHub or GitLab integration
 (``provider=github|gitlab``); the id passes ``resolve_project_scope`` before
-anything is read. Without a provider and a project: every deployment-wide
-probe plus every per-project integration the reader may see. The request
-session's connection is handed back before any probe makes an HTTP call.
+anything is read. Without a project the probe is deployment-wide and needs
+ADMIN: one provider, or (no provider) every deployment-wide probe plus
+every per-project integration. The request session's connection is handed
+back before any probe makes an HTTP call.
 
-Source: [backend/app/routers/integration_health.py:236](../../../backend/app/routers/integration_health.py#L236).
+Source: [backend/app/routers/integration_health.py:249](../../../backend/app/routers/integration_health.py#L249).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -146,6 +148,7 @@ provider: Optional[str]=None, project_id: Optional[uuid.UUID]=None, current_user
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
+HTTPException(status_code=403, detail=PROBE_NEEDS_ADMIN)
 HTTPException(status_code=404, detail=f'This project has no enabled {label} integration.')
 HTTPException(status_code=422, detail='A per-project probe needs provider=github or provider=gitlab.')
 HTTPException(status_code=422, detail='GitLab is probed per project: pass project_id.')
@@ -258,7 +261,7 @@ per-project GitHub / GitLab integration of the reader's projects (an admin:
 every project), then one row per paused outbound webhook in them. Five
 reads for ``all``, none per row.
 
-Source: [backend/app/routers/integration_health.py:188](../../../backend/app/routers/integration_health.py#L188).
+Source: [backend/app/routers/integration_health.py:201](../../../backend/app/routers/integration_health.py#L201).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -361,7 +364,7 @@ credentials are wrong".
 The trend is deployment-wide (W10 INT-04): per-project probes
 (``scope_key <> ''``) stay out of both statements.
 
-Source: [backend/app/routers/integration_health.py:363](../../../backend/app/routers/integration_health.py#L363).
+Source: [backend/app/routers/integration_health.py:388](../../../backend/app/routers/integration_health.py#L388).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

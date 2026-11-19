@@ -281,7 +281,10 @@ async def test_an_unknown_provider_names_gitlab_among_the_supported(world):
 
 @pytest.mark.asyncio
 async def test_probe_all_adds_the_readers_projects(world, monkeypatch):
-    world.as_lead()
+    """Probe-all dials the deployment-wide integrations, so it needs ADMIN
+    (it was QA_LEAD); an admin's accessible set is every project (``None``)."""
+    world.as_admin()
+    world.user = SimpleNamespace(id=uuid.uuid4(), role=UserRole.ADMIN)
     run_all = AsyncMock(return_value=[probes.ProbeResult("jira", "healthy")])
     run_project = AsyncMock(return_value=[])
     monkeypatch.setattr(probes, "run_all_probes", run_all)
@@ -290,7 +293,24 @@ async def test_probe_all_adds_the_readers_projects(world, monkeypatch):
 
     await router.trigger_probe(current_user=world.user, db=world)
 
-    run_project.assert_awaited_once_with(project_ids={world.mine}, db=world)
+    run_project.assert_awaited_once_with(project_ids=None, db=world)
+
+
+@pytest.mark.asyncio
+async def test_probe_all_is_refused_for_a_qa_lead_before_any_probe(world, monkeypatch):
+    world.as_lead()
+    run_all = AsyncMock(return_value=[])
+    run_project = AsyncMock(return_value=[])
+    monkeypatch.setattr(probes, "run_all_probes", run_all)
+    monkeypatch.setattr(probes, "run_project_probes", run_project)
+
+    with pytest.raises(HTTPException) as exc:
+        await router.trigger_probe(current_user=world.user, db=world)
+
+    assert (exc.value.status_code, exc.value.detail) == (403, router.PROBE_NEEDS_ADMIN)
+    assert world.statements == []
+    run_all.assert_not_awaited()
+    run_project.assert_not_awaited()
 
 
 @pytest.mark.asyncio

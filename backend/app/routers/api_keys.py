@@ -405,8 +405,15 @@ async def revoke_api_key(
     # so drop every revoked key's entry now rather than waiting for the TTL.
     # After the commit: dropped before it, a request in between re-cached the
     # key from a row that was still active.
-    for key_hash in (api_key.key_hash, *(child.key_hash for child in descendants)):
-        await forget_streaming_key_hash(key_hash)
+    #
+    # A live session a revoked key opened is ended the same way: its session
+    # token is the only credential the batch route checks, so it is deleted
+    # here (best effort; the 24-hour session age limit is the backstop).
+    from app.services import stream_service  # noqa: PLC0415
+
+    for revoked in (api_key, *descendants):
+        await forget_streaming_key_hash(revoked.key_hash)
+        await stream_service.revoke_session_tokens_for_api_key(revoked.id)
     return None
 
 

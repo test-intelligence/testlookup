@@ -23,8 +23,15 @@ import asyncio
 import uuid
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
+
 from app.services import release_phase_gate_service as gate
 from app.services.release_rollup_service import ReleaseRollup, STATUSES
+
+# The phase is loaded together with its release, so the release id must be a
+# real UUID: a value that is not one cannot own a phase.
+REL = str(uuid.uuid4())
 
 
 def _rollup(**by_test):
@@ -85,7 +92,7 @@ class TestAnEmptyPhaseIsNeverAPass:
         phase = _phase()
 
         result = asyncio.run(
-            gate.evaluate_phase(_Session(phase), "rel", phase.id, record=False)
+            gate.evaluate_phase(_Session(phase), REL, phase.id, record=False)
         )
 
         # The whole point. "No failures" off zero runs is an approval for work
@@ -98,7 +105,7 @@ class TestAnEmptyPhaseIsNeverAPass:
         phase = _phase()
 
         result = asyncio.run(
-            gate.evaluate_phase(_Session(phase), "rel", phase.id, record=False)
+            gate.evaluate_phase(_Session(phase), REL, phase.id, record=False)
         )
 
         # 40 tests, none run. A gate keyed on "nothing failed" says GO.
@@ -110,22 +117,27 @@ class TestAnEmptyPhaseIsNeverAPass:
         phase = _phase()
 
         result = asyncio.run(
-            gate.evaluate_phase(_Session(phase), "rel", phase.id, record=False)
+            gate.evaluate_phase(_Session(phase), REL, phase.id, record=False)
         )
 
         assert result["verdict"] == "NOT_EVALUATED"
         assert result["scorecard"]["measured"] is False
 
-    def test_a_missing_phase_is_not_evaluated_rather_than_passed(self, monkeypatch):
+    def test_a_missing_phase_is_refused_rather_than_passed(self, monkeypatch):
         _stub(monkeypatch, _rollup())
 
-        result = asyncio.run(
-            gate.evaluate_phase(_Session(None), "rel", uuid.uuid4(), record=False)
-        )
+        # An id that resolves to nothing must not fall through to a GO. It used
+        # to answer 200 NOT_EVALUATED "no such phase"; it is now 404, the same
+        # answer a phase of another release gets, so the route does not tell a
+        # caller which phase ids exist
+        # (tests/regression/test_release_phase_belongs_to_release.py).
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                gate.evaluate_phase(_Session(None), REL, uuid.uuid4(), record=False)
+            )
 
-        # An id that resolves to nothing must not fall through to a GO.
-        assert result["verdict"] == "NOT_EVALUATED"
-        assert result["recorded"] is False
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Phase not found"
 
 
 class TestAPopulatedPhaseDecidesNormally:
@@ -134,7 +146,7 @@ class TestAPopulatedPhaseDecidesNormally:
         phase = _phase()
 
         result = asyncio.run(
-            gate.evaluate_phase(_Session(phase), "rel", phase.id, record=False)
+            gate.evaluate_phase(_Session(phase), REL, phase.id, record=False)
         )
 
         assert result["verdict"] == "GO"
@@ -145,7 +157,7 @@ class TestAPopulatedPhaseDecidesNormally:
         phase = _phase()
 
         result = asyncio.run(
-            gate.evaluate_phase(_Session(phase), "rel", phase.id, record=False)
+            gate.evaluate_phase(_Session(phase), REL, phase.id, record=False)
         )
 
         assert result["verdict"] == "NO_GO"
@@ -167,7 +179,7 @@ class TestAPopulatedPhaseDecidesNormally:
         monkeypatch.setattr(gate.decisions, "record_decision", _record)
 
         result = asyncio.run(
-            gate.evaluate_phase(_Session(phase), "rel", phase.id, record=True)
+            gate.evaluate_phase(_Session(phase), REL, phase.id, record=True)
         )
 
         assert result["verdict"] == "NOT_EVALUATED"
@@ -190,7 +202,7 @@ class TestThePhasePolicyLayersOverTheProject:
         phase = _phase(exit_criteria={"thresholds": {"go": 99}})
 
         result = asyncio.run(
-            gate.evaluate_phase(_Session(phase), "rel", phase.id, record=False)
+            gate.evaluate_phase(_Session(phase), REL, phase.id, record=False)
         )
 
         # Before S7b this replaced the project document wholesale, so a phase
@@ -214,7 +226,7 @@ class TestThePhasePolicyLayersOverTheProject:
         phase = _phase(exit_criteria=None)
 
         result = asyncio.run(
-            gate.evaluate_phase(_Session(phase), "rel", phase.id, record=False)
+            gate.evaluate_phase(_Session(phase), REL, phase.id, record=False)
         )
 
         assert result["policy"]["effective_level"] == "project"
@@ -286,7 +298,7 @@ class TestReadingIsNotRecording:
         monkeypatch.setattr(gate.decisions, "record_decision", _must_not_record)
         phases = [_phase("QA", order=0), _phase("UAT", order=1)]
 
-        results = asyncio.run(gate.evaluate_all_phases(_Session(phases[0], phases), "rel"))
+        results = asyncio.run(gate.evaluate_all_phases(_Session(phases[0], phases), REL))
 
         # Appending a row per phase per look would bury the real decisions in
         # noise, and the history is the point of that table.

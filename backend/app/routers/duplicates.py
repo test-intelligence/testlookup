@@ -195,8 +195,12 @@ async def run_duplicate_detection(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
     _: User = Depends(require_project_access()),
+    # QA_ENGINEER, like dismiss and merge below: the sweep writes candidate
+    # rows into the review queue and spends compute, and membership alone let
+    # a VIEWER run it in a loop.
+    _reviewer: User = Depends(require_role(UserRole.QA_ENGINEER)),
 ):
-    """Run a tiered detection sweep over the project's authored cases.
+    """Run a tiered detection sweep over the project's authored cases (QA_ENGINEER+).
 
     The service stages candidate rows + lazily backfills ``dup_fingerprint``;
     this router owns the commit. ``semantic_used`` returned by the service is an

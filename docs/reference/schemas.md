@@ -3514,6 +3514,7 @@ These are the full generated JSON Schema definitions, including required fields,
     "username": {
       "maxLength": 50,
       "minLength": 3,
+      "pattern": "^[\\w.-]+$",
       "title": "Username",
       "type": "string"
     }
@@ -3687,6 +3688,7 @@ These are the full generated JSON Schema definitions, including required fields,
     "username": {
       "maxLength": 50,
       "minLength": 3,
+      "pattern": "^[\\w.-]+$",
       "title": "Username",
       "type": "string"
     }
@@ -53467,6 +53469,15 @@ These are the full generated JSON Schema definitions, including required fields,
     "status": {
       "anyOf": [
         {
+          "enum": [
+            "draft",
+            "review",
+            "approved",
+            "active",
+            "suspended",
+            "closed",
+            "archived"
+          ],
           "type": "string"
         },
         {
@@ -54870,6 +54881,7 @@ These are the full generated JSON Schema definitions, including required fields,
           "type": "null"
         }
       ],
+      "pattern": "^[\\w.-]+$",
       "title": "Username"
     }
   },
@@ -55015,6 +55027,7 @@ These are the full generated JSON Schema definitions, including required fields,
     "username": {
       "maxLength": 50,
       "minLength": 3,
+      "pattern": "^[\\w.-]+$",
       "title": "Username",
       "type": "string"
     }

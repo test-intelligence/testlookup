@@ -47,9 +47,10 @@ async def test_on_demand_probe_uses_resolved_runtime_config(monkeypatch, provide
         resolve,
     )
 
+    # A deployment-wide probe (no project named) needs the ADMIN role.
     result = await integration_health.trigger_probe(
         provider=provider,
-        current_user=SimpleNamespace(),
+        current_user=SimpleNamespace(role="ADMIN"),
         db=db,
     )
 

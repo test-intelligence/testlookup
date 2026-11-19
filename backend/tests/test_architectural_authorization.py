@@ -61,6 +61,13 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
     "review_id",
     # E1.2: an agent invocation is reached by id alone, like a review.
     "invocation_id",
+    # A release phase. Only ever nested under ``/releases/{release_id}``
+    # (require_release_access runs first), and every service loads it with
+    # ``release_service.get_phase_or_404`` WHERE id AND release_id, so a phase
+    # of another release or project is the unknown-id 404 (security audit
+    # 2026-11-18: gate evaluate and run links loaded it by id alone). Listed so
+    # a future route reaching it by id ALONE needs a guard.
+    "phase_id",
     "key_id",
     "rule_id",
     "source_id",
@@ -128,9 +135,11 @@ UNGUARDED_SCOPED_PARAMS: frozenset[str] = frozenset({
 # Grouped by router module — fix one module at a time.
 KNOWN_EXEMPT: frozenset[tuple[str, str]] = frozenset({
     # ── stream SSE — token arrives as query param, guard runs inline ────
-    # The endpoint decodes the token, loads the user, and checks
-    # ProjectMember directly. The architectural ratchet can't see that
-    # inline check, so this entry stays until the SSE auth flow is
+    # The token is checked by ``app.core.session_tokens.authenticate_access_token``
+    # (the same checks ``get_current_user`` applies; pinned by
+    # ``tests/regression/test_live_stream_token_checks.py``) and the endpoint
+    # then checks ProjectMember directly. The architectural ratchet can't see
+    # an inline check, so this entry stays until the SSE auth flow is
     # refactored onto a proper dependency.
     ("GET",    "/api/v1/stream/sse/{project_id}"),
     # ── stream session GET/DELETE — dual-auth (JWT or X-API-Key) ────────
@@ -1467,9 +1476,11 @@ GLOBAL_PATH_PARAMS: dict[str, str] = {
     ),
     # W16 AGT-09: GET /ai-eval/runs/{eval_run_id}[/items].
     "eval_run_id": (
-        "an instance-level AI evaluation run over a GLOBAL dataset (ai_eval_runs / "
-        "ai_eval_datasets have no tenant owner), role-gated (QA_LEAD reads the run, ADMIN "
-        "its items); its project_id names only the budget and release policy a replay used"
+        "an AI evaluation run over a GLOBAL dataset (ai_eval_datasets has no tenant owner). "
+        "Role-gated (QA_LEAD reads the run, ADMIN its items), and a run that carries a "
+        "project_id (a candidate replay) is readable only by callers who can access that "
+        "project: get_eval_run checks get_accessible_project_ids and answers 404 otherwise; "
+        "a run with no project is instance-level"
     ),
     # W20 ADM-09: /scim/v2/Groups/{group_id}. A SCIM group the IdP pushes is instance-wide (scim_groups has no
     # project owner); the routes authenticate with the SCIM bearer token (verify_scim_bearer), not a user session.
@@ -1496,7 +1507,7 @@ UNCLASSIFIED_PATH_PARAMS_BACKLOG: frozenset[str] = frozenset({
     "action_id", "analysis_id", "attempt_id", "candidate_id", "cluster_id",
     "config_id", "dataset_id", "defect_id", "delivery_id", "entity_id",
     "event_id", "investigation_id", "item_id", "job_id", "log_id", "pack_id",
-    "phase_id", "pipeline_id", "plan_id", "policy_id", "pref_id", "report_id",
+    "pipeline_id", "plan_id", "policy_id", "pref_id", "report_id",
     "request_id", "strategy_id", "sub_id", "subscription_id", "suite_id",
     "task_id", "test_case_id", "test_id", "test_run_id", "token_id", "user_id",
     "view_id",
@@ -1571,7 +1582,7 @@ def test_every_path_id_is_classified() -> None:
 
 
 def test_the_unclassified_path_id_backlog_only_shrinks() -> None:
-    assert len(UNCLASSIFIED_PATH_PARAMS_BACKLOG) <= 34, (
+    assert len(UNCLASSIFIED_PATH_PARAMS_BACKLOG) <= 33, (
         "UNCLASSIFIED_PATH_PARAMS_BACKLOG grew. Classify the new id instead."
     )
 

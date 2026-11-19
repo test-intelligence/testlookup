@@ -68,7 +68,6 @@ REVIEWED_CLAMPS: dict[str, str] = {
     "GET /api/v1/activity/mine limit": "routers/activity.py my_activity_filters: 1..MINE_MAX_LIMIT else 422",
     "GET /api/v1/projects/{project_id}/llm-usage/history limit": "routers/llm_cost_budget.py: max(1, min(limit, 60))",
     "GET /api/v1/quarantine limit": "routers/flaky_quarantine.py: min(max(1, limit), 500)",
-    "GET /api/v1/webhooks/{subscription_id}/deliveries limit": "services/webhook_service.py list_deliveries: min(max(1, limit), 200)",
     "GET /api/v1/projects/{project_id}/investigations limit": "routers/agent_investigations.py: max(1, min(limit, 100))",
     "GET /api/v1/projects/{project_id}/agent-runs limit": "routers/agent_investigations.py: max(1, min(limit, 200))",
     "GET /api/v1/projects/{project_id}/fixer/attempts limit": "routers/fixer.py: max(1, min(limit, 100))",
@@ -150,6 +149,7 @@ MAXIMA: dict[str, int] = {
     "GET /api/v1/test-management/traceability/gaps size": 100,
     "GET /api/v1/users page_size": 200,
     "GET /api/v1/users/{user_id}/access-audit limit": 200,
+    "GET /api/v1/webhooks/{subscription_id}/deliveries limit": 200,
     "POST /api/v1/projects/{project_id}/attribution-rules/preview limit": 200,
 }
 

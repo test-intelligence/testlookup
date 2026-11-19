@@ -130,6 +130,8 @@ REVIEWED_OPT_INS: dict[tuple[str, str], tuple[str, str]] = {
         "get_accessible_project_ids", "the list is filtered to the accessible set"),
     ("app/routers/release_readiness.py", "override_release_decision"): (
         "require_run_access", "path {run_id} resolved to its project"),
+    ("app/routers/reports.py", "create_share_link_endpoint"): (
+        "require_run_access", "path {run_id} resolved to its project; the link is for that run only"),
     ("app/routers/releases.py", "create_release"): (
         "resolve_project_scope", "called on the body project_id"),
     ("app/routers/releases.py", "sync_releases_from_external"): (
@@ -211,6 +213,8 @@ REVIEWED_OPT_INS: dict[tuple[str, str], tuple[str, str]] = {
     ("app/routers/webhooks_outbound.py", "test_webhook_subscription"): (
         "_load_and_scope", "the subscription's own project"),
     ("app/routers/webhooks_outbound.py", "replay_webhook_delivery"): (
+        "_load_and_scope", "the subscription's own project"),
+    ("app/routers/webhooks_outbound.py", "list_webhook_deliveries"): (
         "_load_and_scope", "the subscription's own project"),
     ("app/routers/suites.py", "delete_suite"): (
         "_enforce_project_access", "called on the suite's own project"),

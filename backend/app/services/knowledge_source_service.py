@@ -182,6 +182,16 @@ async def create_source(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # For an uploaded document canonical_url is the object key in the shared
+    # knowledge bucket: it must sit under this project's prefix. The connector
+    # repeats the check at fetch time for rows stored before this one existed.
+    if source_type == KnowledgeSourceType.UPLOADED_DOC.value:
+        from app.services.connectors.document_connector import uploaded_document_key_error
+
+        key_error = uploaded_document_key_error(canonical_url, project_id)
+        if key_error is not None:
+            raise HTTPException(status_code=422, detail=key_error)
+
     # RAG-3: Enforce domain allowlist for external URLs
     if source_type == KnowledgeSourceType.EXTERNAL_URL.value:
         allowlist = await get_domain_allowlist(db)

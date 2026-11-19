@@ -314,6 +314,15 @@ async def trigger_reindex(
     # A named project is already confined by resolve_project_scope below.
     bound_project_id = _api_key_bound_project(current_user)
 
+    # ``?project_id=`` arrives as "" and not as None. It names no project, so
+    # it is the instance-wide variant and takes the ADMIN-only branch. Left as
+    # "", it took the QA_LEAD branch, resolve_project_scope checked nothing for
+    # it, and the indexers read "" as "every project".
+    project_id = project_id or None
+    # What the task receives: None on the ADMIN path, otherwise the canonical
+    # id of the project the caller was checked against. Never the raw value.
+    task_project_id: str | None = None
+
     if project_id is None:
         if not is_admin or bound_project_id is not None:
             raise HTTPException(
@@ -330,10 +339,18 @@ async def trigger_reindex(
                 detail="Triggering a reindex requires QA_LEAD or higher",
             )
         # Verifies the *provided* project, raising 403 for a non-member.
-        await resolve_project_scope(db, current_user, project_id)
+        verified_project_id, _ = await resolve_project_scope(db, current_user, project_id)
+        if verified_project_id is None:
+            # Not reachable while resolve_project_scope parses every non-empty
+            # value. Kept so a change there can never turn into "all projects".
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid project ID",
+            )
+        task_project_id = str(verified_project_id)
 
     from app.worker.tasks import reindex_search
-    task = reindex_search.apply_async(kwargs={"project_id": project_id, "full": full})
+    task = reindex_search.apply_async(kwargs={"project_id": task_project_id, "full": full})
     return {"task_id": task.id, "status": "queued", "mode": "full" if full else "incremental"}
 
 

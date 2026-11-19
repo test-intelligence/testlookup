@@ -149,7 +149,9 @@ async def load_approver(
 
     Mirrors the PATCH's dependencies: an active, non-synthetic user whose
     instance role is at least ``required_role`` (``require_role``) and who is
-    an instance ADMIN or a member of ``project_id`` (``require_project_access``).
+    an instance ADMIN or a member of ``project_id`` holding at least
+    ``required_role`` in it (``require_project_access``; on a write the lower
+    of the two roles decides, see ``core/deps.py``).
     The user is LOADED BY ID — no request principal, no API-key binding.
     """
     user_uuid = _as_uuid(user_id)
@@ -171,15 +173,21 @@ async def load_approver(
     instance_admin = role == UserRole.ADMIN
     if instance_admin:
         return approver
-    member = (
+    member_role = (
         await db.execute(
-            select(ProjectMember.id).where(
+            select(ProjectMember.role).where(
                 ProjectMember.user_id == user_uuid,
                 ProjectMember.project_id == project_uuid,
             )
         )
     ).scalar_one_or_none()
-    if member is None:
+    if member_role is None:
+        raise _refuse_approver()
+    try:
+        member_rank = _ROLE_ORDER.index(_normalize_user_role(member_role))
+    except ValueError:
+        raise _refuse_approver() from None
+    if member_rank < _ROLE_ORDER.index(required_role):
         raise _refuse_approver()
     return approver
 

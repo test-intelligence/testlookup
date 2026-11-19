@@ -28,8 +28,8 @@ Fail-CLOSED semantics (changed 2026-08-03)
 This module used to skip the revocation check when Redis was unavailable.
 That made revocation advisory: during a Redis outage a token the user had
 explicitly logged out — or that a password change was meant to kill — kept
-working, for up to ``JWT_ACCESS_TOKEN_EXPIRE_MINUTES`` (default **720**, i.e.
-twelve hours). A security control that silently disables itself under a
+working, for up to ``JWT_ACCESS_TOKEN_EXPIRE_MINUTES`` (then **720**, i.e. twelve
+hours; the default is 30 minutes now). A security control that silently disables itself under a
 condition an attacker can sometimes cause is not a control.
 
 The read path now raises ``RevocationUnavailable`` when the denylist cannot

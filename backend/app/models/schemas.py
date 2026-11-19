@@ -168,11 +168,38 @@ class TimestampMixin(BaseModel):
 MAX_PASSWORD_LENGTH = 128
 
 
+#: What a NEW username may hold: letters, digits, ".", "_" and "-". No "@", so
+#: a username can never equal somebody's e-mail address. Sign-in looks a name
+#: up as "username or e-mail", and a username equal to another user's e-mail
+#: made that user's sign-in fail. Applied where a person chooses a username
+#: (register, invitation accept, admin create and rename). NOT applied to SCIM,
+#: where the identity provider often sends the e-mail as ``userName``, nor to
+#: rows that already exist: those keep signing in.
+USERNAME_PATTERN = r"^[\w.-]+$"
+_USERNAME_RE = re.compile(USERNAME_PATTERN)
+USERNAME_RULE_DETAIL = (
+    "A username may contain only letters, digits, '.', '_' and '-'. "
+    "Choose a name without '@', spaces or other symbols (an e-mail address cannot be a username)."
+)
+
+
+def check_new_username(value: Optional[str]) -> Optional[str]:
+    """Refuse a new username that holds anything but letters, digits, ``.``, ``_``, ``-``."""
+    if value is not None and not _USERNAME_RE.fullmatch(value):
+        raise PydanticCustomError("username_characters", USERNAME_RULE_DETAIL)
+    return value
+
+
 class UserCreate(BaseModel):
     email: EmailStr
-    username: str = Field(..., min_length=3, max_length=50)
+    username: str = Field(..., min_length=3, max_length=50, json_schema_extra={"pattern": USERNAME_PATTERN})
     full_name: Optional[str] = Field(None, max_length=255)
     password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
+
+    @field_validator("username")
+    @classmethod
+    def _username_characters(cls, value):
+        return check_new_username(value)
 
 
 class UserResponse(TimestampMixin):
@@ -4740,10 +4767,22 @@ class TestStrategyCreate(BaseModel):
     test_approach: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
 
 
+#: The statuses a test strategy may hold: the six the Strategy page's menu
+#: offers plus ``archived`` from the model. ``status`` was a free string, so any
+#: text up to the column's 30 characters was stored and shown as the sign-off.
+TestStrategyStatusLiteral = Literal[
+    "draft", "review", "approved", "active", "suspended", "closed", "archived"
+]
+TEST_STRATEGY_STATUSES: tuple[str, ...] = (
+    "draft", "review", "approved", "active", "suspended", "closed", "archived"
+)
+
+
 class TestStrategyUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=500)
     version_label: Optional[str] = Field(None, max_length=50)
-    status: Optional[str] = None
+    # Changing it needs QA_LEAD; the strategy PUT route enforces that.
+    status: Optional[TestStrategyStatusLiteral] = None
     objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     scope: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     out_of_scope: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
@@ -6603,10 +6642,19 @@ class UpdateUserStatusRequest(BaseModel):
 class UpdateUserProfileRequest(BaseModel):
     """Editable user attributes. Only non-None fields are applied."""
     email: Optional[EmailStr] = None
-    username: Optional[str] = Field(None, min_length=3, max_length=50)
+    # The character rule applies to a rename. Leave ``username`` out to keep an
+    # existing name that predates the rule (for example one containing "@").
+    username: Optional[str] = Field(
+        None, min_length=3, max_length=50, json_schema_extra={"pattern": USERNAME_PATTERN}
+    )
     full_name: Optional[str] = None
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
+
+    @field_validator("username")
+    @classmethod
+    def _username_characters(cls, value):
+        return check_new_username(value)
 
 
 class InviteProjectMembership(BaseModel):
@@ -6670,9 +6718,14 @@ class InvitationPreviewResponse(BaseModel):
 
 class AcceptInvitationRequest(BaseModel):
     token: str = Field(..., min_length=1, max_length=256)
-    username: str = Field(..., min_length=3, max_length=50)
+    username: str = Field(..., min_length=3, max_length=50, json_schema_extra={"pattern": USERNAME_PATTERN})
     full_name: Optional[str] = Field(None, max_length=255)
     password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
+
+    @field_validator("username")
+    @classmethod
+    def _username_characters(cls, value):
+        return check_new_username(value)
 
 
 class ResetLinkRequest(BaseModel):
@@ -6693,9 +6746,14 @@ class PasswordResetLinkResponse(BaseModel):
 
 class AdminCreateUserRequest(BaseModel):
     email: EmailStr
-    username: str = Field(..., min_length=3, max_length=50)
+    username: str = Field(..., min_length=3, max_length=50, json_schema_extra={"pattern": USERNAME_PATTERN})
     full_name: Optional[str] = None
     role: UserRole = UserRole.QA_ENGINEER
+
+    @field_validator("username")
+    @classmethod
+    def _username_characters(cls, value):
+        return check_new_username(value)
 
 
 class AdminCreateUserResponse(BaseModel):

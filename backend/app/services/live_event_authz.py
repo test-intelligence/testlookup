@@ -118,8 +118,28 @@ async def forget_streaming_key_hash(key_hash: str) -> None:
         logger.warning("live_key_cache_invalidate_failed error=%r", exc)
 
 
-def run_project_key(run_id: str) -> str:
-    return f"testlookup:live:run-project:{run_id}"
+#: Deployment-wide binding: the legacy shared-secret path, which has no
+#: server-derived project, and every binding written before bindings were
+#: scoped to the project.
+RUN_PROJECT_PREFIX = "testlookup:live:run-project:"
+
+#: Project-scoped binding, written on the project-key path. A different prefix
+#: (not a longer form of the one above) because ``run_id`` is caller-chosen and
+#: may contain colons: a deployment-wide key built from a crafted run id can
+#: then never equal another project's scoped key.
+PROJECT_RUN_PREFIX = "testlookup:live:project-run:"
+
+
+def run_project_key(run_id: str, project_id: Optional[str] = None) -> str:
+    """Redis key binding ``run_id`` to a project.
+
+    With ``project_id`` (the project of the API key that sent the event) the
+    key is that project's own, so two projects can use the same run id without
+    seeing or blocking each other. Without it the key is deployment-wide.
+    """
+    if project_id:
+        return f"{PROJECT_RUN_PREFIX}{project_id}:{run_id}"
+    return f"{RUN_PROJECT_PREFIX}{run_id}"
 
 
 #: SET NX / GET is two round-trips; a key can vanish between them.
@@ -136,8 +156,17 @@ class RunProjectBindingUnavailable(RuntimeError):
     """
 
 
-async def remember_run_project(run_id: str, project_id: str) -> Optional[str]:
+async def remember_run_project(
+    run_id: str, project_id: str, *, project_scoped: bool = False
+) -> Optional[str]:
     """Bind ``run_id`` to the project opening it; return the effective owner.
+
+    ``project_scoped=True`` is for a caller whose project the SERVER derived
+    (a project-bound API key). The binding then lives under that project's own
+    key, so the answer is always the caller's project: another project using
+    the same run id is neither refused nor revealed. Leave it False only for
+    the legacy shared-secret path, where the project comes from the request
+    body and the first ``run_start`` in the whole deployment wins.
 
     Uses SET NX so the FIRST ``run_start`` wins: a later one naming a different
     project cannot steal an established run. The return value is the project
@@ -157,6 +186,7 @@ async def remember_run_project(run_id: str, project_id: str) -> Optional[str]:
         from app.db.redis_client import get_redis
 
         redis = get_redis()
+        key = run_project_key(run_id, str(project_id) if project_scoped else None)
         incumbent = None
         # Two round-trips are not atomic: the key can expire or be evicted
         # between the SET and the GET. Retrying is the only answer that is
@@ -165,14 +195,14 @@ async def remember_run_project(run_id: str, project_id: str) -> Optional[str]:
         # the state the 503 below exists to prevent.
         for _attempt in range(_BIND_ATTEMPTS):
             won = await redis.set(
-                run_project_key(run_id),
+                key,
                 str(project_id),
                 ex=RUN_PROJECT_TTL_SECONDS,
                 nx=True,
             )
             if won:
                 return str(project_id)
-            incumbent = await redis.get(run_project_key(run_id))
+            incumbent = await redis.get(key)
             if incumbent is not None:
                 break
     except Exception as exc:  # noqa: BLE001
@@ -198,19 +228,33 @@ async def remember_run_project(run_id: str, project_id: str) -> Optional[str]:
     return str(incumbent)
 
 
-async def resolve_run_project(run_id: str) -> Optional[str]:
+async def resolve_run_project(
+    run_id: str, *, project_id: Optional[str] = None
+) -> Optional[str]:
     """Return the project bound to ``run_id``, or None when unknown.
 
     None means "no opinion" — either the run predates the binding or Redis
     could not answer. Callers must treat it as "cannot verify", not as
     "verified different".
+
+    ``project_id`` is the project of the API key that sent the event. That
+    project's own binding is read first. Only when it has none is the
+    deployment-wide key read: it holds runs started on the legacy
+    shared-secret path and runs bound before bindings were project-scoped
+    (those expire within ``RUN_PROJECT_TTL_SECONDS`` of the upgrade), and
+    another project's event for such a run must still be refused.
     """
     if not run_id:
         return None
     try:
         from app.db.redis_client import get_redis
 
-        value = await get_redis().get(run_project_key(run_id))
+        redis = get_redis()
+        value = None
+        if project_id:
+            value = await redis.get(run_project_key(run_id, str(project_id)))
+        if value is None:
+            value = await redis.get(run_project_key(run_id))
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "live_run_project_lookup_failed run_id=%s error=%r", run_id, exc

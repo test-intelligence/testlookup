@@ -10,7 +10,7 @@ List Webhook Subscriptions
 
 
 
-Source: [backend/app/routers/webhooks_outbound.py:70](../../../backend/app/routers/webhooks_outbound.py#L70).
+Source: [backend/app/routers/webhooks_outbound.py:129](../../../backend/app/routers/webhooks_outbound.py#L129).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -106,7 +106,7 @@ Create a new webhook subscription. QA_LEAD+.
 isolation check can fire before the body is validated against the
 subscription table.
 
-Source: [backend/app/routers/webhooks_outbound.py:83](../../../backend/app/routers/webhooks_outbound.py#L83).
+Source: [backend/app/routers/webhooks_outbound.py:144](../../../backend/app/routers/webhooks_outbound.py#L144).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -198,7 +198,7 @@ List Webhook Events
 Return the supported event types — shown in the Settings UI so
 users can pick which events to subscribe to.
 
-Source: [backend/app/routers/webhooks_outbound.py:55](../../../backend/app/routers/webhooks_outbound.py#L55).
+Source: [backend/app/routers/webhooks_outbound.py:114](../../../backend/app/routers/webhooks_outbound.py#L114).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_user_or_api_key`, `get_db`.
 
@@ -269,7 +269,7 @@ Delete Webhook Subscription
 
 
 
-Source: [backend/app/routers/webhooks_outbound.py:159](../../../backend/app/routers/webhooks_outbound.py#L159).
+Source: [backend/app/routers/webhooks_outbound.py:221](../../../backend/app/routers/webhooks_outbound.py#L221).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -343,7 +343,7 @@ Get Webhook Subscription
 
 
 
-Source: [backend/app/routers/webhooks_outbound.py:128](../../../backend/app/routers/webhooks_outbound.py#L128).
+Source: [backend/app/routers/webhooks_outbound.py:189](../../../backend/app/routers/webhooks_outbound.py#L189).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -424,7 +424,7 @@ Update Webhook Subscription
 
 
 
-Source: [backend/app/routers/webhooks_outbound.py:137](../../../backend/app/routers/webhooks_outbound.py#L137).
+Source: [backend/app/routers/webhooks_outbound.py:199](../../../backend/app/routers/webhooks_outbound.py#L199).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -513,16 +513,17 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 List Webhook Deliveries
 
+Delivery history for one subscription. QA_LEAD+: each row carries the
+event payload and the start of the receiver's response.
 
+Source: [backend/app/routers/webhooks_outbound.py:282](../../../backend/app/routers/webhooks_outbound.py#L282).
 
-Source: [backend/app/routers/webhooks_outbound.py:220](../../../backend/app/routers/webhooks_outbound.py#L220).
-
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-subscription_id: uuid.UUID, limit: int=50, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+subscription_id: uuid.UUID, limit: int=Query(50, ge=1, le=200), db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD, allow_project_key=True))
 ```
 
 ### Declared wire contract
@@ -549,6 +550,8 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       "required": false,
       "schema": {
         "default": 50,
+        "maximum": 200,
+        "minimum": 1,
         "title": "Limit",
         "type": "integer"
       }
@@ -618,7 +621,7 @@ already in-flight (``PENDING``) or succeeded (``SUCCESS``), and 503
 when the ``outbound_webhooks`` feature flag is off or offline mode
 is enabled.
 
-Source: [backend/app/routers/webhooks_outbound.py:234](../../../backend/app/routers/webhooks_outbound.py#L234).
+Source: [backend/app/routers/webhooks_outbound.py:300](../../../backend/app/routers/webhooks_outbound.py#L300).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -720,7 +723,7 @@ the customer can verify their receiver without waiting for a real
 run. Creates a real ``WebhookDelivery`` row so history reflects the
 test alongside production deliveries.
 
-Source: [backend/app/routers/webhooks_outbound.py:173](../../../backend/app/routers/webhooks_outbound.py#L173).
+Source: [backend/app/routers/webhooks_outbound.py:235](../../../backend/app/routers/webhooks_outbound.py#L235).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
