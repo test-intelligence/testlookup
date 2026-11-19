@@ -167,21 +167,46 @@ def is_secret_field(scope: str, field_name: str) -> bool:
 
 # ── Store / read operations ──────────────────────────────────────────────────
 
+from app.services.secret_providers.vault import VaultReferenceError  # noqa: E402
+
+
+class SecretReferenceNotAllowed(VaultReferenceError):
+    """A ``vault:`` reference reached a store call that only takes literal values.
+
+    A ``VaultReferenceError``, so the application's handler for that class
+    answers 400 with this message.
+    """
+
+
 async def store_secret(
     db: AsyncSession,
     scope: str,
     key_name: str,
     raw_value: str,
     actor_id: Optional[uuid.UUID] = None,
+    *,
+    allow_reference: bool = False,
 ) -> str:
     """
     Encrypt and store a secret. Returns the masked value for display.
     Upserts: if a secret_ref for (scope, key_name) exists, updates it.
+
+    ``allow_reference``: a ``vault:<path>#<key>`` value is a pointer into the
+    deployment's external store, resolved with the SERVER's access when the
+    secret is read. Whoever may store a pointer may therefore name any entry
+    the server can read, so only the ADMIN settings routes pass ``True``.
+    Every other caller gets ``SecretReferenceNotAllowed`` (a 400) for such a
+    value: a project integration token or a webhook signing secret is always
+    a literal.
     """
     # W20 ADM-10: "vault:<path>#<key>" is a REFERENCE — the pointer is stored, the value stays in Vault.
     from app.services.secret_providers import vault
 
     if vault.is_reference(raw_value):
+        if not allow_reference:
+            raise SecretReferenceNotAllowed(
+                "A vault: reference can only be set by an administrator in Settings. Enter the value itself here."
+            )
         return await _store_reference(db, scope, key_name, str(vault.parse_reference(raw_value)), actor_id)
 
     masked = mask_value(raw_value)

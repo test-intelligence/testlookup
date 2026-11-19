@@ -124,6 +124,9 @@ def test_the_one_reader_picks_the_credential(fake, monkeypatch):
 
     monkeypatch.setattr(secret_service, "read_secret", _secret)
     monkeypatch.setattr(github_auth, "load_app_config", _app)
+    # The App signs in only at the deployment's GitHub API base; here that is the fake.
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "GITHUB_APP_API_BASE_URL", "http://github.fake")
     pid = uuid.uuid4()
     pat = asyncio.run(github_auth.get_github_token(None, pid, integration=_row("pat")))
     assert pat.kind == "pat" and pat.token == "fake-gh-pat"

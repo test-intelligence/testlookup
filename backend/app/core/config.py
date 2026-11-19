@@ -831,6 +831,10 @@ class Settings(BaseSettings):
     # W17b ADM-06: statements at least this slow are captured (shape only) for Settings > Performance.
     SLOW_QUERY_MS: int = 500
     GITHUB_TOKEN: Optional[str] = None            # GitHub PAT for build change lookup
+    # The one GitHub API base the deployment's GitHub App identity is ever sent
+    # to. Operator-set (GitHub Enterprise Server: https://<host>/api/v3). A
+    # project's own api_base_url never chooses where the App signs in.
+    GITHUB_APP_API_BASE_URL: str = "https://api.github.com"
     GITHUB_REPO: Optional[str] = None             # e.g. "org/repo"
 
     # ── Commit attribution (Epic 8) / TIA corpus (Epic 10) ────

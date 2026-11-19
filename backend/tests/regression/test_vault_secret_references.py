@@ -108,7 +108,8 @@ def test_store_keeps_the_pointer_and_read_resolves_it(fake):
     from app.services import secret_service
 
     db = _db_with(None)
-    masked = asyncio.run(secret_service.store_secret(db, "integrations", "jira_api_token", " vault:testlookup/jira#api_token"))
+    masked = asyncio.run(secret_service.store_secret(db, "integrations", "jira_api_token", " vault:testlookup/jira#api_token",
+                                                    allow_reference=True))  # the ADMIN settings path
     row = db.add.call_args.args[0]
     assert (row.provider, row.external_ref, row.encrypted_value) == ("vault", "vault:testlookup/jira#api_token", None)
     assert masked == "vault:testlookup/jira#api_token"
@@ -129,7 +130,8 @@ def test_a_malformed_reference_in_a_secret_field_is_refused(fake):
     from app.services import secret_service
 
     with pytest.raises(vault.VaultReferenceError):
-        asyncio.run(secret_service.store_secret(_db_with(None), "integrations", "jira_api_token", "vault:../etc#x"))
+        asyncio.run(secret_service.store_secret(_db_with(None), "integrations", "jira_api_token", "vault:../etc#x",
+                                                allow_reference=True))
 
 
 def test_health_reports_host_and_login_never_a_token(fake, monkeypatch):

@@ -237,3 +237,60 @@ def test_the_release_stack_creates_the_first_admin_once():
     assert "gen-dev-env.sh --release" in install
     assert "INITIAL_ADMIN_PASSWORD" in install
 
+
+
+# ── The release images never get the local-development .env ──────────────────
+#
+# Without --release the generator writes APP_ENV=development and
+# DEV_AUTO_LOGIN_ENABLED=true, which is right for a source checkout and wrong
+# for the pre-built release images: docker-compose.release.yml passes both
+# through and publishes the UI. Two guards: every instruction that prepares a
+# release install passes --release, and the generator picks the release mode
+# by itself in a directory that holds the release Compose file and no
+# development one (the by-hand install and the offline bundle's compose/).
+
+_RELEASE_INSTALL_INSTRUCTIONS = (
+    "docker-compose.release.yml",
+    "scripts/release/import-bundle.sh",
+    "user-guide/air-gapped-install.md",
+    "install.sh",
+)
+
+
+def _env_value(env: dict[str, str], key: str) -> str:
+    return env[key].split(" #", 1)[0].strip()
+
+
+@pytest.mark.parametrize("relative", _RELEASE_INSTALL_INSTRUCTIONS)
+def test_release_install_instructions_generate_a_release_env(relative: str):
+    lines = [
+        line for line in (_REPO / relative).read_text(encoding="utf-8").splitlines()
+        if "bash scripts/gen-dev-env.sh" in line
+    ]
+    assert lines, f"{relative} no longer shows the generator command; update this guard"
+    missing = [line.strip() for line in lines if "--release" not in line]
+    assert not missing, f"{relative} prepares a release install without --release: {missing}"
+
+
+def test_a_release_only_directory_gets_the_secure_defaults_without_the_flag(tmp_path: Path):
+    _require_bash()
+    (tmp_path / "docker-compose.release.yml").write_text("services: {}\n", encoding="utf-8")
+    _run_generator(tmp_path)
+    env = _parse_env((tmp_path / ".env").read_text(encoding="utf-8"))
+
+    assert _env_value(env, "APP_ENV") == "production"
+    assert _env_value(env, "DEV_AUTO_LOGIN_ENABLED") == "false"
+    bad = [k for k in _REQUIRED if k not in env or _is_placeholder(env[k])]
+    assert not bad, f"missing/placeholder secrets: {bad}"
+
+
+def test_a_source_checkout_still_gets_the_development_env(tmp_path: Path):
+    """Both Compose files present, as in a clone: `make dev` keeps dev-login."""
+    _require_bash()
+    (tmp_path / "docker-compose.release.yml").write_text("services: {}\n", encoding="utf-8")
+    (tmp_path / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    _run_generator(tmp_path)
+    env = _parse_env((tmp_path / ".env").read_text(encoding="utf-8"))
+
+    assert _env_value(env, "APP_ENV") == "development"
+    assert _env_value(env, "DEV_AUTO_LOGIN_ENABLED") == "true"

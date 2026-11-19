@@ -192,6 +192,7 @@ async def test_qa_lead_reset_revokes_both_scopes_for_that_user(monkeypatch):
         id=user_id,
         role="QA_LEAD",
         hashed_password="legacy-hash",
+        is_synthetic=True,  # the shared account the reset is for
         must_change_password=True,
     )
     project = SimpleNamespace(

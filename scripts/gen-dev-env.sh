@@ -17,6 +17,8 @@
 #       for the release images (install.sh): random secrets as above, but the
 #       secure .env.example defaults stay (APP_ENV=production, no dev-login),
 #       and the first admin gets the random INITIAL_ADMIN_PASSWORD.
+#   In a directory with docker-compose.release.yml and no docker-compose.yml
+#   (a by-hand release install, the offline bundle) --release is implied.
 set -euo pipefail
 
 if [[ -n "${TL_PYTHON_BIN:-}" ]]; then
@@ -47,6 +49,16 @@ for arg in "$@"; do
     *) echo "error: unknown option $arg (use --force and/or --release)" >&2; exit 2 ;;
   esac
 done
+
+# A directory that holds the release Compose file and no development one is a
+# release install (the by-hand steps in docker-compose.release.yml, the offline
+# bundle's compose/ directory), whether or not --release was passed. The
+# development .env turns on passwordless dev-login, which must never reach the
+# pre-built images. A source checkout has both files and keeps the dev mode.
+if [ "$RELEASE" -ne 1 ] && [ -f docker-compose.release.yml ] && [ ! -f docker-compose.yml ]; then
+  RELEASE=1
+  echo "note: release install detected (docker-compose.release.yml without docker-compose.yml): using --release (production mode, no dev-login)." >&2
+fi
 
 if [ ! -f "$EXAMPLE" ]; then
   echo "error: $EXAMPLE not found (run from the repo root)" >&2

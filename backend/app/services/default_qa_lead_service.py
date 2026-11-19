@@ -174,6 +174,17 @@ async def ensure_default_qa_lead(
     return found
 
 
+class DefaultQaLeadIsPersonalAccount(Exception):
+    """The project's default QA lead is a person, not the shared account.
+
+    ``Project.default_qa_lead_user_id`` may name a real member (suite-review
+    routing uses it that way). The reset below replaces the password and hands
+    the new one back to the caller, which is only acceptable for the
+    auto-provisioned shared account (``User.is_synthetic``). A person's
+    password is changed through the normal account flows.
+    """
+
+
 async def reset_default_qa_lead_password(
     db: AsyncSession,
     project: Project,
@@ -209,6 +220,16 @@ async def reset_default_qa_lead_password(
     before commit; PostgreSQL is the first authority on every cutoff read.
     """
     user = await ensure_default_qa_lead(db, project)
+    # Refused here, not in the router, so no second caller can skip it. ``is
+    # not True`` on purpose: a row without the flag is treated as a person.
+    if getattr(user, "is_synthetic", False) is not True:
+        logger.warning(
+            "default_qa_lead_password_reset_refused",
+            project_id=str(project.id),
+            user_id=str(user.id),
+            reason="personal_account",
+        )
+        raise DefaultQaLeadIsPersonalAccount()
     await db.execute(select(User.id).where(User.id == user.id).with_for_update())
     await db.refresh(user)
     chosen = new_password if new_password else _unguessable_password()

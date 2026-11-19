@@ -176,7 +176,19 @@ async def get_github_token(
                 raise GitHubAppUnavailable("The deployment's GitHub App is not configured (Settings › GitHub App)")
             return None
         try:
-            token = await installation_token(row.api_base_url, int(row.installation_id), app)
+            # The App identity goes to the operator's GitHub API base and
+            # nowhere else. The row's api_base_url is written by a project QA
+            # lead, so it only has to MATCH; it never picks the destination.
+            from app.services.url_safety import same_api_base
+
+            app_base = (settings.GITHUB_APP_API_BASE_URL or "").strip().rstrip("/")
+            if not same_api_base(row.api_base_url, app_base):
+                raise GitHubAppUnavailable(
+                    "This project's GitHub API base URL is not the one the deployment's GitHub App "
+                    "is configured for (GITHUB_APP_API_BASE_URL). Use that base URL, or switch the "
+                    "project to a personal access token."
+                )
+            token = await installation_token(app_base, int(row.installation_id), app)
         except GitHubAppUnavailable as exc:
             logger.warning("github_app_token_unavailable: project=%s reason=%s", project_id, exc)
             if raise_app_errors:

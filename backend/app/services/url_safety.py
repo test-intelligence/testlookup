@@ -154,6 +154,33 @@ async def assert_public_url(url: str) -> None:
         raise ValueError(reason)
 
 
+def url_origin(url: Optional[str]) -> Optional[tuple[str, str, int]]:
+    """``(scheme, host, port)`` of an http(s) URL, lower-cased, default port filled in.
+
+    ``None`` when the value is not an http(s) URL with a host. Two base URLs
+    with the same origin reach the same server; a credential entered for one
+    origin must not be sent to another.
+    """
+    try:
+        parsed = urlparse((url or "").strip())
+        scheme = (parsed.scheme or "").lower()
+        host = (parsed.hostname or "").lower().rstrip(".")
+        port = parsed.port
+    except ValueError:
+        return None
+    if scheme not in ("http", "https") or not host:
+        return None
+    return scheme, host, port or (443 if scheme == "https" else 80)
+
+
+def same_api_base(first: Optional[str], second: Optional[str]) -> bool:
+    """True when both base URLs name the same origin and the same path."""
+    a, b = url_origin(first), url_origin(second)
+    if a is None or b is None or a != b:
+        return False
+    return urlparse(first.strip()).path.rstrip("/") == urlparse(second.strip()).path.rstrip("/")  # type: ignore[union-attr]
+
+
 async def egress_block_reason(url: str) -> Optional[str]:
     """Why the server must not send an integration's credential to ``url``'s
     host, or ``None`` when it may.

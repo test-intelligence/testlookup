@@ -17,7 +17,7 @@ name: testlookup
 #   curl -fsSLo .env.example          $base/.env.example
 #   curl -fsSLo scripts/gen-dev-env.sh $base/scripts/gen-dev-env.sh
 #   curl -fsSLo scripts/init-db.sql    $base/scripts/init-db.sql
-#   bash scripts/gen-dev-env.sh        # writes .env with random local secrets
+#   bash scripts/gen-dev-env.sh --release   # writes .env: random secrets, production mode
 #   docker compose -f docker-compose.release.yml up -d
 #
 # Image selection (override via the environment / .env):
