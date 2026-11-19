@@ -632,19 +632,19 @@ class TestDocsOnlyPushesSkipTheGate:
         assert push_check.docs_only_change()[0] is False
 
     def test_the_skip_runs_no_check(self, monkeypatch):
+        scans = []
         monkeypatch.setattr(push_check, "docs_only_change",
                             lambda: (True, ["README.md"]))
+        # The secret scan still runs on a docs-only push (the Secret scan
+        # workflow runs on every path). Stub it: the real one calls `run` when
+        # gitleaks is installed, which made this test depend on the machine.
+        monkeypatch.setattr(push_check, "check_gitleaks",
+                            lambda: (scans.append(1) or True, "stubbed"))
         monkeypatch.setattr(push_check, "run", lambda *a, **k: pytest.fail(
             "a check ran on a docs-only push"))
-        # The one check a docs-only push keeps is the secret scan, and it is
-        # called directly, not through the check list. Stub it: on a machine
-        # with gitleaks installed it would otherwise reach ``run`` above.
-        scans: list[bool] = []
-        monkeypatch.setattr(push_check, "check_gitleaks",
-                            lambda: (scans.append(True) or True, "stubbed"))
         monkeypatch.setattr("sys.argv", ["push_check.py", "--no-colour"])
         assert push_check._main() == 0
-        assert scans == [True], "a docs-only push must still run the secret scan"
+        assert scans == [1], "the secret scan must still run on a docs-only push"
 
     def test_full_runs_the_checks_anyway(self, monkeypatch):
         ran = []
