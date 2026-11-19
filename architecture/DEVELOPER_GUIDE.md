@@ -416,6 +416,38 @@ A field guide — most production incidents here are one of these:
 12. **`IN` binding under asyncpg** → `bindparam("ids", expanding=True)`.
 13. **LiveSession.run_id is a slug, not a UUID** → convert via `canonical_test_run_uuid()` before queuing Celery tasks with UUID FKs, or the insert silently fails.
 
+### Product invariants from exploratory testing (2026-11)
+
+The 0.1.1 round fixed 22 defects found by an exploratory tester working through the UI as five roles (D-0001 to D-0023). Each line below is a rule one of those fixes enforces. The tests named keep it true. Break one, and its test fails.
+
+**Paid AI**
+- **Role.** A paid model call on a cache miss needs a role allowed to trigger AI (QA engineer or above). A viewer gets the cached result or nothing, and nothing is queued. `backend/tests/regression/test_run_compare_viewer_does_not_generate.py` (D-0003).
+- **Skip AI.** A run uploaded with `run_ai=false` never starts the automatic Investigator, including through "newly failing" transitions. The flag travels in the `transition_notifications` outbox payload. `backend/tests/regression/test_skip_ai_does_not_auto_investigate.py`, `backend/tests/test_transition_payload_binds.py` (D-0006).
+- **Prompt changes.** The chat model is told that the app links the builds and tests it names, so it never disclaims links or sends the reader to search. A prompt change ships with its manifest and eval attestation. `backend/tests/test_chat_agent_stream.py`, `backend/tests/test_prompt_registry.py` (D-0010).
+
+**Time windows and "latest"**
+- **"Ever" questions.** A question such as "has this project ever had a run" passes `days: 0` (`ALL_TIME_PROBE` in `frontend/src/hooks/runProbes.ts`). Leaving `days` out gets the server's 30-day default. `frontend/src/pages/OverviewPage.test.tsx`, `frontend/src/components/reports/catalogue/useEverHadRun.test.tsx` (D-0001, D-0002).
+- **"Latest".** "Latest" means the time TestLookup received the run (`created_at`). `GET /runs?order=newest` lists runs in that order. `backend/tests/test_runs_list_filters.py`, `backend/tests/integration/test_run_list_natural_order_postgres.py` (D-0022).
+
+**Counts, rates and labels**
+- **Joins.** A list query never joins a many-to-many table it only reads a label from. One row per entity, and `total` matches the rows. `backend/tests/regression/test_defects_list_counts_match_rows.py`, `backend/tests/integration/test_defects_list_fields_postgres.py` (D-0011).
+- **Audit categories.** Each audit row belongs to exactly one category, so All equals the sum of the categories. `total` is a real count, and later pages are complete. `backend/tests/regression/test_audit_unified_feed_counts_once.py`, `backend/tests/integration/test_audit_unified_feed_postgres.py` (D-0018).
+- **No evidence, no rate.** If passed + failed + broken = 0, there is no pass rate: show "—" with the reason, and leave it out of averages. `frontend/src/pages/RunsPage.test.tsx` and the Releases, Run compare and Agents page tests (D-0005).
+- **Count labels.** A count label names what it counts and the filter it is under: "per test execution" vs "per unique test", "{Tab} defects N", "rows searchable across 5 entity types". `backend/tests/test_summary_report_service.py`, `frontend/src/pages/DefectsPage.test.tsx`, `frontend/src/pages/SearchPage.test.tsx` (D-0012, D-0014, D-0015).
+- **Search scope counts.** A count beside a search scope uses the same rule as that scope's results. If there is no such count, show none, never 0. `frontend/src/pages/SearchPage.test.tsx`, `frontend/src/components/search/SearchableDataCard.test.tsx` (D-0013).
+- **History wording.** History wording states its basis. A first observed failure is "unknown — first run in this project", never "already failing". One failed execution is not a pattern. `backend/tests/regression/test_phase4_attribution_verdict.py`, `backend/tests/regression/test_flakiness_tool_single_observation.py` (D-0004, D-0008).
+
+**Actions, selection and scope**
+- **Prerequisites.** An action is offered only when its prerequisite exists. Example: no Override without a stored release decision. `frontend/src/pages/ReleaseGatePage.test.tsx` (D-0007).
+- **Unreadable runs.** A run the reader cannot open (404) shows "Run not found", with no actions. Every run action waits until the run has loaded. `frontend/src/pages/RunDetailPage.tabs.test.tsx`, `frontend/src/pages/DeepInvestigationPage.run.test.tsx` (D-0023).
+- **Selections.** A selection is keyed by the entity it was made for. Switching runs never shows the previous run's investigation. `frontend/src/components/investigator/InvestigatorCockpit.test.tsx` (D-0009).
+- **Run-scoped reads.** A read about one run ignores the selected project; the server enforces membership. `frontend/src/hooks/useAgentRuns.test.ts`, `backend/tests/integration/test_pipelines_list_run_scope_postgres.py` (D-0020).
+- **Settings links.** A settings link agrees with what its page lets that role do. A page that only refuses a non-admin is an `admin` item. `frontend/src/components/layout/settingsNav.test.ts` (ratchet), `frontend/src/pages/settings/MfaPolicyPage.test.tsx` (D-0017).
+- **Activity rows.** A real change that people need to trace writes one Activity row, in the same transaction. No-op repeats write none. `backend/tests/regression/test_failure_reassign_writes_activity.py`, `backend/tests/integration/test_activity_failure_reassign_postgres.py` (D-0021).
+
+**Session**
+- **One account per browser profile.** The whole session lives in one `auth-storage` entry shared by every tab. A tab never writes over an entry that names another account. A tab whose account changed elsewhere reloads, with a note. A request that names its own bearer keeps it. `frontend/src/store/authStore.crossTab.test.ts`, `frontend/src/services/api.explicitBearer.test.ts`; release journey TL-AUTH-003 (D-0019).
+
 ---
 
 ## 8. Debugging workflow
