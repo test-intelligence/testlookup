@@ -128,7 +128,6 @@ def world(monkeypatch):
 
     import app.core.deps as deps
     import app.worker.tasks as worker_tasks
-    from app.core.deps import get_current_active_user
     from app.db.postgres import get_db
     from app.models.schemas import AICoverageAnalysisResponse, AITaskEnqueueResponse
     from app.routers import test_management
@@ -212,7 +211,7 @@ def world(monkeypatch):
     app = FastAPI()
     app.include_router(test_management.router)
     app.dependency_overrides[get_db] = _db
-    app.dependency_overrides[get_current_active_user] = lambda: state.user
+    app.dependency_overrides[deps.get_current_active_user] = lambda: state.user
     app.dependency_overrides[require_plan_access] = lambda: plan
     state.http = TestClient(app, raise_server_exceptions=False)
     state.reached = reached

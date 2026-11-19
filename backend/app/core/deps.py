@@ -354,10 +354,9 @@ def _route_role_floor(request) -> UserRole | None:
 def _bind_project_role_floor(user: User, request) -> User:
     """Record on the request's user the role its writes need in a project."""
     floor = _route_role_floor(request) if _is_write(request) else None
-    try:
-        setattr(user, _PROJECT_ROLE_FLOOR_ATTR, floor)
-    except Exception:
-        pass
+    # Not guarded: if the minimum could not be recorded the project guards
+    # would not apply it, so a failure here must fail the request, not pass.
+    setattr(user, _PROJECT_ROLE_FLOOR_ATTR, floor)
     return user
 
 

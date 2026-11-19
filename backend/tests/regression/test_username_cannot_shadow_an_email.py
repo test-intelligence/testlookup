@@ -34,7 +34,6 @@ from app.models.schemas import (
     UserCreate,
 )
 from tests.test_mfa import (  # noqa: F401 - fixtures are used by name
-    PASSWORD,
     _redis,
     _secret_key,
     _session_issuer_clock,
