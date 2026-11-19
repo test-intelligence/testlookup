@@ -461,7 +461,7 @@ async def login(
     # the response time does not change. Nothing is counted here: an attacker
     # hammering a locked account must not be able to keep extending the lock,
     # or the legitimate owner could never wait it out.
-    if lock_expires is not None:
+    if user is not None and lock_expires is not None:
         logger.warning("Sign-in refused, account locked (user_id=%s)", user.id)
         raise _locked_response(lock_expires)
 

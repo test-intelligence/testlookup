@@ -330,7 +330,7 @@ def _route_role_floor(request) -> UserRole | None:
         return None
     cached = getattr(route, _ROUTE_ROLE_FLOOR_ATTR, _NOT_COMPUTED)
     if cached is not _NOT_COMPUTED:
-        return cached
+        return cached if isinstance(cached, UserRole) else None
     floor_idx = -1
     seen: set[int] = set()
     pending = [getattr(route, "dependant", None)]
@@ -381,7 +381,8 @@ def _is_instance_admin(user: User) -> bool:
 
 def _role_at_least(role: object, floor: UserRole) -> bool:
     try:
-        return _ROLE_ORDER.index(_normalize_user_role(role)) >= _ROLE_ORDER.index(floor)
+        normalized = _normalize_user_role(role if isinstance(role, UserRole) else str(role))
+        return _ROLE_ORDER.index(normalized) >= _ROLE_ORDER.index(floor)
     except ValueError:
         return False
 
