@@ -76,6 +76,8 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `MAX_ARCHIVE_RATIO` | `int` | `100` |
 | `FORM_URLENCODED_MAX_BYTES` | `int` | `64 * 1024` |
 | `FORM_URLENCODED_ACS_MAX_BYTES` | `int` | `2 * 1024 * 1024` |
+| `REQUEST_BODY_MAX_BYTES` | `int` | `Field(default=10 * 1024 * 1024, ge=0)` |
+| `REQUEST_BODY_UPLOAD_MAX_BYTES` | `int` | `Field(default=100 * 1024 * 1024, ge=0)` |
 | `INGEST_MAX_RESULTS_PER_UPLOAD` | `int` | `MAX_RESULTS_PER_INGEST` |
 | `INGEST_REDIS_MEMORY_THRESHOLD_PCT` | `float` | `75.0` |
 | `INGEST_REDIS_MEMORY_ABSOLUTE_BYTES` | `int` | `0` |

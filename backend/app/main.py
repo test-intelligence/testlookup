@@ -22,6 +22,10 @@ from app.bootstrap import (
 from app.core.config import settings
 from app.core.demo_mode import install_demo_mode
 from app.core.request_path import routed_path
+from app.middleware.request_hardening import (
+    RequestBodyLimitMiddleware,
+    StrictTransportSecurityMiddleware,
+)
 from app.core.http_client import close_http_client
 from app.core.logging_config import configure_logging
 from app.core.startup_gc import freeze_startup_heap
@@ -233,6 +237,15 @@ app.add_exception_handler(VaultReferenceError, _vault_reference_error_handler)
 # Last resort: a JSON body with the request id for analytics routes, Starlette's
 # plain "Internal Server Error" everywhere else. Never a trace.
 app.add_exception_handler(Exception, unhandled_exception_handler)
+# The body-size limit for every content type. Registered BEFORE
+# configure_middlewares on purpose: add_middleware makes each new middleware
+# the outermost, so the first one registered is the innermost. Its 413 then
+# passes through CORS and Telemetry like any other response.
+app.add_middleware(
+    RequestBodyLimitMiddleware,
+    max_bytes=settings.REQUEST_BODY_MAX_BYTES,
+    upload_max_bytes=settings.REQUEST_BODY_UPLOAD_MAX_BYTES,
+)
 configure_middlewares(app)
 configure_metrics(app)
 register_routers(app)
@@ -399,6 +412,12 @@ async def rate_limit_auth(request: Request, call_next):
 # runs before it: a refused write never spends an auth rate-limit token. Inert
 # unless settings.DEMO_MODE is true. See app/core/demo_mode.py.
 install_demo_mode(app)
+
+# Strict-Transport-Security on https responses. Second to last: outside every
+# middleware that can answer on its own (the rate limiter's 429, the demo
+# refusal, a CORS preflight), and INSIDE the proxy trust boundary below, which
+# is what decides whether the request arrived over https.
+app.add_middleware(StrictTransportSecurityMiddleware)
 
 
 # ── The proxy trust boundary goes on LAST ───────────────────────────────────

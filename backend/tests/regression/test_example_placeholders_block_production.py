@@ -10,9 +10,10 @@ and ``infra/cloudrun/backend.env.example`` (``CHANGE_ME``). Copying one and
 forgetting a line booted production on a published database or object-store
 credential.
 
-An EMPTY value stays allowed: the release compose runs Valkey with no password
-on its private network (``redis://:@redis:6379/0``), and a DSN-only deployment
-leaves ``POSTGRES_PASSWORD`` unset.
+An EMPTY value is not a placeholder: a DSN-only deployment leaves
+``POSTGRES_PASSWORD`` unset, and a Redis on this machine may run without a
+password. A Redis on ANOTHER host without a password gets a warning by its own
+rule (``test_redis_requires_a_password_outside_the_host.py``).
 """
 from __future__ import annotations
 
@@ -98,8 +99,8 @@ def test_an_empty_plain_credential_is_left_to_the_service(production, field):
 
 
 @pytest.mark.parametrize("uri", [
-    "redis://:@redis:6379/0",          # the release compose: Valkey without a password
-    "redis://redis:6379/0",            # no credential at all
+    "redis://:@localhost:6379/0",      # an empty password, Redis on this machine
+    "redis://127.0.0.1:6379/0",        # no credential at all, Redis on this machine
     "postgresql+asyncpg://u@postgres:5432/db",
 ])
 def test_a_password_less_uri_is_never_a_placeholder(production, uri):

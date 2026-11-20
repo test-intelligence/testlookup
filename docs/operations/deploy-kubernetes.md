@@ -80,10 +80,16 @@ Every setting the backend reads, with its default, is in the generated [configur
 
 | Overlay | Namespace | Images | What it changes |
 |---|---|---|---|
-| `dev` | `testlookup-dev` | `ghcr.io/test-intelligence/testlookup/*:dev-latest`, `imagePullPolicy: Always` | One replica each, beat scaled to 0, HPAs pinned to 1, `APP_ENV=development`, `LOG_LEVEL=DEBUG` |
+| `dev` | `testlookup-dev` | `ghcr.io/test-intelligence/testlookup/*:dev-latest`, `imagePullPolicy: Always` | One replica each, beat scaled to 0, HPAs pinned to 1, `LOG_LEVEL=DEBUG`, `APP_ENV=production` in every process, Ingresses on the class `nginx-internal` (see below) |
 | `staging` | `testlookup-staging` | `ghcr.io/test-intelligence/testlookup/*:staging-latest`, `imagePullPolicy: Always` | Two API and UI replicas, one per worker, HPA ceilings of 2, `APP_ENV=staging`, `AI_OFFLINE_MODE=false` (hosted providers allowed) |
 | `prod` | `testlookup` | `ghcr.io/test-intelligence/testlookup/*:v0.1.0` | `APP_ENV=production`, `AI_OFFLINE_MODE=true`, TLS on the ingress, worker replica floors and wider HPA ranges |
 | `self-hosted` | `testlookup` | `ghcr.io/test-intelligence/testlookup/*:v0.1.0` | Builds on `prod` for kubeadm, K3s, RKE2, Rancher, OpenStack/VMware clusters and kind/minikube: NGINX ingress class, `TRUSTED_PROXY_IPS` set to common on-premise pod CIDRs, optional StorageClass patch |
+
+The `dev` overlay is a small install on a shared cluster, not the application's development mode: the API, the workers and beat all run with `APP_ENV=production`, so the production secret check runs and the debug routes stay off. Its two Ingresses use the class `nginx-internal` so that the internet-facing controller (class `nginx`) does not serve an install that runs moving image tags with debug logging. To publish it inside your network, run an ingress controller with that class behind an internal load balancer. Without one, nothing serves the Ingresses and you reach the UI through the API server:
+
+```bash
+kubectl -n testlookup-dev port-forward svc/testlookup-frontend 3000:80   # then open http://localhost:3000
+```
 
 Before applying any overlay, replace the example host names and `CORS_ORIGINS` (`*.yourdomain.com`, `testlookup.example.com`) with yours, and check the images. The base pulls the published images, `ghcr.io/test-intelligence/testlookup/{backend,frontend,mcp}`, and `prod` and `self-hosted` pin the release tag `v0.1.0`. CI publishes `latest` and the full commit SHA for every build of `main`; a release adds `vX.Y.Z` to the digests CI verified. Until `v0.1.0` is tagged, pass a commit SHA with `scripts/deploy-k8s.sh --image-tag=<sha>`. The overlays key their `images:` entries by the base name `ghcr.io/test-intelligence/testlookup/<image>`, so a `kustomize edit set image` must use that name too. To run your own builds, push them (`make build-push REGISTRY=<registry> VERSION=<tag>`) and let `scripts/deploy-k8s.sh` re-point the overlay (`--registry`, `--image-tag`, `--release-manifest`).
 
@@ -133,6 +139,18 @@ scripts/run-k8s-migrations.sh <namespace> <backend-image> [release-id]
 Runs `alembic upgrade head` as one Kubernetes Job (`backoffLimit: 0`, kept for 7 days after it finishes) using the target backend image with `testlookup-config` and `testlookup-secrets`, and waits for it. Environment: `KCLI` (default `kubectl`; set `oc` on OpenShift), `MIGRATION_TIMEOUT_SECONDS` (default 600), `MIGRATION_POLL_SECONDS` (default 2), `MIGRATION_ATTEMPT_ID`. Always migrate with the image you are about to roll out, before the new pods start serving.
 
 ## Network policies
+
+**NetworkPolicy must be enforced by the cluster.** Kubernetes stores every NetworkPolicy object whether or not anything acts on it. On a cluster whose network plugin does not enforce policies, everything in this section is silently a no-op: any pod in the cluster can reach the ChromaDB and Ollama services, which have no authentication, and the cloud metadata address. K3s (kube-router) and OpenShift (OVN-Kubernetes) enforce policies out of the box. On managed Kubernetes it is a switch you must turn on:
+
+| Platform | Switch |
+|---|---|
+| AWS EKS | The VPC CNI addon setting `enableNetworkPolicy: "true"` (VPC CNI v1.14 or later). The Terraform in `infra/aws/` has the switch `enable_network_policy`; it is off by default, so set it to `true` once the policies admit your load balancer (see [AWS EKS](deploy-cloud.md#aws-eks)). On a cluster you built another way: `aws eks update-addon --cluster-name <name> --addon-name vpc-cni --configuration-values '{"enableNetworkPolicy":"true"}'` |
+| Azure AKS | Create the cluster with a network policy engine: `az aks create ... --network-policy azure` (or `calico`, or `cilium` with `--network-dataplane cilium`) |
+| Google GKE | Dataplane V2 (`gcloud container clusters create ... --enable-dataplane-v2`; Autopilot clusters always have it), or on a Standard cluster without it `--enable-network-policy` |
+
+Any cluster can instead run Calico or Cilium as the policy engine. To check a running cluster, start a throwaway pod in another namespace and try a connection the policies must refuse, for example `kubectl -n default run np-check --rm -it --restart=Never --image=busybox:1.36 -- wget -T 5 -qO- http://testlookup-chromadb.testlookup:8001/api/v2/heartbeat`: it must time out. `scripts/deploy-k8s.sh` does not run this check for you.
+
+Turning enforcement on for a cluster that already runs TestLookup starts applying `default-deny-all` at once. Traffic the policies do not name is then blocked: a load balancer that sends straight to pod IPs and a monitoring namespace without the label below are the usual cases, and both are covered at the end of this section.
 
 `default-deny-all` blocks all traffic, then explicit policies open what each component needs: DNS egress for every pod; the frontend (port 80), the backend (port 8000) and MCP (port 8002) accept traffic from the `ingress-nginx` namespace and from OpenShift's router, matched by the `openshift-ingress` namespace name and by the `policy-group.network.openshift.io/ingress` namespace label (which also covers a router on the host network); the backend also accepts port 8000 from the frontend, workers and MCP; workers and the backend accept metrics scrapes from the `monitoring`, `openshift-monitoring` and `openshift-user-workload-monitoring` namespaces, or any namespace labelled `testlookup.io/metrics-scraper: "true"`. Backend and worker egress reaches every pod in the cluster, because datastores may live in another namespace, and every address outside it except the cloud metadata service (`169.254.169.254`, and `fd00:ec2::254` on AWS), which hands out the node's cloud credentials.
 

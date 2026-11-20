@@ -1535,9 +1535,15 @@ jobs:
         # The wheel path is a literal on purpose: Scorecard drops any shell word
         # that holds a variable, so `"$RUNNER_TEMP"/...whl` read as a bare
         # `pip install --no-deps` and counted as unpinned (alert #199).
+        # The build backends (hatchling, setuptools, wheel) come from the hashed
+        # scripts/requirements-build.txt, installed into a throwaway virtual
+        # environment; --no-build-isolation makes pip build with exactly those
+        # instead of downloading the newest backend for each build.
         run: |
           pip install --require-hashes -r scripts/requirements-sdk-test.txt
-          pip wheel --no-deps --wheel-dir /tmp/sdk-wheels ./client ./cli
+          python -m venv /tmp/wheel-build
+          /tmp/wheel-build/bin/pip install --require-hashes -r scripts/requirements-build.txt
+          /tmp/wheel-build/bin/pip wheel --no-build-isolation --no-deps --wheel-dir /tmp/sdk-wheels ./client ./cli
           pip install --no-deps /tmp/sdk-wheels/*.whl
           pip check
 
@@ -1771,7 +1777,7 @@ jobs:
           git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
           extra_inputs=()
           if [[ "$IMAGE_NAME" == "e2e-runner" ]]; then
-            extra_inputs=(e2e-runner/ frontend/package.json frontend/package-lock.json cli/ mcp/ client/ frontend/tests/release/ frontend/playwright.release.config.ts samples/ scripts/release/release_manifest.py)
+            extra_inputs=(e2e-runner/ frontend/package.json frontend/package-lock.json cli/ mcp/ client/ frontend/tests/release/ frontend/playwright.release.config.ts samples/ scripts/release/release_manifest.py scripts/requirements-build.txt)
           fi
           if git diff --quiet "$PR_BASE_SHA" HEAD -- "${extra_inputs[@]}" \
             "$CONTEXT/Dockerfile" "$CONTEXT/requirements*.txt" \
@@ -1792,7 +1798,10 @@ jobs:
             --exclude='target' --exclude='build' --exclude='*.egg-info' \
             ./client/ ./backend/__client_sdks_staged/
           # W17 DEV-02: the CLI wheel served at /api/v1/sdk/cli/<wheel>; a failed build fails the step.
-          python3 -m pip wheel --no-deps --quiet --wheel-dir ./backend/__client_sdks_staged/cli ./cli
+          # Built with the hashed build lock, exactly as build-images does.
+          python3 -m venv /tmp/wheel-build
+          /tmp/wheel-build/bin/pip install --quiet --require-hashes -r scripts/requirements-build.txt
+          /tmp/wheel-build/bin/pip wheel --no-build-isolation --no-deps --quiet --wheel-dir ./backend/__client_sdks_staged/cli ./cli
           ls ./backend/__client_sdks_staged/cli
 
       - name: Set up Docker Buildx
@@ -1934,6 +1943,49 @@ jobs:
       # --package-lock-only` first, so the published image could carry a tree
       # that no PR reviewed.
 
+      # Stage client SDKs into the backend build context so the production
+      # Dockerfile can bake them into the image at /app/client_sdks (the
+      # ``/api/v1/sdk/{lang}`` download endpoint reads from there). Mirrors
+      # the staging step in k3ssetup/deploy-k3s.sh — without it the
+      # `COPY --from=builder /app/__client_sdks_staged ./client_sdks` line
+      # in backend/Dockerfile fails with "/app/__client_sdks_staged: not
+      # found" during the production build.
+      # It runs BEFORE the registry logins on purpose: it is the only step of
+      # this job that installs packages, and it must not do so while the Docker
+      # config holds registry credentials (scripts/test_ci_security.py).
+      - name: Stage client SDKs into backend context
+        run: |
+          set -euo pipefail
+          STAGED_SDK="./backend/__client_sdks_staged"
+          rm -rf "$STAGED_SDK"
+          mkdir -p "$STAGED_SDK"
+          rsync -a \
+            --exclude='.pytest_cache' \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.venv' \
+            --exclude='venv' \
+            --exclude='node_modules' \
+            --exclude='.tox' \
+            --exclude='.mypy_cache' \
+            --exclude='.ruff_cache' \
+            --exclude='target' \
+            --exclude='build' \
+            --exclude='*.egg-info' \
+            --exclude='.coverage' \
+            --exclude='htmlcov' \
+            --exclude='.DS_Store' \
+            ./client/ "$STAGED_SDK/"
+          ls -la "$STAGED_SDK" | head -20
+          # W17 DEV-02: the CLI wheel served at /api/v1/sdk/cli/<wheel>; a failed build fails the step.
+          # The build backend (hatchling) comes from the hashed build lock, in a
+          # throwaway virtual environment; --no-build-isolation stops pip from
+          # downloading the newest one to build with.
+          python3 -m venv /tmp/wheel-build
+          /tmp/wheel-build/bin/pip install --quiet --require-hashes -r scripts/requirements-build.txt
+          /tmp/wheel-build/bin/pip wheel --no-build-isolation --no-deps --quiet --wheel-dir "$STAGED_SDK"/cli ./cli
+          ls "$STAGED_SDK"/cli
+
       - name: Log in to Docker Hub (avoids pull rate limits on base images and buildkit)
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         if: env.DOCKERHUB_USERNAME != ''
@@ -1969,41 +2021,6 @@ jobs:
             type=sha,prefix=sha-
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
-
-      # Stage client SDKs into the backend build context so the production
-      # Dockerfile can bake them into the image at /app/client_sdks (the
-      # ``/api/v1/sdk/{lang}`` download endpoint reads from there). Mirrors
-      # the staging step in k3ssetup/deploy-k3s.sh — without it the
-      # `COPY --from=builder /app/__client_sdks_staged ./client_sdks` line
-      # in backend/Dockerfile fails with "/app/__client_sdks_staged: not
-      # found" during the production build.
-      - name: Stage client SDKs into backend context
-        run: |
-          set -euo pipefail
-          STAGED_SDK="./backend/__client_sdks_staged"
-          rm -rf "$STAGED_SDK"
-          mkdir -p "$STAGED_SDK"
-          rsync -a \
-            --exclude='.pytest_cache' \
-            --exclude='__pycache__' \
-            --exclude='*.pyc' \
-            --exclude='.venv' \
-            --exclude='venv' \
-            --exclude='node_modules' \
-            --exclude='.tox' \
-            --exclude='.mypy_cache' \
-            --exclude='.ruff_cache' \
-            --exclude='target' \
-            --exclude='build' \
-            --exclude='*.egg-info' \
-            --exclude='.coverage' \
-            --exclude='htmlcov' \
-            --exclude='.DS_Store' \
-            ./client/ "$STAGED_SDK/"
-          ls -la "$STAGED_SDK" | head -20
-          # W17 DEV-02: the CLI wheel served at /api/v1/sdk/cli/<wheel>; a failed build fails the step.
-          python3 -m pip wheel --no-deps --quiet --wheel-dir "$STAGED_SDK"/cli ./cli
-          ls "$STAGED_SDK"/cli
 
       - name: Record backend build provenance
         id: build-provenance
@@ -2077,7 +2094,11 @@ jobs:
       # Signed SLSA build provenance for each pushed digest, recorded in
       # Sigstore's public log and pushed next to the image. BuildKit's own
       # provenance above is unsigned. Anyone can check an image with
-      #   gh attestation verify oci://ghcr.io/test-intelligence/testlookup/backend:<tag> --owner test-intelligence
+      #   gh attestation verify oci://ghcr.io/test-intelligence/testlookup/backend:<tag> \
+      #     --repo test-intelligence/testlookup \
+      #     --signer-workflow test-intelligence/testlookup/.github/workflows/ci.yml \
+      #     --source-ref refs/heads/main
+      # (--repo alone accepts a signature from any workflow run in the repository.)
       # release.yml promotes these same digests, so a vX.Y.Z tag carries them.
       - name: Attest backend build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

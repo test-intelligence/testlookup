@@ -13,6 +13,7 @@ scripts/**
 !scripts/release
 scripts/release/**
 !scripts/release/release_manifest.py
+!scripts/requirements-build.txt
 !e2e-runner
 !e2e-runner/**
 !cli

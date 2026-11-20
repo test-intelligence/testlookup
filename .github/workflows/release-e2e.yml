@@ -80,7 +80,10 @@ jobs:
           podman compose version
           printf '%s' "$GH_TOKEN" | podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           python3 -m venv "$RUNNER_TEMP/tl-e2e"
-          "$RUNNER_TEMP/tl-e2e/bin/pip" install PyYAML==6.0.3
+          # The release runner's own hashed lock (it holds PyYAML, which the
+          # campaign needs); a bare `pip install PyYAML==6.0.3` pinned the
+          # version but accepted any file the index served under it.
+          "$RUNNER_TEMP/tl-e2e/bin/pip" install --require-hashes -r e2e-runner/requirements-lock.txt
           "$RUNNER_TEMP/tl-e2e/bin/python" e2e-runner/release_campaign.py --repository "$REPOSITORY" \
             --manifest verified/release-manifest.json --tier "$TIER" --out release-results
       - name: Show release decision
