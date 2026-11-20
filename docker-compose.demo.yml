@@ -232,7 +232,7 @@ services:
   # the Cloudflare dashboard. Profile "public" so a local trial of this stack
   # runs without a token.
   cloudflared:
-    image: cloudflare/cloudflared:2026.10.7
+    image: cloudflare/cloudflared:2026.11.0
     container_name: testlookup_cloudflared
     profiles: ["public"]
     restart: unless-stopped
