@@ -44,7 +44,7 @@ Test Runner --> Ingest API (REST) --> Backend
 | **Anyone holding a share link** | One shared run report (HTML), no JWT | 64-character random token, only its hash stored; default expiry 7 days; every view audited with an 8-character token hint. Creating a link needs the QA_LEAD role in the run's project. Treat the link as a bearer credential |
 | **Backend to knowledge sources** (RAG connectors) | Fetches of external documents | Only while the `knowledge_rag` flag is on; URL sources of both kinds (`external_url` and `internal_url`) must pass a scheme check and the deployment-wide domain allow-list an ADMIN maintains, on create, on every sync and for each redirect target, and neither is fetched in offline mode; the allow-list is the server-side request forgery (SSRF) control. Jira and Confluence ids must match the exact id shape before they go into a request path |
 | **Backend to Jira, GitLab, Splunk, OpenShift** | Issue creation, comments, log searches, pod lookups | Admin-configured credentials over HTTPS; Splunk and OpenShift lookups are no-ops under `AI_OFFLINE_MODE`, and integration-health probes never dial these services while it is on |
-| **Test runners and users to the upload endpoints** | Result files and ZIP archives | 50 MB per file, read in bounded 1 MB chunks; archives capped at 200 MB uncompressed, 5,000 entries, 50 MB per entry and a 100:1 compression ratio (`MAX_ARCHIVE_*` settings); XML formats (TestNG, NUnit, TRX, xUnit, Robot) parsed with defusedxml; ingest rate limits of 200 batches and 20,000 events per project per minute |
+| **Test runners and users to the upload endpoints** | Result files and ZIP archives | A request body is counted while it is received and refused with 413, before the credential is checked, once it passes the route's limit: 100 MiB on the result and archive upload routes (`REQUEST_BODY_UPLOAD_MAX_BYTES`) and 10 MiB on every other route (`REQUEST_BODY_MAX_BYTES`). One result file may be at most 50 MB; that check runs in the handler, after the body has been received, and bounds what is held in memory (the file is read in 1 MB chunks). One report may carry at most `INGEST_MAX_RESULTS_PER_UPLOAD` results. Report ZIP archives are capped at 200 MB uncompressed, 5,000 entries, 50 MB per entry and a 100:1 compression ratio (`MAX_ARCHIVE_*` settings); a project-data import archive is a different format with its own, larger caps. XML formats (JUnit, TestNG, NUnit, TRX, xUnit, Robot) are parsed with defusedxml. There are two separate ingest rate limits, each per project per minute: 200 batches, shared by the JSON, file and live-batch ingest routes (`INGEST_RATE_LIMIT_PER_MINUTE`), and 20,000 single events on the live-event route (`INGEST_EVENT_RATE_LIMIT_PER_MINUTE`). A build written straight to the object store (`<project>/runs/<build>/`) is held to the same result cap and to 50 MiB per object (`INGEST_DROP_MAX_OBJECT_BYTES`) |
 
 ## Offline mode guarantees
 
@@ -106,13 +106,29 @@ absent from the table above, which is how it went unnoticed.
 
 | Mechanism | Scope | Storage |
 |-----------|-------|---------|
-| **JWT** | Per-user session, short-lived (configurable expiry) | Signed with `JWT_SECRET_KEY`, refresh tokens in Postgres |
+| **JWT** | Per-user session, short-lived (configurable expiry) | Signed with `JWT_SECRET_KEY`, refresh tokens in Postgres (hashes only); in the browser, `localStorage` (see below) |
 | **API keys** | Per-user or per-project, long-lived | SHA-256 hash stored in Postgres, raw key shown once at creation |
 | **Role hierarchy** | VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN | Stored as `String(20)` on `users` and `project_members` |
 | **Project scope** | Every data query is filtered by project membership | `require_project_access()` dependency, `get_accessible_project_ids()` returns None for ADMIN (no filter) |
 | **Dual auth** | Endpoints accept either JWT or API key | `get_current_user_or_api_key()` tries JWT first, then API key |
 | **MFA** | Optional per user, enforceable by policy | TOTP (RFC 6238) seed per user with one-time recovery codes; enrolling, disabling and reissuing codes are audited |
 | **SSO / SCIM** | Sign-in through a SAML IdP; provisioning from the IdP | See the SAML and SCIM rows under trust boundaries |
+
+### Where the browser keeps the session
+
+The web app keeps the access token, the refresh token and the signed-in user's profile in the browser's `localStorage`, so a reload or a new tab stays signed in. Any script that runs on the app's origin can read `localStorage`. A script-injection flaw in the web app, or a compromised script in its bundle, would therefore expose both tokens, which an `HttpOnly` cookie would not. This is an accepted trade-off. What limits the damage:
+
+- **Short access tokens.** An access token lasts 30 minutes by default (`JWT_ACCESS_TOKEN_EXPIRE_MINUTES`). The cloud example files suggest the same value.
+- **Refresh rotation with replay detection.** A refresh token works once and is replaced on use. Presenting one that was already replaced (after a leeway of `JWT_REFRESH_REUSE_LEEWAY_SECONDS`, 10 seconds by default) revokes every refresh token of that user and ends their access tokens, so a copied refresh token stops working as soon as both the real browser and the copy have used it. Signing out and changing the password revoke them as well.
+- **Content Security Policy.** The page loads scripts only from its own origin (`script-src 'self'`, so no inline script and no `eval`), allows no plugins (`object-src 'none'`) and no foreign `<base>` or form target.
+
+The stronger design, a refresh token in an `HttpOnly; Secure; SameSite=Strict` cookie with the access token held in memory only, is not implemented.
+
+### Sign-in rate limits and the client address
+
+The sign-in routes are limited per client address (10 sign-ins a minute), and `/api/v1/auth/login` also per typed account name (`LOGIN_ATTEMPTS_PER_USERNAME_PER_MINUTE`, 20 a minute by default), whatever address the attempts come from. In production and staging the counters are kept in Valkey, so a limit is one figure for every worker and pod; while Valkey cannot be reached each worker process counts on its own (`RATE_LIMIT_SHARED_STORAGE`). The account lockout after repeated wrong passwords is separate and stored in Postgres.
+
+Behind a proxy, the client address used for these limits and written to audit rows comes from `X-Forwarded-For`, and only when the connection arrives from a peer listed in `TRUSTED_PROXY_IPS`: it is the right-most entry of the header that is not itself a trusted proxy. Every proxy placed in front of TestLookup must therefore overwrite `X-Forwarded-For` or append the address it saw to it; a trusted proxy that passes the header through unchanged lets a client pick its own address, and with it a fresh rate-limit budget.
 
 ## PII redaction
 

@@ -321,6 +321,11 @@ class Settings(BaseSettings):
     # by a cheap count before parsing and exactly after; see
     # services/upload_limits.py. 0 disables.
     INGEST_MAX_RESULTS_PER_UPLOAD: int = MAX_RESULTS_PER_INGEST
+    # The largest single object (one Allure result file, one TestNG XML) a
+    # build dropped into the bucket may hold: the same 50 MiB as one uploaded
+    # report file. A larger object refuses the build before it is downloaded
+    # (services/ingestion.py). 0 = no limit.
+    INGEST_DROP_MAX_OBJECT_BYTES: int = Field(default=50 * 1024 * 1024, ge=0)
     # Adaptive Redis-memory backpressure. When ``maxmemory`` is set on
     # Redis, the percentage gate fires; when it isn't, the absolute
     # byte gate kicks in instead. Both 0 disables the check entirely.
@@ -931,6 +936,19 @@ class Settings(BaseSettings):
     #: works identically under gunicorn and under a bare uvicorn.
     TRUSTED_PROXY_IPS: str = ""
 
+    # Where the rate limiter (sign-in routes, analytics reads) keeps its
+    # counters. "auto": in Redis (REDIS_URL) when APP_ENV is production or
+    # staging, so a limit is one figure for every worker and pod; in process
+    # memory in development. "on" / "off" force one or the other. When Redis
+    # cannot be reached the limiter falls back to in-memory counters with the
+    # same limits (app/main.py).
+    RATE_LIMIT_SHARED_STORAGE: Literal["auto", "on", "off"] = "auto"
+    # Sign-in attempts accepted per typed account name per minute on
+    # /api/v1/auth/login, whatever address they come from (the per-address
+    # limit is 10 a minute). Counted before the account is looked up and
+    # independent of the account lockout. 0 = no per-name limit.
+    LOGIN_ATTEMPTS_PER_USERNAME_PER_MINUTE: int = Field(default=20, ge=0)
+
     LIVE_EVENTS_REQUIRE_PROJECT_KEY: bool = True
 
     # ── Observability ─────────────────────────────────────────
@@ -943,6 +961,13 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = None
     # Prometheus metrics endpoint
     METRICS_ENABLED: bool = True
+    # Optional bearer token for GET /metrics. Empty (the default) leaves the
+    # scrape open, as before: the shipped proxies do not route /metrics. When
+    # set, a scrape must send "Authorization: Bearer <token>" or it gets 401.
+    METRICS_TOKEN: str = ""
+    # The API reference (/api-docs, /api-docs/redoc, /api-docs/openapi.json).
+    # false turns all three routes off.
+    API_DOCS_ENABLED: bool = True
 
     # ── Logging ───────────────────────────────────────────────
     LOG_LEVEL: str = "INFO"

@@ -190,6 +190,62 @@ describe('the buffer is bounded', () => {
   })
 })
 
+describe('the page address', () => {
+  // Invite, password-reset and SSO values ride in the URL fragment so that they
+  // never reach a server. A vital or an early error recorded before the page
+  // strips the fragment used to send `location.href`, fragment included.
+  afterEach(() => {
+    window.history.replaceState({}, '', '/')
+  })
+
+  it('is reported without its query string or fragment', () => {
+    window.history.replaceState({}, '', '/accept-invite?next=%2Fprivate#token=fake-invite-token')
+
+    reportWebVital({ name: 'LCP', value: 1, rating: 'good', delta: 1 } as never)
+    reportBoundaryError(new Error('boom'), 'in <Page>')
+    flush()
+
+    const bodies = sent.map((s) => s.body).join('')
+    expect(bodies).not.toContain('fake-invite-token')
+    expect(bodies).not.toContain('next=')
+    const batch = JSON.parse(sent[0].body)
+    const expected = `${window.location.origin}/accept-invite`
+    expect(batch.vitals[0].url).toBe(expected)
+    expect(batch.errors.length).toBeGreaterThan(0)
+    for (const error of batch.errors) expect(error.url).toBe(expected)
+  })
+
+  it('is stripped in the "events dropped" record too', () => {
+    window.history.replaceState({}, '', '/reset-password/confirm#token=fake-reset-token')
+    for (let i = 0; i < 200; i++) reportBoundaryError(Object.assign(new Error(`e${i}`), { stack: '' }), '')
+    flush()
+
+    const bodies = sent.map((s) => s.body).join('')
+    expect(bodies).toContain('dropped')
+    expect(bodies).not.toContain('fake-reset-token')
+  })
+})
+
+describe('a request fits the server limit', () => {
+  // The backend refuses a batch with more than 50 errors or 50 vitals (422),
+  // and a beacon cannot see the refusal: the whole batch would be lost.
+  it('never carries more than 50 errors or 50 vitals, overflow record included', () => {
+    for (let i = 0; i < 200; i++) {
+      reportBoundaryError(Object.assign(new Error(`e${i}`), { stack: '' }), '')
+      reportWebVital({ name: 'LCP', value: i, rating: 'good', delta: 1 } as never)
+    }
+    flush()
+
+    expect(sent.length).toBeGreaterThan(0)
+    for (const request of sent) {
+      const batch = JSON.parse(request.body)
+      expect(batch.errors.length).toBeLessThanOrEqual(50)
+      expect(batch.vitals.length).toBeLessThanOrEqual(50)
+    }
+    expect(sent.map((s) => s.body).join('')).toContain('dropped')
+  })
+})
+
 describe('vitals still work', () => {
   it('sends a normal web-vital batch in a single request', () => {
     reportWebVital({ name: 'LCP', value: 1234.5, rating: 'good', delta: 1234.5 } as never)

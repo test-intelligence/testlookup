@@ -18731,18 +18731,18 @@
       "FrontendTelemetryBatch": {
         "properties": {
           "errors": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/FrontendError"
             },
+            "maxItems": 50,
             "title": "Errors",
             "type": "array"
           },
           "vitals": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/WebVitalReport"
             },
+            "maxItems": 50,
             "title": "Vitals",
             "type": "array"
           }
@@ -72362,7 +72362,7 @@
     },
     "/api/v1/observability/frontend": {
       "post": {
-        "description": "Accepts and logs a batch of frontend errors and Web Vitals.\nAlways returns 202 — the browser fires-and-forgets this call.",
+        "description": "Accepts and logs a batch of frontend errors and Web Vitals.\nReturns 202 for an accepted batch — the browser fires-and-forgets this call.\nA batch with more than 50 errors or 50 vitals is refused with 422.",
         "operationId": "receive_frontend_telemetry_api_v1_observability_frontend_post",
         "requestBody": {
           "content": {
@@ -108498,8 +108498,26 @@
     },
     "/health/details": {
       "get": {
-        "description": "Full health report across all infrastructure dependencies.\nRuns all checks concurrently; returns 200 even when non-critical services are degraded.\nNot intended for K8s probes — use /health/live and /health/ready instead.\n\nEvery probe runs under a wall-clock budget, so no single dependency can\nstall the whole response: optional ones via ``_with_budget`` (reported\n``degraded``), critical ones via ``_critical`` (reported ``error``, so\nreadiness still fails closed on them).\n\nThe critical probes were previously left unwrapped, on the reasoning that\nthe readiness probe needs their honest result. A timeout *is* an honest\nfailure, and leaving them unbounded cost more than it bought: an\nunreachable Redis blocks for its 5s socket timeout, which made this\nendpoint take 5.01s and put /health/ready in a dead heat with the\nkubelet's own 5s deadline -- and a kubelet timeout discards the body that\nsays which dependency died.\n\nThe optional probes resolve their endpoints with ``use_cache=False``.\nThat cache is Redis-backed, and ``except Exception`` around it catches a\nrefusal but cannot shorten a hang, so a Redis outage used to time out the\nMinIO and ChromaDB probes and report both ``degraded`` while both were\nhealthy.",
+        "description": "Full health report across all infrastructure dependencies.\nNeeds a signed-in user or an API key (any role); anonymous callers get 401.\nRuns all checks concurrently; returns 200 even when non-critical services are degraded.\nNot intended for K8s probes — use /health/live and /health/ready instead.\n\nEvery probe runs under a wall-clock budget, so no single dependency can\nstall the whole response: optional ones via ``_with_budget`` (reported\n``degraded``), critical ones via ``_critical`` (reported ``error``, so\nreadiness still fails closed on them).\n\nThe critical probes were previously left unwrapped, on the reasoning that\nthe readiness probe needs their honest result. A timeout *is* an honest\nfailure, and leaving them unbounded cost more than it bought: an\nunreachable Redis blocks for its 5s socket timeout, which made this\nendpoint take 5.01s and put /health/ready in a dead heat with the\nkubelet's own 5s deadline -- and a kubelet timeout discards the body that\nsays which dependency died.\n\nThe optional probes resolve their endpoints with ``use_cache=False``.\nThat cache is Redis-backed, and ``except Exception`` around it catches a\nrefusal but cannot shorten a hang, so a Redis outage used to time out the\nMinIO and ChromaDB probes and report both ``degraded`` while both were\nhealthy.",
         "operationId": "health_details_health_details_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -108508,8 +108526,23 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
         "summary": "Full dependency status — for ops dashboards",
         "tags": [
           "Health"
@@ -108518,8 +108551,26 @@
     },
     "/health/ingestion": {
       "get": {
-        "description": "Surface the load + backpressure signals used by the live-stream\nadmission gates.\n\nThe output is for dashboards and for support / on-call humans when a\ncustomer reports \"my runs are slow / 429ing\" (the admission gates are\ndescribed in ``architecture/INGESTION_SCALE.md``). A single GET answers:\n\n* Is Redis approaching the memory threshold that triggers 503?\n* What's the per-minute ingest vs reject rate?\n* How many live sessions are active right now?\n* How deep are the Celery queues backing ingestion + AI analysis?\n* What thresholds is the gate using today (env-tuned, useful for\n  verifying the deployment matches the docs)?\n\nEverything is best-effort — a degraded Redis returns partial data\nrather than 500'ing the health endpoint itself.",
+        "description": "Surface the load + backpressure signals used by the live-stream\nadmission gates.\n\nNeeds a signed-in user or an API key (any role); anonymous callers get 401.\n\nThe output is for dashboards and for support / on-call humans when a\ncustomer reports \"my runs are slow / 429ing\" (the admission gates are\ndescribed in ``architecture/INGESTION_SCALE.md``). A single GET answers:\n\n* Is Redis approaching the memory threshold that triggers 503?\n* What's the per-minute ingest vs reject rate?\n* How many live sessions are active right now?\n* How deep are the Celery queues backing ingestion + AI analysis?\n* What thresholds is the gate using today (env-tuned, useful for\n  verifying the deployment matches the docs)?\n\nEverything is best-effort — a degraded Redis returns partial data\nrather than 500'ing the health endpoint itself.",
         "operationId": "health_ingestion_health_ingestion_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -108532,8 +108583,23 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
         "summary": "Live-stream ingestion health — gate + queue + memory",
         "tags": [
           "Health"

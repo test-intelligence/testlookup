@@ -9,9 +9,10 @@ Generated from tracked source by `scripts/generate_reference.py`. Do not edit by
 Receive frontend telemetry batch
 
 Accepts and logs a batch of frontend errors and Web Vitals.
-Always returns 202 — the browser fires-and-forgets this call.
+Returns 202 for an accepted batch — the browser fires-and-forgets this call.
+A batch with more than 50 errors or 50 vitals is refused with 422.
 
-Source: [backend/app/routers/observability.py:63](../../../backend/app/routers/observability.py#L63).
+Source: [backend/app/routers/observability.py:130](../../../backend/app/routers/observability.py#L130).
 
 Dependency chain: .
 

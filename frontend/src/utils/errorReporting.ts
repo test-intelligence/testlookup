@@ -31,6 +31,14 @@ export function setTelemetrySuppressed(check: () => boolean): void {
 // VITE_API_URL is also accepted as a legacy alias.
 const API_ENDPOINT = `${import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? ''}/api/v1/observability/frontend`
 
+/**
+ * The page address without its query string or fragment.
+ *
+ * Invite, password-reset and SSO values ride in the fragment so that they
+ * never reach a server; `location.href` would send them with every record.
+ */
+const _pageUrl = (): string => location.origin + location.pathname
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface FrontendError {
@@ -87,8 +95,14 @@ const BEACON_LIMIT_BYTES = 60_000
 const MAX_STACK_CHARS = 4000
 const MAX_COMPONENT_STACK_CHARS = 2000
 
-/** Bound the buffer so a render loop cannot grow it without limit. */
-const MAX_BUFFERED_ERRORS = 50
+/**
+ * Bound the buffer so a render loop cannot grow it without limit.
+ *
+ * The backend refuses a batch with more than 50 errors or 50 vitals. A full
+ * error buffer gets one more record on send (the "events dropped" note in
+ * `flush`), so it holds 49.
+ */
+const MAX_BUFFERED_ERRORS = 49
 const MAX_BUFFERED_VITALS = 50
 
 /** Stop rescheduling after this many consecutive failed flushes. */
@@ -207,7 +221,7 @@ export function flush(): void {
     errors.push({
       type: 'error',
       message: `telemetry buffer overflow: ${_droppedEvents} events dropped before send`,
-      url: typeof window !== 'undefined' ? window.location.href : '',
+      url: typeof window !== 'undefined' ? _pageUrl() : '',
       user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
       timestamp: new Date().toISOString(),
       context: { dropped: _droppedEvents },
@@ -308,7 +322,7 @@ export function reportBoundaryError(error: Error, componentStack: string): void 
     message: error.message,
     stack: error.stack,
     component_stack: componentStack,
-    url: window.location.href,
+    url: _pageUrl(),
     user_agent: navigator.userAgent,
     timestamp: new Date().toISOString(),
   })
@@ -323,7 +337,7 @@ export function installGlobalErrorHandlers(): void {
       type: 'error',
       message: event.message || String(event.error),
       stack: event.error?.stack,
-      url: event.filename || window.location.href,
+      url: event.filename || _pageUrl(),
       user_agent: navigator.userAgent,
       timestamp: new Date().toISOString(),
       context: {
@@ -339,7 +353,7 @@ export function installGlobalErrorHandlers(): void {
       type: 'unhandledrejection',
       message: reason instanceof Error ? reason.message : String(reason),
       stack: reason instanceof Error ? reason.stack : undefined,
-      url: window.location.href,
+      url: _pageUrl(),
       user_agent: navigator.userAgent,
       timestamp: new Date().toISOString(),
     })
@@ -360,7 +374,7 @@ export function reportWebVital(metric: Metric): void {
     name: metric.name,
     value: metric.value,
     rating: metric.rating,
-    url: window.location.href,
+    url: _pageUrl(),
     delta: metric.delta,
   })
   _enforceBufferBounds()

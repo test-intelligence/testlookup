@@ -46,6 +46,17 @@ from tests.test_mfa import (  # noqa: F401 - fixtures are used by name
 
 pytestmark = pytest.mark.regression
 
+
+@pytest.fixture(autouse=True)
+async def _access_audit_table(session_factory):
+    """The profile route writes an access-audit row when the e-mail or username
+    changes; the shared sign-in harness creates only the tables sign-in needs."""
+    from app.models.postgres import AccessAuditLog
+
+    engine = session_factory.kw["bind"]
+    async with engine.begin() as conn:
+        await conn.run_sync(AccessAuditLog.__table__.create, checkfirst=True)
+
 VICTIM_EMAIL = "victim@example.com"
 GOOD_PASSWORD = "a-long-enough-passphrase"
 

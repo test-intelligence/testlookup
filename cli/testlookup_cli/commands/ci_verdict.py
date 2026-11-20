@@ -14,6 +14,10 @@ Exit-code contract (stable, for CI):
   must never silently green a build. Teams that prefer availability over
   strictness can pass ``--fail-open`` (exit 0 with a loud warning on
   infrastructure errors).
+* ``2`` — also when the run cannot be judged yet: it is still in progress
+  (its failures may not have arrived), or it holds zero tests (nothing was
+  ingested). ``--fail-open`` does not change this; ``--allow-partial`` judges
+  the run as it is now.
 
 Matching: failures are matched against the manifest primarily by test
 fingerprint (``sha256(class_name::test_name)[:16]``, recomputed
@@ -37,7 +41,38 @@ from testlookup_cli.verdict_logic import (
 )
 
 # Run statuses that mean "still executing" — everything else is terminal.
+# The backend's run status is ``LaunchStatus`` (backend/app/models/postgres.py):
+# IN_PROGRESS, then PASSED, FAILED or STOPPED. ``RUNNING`` is not a backend
+# status; it stays here so a server that ever sends it is waited on, not judged.
 _IN_PROGRESS_STATUSES = {"IN_PROGRESS", "RUNNING"}
+
+
+class RunNotReadyError(Exception):
+    """The run was read, but a verdict on it now could green a failing build."""
+
+
+def _refuse_a_run_that_is_not_ready(run_id: str, run: dict) -> None:
+    """Refuse a run that is still in progress or holds zero tests.
+
+    Neither has a failed test *yet*, so without this the gate would answer
+    "no real failures" and exit 0 for a build whose results have not arrived,
+    or whose upload the server rejected.
+    """
+    status = str(run.get("status", "")).upper()
+    if status in _IN_PROGRESS_STATUSES:
+        raise RunNotReadyError(
+            f"Run {run_id} is still in progress (status {status}), so its "
+            "failures may not have arrived yet. Pass --timeout-seconds N to "
+            "wait for it to finish, or --allow-partial to judge it as it is now."
+        )
+    # Only a count the server reports as zero is refused; a payload without
+    # the field is judged from its failures as before.
+    if run.get("total_tests") == 0:
+        raise RunNotReadyError(
+            f"Run {run_id} has no tests (status {status or 'unknown'}), so there "
+            "is nothing to judge. Check that the results were ingested, or pass "
+            "--allow-partial to accept an empty run."
+        )
 _POLL_INTERVAL_SECONDS = 5.0
 _PAGE_SIZE = 200
 
@@ -104,11 +139,14 @@ async def _gather(
     project: Optional[str],
     timeout_seconds: int,
     profile_name: Optional[str],
+    allow_partial: bool = False,
 ) -> tuple[list[dict], dict]:
     if timeout_seconds > 0:
         run = await _wait_for_completion(run_id, timeout_seconds, profile_name)
     else:
         run = await _fetch_run(run_id, profile_name)
+    if not allow_partial:
+        _refuse_a_run_that_is_not_ready(run_id, run)
     project_id = project or str(run.get("project_id", ""))
     if not project_id:
         raise ValueError(
@@ -169,7 +207,16 @@ def ci_verdict(
         0, "--timeout-seconds",
         help=(
             "Wait up to N seconds for the run to finish before judging "
-            "(polls every 5s). Default 0 = judge the current state immediately."
+            "(polls every 5s). Default 0 = do not wait: a run that is still "
+            "in progress exits 2 unless --allow-partial is given."
+        ),
+    ),
+    allow_partial: bool = typer.Option(
+        False, "--allow-partial",
+        help=(
+            "Judge the run as it is now even when it is still in progress or "
+            "holds zero tests. Without it both exit 2: failures that have not "
+            "arrived yet must not green a build."
         ),
     ),
     profile_name: Optional[str] = typer.Option(None, "--profile"),
@@ -182,12 +229,18 @@ def ci_verdict(
     recomputed client-side), falling back to an exact (test_name, suite_name)
     tuple match. Exit codes: 0 = no real failures, 1 = real failures
     (or --strict + any failure), 2 = API error / run-completion timeout
-    (fail-closed; see --fail-open).
+    (fail-closed; see --fail-open), and 2 = the run is still in progress or
+    holds zero tests (see --allow-partial).
     """
     try:
         failures, manifest = asyncio.run(
-            _gather(run_id, project, timeout_seconds, profile_name)
+            _gather(run_id, project, timeout_seconds, profile_name, allow_partial)
         )
+    except RunNotReadyError as exc:
+        # Not an infrastructure error: TestLookup answered, the run is not
+        # ready. --fail-open must not turn this into a pass.
+        output.print_error(f"ci-verdict refused: {exc}")
+        raise typer.Exit(EXIT_INFRA_ERROR)
     except Exception as exc:  # noqa: BLE001 — verdict must map ALL errors to the contract
         if fail_open:
             output.print_warning(

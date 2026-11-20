@@ -52,7 +52,7 @@ testlookup ci-verdict --run "$RUN_ID" --project "$PROJECT_ID"
 
 - **Exit `0`** — no *real* failures. Quarantined failures do not block (that is the point).
 - **Exit `1`** — at least one non-quarantined failure. With `--strict`, ANY failure blocks, quarantined included.
-- **Exit `2`** — TestLookup unreachable, an API error, or the run did not finish inside `--timeout-seconds`. **Fails closed by default** — a broken TestLookup must never silently green a build. Teams that prefer availability can pass `--fail-open` (exit 0 with a loud warning on infrastructure errors).
+- **Exit `2`** — TestLookup unreachable, an API error, the run is still in progress (pass `--timeout-seconds N` to wait for it), the run reports no tests at all, or the run did not finish inside `--timeout-seconds`. `--allow-partial` judges an unfinished or empty run anyway. **Fails closed by default** — a broken TestLookup must never silently green a build. Teams that prefer availability can pass `--fail-open` (exit 0 with a loud warning on infrastructure errors).
 
 How it decides: the CLI fetches the run's FAILED/BROKEN tests and the project's **quarantine manifest** (`GET /api/v1/projects/{project_id}/quarantine/manifest` — currently active quarantines only, ETag-cached; also an MCP resource, `testlookup://projects/{id}/quarantine-manifest`), then matches primarily by test fingerprint (`sha256(class::name)`, recomputed client-side), falling back to an exact `(test_name, suite_name)` match. `--output json` emits the full partition (`{verdict, counts, real_failures, quarantined_failures}`); `--timeout-seconds N` polls a still-running run before judging.
 

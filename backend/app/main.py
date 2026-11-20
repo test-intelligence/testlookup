@@ -3,11 +3,14 @@ TestLookup — FastAPI Application Entry Point
 """
 import asyncio
 from contextlib import asynccontextmanager
+from typing import Any, Optional
 
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
@@ -66,7 +69,59 @@ if settings.METRICS_ENABLED:
     ).set(1)
 
 # ── Rate limiter (login brute-force protection) ───────────────
-limiter = Limiter(key_func=get_remote_address, default_limits=[])
+#: How long one rate-limit call may wait for Redis, to connect and to answer.
+#: slowapi's Redis client is synchronous, so this is time the event loop is
+#: held: short, and one attempt (redis-py's own defaults are 5 s and retries).
+RATE_LIMIT_REDIS_TIMEOUT_SECONDS = 0.5
+
+
+def _rate_limit_storage_kwargs() -> dict[str, Any]:
+    """Where the limiter counts: the ``Limiter`` arguments for shared storage, or none.
+
+    With counters in process memory every worker of every pod counts alone, so
+    "10 sign-ins a minute" was 10 x workers x pods. In production and staging
+    the counters therefore live in Redis (``RATE_LIMIT_SHARED_STORAGE`` =
+    "auto"; "on" and "off" force the choice). Development keeps them in
+    memory: a local run and the unit tests have no Redis to wait for.
+
+    ``in_memory_fallback_enabled``: when Redis cannot be reached slowapi marks
+    the store dead, counts in memory with the same limits, and probes Redis
+    again with a growing pause (1 s, 2 s, 4 s ...). A Redis outage therefore
+    brings back the per-worker ceiling; it never turns the limit off.
+    """
+    mode = settings.RATE_LIMIT_SHARED_STORAGE
+    shared = mode == "on" or (mode == "auto" and settings.APP_ENV in ("production", "staging"))
+    if not shared:
+        return {}
+    return {
+        "storage_uri": settings.REDIS_URL,
+        "storage_options": {
+            "socket_connect_timeout": RATE_LIMIT_REDIS_TIMEOUT_SECONDS,
+            "socket_timeout": RATE_LIMIT_REDIS_TIMEOUT_SECONDS,
+            "retry": Retry(NoBackoff(), 0),
+        },
+        "in_memory_fallback_enabled": True,
+    }
+
+
+def _build_limiter() -> Limiter:
+    """The application's one limiter. A Redis URL it cannot use never stops startup."""
+    kwargs = _rate_limit_storage_kwargs()
+    if kwargs:
+        try:
+            return Limiter(key_func=get_remote_address, default_limits=[], **kwargs)
+        except Exception as exc:  # noqa: BLE001 - an unsupported URL scheme, a missing driver
+            # Never the URL itself: it can carry the Redis password.
+            logger.warning(
+                "rate_limit_shared_storage_unusable",
+                error=type(exc).__name__,
+                consequence="rate limits are counted per worker process",
+                fix="check REDIS_URL, or set RATE_LIMIT_SHARED_STORAGE=off to silence this",
+            )
+    return Limiter(key_func=get_remote_address, default_limits=[])
+
+
+limiter = _build_limiter()
 
 
 async def _warn_about_refused_notification_destinations() -> None:
@@ -201,8 +256,9 @@ app = FastAPI(
     # the server) while any direct link, bookmark or refresh of /docs landed on
     # Swagger instead. A page you can only reach by not linking to it is not
     # reachable documentation.
-    docs_url="/api-docs",
-    redoc_url="/api-docs/redoc",
+    # API_DOCS_ENABLED=false turns the three reference routes off.
+    docs_url="/api-docs" if settings.API_DOCS_ENABLED else None,
+    redoc_url="/api-docs/redoc" if settings.API_DOCS_ENABLED else None,
     # Under the /api-docs prefix on purpose. The ingress routes /api/,
     # /webhooks/, /ws/, /health/ and /api-docs to this service (never /metrics);
     # everything else falls through to the SPA. A bare /openapi.json therefore
@@ -210,7 +266,7 @@ app = FastAPI(
     # never load the spec -- broken from outside the cluster for as long as the
     # rule has existed. Serving the spec under the same routed prefix as the UI
     # keeps the two together and reachable.
-    openapi_url="/api-docs/openapi.json",
+    openapi_url="/api-docs/openapi.json" if settings.API_DOCS_ENABLED else None,
     lifespan=lifespan,
 )
 
@@ -312,6 +368,12 @@ _AUTH_RATE_LIMITS: dict[str, tuple[str, str]] = {
         "10/minute",
         "Too many recovery code requests. Try again in a minute.",
     ),
+    # The browser's error reports arrive without a credential, so the address
+    # is the only brake on how much one client can make the server log.
+    "/api/v1/observability/frontend": (
+        "60/minute",
+        "Too many telemetry reports. Try again in a minute.",
+    ),
     # ── Invitations + password reset (W17b ADM-01/02) ──────────────────────
     # New unauthenticated routes: account creation and password replacement by
     # token. 32-byte tokens are not guessable; the ceilings stop scripted
@@ -345,16 +407,18 @@ def _auth_rate_limit_key(request: Request) -> str:
     would have broken silently the moment two entries were given the same
     limit. Making the path part of the key removes the coupling.
 
-    Storage is per-process (``Limiter`` is constructed without a
-    ``storage_uri``), so these are per-worker ceilings — a coarse
-    anti-automation measure, not the account-protection control. Per-account
+    Where the counters live is ``_rate_limit_storage_kwargs``: Redis in
+    production and staging, so the ceiling is one figure for every worker and
+    pod; process memory in development, and as the fallback while Redis is
+    unreachable (then these are per-worker ceilings again). Per-account
     lockout (``users.failed_login_attempts`` / ``locked_until``, migration
-    0117) is the control that is actually global.
+    0117) stays the account-protection control: it is in Postgres and does
+    not depend on Redis at all.
     """
     return f"{get_remote_address(request)}|{routed_path(request)}"
 
 
-def _build_auth_limiters() -> dict[str, tuple]:
+def _build_auth_limiters(source: Optional[Limiter] = None) -> dict[str, tuple]:
     """Build one decorated callable per rate-limited path, **once**.
 
     This used to be done inside the middleware, per request. That was a real
@@ -371,6 +435,9 @@ def _build_auth_limiters() -> dict[str, tuple]:
     Each path gets a distinct ``__name__`` so the per-path registrations do
     not share a bucket at slowapi's level either (the key function already
     separates them at the storage level; this keeps the two consistent).
+
+    ``source`` is the limiter to register on; the application's own by
+    default. A test passes another to stand for a second worker process.
     """
     built: dict[str, tuple] = {}
     for path, (prod_limit, error_msg) in _AUTH_RATE_LIMITS.items():
@@ -380,7 +447,7 @@ def _build_auth_limiters() -> dict[str, tuple]:
             pass
 
         _limited.__name__ = "auth_rate_limit_" + path.strip("/").replace("/", "_")
-        decorated = limiter.limit(limit, key_func=_auth_rate_limit_key)(_limited)
+        decorated = (source or limiter).limit(limit, key_func=_auth_rate_limit_key)(_limited)
         built[path] = (decorated, error_msg)
     return built
 

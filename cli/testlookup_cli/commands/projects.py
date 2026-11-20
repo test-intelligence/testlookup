@@ -585,10 +585,10 @@ def import_project(
     typer.echo(f"Inserted {sum(inserted.values())} rows in {sum(1 for n in inserted.values() if n)} tables:")
     for table, count in sorted(inserted.items()):
         if count:
-            typer.echo(f"  {table}: {count}")
+            typer.echo(output.plain(f"  {table}: {count}"))
     for line in report_lines(report):
-        typer.echo(line)
+        typer.echo(output.plain(line))
     if report.get("switched_off"):
         typer.echo(INERT_NOTE)
     for line in history_lines(report.get("history")):
-        typer.echo(line)
+        typer.echo(output.plain(line))

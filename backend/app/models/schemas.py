@@ -740,6 +740,18 @@ class ProjectCreate(BaseModel):
     # The router enforces the role check.
     default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
 
+    @field_validator("slug", mode="after")
+    @classmethod
+    def _slug_is_not_a_reserved_folder(cls, value: str) -> str:
+        # The object store archives HTTP uploads under "uploads/"; a project
+        # with that slug would share the folder (services/minio_sentinel.py).
+        if value == "uploads":
+            raise PydanticCustomError(
+                "reserved_slug",
+                'The slug "uploads" is reserved for stored upload files. Choose another slug.',
+            )
+        return value
+
     # W10 INT-03: validated at save (422 with a fixed sentence); an empty
     # value is stored as None on create.
     @field_validator("splunk_index", mode="after")

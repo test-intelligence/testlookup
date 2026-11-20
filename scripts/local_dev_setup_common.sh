@@ -227,7 +227,7 @@ TestLookup local ${STACK_LABEL} developer stack is ready.
 Useful URLs:
   - Dashboard:      http://localhost:3000
   - API Docs:       http://localhost:8000/api-docs
-  - Health:         http://localhost:8000/health/details
+  - Health:         http://localhost:8000/health/ready
   - Flower:         http://localhost:5555
   - S3 API:         http://localhost:9000  (no web console)
   - MCP SSE:        http://localhost:8002/sse

@@ -108,6 +108,75 @@ export function authHeaders(token?: string, apiKey?: string): Record<string, str
   return {}
 }
 
+// ── Redirects ─────────────────────────────────────────────────────────────────
+
+const MAX_REDIRECTS = 5
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+
+type SdkRequest = Omit<RequestInit, 'headers'> & { headers?: Record<string, string> }
+
+function redirectRefused(message: string): Error {
+  const error = new Error(`[TestLookup] ${message} Set the TestLookup URL to the final URL of the server.`)
+  error.name = 'TestLookupRedirectError'
+  return error
+}
+
+/**
+ * `fetch` that follows a redirect only when its target has the same scheme,
+ * host and port as the configured endpoint, so a path or trailing-slash
+ * redirect keeps working and the API key, the session token and the login form
+ * never leave the configured server. Left to itself, fetch follows a redirect
+ * to any host and re-sends custom headers (`X-API-Key`, `X-Session-Token`)
+ * and, on a 307 / 308, the body.
+ *
+ * A redirect anywhere else throws, naming the other host. A runtime that hides
+ * the target of a manual redirect (a browser: an opaque response with no
+ * `Location`) throws too: it cannot be checked, so it is not followed.
+ */
+async function fetchSameOrigin(url: string, init: SdkRequest): Promise<Response> {
+  const origin = new URL(url).origin
+  let current = url
+  let request: SdkRequest = { ...init, redirect: 'manual' }
+  for (let hop = 0; ; hop++) {
+    const resp = await fetch(current, request)
+    if (resp.type === 'opaqueredirect') {
+      throw redirectRefused(`${origin} answered with a redirect that this runtime does not let the SDK inspect, so it was not followed.`)
+    }
+    if (!REDIRECT_STATUSES.has(resp.status)) return resp
+    const location = resp.headers?.get('Location')
+    if (!location) return resp
+    let target: URL
+    try {
+      target = new URL(location, current)
+    } catch {
+      throw redirectRefused(`${origin} answered with a redirect to an address that cannot be read, so it was not followed.`)
+    }
+    if (target.origin !== origin) {
+      const where = target.origin === 'null' ? target.protocol : target.origin
+      throw redirectRefused(
+        `${origin} answered with a redirect to another host (${where}); the request and its credentials were not sent there.`,
+      )
+    }
+    if (hop >= MAX_REDIRECTS) {
+      throw redirectRefused(`${origin} answered with more than ${MAX_REDIRECTS} redirects in a row.`)
+    }
+    await resp.body?.cancel().catch(() => undefined)
+    // What fetch itself does: a 303 (and a 301 / 302 answer to a POST) continues as a GET without the body.
+    const method = (request.method ?? 'GET').toUpperCase()
+    const becomesGet = resp.status === 303
+      ? method !== 'GET' && method !== 'HEAD'
+      : (resp.status === 301 || resp.status === 302) && method === 'POST'
+    if (becomesGet) {
+      const headers = { ...(request.headers ?? {}) }
+      for (const name of Object.keys(headers)) {
+        if (name.toLowerCase() === 'content-type') delete headers[name]
+      }
+      request = { ...request, method: 'GET', body: undefined, headers }
+    }
+    current = target.href
+  }
+}
+
 export interface SessionOptions {
   buildNumber?: string
   runId?: string
@@ -352,11 +421,14 @@ export class TestLookupReporter {
    * Convenience: obtain a JWT access token via username/password login.
    *
    *   const token = await TestLookupReporter.login(url, '<username>', '<password>')
+   *
+   * A redirect to another host is an error (the form is not sent there): pass
+   * the server's final URL.
    */
   static async login(baseUrl: string, username: string, password: string): Promise<string> {
     const url  = baseUrl.replace(/\/$/, '') + '/api/v1/auth/login'
     const body = new URLSearchParams({ username, password })
-    const resp = await fetch(url, {
+    const resp = await fetchSameOrigin(url, {
       method:  'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body:    body.toString(),
@@ -376,7 +448,7 @@ export class TestLookupReporter {
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
 
     try {
-      const resp = await fetch(this.baseUrl + path, {
+      const resp = await fetchSameOrigin(this.baseUrl + path, {
         method,
         headers: {
           ...this.authHeaders,
@@ -598,7 +670,7 @@ export class LiveSession {
       const timer = setTimeout(() => controller.abort(), this.timeoutMs)
 
       try {
-        const resp = await fetch(`${this.baseUrl}/api/v1/stream/events/batch`, {
+        const resp = await fetchSameOrigin(`${this.baseUrl}/api/v1/stream/events/batch`, {
           method:  'POST',
           headers: {
             'Content-Type':   'application/json',

@@ -279,6 +279,11 @@ async def update_user_profile(
         email=payload.email if payload.email not in (None, user.email) else None,
     )
 
+    # Access changes made here are recorded like the dedicated /role and
+    # /status routes record them: one access-audit row per field that really
+    # changes, written just before the commit so a refused request leaves none.
+    access_changes: list[tuple[str, dict, dict]] = []
+
     # Check email uniqueness if changing
     if payload.email is not None and payload.email != user.email:
         # Without regard to case, and never against the user's own row (so a
@@ -290,6 +295,7 @@ async def update_user_profile(
         )
         if existing.first() is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already in use")
+        access_changes.append(("email_changed", {"email": str(user.email)}, {"email": str(payload.email)}))
         user.email = payload.email
 
     # Check username uniqueness if changing
@@ -297,6 +303,9 @@ async def update_user_profile(
         existing = await db.execute(select(User).where(User.username == payload.username))
         if existing.scalar_one_or_none():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already in use")
+        access_changes.append(
+            ("username_changed", {"username": user.username}, {"username": payload.username})
+        )
         user.username = payload.username
 
     if payload.full_name is not None:
@@ -307,6 +316,8 @@ async def update_user_profile(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot change your own role")
         if _normalize_user_role(payload.role) != UserRole.ADMIN:
             await _assert_not_last_admin(db, user)
+        if str(user.role) != str(payload.role):
+            access_changes.append(("role_changed", {"role": str(user.role)}, {"role": str(payload.role)}))
         user.role = payload.role
 
     if payload.is_active is not None:
@@ -314,8 +325,15 @@ async def update_user_profile(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own account")
         if payload.is_active is False:
             await _assert_not_last_admin(db, user)
+        if bool(user.is_active) != payload.is_active:
+            access_changes.append(
+                ("status_changed", {"is_active": user.is_active}, {"is_active": payload.is_active})
+            )
         user.is_active = payload.is_active
 
+    for action, before_value, after_value in access_changes:
+        await log_access_change(db, action, current_user, target_user_id=user_id,
+                                before_value=before_value, after_value=after_value)
     await db.commit()
     if payload.is_active is False:
         # Same as update_user_status: end the live sessions this user opened.

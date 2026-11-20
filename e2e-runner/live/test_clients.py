@@ -61,8 +61,13 @@ def test_mcp_stdio_public_health(tmp_path):
     from mcp.client.stdio import stdio_client
 
     origin = os.environ["TL_API"]
-    with urlopen(origin + "/health/details", timeout=20) as response:
+    # This case holds no credential, and /health/details needs a sign-in. The
+    # version comes from the public /health/version; the three stores below are
+    # the ones the public /health/ready reports.
+    with urlopen(origin + "/health/version", timeout=20) as response:
         expected = json.load(response)
+    with urlopen(origin + "/health/ready", timeout=20) as response:
+        assert json.load(response)["status"] == "ready"
     params = StdioServerParameters(
         command=sys.executable,
         args=[str(ROOT / "mcp/server.py")],

@@ -98,6 +98,18 @@ def get_profile(name: Optional[str] = None) -> dict:
     }
 
 
+def get_saved_profile(name: Optional[str] = None) -> Optional[dict]:
+    """The profile as saved in ``profiles.json``, or ``None`` when it is not saved.
+
+    ``get_profile`` answers for an unsaved name with a profile built from
+    ``TESTLOOKUP_URL`` / ``TESTLOOKUP_API_KEY``. A caller that is about to
+    write the profile back (``auth logout``) must tell the two apart, or it
+    copies an API key that lived only in the environment onto disk.
+    """
+    name = name or get_active_profile_name()
+    return _load_profiles().get(name)
+
+
 def save_profile(name: str, profile: dict) -> None:
     """Save a profile to disk."""
     profiles = _load_profiles()

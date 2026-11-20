@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hmac
 import inspect
 
 from collections.abc import Sequence
@@ -114,6 +115,7 @@ from app.routers import (
 )
 from app.routers.health import router as health_router
 from app.routers.observability import router as observability_router
+from starlette.responses import PlainTextResponse
 from starlette.routing import request_response
 
 
@@ -416,6 +418,7 @@ def configure_metrics(app: FastAPI) -> None:
         should_ignore_untemplated=True,
         excluded_handlers=["/metrics", "/health/live", "/health/ready"],
     ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+    _require_metrics_token(app)
 
     # W17b ADM-06: budgeted routes are also timed in-app (Settings > Performance reads them back
     # without a Prometheus server). Cheap: one dict lookup per request, nothing for other routes.
@@ -480,6 +483,51 @@ async def _refresh_celery_queue_depths() -> None:
         )
 
 
+def _metrics_scrape_refusal(request):
+    """A 401 for a scrape without the configured token, else ``None``.
+
+    ``METRICS_TOKEN`` is optional: empty leaves ``/metrics`` open, as it always
+    was (the shipped proxies do not route it). When it is set, the scrape must
+    send ``Authorization: Bearer <token>``. Read per request, so the setting is
+    the only switch.
+    """
+    expected = settings.METRICS_TOKEN
+    if not expected:
+        return None
+    scheme, _, presented = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() == "bearer" and hmac.compare_digest(
+        presented.strip().encode("utf-8"), expected.encode("utf-8")
+    ):
+        return None
+    return PlainTextResponse(
+        "The metrics scrape needs the bearer token set in METRICS_TOKEN. "
+        "Send it as: Authorization: Bearer <token>\n",
+        status_code=401,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _require_metrics_token(app) -> None:
+    """Put the token check in front of the instrumentator's /metrics route."""
+    for route in app.routes:
+        if getattr(route, "path", None) != "/metrics":
+            continue
+        original = route.endpoint
+
+        async def _endpoint(request, __orig=original):
+            refusal = _metrics_scrape_refusal(request)
+            if refusal is not None:
+                return refusal
+            result = __orig(request)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+
+        route.endpoint = _endpoint
+        route.app = request_response(_endpoint)
+        return
+
+
 def _install_celery_queue_depth_collector(app) -> None:
     """Wrap the instrumentator's /metrics route so depths refresh per scrape."""
     for route in app.routes:
@@ -488,6 +536,12 @@ def _install_celery_queue_depth_collector(app) -> None:
         original = route.endpoint
 
         async def _endpoint(*args, __orig=original, **kwargs):
+            # A refused scrape must not cost a Redis round trip: answer it
+            # before refreshing anything.
+            request = args[0] if args else kwargs.get("request")
+            refusal = _metrics_scrape_refusal(request) if request is not None else None
+            if refusal is not None:
+                return refusal
             await _refresh_celery_queue_depths()
             from app.services.agent_operational_metrics import (
                 refresh_agent_operational_metrics,

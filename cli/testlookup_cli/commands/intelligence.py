@@ -23,20 +23,23 @@ def show(
             output.print_json(data)
         else:
             run = data.get("run", {})
-            output.console.print(f"\n[bold]Run Intelligence — Build {run.get('build_number', '?')}[/]")
-            output.console.print(f"  Status: {run.get('status', '?')}  |  Pass Rate: {run.get('pass_rate', 0):.1f}%  |  Failed: {run.get('failed_tests', 0)}")
+            # Every value below comes from the server (the summary from an AI
+            # model fed with ingested text): output.safe() prints it as text.
+            safe = output.safe
+            output.console.print(f"\n[bold]Run Intelligence — Build {safe(run.get('build_number', '?'))}[/]")
+            output.console.print(f"  Status: {safe(run.get('status', '?'))}  |  Pass Rate: {run.get('pass_rate', 0):.1f}%  |  Failed: {safe(run.get('failed_tests', 0))}")
 
             decision = data.get("release_decision")
             if decision:
-                output.console.print(f"  Release: [bold]{decision.get('recommendation', '?')}[/]  (risk: {decision.get('risk_score', '?')}/100)")
+                output.console.print(f"  Release: [bold]{safe(decision.get('recommendation', '?'))}[/]  (risk: {safe(decision.get('risk_score', '?'))}/100)")
 
             summary = data.get("structured_summary", {})
             if summary and summary.get("executive_summary"):
-                output.console.print(f"\n[dim]Executive Summary:[/]\n  {summary['executive_summary'][:300]}")
+                output.console.print(f"\n[dim]Executive Summary:[/]\n  {safe(str(summary['executive_summary'])[:300])}")
 
             deep = data.get("deep_pipeline_status", {})
             if deep and deep.get("status") != "never_run":
-                output.console.print(f"\n  Deep Analysis: {deep.get('status', '?')} ({deep.get('completed_at', 'in progress')})")
+                output.console.print(f"\n  Deep Analysis: {safe(deep.get('status', '?'))} ({safe(deep.get('completed_at', 'in progress'))})")
 
             output.console.print()
         # E8.4: review state + AI disclaimer on stderr, so --output json stays pipeable.

@@ -80,6 +80,14 @@ def register(mcp) -> None:  # noqa: ANN001
         try:
             data = await api.get(api.path("/health/details"))
         except Exception as exc:
-            return f"Backend unreachable at {settings.api_url}: {exc}"
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status != 401:
+                return f"Backend unreachable at {settings.api_url}: {exc}"
+            # /health/details needs a sign-in. Without one the public probes
+            # still give the version and the state of the three data stores.
+            try:
+                data = await api.public_health()
+            except Exception as public_exc:
+                return f"Backend unreachable at {settings.api_url}: {public_exc}"
 
         return f"{_render_health(data)}\n**API URL:** {settings.api_url}"

@@ -1,11 +1,20 @@
 """
 Tool: Embed error messages and cluster them semantically using ChromaDB + cosine similarity.
 Groups test failures by root cause before deep investigation (reduces O(n) → O(k) LLM calls).
+
+Nothing is stored. The messages of one call are embedded into an in-memory
+collection that exists for that call only (as ``duplicate_detection_service``
+does). They used to be upserted into one ``failure_clusters`` collection on the
+Chroma server, shared by every project with no project recorded: the messages
+outlived the project they came from, and every clustering call searched all
+projects' documents, so one project's uploads could push another project's own
+neighbours out of the result window and split its clusters.
 """
 import asyncio
 import hashlib
 import logging
-from typing import Any, cast
+import uuid
+from typing import cast
 
 from langchain_core.tools import tool
 
@@ -55,10 +64,9 @@ def _cluster_from_neighbours(
     return clusters
 
 
-async def _get_chroma_client() -> Any:
-    from app.db.chroma import get_configured_chroma_client
-
-    return await get_configured_chroma_client()
+def _scratch_collection_name() -> str:
+    """A name no other call can have: the collection lives for one call."""
+    return f"{_COLLECTION}_{uuid.uuid4().hex}"
 
 
 def _simple_cluster(texts: list[str], threshold: float = 0.75) -> list[list[int]]:
@@ -116,19 +124,12 @@ async def embed_and_cluster(error_messages_json: str) -> str:
     try:
         from app.services import chroma_collections
 
-        # W12: the ACTIVE generation's name (``failure_clusters`` on the legacy
-        # generation) and embedding function (the local bundled one on the legacy one).
+        # W12: only the ACTIVE generation's embedding function (the local bundled
+        # one on the legacy generation), named explicitly like every other
+        # collection's. The stored name is not used: nothing is stored.
         target = await chroma_collections.resolve(_COLLECTION)
-        client = await _get_chroma_client()
-        collection = await asyncio.to_thread(
-            client.get_or_create_collection, target.name, **target.create_kwargs()
-        )
-        # Store with unique IDs derived from content hash
+        # IDs derived from the content hash
         ids = [hashlib.md5(e.encode()).hexdigest()[:16] for e in errors]
-        await asyncio.to_thread(
-            collection.upsert, ids=ids, documents=errors
-        )
-        # Query each error against the collection to find nearest neighbours.
         # The lookup size must be large enough not to fragment a big same-cause
         # cluster (see _MAX_NEIGHBOR_QUERY); beyond the cap, log rather than
         # silently truncate.
@@ -139,12 +140,32 @@ async def embed_and_cluster(error_messages_json: str) -> str:
                 "larger than the cap may fragment.",
                 _MAX_NEIGHBOR_QUERY, len(errors),
             )
-        results = await asyncio.to_thread(
-            collection.query,
-            query_texts=errors,
-            n_results=n_query,
-            include=["distances"],
-        )
+
+        def _embed_and_query() -> dict:
+            import chromadb
+
+            # In memory, in this process, for this call: no server is contacted,
+            # so no other project's (or earlier run's) documents can be among
+            # the neighbours, and nothing is left to purge.
+            client = chromadb.EphemeralClient()
+            name = _scratch_collection_name()
+            collection = client.create_collection(name, **target.create_kwargs())
+            try:
+                collection.upsert(ids=ids, documents=errors)
+                # Query each error against the batch to find nearest neighbours.
+                return cast(dict, collection.query(
+                    query_texts=errors,
+                    n_results=n_query,
+                    include=["distances"],
+                ))
+            finally:
+                # In-memory collections live as long as the process: drop this one.
+                try:
+                    client.delete_collection(name)
+                except Exception:  # noqa: BLE001 - cleanup only; the result stands
+                    logger.debug("Could not drop the in-memory clustering collection %s", name)
+
+        results = await asyncio.to_thread(_embed_and_query)
         cluster_indices = _cluster_from_neighbours(
             ids, results["ids"], results["distances"],
         )

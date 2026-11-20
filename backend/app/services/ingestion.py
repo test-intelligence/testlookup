@@ -32,8 +32,41 @@ from app.services.allure_parser import parse_allure_result
 from app.services.report_timings import ReportTimings, case_timing_columns, empty_timings, merge_timings
 from app.services.run_status import terminal_run_status
 from app.services.testng_parser import parse_testng_xml_with_timings
+from app.services.upload_limits import TooManyResults, enforce_result_limit, refuse_before_parsing
 
 logger = structlog.get_logger("services.ingestion")
+
+
+class DropObjectTooLarge(Exception):
+    """One object of a dropped build is larger than a report file may be.
+
+    Not a parse error: a file that cannot be parsed is logged and skipped, and
+    this must never be skipped, or the run would be stored without the results
+    the oversized file held and still read as complete.
+    """
+
+    code = "object_too_large"
+
+
+def _drop_object_limit() -> int:
+    """The per-object size cap of the bucket-drop path. 0 or less means no cap."""
+    return int(settings.INGEST_DROP_MAX_OBJECT_BYTES)
+
+
+def _refuse_oversized_object(key: str, size: int) -> None:
+    limit = _drop_object_limit()
+    if limit > 0 and size > limit:
+        raise DropObjectTooLarge(
+            f"{key} is {size:,} bytes; one file of a dropped build may be at most "
+            f"{limit:,}. Split the report into smaller files, or ask an admin to "
+            "raise INGEST_DROP_MAX_OBJECT_BYTES."
+        )
+
+
+def _refuse_oversized_listing(objects: list[dict]) -> None:
+    """Refuse the build on the listing's sizes, before anything is downloaded."""
+    for obj in objects:
+        _refuse_oversized_object(str(obj["Key"]), int(obj.get("Size") or 0))
 
 # asyncpg rejects statements with more than 32,767 bind parameters. Keep
 # fingerprint prefetch predicates comfortably below that ceiling, including
@@ -192,6 +225,14 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
 
             logger.info(f"Found {len(result_files)} Allure result files")
 
+            # The HTTP upload routes cap one report at 50 MB and
+            # INGEST_MAX_RESULTS_PER_UPLOAD results; this path had neither, so
+            # whoever can write to the bucket could make a worker read and
+            # hold any amount. Allure is one result per file, so both caps are
+            # checked on the listing, before any download.
+            enforce_result_limit(len(result_files))
+            _refuse_oversized_listing(result_files)
+
             # Parallel S3 fetches bounded by semaphore to prevent resource exhaustion
             sem = asyncio.Semaphore(settings.INGESTION_S3_CONCURRENCY)
 
@@ -199,10 +240,15 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                 async with sem:
                     try:
                         content = await storage.get_object_content(obj["Key"])
+                        # The listing gave the size the store reported; this
+                        # is the same check on what was actually read.
+                        _refuse_oversized_object(obj["Key"], len(content))
                         result_data = json.loads(content)
                         parsed = parse_allure_result(result_data, str(run.id), obj["Key"])
                         if parsed:
                             return parsed, result_data
+                    except DropObjectTooLarge:
+                        raise
                     except Exception as e:
                         logger.warning(
                             "allure_parse_failed",
@@ -229,12 +275,20 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
             testng_prefix = f"{minio_prefix}testng/"
             testng_objects = await storage.list_objects(testng_prefix)
             xml_files = [obj for obj in testng_objects if obj["Key"].endswith(".xml")]
+            _refuse_oversized_listing(xml_files)
 
             async def _fetch_testng(obj: dict) -> tuple[list, ReportTimings]:
                 async with sem:
                     try:
                         content = await storage.get_object_content(obj["Key"])
-                        return parse_testng_xml_with_timings(content.decode("utf-8"), str(run.id))
+                        _refuse_oversized_object(obj["Key"], len(content))
+                        xml_text = content.decode("utf-8")
+                        # A cheap count first: a file several times over the
+                        # result cap is refused without being parsed.
+                        refuse_before_parsing(xml_text, "testng")
+                        return parse_testng_xml_with_timings(xml_text, str(run.id))
+                    except (DropObjectTooLarge, TooManyResults):
+                        raise
                     except Exception as e:
                         logger.warning(
                             "testng_parse_failed",
@@ -262,6 +316,10 @@ async def process_sentinel(sentinel: SentinelFile, minio_prefix: str) -> None:
                     if fp not in existing_fps:
                         parsed_cases.append(case)
                         existing_fps.add(fp)
+
+            # The exact check, on everything the build holds (Allure and
+            # TestNG together), before a single row is written.
+            enforce_result_limit(len(parsed_cases))
 
             # ── Upsert test cases to PostgreSQL ────────────
             # Prefetch existing rows in ONE query and pass them through so

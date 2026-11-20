@@ -509,6 +509,7 @@ final class HttpText {
     static final Pattern FIELD_NAME = py(HttpRedaction.FIELD_NAME_RE, false);
     private static final List<Pattern> ID_SEGMENTS = compileAll(HttpRedaction.ENDPOINT_ID_SEGMENT_RES);
     private static final Set<String> HEADER_DENY = new HashSet<>(HttpRedaction.HEADER_DENYLIST);
+    private static final Set<String> HEADER_SUFFIX_EXCEPTIONS = new HashSet<>(HttpRedaction.HEADER_SUFFIX_EXCEPTIONS);
     private static final Set<String> QUERY_DENY = new HashSet<>(HttpRedaction.QUERY_DENYLIST);
 
     static final String MARKER_HEAD;
@@ -553,7 +554,11 @@ final class HttpText {
     }
 
     static boolean headerIsSecret(String lowered) {
-        return HEADER_DENY.contains(lowered) || endsWithAny(lowered, HttpRedaction.HEADER_SECRET_SUFFIXES);
+        if (HEADER_DENY.contains(lowered)) {
+            return true;
+        }
+        // The suffix rule has exceptions (Idempotency-Key, Sec-WebSocket-Key ...); the denylist has none.
+        return endsWithAny(lowered, HttpRedaction.HEADER_SECRET_SUFFIXES) && !HEADER_SUFFIX_EXCEPTIONS.contains(lowered);
     }
 
     static String tokenPass(String text) {
@@ -594,6 +599,35 @@ final class HttpText {
         }
         String paired = sub(FORM_PAIR, sub(JSON_PAIR, text, HttpText::redactJsonPair), HttpText::redactFormPair);
         return tokenPass(redactText(tokenPass(paired)));
+    }
+
+    /**
+     * The token shapes between path separators ({@code /} and {@code \}): the generic 40+ run includes
+     * {@code /}, so on whole text it would replace every long file path.
+     */
+    private static String segmentTokenPass(String text) {
+        StringBuilder out = new StringBuilder(text.length());
+        int start = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '/' || c == '\\') {
+                out.append(tokenPass(text.substring(start, i))).append(c);
+                start = i + 1;
+            }
+        }
+        return out.append(tokenPass(text.substring(start))).toString();
+    }
+
+    /**
+     * {@code http_capture.failure_text_pass}: the text pass for an error message or a stack trace, with the
+     * token shapes applied per path segment so file paths are kept. Idempotent.
+     */
+    static String failureTextPass(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        String paired = sub(FORM_PAIR, sub(JSON_PAIR, text, HttpText::redactJsonPair), HttpText::redactFormPair);
+        return segmentTokenPass(redactText(segmentTokenPass(paired)));
     }
 
     // ── The url ──────────────────────────────────────────────────────────────
@@ -697,6 +731,11 @@ final class HttpText {
         return HttpRedaction.REDACTED + "@" + host;
     }
 
+    /** In {@code QUERY_DENYLIST} (lower-cased), or secret-named by the JSON / form key rule. */
+    static boolean queryNameIsSecret(String name) {
+        return QUERY_DENY.contains(pyLower(name)) || keyIsSecret(name);
+    }
+
     static String redactQuery(String query) {
         if (query.isEmpty()) {
             return query;
@@ -708,7 +747,7 @@ final class HttpText {
             String sep = eq < 0 ? "" : "=";
             String value = eq < 0 ? "" : part.substring(eq + 1);
             name = tokenPass(name);
-            if (!value.isEmpty() && QUERY_DENY.contains(pyLower(pyStrip(unquotePlus(name))))) {
+            if (!value.isEmpty() && queryNameIsSecret(pyStrip(unquotePlus(name)))) {
                 parts.add(name + "=" + HttpRedaction.REDACTED);
                 continue;
             }

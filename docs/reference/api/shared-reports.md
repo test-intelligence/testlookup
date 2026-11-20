@@ -13,7 +13,7 @@ Render the shared HTML report view (no auth required — token-based).
 A refused (unreviewed, enforced) report answers 409: an HTML page for a
 browser, the JSON ``refusal_detail`` for every other caller.
 
-Source: [backend/app/routers/shared_reports.py:43](../../../backend/app/routers/shared_reports.py#L43).
+Source: [backend/app/routers/shared_reports.py:60](../../../backend/app/routers/shared_reports.py#L60).
 
 Dependency chain: `get_db`.
 
@@ -80,7 +80,7 @@ Download Shared Report Pdf
 
 Download the shared PDF report (no auth required — token-based).
 
-Source: [backend/app/routers/shared_reports.py:112](../../../backend/app/routers/shared_reports.py#L112).
+Source: [backend/app/routers/shared_reports.py:130](../../../backend/app/routers/shared_reports.py#L130).
 
 Dependency chain: `get_db`.
 
@@ -142,7 +142,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-StreamingResponse(io.BytesIO(pdf_bytes), media_type='application/pdf', headers={'Content-Disposition': f'attachment; filename="shared-report-{str(link.run_id)[:8]}.pdf"'})
+StreamingResponse(io.BytesIO(pdf_bytes), media_type='application/pdf', headers={**SHARE_RESPONSE_HEADERS, 'Content-Disposition': f'attachment; filename="shared-report-{str(link.run_id)[:8]}.pdf"'})
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.

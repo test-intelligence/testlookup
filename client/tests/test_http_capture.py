@@ -88,7 +88,8 @@ def test_the_vector_file_is_the_one_this_port_implements():
                  "SCHEMA_KEYS_MAX", "FIELD_NAME_RE", "REDACTED", "UNNAMED_KEYS", "JSON_DEPTH_MAX", "ERROR_MAX",
                  "URL_PARTS_RE"):
         assert getattr(hc, name) == vocab[name], name
-    for name in ("HEADER_DENYLIST", "HEADER_SECRET_SUFFIXES", "QUERY_DENYLIST", "ENDPOINT_ID_SEGMENT_RES",
+    for name in ("HEADER_DENYLIST", "HEADER_SECRET_SUFFIXES", "HEADER_SUFFIX_EXCEPTIONS", "QUERY_DENYLIST",
+                 "ENDPOINT_ID_SEGMENT_RES",
                  "TOKEN_SHAPES", "SCHEMA_STATES"):
         assert list(getattr(hc, name)) == list(vocab[name]), name
     assert hc._JSON_PAIR.pattern == vocab["JSON_PAIR_RE"] and hc._FORM_PAIR.pattern == vocab["FORM_PAIR_RE"]
@@ -124,6 +125,40 @@ def test_what_the_sdk_sends_stores_exactly_the_expected_exchange(case):
             if doc[side]["body"]:
                 doc[side] = dict(doc[side], body=marker.sub("[truncated]", doc[side]["body"]))
     assert stored == expect
+
+
+# ── Failure text (error message / stack trace) ───────────────────────────────
+
+_WINDOWS_FRAME = r"C:\agent\_work\1\s\tests\integration\checkout\test_checkout_flow_long_name.py"
+_TRACEBACK = "\n".join((
+    "Traceback (most recent call last):",
+    '  File "/home/runner/work/shop/shop/tests/integration/test_checkout_flow.py", line 42, in test_checkout',
+    f'  File "{_WINDOWS_FRAME}", line 7, in call',
+    "    resp = client.post(url, headers={'Authorization': 'Bearer w23fBearerSampleValue0123456789'})",
+    f"AssertionError: 500 != 200; sent db_password=w23fFailurePass and {PAT}",  # gitleaks:allow (made-up sample for the redaction test)
+    "",
+))
+
+
+def test_failure_text_loses_its_credentials():
+    out = hc.failure_text_pass(_TRACEBACK)
+    for raw in ("w23fBearerSampleValue0123456789", "w23fFailurePass", PAT):
+        assert raw not in out
+    assert "Bearer [REDACTED]" in out and "db_password=[REDACTED]" in out
+
+
+def test_failure_text_keeps_the_file_paths_of_a_traceback():
+    out = hc.failure_text_pass(_TRACEBACK)
+    assert '"/home/runner/work/shop/shop/tests/integration/test_checkout_flow.py", line 42' in out
+    assert _WINDOWS_FRAME in out
+    # The plain text pass would not keep them: that is why failure text has its own.
+    assert "/home/runner/work/shop/shop/tests/integration/test_checkout_flow.py" not in hc.text_pass(_TRACEBACK)
+
+
+def test_failure_text_pass_is_idempotent_and_takes_empty_text():
+    once = hc.failure_text_pass(_TRACEBACK)
+    assert hc.failure_text_pass(once) == once
+    assert hc.failure_text_pass("") == "" and hc.failure_text_pass("plain assertion text") == "plain assertion text"
 
 
 # ── OFF by default ───────────────────────────────────────────────────────────

@@ -14,17 +14,21 @@ as not captured), so capture never consumes a test's stream. The wrapper calls t
 original first and records after, swallowing every recorder error: capture can
 never change what a test sees.
 
-Secrets never leave the CI machine: every exchange is redacted HERE, before it is
-buffered, with the SAME rules the server applies again
+Captured exchanges are redacted HERE, on the CI machine, before they are buffered,
+with the SAME rules the server applies again
 (``backend/app/services/http_exchange_redaction.py``; the cross-language
 specification is ``sdk-vectors/http_exchange.json`` and
 ``client/tests/test_http_capture.py`` runs every one of its cases through this
 port). Header values of ``HEADER_DENYLIST`` names (and names ending in a secret
-suffix) are replaced by ``[REDACTED]``; query values of ``QUERY_DENYLIST`` names
-and URL userinfo too; every other value, and every JSON string leaf, passes the
-text rules (secret-named pairs, provider token shapes, credentials, JWTs, e-mail
-addresses, phone / card / IPv4 shapes). Bodies are cut at ``BODY_WIRE_MAX_BYTES``
-first, at most ``EXCHANGES_PER_TEST_MAX`` exchanges are kept per test.
+suffix, except ``HEADER_SUFFIX_EXCEPTIONS``) are replaced by ``[REDACTED]``; query
+values of ``QUERY_DENYLIST`` names, of secret-named parameters and URL userinfo
+too; every other value, and every JSON string leaf, passes the text rules (secret-named pairs, provider token shapes, credentials, JWTs, e-mail addresses,
+phone / card / IPv4 shapes). Bodies are cut at ``BODY_WIRE_MAX_BYTES`` first, at most ``EXCHANGES_PER_TEST_MAX`` exchanges are kept per test.
+
+Redaction is by name and by shape, so it is best effort: a credential under a name
+no rule knows, in a value with no recognisable shape, is uploaded as it is. This
+module redacts captured exchanges; for a test's error message and stack trace it
+offers :func:`failure_text_pass`.
 
 Stdlib only (``requests`` / ``httpx`` are wrapped only when importable).
 """
@@ -45,6 +49,7 @@ __all__ = [
     "HttpCapture",
     "capture_enabled",
     "derive_endpoint",
+    "failure_text_pass",
     "redact_body",
     "redact_exchange",
     "redact_headers",
@@ -69,11 +74,18 @@ HEADER_DENYLIST = (
     "authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key", "api-key", "x-auth-token",
     "x-access-token", "x-csrf-token", "x-xsrf-token", "x-amz-security-token", "x-goog-api-key",
     "x-session-token", "private-token", "x-gitlab-token", "x-hub-signature", "x-hub-signature-256",
+    "authentication",
 )
-HEADER_SECRET_SUFFIXES = ("token", "secret", "password", "api-key", "apikey", "signature", "credential")
+HEADER_SECRET_SUFFIXES = (
+    "token", "secret", "password", "api-key", "apikey", "signature", "credential",
+    "-key", "auth", "session", "sessionid",
+)
+# Names that end in "-key" and are not credentials (the suffix rule only; a denylisted name is always redacted).
+HEADER_SUFFIX_EXCEPTIONS = ("idempotency-key", "x-idempotency-key", "sec-websocket-key", "surrogate-key", "x-cache-key")
 QUERY_DENYLIST = (
     "token", "access_token", "id_token", "refresh_token", "api_key", "apikey", "key", "code", "password",
     "secret", "client_secret", "sig", "signature", "x-amz-signature", "x-amz-credential", "x-amz-security-token", "auth",
+    "subscription-key", "pwd", "passwd", "pass", "sessionid", "session", "jwt", "otp", "pin",
 )
 ENDPOINT_ID_SEGMENT_RES = (
     r"^\d+$", r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
@@ -166,6 +178,7 @@ _METHOD = re.compile(METHOD_RE)
 _FIELD_NAME = re.compile(FIELD_NAME_RE)
 _ID_SEGMENTS = tuple(re.compile(pattern) for pattern in ENDPOINT_ID_SEGMENT_RES)
 _HEADER_DENY = frozenset(HEADER_DENYLIST)
+_HEADER_SUFFIX_EXCEPTIONS = frozenset(HEADER_SUFFIX_EXCEPTIONS)
 _QUERY_DENY = frozenset(QUERY_DENYLIST)
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _UNUSABLE_CHARS = re.compile("[\x00\ud800-\udfff]")
@@ -232,6 +245,27 @@ def text_pass(text: str) -> str:
     return _token_pass(_redact_text(_token_pass(paired)))
 
 
+_PATH_SEPARATOR = re.compile(r"([/\\])")
+
+
+def _segment_token_pass(text: str) -> str:
+    """The token shapes between path separators: the generic 40+ run includes ``/``, so on whole text it
+    would replace every long file path in a stack frame."""
+    return "".join(part if part in ("/", "\\") else _token_pass(part) for part in _PATH_SEPARATOR.split(text))
+
+
+def failure_text_pass(text: str) -> str:
+    """The text pass for a test's error message or stack trace, for the reporter to apply before it queues
+    a result: the same rules as :func:`text_pass` (secret-named pairs, token shapes, credentials, JWTs,
+    e-mail / phone / card / IPv4 shapes), with the token shapes applied per path segment so the file paths
+    of a traceback are kept. Best effort, like every rule here; the server redacts the text again.
+    Idempotent."""
+    if not text:
+        return text
+    paired = _FORM_PAIR.sub(_redact_form_pair, _JSON_PAIR.sub(_redact_json_pair, text))
+    return _segment_token_pass(_redact_text(_segment_token_pass(paired)))
+
+
 def _utf8_len(text: str) -> int:
     return len(text.encode("utf-8"))
 
@@ -264,6 +298,14 @@ def _header_text(value: Any) -> Optional[str]:
     return None
 
 
+def _header_name_is_secret(name: str) -> bool:
+    lowered = name.strip().lower().replace("_", "-")
+    if lowered in _HEADER_DENY:
+        return True
+    # The suffix rule has exceptions (Idempotency-Key, Sec-WebSocket-Key ...); the denylist has none.
+    return lowered.endswith(HEADER_SECRET_SUFFIXES) and lowered not in _HEADER_SUFFIX_EXCEPTIONS
+
+
 def redact_headers(headers: Optional[Mapping[str, Any]]) -> tuple[dict[str, str], int]:
     """At most ``HEADERS_MAX`` headers (sorted by name); a denylisted / secret-suffixed name keeps its name
     and loses its value; every other value gets the text pass and the ``HEADER_VALUE_MAX`` cut."""
@@ -281,8 +323,7 @@ def redact_headers(headers: Optional[Mapping[str, Any]]) -> tuple[dict[str, str]
     entries.sort(key=lambda entry: entry[0])
     out: dict[str, str] = {}
     for name, value in entries[:HEADERS_MAX]:
-        lowered = name.strip().lower().replace("_", "-")
-        if lowered in _HEADER_DENY or lowered.endswith(HEADER_SECRET_SUFFIXES):
+        if _header_name_is_secret(name):
             stored = REDACTED if value else value
         else:
             stored = _settle(value, text_pass, lambda text: text[:HEADER_VALUE_MAX])
@@ -299,6 +340,11 @@ def _redact_netloc(netloc: str) -> str:
     return f"{REDACTED}@{host}"
 
 
+def _query_name_is_secret(name: str) -> bool:
+    """In ``QUERY_DENYLIST`` (lower-cased), or secret-named by the JSON / form key rule."""
+    return name.lower() in _QUERY_DENY or _key_is_secret(name)
+
+
 def _redact_query(query: str) -> str:
     if not query:
         return query
@@ -306,7 +352,7 @@ def _redact_query(query: str) -> str:
     for part in query.split("&"):
         name, sep, value = part.partition("=")
         name = _token_pass(name)
-        if value and unquote_plus(name).strip().lower() in _QUERY_DENY:
+        if value and _query_name_is_secret(unquote_plus(name).strip()):
             parts.append(f"{name}={REDACTED}")
             continue
         if value:

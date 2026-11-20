@@ -1237,8 +1237,9 @@ def ingest_test_run(
     shape an API from before that change queued; it is still accepted.
     """
     from app.models.schemas import SentinelFile
-    from app.services.ingestion import process_sentinel
+    from app.services.ingestion import DropObjectTooLarge, process_sentinel
     from app.services.minio_sentinel import SentinelRefused, read_sentinel
+    from app.services.upload_limits import TooManyResults
 
     dedup_key = f"testlookup:dedup:ingest:{minio_prefix}"
     dedup_owner = str(self.request.id)
@@ -1258,7 +1259,16 @@ def ingest_test_run(
                 return "refused"
         else:
             sentinel = SentinelFile(**(sentinel_dict or {}))
-        await process_sentinel(sentinel, minio_prefix)
+        try:
+            await process_sentinel(sentinel, minio_prefix)
+        except (TooManyResults, DropObjectTooLarge) as exc:
+            # Over a size or result limit: the same build is over it on every
+            # retry, so it is refused once and the prefix is freed.
+            logger.warning(
+                "[Task %s] Dropped build refused, not retrying: %s (%s)",
+                self.request.id, minio_prefix, exc,
+            )
+            return "refused"
         return "ingested"
 
     logger.info("[Task %s] Starting ingestion: %s", self.request.id, minio_prefix)

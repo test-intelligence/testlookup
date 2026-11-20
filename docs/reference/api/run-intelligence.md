@@ -20,7 +20,7 @@ Response includes:
 - classified_new_failures (new failures enriched with their cluster classification)
 - suites_impacted_delta, current_suite_count, baseline_suite_count
 
-Source: [backend/app/routers/run_intelligence.py:345](../../../backend/app/routers/run_intelligence.py#L345).
+Source: [backend/app/routers/run_intelligence.py:346](../../../backend/app/routers/run_intelligence.py#L346).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -114,7 +114,7 @@ List Run Decision Reports
 
 List immutable published DecisionReport versions for an authorized run.
 
-Source: [backend/app/routers/run_intelligence.py:265](../../../backend/app/routers/run_intelligence.py#L265).
+Source: [backend/app/routers/run_intelligence.py:266](../../../backend/app/routers/run_intelligence.py#L266).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -222,7 +222,7 @@ Export a customer-facing intelligence report as a structured JSON payload.
 Combines: run summary, structured AI analysis, baseline diff, release decision,
 criticality dimensions, role actions, and provenance — in a single downloadable document.
 
-Source: [backend/app/routers/run_intelligence.py:421](../../../backend/app/routers/run_intelligence.py#L421).
+Source: [backend/app/routers/run_intelligence.py:422](../../../backend/app/routers/run_intelligence.py#L422).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -317,7 +317,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-Response(content=content, media_type='application/json', headers={'Content-Disposition': f'attachment; filename={filename}'})
+Response(content=content, media_type='application/json', headers={'Content-Disposition': f'attachment; filename="{filename}"'})
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -338,7 +338,7 @@ Aggregates:
 - Pipeline stage history with skip context
 - Provenance (schema_version, fallback_used, tools_used_count)
 
-Source: [backend/app/routers/run_intelligence.py:135](../../../backend/app/routers/run_intelligence.py#L135).
+Source: [backend/app/routers/run_intelligence.py:136](../../../backend/app/routers/run_intelligence.py#L136).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -467,7 +467,7 @@ Force-refresh the intelligence snapshot for a run.
 Invalidates the cached snapshot and recomputes from live data.
 Returns the fresh intelligence payload.
 
-Source: [backend/app/routers/run_intelligence.py:378](../../../backend/app/routers/run_intelligence.py#L378).
+Source: [backend/app/routers/run_intelligence.py:379](../../../backend/app/routers/run_intelligence.py#L379).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -567,7 +567,7 @@ Return a mode-specific AI-generated summary.
 Falls back to a deterministic PostgreSQL-derived summary when the AI pipeline
 has not yet produced a MongoDB document for this run.
 
-Source: [backend/app/routers/run_intelligence.py:310](../../../backend/app/routers/run_intelligence.py#L310).
+Source: [backend/app/routers/run_intelligence.py:311](../../../backend/app/routers/run_intelligence.py#L311).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
