@@ -105,6 +105,7 @@ def _rendered_overlay() -> list[dict]:
             assert done.returncode == 0, done.stderr
             return [d for d in yaml.safe_load_all(done.stdout) if d]
     pytest.skip("no kustomize or kubectl on PATH")
+    raise AssertionError("unreachable: pytest.skip raises")
 
 
 def test_every_redis_client_reads_its_urls_from_the_secret():

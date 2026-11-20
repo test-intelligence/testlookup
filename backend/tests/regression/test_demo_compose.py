@@ -441,6 +441,10 @@ def test_install_cron_schedules_the_watchdog_as_root():
 
 WATCHDOG = ROOT / "scripts" / "demo" / "watchdog.sh"
 
+# The watchdog really runs `kill -9 <pid>` on what it reports, so the made-up
+# miners below use pids above the largest pid Linux can assign (4194304). A
+# small number can be a live process or a thread of this pytest run: 4242 was
+# one on CI, and the run was killed.
 INNOCENT_PROCESSES = [
     "1 /sbin/init",
     "812 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock",
@@ -519,32 +523,32 @@ def test_the_watchdog_leaves_ordinary_processes_alone(tmp_path):
 
 @needs_bash
 def test_a_miner_in_a_container_is_reported_and_the_demo_rebuilt(tmp_path):
-    processes = [*INNOCENT_PROCESSES, "4242 /tmp/.x/xmrig -o stratum+tcp://pool.example:3333 --donate-level 1"]
-    result = _watchdog(tmp_path, processes, containers=("4242",))
+    processes = [*INNOCENT_PROCESSES, "4999942 /tmp/.x/xmrig -o stratum+tcp://pool.example:3333 --donate-level 1"]
+    result = _watchdog(tmp_path, processes, containers=("4999942",))
     assert result.returncode == 0, result.stderr
-    assert "ALERT [miner] miner-like process in a container: pid 4242" in result.stdout
+    assert "ALERT [miner] miner-like process in a container: pid 4999942" in result.stdout
     assert any(call.startswith("runuser -u ") and call.endswith("/scripts/demo/demo.sh reset") for call in _calls(tmp_path))
 
 
 @needs_bash
 def test_the_watchdog_resets_at_most_once_an_hour(tmp_path):
-    processes = [*INNOCENT_PROCESSES, "4242 xmrig 600"]
-    _watchdog(tmp_path, processes, containers=("4242",))
-    again = _watchdog(tmp_path, processes, containers=("4242",))
+    processes = [*INNOCENT_PROCESSES, "4999942 xmrig 600"]
+    _watchdog(tmp_path, processes, containers=("4999942",))
+    again = _watchdog(tmp_path, processes, containers=("4999942",))
     assert "ALERT [reset-suppressed]" in again.stdout
     assert sum("demo.sh reset" in call for call in _calls(tmp_path)) == 1
 
 
 @needs_bash
 def test_a_miner_on_the_host_is_a_compromise_not_a_reset(tmp_path):
-    result = _watchdog(tmp_path, [*INNOCENT_PROCESSES, "5151 ./kdevtmpfsi"])
+    result = _watchdog(tmp_path, [*INNOCENT_PROCESSES, "4999951 ./kdevtmpfsi"])
     assert "ALERT [host-compromise]" in result.stdout
     assert not any("demo.sh reset" in call for call in _calls(tmp_path)), "a reset cannot clean a compromised host"
 
 
 @needs_bash
 def test_a_dry_run_reports_without_acting(tmp_path):
-    result = _watchdog(tmp_path, [*INNOCENT_PROCESSES, "4242 xmrig 600"], containers=("4242",), env={"WATCHDOG_DRY_RUN": "1"})
+    result = _watchdog(tmp_path, [*INNOCENT_PROCESSES, "4999942 xmrig 600"], containers=("4999942",), env={"WATCHDOG_DRY_RUN": "1"})
     assert "ALERT [miner]" in result.stdout
     assert _calls(tmp_path) == []
 
@@ -583,7 +587,7 @@ def test_unexpected_listeners_and_pool_connections_are_reported(tmp_path):
         tmp_path,
         INNOCENT_PROCESSES,
         listen=["LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*", "LISTEN 0 5 0.0.0.0:8999 0.0.0.0:*", "LISTEN 0 4096 127.0.0.53%lo:53 0.0.0.0:*"],
-        established=['0 0 10.0.0.2:51234 203.0.113.9:3333 users:(("xmrig",pid=4343,fd=7))', "0 0 10.0.0.2:51300 198.51.100.1:443"],
+        established=['0 0 10.0.0.2:51234 203.0.113.9:3333 users:(("xmrig",pid=4999943,fd=7))', "0 0 10.0.0.2:51300 198.51.100.1:443"],
     )
     listeners = [line for line in result.stdout.splitlines() if "ALERT [listener]" in line]
     assert listeners == [line for line in listeners if line.endswith("0.0.0.0:8999")] and len(listeners) == 1, listeners
