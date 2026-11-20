@@ -266,6 +266,7 @@ lock-python: ## Re-lock every hashed requirements lock (backend, mcp, e2e-runner
 	cd e2e-runner && $(UV_LOCK) --python-version 3.12 requirements.txt ../mcp/requirements.txt ../cli/pyproject.toml -o requirements-lock.txt
 	cd scripts && $(UV_LOCK) --python-version 3.12 requirements-ci.in -o requirements-ci.txt
 	cd scripts && $(UV_LOCK) --python-version 3.11 requirements-sdk-test.in ../client/pyproject.toml ../cli/pyproject.toml -o requirements-sdk-test.txt
+	cd scripts && $(UV_LOCK) --python-version 3.11 requirements-build.in -c requirements-sdk-test.txt -c ../e2e-runner/requirements-lock.txt -o requirements-build.txt
 
 # ── Build ─────────────────────────────────────────────────────
 

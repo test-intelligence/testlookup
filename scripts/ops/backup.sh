@@ -34,6 +34,12 @@
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# Owner-only from here on: the staging files and the archive hold the whole
+# database (password hashes, encrypted integration secrets) and every stored
+# object, unencrypted. Without this they take the caller's umask, usually
+# readable by every local user. Encrypt a copy before it leaves this host.
+umask 077
+
 QUIESCE="${QUIESCE:-0}"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 ARCHIVE="$BACKUP_DIR/testlookup-backup-$TS.tar.gz"

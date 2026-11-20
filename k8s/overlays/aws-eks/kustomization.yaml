@@ -46,6 +46,64 @@ patches:
       kind: Ingress
       name: testlookup-ingress
 
+  # ── Health: publish the endpoints by name, not the /health/ prefix ────────
+  # The base routes the whole prefix, which also publishes every health
+  # endpoint added later (/health/ingestion today). Only these four are meant
+  # for callers outside the cluster: the three probes, and /health/details,
+  # which the web UI polls for its degraded banner and version badge. They
+  # still go to the diagnostics Service, which answers while the backend is
+  # failing readiness. The `test` op stops the build if the base path list
+  # changes and index 4 is no longer the /health/ entry.
+  - patch: |-
+      - op: test
+        path: /spec/rules/0/http/paths/4/path
+        value: /health/
+      - op: remove
+        path: /spec/rules/0/http/paths/4
+      - op: add
+        path: /spec/rules/0/http/paths/4
+        value:
+          path: /health/live
+          pathType: Exact
+          backend:
+            service:
+              name: testlookup-backend-diagnostics
+              port:
+                number: 8000
+      - op: add
+        path: /spec/rules/0/http/paths/5
+        value:
+          path: /health/ready
+          pathType: Exact
+          backend:
+            service:
+              name: testlookup-backend-diagnostics
+              port:
+                number: 8000
+      - op: add
+        path: /spec/rules/0/http/paths/6
+        value:
+          path: /health/version
+          pathType: Exact
+          backend:
+            service:
+              name: testlookup-backend-diagnostics
+              port:
+                number: 8000
+      - op: add
+        path: /spec/rules/0/http/paths/7
+        value:
+          path: /health/details
+          pathType: Exact
+          backend:
+            service:
+              name: testlookup-backend-diagnostics
+              port:
+                number: 8000
+    target:
+      kind: Ingress
+      name: testlookup-ingress
+
   # The MCP host joins the same ALB and keeps SSE connections open for one hour.
   - patch: |-
       apiVersion: networking.k8s.io/v1

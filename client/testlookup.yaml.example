@@ -3,7 +3,8 @@
 #
 # Place this file at your project root, in .testlookup/, or in ~/.testlookup/
 # to configure TestLookup SDKs without code changes. YAML needs the optional
-# dependency: pip install "testlookup-reporter[yaml]".
+# dependency: run pip install ".[yaml]" in the SDK directory (the package is
+# not on PyPI, so do not install it by name).
 #
 # Discovery order (first file found wins; only that one file is read):
 #   1. ./testlookup.properties               (preferred — testlookup.* keys)

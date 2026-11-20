@@ -52,9 +52,18 @@ How a maintainer cuts a release. Users upgrading an install want
    keeps SBOM evidence for 90 days, and tags the digests `:vX.Y.Z`. An existing
    tag pointing at different digests fails the run instead of being moved.
    The digests carry the signed build provenance CI attached when it built them;
-   check each image with
-   `gh attestation verify oci://ghcr.io/test-intelligence/testlookup/backend:vX.Y.Z --owner test-intelligence`
-   (and `frontend`, `mcp`).
+   check each image (`backend`, `frontend`, `mcp`) with
+
+   ```bash
+   gh attestation verify oci://ghcr.io/test-intelligence/testlookup/backend:vX.Y.Z \
+     --repo test-intelligence/testlookup \
+     --signer-workflow test-intelligence/testlookup/.github/workflows/ci.yml \
+     --source-ref refs/heads/main
+   ```
+
+   `--repo` alone accepts a signature from any workflow run in the repository,
+   including one started from a branch. `--signer-workflow` and `--source-ref`
+   also require that the CI workflow signed it, in a run on `main`.
 6. **Build the offline bundle** for air-gapped users: run the "Offline bundle"
    workflow (`.github/workflows/offline-bundle.yml`) with the release version
    (without the `v`):
@@ -62,6 +71,11 @@ How a maintainer cuts a release. Users upgrading an install want
    ```bash
    gh workflow run offline-bundle.yml -f version=X.Y.Z
    ```
+
+   Start it on `main`, which is what the command does when no `--ref` is given.
+   The workflow signs the files only on a run dispatched from `main`; a run
+   from another branch builds and checks the bundle but writes no
+   `.intoto.jsonl`, so it cannot be used for a release.
 
    It checks out `vX.Y.Z`, pulls the image digests the release promoted
    (refusing if `:vX.Y.Z` is missing or is not CI's image of the tagged
@@ -74,7 +88,17 @@ How a maintainer cuts a release. Users upgrading an install want
    are immutable once published, so a file left off cannot be added later.
    OpenSSF Scorecard's Signed-Releases check reads the `.intoto.jsonl` asset,
    and anyone can check a download with
-   `gh attestation verify testlookup-offline-X.Y.Z.tar.gz --repo test-intelligence/testlookup`.
+
+   ```bash
+   gh attestation verify testlookup-offline-X.Y.Z.tar.gz \
+     --repo test-intelligence/testlookup \
+     --signer-workflow test-intelligence/testlookup/.github/workflows/offline-bundle.yml \
+     --source-ref refs/heads/main
+   ```
+
+   (add `--bundle testlookup-offline-X.Y.Z.intoto.jsonl` to check against the
+   attached file instead of asking GitHub). The same command checks the
+   `.sha256` file and `SHA256SUMS`.
    `make offline-bundle` builds the images from source, so use it for
    testing, not for a release. Under Podman it also names the app images
    `localhost/testlookup/...`, which a Docker host cannot import.

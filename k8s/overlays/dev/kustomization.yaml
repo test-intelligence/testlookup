@@ -88,18 +88,39 @@ patches:
       labelSelector: "app.kubernetes.io/component in (api,worker,frontend)"
 
   # ── Environment configuration ─────────────────────────────────────────────
+  # APP_ENV is "production" here on purpose. "dev" names the cluster stage (one
+  # replica, moving image tags, debug logging), not the application's
+  # development mode: that mode skips the production secret check and mounts
+  # the debug routes, and belongs on a laptop (docker-compose.yml). The base
+  # backend Deployment already pins APP_ENV=production; this value used to say
+  # "development", so the workers and beat ran in a different mode from the API.
   - patch: |-
       apiVersion: v1
       kind: ConfigMap
       metadata:
         name: testlookup-config
       data:
-        APP_ENV: "development"
+        APP_ENV: "production"
         LOG_LEVEL: "DEBUG"
         CORS_ORIGINS: "http://localhost:3000,https://testlookup-dev.yourdomain.com"
     target:
       kind: ConfigMap
       name: testlookup-config
+
+  # ── Ingress: not on the public controller ─────────────────────────────────
+  # A dev install runs moving image tags with debug logging, so its Ingresses
+  # must not be served by the internet-facing controller (class "nginx"). Both
+  # move to the class "nginx-internal": run an ingress controller with that
+  # class behind an internal load balancer to publish them inside your network.
+  # With no such controller nothing serves them, and you reach the UI with
+  #   kubectl -n testlookup-dev port-forward svc/testlookup-frontend 3000:80
+  # (see docs/operations/deploy-kubernetes.md, "Generic overlays").
+  - patch: |-
+      - op: replace
+        path: /spec/ingressClassName
+        value: nginx-internal
+    target:
+      kind: Ingress
 
 images:
   - name: ghcr.io/test-intelligence/testlookup/backend

@@ -33,6 +33,18 @@ The repository has no workflow that deploys to a cloud. To build one, follow the
 
 Sign in to the cloud with OpenID Connect (`id-token: write`) instead of long-lived keys. To require an approval before each deploy, run the deploy job in a GitHub environment with required reviewers.
 
+## Before you deploy: NetworkPolicy must be enforced
+
+The manifests isolate the components with NetworkPolicy objects (`default-deny-all`, then one policy per component). **NetworkPolicy must be enforced by the cluster**, and on all three managed platforms that is off unless you ask for it. Without it the API server accepts the policies and nothing applies them, so any pod in the cluster can reach the ChromaDB and Ollama services, which have no authentication, and the cloud metadata address.
+
+| Platform | Switch |
+|---|---|
+| AWS EKS | VPC CNI addon setting `enableNetworkPolicy: "true"` (VPC CNI v1.14 or later). The Terraform in `infra/aws/` has the switch `enable_network_policy`, off by default (see [AWS EKS](#aws-eks) for what must be in place first); on a cluster built another way use `aws eks update-addon --cluster-name <name> --addon-name vpc-cni --configuration-values '{"enableNetworkPolicy":"true"}'` |
+| Azure AKS | `az aks create ... --network-policy azure` (or `calico`, or `cilium` with `--network-dataplane cilium`) |
+| Google GKE | Dataplane V2 (`--enable-dataplane-v2`; always on in Autopilot), or `--enable-network-policy` on a Standard cluster without it |
+
+How to check a running cluster, and what starts being blocked when you turn enforcement on for an existing install, is in [network policies](deploy-kubernetes.md#network-policies). With enforcement on, a load balancer that sends straight to pod IPs (ALB `target-type: ip`, GKE container-native load balancing) must be allowed in `allow-frontend` and `allow-backend`; the EKS and GKE sections below say which ranges.
+
 ## AWS EKS
 
 ### Provision the infrastructure
@@ -43,7 +55,7 @@ Sign in to the cloud with OpenID Connect (`id-token: write`) instead of long-liv
 |---|---|
 | `network` | VPC, subnets across availability zones, NAT |
 | `ecr` | ECR repositories for the backend, frontend and MCP images |
-| `eks` | EKS cluster and managed node group |
+| `eks` | EKS cluster, managed node group and the core addons. Two security switches, both off by default: `enable_network_policy` and `require_imdsv2` (below) |
 | `data` | RDS for PostgreSQL 16, Amazon DocumentDB, ElastiCache (Redis OSS 7.1, TLS and auth token), two encrypted S3 buckets, and a Secrets Manager secret with the generated credentials |
 
 ```bash
@@ -57,6 +69,15 @@ aws eks update-kubeconfig --region <region> --name <cluster name>
 
 `validate.sh` needs no AWS account. No CI workflow runs it, so run it yourself after you change `infra/aws/` or the `aws-eks` overlay. The design and cost reasoning are in [`infra/aws/STRATEGY.md`](../../infra/aws/STRATEGY.md); the commands are in [`infra/aws/README.md`](../../infra/aws/README.md).
 
+The `eks` module has two switches that are off by default, because each one changes a running cluster and needs preparation. Set them in your `.tfvars` file and review the plan before you apply.
+
+| Variable | What it does when `true` | What must be in place first |
+|---|---|---|
+| `enable_network_policy` | Sets `enableNetworkPolicy` on the VPC CNI addon, so the cluster enforces NetworkPolicy. While it is `false`, every policy in the manifests is stored and none is applied | `default-deny-all` starts applying at once. With ALB `target-type: ip` the load balancer reaches the frontend and backend pods directly, and the `aws-eks` overlay only admits it to MCP: add the ALB's source range (your VPC or its public subnets) to `allow-frontend` and `allow-backend` in your overlay first, or the application stops answering through the ALB. Label any monitoring namespace as described in [network policies](deploy-kubernetes.md#network-policies). Needs VPC CNI v1.14 or later |
+| `require_imdsv2` | Starts the nodes from a launch template that requires IMDSv2 and sets the metadata hop limit to 1, so a pod off the host network cannot read the node role's credentials | On an existing cluster the plan replaces the managed node group, because AWS does not let a node group adopt a launch template in place: every node is recreated and the pods restart. A controller running in a pod can no longer read the region or the VPC id from the instance metadata service: give the AWS Load Balancer Controller its own IAM role (IRSA or EKS Pod Identity) and install it with `--set region=<region> --set vpcId=<vpc id>`; do the same for any other controller that used the node role |
+
+Turn both on for a new cluster once those pieces are ready. With both left `false`, applying this Terraform to a cluster built from an earlier version changes nothing in the node group or the addons.
+
 ### Wire the application
 
 1. Copy the Secrets Manager secret into `testlookup-secrets` (External Secrets Operator or a one-off `kubectl create secret`). The Terraform secret carries `DATABASE_URL`, `MONGO_URI`, `REDIS_URL`, `APP_SECRET_KEY`, `JWT_SECRET_KEY` and `WEBHOOK_SECRET`. You still need `POSTGRES_PASSWORD`, `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY`, and a ConfigMap patch that sets `REDIS_URL`, `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` to the ElastiCache `rediss://` endpoint (the base ConfigMap points them at the in-cluster service).
@@ -65,7 +86,7 @@ aws eks update-kubeconfig --region <region> --name <cluster name>
 4. In `k8s/overlays/aws-eks/kustomization.yaml`, replace the ACM certificate ARN (`arn:aws:acm:REGION:ACCOUNT:certificate/REPLACE-ME`, on both Ingresses), the ECR image names (`ACCOUNT.dkr.ecr.REGION.amazonaws.com/...`) and the hosts.
 5. Deploy: `scripts/deploy-k8s.sh --cloud=aws --registry=<account>.dkr.ecr.<region>.amazonaws.com --image-tag=<tag>`.
 
-The overlay installs a `gp3` StorageClass marked as the cluster default, uses ALB `target-type: ip` with `/health/live` health checks, keeps MCP on the same ALB group with a one-hour idle timeout, and opens the MCP pods' network policy to the ALB (the ALB security group is the perimeter; MCP still requires a bearer token). With `target-type: ip` the ALB also reaches the frontend and backend pods directly, so add the ALB's source range to `allow-frontend` and `allow-backend` ([network policies](deploy-kubernetes.md#network-policies)).
+The overlay installs a `gp3` StorageClass marked as the cluster default, uses ALB `target-type: ip` with `/health/live` health checks, redirects port 80 to 443, publishes the health endpoints by name (`/health/live`, `/health/ready`, `/health/version` and `/health/details`, not the whole `/health/` prefix), keeps MCP on the same ALB group with a one-hour idle timeout, and opens the MCP pods' network policy to the ALB (the ALB security group is the perimeter; MCP still requires a bearer token). With `target-type: ip` the ALB also reaches the frontend and backend pods directly, so add the ALB's source range to `allow-frontend` and `allow-backend` ([network policies](deploy-kubernetes.md#network-policies)).
 
 ## Google GKE
 
@@ -75,7 +96,7 @@ The overlay installs a `gp3` StorageClass marked as the cluster default, uses AL
 4. Replace `REGION-docker.pkg.dev/PROJECT/...` in the overlay's `images:` block, or pass `--registry` to `deploy-k8s.sh`.
 5. Deploy with `scripts/deploy-k8s.sh --cloud=gcp ...`.
 
-The overlay switches to the GCE Ingress class with the `testlookup-cert` ManagedCertificate and the `testlookup-ip` address, serves the MCP host from the same Ingress (and deletes the separate MCP Ingress), enables container-native load balancing (`cloud.google.com/neg`) on the backend, frontend and MCP Services, adds a `BackendConfig` with a one-hour timeout and `/health/live` health check for MCP, and sets `TRUSTED_PROXY_IPS` and the MCP network policy to Google's front-end and health-check ranges `35.191.0.0/16` and `130.211.0.0/22`. Because the load balancer reaches the frontend and backend pods directly, add those two ranges to `allow-frontend` and `allow-backend` as well.
+The overlay switches to the GCE Ingress class with the `testlookup-cert` ManagedCertificate and the `testlookup-ip` address, redirects plain HTTP to HTTPS with a `FrontendConfig` (`redirectToHttps`), serves the MCP host from the same Ingress (and deletes the separate MCP Ingress), publishes the health endpoints by name (`/health/live`, `/health/ready`, `/health/version` and `/health/details`), enables container-native load balancing (`cloud.google.com/neg`) on the backend, frontend and MCP Services, adds a `BackendConfig` with a one-hour timeout and `/health/live` health check for MCP, and sets `TRUSTED_PROXY_IPS` and the MCP network policy to Google's front-end and health-check ranges `35.191.0.0/16` and `130.211.0.0/22`. Because the load balancer reaches the frontend and backend pods directly, add those two ranges to `allow-frontend` and `allow-backend` as well.
 
 ## Azure AKS
 
@@ -84,7 +105,7 @@ The overlay switches to the GCE Ingress class with the `testlookup-cert` Managed
 3. Replace `REGISTRY.azurecr.io` in the overlay's `images:` block and the hosts.
 4. Deploy with `scripts/deploy-k8s.sh --cloud=azure ...`.
 
-The overlay keeps the NGINX annotations from the base (120-second proxy timeouts, 100 MB request bodies, TLS redirect) and pins PVCs to `managed-csi`. Azure Blob Storage is not S3-compatible on its own; use an S3-compatible gateway or store.
+The overlay keeps the NGINX annotations from the base (120-second proxy timeouts, 100 MB request bodies, TLS redirect), publishes the health endpoints by name (`/health/live`, `/health/ready`, `/health/version` and `/health/details`) and pins PVCs to `managed-csi`. Azure Blob Storage is not S3-compatible on its own; use an S3-compatible gateway or store.
 
 ## Related
 

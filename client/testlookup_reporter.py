@@ -31,8 +31,9 @@ Quick start (async)
 
 Pytest plugin
 -------------
-Install:
-    pip install testlookup-reporter
+Install (the package is not on PyPI; run this in the SDK directory, which is
+the Python SDK ZIP your TestLookup instance serves or ``client/`` in a clone):
+    pip install .
 
 Run:
     pytest --testlookup-url     http://localhost:8000 \\

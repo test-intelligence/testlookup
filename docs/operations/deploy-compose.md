@@ -89,17 +89,23 @@ It checks for Docker and Compose v2, downloads `docker-compose.release.yml`, `.e
 
 `--release` fills every secret with a random value and keeps the secure defaults: `APP_ENV=production` and `DEV_AUTO_LOGIN_ENABLED=false`, so there is no passwordless login. It also writes a random `INITIAL_ADMIN_PASSWORD` into `.env`. On first start the `db-migrate` service runs `alembic upgrade head` and then `scripts/create_admin.py`, which creates the user `admin` with that password on a new database only (an existing admin is never modified) and requires a password change at the first sign-in.
 
-The installer ends by saying where the admin password is, never the value, because a terminal's scrollback or a CI log keeps what is printed: it is stored in `.env` (mode 600) as `INITIAL_ADMIN_PASSWORD`. If `.env` has no `INITIAL_ADMIN_PASSWORD`, a random password is generated and printed once in `docker compose -f docker-compose.release.yml logs db-migrate`. Sign in at [localhost:3000](http://localhost:3000) and set your own password.
+The installer ends by saying where the admin password is, never the value, because a terminal's scrollback or a CI log keeps what is printed: it is stored in `.env` (mode 600) as `INITIAL_ADMIN_PASSWORD`. If `.env` has no `INITIAL_ADMIN_PASSWORD`, a random password is generated and printed once in `docker compose -f docker-compose.release.yml logs db-migrate`. Sign in at [localhost:3000](http://localhost:3000) and set your own password. After that first sign-in, delete the `INITIAL_ADMIN_PASSWORD` line from `.env`: it is only used to create the admin on a new database, and `.env` is passed to several services.
+
+The installer also ends with a warning that port 3000 is plain HTTP on every network interface of the host; see [Before other people use it](#before-other-people-use-it). It stops if it cannot set `.env` to mode 600.
 
 | Variable | Default | Effect |
 |---|---|---|
 | `TL_DIR` | `testlookup` | Install directory |
-| `TL_REF` | `main` | Branch, tag or commit the files are downloaded from |
-| `TESTLOOKUP_VERSION` | `latest` | Image tag to run |
+| `TL_REF` | `main` | Branch, tag or commit the files are downloaded from. With a release tag (`vX.Y.Z`) the images default to the same tag |
+| `TESTLOOKUP_VERSION` | `latest` | Image tag to run. With a release tag (`vX.Y.Z`) and no `TL_REF`, the files are downloaded from the same tag |
+| `TL_RAW_BASE` | `https://raw.githubusercontent.com/test-intelligence/testlookup` | Where the files are downloaded from (a mirror) |
+| `TL_RELEASE_BASE` | `https://github.com/test-intelligence/testlookup/releases/download` | Where a release's `SHA256SUMS` is downloaded from (a mirror) |
 | `TL_PROFILE` | none | Adds a Compose profile: `demo` (seed data) or `local-llm` (Ollama and ChromaDB) |
 | `TL_NO_UP` | `0` | `1` downloads and generates `.env` but does not start anything |
 
 Pass them before `bash`, for example `curl -fsSL .../install.sh | TL_PROFILE=demo bash`. For an evaluation, `TL_PROFILE=demo` is the documented default (README, [GETTING_STARTED.md](../../GETTING_STARTED.md)): without it the first dashboard is empty until you send a report. For a team instance, leave it out. The images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026).
+
+To install a release instead of the tip of `main`, name its tag: `curl -fsSL .../install.sh | TL_REF=vX.Y.Z bash`. The installer then downloads that release's `SHA256SUMS` from the GitHub release and compares the four files it fetched before it writes them into the install directory or runs anything. It stops, with nothing installed, on a mismatch, on a file the sums do not list, or when the release has no `SHA256SUMS`. For `main`, or any other branch or commit, no checksum exists and the installer says the files are not verified. The check covers the files the installer downloads, not the installer itself: to check that too, download `install.sh` and `SHA256SUMS` from the release page, run `sha256sum -c --ignore-missing SHA256SUMS`, then run the script.
 
 ### Image tags
 
@@ -134,9 +140,10 @@ The release file publishes the frontend on port 3000 of every interface and ever
 
 A release `.env` already runs in production mode with random secrets; the backend refuses to start if any of them is a placeholder. For a shared host also:
 
-1. Set `CORS_ORIGINS` and `PUBLIC_BASE_URL` to the URL people will open, and put a TLS-terminating reverse proxy in front of port 3000.
-2. Check that `REDIS_PASSWORD` is set, so the broker requires authentication.
-3. Schedule backups (below) and pin `TESTLOOKUP_VERSION`.
+1. Set `CORS_ORIGINS` and `PUBLIC_BASE_URL` to the URL people will open, and put a TLS-terminating reverse proxy in front of port 3000. Port 3000 is plain HTTP and is published on every network interface, so until you do this anyone on the network can read the passwords, session tokens and API keys sent to it. With the proxy on the same host, also set `FRONTEND_PUBLISH_ADDR=127.0.0.1` in `.env`: the proxy still reaches the port, and nobody can go around it.
+2. `REDIS_PASSWORD` must be set: the release stack refuses to start without it (Compose prints `REDIS_PASSWORD is required`), and in production the backend refuses to start when a Redis URL names another host and carries no password. `scripts/gen-dev-env.sh` writes one. If you built `.env` by hand, generate one with `openssl rand -hex 24`.
+3. After the first sign-in, delete the `INITIAL_ADMIN_PASSWORD` line from `.env`.
+4. Schedule backups (below) and pin `TESTLOOKUP_VERSION`.
 
 Run `docker compose -f docker-compose.release.yml up -d` again after editing `.env`. If you generated `.env` without `--release` (the local/demo mode with `APP_ENV=development` and passwordless login), regenerate it with `bash scripts/gen-dev-env.sh --release --force` before a shared install; `--force` replaces every secret, so do it before any data exists.
 
@@ -191,7 +198,7 @@ All commands run through `docker compose exec/run`, so the host needs only Docke
 | `make upgrade TAG=vX.Y.Z` | Pulls (release stack) or rebuilds (source stack), migrates, restarts in order and runs the smoke check; prints rollback steps on failure |
 | `make verify-ops-scripts` | Lints and unit-tests the scripts without a running stack |
 
-Valkey, ChromaDB and Ollama volumes are not in the archive. Copy archives off the host. Details: [administration guide](../../user-guide/administration.md#backup-restore--upgrades).
+Valkey, ChromaDB and Ollama volumes are not in the archive. The archive is not encrypted and holds the whole database, including password hashes; `make backup` writes it readable by its owner only (`umask 077`). Copy archives off the host, and encrypt the copy first (for example `gpg --symmetric` or `age`). Details: [administration guide](../../user-guide/administration.md#backup-restore--upgrades).
 
 ## Troubleshooting
 

@@ -333,6 +333,10 @@ else
     --from-literal=WEBHOOK_SECRET="${WEBHOOK_SECRET}"
   log "Secrets created."
   mkdir -p "$(dirname "$CREDS_FILE")"
+  # Owner-only before any secret is written: create it under umask 077, and
+  # set the mode again for a file an earlier run left with the default umask.
+  ( umask 077; : > "$CREDS_FILE" )
+  chmod 600 "$CREDS_FILE"
   cat > "$CREDS_FILE" <<CREDS
 # TestLookup OpenShift credentials — generated $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # DO NOT COMMIT
@@ -340,7 +344,7 @@ POSTGRES_PASSWORD=${PG_PASSWORD}
 MINIO_ACCESS_KEY=${MINIO_ACCESS}
 MINIO_SECRET_KEY=${MINIO_SECRET}
 CREDS
-  log "Credentials saved to $CREDS_FILE (gitignored)."
+  log "Credentials saved to $CREDS_FILE (owner-only, mode 600; ignored by git)."
 fi
 
 # ── Step 7 — Resolve storage class ──────────────────────────────────────────

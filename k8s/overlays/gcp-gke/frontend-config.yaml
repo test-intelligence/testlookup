@@ -1,0 +1,13 @@
+# A GCE Ingress listens on port 80 as well as 443. This tells the load balancer
+# to answer every plain-HTTP request with a redirect to HTTPS, so the app, the
+# API and the MCP host never answer a bearer token or an API key over HTTP.
+# The Ingress refers to it with the annotation
+# networking.gke.io/v1beta1.FrontendConfig (see kustomization.yaml).
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata:
+  name: testlookup-frontend-config
+  namespace: testlookup
+spec:
+  redirectToHttps:
+    enabled: true

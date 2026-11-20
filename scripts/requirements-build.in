@@ -1,0 +1,18 @@
+# Build backends for the wheels CI and the release runner image build from
+# source: the CLI (cli/pyproject.toml: hatchling) and the Python SDK
+# (client/pyproject.toml: setuptools, wheel).
+#
+# `pip wheel ./cli` used to download the newest hatchling into an isolated
+# build environment, unpinned and unhashed, in the job that publishes the
+# images. The jobs now install requirements-build.txt with --require-hashes
+# into a throwaway virtual environment and build with --no-build-isolation,
+# so the build runs only these files. scripts/test_ci_security.py fails a
+# `pip wheel` that does not.
+#
+# Regenerate (in scripts/, needs uv):
+#   uv pip compile --universal --generate-hashes --python-version 3.11 requirements-build.in -c requirements-sdk-test.txt -c ../e2e-runner/requirements-lock.txt -o requirements-build.txt
+# The two -c files keep shared pins (packaging, pluggy) on the versions the
+# SDK test job and the runner image already install.
+hatchling
+setuptools>=61
+wheel

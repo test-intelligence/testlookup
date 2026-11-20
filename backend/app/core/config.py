@@ -113,6 +113,32 @@ def _uri_password(uri: str) -> Optional[str]:
     return unquote(password) if password else None
 
 
+def _uri_names_another_host_without_a_password(uri: str) -> bool:
+    """True for a connection URI to a host other than this machine with no password.
+
+    A URI without a host (a unix socket, or one that does not parse) and one
+    that names this machine (``localhost``, ``127.0.0.0/8``, ``::1``) are
+    False: only a local process can reach those.
+    """
+    from ipaddress import ip_address
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(str(uri or ""))
+        host = (parts.hostname or "").strip().lower()
+        password = parts.password
+    except ValueError:
+        return False
+    if not host or password:
+        return False
+    if host == "localhost" or host.endswith(".localhost"):
+        return False
+    try:
+        return not ip_address(host).is_loopback
+    except ValueError:
+        return True
+
+
 # The most test results one ingest may carry. The JSON batch schema enforces it
 # at the API (``IngestPayload.results``); the upload worker enforces it after
 # parsing a file, through ``INGEST_MAX_RESULTS_PER_UPLOAD``, which defaults to
@@ -276,6 +302,18 @@ class Settings(BaseSettings):
     # ...except the SAML ACS (POST binding), whose SAMLResponse may reach the
     # route's own 1,000,000-char limit (routers/sso.py) plus urlencoding growth.
     FORM_URLENCODED_ACS_MAX_BYTES: int = 2 * 1024 * 1024
+    # Largest request body of ANY content type on an ordinary route, counted
+    # while it is read (middleware/request_hardening.py). 10 MiB is twice the
+    # largest body such a route accepts today (the 5 MiB test-case import
+    # file; the next is a 1,000,000-character CODEOWNERS paste). 0 = no limit.
+    REQUEST_BODY_MAX_BYTES: int = Field(default=10 * 1024 * 1024, ge=0)
+    # The same limit for the routes that carry test results or an archive
+    # (JSON batch and file ingest, live batches, project import). 100 MiB is
+    # the largest body a shipped front door lets through (the base ingress's
+    # proxy-body-size; the frontend's nginx allows 55m), so nothing accepted
+    # today is refused; each route's own lower check still answers first.
+    # 0 = no limit.
+    REQUEST_BODY_UPLOAD_MAX_BYTES: int = Field(default=100 * 1024 * 1024, ge=0)
     # Re-audit M5. The most test results one uploaded report may carry: the
     # same cap as a JSON batch, so a file is not a way around it. The 50MB
     # size limit bounds bytes, not rows -- 50MB of minimal JUnit elements is
@@ -1026,10 +1064,10 @@ class Settings(BaseSettings):
             # infra/cloudrun/backend.env.example all ship APP_ENV=production):
             # the Postgres and Redis passwords, the S3 secret key and the
             # passwords inside connection URIs. Only a value that IS a
-            # placeholder is refused. An empty one is left alone: the release
-            # compose runs Valkey without a password on its private network,
-            # a DSN-only deployment leaves POSTGRES_PASSWORD unset, and each
-            # service refuses a missing credential on its own.
+            # placeholder is refused here. An empty one is left alone: a
+            # DSN-only deployment leaves POSTGRES_PASSWORD unset, the Redis
+            # password is judged below by the URLs the process connects with,
+            # and each service refuses a missing credential on its own.
             for name, value in (
                 ("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD),
                 ("MINIO_SECRET_KEY", self.MINIO_SECRET_KEY),
@@ -1051,6 +1089,32 @@ class Settings(BaseSettings):
                     warnings.append(
                         f"CRITICAL: {name} carries a placeholder password from an "
                         "example env file — set a generated value"
+                    )
+            # Redis is the Celery broker, the result backend, the
+            # token-revocation store and the authorisation cache. Without a
+            # password, anything that can open a connection to it can queue
+            # tasks, forge or delete revocation entries and empty the cache.
+            # A Redis on this machine is reachable by local processes only, so
+            # it may run without one. On any other host it should have one.
+            #
+            # A WARNING, not a refusal. The release and single-VM Compose
+            # stacks enforce the password themselves (they do not start
+            # without REDIS_PASSWORD). The shipped Kubernetes manifests still
+            # run the in-cluster Redis without one, behind a NetworkPolicy,
+            # and some managed Redis services have no AUTH: an upgrade must
+            # not stop those installs. It becomes CRITICAL once the manifests
+            # carry a password.
+            redis_severity = "WARNING"
+            for name, uri in (
+                ("REDIS_URL", self.REDIS_URL),
+                ("CELERY_BROKER_URL", self.CELERY_BROKER_URL),
+                ("CELERY_RESULT_BACKEND", self.CELERY_RESULT_BACKEND),
+            ):
+                if _uri_names_another_host_without_a_password(uri):
+                    warnings.append(
+                        f"{redis_severity}: {name} connects to Redis on another host without a "
+                        "password — set REDIS_PASSWORD on the Redis server and put it in the URL "
+                        "(redis://:<password>@host:6379/0)"
                     )
             # WARNING, not CRITICAL: the Jira webhook fails closed on its own (403
             # for every delivery), so an unset secret denies rather than exposes,

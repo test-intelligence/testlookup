@@ -119,6 +119,15 @@ Existing usernames that contain `@` keep working for sign-in.
 - **MCP.** Put the MCP env file next to `server.py` or name it in `TESTLOOKUP_ENV_FILE`; a `.env` in the working directory is no longer read. Clients that parse resource bodies read the previous body under `data`. Ids passed to tools must be the UUIDs the list tools return.
 - **`GET /settings/ai/model-status`.** `ollama_error` is one of `refused_by_policy`, `unreachable`, `unexpected_status`, `invalid_response`.
 
+### Install and deployment files
+
+- **Redis password in Compose.** `docker-compose.release.yml` and the single-VM stack refuse to start without `REDIS_PASSWORD`. Installs made with `install.sh` or the offline bundle already have one. For a hand-made `.env`, set `REDIS_PASSWORD` and put it in `REDIS_URL`, `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` (`redis://:<password>@redis:6379/0`), then restart the stack.
+- **Request body limit.** A request body over 10 MiB (100 MiB on the ingest and import routes) answers 413. Raise `REQUEST_BODY_MAX_BYTES` / `REQUEST_BODY_UPLOAD_MAX_BYTES` if you send larger ones, and keep them at or above your proxy's limit.
+- **Installer and release tags.** `TL_REF=v0.1.0` alone now also selects the `0.1.0` images (it used to run `:latest`), and the files are checked against the release's `SHA256SUMS`. With nothing set the installer still follows `main` and `:latest`.
+- **Cloud ingresses.** EKS, GKE and AKS publish `/health/live`, `/health/ready`, `/health/version` and `/health/details` only. A monitor that called another `/health/...` path through the ingress must use one of these or the Service directly. GKE answers http with a redirect to https.
+- **`dev` overlay.** Its Ingress uses the `nginx-internal` class; reach a dev deploy through that class or `kubectl port-forward`.
+- **NetworkPolicy.** Check that your cluster enforces NetworkPolicy (EKS: the VPC CNI setting; AKS: a network policy option; GKE: Dataplane V2 or network policy). On EKS, read the guide before setting `enable_network_policy = true`: the load balancer's addresses must be admitted to the frontend and backend first.
+
 ### Development starts need real secrets
 
 With `APP_ENV=development` (the default when the variable is unset) the API
