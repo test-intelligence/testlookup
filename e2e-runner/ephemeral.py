@@ -50,7 +50,7 @@ def prepare(directory, manifest, project, engine="podman", *, host_runner=False)
         "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-testlookup_user} -d ${POSTGRES_DB:-testlookup}",
     ]
     # Ask Compose for free host ports. All database and worker ports remain internal.
-    for name, port in (("backend", 8000), ("frontend", 80), ("mcp", 8002)):
+    for name, port in (("backend", 8000), ("frontend", 8080), ("mcp", 8002)):
         services[name]["ports"] = [f"127.0.0.1::{port}"]
     config["networks"]["testlookup_net"].pop("ipam", None)
     config["networks"]["testlookup_net"]["internal"] = True
@@ -188,7 +188,7 @@ def main():
                         "-e",
                         "TL_API=http://backend:8000",
                         "-e",
-                        "TL_WEB=http://frontend",
+                        "TL_WEB=http://frontend:8080",
                         "-e",
                         "TL_MCP=http://mcp:8002",
                         "-e",
@@ -247,7 +247,7 @@ def main():
                 "TL_COMPOSE_PROJECT": project,
                 "TL_FAKE_URL": address("release-fixture", 8080),
                 "TL_API": address("backend", 8000),
-                "TL_WEB": address("frontend", 80),
+                "TL_WEB": address("frontend", 8080),
                 "TL_MCP": address("mcp", 8002),
                 "TL_MANIFEST": str(manifest_file),
                 "TL_EXPECTED_SHA": manifest["source_sha"],

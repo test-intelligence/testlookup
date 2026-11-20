@@ -2,9 +2,9 @@
 
 Both OpenShift overlays publish the UI (``testlookup-frontend``, port
 ``http``), MCP (``testlookup-mcp``, port ``sse``) and, on the API host, one
-Route per backend path (``testlookup-backend``, and ``/health/`` to
-``testlookup-backend-diagnostics``, port ``http``; the Artifactory deploy
-script advertises ``https://<api host>/api-docs``). Under the base ``default-deny-all`` the
+Route per backend path (``testlookup-backend``, and each published health
+endpoint to ``testlookup-backend-diagnostics``, port ``http``; the Artifactory
+deploy script advertises ``https://<api host>/api-docs``). Under the base ``default-deny-all`` the
 router needs an ingress allow on each target. ``allow-frontend`` and
 ``allow-mcp`` admitted the ``openshift-ingress`` namespace; ``allow-backend``
 did not, so the API Route never reached the backend.
@@ -15,6 +15,11 @@ on bare metal) is not traffic from that namespace's pods; OpenShift documents
 the namespace label ``policy-group.network.openshift.io/ingress: ""`` for
 allowing router traffic regardless of the router configuration, and the base
 policies now carry both.
+
+A Route ``path`` is a prefix match and has no exact mode. One Route for
+``/health/`` published every health endpoint, including ones added later; so
+each published endpoint (live, ready, version, details) has its own Route and
+no Route covers the ``/health`` prefix as a whole.
 """
 from __future__ import annotations
 
@@ -40,6 +45,14 @@ ROUTER_ON_POD_NETWORK = {"kubernetes.io/metadata.name": "openshift-ingress", POL
 ROUTER_ON_HOST_NETWORK = {POLICY_GROUP: ""}
 ROUTERS = {"pod-network": ROUTER_ON_POD_NETWORK, "host-network": ROUTER_ON_HOST_NETWORK}
 INGRESS_ALLOWS = ("allow-frontend", "allow-backend", "allow-mcp")
+DIAGNOSTICS = "testlookup-backend-diagnostics"
+# Route name -> path, for the health endpoints an installation publishes.
+HEALTH_ROUTES = {
+    "testlookup-api-health-live": "/health/live",
+    "testlookup-api-health-ready": "/health/ready",
+    "testlookup-api-health-version": "/health/version",
+    "testlookup-api-health-details": "/health/details",
+}
 
 
 def _routes(overlay: str) -> list[tuple[str, str, str]]:
@@ -60,9 +73,24 @@ def _target(service: str, port_name: str) -> tuple[dict[str, str], int]:
     spec = services[service]["spec"]
     port = next(p for p in spec["ports"] if p.get("name") == port_name)
     pods = template_labels(sorted(BASE.glob("*.yaml")))
-    matches = [labels for labels in pods.values() if selects({"matchLabels": spec["selector"]}, labels)]
+    matches = {name: labels for name, labels in pods.items() if selects({"matchLabels": spec["selector"]}, labels)}
     assert len(matches) == 1, f"{service} selects {len(matches)} Deployments"
-    return matches[0], int(port["targetPort"])
+    workload, labels = next(iter(matches.items()))
+    return labels, _container_port(workload, port["targetPort"])
+
+
+def _container_port(workload: str, target) -> int:
+    """A Service targetPort is a number, or the NAME of a container port of the pod."""
+    if isinstance(target, int) or str(target).isdigit():
+        return int(target)
+    for path in sorted(BASE.glob("*.yaml")):
+        for doc in yaml_docs(path):
+            if doc.get("kind") in ("Deployment", "StatefulSet") and doc["metadata"]["name"] == workload:
+                for container in doc["spec"]["template"]["spec"]["containers"]:
+                    for container_port in container.get("ports") or []:
+                        if container_port.get("name") == target:
+                            return int(container_port["containerPort"])
+    raise AssertionError(f"{workload} has no container port named {target!r}")
 
 
 def test_the_route_scan_finds_the_api_route():
@@ -70,8 +98,42 @@ def test_the_route_scan_finds_the_api_route():
     for overlay in OPENSHIFT_OVERLAYS:
         routes = {name: (svc, port) for name, svc, port in _routes(overlay)}
         assert routes.get("testlookup-api") == ("testlookup-backend", "http"), (overlay, routes)
-        assert routes.get("testlookup-api-health") == ("testlookup-backend-diagnostics", "http"), (overlay, routes)
-        assert len(routes) == 7, (overlay, routes)
+        for name in HEALTH_ROUTES:
+            assert routes.get(name) == (DIAGNOSTICS, "http"), (overlay, name, routes)
+        assert len(routes) == 6 + len(HEALTH_ROUTES), (overlay, routes)
+
+
+def _route_docs(overlay: str) -> dict[str, dict]:
+    return {d["metadata"]["name"]: d for d in yaml_docs(OVERLAYS / overlay / "route.yaml") if d.get("kind") == "Route"}
+
+
+@pytest.mark.parametrize("overlay", OPENSHIFT_OVERLAYS)
+def test_no_route_publishes_the_whole_health_prefix(overlay: str):
+    """Refusal case: a Route at /health or /health/ also serves /health/ingestion
+    and every health endpoint added later."""
+    routes = _route_docs(overlay)
+    api_host = routes["testlookup-api"]["spec"]["host"]
+    health = {name: doc["spec"]["path"] for name, doc in routes.items()
+              if doc["spec"].get("host") == api_host and doc["spec"].get("path", "/").startswith("/health")}
+    assert health == HEALTH_ROUTES, f"{overlay}: the API host publishes {health}"
+    whole_host = [name for name, doc in routes.items()
+                  if doc["spec"].get("host") == api_host and doc["spec"].get("path", "/") == "/"]
+    assert not whole_host, f"{overlay}: {whole_host} publishes every path of the API host"
+
+
+@pytest.mark.parametrize("overlay", OPENSHIFT_OVERLAYS)
+def test_each_health_route_matches_the_other_api_routes(overlay: str):
+    """Positive case: same Service port, TLS settings and annotations as the
+    API Route beside it, so the endpoints answer exactly as they did."""
+    routes = _route_docs(overlay)
+    api = routes["testlookup-api"]
+    for name in HEALTH_ROUTES:
+        route = routes[name]
+        assert route["spec"]["to"]["name"] == DIAGNOSTICS
+        assert route["spec"]["port"] == api["spec"]["port"], name
+        assert route["spec"]["tls"] == api["spec"]["tls"], name
+        assert route["metadata"].get("annotations") == api["metadata"].get("annotations"), name
+        assert route["metadata"].get("labels") == api["metadata"].get("labels"), name
 
 
 @pytest.mark.parametrize("router", sorted(ROUTERS))
@@ -110,3 +172,12 @@ def test_without_the_router_peers_the_api_route_is_shut():
     assert not admits_from_namespace(
         policies_for("openshift-artifactory"), pod, {"kubernetes.io/metadata.name": "elsewhere"}, port
     )
+
+
+def test_the_deploy_script_removes_the_retired_prefix_route():
+    """`oc apply -k` never deletes: on an install made before the split, the old
+    testlookup-api-health Route would keep publishing the whole /health/ prefix."""
+    script = (OVERLAYS.parents[1] / "openshiftsetup" / "deploy-openshift-artifactory.sh").read_text(encoding="utf-8")
+    apply_at = script.index('"$KCLI" apply -k "$OVERLAY_DIR"' + chr(10))  # the real apply, not the dry run
+    delete_at = script.index('delete route testlookup-api-health --ignore-not-found')
+    assert apply_at < delete_at, "the old Route is deleted before the new ones exist"

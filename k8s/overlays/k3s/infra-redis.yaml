@@ -46,6 +46,26 @@ spec:
             - 512mb
             - --maxmemory-policy
             - volatile-lru
+            # Every client must send the password (security audit 2026-11-18:
+            # the broker and token-revocation store took any client that could
+            # reach the port). Kubernetes replaces $(REDIS_PASSWORD) with the
+            # value of the env entry below. k3ssetup/deploy-k3s.sh generates
+            # the Secret key before it applies this manifest.
+            - --requirepass
+            - $(REDIS_PASSWORD)
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: testlookup-secrets
+                  key: REDIS_PASSWORD
+            # redis-cli reads this variable, so `kubectl exec ... redis-cli`
+            # signs in without a flag.
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: testlookup-secrets
+                  key: REDIS_PASSWORD
           ports:
             - containerPort: 6379
           resources:
@@ -55,14 +75,17 @@ spec:
             limits:
               cpu: 500m
               memory: 768Mi
+          # The probes sign in and require the PONG: `redis-cli ping` alone
+          # exits 0 on a "NOAUTH" error reply, so it would report a server
+          # nobody can use as healthy.
           readinessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
             initialDelaySeconds: 15
             periodSeconds: 30
           volumeMounts:

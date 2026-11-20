@@ -487,6 +487,11 @@ def test_kubernetes_redis_has_aof_non_evictable_evidence_and_pvc(
     deployment = resources["Deployment"]
     container = deployment["spec"]["template"]["spec"]["containers"][0]
     command = container["command"]
+    if command[:2] == ["sh", "-c"]:
+        # The OpenShift overlay starts Valkey through `sh -c "exec valkey-server
+        # ..."` so it can add --requirepass when the Secret holds a password.
+        command = command[2].split()
+        assert command[:2] == ["exec", "valkey-server"]
     assert command[command.index("--appendonly") + 1] == "yes"
     assert command[command.index("--appendfsync") + 1] == "everysec"
     assert command[command.index("--maxmemory-policy") + 1] == "volatile-lru"

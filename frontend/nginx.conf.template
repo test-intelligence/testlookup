@@ -13,7 +13,11 @@ map "$og_scheme://$host" $og_origin {
 }
 
 server {
-    listen 80;
+    # 8080 unless NGINX_LISTEN_PORT says otherwise (frontend/Dockerfile sets
+    # the default). nginx runs as uid 101, which cannot be counted on to bind
+    # a port below 1024; what users reach (the published Compose port, the
+    # Kubernetes Service port 80) is mapped onto this one outside the container.
+    listen ${NGINX_LISTEN_PORT};
     root /usr/share/nginx/html;
     index index.html;
 
@@ -77,6 +81,14 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    # `^~` on every proxied prefix below: nginx stops at the longest matching
+    # prefix and does not go on to the regex locations. Without it the
+    # static-asset regex at the end of this block wins for any proxied path
+    # that ends in .js, .css, .png and so on (an artefact download, a file
+    # name in an API path), and nginx answers it from disk: a 404 with a
+    # one-year cache header. The longer download prefix carries it too,
+    # because only the LONGEST matching prefix decides. Pinned by
+    # backend/tests/regression/test_nginx_proxied_paths_skip_the_static_regex.py.
     # Proxy API requests to backend.
     # BACKEND_UPSTREAM is templated at container start via envsubst.
     # Defaults to "backend:8000" (docker-compose). In Kubernetes, set
@@ -84,7 +96,7 @@ server {
     # When the cluster ingress already routes /api to the backend service,
     # this proxy is unused but remains as a safety net for direct
     # service/port-forward access to the frontend pod.
-    location /api/ {
+    location ^~ /api/ {
         proxy_pass http://${BACKEND_UPSTREAM};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -101,7 +113,7 @@ server {
     # pod's disk. The timeouts are idle gaps between two reads / writes, not a
     # total. No add_header here, so the server-level security headers are
     # inherited. Pinned by backend/tests/regression/test_nginx_configs.py.
-    location /api/v1/project-data-downloads/ {
+    location ^~ /api/v1/project-data-downloads/ {
         proxy_pass http://${BACKEND_UPSTREAM};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -115,7 +127,7 @@ server {
     # Same-origin WebSocket endpoint used by the live execution UI. This also
     # keeps Compose and direct frontend port-forwards working when no cluster
     # ingress is present to route /ws independently.
-    location /ws/ {
+    location ^~ /ws/ {
         proxy_pass http://${BACKEND_UPSTREAM};
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -127,7 +139,7 @@ server {
         proxy_send_timeout 3600s;
     }
 
-    location /webhooks/ {
+    location ^~ /webhooks/ {
         proxy_pass http://${BACKEND_UPSTREAM};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

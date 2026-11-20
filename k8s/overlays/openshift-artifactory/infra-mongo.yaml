@@ -33,9 +33,30 @@ spec:
       # No Kubernetes API calls here, so no service-account token in the pod
       # (OSS review 2026-11-12, L-8).
       automountServiceAccountToken: false
+      # The stock image starts with its own UID: the only account with the
+      # anyuid SCC (serviceaccount-anyuid.yaml).
+      serviceAccountName: testlookup-anyuid
       containers:
         - name: mongo
           image: mongo:7
+          # Authentication is on when testlookup-secrets holds a root user, and
+          # off (as before) when it does not: the keys are optional. The image
+          # creates the user only on an EMPTY data directory, so never add the
+          # keys by hand on an install with data: the deploy script does it
+          # safely (ENABLE_MONGO_AUTH in openshiftsetup/artifactory.env.example).
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: testlookup-secrets
+                  key: MONGO_ROOT_USERNAME
+                  optional: true
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: testlookup-secrets
+                  key: MONGO_ROOT_PASSWORD
+                  optional: true
           ports:
             - containerPort: 27017
           volumeMounts:

@@ -36,8 +36,13 @@ INGRESSES = (
 )
 
 # The endpoints an operator needs while the backend is refusing traffic. All
-# live under one prefix, so one routing rule covers them.
+# live under one prefix. The base Ingress routes the prefix (the cloud overlays
+# replace that entry with the four endpoints by name); the K3s Ingress names
+# the four itself, so an endpoint added under /health/ later is not published
+# by accident (/health/ingestion is not meant for callers outside the cluster).
 HEALTH_PREFIX = "/health/"
+PUBLISHED_HEALTH_ENDPOINTS = ("/health/live", "/health/ready", "/health/version", "/health/details")
+K3S_INGRESS = INGRESSES[1]
 # Paths that carry real traffic. These must stay behind the strict gate: if the
 # backend cannot serve, routing at it produces errors instead of a clean 503.
 SERVING_PREFIXES = ("/api/", "/ws/", "/webhooks/")
@@ -69,15 +74,22 @@ def _routes(path: Path) -> dict[str, str]:
     return found
 
 
+def _health_paths(ingress: Path) -> tuple[str, ...]:
+    """The health entries this Ingress is expected to carry."""
+    return PUBLISHED_HEALTH_ENDPOINTS if ingress == K3S_INGRESS else (HEALTH_PREFIX,)
+
+
 @pytest.mark.parametrize("ingress", INGRESSES, ids=lambda p: p.parent.name)
 def test_health_is_routed_at_a_service_that_publishes_notready_pods(ingress):
     """The load-bearing assertion. Everything else here supports it."""
     routes = _routes(ingress)
-    assert HEALTH_PREFIX in routes, (
-        str(ingress) + " no longer routes " + HEALTH_PREFIX + " at all"
-    )
+    targets = set()
+    for path in _health_paths(ingress):
+        assert path in routes, str(ingress) + " no longer routes " + path + " at all"
+        targets.add(routes[path])
+    assert len(targets) == 1, "the health endpoints are split across Services: " + repr(sorted(targets))
 
-    target = routes[HEALTH_PREFIX]
+    [target] = targets
     services = _services()
     assert target in services, (
         HEALTH_PREFIX + " points at Service '" + target + "', which is not "
@@ -91,6 +103,24 @@ def test_health_is_routed_at_a_service_that_publishes_notready_pods(ingress):
         "the endpoint that names the failed dependency -- becomes unreachable "
         "at the one moment it matters."
     )
+
+
+def test_the_k3s_ingress_publishes_the_four_health_endpoints_by_name():
+    """Exact entries, not the prefix: a request for any other /health/ path
+    (/health/ingestion today) falls through to the frontend route and never
+    reaches the backend. All four keep the diagnostics Service and its port."""
+    entries = {}
+    for doc in _docs(K3S_INGRESS):
+        for rule in doc.get("spec", {}).get("rules", []):
+            for route in rule.get("http", {}).get("paths", []):
+                if route["path"].startswith("/health"):
+                    entries[route["path"]] = route
+    assert set(entries) == set(PUBLISHED_HEALTH_ENDPOINTS), sorted(entries)
+    for path, route in entries.items():
+        assert route["pathType"] == "Exact", path + " is routed by prefix"
+        assert route["backend"]["service"] == {
+            "name": "testlookup-backend-diagnostics", "port": {"number": 8000},
+        }, path
 
 
 def test_traefik_is_told_to_target_the_cluster_ip():
