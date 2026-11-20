@@ -736,9 +736,7 @@ BUILD_LOCK = "scripts/requirements-build.txt"
 # Wheel builds that still download their build backend. Each is fixed in the
 # pull request named beside it; the test below fails once the file is fixed, so
 # the entry is removed and the rule covers the file from then on.
-_WHEEL_BUILDS_PENDING = {
-    "k3ssetup/deploy-k3s.sh": "the owner-tested cluster deploy pull request (security audit 2026-11-18)",
-}
+_WHEEL_BUILDS_PENDING: dict[str, str] = {}
 
 
 def _ordered_pip_commands(script: str) -> list[list[str]]:

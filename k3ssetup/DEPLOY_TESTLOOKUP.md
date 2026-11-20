@@ -26,3 +26,10 @@ named by `TESTLOOKUP_K3S_ENV` (default
 the initial admin password, shows them once and saves them to
 `k3ssetup/.k3s-credentials` (gitignored, mode 600); re-runs never
 regenerate a secret or touch an existing admin.
+
+Redis and MongoDB require a password, and the TestLookup images are deployed by
+sha256 digest. An install from before either change is upgraded in place by its
+next `deploy-k3s.sh` run: the script adds the two passwords to the existing
+Secret and to the credentials file, creates the MongoDB root user in the
+running database, and only then turns authentication on. Never apply
+`k8s/overlays/k3s` to an existing install by hand.

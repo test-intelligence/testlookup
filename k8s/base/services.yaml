@@ -71,9 +71,14 @@ spec:
   selector:
     app: testlookup-frontend
   ports:
+    # Port 80 is what ingresses, Routes and port-forwards name; it stays.
+    # The container listens on 8080 (nginx runs as a non-root user). The
+    # target is the pod's port NAME, resolved per pod: during the rolling
+    # update that moves the port, a pod of the old image (http = 80) and one
+    # of the new (http = 8080) are both reached correctly.
     - name: http
       port: 80
-      targetPort: 80
+      targetPort: http
   type: ClusterIP
 ---
 apiVersion: v1

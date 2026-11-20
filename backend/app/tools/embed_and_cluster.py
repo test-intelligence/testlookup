@@ -14,7 +14,7 @@ import asyncio
 import hashlib
 import logging
 import uuid
-from typing import cast
+from typing import Any, cast
 
 from langchain_core.tools import tool
 
@@ -62,6 +62,44 @@ def _cluster_from_neighbours(
                 assigned[j] = True
         clusters.append(cluster)
     return clusters
+
+
+def _exact_neighbours(
+    ids: list[str], stored_ids: list[str], stored_embeddings: Any, n_results: int,
+) -> dict[str, list[list[Any]]]:
+    """Each id's ``n_results`` nearest ids in the batch, nearest first, with the
+    squared L2 distances a collection query reports, computed exactly.
+
+    The collection's own ``query`` is an approximate (HNSW) search. On a batch
+    of near-identical messages it sometimes returned one neighbour short: one
+    message was missing from every row, its own included, and ended up in a
+    cluster of one. About 3 calls in 100 on a 40-message batch, differently on
+    every run. The batch is small (the caller caps the row width), so the
+    exact distances cost little and the grouping is the same on every run.
+    """
+    import numpy as np
+
+    by_id = {stored_id: vector for stored_id, vector in zip(stored_ids, stored_embeddings)}
+    missing = [cid for cid in ids if cid not in by_id]
+    if missing:
+        raise ValueError(f"{len(missing)} message(s) have no stored embedding")
+    vectors = np.asarray([by_id[cid] for cid in ids], dtype=np.float32)
+    squared = (vectors * vectors).sum(axis=1)
+    out_ids: list[list[Any]] = []
+    out_distances: list[list[Any]] = []
+    step = 256  # rows per block: bounds the distance block at step x len(ids)
+    for start in range(0, len(ids), step):
+        block = vectors[start:start + step]
+        distances = squared[start:start + step, None] + squared[None, :] - 2.0 * (block @ vectors.T)
+        np.maximum(distances, 0.0, out=distances)
+        for offset in range(len(block)):
+            distances[offset, start + offset] = 0.0  # a message is its own nearest neighbour
+        order = np.argsort(distances, axis=1, kind="stable")[:, :n_results]
+        for offset in range(len(block)):
+            row = order[offset]
+            out_ids.append([ids[int(k)] for k in row])
+            out_distances.append([float(distances[offset, int(k)]) for k in row])
+    return {"ids": out_ids, "distances": out_distances}
 
 
 def _scratch_collection_name() -> str:
@@ -152,12 +190,11 @@ async def embed_and_cluster(error_messages_json: str) -> str:
             collection = client.create_collection(name, **target.create_kwargs())
             try:
                 collection.upsert(ids=ids, documents=errors)
-                # Query each error against the batch to find nearest neighbours.
-                return cast(dict, collection.query(
-                    query_texts=errors,
-                    n_results=n_query,
-                    include=["distances"],
-                ))
+                # Each error's nearest neighbours in the batch, computed exactly
+                # from the stored embeddings (see _exact_neighbours for why the
+                # collection's approximate query is not used).
+                stored = collection.get(ids=ids, include=["embeddings"])
+                return _exact_neighbours(ids, stored["ids"], stored["embeddings"], n_query)
             finally:
                 # In-memory collections live as long as the process: drop this one.
                 try:

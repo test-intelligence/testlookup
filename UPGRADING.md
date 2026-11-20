@@ -150,6 +150,14 @@ Existing usernames that contain `@` keep working for sign-in.
 - **Jira keys.** Before upgrading, an administrator should set the Jira key on each project (Projects, edit) whose team files into a Jira project other than the default. Afterwards QA engineers on a project without a key can file and link only in the default Jira project, and QA leads can no longer set the key. One key per project: for a team that files into several Jira projects leave the key empty and have a QA lead file the exceptions. A pending approval that carries another Jira project is approved without a ticket and shows the reason.
 - **API clients.** New 422 answers on the Jira filing, linking and release-sync routes; 403 from the Jira picker route for viewers and testers; the Jira status sync result has an `out_of_scope` count; `/sso/login-url` and `/sso/oidc/login` can answer 429.
 
+### Cluster installs (K3s, OpenShift, Kubernetes)
+
+- **K3s.** The next `k3ssetup/deploy-k3s.sh` run adds Redis and MongoDB passwords to `testlookup-secrets` and to the credentials file, creates the MongoDB root user, restarts both stores with authentication and rolls the application pods. Take a backup first. The script checks that the Traefik pods carry the label `app.kubernetes.io/name=traefik` and stops before changing anything if they do not. Do not delete `testlookup-secrets` to start clean: the MongoDB volume keeps its user.
+- **OpenShift.** The first deploy with the new script needs cluster-admin, restarts every data store once and adds a Redis password. Afterwards remove the old grant: `oc adm policy remove-scc-from-user anyuid -z default -n <namespace>` (or one run with `REVOKE_DEFAULT_ANYUID=true`). An offline-bundle install must grant `anyuid` to `testlookup-anyuid` before applying the new manifests, and should add `REDIS_PASSWORD`, `REDIS_URL`, `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` to its Secret.
+- **Frontend container port.** nginx listens on 8080 inside the container. If you publish or route to the container port yourself (your own `ports:` line, a numeric `targetPort`, a pod NetworkPolicy), change the container side from 80 to 8080, and keep the Compose file and the frontend image on the same version. A file of your own in `/etc/nginx/conf.d` must `listen 8080`.
+- **Read-only containers.** A custom patch that replaces a whole `volumes` or `volumeMounts` list on the TestLookup Deployments removes the new `emptyDir`s; append with `/-`. A pod of your own in the namespace that uses `hostPath`, a host namespace, a host port or privileged mode is refused by the `baseline` rule when next created.
+- **Backups.** With MongoDB authentication on, `MONGO_URI` in the Secret must carry the credentials (the deploy scripts write it that way).
+
 ### Development starts need real secrets
 
 With `APP_ENV=development` (the default when the variable is unset) the API

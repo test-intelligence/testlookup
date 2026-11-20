@@ -279,7 +279,9 @@ ENV
 
 ── OpenShift ──────────────────────────────────────────────────────────────
   Same ordered sequence as Kubernetes, plus:
-  oc adm policy add-scc-to-user anyuid -z default -n testlookup
+  oc adm policy add-scc-to-user anyuid -z testlookup-anyuid -n testlookup
+  oc adm policy add-scc-to-user nonroot-v2 -z default -n testlookup
+  oc adm policy add-scc-to-user nonroot-v2 -z testlookup-sa -n testlookup
   Use KCLI=oc and oc in place of kubectl when running the migration helper.
   The rendered manifests already include the Routes (edge TLS + redirect).
   Re-run this script with --apps-domain <your apps domain> if the route hosts

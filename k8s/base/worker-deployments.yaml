@@ -46,6 +46,13 @@ spec:
         app.kubernetes.io/component: worker
         queue: critical
     spec:
+      # Pod-level, so every container in this pod (an init container, and any
+      # added later) inherits them. No fsGroup: OpenShift's restricted SCC
+      # refuses a fixed one, and the writable volumes are emptyDirs.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 60   # allow in-flight tasks to finish
       # Block worker startup until the Celery broker (Redis) is reachable.
@@ -68,6 +75,16 @@ spec:
                 sleep 2
               done
               echo "wait-for-redis: Redis is reachable, starting worker"
+          # The same restrictions as the main container below. busybox's own
+          # default user is root, so the uid is stated.
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       containers:
         - name: worker
           image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
@@ -112,6 +129,10 @@ spec:
           # cpu limit 1000m -> 2000m to match --concurrency=2. Not separately
           # measured; same arithmetic as the ingestion worker below, which was.
           volumeMounts:
+            # The root filesystem is read-only. /tmp is HOME in the image, and
+            # holds temp files, uploads being parsed and the worker's ready file.
+            - name: tmp
+              mountPath: /tmp
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
@@ -160,16 +181,14 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
-            runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # Everything the process writes is on a volume below.
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-            seccompProfile:
-              type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -180,6 +199,9 @@ spec:
                     app: testlookup-worker-critical
                 topologyKey: kubernetes.io/hostname
       volumes:
+        # Writable /tmp for a read-only root filesystem.
+        - name: tmp
+          emptyDir: {}
         # Scratch space for multiprocess metric files. emptyDir, not
         # persistent: the files describe this pod's live processes and
         # must start empty, or a restart would resurrect dead children.
@@ -232,6 +254,13 @@ spec:
         app.kubernetes.io/component: worker
         queue: ingestion
     spec:
+      # Pod-level, so every container in this pod (an init container, and any
+      # added later) inherits them. No fsGroup: OpenShift's restricted SCC
+      # refuses a fixed one, and the writable volumes are emptyDirs.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 120   # parsing can take time
       initContainers:
@@ -246,6 +275,16 @@ spec:
                 sleep 2
               done
               echo "wait-for-redis: Redis is reachable, starting worker"
+          # The same restrictions as the main container below. busybox's own
+          # default user is root, so the uid is stated.
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       containers:
         - name: worker
           image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
@@ -314,6 +353,10 @@ spec:
           # corpus size: 5.0 runs/s throttled at 1 core, 23.5 and 22.7 runs/s
           # unthrottled at 4. Observed demand peaked at 1.46 cores per pod.
           volumeMounts:
+            # The root filesystem is read-only. /tmp is HOME in the image, and
+            # holds temp files, uploads being parsed and the worker's ready file.
+            - name: tmp
+              mountPath: /tmp
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
@@ -368,16 +411,14 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
-            runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # Everything the process writes is on a volume below.
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-            seccompProfile:
-              type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -388,6 +429,9 @@ spec:
                     app: testlookup-worker-ingestion
                 topologyKey: kubernetes.io/hostname
       volumes:
+        # Writable /tmp for a read-only root filesystem.
+        - name: tmp
+          emptyDir: {}
         # Scratch space for multiprocess metric files. emptyDir, not
         # persistent: the files describe this pod's live processes and
         # must start empty, or a restart would resurrect dead children.
@@ -440,6 +484,13 @@ spec:
         app.kubernetes.io/component: worker
         queue: ai_analysis
     spec:
+      # Pod-level, so every container in this pod (an init container, and any
+      # added later) inherits them. No fsGroup: OpenShift's restricted SCC
+      # refuses a fixed one, and the writable volumes are emptyDirs.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 1860  # match Celery hard time limit (31 min)
       initContainers:
@@ -454,6 +505,16 @@ spec:
                 sleep 2
               done
               echo "wait-for-redis: Redis is reachable, starting worker"
+          # The same restrictions as the main container below. busybox's own
+          # default user is root, so the uid is stated.
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       containers:
         - name: worker
           image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
@@ -496,6 +557,10 @@ spec:
             - name: CHROMA_ONNX_MODEL_DIR
               value: /var/cache/testlookup/chroma-onnx
           volumeMounts:
+            # The root filesystem is read-only. /tmp is HOME in the image, and
+            # holds temp files, uploads being parsed and the worker's ready file.
+            - name: tmp
+              mountPath: /tmp
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
@@ -544,16 +609,14 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
-            runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # Everything the process writes is on a volume below.
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-            seccompProfile:
-              type: RuntimeDefault
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -564,6 +627,9 @@ spec:
                     app: testlookup-worker-ai
                 topologyKey: kubernetes.io/hostname
       volumes:
+        # Writable /tmp for a read-only root filesystem.
+        - name: tmp
+          emptyDir: {}
         # Scratch space for multiprocess metric files. emptyDir, not
         # persistent: the files describe this pod's live processes and
         # must start empty, or a restart would resurrect dead children.
@@ -616,6 +682,13 @@ spec:
         app.kubernetes.io/component: worker
         queue: default
     spec:
+      # Pod-level, so every container in this pod (an init container, and any
+      # added later) inherits them. No fsGroup: OpenShift's restricted SCC
+      # refuses a fixed one, and the writable volumes are emptyDirs.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 60
       initContainers:
@@ -630,6 +703,16 @@ spec:
                 sleep 2
               done
               echo "wait-for-redis: Redis is reachable, starting worker"
+          # The same restrictions as the main container below. busybox's own
+          # default user is root, so the uid is stated.
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       containers:
         - name: worker
           image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
@@ -679,6 +762,10 @@ spec:
           # Not separately measured -- driving the default queue in isolation
           # is awkward -- but the arithmetic is the ingestion worker's.
           volumeMounts:
+            # The root filesystem is read-only. /tmp is HOME in the image, and
+            # holds temp files, uploads being parsed and the worker's ready file.
+            - name: tmp
+              mountPath: /tmp
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
@@ -740,17 +827,18 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
-            runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # Everything the process writes is on a volume below.
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-            seccompProfile:
-              type: RuntimeDefault
       volumes:
+        # Writable /tmp for a read-only root filesystem.
+        - name: tmp
+          emptyDir: {}
         # Scratch space for multiprocess metric files. emptyDir, not
         # persistent: the files describe this pod's live processes and
         # must start empty, or a restart would resurrect dead children.
@@ -791,6 +879,13 @@ spec:
         app: testlookup-beat
         app.kubernetes.io/component: scheduler
     spec:
+      # Pod-level, so every container in this pod (an init container, and any
+      # added later) inherits them. No fsGroup: OpenShift's restricted SCC
+      # refuses a fixed one, and the writable volumes are emptyDirs.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: testlookup-sa
       initContainers:
         - name: wait-for-redis
@@ -804,6 +899,16 @@ spec:
                 sleep 2
               done
               echo "wait-for-redis: Redis is reachable, starting beat"
+          # The same restrictions as the main container below. busybox's own
+          # default user is root, so the uid is stated.
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       containers:
         - name: beat
           image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
@@ -823,6 +928,11 @@ spec:
                 name: testlookup-config
             - secretRef:
                 name: testlookup-secrets
+          volumeMounts:
+            # The root filesystem is read-only. /tmp is HOME in the image and
+            # holds the schedule and pid files named in the command above.
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
               cpu: 100m
@@ -842,13 +952,15 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
-            runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # Everything the process writes is on a volume below.
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-            seccompProfile:
-              type: RuntimeDefault
+      volumes:
+        # Writable /tmp for a read-only root filesystem.
+        - name: tmp
+          emptyDir: {}
