@@ -159,6 +159,39 @@ async def test_a_call_cannot_see_an_earlier_calls_messages(no_server, monkeypatc
     assert no_server == []
 
 
+async def test_the_neighbour_search_is_exact_and_never_the_approximate_query(no_server, monkeypatch):
+    """The collection's ``query`` is an approximate search: on 40 near-identical
+    messages it returned 39 neighbours about 3 times in 100, so one message
+    was missing from every row and landed in a cluster of its own (and the test
+    above failed now and then). The neighbours are computed exactly instead."""
+    from chromadb.api.models.Collection import Collection
+
+    def _refuse(*_args, **_kwargs):
+        raise AssertionError("failure clustering used the approximate collection query")
+
+    monkeypatch.setattr(Collection, "query", _refuse)
+    rows: list[tuple[list[list[str]], list[list[float]]]] = []
+    real = module._cluster_from_neighbours
+
+    def _spy(ids, result_ids, result_distances, *args, **kwargs):
+        rows.append((result_ids, result_distances))
+        return real(ids, result_ids, result_distances, *args, **kwargs)
+
+    monkeypatch.setattr(module, "_cluster_from_neighbours", _spy)
+    errors = [TIMEOUT.format(n=n) for n in range(40, 80)]
+    ids = [hashlib.md5(e.encode()).hexdigest()[:16] for e in errors]
+    with patch.object(module, "logger", MagicMock()) as log:
+        clusters = await _cluster(errors)
+
+    log.warning.assert_not_called()                      # the embedding path ran, not the fallback
+    (result_ids, result_distances), = rows
+    for own, row, distances in zip(ids, result_ids, result_distances):
+        assert sorted(row) == sorted(ids)                # every message, in every row
+        assert distances[row.index(own)] == 0.0          # itself, at distance zero
+        assert distances == sorted(distances)            # nearest first
+    assert _groups(clusters) == [sorted(f"t{i}" for i in range(40))]
+
+
 async def test_errors_with_the_same_cause_still_land_in_one_cluster(no_server):
     errors = [TIMEOUT.format(n=n) for n in range(6)] + [NULLREF.format(n=n) for n in range(4)]
     clusters = await _cluster(errors)

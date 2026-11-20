@@ -109,14 +109,23 @@ class TestSamlStructuralHardening:
 # ── Tier 1: enforce_saml_security (binding + anti-replay) ────────────────────
 
 
+# The sign-in cookie of the browser that started the login; the store keeps its hash with the request id.
+_BROWSER_COOKIE = "the-cookie-of-the-browser-that-started-it"
+
+
 def _valid_parsed() -> dict:
+    from datetime import datetime, timedelta, timezone
+
+    # NotOnOrAfter is required since the SSO hardening: an assertion that never expires is refused.
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {
         "conditions_present": True,
         "audiences": ["https://sp.test"],
         "recipient": "https://sp.test/acs",
         "in_response_to": "_req1",
         "assertion_id": "_a1",
-        "not_on_or_after": None,
+        "not_on_or_after": expires,
+        "subject_not_on_or_after": expires,
     }
 
 
@@ -133,7 +142,8 @@ def _patch_store(monkeypatch, *, consume=True, fresh=True):
     from app.services import sso_service
 
     async def fake_consume(_rid):
-        return consume
+        # A pending request yields what was stored with it: the hash of the starting browser's cookie.
+        return sso_service.browser_binding_hash(_BROWSER_COOKIE) if consume else None
 
     async def fake_claim(_aid, _ttl):
         return fresh
@@ -146,45 +156,45 @@ def _patch_store(monkeypatch, *, consume=True, fresh=True):
 class TestEnforceSamlSecurity:
     async def test_valid_assertion_passes(self, monkeypatch):
         svc = _patch_store(monkeypatch, consume=True, fresh=True)
-        await svc.enforce_saml_security(_valid_parsed(), _config())  # no raise
+        await svc.enforce_saml_security(_valid_parsed(), _config(), browser_token=_BROWSER_COOKIE)  # no raise
 
     async def test_missing_conditions_rejected(self, monkeypatch):
         svc = _patch_store(monkeypatch)
         parsed = _valid_parsed()
         parsed["conditions_present"] = False
         with pytest.raises(ValueError, match="Conditions"):
-            await svc.enforce_saml_security(parsed, _config())
+            await svc.enforce_saml_security(parsed, _config(), browser_token=_BROWSER_COOKIE)
 
     async def test_missing_audience_rejected(self, monkeypatch):
         svc = _patch_store(monkeypatch)
         parsed = _valid_parsed()
         parsed["audiences"] = []
         with pytest.raises(ValueError, match="AudienceRestriction"):
-            await svc.enforce_saml_security(parsed, _config())
+            await svc.enforce_saml_security(parsed, _config(), browser_token=_BROWSER_COOKIE)
 
     async def test_audience_mismatch_rejected(self, monkeypatch):
         svc = _patch_store(monkeypatch)
         parsed = _valid_parsed()
         parsed["audiences"] = ["https://attacker-sp.example"]
         with pytest.raises(ValueError, match="audience does not match"):
-            await svc.enforce_saml_security(parsed, _config())
+            await svc.enforce_saml_security(parsed, _config(), browser_token=_BROWSER_COOKIE)
 
     async def test_recipient_mismatch_rejected(self, monkeypatch):
         svc = _patch_store(monkeypatch)
         parsed = _valid_parsed()
         parsed["recipient"] = "https://evil.example/acs"
         with pytest.raises(ValueError, match="Recipient does not match"):
-            await svc.enforce_saml_security(parsed, _config())
+            await svc.enforce_saml_security(parsed, _config(), browser_token=_BROWSER_COOKIE)
 
     async def test_in_response_to_not_pending_rejected(self, monkeypatch):
         svc = _patch_store(monkeypatch, consume=False)
         with pytest.raises(ValueError, match="InResponseTo"):
-            await svc.enforce_saml_security(_valid_parsed(), _config())
+            await svc.enforce_saml_security(_valid_parsed(), _config(), browser_token=_BROWSER_COOKIE)
 
     async def test_replayed_assertion_rejected(self, monkeypatch):
         svc = _patch_store(monkeypatch, consume=True, fresh=False)
         with pytest.raises(ValueError, match="already been used|replay"):
-            await svc.enforce_saml_security(_valid_parsed(), _config())
+            await svc.enforce_saml_security(_valid_parsed(), _config(), browser_token=_BROWSER_COOKIE)
 
     async def test_idp_initiated_blocked_by_default(self, monkeypatch):
         svc = _patch_store(monkeypatch)
@@ -194,7 +204,7 @@ class TestEnforceSamlSecurity:
         parsed = _valid_parsed()
         parsed["in_response_to"] = None
         with pytest.raises(ValueError, match="InResponseTo"):
-            await svc.enforce_saml_security(parsed, _config())
+            await svc.enforce_saml_security(parsed, _config(), browser_token=_BROWSER_COOKIE)
 
     async def test_idp_initiated_allowed_when_opted_in(self, monkeypatch):
         svc = _patch_store(monkeypatch, fresh=True)
@@ -203,7 +213,7 @@ class TestEnforceSamlSecurity:
         monkeypatch.setattr(settings, "SAML_ALLOW_IDP_INITIATED", True)
         parsed = _valid_parsed()
         parsed["in_response_to"] = None
-        await svc.enforce_saml_security(parsed, _config())  # no raise
+        await svc.enforce_saml_security(parsed, _config(), browser_token=_BROWSER_COOKIE)  # no raise
 
 
 # ── Tier 2: provisioning role ceiling ────────────────────────────────────────

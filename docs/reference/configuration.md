@@ -209,6 +209,8 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `SSO_ALLOW_PRIVATE_IDP_ENDPOINTS` | `bool` | `False` |
 | `SAML_ALLOW_IDP_INITIATED` | `bool` | `False` |
 | `SAML_CLOCK_SKEW_SECONDS` | `int` | `60` |
+| `SAML_BROWSER_BINDING` | `bool` | `True` |
+| `SAML_MAX_ASSERTION_LIFETIME_SECONDS` | `int` | `Field(default=600, ge=60, le=86400)` |
 | `SSO_MAX_PROVISIONED_ROLE` | `str` | `'ADMIN'` |
 | `SECRET_PROVIDER_VAULT_ADDR` | `str` | `''` |
 | `SECRET_PROVIDER_VAULT_AUTH` | `str` | `'token'` |

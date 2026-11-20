@@ -115,6 +115,8 @@ async def test_update_rejects_case_insensitive_collision_without_mutating(monkey
             db,
             user.id,
             username="alice",
+            # a userName / e-mail change needs a token bound to the account's directory
+            sso_config_id=uuid.uuid4(),
         )
 
     assert user.username == "owner"

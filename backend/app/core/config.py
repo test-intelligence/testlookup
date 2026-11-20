@@ -740,6 +740,19 @@ class Settings(BaseSettings):
     # Allowed IdP/SP clock drift (seconds) applied to SAML assertion
     # NotBefore / NotOnOrAfter so minor NTP skew doesn't reject valid logins.
     SAML_CLOCK_SKEW_SECONDS: int = 60
+    # An SP-initiated SAML sign-in must finish in the browser that started it:
+    # /sso/login-url sets a ``SameSite=None; Secure`` cookie and the ACS refuses
+    # a response that arrives without it. Browsers keep such a cookie only over
+    # HTTPS, so with this on, /sso/login-url refuses to start a SAML sign-in
+    # whose ACS URL is plain http. Set false only for a plain-HTTP deployment;
+    # SAML sign-in is then open to login CSRF again. OIDC is always bound (its
+    # ``SameSite=Lax`` cookie works over http too).
+    SAML_BROWSER_BINDING: bool = True
+    # The longest a SAML assertion may still be usable when it arrives, in
+    # seconds (SAML_CLOCK_SKEW_SECONDS is added on top). Measured to the earlier
+    # of Conditions/@NotOnOrAfter and SubjectConfirmationData/@NotOnOrAfter.
+    # It also bounds how long the single-use record of an assertion is kept.
+    SAML_MAX_ASSERTION_LIFETIME_SECONDS: int = Field(default=600, ge=60, le=86400)
     # Hard ceiling on the role an IdP group-mapping (SSO JIT) or SCIM provision
     # may grant. Resolved roles above this are clamped down and a WARNING audit
     # is emitted. Default ADMIN honours deliberate admin-configured mappings;

@@ -1,11 +1,12 @@
 """SSO router — admin configuration CRUD, SP-initiated login, SAML ACS, OIDC login + callback (W20 ADM-08b)."""
 import logging
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import quote, urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -37,6 +38,9 @@ from app.models.schemas import (
     UserResponse,
 )
 from app.services.sso_service import (
+    SignedAssertionRefused,
+    browser_binding_hash,
+    browser_binding_matches,
     build_authn_request,
     certificate_expiration,
     certificate_fingerprint,
@@ -89,6 +93,60 @@ _OIDC_CODE_MAX = 4096
 
 def _is_oidc(config: SSOConfiguration) -> bool:
     return getattr(config, "provider_type", None) == SSOProviderType.OIDC
+
+
+# ── Browser binding: a sign-in finishes in the browser that started it ───────
+#
+# Starting a sign-in sets a short-lived HttpOnly cookie holding a random value;
+# only its SHA-256 is kept with the SAML request id / OIDC state. The ACS and
+# the OIDC callback refuse a response whose browser does not send that cookie,
+# so a response one person obtained cannot be delivered by someone else's
+# browser (login CSRF). Two names, because the two cookies differ:
+#
+# * SAML: the IdP form-POSTs to the ACS from its own site, and a browser sends
+#   a cookie on such a request only when it is ``SameSite=None; Secure``. That
+#   needs HTTPS (see SAML_BROWSER_BINDING).
+# * OIDC: the callback is a top-level GET, which ``SameSite=Lax`` covers, over
+#   http as well.
+#
+# The cookies are scoped to the SSO routes and never read by the app's pages.
+SAML_BINDING_COOKIE = "tl_sso_saml"
+OIDC_BINDING_COOKIE = "tl_sso_oidc"
+_BINDING_COOKIE_PATH = "/api/v1/sso"
+_BINDING_COOKIE_MAX_AGE = 600  # the lifetime of the SAML request id and of the OIDC state
+_BINDING_REFUSED = "did not come back through the browser that started the sign-in (the sign-in cookie is missing or different)"
+
+
+def _oidc_cookie_secure() -> bool:
+    """``Secure`` when the IdP sends the browser back over https. Not tied to APP_ENV: a production
+    install served over plain http would have the browser drop a Secure cookie, ending every sign-in."""
+    return oidc_service.callback_url().lower().startswith("https://")
+
+
+def _set_binding_cookie(response: Response, name: str, value: str) -> None:
+    saml = name == SAML_BINDING_COOKIE
+    response.set_cookie(
+        name,
+        value,
+        max_age=_BINDING_COOKIE_MAX_AGE,
+        path=_BINDING_COOKIE_PATH,
+        httponly=True,
+        secure=True if saml else _oidc_cookie_secure(),
+        samesite="none" if saml else "lax",
+    )
+    # The answer that carries the cookie belongs to one browser.
+    response.headers["Cache-Control"] = "no-store"
+
+
+def _clear_binding_cookie(response: Response, name: str) -> None:
+    saml = name == SAML_BINDING_COOKIE
+    response.delete_cookie(
+        name,
+        path=_BINDING_COOKIE_PATH,
+        httponly=True,
+        secure=True if saml else _oidc_cookie_secure(),
+        samesite="none" if saml else "lax",
+    )
 
 # ── Public endpoints (no JWT required) ───────────────────────────────────────
 
@@ -202,11 +260,15 @@ async def saml_single_logout(request: Request, db: AsyncSession):
 
 
 @router.get("/login-url", response_model=dict)
-async def get_sso_login_url(next: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+async def get_sso_login_url(response: Response, next: Optional[str] = None, db: AsyncSession = Depends(get_db)):
     """
     The IdP URL that starts an SP-initiated login: the IdP SSO URL carrying a
     SAML AuthnRequest (HTTP-Redirect binding) and, when ``next`` is an
     app-relative path, a RelayState the browser returns to after sign-in.
+
+    The answer also sets the sign-in cookie that the ACS / OIDC callback
+    require, so the caller must be the browser that will follow the URL (a
+    page on another origin has to send the request with credentials).
     """
     if not settings.SSO_ENABLED:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO is not enabled")
@@ -219,21 +281,51 @@ async def get_sso_login_url(next: Optional[str] = None, db: AsyncSession = Depen
         )
 
     if _is_oidc(config):
+        browser_token = secrets.token_urlsafe(32)
         try:
-            oidc_url = await oidc_service.start_login(config, next_path=safe_relay_state(next))
+            oidc_url = await oidc_service.start_login(
+                config, next_path=safe_relay_state(next), browser_hash=browser_binding_hash(browser_token),
+            )
         except oidc_service.OIDCError as exc:
             logger.warning("OIDC login could not start: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="The identity provider could not be reached. Contact your administrator.",
             )
+        _set_binding_cookie(response, OIDC_BINDING_COOKIE, browser_token)
         return {"redirect_url": oidc_url, "request_id": None, "provider_type": SSOProviderType.OIDC.value}
+
+    # The sign-in cookie for the ACS is ``SameSite=None; Secure``, which a
+    # browser keeps only over HTTPS. Say so here, rather than let every
+    # sign-in fail at the ACS with no explanation.
+    saml_cookie_token: Optional[str] = None
+    if settings.SAML_BROWSER_BINDING:
+        if not (config.sp_acs_url or "").lower().startswith("https://"):
+            logger.error(
+                "SAML sign-in refused: the ACS URL of SSO config %s is not https, so the sign-in cookie "
+                "cannot be kept. Serve TestLookup over HTTPS or set SAML_BROWSER_BINDING=false.", config.id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "SAML sign-in needs HTTPS: this SSO configuration's ACS URL is not an https URL, and the "
+                    "cookie that ties the sign-in to this browser is only kept over HTTPS. Ask your "
+                    "administrator to serve TestLookup over HTTPS and update the ACS URL, or to set "
+                    "SAML_BROWSER_BINDING=false."
+                ),
+            )
+        saml_cookie_token = secrets.token_urlsafe(32)
 
     # SP-initiated: redirect to IdP SSO URL. Persist the minted request id
     # (single-use, short TTL) so the ACS can bind the IdP's response to this
-    # request via InResponseTo and reject replays / unsolicited responses.
+    # request via InResponseTo and reject replays / unsolicited responses,
+    # with the hash of the cookie this browser gets.
     request_id = "_" + uuid.uuid4().hex
-    await remember_saml_request(request_id)
+    await remember_saml_request(
+        request_id, browser_hash=browser_binding_hash(saml_cookie_token) if saml_cookie_token else None,
+    )
+    if saml_cookie_token:
+        _set_binding_cookie(response, SAML_BINDING_COOKIE, saml_cookie_token)
     # A SAML row always has these (ck_sso_config_fields_by_provider); the columns are NULL-able for OIDC rows.
     idp_sso_url = config.idp_sso_url or ""
     authn_request = build_authn_request(
@@ -260,12 +352,17 @@ async def oidc_login(next: Optional[str] = None, db: AsyncSession = Depends(get_
     config = await get_active_sso_config(db)
     if config is None or not _is_oidc(config):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active OIDC configuration found")
+    browser_token = secrets.token_urlsafe(32)
     try:
-        url = await oidc_service.start_login(config, next_path=safe_relay_state(next))
+        url = await oidc_service.start_login(
+            config, next_path=safe_relay_state(next), browser_hash=browser_binding_hash(browser_token),
+        )
     except oidc_service.OIDCError as exc:
         logger.warning("OIDC login could not start: %s", exc)
         return RedirectResponse(url=f"{settings.public_base_url}/login?sso_error=1", status_code=status.HTTP_302_FOUND)
-    return RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+    redirect = RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+    _set_binding_cookie(redirect, OIDC_BINDING_COOKIE, browser_token)
+    return redirect
 
 
 @router.get("/oidc/callback")
@@ -287,6 +384,16 @@ async def oidc_callback(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO is not enabled")
     client_ip = request.client.host if request.client else None
     config = await get_active_sso_config(db)
+    parked: Optional[dict] = None
+
+    def back_to_login() -> RedirectResponse:
+        redirect = RedirectResponse(
+            url=f"{settings.public_base_url}/login?sso_error=1", status_code=status.HTTP_303_SEE_OTHER,
+        )
+        # Once the state is spent the cookie has no further use. Not for an unknown state: anyone can send one.
+        if parked is not None:
+            _clear_binding_cookie(redirect, OIDC_BINDING_COOKIE)
+        return redirect
 
     async def refuse(reason: str, *, audit: bool = True, **detail: object) -> RedirectResponse:
         logger.warning("OIDC sign-in refused: %s", reason)
@@ -303,7 +410,7 @@ async def oidc_callback(
                 error_message=reason[:500],
             )
             await db.commit()
-        return RedirectResponse(url=f"{settings.public_base_url}/login?sso_error=1", status_code=status.HTTP_303_SEE_OTHER)
+        return back_to_login()
 
     if config is None or not _is_oidc(config):
         return await refuse("no active OIDC configuration", audit=False)
@@ -311,6 +418,10 @@ async def oidc_callback(
     parked = await oidc_service.consume_state(state)
     if parked is None:
         return await refuse("state unknown, already used or expired", audit=False)
+    # The browser must be the one that started this sign-in. Checked before the code is redeemed; a log
+    # line, not an event: whoever starts a sign-in can send its state from anywhere.
+    if not browser_binding_matches(request.cookies.get(OIDC_BINDING_COOKIE), parked.get("browser_hash")):
+        return await refuse(f"the callback {_BINDING_REFUSED}", audit=False)
     if error:
         return await refuse(f"identity provider returned error {error[:100]!r}")
     if parked.get("config_id") != str(config.id):
@@ -383,7 +494,11 @@ async def oidc_callback(
     fragment = f"code={quote(handoff)}"
     if parked.get("next"):
         fragment += f"&next={quote(parked['next'], safe='')}"
-    return RedirectResponse(url=f"{settings.public_base_url}/sso/callback#{fragment}", status_code=status.HTTP_303_SEE_OTHER)
+    into_app = RedirectResponse(
+        url=f"{settings.public_base_url}/sso/callback#{fragment}", status_code=status.HTTP_303_SEE_OTHER,
+    )
+    _clear_binding_cookie(into_app, OIDC_BINDING_COOKIE)
+    return into_app
 
 
 def _wants_browser_redirect(request: Request) -> bool:
@@ -407,6 +522,7 @@ def _acs_failure(browser: bool, status_code: int, detail: str) -> HTTPException:
 @router.post("/acs", response_model=SSOLoginResponse)
 async def saml_acs(
     request: Request,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -457,32 +573,52 @@ async def saml_acs(
             browser, status.HTTP_400_BAD_REQUEST, "SSO is misconfigured. Contact your administrator."
         )
 
-    try:
-        # Pass the configured IdP X.509 cert so parse_saml_response can
-        # cryptographically verify the assertion's XML-DSig signature
-        # before extracting any claims, then enforce response-binding /
-        # anti-replay (audience, recipient, InResponseTo, single-use).
-        parsed = parse_saml_response(
-            str(saml_response_b64),
-            idp_certificate_pem=config.idp_certificate,
-        )
-        validate_saml_issuer(parsed, config)
-        await enforce_saml_security(parsed, config)
-    except ValueError as exc:
+    # Keep the specific reason server-side only; returning it to the
+    # unauthenticated caller leaks signal that helps tune forged responses.
+    refused = _acs_failure(browser, status.HTTP_401_UNAUTHORIZED, "SAML assertion validation failed.")
+
+    async def audit_refusal(exc: ValueError) -> None:
         await log_identity_event(
             db,
             IdentityEventType.SSO_LOGIN_FAILED,
             sso_config_id=config.id,
-            detail={"error": str(exc)},
+            detail={"error": str(exc)[:500]},
             ip_address=client_ip,
             success=False,
-            error_message=str(exc),
+            error_message=str(exc)[:500],
         )
         await db.commit()
-        # Keep the specific reason server-side only; returning it to the
-        # unauthenticated caller leaks signal that helps tune forged responses.
         logger.warning("SAML assertion validation failed: %s", exc)
-        raise _acs_failure(browser, status.HTTP_401_UNAUTHORIZED, "SAML assertion validation failed.")
+
+    try:
+        # Pass the configured IdP X.509 cert so parse_saml_response can
+        # cryptographically verify the assertion's XML-DSig signature
+        # before extracting any claims.
+        parsed = parse_saml_response(
+            str(saml_response_b64),
+            idp_certificate_pem=config.idp_certificate,
+        )
+    except SignedAssertionRefused as exc:
+        await audit_refusal(exc)
+        raise refused
+    except ValueError as exc:
+        # Nothing here was signed by the IdP: anyone can post it, as often as
+        # the rate limit allows. identity_events has no retention clock, so
+        # this is a log line, not an event (the OIDC callback does the same).
+        logger.warning("SAML response refused before its signature verified: %s", str(exc)[:500])
+        raise refused
+
+    try:
+        # The IdP signed it. Now response-binding / anti-replay: issuer,
+        # validity window, audience, recipient, InResponseTo + the browser
+        # that started the sign-in, single-use.
+        validate_saml_issuer(parsed, config)
+        await enforce_saml_security(
+            parsed, config, browser_token=request.cookies.get(SAML_BINDING_COOKIE),
+        )
+    except ValueError as exc:
+        await audit_refusal(exc)
+        raise refused
 
     try:
         user, is_new = await jit_provision_or_link(
@@ -505,11 +641,11 @@ async def saml_acs(
         await db.commit()
         raise _acs_failure(browser, status.HTTP_400_BAD_REQUEST, str(exc))
 
-    refused = _jit_refusal(user, is_new)
-    if refused is not None:
+    jit_refused = _jit_refusal(user, is_new)
+    if jit_refused is not None:
         await db.rollback()  # never keep a link to an erased row, nor an account in the reserved space
-        if refused == USERNAME_RESERVED_DETAIL:
-            raise _acs_failure(browser, status.HTTP_422_UNPROCESSABLE_ENTITY, refused)
+        if jit_refused == USERNAME_RESERVED_DETAIL:
+            raise _acs_failure(browser, status.HTTP_422_UNPROCESSABLE_ENTITY, jit_refused)
         raise _acs_failure(browser, status.HTTP_403_FORBIDDEN, "Account is deactivated")
 
     if not user.is_active:
@@ -541,7 +677,9 @@ async def saml_acs(
         user=UserResponse.model_validate(user),
         is_new_user=is_new,
     )
+    # The sign-in cookie has done its work.
     if not browser:
+        _clear_binding_cookie(response, SAML_BINDING_COOKIE)
         return signed_in
 
     # Into the app. The fragment never reaches a server log or a Referer.
@@ -549,10 +687,12 @@ async def saml_acs(
     fragment = f"code={quote(code)}"
     if relay_state:
         fragment += f"&next={quote(relay_state, safe='')}"
-    return RedirectResponse(
+    into_app = RedirectResponse(
         url=f"{settings.public_base_url}/sso/callback#{fragment}",
         status_code=status.HTTP_303_SEE_OTHER,
     )
+    _clear_binding_cookie(into_app, SAML_BINDING_COOKIE)
+    return into_app
 
 
 @router.post("/exchange", response_model=SSOLoginResponse)
@@ -672,6 +812,7 @@ async def create_sso_config(
         default_role=payload.default_role,
         group_attribute=payload.group_attribute,
         enforcement_mode=payload.enforcement_mode,
+        link_existing_accounts_by_email=payload.link_existing_accounts_by_email,
     )
     db.add(config)
     # The app's sessions do not autoflush: insert the config before the audit row that references it
@@ -715,6 +856,9 @@ async def update_sso_config(
 
     update_data = payload.model_dump(exclude_unset=True)
     new_secret = update_data.pop("oidc_client_secret", None)
+    # The column is NOT NULL: a null here means "keep the stored value", like leaving it out.
+    if update_data.get("link_existing_accounts_by_email", False) is None:
+        del update_data["link_existing_accounts_by_email"]
 
     # W20 ADM-08b: the fields this provider type cannot do without may change, never become empty
     # (the CHECK constraint would refuse it at commit; say which field instead).
@@ -985,6 +1129,7 @@ def _config_to_response(config: SSOConfiguration, *, oidc_client_secret_set: boo
         default_role=config.default_role,
         group_attribute=config.group_attribute,
         enforcement_mode=config.enforcement_mode,
+        link_existing_accounts_by_email=bool(getattr(config, "link_existing_accounts_by_email", False)),
         is_active=config.is_active,
         last_test_at=config.last_test_at,
         last_test_success=config.last_test_success,

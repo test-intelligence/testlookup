@@ -116,15 +116,16 @@ test('P1 New Project: Cancel, the X and Escape send nothing; the POST of the non
   await form.getByLabel('Project Name *').fill('Payment Gateway API')
   await expect(form.getByLabel('Slug *'), 'the slug follows the name').toHaveValue('payment-gateway-api')
   await form.getByLabel('Description').fill('Cards and wallets ')
-  await form.getByLabel('Jira Project Key').fill('pay')
-  await expect(form.getByLabel('Jira Project Key')).toHaveValue('PAY')
+  // The signed-in user is a QA lead: the Jira key decides which Jira project the project may use, so only an
+  // administrator can set it. The field is shown, disabled, and is not sent.
+  await expect(form.getByLabel('Jira Project Key')).toBeDisabled()
   await form.getByRole('button', { name: 'Create Project' }).click()
   await expect(form).toHaveCount(0)
   await expect(page.getByText('Project created', { exact: true })).toBeVisible()
   await expect(projectCard(page, 'Payment Gateway API')).toBeVisible()
   await networkQuiet(page, api)
   expect(world.writes).toEqual([
-    { line: 'POST /api/v1/projects', body: { name: 'Payment Gateway API', slug: 'payment-gateway-api', description: 'Cards and wallets ', jira_project_key: 'PAY' } },
+    { line: 'POST /api/v1/projects', body: { name: 'Payment Gateway API', slug: 'payment-gateway-api', description: 'Cards and wallets ' } },
   ])
   expect(requestsTo(api, '/api/v1/projects').length, 'the list re-reads').toBeGreaterThan(reads)
   await expect.poll(() => activeProjectId(page), { message: 'the new project is the active one' }).toBe(NEW_PROJECT_ID)

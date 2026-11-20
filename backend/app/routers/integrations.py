@@ -15,7 +15,7 @@ from app.services.action_policy import (
     ActionStatus,
     check_jira_ticket_creation_policy,
 )
-from app.services.defect_jira_service import resolve_jira_config
+from app.services.defect_jira_service import resolve_jira_config, resolve_jira_project_key
 from app.services.defect_status import ACTIVE_STATUSES
 from app.services.jira_client import (
     LEGACY_JIRA_REASON_TEXT,
@@ -70,6 +70,13 @@ async def create_jira_defect(
     if unavailable is not None:
         raise HTTPException(status_code=503, detail=LEGACY_JIRA_REASON_TEXT[unavailable])
 
+    # The Jira account is shared by every project: the requested Jira project
+    # must be the one this TestLookup project may use (422 otherwise), before
+    # anything is staged for approval or sent.
+    jira_project_key = await resolve_jira_project_key(
+        db, owning_project_id, current_user, request.project_key, cfg=jira_cfg,
+    )
+
     ai_result = await db.execute(
         select(AIAnalysis).where(AIAnalysis.test_case_id == tc.id)
     )
@@ -96,6 +103,7 @@ async def create_jira_defect(
             ai_analysis=ai_analysis,
             request=request,
             policy_result=policy_result,
+            jira_project_key=jira_project_key,
         )
         await db.commit()
         # VIZ-212: a new OPEN defect changes the cached dashboard's counts.
@@ -120,7 +128,7 @@ async def create_jira_defect(
 
     try:
         result = await create_jira_issue(
-            project_key=request.project_key,
+            project_key=jira_project_key or "",
             test_name=test_name,
             run_id=str(request.run_id),
             ai_summary=request.ai_summary,
@@ -148,6 +156,7 @@ async def _stage_pending_jira_defect(
     ai_analysis: AIAnalysis | None,
     request: JiraIssueRequest,
     policy_result: dict,
+    jira_project_key: str | None,
 ) -> Defect:
     """Persist a local approval record before any direct Jira mutation.
 
@@ -169,7 +178,8 @@ async def _stage_pending_jira_defect(
     defect = existing_result.scalars().first()
     policy_snapshot = _json_safe({
         **policy_result,
-        "requested_project_key": request.project_key,
+        # The checked key (``resolve_jira_project_key``), not the raw request text.
+        "requested_project_key": jira_project_key,
         "requested_run_id": str(request.run_id),
         "requested_summary_sha256": _hash_text(request.ai_summary),
         "requested_action_sha256": _hash_text(request.recommended_action),

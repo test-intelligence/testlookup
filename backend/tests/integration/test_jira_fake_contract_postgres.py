@@ -93,8 +93,11 @@ async def world():
 
     async def file(fingerprint, **kwargs):
         async with sessions() as db:
+            # An administrator on a project without a Jira key of its own: the one caller who may
+            # name any Jira project, so "Jira refuses the project" below still reaches Jira.
             out = await svc.create_or_link_issue(
-                db, str(pid), SimpleNamespace(id=None, username="it"), fingerprint=fingerprint, **kwargs,
+                db, str(pid), SimpleNamespace(id=None, username="it", role="ADMIN"),
+                fingerprint=fingerprint, **kwargs,
             )
             await db.commit()
             return out

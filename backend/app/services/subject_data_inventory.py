@@ -524,6 +524,7 @@ NOT_A_PERSON: dict[str, str] = {
     "service_ownership_rules.service_name": _TEAM,
     "service_ownership_rules.team_name": _TEAM,
     "sso_configurations.display_name": "an identity provider's name — not a person",
+    "sso_configurations.link_existing_accounts_by_email": "an on/off switch of the configuration — not a person",
     "suite_executions.suite_name": _TEST,
     "suite_membership_events.suite_name": _TEST,
     "suite_membership_events.test_name": _TEST,

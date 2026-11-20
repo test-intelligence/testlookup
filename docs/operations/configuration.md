@@ -116,6 +116,8 @@ Two more production-only behaviours:
 | `SSO_ALLOW_PRIVATE_IDP_ENDPOINTS` | bool | `false` | The SSO "test connection" call refuses private and link-local IdP addresses (SSRF guard). Set true only for an internal-only IdP. |
 | `SAML_ALLOW_IDP_INITIATED` | bool | `false` | Accept assertions without `InResponseTo` (IdP-initiated login). Off by default: each response must answer a request minted by `/login-url`. Turning it on drops that replay-protection leg; the assertion-ID single-use cache, audience, recipient and signature checks still apply. |
 | `SAML_CLOCK_SKEW_SECONDS` | int | `60` | Tolerated IdP/SP clock difference for `NotBefore` / `NotOnOrAfter`. |
+| `SAML_BROWSER_BINDING` | bool | `true` | A SAML sign-in started at `/api/v1/sso/login-url` must finish in the browser that started it. It uses a `SameSite=None; Secure` cookie, so it needs HTTPS: with it on, `/sso/login-url` refuses a SAML configuration whose ACS URL is not `https://`. Set `false` only for a plain-HTTP deployment. |
+| `SAML_MAX_ASSERTION_LIFETIME_SECONDS` | int | `600` | Longest a SAML assertion may still be usable when it arrives (60 to 86400), measured to the earlier of its two `NotOnOrAfter` values; `SAML_CLOCK_SKEW_SECONDS` is added on top. |
 | `SSO_MAX_PROVISIONED_ROLE` | `VIEWER` \| `TESTER` \| `QA_ENGINEER` \| `QA_LEAD` \| `ADMIN` | `ADMIN` | Ceiling on the role an IdP group mapping (SSO just-in-time provisioning) or a SCIM provision can grant. Higher resolved roles are clamped and logged at WARNING. Set `QA_LEAD` to refuse IdP-driven admin grants. An invalid value stops startup. |
 
 ## Databases

@@ -79,6 +79,7 @@
  "GET /api/v1/project-imports": {"role": "ADMIN"},
  "GET /api/v1/projects/{project_id}/agent-actions": {"role": "QA_LEAD"},
  "GET /api/v1/projects/{project_id}/data-jobs": {"role": "QA_LEAD"},
+ "GET /api/v1/projects/{project_id}/defects/jira/metadata": {"role": "QA_ENGINEER"},
  "GET /api/v1/projects/{project_id}/deletion/jobs": {"role": "ADMIN"},
  "GET /api/v1/projects/{project_id}/deletion/jobs/{job_id}": {"role": "ADMIN"},
  "GET /api/v1/projects/{project_id}/export-estimate": {"role": "QA_LEAD"},

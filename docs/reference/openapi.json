@@ -19984,6 +19984,7 @@
           "ADMIN_FALLBACK_LOGIN",
           "JIT_PROVISIONED",
           "ROLE_MAPPED",
+          "ACCOUNT_LINKED",
           "SSO_LOGOUT",
           "MFA_ENROLL_STARTED",
           "MFA_ENABLED",
@@ -40775,6 +40776,12 @@
             ],
             "title": "Idp Sso Url"
           },
+          "link_existing_accounts_by_email": {
+            "default": false,
+            "description": "Link a first SSO sign-in to an existing local account with the same e-mail (OIDC: verified e-mail only; SAML: the NameID must be that e-mail). Off: such a sign-in is refused. An ADMIN account is never linked.",
+            "title": "Link Existing Accounts By Email",
+            "type": "boolean"
+          },
           "oidc_client_id": {
             "anyOf": [
               {
@@ -41007,6 +41014,11 @@
               }
             ],
             "title": "Last Test Success"
+          },
+          "link_existing_accounts_by_email": {
+            "default": false,
+            "title": "Link Existing Accounts By Email",
+            "type": "boolean"
           },
           "oidc_client_id": {
             "anyOf": [
@@ -41249,6 +41261,17 @@
               }
             ],
             "title": "Is Active"
+          },
+          "link_existing_accounts_by_email": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Link Existing Accounts By Email"
           },
           "oidc_client_id": {
             "anyOf": [
@@ -76725,7 +76748,7 @@
     },
     "/api/v1/projects/{project_id}/defects/jira/metadata": {
       "get": {
-        "description": "Jira projects + issue types for the create dialog. Never 5xxs for a\nbroken Jira — returns ``available=false`` + ``reason`` instead.",
+        "description": "Jira projects + issue types for the create dialog. QA_ENGINEER+, like the\ncreate it serves: the list says what the shared Jira account can see, cut\ndown to the Jira projects this caller may file under from this project.\nNever 5xxs for a broken Jira — returns ``available=false`` + ``reason`` instead.",
         "operationId": "jira_defect_metadata_api_v1_projects__project_id__defects_jira_metadata_get",
         "parameters": [
           {
@@ -94382,7 +94405,7 @@
     },
     "/api/v1/scim/v2/Users/{user_id}": {
       "delete": {
-        "description": "SCIM 2.0: Delete a user — deactivate (soft-delete) by default, or erase the person's data when the\noperator setting ``scim_delete_action`` is ``erase`` (W38).\n\nDeactivate (the default): the account is switched off and kept; a later ``GET`` still answers it with\n``active: false``. Erase: the W31 erasure with the identity provider as the requester — the account is locked\nout at once (sessions, tokens and keys) in this request's one commit, the person's data is pseudonymised by the\nworker afterwards, and a pending erasure request of theirs is accepted. A retry while that erasure runs, or a\n``DELETE`` of an erased account, changes nothing. When the erasure is refused (a service account, an export\nstill running, the last active administrator) the account is deactivated instead and the refusal is recorded\nas a failed identity event. Every case answers 204 with no body.",
+        "description": "SCIM 2.0: Delete a user — deactivate (soft-delete) by default, or erase the person's data when the\noperator setting ``scim_delete_action`` is ``erase`` (W38).\n\nDeactivate (the default): the account is switched off and kept; a later ``GET`` still answers it with\n``active: false``. Erase: the W31 erasure with the identity provider as the requester — the account is locked\nout at once (sessions, tokens and keys) in this request's one commit, the person's data is pseudonymised by the\nworker afterwards, and a pending erasure request of theirs is accepted. A retry while that erasure runs, or a\n``DELETE`` of an erased account, changes nothing. When the erasure is refused (a service account, an export\nstill running) the account is deactivated instead and the refusal is recorded as a failed identity event.\nEach of those cases answers 204 with no body.\n\nThe last active administrator is never deactivated or erased over SCIM: the request is refused with 409 and\nthe account stays active. A token that is not bound to an identity provider reaches only accounts that SCIM\ncreated or that have a federated link; any other id answers 404.",
         "operationId": "scim_delete_api_v1_scim_v2_Users__user_id__delete",
         "parameters": [
           {
@@ -98289,7 +98312,7 @@
     },
     "/api/v1/sso/login-url": {
       "get": {
-        "description": "The IdP URL that starts an SP-initiated login: the IdP SSO URL carrying a\nSAML AuthnRequest (HTTP-Redirect binding) and, when ``next`` is an\napp-relative path, a RelayState the browser returns to after sign-in.",
+        "description": "The IdP URL that starts an SP-initiated login: the IdP SSO URL carrying a\nSAML AuthnRequest (HTTP-Redirect binding) and, when ``next`` is an\napp-relative path, a RelayState the browser returns to after sign-in.\n\nThe answer also sets the sign-in cookie that the ACS / OIDC callback\nrequire, so the caller must be the browser that will follow the URL (a\npage on another origin has to send the request with credentials).",
         "operationId": "get_sso_login_url_api_v1_sso_login_url_get",
         "parameters": [
           {

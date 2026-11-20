@@ -4,10 +4,11 @@ One-click Jira defect creation (PMF US-6.1 / US-6.3).
 Endpoints (all project-scoped so ``require_project_access`` applies —
 authorization ratchet):
 
-* ``GET  /api/v1/projects/{project_id}/defects/jira/metadata`` — Jira
-  projects + issue types for the dialog pickers (cached ~5 min in the
-  service; graceful ``available=false`` shape when Jira is unreachable,
-  unconfigured, or offline-gated).
+* ``GET  /api/v1/projects/{project_id}/defects/jira/metadata`` — QA_ENGINEER+.
+  The Jira projects this caller may file under from this project + issue
+  types for the dialog pickers (cached ~5 min in the service; graceful
+  ``available=false`` shape when Jira is unreachable, unconfigured, or
+  offline-gated).
 * ``GET  /api/v1/projects/{project_id}/defects/jira/preview`` — server-side
   pre-filled summary/description for a failure signature (fingerprint or
   cluster id), including dedup info when an open linked defect exists.
@@ -20,6 +21,11 @@ authorization ratchet):
   Triage (DEF-01): status, assignee, owner team, Jira link. Offline the key
   is saved locally; online it is checked against Jira first, and a status
   change on a linked defect is written back after the commit.
+
+Every Jira project key and issue key a request names is checked against the
+TestLookup project first (``defect_jira_service.JiraKeyScope``): the project's
+own ``jira_project_key`` when set, else the instance default for callers below
+QA_LEAD. A refused key is a 422 and nothing is sent to Jira.
 
 Route-order note: the literal ``/defects/jira/...`` sub-paths sit on their
 own ``/api/v1/projects``-prefixed router (same pattern as the quarantine
@@ -73,10 +79,13 @@ router = APIRouter(prefix="/api/v1/projects", tags=["Defects"])
 async def jira_defect_metadata(
     project_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_project_access()),
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
+    _: User = Depends(require_project_access()),
 ):
-    """Jira projects + issue types for the create dialog. Never 5xxs for a
-    broken Jira — returns ``available=false`` + ``reason`` instead."""
+    """Jira projects + issue types for the create dialog. QA_ENGINEER+, like the
+    create it serves: the list says what the shared Jira account can see, cut
+    down to the Jira projects this caller may file under from this project.
+    Never 5xxs for a broken Jira — returns ``available=false`` + ``reason`` instead."""
     return await svc.get_metadata(db, str(project_id), user=current_user)
 
 
@@ -175,16 +184,26 @@ async def update_defect(
 
     cfg = None
     reason = None
+    key_scope = None
     if "jira_key" in fields or "resolution_status" in fields:
         cfg = await svc.resolve_jira_config(db)
         reason = svc.availability_reason(cfg)
+        # Read now, while the request still holds its connection: the Jira
+        # calls below run with it handed back.
+        key_scope = await svc.jira_key_scope(db, project_id, current_user, cfg=cfg)
 
     issue = None
-    if "jira_key" in fields and body.jira_key and body.jira_key.strip() and cfg is not None and reason is None:
+    if "jira_key" in fields and body.jira_key and body.jira_key.strip() and key_scope is not None:
         key = triage.normalize_jira_key(body.jira_key)
-        # Nothing is staged yet: give the connection back for the Jira call.
-        await release_read_connection(db)
-        issue = await svc.get_issue(cfg, key)
+        # Offline too: a saved key is read by the status sync and written to
+        # by the next status change, so it is checked before it is stored.
+        refusal = key_scope.refusal(key)
+        if refusal is not None:
+            raise HTTPException(status_code=422, detail=refusal)
+        if cfg is not None and reason is None:
+            # Nothing is staged yet: give the connection back for the Jira call.
+            await release_read_connection(db)
+            issue = await svc.get_issue(cfg, key)
 
     try:
         outcome = await triage.update_defect(
@@ -218,7 +237,14 @@ async def update_defect(
         await bump_analytics_epoch(project_id)
 
     write_back = None
-    if outcome.write_back_target and outcome.jira_key and cfg is not None:
+    if (
+        outcome.write_back_target and outcome.jira_key
+        and key_scope is not None and key_scope.refusal(outcome.jira_key) is not None
+    ):
+        # A key stored before Jira keys were bound to the project: the status
+        # change above is saved, the issue is left alone.
+        write_back = {"status": "not_sent", "reason": svc.JIRA_KEY_NOT_ALLOWED}
+    elif outcome.write_back_target and outcome.jira_key and cfg is not None:
         write_back = await svc.transition_issue(cfg, outcome.jira_key, outcome.write_back_target)
     elif outcome.status_change is not None and outcome.jira_key and reason is not None:
         write_back = {"status": "not_sent", "reason": reason}

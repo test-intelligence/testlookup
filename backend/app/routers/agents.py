@@ -1668,12 +1668,23 @@ async def defect_command(
         db, current_user, run_id, project_id
     )
 
+    # ``project_key`` is a Jira project key from the query string. The Jira
+    # account is shared by every project, so the key must be one this project
+    # may use (422 otherwise) before the agent runs. No key: nothing is filed.
+    if project_key is not None and project_key.strip():
+        from app.services.defect_jira_service import resolve_jira_project_key
+
+        project_key = await resolve_jira_project_key(db, scoped_project_id, current_user, project_key)
+    else:
+        project_key = None
+
     from app.agents.defect_commander import run_defect_commander
     result = await run_defect_commander(
         cluster_id=cluster_id,
         test_run_id=str(run_id),
         project_id=str(scoped_project_id),
         project_key=project_key,
+        actor=current_user,
     )
     await record_activity(
         db,

@@ -170,13 +170,15 @@ async def test_a_failure_is_logged_never_raised(monkeypatch):
 
 async def _promote(monkeypatch, *, initial_status: str, actor=None):
     """Drive the real promote_cluster on an in-memory session."""
-    from app.models.postgres import FailureCluster, TestRun
+    from app.models.postgres import FailureCluster, Project, TestRun
     from app.services import defect_promotion_service as svc
 
     cluster = FailureCluster(id=uuid.uuid4(), test_run_id=RUN, cluster_id="cl_7", label="Checkout 500",
                              size=1, member_test_ids=[])
     run = TestRun(id=RUN, project_id=PID, build_number="b1", status="FAILED", primary_release_id=None)
-    db = MemDB([cluster, run])
+    # The project's own Jira key: the only one a promotion may name.
+    project = Project(id=PID, name="Platform", slug="platform", jira_project_key="PLAT")
+    db = MemDB([cluster, run, project])
     monkeypatch.setattr(svc, "_resolve_defect_owner_from_memory", AsyncMock(return_value=None))
     monkeypatch.setattr(svc, "_find_duplicate_semantic", AsyncMock(return_value=(None, False)))
     monkeypatch.setattr(svc, "_create_jira_ticket", AsyncMock(return_value=(None, None)))

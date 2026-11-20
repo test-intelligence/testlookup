@@ -80,6 +80,19 @@ class _FakeResult:
     def scalars(self):
         return _FakeScalars(self._rows)
 
+    def all(self):
+        return self._rows
+
+
+@pytest.fixture(autouse=True)
+def any_jira_project(monkeypatch):
+    """The caller is a QA lead on a project without a Jira key of its own, so the key a test names is
+    one they may use and ``_FakeDB``'s scripted results stay in order. Which Jira project a caller may
+    reach: ``tests/regression/test_jira_keys_are_bound_to_the_project.py``."""
+    from tests.fakes.fake_defect_world import patch_jira_key_scope
+
+    patch_jira_key_scope(monkeypatch)
+
 
 class _FakeDB:
     """Programmable AsyncSession stand-in: pops one result per execute."""
@@ -562,7 +575,7 @@ async def test_sync_mirrors_status_and_flags_conflict(monkeypatch):
     ])
     out = await svc.sync_external_statuses(db)
 
-    assert out == {"checked": 3, "conflicts": 1, "errors": 0}
+    assert out == {"checked": 3, "conflicts": 1, "errors": 0, "out_of_scope": 0}
     assert d_open.jira_status == "In Progress"
     assert d_open.external_status_conflict is False
     assert d_open.external_status_at is not None

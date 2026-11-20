@@ -111,6 +111,13 @@ def harness(monkeypatch):
         "_jira_content_for_state",
         AsyncMock(return_value={"title": "t", "description": "d", "labels": []}),
     )
+    # Which Jira project the run may file under is its own rule
+    # (tests/regression/test_jira_keys_are_bound_to_the_project.py); here the
+    # key the state carries is one the project may use.
+    async def _key_allowed(db, project_id, project_key, actor):
+        return project_key, None
+
+    monkeypatch.setattr("app.agents.defect_commander.project_key_for_filing", _key_allowed)
     persist = AsyncMock(return_value="dddddddd-dddd-dddd-dddd-dddddddddddd")
     monkeypatch.setattr(DefectCommander, "_persist_defect", persist)
     jira = AsyncMock(return_value=({"key": "QA-1", "ticket_url": "u"}, "u"))

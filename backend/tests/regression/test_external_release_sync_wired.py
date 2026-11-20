@@ -70,6 +70,13 @@ def _body(source, key=None):
 
 
 def _patch_scope(mp, scoped=PROJECT):
+    # Which Jira project the sync may read is its own rule
+    # (tests/regression/test_jira_keys_are_bound_to_the_project.py): here the
+    # caller is a lead on a project without a Jira key, who may name one.
+    from tests.fakes.fake_defect_world import patch_jira_key_scope
+
+    patch_jira_key_scope(mp)
+
     async def _scope(_db, _user, _pid):
         return scoped, None
 

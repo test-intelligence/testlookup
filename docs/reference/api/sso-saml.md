@@ -19,14 +19,14 @@ The POST comes from the browser. It answers with a 303 into the app
 app exchanges for the tokens (``POST /sso/exchange``); a refusal goes back
 to ``/login``. A client that asks for JSON gets the tokens as before.
 
-Source: [backend/app/routers/sso.py:407](../../../backend/app/routers/sso.py#L407).
+Source: [backend/app/routers/sso.py:522](../../../backend/app/routers/sso.py#L522).
 
 Dependency chain: `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-request: Request, db: AsyncSession=Depends(get_db)
+request: Request, response: Response, db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -64,7 +64,7 @@ List Sso Configs
 
 List all SSO configurations (ADMIN only).
 
-Source: [backend/app/routers/sso.py:597](../../../backend/app/routers/sso.py#L597).
+Source: [backend/app/routers/sso.py:737](../../../backend/app/routers/sso.py#L737).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -139,7 +139,7 @@ Create Sso Config
 
 Create a new SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:626](../../../backend/app/routers/sso.py#L626).
+Source: [backend/app/routers/sso.py:766](../../../backend/app/routers/sso.py#L766).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -227,7 +227,7 @@ Delete Sso Config
 
 Delete an SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:807](../../../backend/app/routers/sso.py#L807).
+Source: [backend/app/routers/sso.py:951](../../../backend/app/routers/sso.py#L951).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -307,7 +307,7 @@ Get Sso Config
 
 Get a specific SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:610](../../../backend/app/routers/sso.py#L610).
+Source: [backend/app/routers/sso.py:750](../../../backend/app/routers/sso.py#L750).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -394,7 +394,7 @@ Update Sso Config
 
 Update an SSO configuration (ADMIN only).
 
-Source: [backend/app/routers/sso.py:700](../../../backend/app/routers/sso.py#L700).
+Source: [backend/app/routers/sso.py:841](../../../backend/app/routers/sso.py#L841).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -497,7 +497,7 @@ W20 ADM-08a: the role a user in these IdP groups would get (ADMIN only; pure, wr
 
 The posted ``role_mapping`` / ``default_role`` preview an unsaved edit; otherwise the stored ones answer.
 
-Source: [backend/app/routers/sso.py:841](../../../backend/app/routers/sso.py#L841).
+Source: [backend/app/routers/sso.py:985](../../../backend/app/routers/sso.py#L985).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -596,7 +596,7 @@ Test Sso Connection
 
 Test an SSO configuration by validating the certificate and IdP metadata (ADMIN only).
 
-Source: [backend/app/routers/sso.py:870](../../../backend/app/routers/sso.py#L870).
+Source: [backend/app/routers/sso.py:1014](../../../backend/app/routers/sso.py#L1014).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -686,7 +686,7 @@ The tokens for an SSO sign-in the ACS completed, for its one-time code.
 Public, like the ACS: the code is the credential. It works once, within a
 minute of the IdP's response.
 
-Source: [backend/app/routers/sso.py:558](../../../backend/app/routers/sso.py#L558).
+Source: [backend/app/routers/sso.py:698](../../../backend/app/routers/sso.py#L698).
 
 Dependency chain: .
 
@@ -753,19 +753,24 @@ The IdP URL that starts an SP-initiated login: the IdP SSO URL carrying a
 SAML AuthnRequest (HTTP-Redirect binding) and, when ``next`` is an
 app-relative path, a RelayState the browser returns to after sign-in.
 
-Source: [backend/app/routers/sso.py:204](../../../backend/app/routers/sso.py#L204).
+The answer also sets the sign-in cookie that the ACS / OIDC callback
+require, so the caller must be the browser that will follow the URL (a
+page on another origin has to send the request with credentials).
+
+Source: [backend/app/routers/sso.py:262](../../../backend/app/routers/sso.py#L262).
 
 Dependency chain: `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-next: Optional[str]=None, db: AsyncSession=Depends(get_db)
+response: Response, next: Optional[str]=None, db: AsyncSession=Depends(get_db)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
+HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="SAML sign-in needs HTTPS: this SSO configuration's ACS URL is not an https URL, and the cookie that ties the sign-in to this browser is only kept over HTTPS. Ask your administrator to serve TestLookup over HTTPS and update the ACS URL, or to set SAML_BROWSER_BINDING=false.")
 HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='No active SSO configuration found')
 HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='SSO is not enabled')
 HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail='The identity provider could not be reached. Contact your administrator.')
@@ -834,7 +839,7 @@ configuration has an IdP SLO URL (``/sso/slo`` answers 404 otherwise, and
 advertising it then sent IdPs to that 404). IdP-initiated SLO only, so no
 SP signing key is published.
 
-Source: [backend/app/routers/sso.py:96](../../../backend/app/routers/sso.py#L96).
+Source: [backend/app/routers/sso.py:154](../../../backend/app/routers/sso.py#L154).
 
 Dependency chain: `get_db`.
 
@@ -879,7 +884,7 @@ the ID token validated (signature / iss / aud / exp / nonce), then the user is J
 and handed into the app through the one-time-code fragment. Every refusal goes back to ``/login`` with a
 generic notice; the reason stays in the server log and the identity-event audit.
 
-Source: [backend/app/routers/sso.py:271](../../../backend/app/routers/sso.py#L271).
+Source: [backend/app/routers/sso.py:368](../../../backend/app/routers/sso.py#L368).
 
 Dependency chain: `get_db`.
 
@@ -978,8 +983,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-RedirectResponse(url=f'{settings.public_base_url}/login?sso_error=1', status_code=status.HTTP_303_SEE_OTHER)
-RedirectResponse(url=f'{settings.public_base_url}/sso/callback#{fragment}', status_code=status.HTTP_303_SEE_OTHER)
 await refuse('missing authorization code')
 await refuse('no active OIDC configuration', audit=False)
 await refuse('no client secret is stored for this configuration')
@@ -987,9 +990,13 @@ await refuse('state unknown, already used or expired', audit=False)
 await refuse('the active SSO configuration changed during the sign-in')
 await refuse(_DEACTIVATED, sub=claims['sub'])
 await refuse(f'identity provider returned error {error[:100]!r}')
+await refuse(f'the callback {_BINDING_REFUSED}', audit=False)
 await refuse(refused, sub=claims['sub'])
 await refuse(str(exc))
 await refuse(str(exc), sub=claims['sub'])
+back_to_login()
+into_app
+redirect
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -1000,7 +1007,7 @@ Oidc Login
 
 W20 ADM-08b: start an OIDC sign-in — 302 to the IdP's authorization endpoint (state, nonce, PKCE S256).
 
-Source: [backend/app/routers/sso.py:255](../../../backend/app/routers/sso.py#L255).
+Source: [backend/app/routers/sso.py:347](../../../backend/app/routers/sso.py#L347).
 
 Dependency chain: `get_db`.
 
@@ -1069,7 +1076,7 @@ Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
 RedirectResponse(url=f'{settings.public_base_url}/login?sso_error=1', status_code=status.HTTP_302_FOUND)
-RedirectResponse(url=url, status_code=status.HTTP_302_FOUND)
+redirect
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -1254,7 +1261,7 @@ Saml Single Logout Redirect Binding
 
 W20 ADM-08c: IdP-initiated single logout, HTTP-Redirect binding (see ``saml_single_logout``).
 
-Source: [backend/app/routers/sso.py:121](../../../backend/app/routers/sso.py#L121).
+Source: [backend/app/routers/sso.py:179](../../../backend/app/routers/sso.py#L179).
 
 Dependency chain: `get_db`.
 
@@ -1298,7 +1305,7 @@ Saml Single Logout Post Binding
 
 W20 ADM-08c: IdP-initiated single logout, HTTP-POST binding (see ``saml_single_logout``).
 
-Source: [backend/app/routers/sso.py:129](../../../backend/app/routers/sso.py#L129).
+Source: [backend/app/routers/sso.py:187](../../../backend/app/routers/sso.py#L187).
 
 Dependency chain: `get_db`.
 
@@ -1342,7 +1349,7 @@ Get Sso Status
 
 Public endpoint to check if SSO is enabled and available.
 
-Source: [backend/app/routers/sso.py:576](../../../backend/app/routers/sso.py#L576).
+Source: [backend/app/routers/sso.py:716](../../../backend/app/routers/sso.py#L716).
 
 Dependency chain: `get_db`.
 
