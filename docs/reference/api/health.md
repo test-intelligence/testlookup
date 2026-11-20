@@ -9,6 +9,7 @@ Generated from tracked source by `scripts/generate_reference.py`. Do not edit by
 Full dependency status — for ops dashboards
 
 Full health report across all infrastructure dependencies.
+Needs a signed-in user or an API key (any role); anonymous callers get 401.
 Runs all checks concurrently; returns 200 even when non-critical services are degraded.
 Not intended for K8s probes — use /health/live and /health/ready instead.
 
@@ -31,9 +32,9 @@ refusal but cannot shorten a hang, so a Redis outage used to time out the
 MinIO and ChromaDB probes and report both ``degraded`` while both were
 healthy.
 
-Source: [backend/app/routers/health.py:301](../../../backend/app/routers/health.py#L301).
+Source: [backend/app/routers/health.py:318](../../../backend/app/routers/health.py#L318).
 
-Dependency chain: .
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
@@ -48,6 +49,24 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 ```json
 {
   "operationId": "health_details_health_details_get",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
   "responses": {
     "200": {
       "content": {
@@ -56,8 +75,23 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
         }
       },
       "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
     }
-  }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
 }
 ```
 
@@ -76,6 +110,8 @@ Live-stream ingestion health — gate + queue + memory
 Surface the load + backpressure signals used by the live-stream
 admission gates.
 
+Needs a signed-in user or an API key (any role); anonymous callers get 401.
+
 The output is for dashboards and for support / on-call humans when a
 customer reports "my runs are slow / 429ing" (the admission gates are
 described in ``architecture/INGESTION_SCALE.md``). A single GET answers:
@@ -90,9 +126,9 @@ described in ``architecture/INGESTION_SCALE.md``). A single GET answers:
 Everything is best-effort — a degraded Redis returns partial data
 rather than 500'ing the health endpoint itself.
 
-Source: [backend/app/routers/health.py:354](../../../backend/app/routers/health.py#L354).
+Source: [backend/app/routers/health.py:378](../../../backend/app/routers/health.py#L378).
 
-Dependency chain: .
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
@@ -107,6 +143,24 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 ```json
 {
   "operationId": "health_ingestion_health_ingestion_get",
+  "parameters": [
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
   "responses": {
     "200": {
       "content": {
@@ -119,8 +173,23 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
         }
       },
       "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
     }
-  }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
 }
 ```
 
@@ -132,7 +201,7 @@ Kubernetes liveness probe.
 Returns 200 as long as the process is running and the event loop is responsive.
 Never checks external dependencies — a database outage must NOT restart the pod.
 
-Source: [backend/app/routers/health.py:235](../../../backend/app/routers/health.py#L235).
+Source: [backend/app/routers/health.py:252](../../../backend/app/routers/health.py#L252).
 
 Dependency chain: .
 
@@ -178,7 +247,7 @@ Kubernetes readiness probe.
 Checks PostgreSQL, MongoDB, and Redis connectivity concurrently.
 Returns 503 if any of those is unavailable so the load balancer stops sending traffic.
 
-Source: [backend/app/routers/health.py:249](../../../backend/app/routers/health.py#L249).
+Source: [backend/app/routers/health.py:266](../../../backend/app/routers/health.py#L266).
 
 Dependency chain: .
 
@@ -235,7 +304,7 @@ Always returns 200 (the process is alive if it can answer at all).
 ``build.revision`` / ``build.built_at`` fall back to ``"unknown"`` in
 local/dev runs where the image-build env is unset.
 
-Source: [backend/app/routers/health.py:272](../../../backend/app/routers/health.py#L272).
+Source: [backend/app/routers/health.py:289](../../../backend/app/routers/health.py#L289).
 
 Dependency chain: .
 

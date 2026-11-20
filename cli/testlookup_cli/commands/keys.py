@@ -22,9 +22,9 @@ def create(
             output.print_json(data)
         else:
             output.print_success("API key created")
-            output.console.print(f"\n  [bold yellow]Raw Key (shown once):[/] {data.get('raw_key', '???')}")
-            output.console.print(f"  Key Hint: {data.get('key_hint', '???')}")
-            output.console.print(f"  ID: {data.get('id', '???')}\n")
+            output.console.print(f"\n  [bold yellow]Raw Key (shown once):[/] {output.safe(data.get('raw_key', '???'))}")
+            output.console.print(f"  Key Hint: {output.safe(data.get('key_hint', '???'))}")
+            output.console.print(f"  ID: {output.safe(data.get('id', '???'))}\n")
             output.print_warning("Save this key now — it cannot be retrieved again.")
     except Exception as e:
         output.print_error(str(e))

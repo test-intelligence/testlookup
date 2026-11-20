@@ -1,13 +1,55 @@
 """Output formatting — table, JSON, YAML modes."""
 import json
+import re
 import sys
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
+from rich.text import Text
 
 console = Console()
 error_console = Console(stderr=True)
+
+# C0 and C1 control characters and DEL, except newline and tab. ESC (0x1b) and
+# CSI (0x9b) start terminal escape sequences; a carriage return or backspace
+# lets one line overwrite another.
+_CONTROL_CHARACTERS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def plain(value: Any) -> str:
+    """``value`` as text with the control characters removed.
+
+    Test names, suite names, error details and AI summaries come from the
+    server, and most were first written by whoever ingested a run. Printed
+    as they are, an ESC in a test name could clear the reader's screen or set
+    the terminal title. Use this for anything printed without Rich
+    (``typer.echo``) or wrapped in a Rich ``Text``.
+    """
+    return _CONTROL_CHARACTERS.sub("", str(value))
+
+
+def safe(value: Any) -> str:
+    """``value`` made safe to put inside a Rich markup string.
+
+    Control characters are removed (see ``plain``) and markup is escaped, so
+    ``[link=...]`` in a test name prints as those characters instead of
+    making a hyperlink, and a stray ``[/]`` cannot crash the command. Use it
+    for every server value interpolated into a string that Rich will parse:
+    ``console.print(f"[bold]Build[/] {safe(build)}")``.
+    """
+    return escape(plain(value))
+
+
+def _literal(target: Console, value: Any) -> Text:
+    """``value`` as a Rich ``Text`` that is never parsed as markup.
+
+    Used for table cells and messages. The console still highlights numbers
+    and the like as it does for a plain string; only markup and emoji codes
+    in the data are left alone.
+    """
+    return target.render_str(plain(value), markup=False, emoji=False)
 
 
 def print_json(data: Any) -> None:
@@ -27,12 +69,18 @@ def print_yaml(data: Any) -> None:
 
 def print_table(rows: list[dict], columns: list[str], title: str = "") -> None:
     """Print rows as a Rich table."""
-    table = Table(title=title, show_lines=False, pad_edge=False)
+    # The title can carry what the user typed or a server name: text, in the
+    # style Rich gives a table title.
+    heading = (
+        console.render_str(plain(title), style="table.title", markup=False, emoji=False, highlight=False)
+        if title else None
+    )
+    table = Table(title=heading, show_lines=False, pad_edge=False)
     for col in columns:
         table.add_column(col.replace("_", " ").title(), style="cyan" if col == columns[0] else None)
 
     for row in rows:
-        table.add_row(*[str(row.get(col, "—")) for col in columns])
+        table.add_row(*[_literal(console, row.get(col, "—")) for col in columns])
 
     console.print(table)
 
@@ -51,7 +99,10 @@ def render(data: Any, output_format: str, columns: list[str] | None = None, titl
         table.add_column("Field", style="bold")
         table.add_column("Value")
         for k, v in data.items():
-            table.add_row(k.replace("_", " ").title(), str(v) if v is not None else "—")
+            table.add_row(
+                _literal(console, str(k).replace("_", " ").title()),
+                _literal(console, v if v is not None else "—"),
+            )
         console.print(table)
     else:
         print_json(data)
@@ -94,10 +145,14 @@ def encodable(stream):
 
     For ingested names (a CJK suite name) printed on a console whose code page
     cannot hold them: the command still prints and exits 0 instead of dying on
-    a UnicodeEncodeError after the request succeeded."""
+    a UnicodeEncodeError after the request succeeded.
+
+    The cleaner also removes control characters (see ``plain``): every
+    renderer that prints ingested names through it gets both."""
     encoding = getattr(stream, "encoding", None) or "utf-8"
 
     def clean(text: str) -> str:
+        text = plain(text)
         try:
             return text.encode(encoding, "replace").decode(encoding)
         except LookupError:
@@ -106,16 +161,24 @@ def encodable(stream):
     return clean
 
 
+def _print_message(target: Console, glyph: str, colour: str, message: Any) -> None:
+    """One coloured glyph, then the message as text.
+
+    The message is never parsed as markup: most messages carry a server error
+    detail or a name from the data (see ``plain``)."""
+    target.print(Text.assemble((glyph, colour), " ", _literal(target, message)))
+
+
 def print_success(message: str) -> None:
-    console.print(f"[green]{_glyph('✓', '[OK]', sys.stdout)}[/] {message}")
+    _print_message(console, _glyph('✓', '[OK]', sys.stdout), "green", message)
 
 
 def print_error(message: str) -> None:
-    error_console.print(f"[red]{_glyph('✗', '[X]', sys.stderr)}[/] {message}")
+    _print_message(error_console, _glyph('✗', '[X]', sys.stderr), "red", message)
 
 
 def print_warning(message: str) -> None:
-    error_console.print(f"[yellow]{_glyph('⚠', '[!]', sys.stderr)}[/] {message}")
+    _print_message(error_console, _glyph('⚠', '[!]', sys.stderr), "yellow", message)
 
 
 def print_review_notice(data: Any) -> None:
@@ -133,8 +196,8 @@ def print_review_notice(data: Any) -> None:
             markup=False, highlight=False,
         )
         return
-    error_console.print(f"Review state: {state}", markup=False, highlight=False)
+    error_console.print(f"Review state: {plain(state)}", markup=False, highlight=False)
     if review.get("message"):
-        error_console.print(str(review["message"]), markup=False, highlight=False)
+        error_console.print(plain(review["message"]), markup=False, highlight=False)
     if data.get("ai_disclaimer"):
-        error_console.print(str(data["ai_disclaimer"]), markup=False, highlight=False)
+        error_console.print(plain(data["ai_disclaimer"]), markup=False, highlight=False)

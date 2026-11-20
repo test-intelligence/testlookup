@@ -224,7 +224,8 @@ async def test_a_malformed_json_field_is_kept_as_text(redis):
 # ── /health/ingestion counts both ────────────────────────────────────────
 
 
-async def test_health_counts_the_stream_dlq_too(client, redis):
+async def test_health_counts_the_stream_dlq_too(client, auth_as, redis):
+    auth_as()  # /health/ingestion needs a signed-in user (any role)
     await _fill()
 
     resp = await client.get("/health/ingestion")
@@ -234,7 +235,8 @@ async def test_health_counts_the_stream_dlq_too(client, redis):
     assert dlq["stream"] == 2, "/health/ingestion still counts only one of the two stores"
 
 
-async def test_health_reports_an_unreadable_stream_count_as_unknown(client, monkeypatch):
+async def test_health_reports_an_unreadable_stream_count_as_unknown(client, auth_as, monkeypatch):
+    auth_as()  # /health/ingestion needs a signed-in user (any role)
     _use(monkeypatch, _DownRedis())
 
     resp = await client.get("/health/ingestion")

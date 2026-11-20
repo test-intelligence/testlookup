@@ -20074,18 +20074,18 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "properties": {
     "errors": {
-      "default": [],
       "items": {
         "$ref": "#/components/schemas/FrontendError"
       },
+      "maxItems": 50,
       "title": "Errors",
       "type": "array"
     },
     "vitals": {
-      "default": [],
       "items": {
         "$ref": "#/components/schemas/WebVitalReport"
       },
+      "maxItems": 50,
       "title": "Vitals",
       "type": "array"
     }

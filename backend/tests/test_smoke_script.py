@@ -64,3 +64,66 @@ def test_probe_handles_unreachable_host_without_raising():
     # Unroutable port — must return (0, '', err), never raise.
     status, body, err = smoke.probe("http://127.0.0.1:9/__nope__")
     assert status == 0 and body == "" and err
+
+
+# ── The checks themselves, against a faked stack ─────────────────────────────
+#
+# /health/details needs a sign-in, and the smoke check holds no credential: it
+# reads the per-dependency status from the public readiness probe instead.
+
+_READY = '{"status": "ready", "checks": {"postgres": {"status": "ok"}, "mongo": {"status": "ok"}, "redis": {"status": "ok"}}}'
+_NOT_READY = (
+    '{"status": "not_ready", "checks": {"postgres": {"status": "ok"}, "mongo": {"status": "ok"}, '
+    '"redis": {"status": "error", "detail": "check failed; see the server log"}}}'
+)
+
+
+def _fake_stack(monkeypatch, answers: dict[str, tuple[int, str, str]]) -> list[str]:
+    asked: list[str] = []
+
+    def _probe(url: str, *, method: str = "GET"):
+        asked.append(url)
+        for suffix, answer in answers.items():
+            if url.endswith(suffix):
+                return answer
+        return 200, "<!doctype html><div id=root></div>", ""
+
+    monkeypatch.setattr(smoke, "probe", _probe)
+    return asked
+
+
+def test_the_checks_call_only_routes_that_need_no_sign_in(monkeypatch):
+    asked = _fake_stack(monkeypatch, {"/health/ready": (200, _READY, "")})
+    checks = smoke.run_checks()
+    assert not [u for u in asked if "/health/details" in u or "/health/ingestion" in u]
+    ok, text = summarize(checks)
+    assert ok is True
+    assert "[info] dependency details -- postgres=ok, mongo=ok, redis=ok" in text
+
+
+def test_a_failed_readiness_names_the_dependency(monkeypatch):
+    _fake_stack(monkeypatch, {"/health/ready": (503, _NOT_READY, "HTTP 503")})
+    ok, text = summarize(smoke.run_checks())
+    assert ok is False
+    assert "[FAIL] backend readiness (/health/ready)" in text
+    assert "redis=error" in text
+
+
+def test_a_turned_off_api_reference_is_reported_not_failed(monkeypatch):
+    _fake_stack(monkeypatch, {
+        "/health/ready": (200, _READY, ""),
+        "/api-docs/openapi.json": (404, "", "HTTP 404"),
+    })
+    ok, text = summarize(smoke.run_checks())
+    assert ok is True
+    assert "[info] API schema (/api-docs/openapi.json)" in text and "API_DOCS_ENABLED" in text
+
+
+def test_a_broken_api_reference_still_fails(monkeypatch):
+    _fake_stack(monkeypatch, {
+        "/health/ready": (200, _READY, ""),
+        "/api-docs/openapi.json": (500, "", "HTTP 500"),
+    })
+    ok, text = summarize(smoke.run_checks())
+    assert ok is False
+    assert "[FAIL] API schema (/api-docs/openapi.json)" in text

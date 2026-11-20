@@ -294,6 +294,24 @@ async def backend_ready() -> bool:
     return response.status_code == 200
 
 
+async def public_health() -> dict[str, Any]:
+    """Version and readiness from the two public probes, with no credential.
+
+    ``/health/ready`` answers 503 with the same body when a data store is
+    down, so that status is read, not raised.
+    """
+    client = _get_client()
+    merged: dict[str, Any] = {}
+    for probe in (path("/health/version"), path("/health/ready")):
+        resp = await client.get(_checked_path(client, probe))
+        if resp.status_code not in (200, 503):
+            resp.raise_for_status()
+        body = resp.json()
+        if isinstance(body, dict):
+            merged.update(body)
+    return merged
+
+
 async def _auth_context() -> tuple[dict[str, str], bool]:
     """Return headers plus whether they belong to an authenticated MCP caller."""
     request_token = _request_access_token()

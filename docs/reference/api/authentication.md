@@ -14,7 +14,7 @@ A wrong current password counts toward the same account lockout as a failed
 sign-in, and a locked account answers 429 whatever was typed. Without that,
 a stolen access token could be used to guess the password with no limit.
 
-Source: [backend/app/routers/auth.py:1063](../../../backend/app/routers/auth.py#L1063).
+Source: [backend/app/routers/auth.py:1118](../../../backend/app/routers/auth.py#L1118).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_interactive_session`.
 
@@ -103,7 +103,7 @@ ordinary user, because everyone on the internet signs in as it. Answers
 Rate-limited per IP (``_AUTH_RATE_LIMITS``); the demo-mode middleware keeps
 the session read-only.
 
-Source: [backend/app/routers/auth.py:730](../../../backend/app/routers/auth.py#L730).
+Source: [backend/app/routers/auth.py:785](../../../backend/app/routers/auth.py#L785).
 
 Dependency chain: `get_db`.
 
@@ -159,7 +159,7 @@ Query param:
 If the requested user does not exist yet (seed not run), a temporary account
 is created on the fly so developers can always access the UI after `make dev`.
 
-Source: [backend/app/routers/auth.py:653](../../../backend/app/routers/auth.py#L653).
+Source: [backend/app/routers/auth.py:708](../../../backend/app/routers/auth.py#L708).
 
 Dependency chain: `get_db`.
 
@@ -248,7 +248,7 @@ Forced password reset for self-registered users on first login.
 - Does NOT require the current/registration password.
 - Clears the must_change_password flag after a successful change.
 
-Source: [backend/app/routers/auth.py:778](../../../backend/app/routers/auth.py#L778).
+Source: [backend/app/routers/auth.py:833](../../../backend/app/routers/auth.py#L833).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_interactive_session`.
 
@@ -335,7 +335,7 @@ authorisation. Single use under ``SELECT … FOR UPDATE``. When the workspace
 requires MFA for the role, answers the login flow's enrollment shape instead
 of tokens (an invite never skips the second factor).
 
-Source: [backend/app/routers/auth.py:151](../../../backend/app/routers/auth.py#L151).
+Source: [backend/app/routers/auth.py:153](../../../backend/app/routers/auth.py#L153).
 
 Dependency chain: `get_db`.
 
@@ -409,7 +409,7 @@ Preview Invitation
 
 Who invited whom, as what — read by the accept page before the form. Public.
 
-Source: [backend/app/routers/auth.py:125](../../../backend/app/routers/auth.py#L125).
+Source: [backend/app/routers/auth.py:127](../../../backend/app/routers/auth.py#L127).
 
 Dependency chain: `get_db`.
 
@@ -479,7 +479,7 @@ are **not** access tokens and are rejected by ``get_current_user``: see
 ``core/security.create_mfa_token`` for why a claim on a real access token
 would have been a complete bypass.
 
-Source: [backend/app/routers/auth.py:411](../../../backend/app/routers/auth.py#L411).
+Source: [backend/app/routers/auth.py:463](../../../backend/app/routers/auth.py#L463).
 
 Dependency chain: `OAuth2PasswordRequestForm`, `get_db`.
 
@@ -565,7 +565,7 @@ so every access token already issued to the user stops working at once.
 Plain logout leaves the user's other access tokens to expire on their own
 (they cannot be refreshed).
 
-Source: [backend/app/routers/auth.py:969](../../../backend/app/routers/auth.py#L969).
+Source: [backend/app/routers/auth.py:1024](../../../backend/app/routers/auth.py#L1024).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_interactive_session`.
 
@@ -648,7 +648,7 @@ Get Me
 
 Return the authenticated user's profile.
 
-Source: [backend/app/routers/auth.py:914](../../../backend/app/routers/auth.py#L914).
+Source: [backend/app/routers/auth.py:969](../../../backend/app/routers/auth.py#L969).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -720,7 +720,7 @@ Update Me
 Self-service profile update — any authenticated user can update their own
 full_name and avatar_color.  Email and username are read-only here.
 
-Source: [backend/app/routers/auth.py:951](../../../backend/app/routers/auth.py#L951).
+Source: [backend/app/routers/auth.py:1006](../../../backend/app/routers/auth.py#L1006).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -802,7 +802,7 @@ List My Dismissals
 UI prompts this user has dismissed. Read-only; no project scope — a
 dismissal is a property of the person, not of a project.
 
-Source: [backend/app/routers/auth.py:920](../../../backend/app/routers/auth.py#L920).
+Source: [backend/app/routers/auth.py:975](../../../backend/app/routers/auth.py#L975).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -874,7 +874,7 @@ Dismiss Prompt
 Dismiss a UI prompt for this user. Idempotent — dismissing twice is a
 no-op and still returns 201 with the full list.
 
-Source: [backend/app/routers/auth.py:931](../../../backend/app/routers/auth.py#L931).
+Source: [backend/app/routers/auth.py:986](../../../backend/app/routers/auth.py#L986).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1415,7 +1415,7 @@ the login page offers the email form; it reveals nothing about any account.
 ``demo_mode`` is true on the public read-only demo: the login page offers
 one-click demo sign-in and the app shows the demo banner.
 
-Source: [backend/app/routers/auth.py:76](../../../backend/app/routers/auth.py#L76).
+Source: [backend/app/routers/auth.py:78](../../../backend/app/routers/auth.py#L78).
 
 Dependency chain: .
 
@@ -1455,7 +1455,7 @@ Forgot Password
 
 Always 202 with the same body. The lookup and the mail run after the response.
 
-Source: [backend/app/routers/auth.py:253](../../../backend/app/routers/auth.py#L253).
+Source: [backend/app/routers/auth.py:255](../../../backend/app/routers/auth.py#L255).
 
 Dependency chain: .
 
@@ -1517,7 +1517,7 @@ Redeem a reset link: set the password, clear lockout, sign out everywhere.
 
 MFA is untouched — the next sign-in still asks for the code.
 
-Source: [backend/app/routers/auth.py:290](../../../backend/app/routers/auth.py#L290).
+Source: [backend/app/routers/auth.py:292](../../../backend/app/routers/auth.py#L292).
 
 Dependency chain: `get_db`.
 
@@ -1576,7 +1576,7 @@ Refresh Tokens
 Exchange a valid refresh token for a new access + refresh token pair (rotation).
 The old refresh token is not reusable after this call.
 
-Source: [backend/app/routers/auth.py:820](../../../backend/app/routers/auth.py#L820).
+Source: [backend/app/routers/auth.py:875](../../../backend/app/routers/auth.py#L875).
 
 Dependency chain: `get_db`.
 
@@ -1648,7 +1648,7 @@ sign-up form promises -- with no project membership and
 must_change_password=True. It used to be QA_ENGINEER, which can create
 API keys.
 
-Source: [backend/app/routers/auth.py:337](../../../backend/app/routers/auth.py#L337).
+Source: [backend/app/routers/auth.py:339](../../../backend/app/routers/auth.py#L339).
 
 Dependency chain: `get_db`.
 
@@ -1716,7 +1716,7 @@ Return active users for assignee dropdowns (bounded).
 Only the people the caller works with: users who share a project with
 them, and themselves. An admin sees everyone.
 
-Source: [backend/app/routers/auth.py:1034](../../../backend/app/routers/auth.py#L1034).
+Source: [backend/app/routers/auth.py:1089](../../../backend/app/routers/auth.py#L1089).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

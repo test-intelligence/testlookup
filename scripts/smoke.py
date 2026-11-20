@@ -40,7 +40,12 @@ def probe(url: str, *, method: str = "GET") -> tuple[int, str, str]:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # noqa: S310 (local URL)
             return resp.status, resp.read(2048).decode("utf-8", "replace"), ""
     except urllib.error.HTTPError as e:
-        return e.code, "", f"HTTP {e.code}"
+        # Keep the body: a 503 from /health/ready names the dependency that is down.
+        try:
+            body = e.read(2048).decode("utf-8", "replace")
+        except Exception:
+            body = ""
+        return e.code, body, f"HTTP {e.code}"
     except Exception as e:  # connection refused, timeout, DNS, …
         return 0, "", f"{type(e).__name__}: {e}"
 
@@ -48,38 +53,51 @@ def probe(url: str, *, method: str = "GET") -> tuple[int, str, str]:
 def run_checks() -> list[Check]:
     checks: list[Check] = []
 
-    st, _, err = probe(f"{API}/health/ready")
+    # /health/ready is public and reports PostgreSQL, MongoDB and Redis by name.
+    # (/health/details reports more, but needs a sign-in; this script holds no
+    # credential.)
+    st, ready_body, err = probe(f"{API}/health/ready")
+    deps = _deps_summary(_json(ready_body))
     checks.append(Check("backend readiness (/health/ready)", st == 200, True,
-                        err or f"HTTP {st}"))
+                        " -- ".join(part for part in (err or f"HTTP {st}", deps) if part)))
 
     st, _, err = probe(f"{API}/health/live")
     checks.append(Check("backend liveness (/health/live)", st == 200, True,
                         err or f"HTTP {st}"))
 
     st, _, err = probe(f"{API}/api-docs/openapi.json")
-    checks.append(Check("API schema (/api-docs/openapi.json)", st == 200, True,
-                        err or f"HTTP {st}"))
+    if st == 404:
+        # API_DOCS_ENABLED=false turns the API reference off; that is a choice,
+        # not a fault. Any other failure is still a core failure.
+        checks.append(Check("API schema (/api-docs/openapi.json)", False, False,
+                            "HTTP 404 -- not served (API_DOCS_ENABLED=false turns it off)"))
+    else:
+        checks.append(Check("API schema (/api-docs/openapi.json)", st == 200, True,
+                            err or f"HTTP {st}"))
 
     st, body, err = probe(f"{WEB}/")
     web_ok = st == 200 and ("root" in body or "<title" in body.lower() or "<!doctype" in body.lower())
     checks.append(Check("frontend (/)", web_ok, True, err or f"HTTP {st}"))
 
-    # Informational: did the demo seed land? (a bare `make dev` legitimately has none)
-    st, body, err = probe(f"{API}/health/details")
-    if st == 200:
-        try:
-            data = json.loads(body) if body else {}
-            checks.append(Check("dependency details", True, False, _deps_summary(data)))
-        except Exception:
-            pass
+    # Informational: the per-dependency status the readiness probe reported.
+    if deps:
+        checks.append(Check("dependency details", True, False, deps))
     return checks
+
+
+def _json(body: str) -> dict:
+    try:
+        data = json.loads(body) if body else {}
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def _deps_summary(data: dict) -> str:
     deps = data.get("dependencies") or data.get("checks") or {}
     if isinstance(deps, dict) and deps:
         return ", ".join(f"{k}={(v.get('status') if isinstance(v, dict) else v)}" for k, v in deps.items())
-    return data.get("status", "ok")
+    return str(data.get("status", ""))
 
 
 def summarize(checks: list[Check]) -> tuple[bool, str]:

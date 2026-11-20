@@ -1,7 +1,5 @@
 import useSWR from 'swr'
-import axios from 'axios'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
+import { api } from '@/services/api'
 
 export type CheckStatus = 'ok' | 'error' | 'timeout' | 'unavailable' | string
 
@@ -34,6 +32,9 @@ export interface HealthDetails {
 
 // /health/details lives at the platform root (no /api/v1 prefix). It runs
 // every probe concurrently with a per-probe budget so this poll is cheap.
+// It needs a sign-in (any role), so the poll goes through the shared API
+// client, which attaches the session token and refreshes it on a 401. Only the
+// signed-in shell mounts this hook.
 // 60s is generous: a transient outage longer than that is real news the
 // banner should surface; shorter blips don't deserve a UI flash.
 const REFRESH_INTERVAL_MS = 60_000
@@ -45,8 +46,10 @@ async function fetchSystemHealth(): Promise<HealthDetails> {
   // which is strictly worse than any single dependency being down. Silence and
   // "everything is fine" looked identical. Let it throw; SWR records the error
   // and `isUnreachable` below turns it into a banner that says so.
-  const { data } = await axios.get<HealthDetails>(`${API_BASE}/health/details`, {
+  const { data } = await api.get<HealthDetails>('/health/details', {
     timeout: 8000,
+    // The banner reports a failed poll itself; no error toast every minute.
+    suppressToast: true,
   })
   return data
 }

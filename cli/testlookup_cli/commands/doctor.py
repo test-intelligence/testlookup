@@ -28,6 +28,7 @@ just have not logged in yet) and does not fail the exit code.
 import asyncio
 
 import typer
+from rich.text import Text
 
 from testlookup_cli import client, config, output
 from testlookup_cli.errors import CLIError, EXIT_AUTH
@@ -152,7 +153,8 @@ def _print_human(results: list[dict]) -> None:
         elif status == _STATUS_WARN:
             output.print_warning(line)
         elif status == _STATUS_SKIP:
-            output.console.print(f"[dim]- {line}[/]")
+            # Text, not markup: a check's detail can carry a server message.
+            output.console.print(Text(f"- {output.plain(line)}", style="dim"))
         else:
             output.print_error(line)
 

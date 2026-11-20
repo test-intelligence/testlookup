@@ -47,15 +47,25 @@ export const HEADER_DENYLIST = [
   'authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key', 'api-key', 'x-auth-token',
   'x-access-token', 'x-csrf-token', 'x-xsrf-token', 'x-amz-security-token', 'x-goog-api-key',
   'x-session-token', 'private-token', 'x-gitlab-token', 'x-hub-signature', 'x-hub-signature-256',
+  'authentication',
 ] as const
 
 /** A header name ENDING in one of these is redacted too (`X-GitHub-Token`, `X-Client-Secret` …). */
-export const HEADER_SECRET_SUFFIXES = ['token', 'secret', 'password', 'api-key', 'apikey', 'signature', 'credential'] as const
+export const HEADER_SECRET_SUFFIXES = [
+  'token', 'secret', 'password', 'api-key', 'apikey', 'signature', 'credential',
+  '-key', 'auth', 'session', 'sessionid',
+] as const
+
+/** Names that end in `-key` and are not credentials: exempt from the suffix rule (never from the denylist). */
+export const HEADER_SUFFIX_EXCEPTIONS = [
+  'idempotency-key', 'x-idempotency-key', 'sec-websocket-key', 'surrogate-key', 'x-cache-key',
+] as const
 
 /** Query parameter names (lower-case) whose VALUE the server replaces with `[REDACTED]`. */
 export const QUERY_DENYLIST = [
   'token', 'access_token', 'id_token', 'refresh_token', 'api_key', 'apikey', 'key', 'code', 'password',
   'secret', 'client_secret', 'sig', 'signature', 'x-amz-signature', 'x-amz-credential', 'x-amz-security-token', 'auth',
+  'subscription-key', 'pwd', 'passwd', 'pass', 'sessionid', 'session', 'jwt', 'otp', 'pin',
 ] as const
 
 /** The panel's copy, rendered verbatim (`{dropped}` is filled in by the panel). */

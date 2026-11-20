@@ -33,6 +33,12 @@ MAX_SENTINEL_BYTES = 64 * 1024
 # Segments that are not a name of their own: the local backend resolves them,
 # S3 and MinIO keep them literally, so no key holding one means one object.
 _NOT_A_NAME = frozenset({"", ".", ".."})
+#: The folder a project's dropped builds live in: ``<project>/runs/<build>/``.
+RUNS_SEGMENT = "runs"
+#: The folder the API archives every HTTP upload under, in the same bucket
+#: (``uploads/<project id>/<run id>/<client file name>``, worker/tasks.py).
+#: The file name there is the client's, so it is never a project.
+UPLOAD_ARCHIVE_SEGMENT = "uploads"
 _BACKSLASH = chr(92)
 
 
@@ -44,8 +50,8 @@ def sentinel_key_problem(key: str) -> str | None:
     """What stops ``key`` from being a sentinel's key, or None when nothing does.
 
     A sentinel key is ``{project}/runs/{build}/.../upload_complete.json``. Its
-    first segment is the project, and the run's result files are read from its
-    directory, so every segment must be a plain name. On the local storage
+    first segment is the project, its second is ``runs``, and the run's result
+    files are read from its directory, so every segment must be a plain name. On the local storage
     backend, which resolves paths, ``victim/runs/../../attacker/runs/7/``
     ``upload_complete.json`` read the attacker's sentinel and bound it to
     project ``victim`` (code review of the N10 follow-up). A backslash is a
@@ -64,11 +70,19 @@ def sentinel_key_problem(key: str) -> str | None:
         # three times and dead-lettered instead of refused (review of U).
         return "contains a control character"
     parts = key.split("/")
-    if len(parts) < 3:
+    if len(parts) < 4:
         return "is too short to name a project and a run"
     for part in parts:
         if part in _NOT_A_NAME:
             return f"has a {part!r} segment" if part else "has an empty segment"
+    # Compared without regard to case: the local backend on a
+    # case-insensitive file system opens ``Uploads/`` as ``uploads/``.
+    if parts[0].lower() == UPLOAD_ARCHIVE_SEGMENT:
+        # A client file named upload_complete.json, archived from an HTTP
+        # upload, sat at a key this function used to accept.
+        return "is under the folder HTTP uploads are archived in, which is not a project"
+    if parts[1] != RUNS_SEGMENT:
+        return "is not under <project>/runs/<build>/"
     return None
 
 

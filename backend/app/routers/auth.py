@@ -1,4 +1,5 @@
 """Authentication endpoints — register, login, refresh, me, change-password."""
+import hashlib
 import logging
 import uuid as _uuid
 from datetime import datetime, timezone
@@ -7,6 +8,7 @@ from typing import Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
+from limits import parse as parse_rate_limit
 from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -408,6 +410,56 @@ def _locked_response(until: datetime, *, attempts: str = "sign-in") -> HTTPExcep
     )
 
 
+LOGIN_NAME_LIMIT_DETAIL = (
+    "Too many sign-in attempts for this account name. Wait a minute and try again."
+)
+
+
+def enforce_login_name_limit(typed_name: str) -> None:
+    """Per-name ceiling on ``/auth/login``: 429 once one typed name has been tried too often.
+
+    The per-address limit (``app.main._AUTH_RATE_LIMITS``) bounds one address
+    against many accounts. This bounds many addresses against one account
+    name: ``LOGIN_ATTEMPTS_PER_USERNAME_PER_MINUTE`` attempts a minute, right
+    or wrong password, counted before the account is looked up. So the answer
+    is the same for a name that does not exist, and it does not depend on the
+    account lockout (which counts wrong passwords on real accounts, in
+    Postgres).
+
+    The counter lives in the application's rate limiter, so it is shared
+    across workers wherever that one is (Redis in production). The key is a
+    SHA-256 of the lower-cased name, never the typed text, and it expires with
+    its one-minute window. Development keeps the relaxed 200 a minute of the
+    other sign-in limits. If the counter cannot be reached the sign-in goes
+    ahead: the per-address limit and the lockout still apply, and a Redis
+    outage must not stop everyone signing in.
+    """
+    per_minute = settings.LOGIN_ATTEMPTS_PER_USERNAME_PER_MINUTE
+    if per_minute <= 0:
+        return
+    if settings.APP_ENV == "development":
+        per_minute = max(per_minute, 200)
+    digest = hashlib.sha256(typed_name.strip().lower().encode("utf-8")).hexdigest()
+    try:
+        from app.main import limiter  # noqa: PLC0415 - app.main imports this router
+
+        allowed = limiter.limiter.hit(parse_rate_limit(f"{per_minute}/minute"), "login-name", digest)
+    except Exception as exc:  # noqa: BLE001 - fail open, see the docstring
+        logger.warning(
+            "Per-name sign-in counter unavailable (%s); the per-address limit and the "
+            "account lockout still apply",
+            type(exc).__name__,
+        )
+        return
+    if not allowed:
+        logger.warning("Sign-in refused, too many attempts for one account name")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=LOGIN_NAME_LIMIT_DETAIL,
+            headers={"Retry-After": "60"},
+        )
+
+
 @router.post(
     "/login",
     response_model=Union[TokenResponse, MfaChallengeResponse, MfaEnrollmentRequiredResponse],
@@ -431,6 +483,8 @@ async def login(
     ``core/security.create_mfa_token`` for why a claim on a real access token
     would have been a complete bypass.
     """
+    enforce_login_name_limit(form_data.username)
+
     # The typed name may match one account's e-mail and another account's
     # username (usernames written before the "@" rule, or by SCIM). The e-mail
     # match wins and exactly one row is taken, so that pair signs the e-mail's
@@ -470,10 +524,11 @@ async def login(
         logger.warning("Failed login attempt (user_id=%s)", str(user.id) if user is not None else "unknown")
         # Only count against a real account (a locked one never reaches this
         # point).
-        # Failures against usernames that do not exist are the IP rate
-        # limiter's problem; counting them would need a per-username store
-        # keyed on unverified input, which is a memory-exhaustion and
-        # enumeration vector on its own.
+        # Failures against usernames that do not exist are the rate limiters'
+        # problem (per address, and per typed name: enforce_login_name_limit,
+        # whose keys are hashes that expire with their minute). A lasting
+        # per-username failure store keyed on unverified input would be a
+        # memory-exhaustion and enumeration vector on its own.
         if user is not None:
             await mfa_service.register_failed_attempt(
                 db, user, policy,

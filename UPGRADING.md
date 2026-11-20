@@ -128,6 +128,17 @@ Existing usernames that contain `@` keep working for sign-in.
 - **`dev` overlay.** Its Ingress uses the `nginx-internal` class; reach a dev deploy through that class or `kubectl port-forward`.
 - **NetworkPolicy.** Check that your cluster enforces NetworkPolicy (EKS: the VPC CNI setting; AKS: a network policy option; GKE: Dataplane V2 or network policy). On EKS, read the guide before setting `enable_network_policy = true`: the load balancer's addresses must be admitted to the frontend and backend first.
 
+### Health routes, rate limits, CLI and SDKs
+
+- **Monitoring.** A monitor that read `/health/details` or `/health/ingestion` without a credential gets 401. Send an API key in `X-API-Key`, or use `/health/ready` (public; it names the data store that is down).
+- **Rate limits in Redis.** In production and staging the API opens a second, synchronous Redis connection for rate-limit counters. `RATE_LIMIT_SHARED_STORAGE=off` keeps per-process counters. Sign-in answers 429 after 20 attempts a minute for one account name (`LOGIN_ATTEMPTS_PER_USERNAME_PER_MINUTE`).
+- **`ci-verdict` in pipelines.** A step that ran `testlookup ci-verdict` right after an upload, with no `--timeout-seconds`, now exits 2 while the run is still in progress. Add `--timeout-seconds N` to wait for the run, or `--allow-partial` to keep the old behaviour.
+- **`testlookup auth logout`** also removes the API key stored in the profile. Scripts that expected the key to remain must set it again.
+- **JS and Go SDKs.** An endpoint that answers with a redirect to another host, port or scheme (for example http to https) now fails with a message that names the target. Configure the final address.
+- **Bucket-drop ingestion.** A dropped build with a file over 50 MiB, or over the result limit, is refused. A project whose slug is `uploads` no longer has its dropped builds ingested.
+- **Failure clusters.** The stored `failure_clusters` vector collection is no longer written; an existing one stays until it is dropped with its collection generation and can be deleted.
+- **Shared report pages** are sent with `Cache-Control: no-store`, so proxies and browsers no longer cache them.
+
 ### Development starts need real secrets
 
 With `APP_ENV=development` (the default when the variable is unset) the API

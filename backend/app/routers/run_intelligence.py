@@ -34,6 +34,7 @@ from app.core.metrics import (
 )
 from app.db.postgres import get_db
 from app.db.mongo import get_mongo_db
+from app.services.csv_safe import filename_segment
 from app.services.run_diff_service import get_baseline_diff
 from app.services.run_intelligence_service import get_run_intelligence, get_run_mode_summary
 from app.services.intelligence_snapshot_service import get_cached_snapshot, get_stale_snapshot, invalidate, save_snapshot
@@ -446,11 +447,15 @@ async def export_intelligence_report(
     except Exception:
         pass
 
+    # A run without an AI summary stores ``structured_summary: None``: the key
+    # exists, so a ``.get(..., {})`` default does not apply.
+    structured_summary = intelligence.get("structured_summary") or {}
+
     report = {
         "report_type": "run_intelligence",
         "export_mode": mode,
         "run": intelligence.get("run"),
-        "summary": mode_summary.get("markdown_report") if mode_summary else intelligence.get("structured_summary", {}).get("executive_summary"),
+        "summary": mode_summary.get("markdown_report") if mode_summary else structured_summary.get("executive_summary"),
         "baseline_diff": intelligence.get("what_changed_since_last_good_run"),
         "release_decision": intelligence.get("release_decision"),
         "failure_clusters": intelligence.get("failure_clusters", [])[:10],
@@ -458,8 +463,8 @@ async def export_intelligence_report(
         "defect_candidates": intelligence.get("defect_candidates", []),
         "role_actions": intelligence.get("role_actions", {}),
         "provenance": intelligence.get("provenance"),
-        "decision_report": intelligence.get("structured_summary", {}).get("decision_report"),
-        "decision_report_verification": intelligence.get("structured_summary", {}).get("decision_report_verification"),
+        "decision_report": structured_summary.get("decision_report"),
+        "decision_report_verification": structured_summary.get("decision_report_verification"),
         "category_breakdown": intelligence.get("category_breakdown", {}),
     }
 
@@ -503,10 +508,14 @@ async def export_intelligence_report(
 
     import json
     content = json.dumps(report, indent=2, default=str)
-    filename = f"intelligence-report-{run_data.get('build_number', str(run_id)[:8])}.json"
+    # The build number is text chosen by whoever uploaded the run: reduce it to
+    # [A-Za-z0-9._-] and quote the name, so it cannot add a header parameter,
+    # break the header, or make it impossible to encode (non-latin-1 -> 500).
+    build_number = run_data.get("build_number") if isinstance(run_data, dict) else None
+    filename = f"intelligence-report-{filename_segment(build_number, fallback=str(run_id)[:8])}.json"
 
     return Response(
         content=content,
         media_type="application/json",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

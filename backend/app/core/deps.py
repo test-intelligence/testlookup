@@ -1904,9 +1904,19 @@ async def verify_webhook_secret(
     # compare_digest, not ==: a plain comparison short-circuits on the first
     # differing byte, which leaks the secret's prefix to a caller who can time
     # the response (re-audit H1). An unset secret matches nothing.
+    #
+    # Bytes, not str: compare_digest raises TypeError for a str holding a
+    # non-ASCII character, which was a public 500 on this unauthenticated
+    # route. The server decodes a header as latin-1, so encoding it back gives
+    # the bytes the caller sent; a value that cannot be encoded is a mismatch.
+    expected_bytes = expected.encode("utf-8")
     matched = False
     for candidate in presented:
-        matched = hmac.compare_digest(candidate, expected) or matched
+        try:
+            candidate_bytes = candidate.encode("latin-1")
+        except UnicodeEncodeError:
+            continue
+        matched = hmac.compare_digest(candidate_bytes, expected_bytes) or matched
     if not expected or not matched:
         logger.warning("Webhook request with invalid secret rejected")
         raise HTTPException(

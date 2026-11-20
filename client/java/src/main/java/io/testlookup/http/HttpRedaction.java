@@ -23,8 +23,8 @@ import java.util.Map;
  * runs every one of its cases (and idempotence) through this class.
  *
  * <p>Pure: no HTTP client, no framework, no I/O. Header values of {@link #HEADER_DENYLIST} names (and names
- * ending in a {@link #HEADER_SECRET_SUFFIXES} entry) become {@link #REDACTED}; query values of
- * {@link #QUERY_DENYLIST} names and url userinfo too; every other value, and every JSON string leaf and key,
+ * ending in a {@link #HEADER_SECRET_SUFFIXES} entry, except {@link #HEADER_SUFFIX_EXCEPTIONS}) become
+ * {@link #REDACTED}; query values of {@link #QUERY_DENYLIST} names, of secret-named parameters and url userinfo too; every other value, and every JSON string leaf and key,
  * passes the text rules (secret-named pairs, provider token shapes, credentials, JWTs, e-mail addresses,
  * phone / card / IPv4 shapes). Bodies are cut at {@link #BODY_WIRE_MAX_BYTES} first.
  */
@@ -55,13 +55,18 @@ public final class HttpRedaction {
     public static final List<String> HEADER_DENYLIST = list(
         "authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key", "api-key", "x-auth-token",
         "x-access-token", "x-csrf-token", "x-xsrf-token", "x-amz-security-token", "x-goog-api-key",
-        "x-session-token", "private-token", "x-gitlab-token", "x-hub-signature", "x-hub-signature-256");
-    public static final List<String> HEADER_SECRET_SUFFIXES =
-        list("token", "secret", "password", "api-key", "apikey", "signature", "credential");
+        "x-session-token", "private-token", "x-gitlab-token", "x-hub-signature", "x-hub-signature-256",
+        "authentication");
+    public static final List<String> HEADER_SECRET_SUFFIXES = list(
+        "token", "secret", "password", "api-key", "apikey", "signature", "credential",
+        "-key", "auth", "session", "sessionid");
+    /** Names that end in "-key" and are not credentials (the suffix rule only; a denylisted name is always redacted). */
+    public static final List<String> HEADER_SUFFIX_EXCEPTIONS =
+        list("idempotency-key", "x-idempotency-key", "sec-websocket-key", "surrogate-key", "x-cache-key");
     public static final List<String> QUERY_DENYLIST = list(
         "token", "access_token", "id_token", "refresh_token", "api_key", "apikey", "key", "code", "password",
         "secret", "client_secret", "sig", "signature", "x-amz-signature", "x-amz-credential", "x-amz-security-token",
-        "auth");
+        "auth", "subscription-key", "pwd", "passwd", "pass", "sessionid", "session", "jwt", "otp", "pin");
     /** Python {@code re} pattern texts (as in the vectors; {@code \d} is any Unicode digit). */
     public static final List<String> ENDPOINT_ID_SEGMENT_RES = list(
         "^\\d+$", "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
@@ -232,6 +237,16 @@ public final class HttpRedaction {
     /** The url's path with id-like segments as {@code {id}} (the server's drift key when no template is sent). */
     public static String deriveEndpoint(String url) {
         return HttpText.deriveEndpoint(url);
+    }
+
+    /**
+     * The text pass for a test's error message or stack trace ({@code http_capture.failure_text_pass}), for a
+     * reporter to apply before it queues a result: secret-named pairs, token shapes, credentials, JWTs and
+     * e-mail / phone / card / IPv4 shapes become {@link #REDACTED} markers; file paths are kept. Best effort;
+     * the server redacts the text again. {@code null} stays {@code null}. Idempotent.
+     */
+    public static String failureText(String text) {
+        return HttpText.failureTextPass(text);
     }
 
     // ── Headers ──────────────────────────────────────────────────────────────

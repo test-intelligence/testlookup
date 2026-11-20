@@ -909,9 +909,16 @@ async def ingest_live_event(
                     "events. The shared webhook secret names no project."
                 ),
             )
-        if not hmac.compare_digest(
-            str(x_webhook_secret), str(settings.WEBHOOK_SECRET)
-        ):
+        # Bytes, not str: compare_digest raises TypeError for a str holding a
+        # non-ASCII character (a public 500). A header arrives decoded as
+        # latin-1, so encoding it back gives the bytes the caller sent; a
+        # value that cannot be encoded is a wrong secret.
+        try:
+            presented_secret = str(x_webhook_secret).encode("latin-1")
+        except UnicodeEncodeError:
+            presented_secret = b""
+        expected_secret = str(settings.WEBHOOK_SECRET or "").encode("utf-8")
+        if not expected_secret or not hmac.compare_digest(presented_secret, expected_secret):
             logger.warning("Live event rejected — invalid webhook secret")
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN, detail="Invalid webhook secret"
