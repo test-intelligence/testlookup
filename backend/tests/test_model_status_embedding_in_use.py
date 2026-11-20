@@ -32,7 +32,7 @@ MXBAI = {"provider": "ollama", "model": "mxbai-embed-large"}
 def probes(monkeypatch):
     calls: list[str] = []
 
-    async def probe(base_url=None, timeout=None):
+    async def probe(base_url=None, timeout=None, **_kwargs):  # offline= since the probe obeys the policy
         calls.append(base_url)
         return {"reachable": True, "models": ["nomic-embed-text:v1.5"], "error": None}
 

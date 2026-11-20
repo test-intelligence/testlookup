@@ -310,6 +310,12 @@ async def _load_from_db_and_env(*, db: Any = None) -> dict[str, Any]:
         "google_api_key": settings.GOOGLE_API_KEY,
         "anthropic_api_key": getattr(settings, "ANTHROPIC_API_KEY", None),
         "openrouter_api_key": getattr(settings, "OPENROUTER_API_KEY", None),
+        # Which of the four keys above were stored in Settings > AI
+        # Configuration (the rest, if set, come from the environment). The
+        # provider policy reads this: an environment key is never sent to a
+        # base URL that is not the provider's own, a stored key may be.
+        # Names only, never values. Empty when the database cannot be read.
+        "stored_api_keys": [],
     }
 
     def _apply_stored_toggles(overrides: Mapping[str, Any] | None) -> None:
@@ -328,6 +334,7 @@ async def _load_from_db_and_env(*, db: Any = None) -> dict[str, Any]:
     _apply_stored_toggles(None)
 
     async def _merge_from_db(session: Any) -> None:
+        stored_keys: list[str] = []
         # Load DB overrides
         result = await session.execute(
                 select(AppSetting).where(AppSetting.key == "ai_config")
@@ -360,6 +367,10 @@ async def _load_from_db_and_env(*, db: Any = None) -> dict[str, Any]:
             secret = await read_secret(session, "ai_config", key_name)
             if secret:
                 config[key_name] = secret
+                stored_keys.append(key_name)
+        # Assigned once, after every read: a failure part-way leaves the
+        # default (no stored keys), never a half-true list.
+        config["stored_api_keys"] = stored_keys
 
     try:
         if db is None:

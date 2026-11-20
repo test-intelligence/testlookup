@@ -218,8 +218,10 @@ async def start_fixer_run(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
-                "Suggest mode requires a runner (docker or workflow_dispatch). "
-                "Configure fixer.runner.type before running in suggest mode."
+                "Suggest mode requires a runner, and it opens a pull request only with "
+                "the docker runner (workflow_dispatch reruns the unpatched branch and "
+                "records a baseline-only result). Set fixer.runner.type to docker before "
+                "running in suggest mode."
             ),
         )
     except svc.FixerAlreadyRunning:

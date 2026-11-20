@@ -256,8 +256,8 @@ def test_the_paths_are_routes_the_backend_serves():
     for route in ('"/{run_id}/ai-history"', '"/{run_id}/ai-history/diff"', '"/{run_id}/ai-compare"'):
         assert route in source, route
     tools_src = (MCP_DIR / "tools" / "intelligence.py").read_text(encoding="utf-8")
-    for path in ('f"/api/v1/runs/{run_id}/ai-history"', 'f"/api/v1/runs/{run_id}/ai-history/diff"',
-                 'f"/api/v1/runs/{run_id}/ai-compare"'):
+    for path in ('"/api/v1/runs/{run_id}/ai-history"', '"/api/v1/runs/{run_id}/ai-history/diff"',
+                 '"/api/v1/runs/{run_id}/ai-compare"'):
         assert path in tools_src, path
 
 

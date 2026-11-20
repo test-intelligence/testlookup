@@ -16,7 +16,7 @@ def register(mcp) -> None:  # noqa: ANN001
         Returns project names, slugs, integration keys (Jira, OCP, Splunk),
         and unique IDs needed for other tool calls.
         """
-        data = await api.get("/api/v1/projects")
+        data = await api.get(api.path("/api/v1/projects"))
         if not data:
             return "No active projects found."
 
@@ -42,7 +42,7 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             project_id: The project UUID (from list_projects).
         """
-        data = await api.get(f"/api/v1/projects/{project_id}")
+        data = await api.get(api.path("/api/v1/projects/{project_id}", project_id=api.uuid_id(project_id)))
 
         lines = [
             f"## Project: {data['name']}",
@@ -96,7 +96,7 @@ def register(mcp) -> None:  # noqa: ANN001
         # Remove None values
         body = {k: v for k, v in body.items() if v is not None}
 
-        data = await api.post("/api/v1/projects", json_body=body)
+        data = await api.post(api.path("/api/v1/projects"), json_body=body)
 
         return (
             f"Project **{data['name']}** created successfully.\n"

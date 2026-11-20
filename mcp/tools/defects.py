@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Optional
 
 import client as api  # type: ignore[import]
+import untrusted  # type: ignore[import]
 
 
 def _signature_params(
@@ -55,7 +56,7 @@ def register(mcp) -> None:  # noqa: ANN001
             "page": 1,
             "size": min(max(1, limit), 100),
         }
-        data = await api.get("/api/v1/analytics/defects", params=params)
+        data = await api.get(api.path("/api/v1/analytics/defects"), params=params)
         items = (data or {}).get("items", [])
         if not items:
             return f"No defects found for project `{project_id}` with the given filter."
@@ -82,12 +83,12 @@ def register(mcp) -> None:  # noqa: ANN001
             else:
                 jira_note = " · Jira: unlinked"
             lines.append(
-                f"- **{d.get('test_name') or 'Unlinked defect'}** "
+                f"- **{untrusted.inline(d.get('test_name'), missing='Unlinked defect')}** "
                 f"· {category} · status `{status}`{jira_note}"
             )
             detail = []
             if d.get("suite_name"):
-                detail.append(f"suite `{d['suite_name']}`")
+                detail.append(f"suite {untrusted.inline(d['suite_name'])}")
             confidence = d.get("ai_confidence_score")
             if confidence is not None:
                 detail.append(f"AI confidence {confidence}%")
@@ -96,14 +97,14 @@ def register(mcp) -> None:  # noqa: ANN001
             if d.get("resolved_at"):
                 detail.append(f"resolved {str(d['resolved_at'])[:10]}")
             if d.get("release_name"):
-                detail.append(f"release `{d['release_name']}`")
+                detail.append(f"release {untrusted.inline(d['release_name'])}")
             if d.get("jira_status"):
-                detail.append(f"Jira status `{d['jira_status']}`")
+                detail.append(f"Jira status `{untrusted.short(d['jira_status'])}`")
             if d.get("external_status_conflict"):
                 detail.append("Jira status conflicts with TestLookup")
             if detail:
                 lines.append("  - " + " · ".join(detail))
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     # ── Write path (PMF US-14.1) ───────────────────────────────────────────
 
@@ -158,7 +159,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if dry_run:
             try:
                 preview = await api.get(
-                    f"/api/v1/projects/{project_id}/defects/jira/preview",
+                    api.path("/api/v1/projects/{project_id}/defects/jira/preview", project_id=api.uuid_id(project_id)),
                     params=sig,
                 )
             except Exception as exc:
@@ -166,6 +167,8 @@ def register(mcp) -> None:  # noqa: ANN001
             return {
                 "ok": True,
                 "dry_run": True,
+                # The preview's summary and description are built from the failing test's output.
+                "content_notice": untrusted.DATA_NOTICE,
                 "preview": preview,
                 "note": (
                     "No issue was created. Show this preview to the user; "
@@ -183,7 +186,7 @@ def register(mcp) -> None:  # noqa: ANN001
         }
         try:
             result = await api.post(
-                f"/api/v1/projects/{project_id}/defects/jira",
+                api.path("/api/v1/projects/{project_id}/defects/jira", project_id=api.uuid_id(project_id)),
                 json_body={k: v for k, v in body.items() if v is not None},
             )
         except Exception as exc:

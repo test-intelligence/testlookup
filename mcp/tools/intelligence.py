@@ -9,6 +9,7 @@ import re
 import ai_history_format  # type: ignore[import]
 import client as api  # type: ignore[import]
 import review_notice  # type: ignore[import]
+import untrusted  # type: ignore[import]
 
 #: ``get_ai_history``: versions listed by default, and the route's cap.
 AI_HISTORY_DEFAULT_LIMIT = 20
@@ -41,13 +42,13 @@ def register(mcp) -> None:  # noqa: ANN001
         Returns: executive summary, failure clusters, release decision,
         dimension scores, baseline diff, defect candidates, and provenance.
         """
-        data = await api.get(f"/api/v1/runs/{run_id}/intelligence")
+        data = await api.get(api.path("/api/v1/runs/{run_id}/intelligence", run_id=api.uuid_id(run_id)))
         run = data.get("run", {})
         decision = data.get("release_decision")
         summary = data.get("structured_summary", {})
 
         lines = [
-            f"## Run Intelligence — Build {run.get('build_number', '?')}",
+            f"## Run Intelligence — Build {untrusted.short(run.get('build_number'), missing='?')}",
             f"**Status:** {run.get('status', '?')}  |  **Pass Rate:** {run.get('pass_rate', 0):.1f}%  |  **Failed:** {run.get('failed_tests', 0)}",
         ]
 
@@ -55,7 +56,8 @@ def register(mcp) -> None:  # noqa: ANN001
             lines.append(f"**Release:** {decision.get('recommendation', '?')} (risk: {decision.get('risk_score', '?')}/100)")
 
         if summary and summary.get("executive_summary"):
-            lines.append(f"\n### Executive Summary\n{summary['executive_summary'][:500]}")
+            # AI text written from test output: it can repeat what a report said.
+            lines += ["\n### Executive Summary", *untrusted.block(summary["executive_summary"], limit=500)]
 
         deep = data.get("deep_pipeline_status", {})
         if deep and deep.get("status") != "never_run":
@@ -65,8 +67,12 @@ def register(mcp) -> None:  # noqa: ANN001
         if clusters:
             lines.append(f"\n### Failure Clusters ({len(clusters)})")
             for c in clusters[:5]:
-                lines.append(f"- **{c.get('label', '?')}** — {c.get('size', 0)} tests, {c.get('criticality_level', '?')}")
+                lines.append(
+                    f"- **{untrusted.inline(c.get('label'), missing='?')}** — {c.get('size', 0)} tests, "
+                    f"{c.get('criticality_level', '?')}"
+                )
 
+        lines = untrusted.with_notice(lines)
         # E8.4: the agent must see whether a person has accepted this AI content.
         lines.extend(review_notice.review_lines(data))
         return "\n".join(lines)
@@ -74,7 +80,7 @@ def register(mcp) -> None:  # noqa: ANN001
     @mcp.tool()
     async def refresh_intelligence(run_id: str) -> str:
         """Force-refresh the cached intelligence snapshot for a run."""
-        await api.post(f"/api/v1/runs/{run_id}/intelligence/refresh")
+        await api.post(api.path("/api/v1/runs/{run_id}/intelligence/refresh", run_id=api.uuid_id(run_id)))
         return f"Intelligence snapshot refreshed for run {run_id}."
 
     @mcp.tool()
@@ -83,9 +89,13 @@ def register(mcp) -> None:  # noqa: ANN001
         Get a mode-specific narrative summary for a run.
         Modes: executive, developer, manager.
         """
-        data = await api.get(f"/api/v1/runs/{run_id}/summary", params={"mode": mode})
-        summary = data.get("executive_summary") or data.get("markdown_report", "No summary available.")
-        return "\n".join([f"## {mode.title()} Summary", "", str(summary), *review_notice.review_lines(data)])
+        data = await api.get(api.path("/api/v1/runs/{run_id}/summary", run_id=api.uuid_id(run_id)), params={"mode": mode})
+        summary = data.get("executive_summary") or data.get("markdown_report")
+        if not str(summary or "").strip():
+            return "\n".join([f"## {mode.title()} Summary", "", "No summary available.", *review_notice.review_lines(data)])
+        # AI text written from test output: it can repeat what a report said.
+        lines = untrusted.with_notice([f"## {mode.title()} Summary", "", *untrusted.block(summary)])
+        return "\n".join([*lines, *review_notice.review_lines(data)])
 
     @mcp.tool()
     async def get_ai_history(run_id: str, limit: int = AI_HISTORY_DEFAULT_LIMIT) -> dict:
@@ -115,7 +125,7 @@ def register(mcp) -> None:  # noqa: ANN001
         limit = max(1, min(int(limit), AI_HISTORY_MAX_LIMIT))
         try:
             body = await api.get(
-                f"/api/v1/runs/{run_id}/ai-history",
+                api.path("/api/v1/runs/{run_id}/ai-history", run_id=api.uuid_id(run_id)),
                 params={"kind": "analysis_digest", "limit": limit},
             )
         except Exception as exc:  # noqa: BLE001 - every failure is a structured result
@@ -123,7 +133,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if not isinstance(body, dict):
             return {"ok": False, "error": "unexpected response from the AI history endpoint"}
         summary = "\n".join([ai_history_format.history_markdown(body), *review_notice.review_lines(body)])
-        return {"ok": True, "summary": summary, "history": body}
+        return {"ok": True, "content_notice": untrusted.DATA_NOTICE, "summary": summary, "history": body}
 
     @mcp.tool()
     async def diff_ai_versions(run_id: str, from_version: int, to_version: int | str = "latest") -> dict:
@@ -163,7 +173,7 @@ def register(mcp) -> None:  # noqa: ANN001
             }
         try:
             listing = await api.get(
-                f"/api/v1/runs/{run_id}/ai-history",
+                api.path("/api/v1/runs/{run_id}/ai-history", run_id=api.uuid_id(run_id)),
                 params={"kind": "analysis_digest", "limit": AI_HISTORY_RESOLVE_LIMIT},
             )
         except Exception as exc:  # noqa: BLE001 - every failure is a structured result
@@ -185,7 +195,7 @@ def register(mcp) -> None:  # noqa: ANN001
         to_param = ids[to_number] if to_number is not None else to_text
         try:
             body = await api.get(
-                f"/api/v1/runs/{run_id}/ai-history/diff",
+                api.path("/api/v1/runs/{run_id}/ai-history/diff", run_id=api.uuid_id(run_id)),
                 params={"from": ids[frm], "to": to_param},
             )
         except Exception as exc:  # noqa: BLE001 - every failure is a structured result
@@ -193,7 +203,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if not isinstance(body, dict):
             return {"ok": False, "error": "unexpected response from the AI diff endpoint"}
         summary = "\n".join([ai_history_format.diff_markdown(body), *review_notice.review_lines(body)])
-        return {"ok": True, "summary": summary, "diff": body}
+        return {"ok": True, "content_notice": untrusted.DATA_NOTICE, "summary": summary, "diff": body}
 
     @mcp.tool()
     async def compare_ai_with_previous(run_id: str, baseline_run_id: str | None = None) -> dict:
@@ -226,7 +236,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         try:
             body = await api.get(
-                f"/api/v1/runs/{run_id}/ai-compare",
+                api.path("/api/v1/runs/{run_id}/ai-compare", run_id=api.uuid_id(run_id)),
                 params={"baseline_run_id": baseline_run_id},
             )
         except Exception as exc:  # noqa: BLE001 - every failure is a structured result
@@ -236,6 +246,7 @@ def register(mcp) -> None:  # noqa: ANN001
         summary = "\n".join([ai_history_format.compare_markdown(body), *review_notice.review_lines(body)])
         return {
             "ok": True,
+            "content_notice": untrusted.DATA_NOTICE,
             "summary": summary,
             "verdict_regressed": ai_history_format.verdict_regressed(body),
             "compare": body,

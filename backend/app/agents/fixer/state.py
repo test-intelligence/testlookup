@@ -21,6 +21,12 @@ VALID_FIXER_MODES: tuple[str, ...] = ("shadow", "suggest")
 
 VALID_RUNNER_TYPES: tuple[str, ...] = ("docker", "workflow_dispatch", "none")
 
+# Runner types that rerun the test WITHOUT the candidate patch. The dispatch
+# runner starts the customer's workflow on the default branch and has no way
+# to hand it the patch, so its result is about the baseline only: it never
+# leads to a pull request and is never described as validating the patch.
+BASELINE_ONLY_RUNNER_TYPES: tuple[str, ...] = ("workflow_dispatch",)
+
 VALID_SCHEDULES: tuple[str, ...] = ("daily", "weekly", "off")
 
 # Docker image reference the policy may configure (security-critical: the
@@ -115,12 +121,20 @@ class RunAttempt:
 
 @dataclass(frozen=True)
 class ValidationResult:
-    """Runner outcome. ``validated`` iff EVERY rerun passed."""
+    """Runner outcome. ``validated`` iff EVERY rerun passed.
+
+    ``patch_applied`` says what the reruns executed. True (the default): the
+    candidate patch was applied before the test ran, so the result is about
+    the patch. False: the runner ran the ref as it is (baseline only) — the
+    result says nothing about the patch, and the workflow never opens a pull
+    request from it.
+    """
 
     status: str                    # validated | failed | error
     runs: list[RunAttempt] = field(default_factory=list)
     logs_ref: Optional[str] = None
     error: Optional[str] = None
+    patch_applied: bool = True
 
     @property
     def reruns(self) -> int:
@@ -163,4 +177,5 @@ def to_validation_result(payload: dict[str, Any]) -> ValidationResult:
         runs=runs,
         logs_ref=payload.get("logs_ref"),
         error=payload.get("error"),
+        patch_applied=payload.get("patch_applied", True) is not False,
     )

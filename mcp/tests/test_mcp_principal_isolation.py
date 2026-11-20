@@ -70,7 +70,7 @@ def test_network_401_never_falls_back_to_configured_credentials(monkeypatch):
     monkeypatch.setattr(client, "authenticate", authenticate)
 
     try:
-        asyncio.run(client.get("/api/v1/projects"))
+        asyncio.run(client.get(client.path("/api/v1/projects")))
     except httpx.HTTPStatusError as exc:
         assert exc.response.status_code == 401
     else:  # pragma: no cover - assertion guard

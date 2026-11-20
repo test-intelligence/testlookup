@@ -24,7 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import ensure_ingest_role, get_api_key_context, get_db, resolve_project_scope
 from app.models.postgres import IngestionSource, User
 from app.services.activity.service import ActorRef, record as record_activity
-from app.models.schemas import BUILD_NUMBER_MAX_LENGTH, IngestPayload, IngestResponse, UploadStatusResponse
+from app.models.schemas import (
+    BUILD_NUMBER_MAX_LENGTH, IngestPayload, IngestResponse, UploadStatusResponse, http_ci_run_url,
+)
 
 router = APIRouter(prefix="/api/v1/ingest", tags=["Ingest"])
 logger = structlog.get_logger("routers.ingest")
@@ -363,6 +365,9 @@ async def ingest_file(
             ci_actor, ci_run_url, jenkins_job, environment, commit_range, run_context,
         )
     )
+    # The CI job link is printed as a link in mail and the app: only an http(s) URL is
+    # kept. Anything else is dropped (and logged), so the upload itself still succeeds.
+    ci_run_url = http_ci_run_url(ci_run_url)  # type: ignore[assignment]  # the form default is None too
     if not build_number:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

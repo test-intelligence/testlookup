@@ -34,7 +34,7 @@ def register(mcp) -> None:  # noqa: ANN001
                 include the workspace default policies.
         """
         params = {"project_id": project_id} if project_id else None
-        data = await api.get("/api/v1/release-gate-policies", params=params)
+        data = await api.get(api.path("/api/v1/release-gate-policies"), params=params)
         if not data:
             return "No release gate policies configured."
 
@@ -71,7 +71,7 @@ def register(mcp) -> None:  # noqa: ANN001
             params["project_id"] = project_id
         if page:
             params["page"] = page
-        data = await api.get("/api/v1/saved-views", params=params or None)
+        data = await api.get(api.path("/api/v1/saved-views"), params=params or None)
         if not data:
             return "No saved views configured."
 
@@ -106,7 +106,7 @@ def register(mcp) -> None:  # noqa: ANN001
         # project_id, FastAPI ignores undeclared query params, and the tool
         # would have returned unfiltered rows while promising to scope. Filter
         # on the returned rows, which carry project_id.
-        data = await api.get("/api/v1/digests/subscriptions")
+        data = await api.get(api.path("/api/v1/digests/subscriptions"))
         if project_id and data:
             data = [s for s in data if str(s.get("project_id") or "") == str(project_id)]
         if not data:
@@ -136,7 +136,7 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             project_id: The project UUID to list rules for.
         """
-        data = await api.get(f"/api/v1/projects/{project_id}/ownership/rules")
+        data = await api.get(api.path("/api/v1/projects/{project_id}/ownership/rules", project_id=api.uuid_id(project_id)))
         if not data:
             return f"No ownership rules for project `{project_id}`."
 
@@ -168,7 +168,7 @@ def register(mcp) -> None:  # noqa: ANN001
         are live in production?" without opening the Settings UI.
         """
         try:
-            data = await api.get("/api/v1/feature-flags")
+            data = await api.get(api.path("/api/v1/feature-flags"))
         except Exception as exc:
             if "403" in str(exc):
                 return (
@@ -211,7 +211,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         params = {"project_id": project_id} if project_id else None
         try:
-            data = await api.get(f"/api/v1/feature-flags/{key}/status", params=params)
+            data = await api.get(api.path("/api/v1/feature-flags/{key}/status", key=key), params=params)
         except Exception as exc:
             return f"❌ Failed to check flag `{key}`: {exc}"
         state = "enabled" if data.get("enabled") else "disabled"

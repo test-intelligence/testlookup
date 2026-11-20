@@ -10,6 +10,12 @@ Invariants enforced here:
 * **Validated-only PRs.** A PR is opened ONLY from a ``validated`` result in
   suggest mode. ``error`` (infra) and ``failed`` (fix didn't validate) — and
   the ``NoRunner`` default — NEVER open a PR. Shadow mode never opens a PR.
+* **Baseline-only results are not validation.** A runner that reruns the test
+  WITHOUT the patch (``workflow_dispatch``; any result with
+  ``patch_applied=False``) never opens a PR. Whatever the rerun's outcome the
+  attempt ends ``error`` (never ``validated`` or ``failed_validation``: nobody
+  ran the patch) with a reason that says "baseline only" and that the patch
+  was not run, and the run counts it under ``baseline_only`` alone.
 * **Test-code-only.** A generated diff touching any non-test file is
   ``rejected_globs`` BEFORE any execution.
 * **Budgets + kill switch.** ``max_tests_per_run`` / ``max_attempts_per_test``
@@ -32,6 +38,7 @@ from sqlalchemy import func, select, update
 from app.agents.fixer import pipeline
 from app.agents.fixer.runners import ValidationRunner, build_runner, redact_secrets
 from app.agents.fixer.state import (
+    BASELINE_ONLY_RUNNER_TYPES,
     RESULT_ERROR,
     RESULT_FAILED,
     RESULT_VALIDATED,
@@ -67,14 +74,21 @@ class TerminalDecision:
     slot AND a usable GitHub integration. This encodes the load-bearing
     invariant: ``error`` (infra), ``failed`` (fix didn't validate), shadow
     mode, and the NoRunner default NEVER open a PR.
+
+    ``baseline_only`` is True when the reruns did not include the patch. Such
+    a decision never has ``open_pr``, its status is ``error`` and its
+    ``reason`` starts with "baseline only".
     """
 
-    __slots__ = ("status", "open_pr", "reason")
+    __slots__ = ("status", "open_pr", "reason", "baseline_only")
 
-    def __init__(self, status: str, open_pr: bool, reason: str) -> None:
+    def __init__(
+        self, status: str, open_pr: bool, reason: str, *, baseline_only: bool = False,
+    ) -> None:
         self.status = status
         self.open_pr = open_pr
         self.reason = reason
+        self.baseline_only = baseline_only
 
 
 def classify_validation_terminal(
@@ -85,11 +99,33 @@ def classify_validation_terminal(
     reruns: int,
     open_pr_slots: int,
     github_available: bool,
+    patch_applied: bool = True,
+    runner_type: str = "",
 ) -> TerminalDecision:
     """Pure decision: (mode, validation result) → terminal status + whether to
-    open a PR. Unit-tested directly (the validated-only-PR invariant)."""
+    open a PR. Unit-tested directly (the validated-only-PR invariant).
+
+    ``patch_applied`` (from the runner's result) and ``runner_type`` identify a
+    baseline-only rerun: the test ran on the unpatched ref. Either one is
+    enough — a ``workflow_dispatch`` result is baseline only whatever the
+    result object claims. A baseline-only rerun never opens a PR and is stored
+    as ``error`` whether the rerun passed or not: ``validated`` would show a
+    patch nobody ran as a success in the attempts list, and
+    ``failed_validation`` would blame a fix nobody tried.
+    """
     if result_status == RESULT_ERROR:
         return TerminalDecision(STATUS_ERROR, False, "validation infra error — fix merit unknown")
+    baseline_only = (not patch_applied) or runner_type in BASELINE_ONLY_RUNNER_TYPES
+    if baseline_only and result_status in (RESULT_VALIDATED, RESULT_FAILED):
+        ran_by = f"the {runner_type} runner" if runner_type else "the runner"
+        return TerminalDecision(
+            STATUS_ERROR, False,
+            f"baseline only — {ran_by} reran the test on the unpatched default branch "
+            f"({passed}/{reruns} runs passed); the patch itself was not run, so fix merit "
+            "unknown and no pull request is opened. Use the docker runner to have the "
+            "patch run.",
+            baseline_only=True,
+        )
     if result_status == RESULT_FAILED:
         return TerminalDecision(
             STATUS_FAILED_VALIDATION, False,
@@ -243,7 +279,7 @@ async def run_fixer_run(
     max_open_prs = int(budgets["max_concurrent_open_prs"])
 
     counters = {
-        "selected": 0, "validated": 0, "failed_validation": 0,
+        "selected": 0, "validated": 0, "baseline_only": 0, "failed_validation": 0,
         "rejected_globs": 0, "pr_opened": 0, "error": 0, "skipped_budget": 0,
     }
     actions_proposed: list[str] = []
@@ -389,7 +425,18 @@ async def run_fixer_run(
                     passed=result.passed_count, reruns=result.reruns,
                     open_pr_slots=max_open_prs - open_prs,
                     github_available=ghctx is not None,
+                    patch_applied=result.patch_applied,
+                    runner_type=runner.type,
                 )
+
+                if decision.baseline_only:
+                    # The rerun was on the UNPATCHED branch; the patch was
+                    # never run. Stored as an error with the "baseline only"
+                    # reason, counted under its own counter only, and never
+                    # offered as a PR.
+                    counters["baseline_only"] += 1
+                    await _advance(db, row, STATUS_ERROR, terminal=True, reason=decision.reason)
+                    continue
 
                 if decision.status == STATUS_ERROR:
                     # Defensive redaction: the runner already scrubs its own
@@ -436,6 +483,7 @@ async def run_fixer_run(
                 validation=open_pr_payload["validation"],
                 reasoning=open_pr_payload["reasoning"],
                 ledger_deep_link=f"/fixer/runs/{fixer_run_id}",
+                runner_type=runner.type,
             )
 
             async with AsyncSessionLocal() as db:
@@ -506,6 +554,7 @@ def _run_summary(mode: str, runner_type: str, counters: dict[str, int]) -> str:
     return (
         f"Fixer run ({mode}, runner={runner_type}): "
         f"selected {counters['selected']}, validated {counters['validated']}, "
+        f"baseline only (patch not run) {counters.get('baseline_only', 0)}, "
         f"PRs {counters['pr_opened']}, failed {counters['failed_validation']}, "
         f"rejected_globs {counters['rejected_globs']}, error {counters['error']}, "
         f"skipped {counters['skipped_budget']}."

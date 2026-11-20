@@ -165,7 +165,7 @@ def register(mcp) -> None:  # noqa: ANN001
             "size": max(1, min(int(size), MAX_SIZE)),
         }
         try:
-            body = await api.get("/api/v1/test-management/cases", params=params)
+            body = await api.get(api.path("/api/v1/test-management/cases"), params=params)
         except Exception as exc:
             return api.error_payload(exc)
         body = body if isinstance(body, dict) else {}
@@ -197,8 +197,8 @@ def register(mcp) -> None:  # noqa: ANN001
                     "detail": f"'{case_id}' is not a case id: pass the full id from list_managed_test_cases "
                               "(a TC- short id: list_managed_test_cases with search set to it)."}
         try:
-            case = await api.get(f"/api/v1/test-management/cases/{case_id}")
-            history = await api.get(f"/api/v1/test-management/cases/{case_id}/history") if include_history else None
+            case = await api.get(api.path("/api/v1/test-management/cases/{case_id}", case_id=api.uuid_id(case_id)))
+            history = await api.get(api.path("/api/v1/test-management/cases/{case_id}/history", case_id=api.uuid_id(case_id))) if include_history else None
         except Exception as exc:
             return api.error_payload(exc)
         case = case if isinstance(case, dict) else {}

@@ -49,8 +49,8 @@ from a `validated` result in suggest mode.
 | type | where it runs | notes |
 |------|---------------|-------|
 | `none` (default) | — | always errors "no runner configured"; never opens a PR |
-| `docker` | the worker | ephemeral container per rerun: shallow clone at ref (scoped token in the clone command only), apply patch, run M times, destroy workspace. CPU/mem/timeout limits, `--network=none` by default, non-root user, no secret/DB mounts |
-| `workflow_dispatch` | GitHub Actions | dispatches a reference workflow and polls the run conclusion |
+| `docker` | the worker | ephemeral container per rerun: shallow clone at ref (scoped token in the clone command only), apply patch, run M times, destroy workspace. CPU/mem/timeout limits, `--network=none` by default, non-root user, all capabilities dropped, no new privileges, read-only root filesystem (the workspace at `/work` and a `/tmp` tmpfs are writable), no secret/DB mounts |
+| `workflow_dispatch` | GitHub Actions | dispatches a reference workflow on the default branch and polls the run conclusion. The workflow does not receive the patch, so this reruns the test **without** the fix: the attempt is recorded as an error with the reason "baseline only ... fix merit unknown", and no pull request is opened. Use `docker` to have the patch itself run |
 
 For `docker`, set `runner_image` (e.g. `python:3.11`) and `command_template`
 (e.g. `pytest -x {test_selector}`). The selector is passed as a single argv

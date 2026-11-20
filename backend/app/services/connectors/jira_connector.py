@@ -19,7 +19,14 @@ from app.services.connectors.base import (
 
 logger = structlog.get_logger(__name__)
 
-_ISSUE_KEY_RE = re.compile(r"([A-Z][A-Z0-9]+-\d+)")
+# A Jira issue key. The key goes into a REST path and, for an epic, into a JQL
+# string, on requests that carry the deployment's Jira credential, so nothing
+# but this shape is ever used. ASCII digits only (``\d`` also matches other
+# scripts' digits). ``schemas.KnowledgeSourceCreate`` applies the same pattern
+# on create; a regression test keeps the two equal.
+_ISSUE_KEY_PATTERN = r"[A-Z][A-Z0-9_]+-[0-9]+"
+_ISSUE_KEY_RE = re.compile(f"({_ISSUE_KEY_PATTERN})")
+_ISSUE_KEY_FULL_RE = re.compile(_ISSUE_KEY_PATTERN)
 
 
 class JiraKnowledgeConnector(KnowledgeConnectorBase):
@@ -69,16 +76,24 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
         }
 
     def _extract_issue_key(self, canonical_url: str, external_id: Optional[str]) -> str:
-        """Extract the Jira issue key from URL or external_id."""
-        if external_id:
-            match = _ISSUE_KEY_RE.search(external_id)
-            if match:
-                return match.group(1)
+        """The Jira issue key for a source: ``external_id`` or, failing that, the URL.
+
+        ``external_id`` is used only when the whole value is an issue key. Any
+        other value is ignored, never passed through: it would become part of
+        the request path. The result always matches ``_ISSUE_KEY_PATTERN``.
+        """
+        if external_id and _ISSUE_KEY_FULL_RE.fullmatch(external_id):
             return external_id
 
         match = _ISSUE_KEY_RE.search(canonical_url)
         if match:
             return match.group(1)
+        if external_id:
+            raise ConnectorFetchError(
+                "Cannot extract a Jira issue key: the source's external id is not "
+                "an issue key such as ABC-123 and its URL does not contain one. "
+                "Recreate the source with the issue key or the issue's URL."
+            )
         raise ConnectorFetchError(
             f"Cannot extract Jira issue key from URL: {canonical_url}"
         )
@@ -266,7 +281,12 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
             # CHANGE-2046); its replacement takes the same jql/fields/maxResults
             # and answers with the same "issues" list.
             url = f"{self._base_url()}/rest/api/3/search/jql"
-            jql = f'"Epic Link" = {epic_key} OR parent = {epic_key}'
+            # The key is quoted, and refused outright if it is not key-shaped:
+            # the caller already pattern-checks it, this keeps the JQL safe on
+            # its own.
+            if not _ISSUE_KEY_FULL_RE.fullmatch(epic_key):
+                raise ConnectorFetchError(f"Not a Jira issue key: {epic_key!r}")
+            jql = f'"Epic Link" = "{epic_key}" OR parent = "{epic_key}"'
             params = {
                 "jql": jql,
                 "fields": "summary,description,issuetype,status,priority",

@@ -29,16 +29,18 @@ from __future__ import annotations
 
 import base64
 import json
+import posixpath
 import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import quote
 
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.fixer.state import FixCandidate
+from app.agents.fixer.state import BASELINE_ONLY_RUNNER_TYPES, FixCandidate
 from app.core.config import settings
 from app.models.postgres import (
     AgentInvestigation,
@@ -200,6 +202,15 @@ async def gather_diagnosis(
 
 # ── Fix generation (ONE registry prompt; test-code-only; offline-honest) ─────
 
+# The test name and the diagnosis come from ingested results (a results-upload
+# key chooses the test name; the recall lines and the investigation narrative
+# are derived from uploaded failure text). They reach the prompt only inside
+# the untrusted-data block. These are the WRAPPED lengths: a test name is at
+# most 500 characters in the database; the diagnosis is a flip-history line,
+# up to three recall lines and a 400-character narrative.
+_PROMPT_TEST_NAME_LIMIT = 600
+_PROMPT_DIAGNOSIS_LIMIT = 4000
+
 
 async def generate_candidate_patch(
     *,
@@ -225,10 +236,24 @@ async def generate_candidate_patch(
         from app.services.llm_factory import get_llm
         from app.services.llm_pricing import extract_token_usage
         from app.services.prompt_registry import get_prompt_text
+        from app.services.untrusted_input import wrap_untrusted
 
+        # The registered prompt text is unchanged; only the two VALUES are
+        # scrubbed, neutralised and wrapped, so neither can close its block
+        # or pass for part of the instructions.
+        # The fingerprint fallback is wrapped too: a quarantine request can
+        # be created through the API with a caller-chosen fingerprint. (The
+        # scrubber replaces a 64-character hex digest as if it were a
+        # credential; the model then sees a placeholder, which is fine for a
+        # label it only needs when there is no test name.)
         prompt = get_prompt_text("fixer_generate_patch").format(
-            test_name=candidate.test_name or candidate.test_fingerprint,
-            diagnosis=diagnosis.get("text") or "",
+            test_name=wrap_untrusted(
+                candidate.test_name or candidate.test_fingerprint,
+                limit=_PROMPT_TEST_NAME_LIMIT,
+            ),
+            diagnosis=wrap_untrusted(
+                str(diagnosis.get("text") or ""), limit=_PROMPT_DIAGNOSIS_LIMIT,
+            ),
             test_source=test_source or "(test source unavailable)",
         )
         llm = await get_llm(temperature=0.0)
@@ -326,15 +351,49 @@ def glob_match(path: str, pattern: str) -> bool:
     return re.match(_glob_to_regex(pattern), path) is not None
 
 
+def unsafe_diff_path(path: str) -> Optional[str]:
+    """Why a diff path is refused whatever the test globs say, or None when it
+    is a plain repo-relative path.
+
+    The globs are matched against the header TEXT, so the text must already be
+    the path it names: ``tests/../.github/workflows/ci.yml`` matches
+    ``tests/**`` as text but names a file outside ``tests/``. Refused: an
+    absolute path, a ``.`` or ``..`` segment, a backslash, anything that is
+    not its own ``posixpath.normpath`` (doubled or trailing slashes), and
+    anything under ``.github/`` (workflow and repository automation files are
+    never test code, even when a glob such as ``**/*.test.*`` matches them).
+    """
+    if not path:
+        return "empty path"
+    if "\\" in path:
+        return "contains a backslash"
+    if path.startswith("/"):
+        return "absolute path"
+    segments = path.split("/")
+    if "." in segments or ".." in segments:
+        return "has a '.' or '..' segment"
+    if posixpath.normpath(path) != path:
+        return "not a normalised path"
+    if segments[0].lower() == ".github":
+        return "under .github/"
+    return None
+
+
 def patch_touches_only_test_globs(
     patch: str, test_globs: list[str],
 ) -> tuple[bool, list[str]]:
     """Return ``(all_test_code, offending_paths)``. A patch that touches ANY
-    path not matching a test glob — or that touches nothing — is rejected."""
+    path not matching a test glob — or that touches nothing — is rejected.
+    So is any path :func:`unsafe_diff_path` refuses, before the globs are
+    consulted."""
     paths = diff_touched_paths(patch)
     if not paths:
         return False, []
-    offending = [p for p in paths if not any(glob_match(p, g) for g in (test_globs or []))]
+    offending = [
+        p for p in paths
+        if unsafe_diff_path(p) is not None
+        or not any(glob_match(p, g) for g in (test_globs or []))
+    ]
     return (not offending), offending
 
 
@@ -462,15 +521,41 @@ async def open_draft_pr(
     validation: dict[str, int],
     reasoning: str,
     ledger_deep_link: str,
+    runner_type: str,
 ) -> dict[str, Any]:
     """Open a DRAFT PR carrying the validated test-only fix. Best-effort and
     fully guarded — returns ``{"pr_url","pr_number"}`` on success or
     ``{"skipped"|"error": reason}``. Reuses the GitHub PAT/SSRF/HTTP patterns
-    from ``github_checks_service``; never raises."""
+    from ``github_checks_service``; never raises.
+
+    ``runner_type`` is the runner that produced ``validation``; the PR body
+    states what that runner actually ran. Two refusals happen here as well as
+    in the workflow, before any request is made: a baseline-only runner (the
+    patch was never run), and a patch whose paths are not plain repo-relative
+    paths that the glob check also saw.
+    """
     import httpx
     from app.core.http_client import http_verify
 
     from app.services.github_checks_service import _ssrf_block_reason
+
+    if runner_type in BASELINE_ONLY_RUNNER_TYPES:
+        return {
+            "skipped": (
+                f"the {runner_type} runner reran the test on the unpatched default "
+                "branch; the patch itself was not run, so no pull request is opened"
+            ),
+        }
+    file_diffs = split_per_file_diffs(patch)
+    checked_paths = set(diff_touched_paths(patch))
+    for path in file_diffs:
+        problem = unsafe_diff_path(path)
+        if problem is None and path not in checked_paths:
+            problem = "not a path the test-glob check read from this patch"
+        if problem is not None:
+            return {"error": f"patch path refused ({problem}): {path[:200]}"}
+    if not file_diffs:
+        return {"error": "patch names no file to change"}
 
     fp12 = candidate.test_fingerprint[:12]
     branch = FIX_BRANCH_PREFIX + fp12
@@ -511,9 +596,14 @@ async def open_draft_pr(
                 return {"error": f"branch create HTTP {created.status_code}"}
 
             # Reconstruct + commit each touched (test) file on the branch.
-            for path, file_diff in split_per_file_diffs(patch).items():
+            for path, file_diff in file_diffs.items():
+                # Each segment is quoted so no character of a path can change
+                # which URL is requested ("#", "?", "%", spaces).
+                contents_url = f"{repo_url}/contents/" + "/".join(
+                    quote(segment, safe="") for segment in path.split("/")
+                )
                 content_resp = await client.get(
-                    f"{repo_url}/contents/{path}",
+                    contents_url,
                     headers=headers, params={"ref": default_branch},
                 )
                 if content_resp.status_code != 200:
@@ -524,7 +614,7 @@ async def open_draft_pr(
                 if new_text is None:
                     return {"error": f"patch context mismatch on {path}"}
                 put = await client.put(
-                    f"{repo_url}/contents/{path}", headers=headers,
+                    contents_url, headers=headers,
                     json={
                         "message": f"fix(flaky): stabilise {candidate.test_name or path}",
                         "content": base64.b64encode(new_text.encode("utf-8")).decode("ascii"),
@@ -535,7 +625,9 @@ async def open_draft_pr(
                 if put.status_code not in (200, 201):
                     return {"error": f"content PUT {path} HTTP {put.status_code}"}
 
-            body = _pr_body(candidate, validation, reasoning, ledger_deep_link)
+            body = _pr_body(
+                candidate, validation, reasoning, ledger_deep_link, runner_type=runner_type,
+            )
             title = (
                 f"Attempt to fix flaky test {candidate.test_name or candidate.test_fingerprint} "
                 f"— validated {validation.get('passed', 0)}/{validation.get('reruns', 0)} reruns"
@@ -563,21 +655,46 @@ async def open_draft_pr(
         return {"error": str(exc)[:300]}
 
 
+def _what_was_run(runner_type: str, reruns: int, passed: int) -> str:
+    """One or two sentences for the PR body: what the runner of this type
+    actually executed. Never claims more than that runner does."""
+    if runner_type in BASELINE_ONLY_RUNNER_TYPES:
+        return (
+            f"The patch itself was not run. The `{runner_type}` runner reran the test on "
+            f"the unpatched default branch ({passed} of {reruns} runs passed), which says "
+            f"nothing about this change."
+        )
+    if runner_type == "docker":
+        return (
+            f"The patch was applied to a fresh clone of the default branch and the test "
+            f"was rerun {reruns} times, each in a new throwaway container ({passed} passed)."
+        )
+    return (
+        f"The `{runner_type or 'unknown'}` runner reran the test {reruns} times with the "
+        f"patch applied ({passed} passed)."
+    )
+
+
 def _pr_body(
     candidate: FixCandidate, validation: dict[str, int], reasoning: str, ledger_deep_link: str,
+    *, runner_type: str,
 ) -> str:
     reruns = validation.get("reruns", 0)
     passed = validation.get("passed", 0)
+    if runner_type in BASELINE_ONLY_RUNNER_TYPES:
+        result = "not validated (baseline only)"
+    else:
+        result = "validated ✅" if passed == reruns and reruns else "partial"
     return (
         f"### TestLookup Fixer — flaky-test stabilisation\n\n"
         f"**Test:** `{candidate.test_name or candidate.test_fingerprint}`\n\n"
         f"**Reasoning:** {reasoning or 'Test-code-only stabilisation of a flaky test.'}\n\n"
         f"**Validation:**\n\n"
-        f"| reruns | passed | result |\n|---|---|---|\n"
-        f"| {reruns} | {passed} | {'validated ✅' if passed == reruns and reruns else 'partial'} |\n\n"
+        f"| runner | reruns | passed | result |\n|---|---|---|---|\n"
+        f"| {runner_type or 'unknown'} | {reruns} | {passed} | {result} |\n\n"
         f"Ledger: {ledger_deep_link}\n\n"
-        f"> This is a **draft** PR generated by TestLookup Fixer. It changes test code only "
-        f"and was validated by rerunning the test {reruns} times in an isolated sandbox. "
+        f"> This is a **draft** PR generated by TestLookup Fixer. It changes test code only. "
+        f"{_what_was_run(runner_type, reruns, passed)} "
         f"Review before merging.\n"
     )
 

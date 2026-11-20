@@ -72,9 +72,22 @@ class _Client:
 
 
 def _install_client(monkeypatch: pytest.MonkeyPatch, client: _Client) -> _Client:
+    """Fake both clients the probe can use, and make ``ollama`` an on-box name.
+
+    The probe applies the provider policy before it sends anything: offline,
+    the base URL's host must resolve on-box and the request goes through the
+    on-box-only client; online, through the shared client.
+    """
     import app.core.http_client as http_client
+    from app.services import llm_egress, llm_policy_service
+
+    def on_box(*_a, **_k):
+        return [(2, 1, 6, "", ("10.0.0.5", 0))]
 
     monkeypatch.setattr(http_client, "get_http_client", lambda: client)
+    monkeypatch.setattr(llm_egress, "get_local_only_http_client", lambda: client)
+    monkeypatch.setattr(llm_policy_service, "_RESIDENCY_CACHE", {})
+    monkeypatch.setattr(llm_policy_service.socket, "getaddrinfo", on_box)
     return client
 
 
@@ -114,7 +127,9 @@ async def test_probe_never_raises_on_transport_error(monkeypatch):
 
     assert probe["reachable"] is False
     assert probe["models"] == []
-    assert "connect refused" in probe["error"]
+    # A fixed word: the error text is never returned (the base URL is a saved
+    # setting, so the text would describe whatever host it names).
+    assert probe["error"] == "unreachable"
 
 
 @pytest.mark.asyncio
@@ -124,7 +139,7 @@ async def test_probe_non_200_is_unreachable_with_status(monkeypatch):
     probe = await svc.probe_ollama("http://ollama:11434")
 
     assert probe["reachable"] is False
-    assert probe["error"] == "HTTP 503"
+    assert probe["error"] == "unexpected_status"
 
 
 @pytest.mark.asyncio
@@ -226,13 +241,13 @@ async def test_unreachable_ollama_still_returns_chain_with_rules(monkeypatch):
     status = await svc.build_model_status(_BASE_CFG)
 
     assert status["ollama_reachable"] is False
-    assert "connection refused" in status["ollama_error"]
+    assert status["ollama_error"] == "unreachable"
     assert status["installed_models"] == []
 
     llm = _entry(status, "llm")
     assert llm["available"] is False
     assert "unreachable" in llm["reason"]
-    assert "connection refused" in llm["reason"]
+    assert "(unreachable)" in llm["reason"]
     # An unreachable daemon must NOT be reported as a missing model, and
     # must not hand out a pull recipe that cannot possibly work yet.
     assert "ollama pull" not in llm["reason"].lower()
@@ -366,7 +381,7 @@ async def test_health_check_ollama_delegates_to_shared_probe(monkeypatch):
     _install_client(monkeypatch, _Client(exc=RuntimeError("down")))
     degraded = await health._check_ollama()
     assert degraded["status"] == "degraded"
-    assert "down" in degraded["detail"]
+    assert degraded["detail"] == "unreachable"
 
 
 @pytest.mark.asyncio
@@ -486,7 +501,7 @@ async def test_endpoint_degrades_when_the_settings_read_fails(monkeypatch):
     )
 
     assert result.ollama_reachable is False
-    assert "no route to host" in (result.ollama_error or "")
+    assert result.ollama_error == "unreachable"
     assert [e.mode for e in result.fallback_chain] == ["ml", "llm", "rules"]
 
 

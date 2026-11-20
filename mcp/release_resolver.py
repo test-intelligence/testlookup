@@ -57,7 +57,7 @@ def match_release(name: str, releases: list[dict]) -> dict:
 async def resolve_project(value: Optional[str]) -> Optional[str]:
     if not value or is_uuid(value):
         return value
-    projects = _items(await api.get("/api/v1/projects"))
+    projects = _items(await api.get(api.path("/api/v1/projects")))
     hits = [p for p in projects if str(p.get("name") or "").strip().casefold() == value.strip().casefold()]
     if len(hits) == 1:
         return str(hits[0]["id"])
@@ -72,7 +72,7 @@ async def resolve_releases(values: Optional[list[str]], project_id: Optional[str
         return values
     if all(is_uuid(v) or str(v).strip().casefold() == UNATTRIBUTED for v in values):
         return [v if is_uuid(v) else UNATTRIBUTED for v in values]
-    releases = _items(await api.get("/api/v1/releases", params={"project_id": project_id} if project_id else None))
+    releases = _items(await api.get(api.path("/api/v1/releases"), params={"project_id": project_id} if project_id else None))
     return [
         v if is_uuid(v) else UNATTRIBUTED if str(v).strip().casefold() == UNATTRIBUTED else str(match_release(v, releases)["id"])
         for v in values

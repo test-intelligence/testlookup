@@ -32,7 +32,7 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             run_id: The test run UUID to explain.
         """
-        data = await api.get(f"/api/v1/runs/{run_id}/decision-trail")
+        data = await api.get(api.path("/api/v1/runs/{run_id}/decision-trail", run_id=api.uuid_id(run_id)))
         if not data:
             return f"No decision trail available for run `{run_id}`."
 

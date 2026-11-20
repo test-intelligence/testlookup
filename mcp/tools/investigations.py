@@ -116,7 +116,7 @@ def register(mcp) -> None:  # noqa: ANN001
             run_id: Test run UUID to investigate.
         """
         try:
-            data = await api.post(f"/api/v1/runs/{run_id}/investigations")
+            data = await api.post(api.path("/api/v1/runs/{run_id}/investigations", run_id=api.uuid_id(run_id)))
         except Exception as exc:
             return api.error_payload(exc)
         return {
@@ -148,7 +148,7 @@ def register(mcp) -> None:  # noqa: ANN001
                 or list_investigations).
         """
         try:
-            data = await api.get(f"/api/v1/investigations/{investigation_id}")
+            data = await api.get(api.path("/api/v1/investigations/{investigation_id}", investigation_id=api.uuid_id(investigation_id)))
         except Exception as exc:
             return api.error_payload(exc)
         return {"ok": True, "investigation": _compact_detail(data or {})}
@@ -165,7 +165,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         try:
             data = await api.get(
-                f"/api/v1/projects/{project_id}/investigations",
+                api.path("/api/v1/projects/{project_id}/investigations", project_id=api.uuid_id(project_id)),
                 params={"limit": _clamp_limit(limit), "offset": 0},
             )
         except Exception as exc:

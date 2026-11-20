@@ -42,8 +42,8 @@ def _tools(monkeypatch, deny=False):
             req = httpx.Request("GET", "http://x")
             raise httpx.HTTPStatusError("e", request=req, response=httpx.Response(403, request=req))
         if path.endswith("/activity"):
-            return {"items": [{"id": "e0", "event_type": "defect.created", "summary": "Defect filed", "extra": "x"}], "next_cursor": "c2"}
-        return {"id": "e0", "diff": {"before": {"a": 1}, "after": {"a": 2}, "changed_fields": ["a"]}}
+            return {"items": [{"id": "77777777-7777-4777-8777-777777777777", "event_type": "defect.created", "summary": "Defect filed", "extra": "x"}], "next_cursor": "c2"}
+        return {"id": "77777777-7777-4777-8777-777777777777", "diff": {"before": {"a": 1}, "after": {"a": 2}, "changed_fields": ["a"]}}
 
     monkeypatch.setattr(client, "get", _get)
     mcp = _FakeMCP()
@@ -62,7 +62,7 @@ def test_list_resolves_the_project_and_says_there_is_more(monkeypatch):
 
 def test_the_event_carries_its_diff(monkeypatch):
     _, tools = _tools(monkeypatch)
-    out = asyncio.run(tools["get_activity_event"](P1, "e0"))
+    out = asyncio.run(tools["get_activity_event"](P1, "77777777-7777-4777-8777-777777777777"))
     assert out["ok"] and out["diff"]["changed_fields"] == ["a"]
 
 

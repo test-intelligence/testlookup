@@ -76,6 +76,7 @@ from starlette.responses import JSONResponse
 import client as api
 from config import settings
 from token_verifier import TestLookupTokenVerifier, build_auth_settings
+from untrusted import SERVER_INSTRUCTIONS as UNTRUSTED_CONTENT_INSTRUCTIONS
 
 from tools import auth, projects, runs, metrics, analytics, analysis, release
 from tools import intelligence, deep, search, reports
@@ -127,6 +128,7 @@ mcp = MCPServer(
         "available projects. Use `get_run_intelligence` for AI-powered run analysis, "
         "`trigger_deep_analysis` for multi-agent investigation, and `global_search` "
         "to find anything in the system.\n\n"
+        f"{UNTRUSTED_CONTENT_INSTRUCTIONS}\n\n"
         "Enterprise-QA surface (Tier 2 item 7): "
         "`get_decision_trail` explains *why* the AI made every pipeline decision for a run. "
         "`list_compliance_packs` and `generate_compliance_pack` manage audit ZIPs for "

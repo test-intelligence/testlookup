@@ -61,8 +61,8 @@ def _row(**extra):
 def test_list_agent_actions_reads_the_pending_queue_with_a_clamped_limit(monkeypatch):
     payload = {"items": [_row()], "count": 1, "total": 3}
     tool, calls = _tool(monkeypatch, payload)
-    text = asyncio.run(tool("proj-1", limit=999))
-    assert calls == [("/api/v1/projects/proj-1/agent-actions", {"view": "pending", "limit": 200})]
+    text = asyncio.run(tool("44444444-4444-4444-8444-444444444444", limit=999))
+    assert calls == [("/api/v1/projects/44444444-4444-4444-8444-444444444444/agent-actions", {"view": "pending", "limit": 200})]
     assert "| Action | Type | Target | Status | Outcome |" in text
     assert "| Quarantine checkout-retry | quarantine.apply | checkout retry | pending_review " in text
     assert "(1 of 3)" in text
@@ -71,25 +71,25 @@ def test_list_agent_actions_reads_the_pending_queue_with_a_clamped_limit(monkeyp
 
 def test_the_decided_view_passes_through_and_anything_else_reads_as_pending(monkeypatch):
     tool, calls = _tool(monkeypatch, {"items": [], "count": 0, "total": 0})
-    asyncio.run(tool("proj-1", view="decided", limit=0))
-    asyncio.run(tool("proj-1", view="'; DROP", limit=20))
+    asyncio.run(tool("44444444-4444-4444-8444-444444444444", view="decided", limit=0))
+    asyncio.run(tool("44444444-4444-4444-8444-444444444444", view="'; DROP", limit=20))
     assert calls == [
-        ("/api/v1/projects/proj-1/agent-actions", {"view": "decided", "limit": 1}),
-        ("/api/v1/projects/proj-1/agent-actions", {"view": "pending", "limit": 20}),
+        ("/api/v1/projects/44444444-4444-4444-8444-444444444444/agent-actions", {"view": "decided", "limit": 1}),
+        ("/api/v1/projects/44444444-4444-4444-8444-444444444444/agent-actions", {"view": "pending", "limit": 20}),
     ]
 
 
 def test_an_empty_queue_says_so(monkeypatch):
     tool, _ = _tool(monkeypatch, {"items": [], "count": 0, "total": 0})
-    text = asyncio.run(tool("proj-1"))
-    assert text.startswith("No agent actions are waiting for approval in project proj-1.")
+    text = asyncio.run(tool("44444444-4444-4444-8444-444444444444"))
+    assert text.startswith("No agent actions are waiting for approval in project 44444444-4444-4444-8444-444444444444.")
     assert "not available through MCP" in text
 
 
 def test_a_cell_cannot_break_the_table(monkeypatch):
     row = _row(title="Quarantine a | b\n| injected | row |", outcome_text=None)
     tool, _ = _tool(monkeypatch, {"items": [row], "count": 1, "total": 1})
-    text = asyncio.run(tool("proj-1"))
+    text = asyncio.run(tool("44444444-4444-4444-8444-444444444444"))
     table_rows = [line for line in text.splitlines() if line.startswith("| Quarantine")]
     assert table_rows == ["| Quarantine a / b / injected / row / | quarantine.apply | checkout retry "
                           "| pending_review | - |"]

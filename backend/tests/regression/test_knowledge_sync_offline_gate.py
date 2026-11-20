@@ -5,8 +5,12 @@ Bug pinned (review/knowledge-sync-service, 2026-06-02): ``run_sync`` had no
 Jira / Confluence / external-URL source made outbound network calls even when
 the air-gapped kill switch was on — violating "offline mode is a hard gate
 above feature flags". Fix: short-circuit external-fetch source types before
-touching the network (INTERNAL_URL / UPLOADED_DOC stay enabled — they don't
-reach hosted services).
+touching the network (UPLOADED_DOC stays enabled: it is read from the
+deployment's own object storage).
+
+2026-11-19: INTERNAL_URL is gated too. It was left out as "same-network", but
+it is fetched by the same public-only connector as EXTERNAL_URL, so in offline
+mode it was a way to reach a public host.
 """
 from __future__ import annotations
 
@@ -38,6 +42,7 @@ def _source(source_type: str) -> SimpleNamespace:
     KnowledgeSourceType.JIRA_ISSUE.value,
     KnowledgeSourceType.JIRA_EPIC.value,
     KnowledgeSourceType.CONFLUENCE_PAGE.value,
+    KnowledgeSourceType.INTERNAL_URL.value,
     KnowledgeSourceType.EXTERNAL_URL.value,
 ])
 async def test_offline_skips_external_fetch_without_connector(stype):
@@ -54,11 +59,10 @@ async def test_offline_skips_external_fetch_without_connector(stype):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stype", [
-    KnowledgeSourceType.INTERNAL_URL.value,
     KnowledgeSourceType.UPLOADED_DOC.value,
 ])
-async def test_offline_allows_internal_and_uploaded(stype):
-    # These don't reach hosted services → the offline gate must NOT short-circuit.
+async def test_offline_allows_uploaded(stype):
+    # Read from the deployment's own storage → the offline gate must NOT short-circuit.
     # Stub the connector to fail fast so we only assert the gate let it through.
     conn = MagicMock()
     conn.fetch_content = AsyncMock(side_effect=ConnectorFetchError("stop", retryable=False))
