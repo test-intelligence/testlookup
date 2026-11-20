@@ -175,7 +175,17 @@ def test_a_server_span_and_a_client_span_carry_no_query(traced):
     # Positive: the spans are still produced and still say which route was called.
     assert "/api/v1/stream/sse/" in written
     assert "partner.test/v1/items" in written
-    assert "hooks.slack.com" in written
+    # The webhook host is still named (compared as a parsed host, never as a
+    # substring of the address).
+    from urllib.parse import urlsplit
+
+    span_hosts = {
+        urlsplit(value).hostname
+        for span in exporter.get_finished_spans()
+        for value in (span.attributes or {}).values()
+        if isinstance(value, str) and "://" in value
+    }
+    assert span_hosts & {"hooks.slack.com"}
     kinds = {json.loads(span.to_json())["kind"] for span in exporter.get_finished_spans()}
     assert {"SpanKind.SERVER", "SpanKind.CLIENT"} <= kinds
 

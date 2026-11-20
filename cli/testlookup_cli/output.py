@@ -15,7 +15,8 @@ error_console = Console(stderr=True)
 # C0 and C1 control characters and DEL, except newline and tab. ESC (0x1b) and
 # CSI (0x9b) start terminal escape sequences; a carriage return or backspace
 # lets one line overwrite another.
-_CONTROL_CHARACTERS = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+_CONTROL_CODE_POINTS = (*range(0x00, 0x09), *range(0x0B, 0x20), *range(0x7F, 0xA0))
+_CONTROL_CHARACTERS = re.compile("[" + "".join(re.escape(chr(code)) for code in _CONTROL_CODE_POINTS) + "]")
 
 
 def plain(value: Any) -> str:
