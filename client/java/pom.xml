@@ -46,7 +46,7 @@
         <!-- 5.5.7: the newest 5.x. 6.x needs Java 17; this SDK targets Java 11.
              Provided + optional: users bring their own RestAssured, nothing
              reaches their classpath from this pom, and the -all jar has none. -->
-        <rest-assured.version>5.5.7</rest-assured.version>
+        <rest-assured.version>6.3.0</rest-assured.version>
     </properties>
 
     <dependencyManagement>
