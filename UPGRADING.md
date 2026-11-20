@@ -139,6 +139,14 @@ Existing usernames that contain `@` keep working for sign-in.
 - **Failure clusters.** The stored `failure_clusters` vector collection is no longer written; an existing one stays until it is dropped with its collection generation and can be deleted.
 - **Shared report pages** are sent with `Cache-Control: no-store`, so proxies and browsers no longer cache them.
 
+### Cluster installs (K3s, OpenShift, Kubernetes)
+
+- **K3s.** The next `k3ssetup/deploy-k3s.sh` run adds Redis and MongoDB passwords to `testlookup-secrets` and to the credentials file, creates the MongoDB root user, restarts both stores with authentication and rolls the application pods. Take a backup first. The script checks that the Traefik pods carry the label `app.kubernetes.io/name=traefik` and stops before changing anything if they do not. Do not delete `testlookup-secrets` to start clean: the MongoDB volume keeps its user.
+- **OpenShift.** The first deploy with the new script needs cluster-admin, restarts every data store once and adds a Redis password. Afterwards remove the old grant: `oc adm policy remove-scc-from-user anyuid -z default -n <namespace>` (or one run with `REVOKE_DEFAULT_ANYUID=true`). An offline-bundle install must grant `anyuid` to `testlookup-anyuid` before applying the new manifests, and should add `REDIS_PASSWORD`, `REDIS_URL`, `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` to its Secret.
+- **Frontend container port.** nginx listens on 8080 inside the container. If you publish or route to the container port yourself (your own `ports:` line, a numeric `targetPort`, a pod NetworkPolicy), change the container side from 80 to 8080, and keep the Compose file and the frontend image on the same version. A file of your own in `/etc/nginx/conf.d` must `listen 8080`.
+- **Read-only containers.** A custom patch that replaces a whole `volumes` or `volumeMounts` list on the TestLookup Deployments removes the new `emptyDir`s; append with `/-`. A pod of your own in the namespace that uses `hostPath`, a host namespace, a host port or privileged mode is refused by the `baseline` rule when next created.
+- **Backups.** With MongoDB authentication on, `MONGO_URI` in the Secret must carry the credentials (the deploy scripts write it that way).
+
 ### Development starts need real secrets
 
 With `APP_ENV=development` (the default when the variable is unset) the API

@@ -68,7 +68,8 @@ services:
         # on 127.0.0.1:8000 (BACKEND_PUBLISH_ADDR in docker-compose.yml).
         VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     ports:
-      - "80:80"
+      # Host port 80 as before; nginx listens on 8080 inside the container.
+      - "80:8080"
     volumes: !reset []
     environment: []
 

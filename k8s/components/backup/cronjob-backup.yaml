@@ -45,11 +45,28 @@ spec:
             - name: postgres
               image: postgres:16-alpine
               command: ["/bin/sh", "/scripts/backup.sh", "postgres"]
-              envFrom: &stores
+              # Only this store's credentials, key by key: the dump containers
+              # used to receive the whole testlookup-secrets Secret, signing and
+              # encryption keys included. lib.sh uses DATABASE_URL when it is
+              # set and the ConfigMap's POSTGRES_* pieces with this password
+              # otherwise, so neither key has to exist.
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: testlookup-secrets
+                      key: DATABASE_URL
+                      optional: true
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: testlookup-secrets
+                      key: POSTGRES_PASSWORD
+                      optional: true
+              # Host names, ports and database names: nothing secret.
+              envFrom: &settings
                 - configMapRef:
                     name: testlookup-config
-                - secretRef:
-                    name: testlookup-secrets
               volumeMounts: &work
                 - name: scripts
                   mountPath: /scripts
@@ -68,7 +85,18 @@ spec:
             - name: mongo
               image: mongo:7
               command: ["/bin/sh", "/scripts/backup.sh", "mongo"]
-              envFrom: *stores
+              # MONGO_URI carries the MongoDB user and password where the
+              # store requires them (the K3s and OpenShift deploy scripts
+              # write it that way). Without the key, lib.sh falls back to the
+              # ConfigMap's MONGO_HOST and MONGO_PORT.
+              env:
+                - name: MONGO_URI
+                  valueFrom:
+                    secretKeyRef:
+                      name: testlookup-secrets
+                      key: MONGO_URI
+                      optional: true
+              envFrom: *settings
               volumeMounts: *work
               securityContext: *hardened
               resources: *small
@@ -78,7 +106,17 @@ spec:
               env:
                 - name: HOME
                   value: /tmp
-              envFrom: *stores
+                - name: MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: testlookup-secrets
+                      key: MINIO_ACCESS_KEY
+                - name: MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: testlookup-secrets
+                      key: MINIO_SECRET_KEY
+              envFrom: *settings
               volumeMounts: *work
               securityContext: *hardened
               resources: *small

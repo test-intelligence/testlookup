@@ -45,7 +45,7 @@ spec:
 # (k8s/base/ingress.yaml). One Route for the whole host also published
 # /metrics, which has no authentication (OSS review 2026-11-12, M-12);
 # Prometheus scrapes the pods directly (k8s/monitoring/podmonitors.yaml).
-# /health/ goes to the diagnostics Service, as in the Ingress.
+# The health endpoints have their own Routes below.
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
@@ -142,10 +142,15 @@ spec:
     insecureEdgeTerminationPolicy: Redirect
   wildcardPolicy: None
 ---
+# One Route per published health endpoint. A Route path is a prefix match with
+# no exact mode, so a single Route at /health/ also published /health/ingestion
+# and every health endpoint added later. Each of these still matches sub-paths
+# of itself (/health/live/x), which reach nothing. All four go to the
+# diagnostics Service, as in the Ingress.
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
-  name: testlookup-api-health
+  name: testlookup-api-health-live
   namespace: testlookup
   labels:
     app.kubernetes.io/name: testlookup
@@ -154,7 +159,79 @@ metadata:
     haproxy.router.openshift.io/hsts_header: "max-age=31536000"
 spec:
   host: ROUTE_HOST_API_PLACEHOLDER
-  path: /health/
+  path: /health/live
+  to:
+    kind: Service
+    name: testlookup-backend-diagnostics
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup-api-health-ready
+  namespace: testlookup
+  labels:
+    app.kubernetes.io/name: testlookup
+    app.kubernetes.io/component: backend
+  annotations:
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
+spec:
+  host: ROUTE_HOST_API_PLACEHOLDER
+  path: /health/ready
+  to:
+    kind: Service
+    name: testlookup-backend-diagnostics
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup-api-health-version
+  namespace: testlookup
+  labels:
+    app.kubernetes.io/name: testlookup
+    app.kubernetes.io/component: backend
+  annotations:
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
+spec:
+  host: ROUTE_HOST_API_PLACEHOLDER
+  path: /health/version
+  to:
+    kind: Service
+    name: testlookup-backend-diagnostics
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: testlookup-api-health-details
+  namespace: testlookup
+  labels:
+    app.kubernetes.io/name: testlookup
+    app.kubernetes.io/component: backend
+  annotations:
+    haproxy.router.openshift.io/hsts_header: "max-age=31536000"
+spec:
+  host: ROUTE_HOST_API_PLACEHOLDER
+  path: /health/details
   to:
     kind: Service
     name: testlookup-backend-diagnostics

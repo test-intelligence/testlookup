@@ -510,17 +510,23 @@ services:
     image: ${TESTLOOKUP_IMAGE:-ghcr.io/test-intelligence/testlookup}/frontend:${TESTLOOKUP_VERSION:-latest}
     container_name: testlookup_frontend
     restart: unless-stopped
-    # Production image is nginx serving the built SPA on :80 and proxying /api
-    # to BACKEND_UPSTREAM (default backend:8000).
+    # Production image is nginx serving the built SPA and proxying /api to
+    # BACKEND_UPSTREAM (default backend:8000). nginx runs as a non-root user
+    # (uid 101) and listens on 8080 inside the container; the host port is
+    # still 3000.
     ports:
       # Every interface by default (unchanged); FRONTEND_PUBLISH_ADDR=127.0.0.1
       # when something on the host (a tunnel, a reverse proxy) is the only way in.
-      - "${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:80"
+      - "${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:8080"
     environment:
       - BACKEND_UPSTREAM=backend:8000
     healthcheck:
       # busybox wget ships in the nginx image; the same path as the k8s probes.
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      # 8080 is where nginx listens. The second try, on 80, is for the public
+      # demo (docker-compose.demo.yml keeps nginx on 80 for its tunnel) and for
+      # a frontend image from before the port moved (a rollback that pins an
+      # older TESTLOOKUP_VERSION, or the upgrade test's previous build).
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || wget -q -O /dev/null http://127.0.0.1:80/"]
       interval: 30s
       timeout: 5s
       retries: 3

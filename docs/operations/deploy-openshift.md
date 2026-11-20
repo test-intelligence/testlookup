@@ -74,7 +74,7 @@ Every value can also come from the environment (the environment wins). `ARTIFACT
 | `ROUTE_TLS_CERT`, `ROUTE_TLS_KEY`, `ROUTE_TLS_CACERT` | no | PEM files injected into all three Routes. Empty uses the router's default wildcard certificate |
 | `NAMESPACE` | no | Project name, default `testlookup` |
 | `STORAGE_CLASS` | no | StorageClass for the PVCs; empty auto-detects the cluster default. Pick one whose volumes survive pod replacement |
-| `GRANT_ANYUID` | no | `true` grants the `anyuid` SCC to the namespace's default service account so the stock datastore images run with their expected UIDs; set `false` (or pass `--no-anyuid`) on hardened clusters with UID-agnostic images |
+| `GRANT_ANYUID` | no | `true` grants the `anyuid` SCC to the `testlookup-anyuid` service account, which only the bundled data stores and Ollama use, so the stock images run with their expected UIDs (the application pods get `nonroot-v2`; `GRANT_NONROOT`, default `true`). An install from before this change keeps the old grant on `default` until one run with `REVOKE_DEFAULT_ANYUID=true`. `ENABLE_MONGO_AUTH=true` turns on MongoDB authentication (off by default; the bundled Valkey always gets a generated password); set `false` (or pass `--no-anyuid`) on hardened clusters with UID-agnostic images |
 | `ADMIN_USERNAME`, `ADMIN_EMAIL`, `ADMIN_FULL_NAME` | no | The first admin account |
 | `ADMIN_PASSWORD` | no | Leave empty: the script generates the password at first install and prints it once. Set it only to choose your own |
 | `INFRA_IMAGES` | no | Space-separated third-party images to mirror. Empty derives the list from `deploy/images.manifest.txt`; set it only to mirror a subset |

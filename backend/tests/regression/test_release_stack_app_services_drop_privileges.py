@@ -76,15 +76,20 @@ def test_the_demo_still_locks_down_the_services_only_it_defines_or_restricts():
 def test_the_services_that_start_as_root_keep_their_capabilities():
     """Positive case: nothing the demo does not prove is restricted here.
 
-    postgres, mongo, valkey, versitygw and nginx start as root and change user,
+    postgres, mongo, valkey and versitygw start as root and change user,
     which needs SETUID/SETGID/CHOWN; dropping every capability stops them.
+    nginx now starts as uid 101, but a frontend image from before that change
+    (a pinned older TESTLOOKUP_VERSION) still starts as root, so the frontend
+    keeps its capabilities for one release.
     """
     services = _services("docker-compose.release.yml")
     for name in ("postgres", "mongo", "redis", "minio", "frontend"):
         assert "cap_drop" not in services[name], name
 
 
-def test_the_frontend_image_and_port_are_unchanged():
+def test_the_frontend_image_and_host_port_are_unchanged():
+    """Host port 3000 as before. The container side is 8080 since nginx runs
+    as a non-root user (test_frontend_runs_unprivileged.py)."""
     frontend = _services("docker-compose.release.yml")["frontend"]
-    assert frontend["ports"] == ["${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:80"]
+    assert frontend["ports"] == ["${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:8080"]
     assert "user" not in frontend

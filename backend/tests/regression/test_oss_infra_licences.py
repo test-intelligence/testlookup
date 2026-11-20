@@ -191,7 +191,10 @@ def test_k8s_broker_is_valkey_under_the_redis_names(overlay):
     [container] = deployment["spec"]["template"]["spec"]["containers"]
     assert container["image"] == VALKEY
     assert container["volumeMounts"] == [{"name": "data", "mountPath": "/data"}]
-    assert container["command"][0] in ("valkey-server", "redis-server")
+    command = container["command"]
+    if command[:2] == ["sh", "-c"]:  # OpenShift: `sh -c "exec valkey-server ..."`
+        command = command[2].split()[1:]
+    assert command[0] in ("valkey-server", "redis-server")
 
 
 def test_k3s_broker_differs_from_redis_7_only_by_its_image():
@@ -201,8 +204,12 @@ def test_k3s_broker_differs_from_redis_7_only_by_its_image():
     docs = _k8s_docs(ROOT / "k8s" / "overlays" / "k3s" / "infra-redis.yaml")
     [container] = next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]["containers"]
     assert container["command"][0] == "redis-server"
-    assert container["readinessProbe"]["exec"]["command"] == ["redis-cli", "ping"]
-    assert container["livenessProbe"]["exec"]["command"] == ["redis-cli", "ping"]
+    # The probes sign in since the server requires a password (security audit
+    # 2026-11-18); they still call redis-cli, with flags both images have.
+    probe = ["sh", "-c", 'redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG']
+    assert container["readinessProbe"]["exec"]["command"] == probe
+    assert container["livenessProbe"]["exec"]["command"] == probe
+    assert "valkey-" not in " ".join(container["command"] + probe)
     assert container["resources"]["limits"] == {"cpu": "500m", "memory": "768Mi"}
 
 

@@ -35,6 +35,9 @@ spec:
       # No Kubernetes API calls here, so no service-account token in the pod
       # (OSS review 2026-11-12, L-8).
       automountServiceAccountToken: false
+      # The stock image starts with its own UID: the only account with the
+      # anyuid SCC (serviceaccount-anyuid.yaml).
+      serviceAccountName: testlookup-anyuid
       containers:
         - name: postgres
           image: postgres:16-alpine

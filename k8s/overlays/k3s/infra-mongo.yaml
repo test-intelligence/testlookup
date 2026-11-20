@@ -36,6 +36,23 @@ spec:
       containers:
         - name: mongo
           image: mongo:7
+          # With both variables set the image starts mongod with --auth: every
+          # client must sign in (security audit 2026-11-18). The image creates
+          # this root user by itself ONLY on an empty data directory. On a
+          # volume that already holds data, k3ssetup/deploy-k3s.sh creates the
+          # user in the running database before it applies this manifest, so
+          # never apply this file to an existing install by hand.
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: testlookup-secrets
+                  key: MONGO_ROOT_USERNAME
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: testlookup-secrets
+                  key: MONGO_ROOT_PASSWORD
           ports:
             - containerPort: 27017
           volumeMounts:

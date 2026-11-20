@@ -5,3 +5,13 @@ metadata:
   labels:
     app.kubernetes.io/name: testlookup
     app.kubernetes.io/managed-by: kustomize
+    # Pod Security Standard "baseline": a pod that asks for host namespaces,
+    # hostPath, privileged mode or a capability outside the default set is
+    # refused. Running as root is still allowed (the bundled data stores and
+    # Ollama do). warn/audit make `kubectl apply` say so when a Deployment
+    # would produce such a pod, since enforce acts on the pod, not on its
+    # Deployment. Every rendered pod is checked against this in
+    # backend/tests/regression/test_k8s_pod_security.py.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: baseline

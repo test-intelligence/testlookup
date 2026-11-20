@@ -169,7 +169,8 @@ def test_the_release_compose_header_carries_the_same_warning():
     header = compose[: compose.index("\nservices:")]
     assert "PLAIN HTTP" in header and "FRONTEND_PUBLISH_ADDR=127.0.0.1" in header
     # The default itself is unchanged: every interface unless the operator narrows it.
-    assert '"${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:80"' in compose
+    # (Host port 3000; the container side is 8080 since nginx runs as a non-root user.)
+    assert '"${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:8080"' in compose
 
 
 def test_the_compose_guide_closes_the_plain_port_in_the_tls_step():

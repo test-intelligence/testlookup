@@ -303,7 +303,8 @@ def test_the_rendered_overlay_carries_the_site(tmp_path: Path):
         f'K3S_PATCHES_DIR="{_posix(patches)}"\n'
         'OVERLAY_IMAGE_PREFIX="registry.local:30500/testlookup"\n'
         + _function(DEPLOY, "render_overlay")
-        + f'\nrender_overlay "{_posix(render_dir)}" build-20260101-000000\n'
+        + f'\nrender_overlay "{_posix(render_dir)}" build-20260101-000000 '
+        + " ".join(f"sha256:{digit * 64}" for digit in "abc") + "\n"
     )
     try:
         result = _bash(tmp_path, body)
@@ -312,7 +313,10 @@ def test_the_rendered_overlay_carries_the_site(tmp_path: Path):
         assert "  - ../../k8s/overlays/k3s" in kustomization
         for image in ("backend", "frontend", "mcp"):
             assert f"newName: reg.example.test:30500/testlookup/{image}" in kustomization
-        assert kustomization.count("newTag: build-20260101-000000") == 3
+        # By digest, never by tag (tests/regression/test_k3s_deploys_by_digest.py).
+        assert "newTag:" not in kustomization
+        for digit in "abc":
+            assert f"digest: sha256:{digit * 64}" in kustomization
         assert "path: site-patch-10-ai.yaml" in kustomization
         assert "value: site.example.test" in (render_dir / "site-ingress-host.yaml").read_text(
             encoding="utf-8"
@@ -327,7 +331,7 @@ def test_the_rendered_overlay_carries_the_site(tmp_path: Path):
             if rendered.returncode == 0:
                 out = rendered.stdout
                 assert "BUILD_TAG_PLACEHOLDER" not in out
-                assert "image: reg.example.test:30500/testlookup/backend:build-20260101-000000" in out
+                assert f"image: reg.example.test:30500/testlookup/backend@sha256:{'a' * 64}" in out
                 assert "host: site.example.test" in out
                 assert "LLM_PROVIDER: openrouter" in out
     finally:

@@ -80,6 +80,26 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # work in any deploy target by setting BACKEND_UPSTREAM (default backend:8000
 # for docker-compose; set to testlookup-backend:8000 in Kubernetes).
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+# nginx runs as the image's own unprivileged user (uid 101, `nginx`) from the
+# first process on: no root master. Three things follow.
+#   * nginx.main.conf replaces the stock /etc/nginx/nginx.conf: no `user`
+#     directive, and the pid file and temp paths under /tmp.
+#   * uid 101 must be able to write /etc/nginx/conf.d, where the entrypoint
+#     renders the template. Group 0 gets the same bits because OpenShift runs
+#     the image under an arbitrary uid in group 0.
+#   * The stock default.conf (it listens on 80) is removed, so a template that
+#     failed to render stops nginx instead of serving the stock page.
+# The container port is 8080: an unprivileged process cannot be counted on to
+# bind 80. Published ports and the Kubernetes Service port do not change.
+# Pinned by backend/tests/regression/test_frontend_runs_unprivileged.py.
+COPY nginx.main.conf /etc/nginx/nginx.conf
+RUN rm -f /etc/nginx/conf.d/default.conf \
+    && chown -R 101:0 /etc/nginx/conf.d \
+    && chmod -R g+rwX /etc/nginx/conf.d
 ENV BACKEND_UPSTREAM=backend:8000
-EXPOSE 80
+# The port in the template's `listen`. Leave it alone: every manifest in this
+# repository expects 8080. Only docker-compose.demo.yml sets it (to 80).
+ENV NGINX_LISTEN_PORT=8080
+EXPOSE 8080
+USER 101
 CMD ["nginx", "-g", "daemon off;"]
