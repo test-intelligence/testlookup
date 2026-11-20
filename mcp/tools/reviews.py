@@ -60,7 +60,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         limit = max(1, min(int(limit), MAX_LIMIT))
         rows = await api.get(
-            f"/api/v1/projects/{project_id}/reviews",
+            api.path("/api/v1/projects/{project_id}/reviews", project_id=api.uuid_id(project_id)),
             params={"state": "pending_review", "limit": limit},
         )
         return render_pending_reviews(project_id, rows)

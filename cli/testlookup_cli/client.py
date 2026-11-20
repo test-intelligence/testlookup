@@ -1,10 +1,13 @@
 """Shared HTTP client — handles auth injection, retries, and error mapping."""
+import ipaddress
 import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 from typing import Any, Optional
 
+from testlookup_cli import output
 from testlookup_cli.config import get_profile, save_profile
 from testlookup_cli.errors import CLIError, map_http_error, map_connection_error, EXIT_AUTH
 
@@ -89,14 +92,59 @@ class APIError(CLIError):
         self.detail = detail
 
 
+def is_plain_http_to_another_host(base_url: str) -> bool:
+    """True for an ``http://`` URL whose host is not this machine.
+
+    Loopback is ``localhost``, a name ending in ``.localhost``, ``127.0.0.0/8``
+    and ``::1``: nothing leaves the machine, so plain HTTP is fine there.
+    """
+    try:
+        parts = urlsplit(base_url or "")
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return False
+    if parts.scheme.lower() != "http" or not host:
+        return False
+    if host == "localhost" or host.endswith(".localhost"):
+        return False
+    try:
+        return not ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return True
+
+
+#: Hosts already warned about, so one command prints the warning once.
+_plain_http_warned: set[str] = set()
+
+
+def warn_if_plain_http(base_url: str) -> None:
+    """Warn (once per host, on stderr) before a credential goes out over plain HTTP.
+
+    A warning, not a refusal: an internal network without TLS still works.
+    """
+    if not is_plain_http_to_another_host(base_url):
+        return
+    host = (urlsplit(base_url).hostname or "").lower()
+    if host in _plain_http_warned:
+        return
+    _plain_http_warned.add(host)
+    output.print_warning(
+        f"Sending credentials to {host} over plain HTTP: anyone on the network "
+        "path can read them. Use an https:// URL."
+    )
+
+
 def _build_headers(profile: dict) -> dict[str, str]:
     """Build auth headers from the active profile."""
     auth_type = profile.get("auth_type", "jwt")
+    headers: dict[str, str] = {}
     if auth_type == "api_key" and profile.get("api_key"):
-        return {"X-API-Key": profile["api_key"]}
-    if profile.get("access_token"):
-        return {"Authorization": f"Bearer {profile['access_token']}"}
-    return {}
+        headers = {"X-API-Key": profile["api_key"]}
+    elif profile.get("access_token"):
+        headers = {"Authorization": f"Bearer {profile['access_token']}"}
+    if headers:
+        warn_if_plain_http(profile.get("url", ""))
+    return headers
 
 
 async def request(
@@ -338,8 +386,47 @@ async def _try_refresh(client: httpx.AsyncClient, base_url: str, profile: dict, 
     return False
 
 
+async def logout(base_url: str, access_token: Optional[str], refresh_token: Optional[str] = None) -> None:
+    """End the session on the server: ``POST /api/v1/auth/logout``.
+
+    The server revokes the access token and every refresh token of the user,
+    so a refresh token copied from ``profiles.json`` earlier stops working.
+    An access token that has already expired is refused with 401; the refresh
+    token is then traded once for a new access token so the session can still
+    be ended. Raises ``CLIError`` when the server could not be told.
+    """
+    base = (base_url or "").rstrip("/")
+    warn_if_plain_http(base)
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as http:
+            resp = None
+            if access_token:
+                resp = await http.post(
+                    f"{base}/api/v1/auth/logout",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                )
+            if (resp is None or resp.status_code == 401) and refresh_token:
+                refreshed = await http.post(
+                    f"{base}/api/v1/auth/refresh", json={"refresh_token": refresh_token},
+                )
+                new_token = refreshed.json().get("access_token") if refreshed.status_code == 200 else None
+                if new_token:
+                    resp = await http.post(
+                        f"{base}/api/v1/auth/logout",
+                        headers={"Authorization": f"Bearer {new_token}"},
+                    )
+                elif resp is None:
+                    resp = refreshed
+            if resp is None:
+                raise CLIError("No token to end the session with", EXIT_AUTH)
+            _raise_for_status(resp)
+    except httpx.RequestError as exc:
+        raise map_connection_error(exc, base) from exc
+
+
 async def login(base_url: str, username: str, password: str) -> dict:
     """Authenticate and return tokens."""
+    warn_if_plain_http(base_url)
     async with httpx.AsyncClient(timeout=15.0) as client:
         # The endpoint is OAuth2PasswordRequestForm — form-encoded only.
         # Posting json= returns 422, which this function then reported as

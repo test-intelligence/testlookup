@@ -79,7 +79,8 @@ jobs:
     runs-on: ubuntu-latest
     # id-token, attestations and artifact-metadata are for the signed build
     # provenance of a release run's files (the attest step runs only when
-    # `version` is given); everything else stays read-only.
+    # `version` is given AND the run was dispatched from main); everything else
+    # stays read-only.
     permissions:
       contents: read
       id-token: write
@@ -204,11 +205,20 @@ jobs:
       # can verify a download with
       #   gh attestation verify testlookup-offline-<version>.tar.gz \
       #     --repo test-intelligence/testlookup \
+      #     --signer-workflow test-intelligence/testlookup/.github/workflows/offline-bundle.yml \
+      #     --source-ref refs/heads/main \
       #     --bundle testlookup-offline-<version>.intoto.jsonl
+      # --repo alone accepts a signature from any workflow run in the repository;
+      # the two extra flags bind it to this workflow file as it is on main.
       # Releases are immutable once published, so it must go on the draft.
+      #
+      # Signed only on a release run: dispatched by hand, from main, with a
+      # version (`gh workflow run offline-bundle.yml -f version=X.Y.Z` starts on
+      # main). A run dispatched from another branch can carry a changed copy of
+      # this file, so it still builds and checks the bundle but signs nothing.
       - name: Attest the release files' build provenance
         id: attest
-        if: env.RELEASE_TAG != ''
+        if: env.RELEASE_TAG != '' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
@@ -217,7 +227,7 @@ jobs:
             dist/SHA256SUMS
 
       - name: Keep the provenance bundle with the release files
-        if: env.RELEASE_TAG != ''
+        if: env.RELEASE_TAG != '' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
         env:
           BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
         run: |
@@ -253,7 +263,7 @@ jobs:
 
       # A release run keeps the files 30 days so they can be attached to the
       # GitHub release (with the .intoto.jsonl provenance, which only a
-      # release run writes); a CI check build keeps them 5.
+      # release run dispatched from main writes); a CI check build keeps them 5.
       - name: Upload bundle for the offline verifier
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

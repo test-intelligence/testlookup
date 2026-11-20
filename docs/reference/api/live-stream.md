@@ -10,7 +10,7 @@ List Active Sessions
 
 
 
-Source: [backend/app/routers/stream.py:275](../../../backend/app/routers/stream.py#L275).
+Source: [backend/app/routers/stream.py:284](../../../backend/app/routers/stream.py#L284).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -139,7 +139,7 @@ Ingest Event Batch
 
 
 
-Source: [backend/app/routers/stream.py:150](../../../backend/app/routers/stream.py#L150).
+Source: [backend/app/routers/stream.py:159](../../../backend/app/routers/stream.py#L159).
 
 Dependency chain: .
 
@@ -216,7 +216,7 @@ session's project, and the body ``run_id`` must be the session's own. The
 exchanges were already cut and redacted by the model; the store redacts
 them again (idempotent) and never fails the request on a Mongo error.
 
-Source: [backend/app/routers/stream.py:218](../../../backend/app/routers/stream.py#L218).
+Source: [backend/app/routers/stream.py:227](../../../backend/app/routers/stream.py#L227).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -309,7 +309,7 @@ can derive ``project_id`` itself) and carry the ``stream:write`` scope.
 The first call for a given ``run_id`` auto-creates a live session;
 subsequent calls reuse it.
 
-Source: [backend/app/routers/stream.py:173](../../../backend/app/routers/stream.py#L173).
+Source: [backend/app/routers/stream.py:182](../../../backend/app/routers/stream.py#L182).
 
 Dependency chain: `get_db`, `get_streaming_api_key_context`.
 
@@ -385,7 +385,7 @@ Create Session
 
 
 
-Source: [backend/app/routers/stream.py:54](../../../backend/app/routers/stream.py#L54).
+Source: [backend/app/routers/stream.py:63](../../../backend/app/routers/stream.py#L63).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -472,7 +472,7 @@ Close Session
 
 
 
-Source: [backend/app/routers/stream.py:108](../../../backend/app/routers/stream.py#L108).
+Source: [backend/app/routers/stream.py:117](../../../backend/app/routers/stream.py#L117).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -545,7 +545,7 @@ Get Session
 
 
 
-Source: [backend/app/routers/stream.py:92](../../../backend/app/routers/stream.py#L92).
+Source: [backend/app/routers/stream.py:101](../../../backend/app/routers/stream.py#L101).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_db`.
 
@@ -631,7 +631,7 @@ Sse Stream
 
 
 
-Source: [backend/app/routers/stream.py:350](../../../backend/app/routers/stream.py#L350).
+Source: [backend/app/routers/stream.py:359](../../../backend/app/routers/stream.py#L359).
 
 Dependency chain: .
 
@@ -645,9 +645,9 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=400, detail='Invalid Last-Event-ID')
-HTTPException(status_code=400, detail='Invalid project or user ID')
-HTTPException(status_code=401, detail='Invalid token')
+HTTPException(status_code=400, detail='Invalid project ID')
 HTTPException(status_code=403, detail='You do not have access to this project')
+HTTPException(status_code=refused.status_code, detail=refused.detail, headers={'Retry-After': '5'} if refused.status_code == 503 else None)
 ```
 
 ### Declared wire contract

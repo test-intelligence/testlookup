@@ -65,15 +65,20 @@ def wired(monkeypatch):
         "app.db.mongo.get_mongo_db", lambda: {"live_execution_events": _Coll()}
     )
 
-    remembered: dict[str, str] = {}
+    # Keyed like the real bindings: ``run_id`` for a deployment-wide binding
+    # (the legacy shared-secret path), ``(project, run_id)`` for a
+    # project-scoped one (a project key).
+    remembered: dict = {}
 
-    async def _remember(run_id, project_id):
+    async def _remember(run_id, project_id, *, project_scoped=False):
         # Same contract as the real SET NX: the FIRST writer wins, and the
         # effective owner is returned so a loser can be told immediately.
-        return remembered.setdefault(run_id, project_id)
+        key = (project_id, run_id) if project_scoped else run_id
+        return remembered.setdefault(key, project_id)
 
-    async def _resolve(run_id):
-        return remembered.get(run_id)
+    async def _resolve(run_id, *, project_id=None):
+        own = remembered.get((project_id, run_id)) if project_id else None
+        return own if own is not None else remembered.get(run_id)
 
     monkeypatch.setattr(
         "app.services.live_event_authz.remember_run_project", _remember
@@ -223,20 +228,24 @@ async def test_an_api_key_cannot_name_another_project(wired, monkeypatch):
         "the caller's forged project_id reached the stream — a key for one "
         "project could open a run against another"
     )
-    assert wired.remembered[RUN] == PROJECT_A
+    assert wired.remembered[(PROJECT_A, RUN)] == PROJECT_A
+    assert (PROJECT_B, RUN) not in wired.remembered
 
 
 @pytest.mark.asyncio
 async def test_a_later_event_cannot_cross_into_another_projects_run(
     wired, monkeypatch
 ):
-    """Project A opens the run; project B's key may not append to it."""
-    monkeypatch.setattr(
-        "app.routers.live.get_streaming_api_key_context",
-        AsyncMock(return_value=_key_ctx(PROJECT_A)),
-    )
+    """A run bound deployment-wide to project A (the legacy path, or a run
+    started before bindings were project-scoped); project B's key may not
+    append to it.
+
+    This used to open the run with project A's KEY. A key-opened run is now
+    bound inside project A only, so project B's event for the same id is B's
+    own run and never reaches A's: see test_live_run_ids_are_per_project.py.
+    """
     await _call(
-        x_api_key="ka",
+        x_webhook_secret="the-real-secret",
         event={"type": "run_start", "project_id": PROJECT_A, "build_number": "1"},
     )
 
@@ -361,22 +370,21 @@ async def test_a_shared_secret_call_is_refused_under_the_shipped_default(
 async def test_a_second_project_opening_the_same_run_id_is_told_immediately(
     wired, monkeypatch
 ):
-    monkeypatch.setattr(
-        "app.routers.live.get_streaming_api_key_context",
-        AsyncMock(return_value=_key_ctx(PROJECT_A)),
-    )
+    """On the legacy shared-secret path, where run ids are deployment-wide.
+
+    This used to drive two project KEYS and pinned a 409 between them. That
+    let one project block, and probe for, another project's run ids; with
+    project keys each project now has its own run-id namespace (pinned in
+    test_live_run_ids_are_per_project.py), so the collision exists only here.
+    """
     await _call(
-        x_api_key="ka",
+        x_webhook_secret="the-real-secret",
         event={"type": "run_start", "project_id": PROJECT_A, "build_number": "1"},
     )
 
-    monkeypatch.setattr(
-        "app.routers.live.get_streaming_api_key_context",
-        AsyncMock(return_value=_key_ctx(PROJECT_B)),
-    )
     with pytest.raises(HTTPException) as exc:
         await _call(
-            x_api_key="kb",
+            x_webhook_secret="the-real-secret",
             event={"type": "run_start", "project_id": PROJECT_B, "build_number": "1"},
         )
 
@@ -414,7 +422,7 @@ async def test_a_binding_that_cannot_be_written_refuses_the_run(wired, monkeypat
     """
     from app.services.live_event_authz import RunProjectBindingUnavailable
 
-    async def _boom(_run_id, _project_id):
+    async def _boom(_run_id, _project_id, **_kwargs):
         raise RunProjectBindingUnavailable("redis down")
 
     monkeypatch.setattr("app.services.live_event_authz.remember_run_project", _boom)
@@ -666,7 +674,8 @@ async def test_an_api_key_producer_need_not_send_a_project_id(wired, monkeypatch
     assert result["accepted"] is True
     _run_id, published = wired.published[0]
     assert published["project_id"] == PROJECT_A
-    assert wired.remembered[RUN] == PROJECT_A
+    assert wired.remembered[(PROJECT_A, RUN)] == PROJECT_A
+    assert (PROJECT_B, RUN) not in wired.remembered
 
 
 @pytest.mark.asyncio

@@ -729,6 +729,32 @@ async def get_ai_model_status(
     return AIModelStatusRead.model_validate(status)
 
 
+async def _base_url_or_422(db: AsyncSession, provider: Any, base_url: str, updates: dict) -> None:
+    """Refuse (422) an LLM base URL the next model call would refuse.
+
+    The rules live in ``llm_policy_service``: an absolute HTTP(S) URL, listed
+    in ``AI_LLM_ALLOWED_BASE_URLS`` when that is set, and, for a remote
+    provider, not somewhere other than the provider unless a key for it is
+    stored in Settings (sent with this save or stored earlier). The key from
+    the environment is never sent to a base URL an ADMIN typed.
+    """
+    from app.services.llm_policy_service import (
+        PROVIDER_KEY_SETTINGS,
+        LLMPolicyViolation,
+        validate_base_url_for_save,
+    )
+    from app.services.secret_service import has_secret
+
+    key_name = PROVIDER_KEY_SETTINGS.get(str(provider or "").strip().lower())
+    key_stored = False
+    if key_name is not None:
+        key_stored = bool(updates.get(key_name)) or await has_secret(db, _AI_CONFIG_KEY, key_name)
+    try:
+        validate_base_url_for_save(str(provider or ""), base_url, key_from_settings=key_stored)
+    except LLMPolicyViolation as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+
 @router.put("/ai", response_model=AIConfigRead)
 async def update_ai_config(
     payload: AIConfigUpdate,
@@ -774,6 +800,12 @@ async def update_ai_config(
         )
 
     merged = {**existing, **updates}
+
+    # A base URL sent with this save is checked with the model call's own
+    # rules, before anything is written, so the ADMIN reads the reason here
+    # and not in a failed analysis later.
+    if updates.get("base_url"):
+        await _base_url_or_422(db, merged.get("llm_provider"), updates["base_url"], updates)
 
     # W12 SRCH-02: a CHANGED embedder is validated and starts a re-embed into
     # a new generation; reads keep the active one until it finishes. Only a

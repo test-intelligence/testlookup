@@ -54,6 +54,7 @@ def register(mcp) -> None:  # noqa: ANN001
             )
         _api._stdio_access_token = None
 
+        _api.warn_if_credentials_leave_in_plain_http()
         # Backend expects OAuth2 form-encoded data, not JSON
         resp = await _api._get_client().post(
             "/api/v1/auth/login",
@@ -77,8 +78,16 @@ def register(mcp) -> None:  # noqa: ANN001
         version, environment, uptime, and per-dependency health.
         """
         try:
-            data = await api.get("/health/details")
+            data = await api.get(api.path("/health/details"))
         except Exception as exc:
-            return f"Backend unreachable at {settings.api_url}: {exc}"
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            if status != 401:
+                return f"Backend unreachable at {settings.api_url}: {exc}"
+            # /health/details needs a sign-in. Without one the public probes
+            # still give the version and the state of the three data stores.
+            try:
+                data = await api.public_health()
+            except Exception as public_exc:
+                return f"Backend unreachable at {settings.api_url}: {public_exc}"
 
         return f"{_render_health(data)}\n**API URL:** {settings.api_url}"

@@ -26,10 +26,13 @@
 #     the network is ever made routable again: Docker-published ports bypass
 #     host firewalls like ufw.
 #   * No privilege to gain: no-new-privileges everywhere. The containers that
-#     run as a non-root user from the start (the backend image's services and
-#     cloudflared) also drop every Linux capability; the data stores and nginx
+#     run as a non-root user from the start (the backend image's services, in
+#     the release file itself, and cloudflared, here) also drop every Linux
+#     capability; the data stores
 #     start as root and drop to their own user, so they keep Docker's default,
-#     already reduced, set.
+#     already reduced, set. nginx runs as its own user from the start; it
+#     keeps the default set too until one release has shipped the non-root
+#     image (an older frontend image still needs them).
 #   * Ceilings on memory, CPU and process count, and log rotation, so one
 #     runaway container, a miner or a fork bomb cannot take the whole VM down.
 #   * nginx gets a second per-address limit and the real client address
@@ -61,7 +64,10 @@ x-demo-env: &demo-env
   GOOGLE_API_KEY: ""
   OPENROUTER_API_KEY: ""
 
-# Containers that run as a non-root user from the start.
+# Containers that run as a non-root user from the start. The backend image's
+# services are not listed here any more: docker-compose.release.yml gives them
+# the same two restrictions itself. Repeating security_opt here would stop the
+# stack: Compose appends the two lists and then refuses the repeated item.
 x-app-lockdown: &app-lockdown
   cap_drop: [ALL]
   security_opt: ["no-new-privileges:true"]
@@ -108,7 +114,7 @@ services:
           pids: 256
 
   minio-setup:
-    <<: [*demo-logging, *app-lockdown]
+    <<: *demo-logging
     deploy:
       resources:
         limits:
@@ -116,7 +122,7 @@ services:
           pids: 64
 
   db-budget-check:
-    <<: [*demo-logging, *app-lockdown]
+    <<: *demo-logging
     # Arithmetic on its environment only. The release file leaves it on the
     # default network, which has a route out; it needs no network at all.
     network_mode: none
@@ -127,7 +133,7 @@ services:
           pids: 64
 
   db-migrate:
-    <<: [*demo-logging, *app-lockdown]
+    <<: *demo-logging
     environment:
       <<: *demo-env
     deploy:
@@ -137,7 +143,7 @@ services:
           pids: 128
 
   backend:
-    <<: [*demo-logging, *app-lockdown]
+    <<: *demo-logging
     environment:
       <<: *demo-env
       DEMO_MODE: "true"
@@ -155,7 +161,7 @@ services:
           pids: 512
 
   worker:
-    <<: [*demo-logging, *app-lockdown]
+    <<: *demo-logging
     environment:
       <<: *demo-env
     deploy:
@@ -166,7 +172,7 @@ services:
           pids: 512
 
   worker-children:
-    <<: [*demo-logging, *app-lockdown]
+    <<: *demo-logging
     environment:
       <<: *demo-env
     deploy:
@@ -177,7 +183,7 @@ services:
           pids: 256
 
   beat:
-    <<: [*demo-logging, *app-lockdown]
+    <<: *demo-logging
     deploy:
       resources:
         limits:
@@ -186,7 +192,7 @@ services:
           pids: 64
 
   seed-init:
-    <<: [*demo-logging, *app-lockdown]
+    <<: *demo-logging
     environment:
       <<: *demo-env
     deploy:
@@ -197,6 +203,16 @@ services:
 
   frontend:
     <<: [*demo-logging, *store-lockdown]
+    # The tunnel's target, http://frontend:80, is set in the Cloudflare
+    # dashboard and not in this repository. The image listens on 8080 by
+    # default (nginx runs as uid 101), so the demo alone keeps nginx on 80:
+    # nothing has to change at Cloudflare when the demo is upgraded. The
+    # sysctl lets a non-root process bind a port below 1024 (Docker's own
+    # default since 20.10; stated here so it does not depend on the engine).
+    environment:
+      NGINX_LISTEN_PORT: "80"
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: "0"
     volumes:
       - ./deploy/demo/nginx-demo-edge.conf:/etc/nginx/conf.d/demo-edge.conf:ro
     deploy:

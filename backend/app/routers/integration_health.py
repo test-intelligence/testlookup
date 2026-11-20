@@ -38,6 +38,19 @@ logger = logging.getLogger("routers.integration_health")
 
 router = APIRouter(prefix="/api/v1/integration-health", tags=["Integration Health"])
 
+#: An on-demand probe that names no project makes the server dial the
+#: deployment's own Jira / Splunk / Slack / ... with the deployment's
+#: credentials, so it needs the instance ADMIN role; QA_LEAD is a role people
+#: hold per project. ``require_role(ADMIN)`` is called from the handler (the
+#: route dependency stays QA_LEAD for the per-project probe), so the bound-key
+#: and scoped-key refusals apply exactly as on any other ADMIN route.
+_require_admin = require_role(UserRole.ADMIN)
+PROBE_NEEDS_ADMIN = (
+    "Probing the deployment-wide integrations requires the ADMIN role. To probe one "
+    "project's GitHub or GitLab integration, pass project_id with provider=github or "
+    "provider=gitlab."
+)
+
 #: ``webhook_breaker.WEBHOOK_DISABLED_REASONS[0]``, written out: a router that
 #: imports the breaker module (which records activity) would read as recording
 #: activity itself to ``backend.activity-coverage``.
@@ -240,13 +253,15 @@ async def trigger_probe(
     current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     db: AsyncSession = Depends(get_db),
 ):
-    """Trigger an on-demand health probe for all or a specific provider (QA_LEAD+).
+    """Trigger an on-demand health probe: one project's integration (QA_LEAD+)
+    or the deployment-wide integrations (ADMIN).
 
     ``project_id`` probes that project's GitHub or GitLab integration
     (``provider=github|gitlab``); the id passes ``resolve_project_scope`` before
-    anything is read. Without a provider and a project: every deployment-wide
-    probe plus every per-project integration the reader may see. The request
-    session's connection is handed back before any probe makes an HTTP call.
+    anything is read. Without a project the probe is deployment-wide and needs
+    ADMIN: one provider, or (no provider) every deployment-wide probe plus
+    every per-project integration. The request session's connection is handed
+    back before any probe makes an HTTP call.
     """
     from app.services.integration_probe_service import (
         ALL_PROBES,
@@ -283,6 +298,16 @@ async def trigger_probe(
         )
     if provider == "gitlab":
         raise HTTPException(status_code=422, detail="GitLab is probed per project: pass project_id.")
+
+    # No project was named: everything below dials a deployment-wide
+    # integration. The two 422s above come first because they tell the caller
+    # how to fix the request and read nothing.
+    try:
+        await _require_admin(current_user=current_user)
+    except HTTPException as exc:
+        if exc.status_code == 403 and str(exc.detail).startswith("Requires at least"):
+            raise HTTPException(status_code=403, detail=PROBE_NEEDS_ADMIN) from exc
+        raise
 
     if provider and provider in SAVED_CONFIG_PROBES:
         # W23d AGT-15: the saved-only Prometheus block, merged over the global config, on the request session;

@@ -22,7 +22,11 @@ pip install -r mcp/requirements.txt      # or: make mcp-install
 | `python mcp/server.py --transport sse --port 8002` or `make mcp-sse` | SSE transport on `0.0.0.0:8002` (`--port` defaults to 8002) |
 | `make mcp-sse-docker` (`docker compose up -d mcp`) | The `mcp` Compose service: SSE on port 8002, published on `127.0.0.1:8002`, talking to the `backend` service |
 
-The server reads its settings from `TESTLOOKUP_*` environment variables and from a `.env` file in the working directory; [mcp/.env.example](.env.example) is a template.
+The server reads its settings from `TESTLOOKUP_*` environment variables and from one env file: `.env` next to `server.py`, or the file named by `TESTLOOKUP_ENV_FILE` when that variable is set (a relative path is taken from the server's directory). It never reads a `.env` from the working directory, and real environment variables win over the file. [mcp/.env.example](.env.example) is a template.
+
+Use an `https://` API address. Over plain `http` to a host other than this machine the sign-in is sent unencrypted; the server logs a warning once and still signs in.
+
+**Ids and test output.** An id argument must be the UUID a list tool returned; anything else is refused by the MCP server ("`<argument>` must be a UUID") before any request is sent, and other path values are percent-encoded. Text copied from test reports (test names, error messages, stack traces, step names) is shown between `<test-output>` and `</test-output>` with a line saying it is data, not instructions. Eight resources return `{"untrusted_content_notice": ..., "data": ...}` and five structured tools carry a `content_notice` key.
 
 ## Authentication
 
@@ -32,7 +36,7 @@ The MCP server authenticates to the TestLookup API as a user, with a JWT access 
 
 **SSE.** There is no server-wide identity. Every request (the `/sse` stream and each `/messages/` post) must carry `Authorization: Bearer <access token>`, where the token is a TestLookup JWT access token. The server checks it against `GET /api/v1/auth/me` on every request, with no caching, so revocation and deactivation take effect at once. The token's `jti` owns the SSE session: a refreshed token has to reconnect. `TESTLOOKUP_USERNAME` / `TESTLOOKUP_PASSWORD` are never used as a network identity, and the `login` tool refuses to run on a network session.
 
-To get an access token for an SSE client, log in as the user the agent should act as (access tokens last 12 hours unless the server's `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` says otherwise):
+To get an access token for an SSE client, log in as the user the agent should act as (access tokens last 30 minutes unless the server's `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` says otherwise):
 
 ```bash
 curl -s -X POST http://localhost:8000/api/v1/auth/login \
@@ -265,7 +269,7 @@ touched a suite whole, so under a suite filter it differs from
 | `check_release_readiness` | `project_id`, `days?`, `release_id?` | Project GREEN/AMBER/RED from the server's policy verdict over a time window, or a release's stored gate decision when `release_id` is given |
 | `get_release_gate` | `release`, `project?`, `evaluate?` | A release's gate verdict as data (verdict, pass rate, evidence, blockers, decided_at); `release` is an id or a name / version (an ambiguous name lists the candidates); `evaluate=true` records a fresh verdict (QA lead); never evaluated is `evaluated: false` |
 | `check_run_release_readiness` | `run_id` | Single-run GO/CONDITIONAL_GO/NO_GO with risk score and blocking issues |
-| `create_share_link` | `run_id`, `expires_days?`, `layout?` | Time-limited share URL for a run report |
+| `create_share_link` | `run_id`, `expires_days?`, `layout?`, `confirm?` | Public, time-limited share URL for a run report (QA_LEAD). Sends nothing until `confirm` is true |
 
 ### Activity ledger
 

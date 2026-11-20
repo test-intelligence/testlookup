@@ -54,7 +54,13 @@ def test_analytics_resources_drop_meta_and_keep_the_rest(monkeypatch, uri):
     registry.register(mcp)
     out = asyncio.run(mcp.resources[uri](project_id="p1"))
     assert seen == [path]
-    assert json.loads(out) == body, "every other key is kept exactly"
+    document = json.loads(out)
+    if uri.endswith("/metrics"):
+        assert document == body, "every other key is kept exactly"
+    else:
+        # These two carry test names, so the body sits under "data" beside the
+        # untrusted-content statement (test_mcp_untrusted_marking.py).
+        assert document["data"] == body, "every other key is kept exactly"
     assert "schema_version" not in out and "matched_runs" not in out
 
 

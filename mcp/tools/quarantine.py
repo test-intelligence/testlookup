@@ -61,7 +61,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if status:
             params["status_filter"] = status
 
-        data = await api.get("/api/v1/quarantine", params=params)
+        data = await api.get(api.path("/api/v1/quarantine"), params=params)
         if not data:
             return "No quarantine requests found for this filter."
 
@@ -96,7 +96,7 @@ def register(mcp) -> None:  # noqa: ANN001
         params: dict = {}
         if project_id:
             params["project_id"] = project_id
-        data = await api.get("/api/v1/quarantine/stats", params=params)
+        data = await api.get(api.path("/api/v1/quarantine/stats"), params=params)
 
         lines = ["## Quarantine stats\n"]
         lines.append(f"- **Awaiting review:** {data.get('proposed', 0) + data.get('detected', 0)}")
@@ -136,7 +136,7 @@ def register(mcp) -> None:  # noqa: ANN001
             body["quarantine_duration_days"] = quarantine_duration_days
         try:
             row = await api.post(
-                f"/api/v1/quarantine/{request_id}/approve",
+                api.path("/api/v1/quarantine/{request_id}/approve", request_id=api.uuid_id(request_id)),
                 json_body=body,
             )
         except Exception as exc:
@@ -170,7 +170,7 @@ def register(mcp) -> None:  # noqa: ANN001
             body["notes"] = notes
         try:
             row = await api.post(
-                f"/api/v1/quarantine/{request_id}/reject",
+                api.path("/api/v1/quarantine/{request_id}/reject", request_id=api.uuid_id(request_id)),
                 json_body=body,
             )
         except Exception as exc:
@@ -224,7 +224,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if suite_name:
             body["suite_name"] = suite_name
         try:
-            row = await api.post("/api/v1/quarantine", json_body=body)
+            row = await api.post(api.path("/api/v1/quarantine"), json_body=body)
         except Exception as exc:
             return api.error_payload(exc)
         return {
@@ -259,7 +259,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         try:
             row = await api.post(
-                f"/api/v1/quarantine/{request_id}/release",
+                api.path("/api/v1/quarantine/{request_id}/release", request_id=api.uuid_id(request_id)),
                 json_body={"notes": reason},
             )
         except Exception as exc:
@@ -298,7 +298,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         try:
             rows = await api.get(
-                "/api/v1/quarantine",
+                api.path("/api/v1/quarantine"),
                 params={"project_id": project_id, "live_only": True, "limit": 500},
             )
         except Exception as exc:
@@ -331,7 +331,7 @@ def register(mcp) -> None:  # noqa: ANN001
         for entry in listing:
             try:
                 row = await api.post(
-                    f"/api/v1/quarantine/{entry['request_id']}/release",
+                    api.path("/api/v1/quarantine/{request_id}/release", request_id=api.uuid_id(entry['request_id'])),
                     json_body={
                         "notes": (
                             "Promoted out of quarantine: reached the "

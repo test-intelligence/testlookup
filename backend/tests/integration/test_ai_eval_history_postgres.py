@@ -169,19 +169,41 @@ async def test_reviewer_history_is_read_per_project_without_its_observations(wor
 
 async def test_runs_filter_by_metric_kind_and_status(world):
     w = world
+    # The two replay runs were made for project P, so P's lead is the one who
+    # lists them; the legacy run has no project.
     base = {"dataset_id": str(w.dataset.id)}
-    every = await w.client.get("/api/v1/ai-eval/runs", params=base, headers=w.lead_q_jwt)
+    every = await w.client.get("/api/v1/ai-eval/runs", params=base, headers=w.lead_p_jwt)
     assert every.status_code == 200, every.text
     assert every.json()["total"] == 3
-    replay_done = await w.client.get("/api/v1/ai-eval/runs", headers=w.lead_q_jwt,
+    replay_done = await w.client.get("/api/v1/ai-eval/runs", headers=w.lead_p_jwt,
                                      params={**base, "metric_kind": "replay", "status": "completed"})
     assert replay_done.json()["total"] == 1
     (row,) = replay_done.json()["items"]
     assert (row["id"], row["metric_label"]) == (str(w.replay_done), "Replay of the candidate")
-    legacy = await w.client.get("/api/v1/ai-eval/runs", headers=w.lead_q_jwt,
+    legacy = await w.client.get("/api/v1/ai-eval/runs", headers=w.lead_p_jwt,
                                 params={**base, "metric_kind": "label_agreement"})
     (old,) = legacy.json()["items"]
     assert (old["status"], old["metric_label"]) == ("completed", "Legacy label-agreement metric")
+
+
+async def test_a_lead_of_another_project_sees_only_runs_with_no_project(world):
+    """Q's lead: P's replay runs are absent from the list and its total, and one
+    read by id is the same 404 as a missing run. The run with no project stays."""
+    w = world
+    base = {"dataset_id": str(w.dataset.id)}
+    listed = await w.client.get("/api/v1/ai-eval/runs", params=base, headers=w.lead_q_jwt)
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body["total"] == 1
+    assert [(row["metric_kind"], row["project_id"]) for row in body["items"]] == [("label_agreement", None)]
+    assert str(w.P) not in listed.text
+    foreign = await w.client.get(f"/api/v1/ai-eval/runs/{w.replay_done}", headers=w.lead_q_jwt)
+    assert foreign.status_code == 404, foreign.text
+    assert foreign.json()["detail"]["code"] == "eval_run_not_found"
+    mine = await w.client.get(f"/api/v1/ai-eval/runs/{w.replay_done}", headers=w.lead_p_jwt)
+    assert mine.status_code == 200, mine.text
+    admin = await w.client.get("/api/v1/ai-eval/runs", params=base, headers=w.admin)
+    assert admin.json()["total"] == 3
 
 
 async def test_a_second_replay_of_the_same_dataset_and_tier_is_refused(world):

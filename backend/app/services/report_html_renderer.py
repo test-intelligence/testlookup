@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import logging
+import math
 from typing import Any
 
 logger = logging.getLogger("services.report_html_renderer")
@@ -23,6 +24,39 @@ def _e(text: Any, max_len: int = 500) -> str:
     from app.services.privacy_service import sanitize_for_report
     s = html.escape(sanitize_for_report(str(text or "")))
     return s[:max_len] + "..." if len(s) > max_len else s
+
+
+def _float(value: Any, default: float = 0.0) -> float:
+    """``value`` as a finite float; ``default`` for anything that is not a number.
+
+    A snapshot payload can come from an imported archive, so a field that is
+    "always a number" may hold any text. A numeric format spec on a string
+    would raise, and printing the string as it is would put it on the page as
+    markup."""
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return default
+    else:
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _n(value: Any, missing: str = "") -> str:
+    """A value that should be a number, ready for the page: a real number is
+    printed as it is, ``None`` as ``missing``, anything else as escaped text."""
+    if value is None:
+        return missing
+    if isinstance(value, bool):
+        return str(int(value))
+    if isinstance(value, (int, float)):
+        return html.escape(str(value))
+    return _e(value)
 
 
 def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -> str:
@@ -51,12 +85,12 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
     sections.append(f"""
     <div style="display:flex;gap:16px;margin-bottom:20px">
         <div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:16px;flex:1;text-align:center">
-            <div style="font-size:28px;font-weight:bold;color:#059669">{report.pass_rate:.1f}%</div>
+            <div style="font-size:28px;font-weight:bold;color:#059669">{_float(report.pass_rate):.1f}%</div>
             <div style="font-size:12px;color:#6B7280">Pass Rate</div>
         </div>
         <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:16px;flex:1;text-align:center">
-            <div style="font-size:20px;font-weight:bold">{report.total_tests}</div>
-            <div style="font-size:12px;color:#6B7280">Total | {report.passed_tests} passed | {report.failed_tests} failed | {report.skipped_tests} skipped</div>
+            <div style="font-size:20px;font-weight:bold">{_n(report.total_tests)}</div>
+            <div style="font-size:12px;color:#6B7280">Total | {_n(report.passed_tests)} passed | {_n(report.failed_tests)} failed | {_n(report.skipped_tests)} skipped</div>
         </div>
     </div>""")
 
@@ -66,7 +100,7 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
         <div style="background:{rec_color}15;border:2px solid {rec_color};border-radius:12px;padding:20px;margin-bottom:20px;display:flex;align-items:center;gap:20px">
             <div style="font-size:36px;font-weight:900;color:{rec_color}">{_e(rec.replace('_', ' '))}</div>
             <div style="flex:1">
-                <div style="font-size:14px;color:#6B7280">Risk Score: <b>{report.risk_score}</b>/100</div>
+                <div style="font-size:14px;color:#6B7280">Risk Score: <b>{_n(report.risk_score)}</b>/100</div>
                 {f'<div style="font-size:13px;color:#374151;margin-top:4px"><i>{_e(report.release_reasoning, 500)}</i></div>' if report.release_reasoning else ''}
             </div>
         </div>""")
@@ -88,9 +122,9 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
     if report.dimension_scores:
         rows = "".join(
             f'<tr><td style="padding:6px 12px">{_e(d.get("label", d.get("name", "")))}</td>'
-            f'<td style="padding:6px 12px;text-align:center">{d.get("score", 0):.1f}</td>'
-            f'<td style="padding:6px 12px;text-align:center">{d.get("weight", 0):.2f}</td>'
-            f'<td style="padding:6px 12px;text-align:center">{d.get("contribution", 0):.2f}</td></tr>'
+            f'<td style="padding:6px 12px;text-align:center">{_float(d.get("score", 0)):.1f}</td>'
+            f'<td style="padding:6px 12px;text-align:center">{_float(d.get("weight", 0)):.2f}</td>'
+            f'<td style="padding:6px 12px;text-align:center">{_float(d.get("contribution", 0)):.2f}</td></tr>'
             for d in report.dimension_scores
         )
         sections.append(f"""
@@ -108,8 +142,8 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
     # Category breakdown
     if report.category_breakdown:
         cat_rows = "".join(
-            f'<tr><td style="padding:4px 12px">{_e(cat)}</td><td style="padding:4px 12px;text-align:center">{cnt}</td></tr>'
-            for cat, cnt in sorted(report.category_breakdown.items(), key=lambda x: -x[1])
+            f'<tr><td style="padding:4px 12px">{_e(cat)}</td><td style="padding:4px 12px;text-align:center">{_n(cnt)}</td></tr>'
+            for cat, cnt in sorted(report.category_breakdown.items(), key=lambda x: -_float(x[1]))
         )
         sections.append(f"""
         <h2 style="color:#1E40AF">Failure Categories</h2>
@@ -123,14 +157,14 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
     # Baseline diff
     diff = report.baseline_diff
     if diff and diff.get("pass_rate_delta") is not None:
-        delta = diff["pass_rate_delta"]
+        delta = _float(diff["pass_rate_delta"])
         delta_str = f"+{delta:.1f}%" if delta >= 0 else f"{delta:.1f}%"
         sections.append(f"""
         <h2 style="color:#1E40AF">Baseline Comparison</h2>
         <p style="font-size:13px">
             Pass rate delta: <b>{delta_str}</b> |
-            New failures: <b>{diff.get('new_failures_count', 0)}</b> |
-            Resolved: <b>{diff.get('resolved_count', 0)}</b> |
+            New failures: <b>{_n(diff.get('new_failures_count', 0))}</b> |
+            Resolved: <b>{_n(diff.get('resolved_count', 0))}</b> |
             Classification: <b>{_e(diff.get('regression_classification', 'unclassified'))}</b>
         </p>""")
 
@@ -138,7 +172,7 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
     if report.layout == "engineering" and report.failure_clusters:
         cl_rows = "".join(
             f'<tr><td style="padding:4px 8px">{_e(c.get("label", ""), 80)}</td>'
-            f'<td style="padding:4px 8px;text-align:center">{c.get("size", 0)}</td>'
+            f'<td style="padding:4px 8px;text-align:center">{_n(c.get("size", 0))}</td>'
             f'<td style="padding:4px 8px">{_e(c.get("criticality_level", "—"))}</td>'
             f'<td style="padding:4px 8px;font-size:11px">{_e(c.get("representative_error", ""), 150)}</td></tr>'
             for c in report.failure_clusters[:15]
@@ -157,11 +191,11 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
 
     # Provenance footer
     prov = report.provenance
-    sources_used = ", ".join(_e(source) for source in prov.get("sources_used", []))
+    sources_used = ", ".join(_e(source) for source in prov.get("sources_used") or [])
     sections.append(f"""
     <div style="margin-top:30px;padding-top:12px;border-top:1px solid #E2E8F0;font-size:11px;color:#9CA3AF">
         Generated by TestLookup |
-        Confidence: {prov.get('confidence', 'N/A')}% |
+        Confidence: {_n(prov.get('confidence', 'N/A'), 'N/A')}% |
         Sources: {sources_used} |
         {_e(report.generated_at)}
     </div>""")
@@ -184,7 +218,7 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
 </head>
 <body>
     <h1>TestLookup — Release Report</h1>
-    <p style="color:#6B7280;font-size:13px">Build: <b>{_e(report.build_number)}</b> | Branch: <b>{_e(report.branch)}</b> | {report.layout.title()} Report</p>
+    <p style="color:#6B7280;font-size:13px">Build: <b>{_e(report.build_number)}</b> | Branch: <b>{_e(report.branch)}</b> | {_e(str(report.layout).title())} Report</p>
     {body}
 </body>
 </html>"""
@@ -192,20 +226,20 @@ def render_report_html(report: Any, shared_by: str = "", expires_at: str = "") -
 
 def _render_executive_panel_html(panel: dict) -> str:
     """Render the structured executive panel as inline-styled HTML."""
-    metrics = panel.get("metrics", {})
-    signal = panel.get("status_signal", "CONDITIONAL_GO")
+    metrics = panel.get("metrics") or {}
+    signal = str(panel.get("status_signal", "CONDITIONAL_GO"))
     signal_color = _REC_COLORS.get(signal, "#D97706")
     risk = panel.get("risk_score")
 
     parts: list[str] = []
 
     # Headline + status
-    risk_html = f' <span style="color:#6B7280;font-size:13px;margin-left:12px">Risk {risk}/100</span>' if risk is not None else ""
+    risk_html = f' <span style="color:#6B7280;font-size:13px;margin-left:12px">Risk {_n(risk)}/100</span>' if risk is not None else ""
     parts.append(f"""
     <div style="background:{signal_color}10;border:2px solid {signal_color};border-radius:12px;padding:16px;margin-bottom:20px">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
             <h2 style="margin:0;color:#1E40AF;font-size:16px">{_e(panel.get('headline', ''))}</h2>
-            <span style="background:{signal_color};color:white;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:bold">{_e(str(signal).replace('_', ' '))}</span>
+            <span style="background:{signal_color};color:white;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:bold">{_e(signal.replace('_', ' '))}</span>
             {risk_html}
         </div>""")
 
@@ -213,12 +247,12 @@ def _render_executive_panel_html(panel: dict) -> str:
     parts.append(f"""
         <table style="width:100%;border-collapse:collapse;margin-top:12px;font-size:13px;text-align:center">
             <tr style="background:#F0F9FF">
-                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('pass_rate', 0):.1f}%</b><br><small>Pass Rate</small></td>
-                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('total_tests', 0)}</b><br><small>Total</small></td>
-                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('failed', 0)}</b><br><small>Failed</small></td>
-                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('skipped', 0)}</b><br><small>Skipped</small></td>
-                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('failure_clusters', 0)}</b><br><small>Clusters</small></td>
-                <td style="padding:8px;border:1px solid #E2E8F0"><b>{metrics.get('anomaly_count', 0)}</b><br><small>Anomalies</small></td>
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{_float(metrics.get('pass_rate', 0)):.1f}%</b><br><small>Pass Rate</small></td>
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{_n(metrics.get('total_tests', 0))}</b><br><small>Total</small></td>
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{_n(metrics.get('failed', 0))}</b><br><small>Failed</small></td>
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{_n(metrics.get('skipped', 0))}</b><br><small>Skipped</small></td>
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{_n(metrics.get('failure_clusters', 0))}</b><br><small>Clusters</small></td>
+                <td style="padding:8px;border:1px solid #E2E8F0"><b>{_n(metrics.get('anomaly_count', 0))}</b><br><small>Anomalies</small></td>
             </tr>
         </table>""")
 
@@ -228,7 +262,7 @@ def _render_executive_panel_html(panel: dict) -> str:
         cat = str(dom.get("category", "")).replace("_", " ").title()
         parts.append(f"""
         <div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:13px">
-            <b>{_e(cat)}</b> — {dom.get('count', 0)} failures ({dom.get('percentage', 0):.0f}%)
+            <b>{_e(cat)}</b> — {_n(dom.get('count', 0))} failures ({_float(dom.get('percentage', 0)):.0f}%)
         </div>""")
 
     # Key takeaways
@@ -240,11 +274,11 @@ def _render_executive_panel_html(panel: dict) -> str:
     # Baseline comparison
     bl = panel.get("baseline_comparison")
     if bl:
-        delta = bl.get("pass_rate_delta", 0)
+        delta = _float(bl.get("pass_rate_delta", 0))
         delta_str = f"+{delta:.1f}%" if delta >= 0 else f"{delta:.1f}%"
         parts.append(f"""
         <div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:8px 12px;margin-top:10px;font-size:13px">
-            Pass rate: <b>{delta_str}</b> | New failures: <b>{bl.get('new_failures', 0)}</b> | Resolved: <b>{bl.get('resolved', 0)}</b>
+            Pass rate: <b>{delta_str}</b> | New failures: <b>{_n(bl.get('new_failures', 0))}</b> | Resolved: <b>{_n(bl.get('resolved', 0))}</b>
         </div>""")
 
     # Next actions

@@ -143,7 +143,7 @@ def show_event(
             lines.append(f"    {f}: {before.get(f, '—')} -> {after.get(f, '—')}")
     else:
         lines.append("  changes  (none recorded)")
-    typer.echo("\n".join(lines))
+    typer.echo(output.plain("\n".join(lines)))
 
 
 @activity_app.command("types")

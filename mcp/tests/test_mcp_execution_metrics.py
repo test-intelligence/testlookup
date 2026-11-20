@@ -216,7 +216,7 @@ def test_the_paths_are_routes_the_backend_serves():
     assert '"/runs/{run_id}/timing"' in source
     assert '"/analytics/execution-metrics"' in source
     tools_src = (MCP_DIR / "tools" / "runs.py").read_text(encoding="utf-8")
-    assert 'f"/api/v1/runs/{run_id}/timing"' in tools_src
+    assert '"/api/v1/runs/{run_id}/timing"' in tools_src
     assert '"/api/v1/analytics/execution-metrics"' in (MCP_DIR / "tools" / "analytics.py").read_text(encoding="utf-8")
 
 

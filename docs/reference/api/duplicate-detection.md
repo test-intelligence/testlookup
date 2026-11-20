@@ -152,7 +152,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 Run Duplicate Detection
 
-Run a tiered detection sweep over the project's authored cases.
+Run a tiered detection sweep over the project's authored cases (QA_ENGINEER+).
 
 The service stages candidate rows + lazily backfills ``dup_fingerprint``;
 this router owns the commit. ``semantic_used`` returned by the service is an
@@ -160,12 +160,12 @@ extra key the response model ignores.
 
 Source: [backend/app/routers/duplicates.py:186](../../../backend/app/routers/duplicates.py#L186).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID, enable_semantic: bool=Query(True, description='Run the optional local-embedder semantic tier (best-effort)'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _: User=Depends(require_project_access())
+project_id: uuid.UUID, enable_semantic: bool=Query(True, description='Run the optional local-embedder semantic tier (best-effort)'), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _: User=Depends(require_project_access()), _reviewer: User=Depends(require_role(UserRole.QA_ENGINEER))
 ```
 
 ### Declared wire contract
@@ -254,7 +254,7 @@ Dismiss a candidate pair (status → ``dismissed`` + suppression record).
 The suppression row keeps the pair from resurfacing on the next detection
 run. STAGE in the service; commit here.
 
-Source: [backend/app/routers/duplicates.py:219](../../../backend/app/routers/duplicates.py#L219).
+Source: [backend/app/routers/duplicates.py:223](../../../backend/app/routers/duplicates.py#L223).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -356,7 +356,7 @@ losing case. Never deletes a case or redirects a fingerprint.
 authoritative — a mismatch is a 400). ``keep_case_id`` must be one of the
 pair's two cases (service raises → 400).
 
-Source: [backend/app/routers/duplicates.py:254](../../../backend/app/routers/duplicates.py#L254).
+Source: [backend/app/routers/duplicates.py:258](../../../backend/app/routers/duplicates.py#L258).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

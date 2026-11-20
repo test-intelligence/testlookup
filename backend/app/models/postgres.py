@@ -2529,7 +2529,9 @@ class FixAttempt(Base):
     ``rejected_globs`` (the diff touched a non-test file — rejected BEFORE
     any execution), ``failed_validation`` (the fix did not validate),
     ``pr_opened`` (validated + a draft PR was created), ``error`` (infra
-    trouble — no runner, docker unavailable, generation offline), or
+    trouble — no runner, docker unavailable, generation offline — or the
+    runner could not run the patch: a ``workflow_dispatch`` rerun is of the
+    unpatched branch, and its ``reason`` starts "baseline only"), or
     ``skipped_budget`` (a budget cap or the kill switch stopped it).
 
     Invariant: a PR is opened ONLY from ``validated`` in suggest mode.

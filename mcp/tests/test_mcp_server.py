@@ -398,7 +398,7 @@ class TestStepFlipRenderer:
         assert "3 total flips across 6 runs" in out
         assert "Step 'login' flickered 3 times." in out
         assert "| Step | Flips | Runs Observed | Current |" in out
-        assert "| login | 3 | 6 |" in out
+        assert "| <test-output>login</test-output> | 3 | 6 |" in out
         assert "FAILED" in out
 
     def test_unnamed_step_falls_back_to_ordinal(self):

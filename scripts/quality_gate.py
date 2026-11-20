@@ -4550,6 +4550,79 @@ def _repo_no_private_markers() -> list[Violation]:
     return violations
 
 
+# ── repo.no-bare-name-package-install ────────────────────────────────────────
+#
+# The SDK, the CLI and the JavaScript reporter are not published to PyPI or npm
+# (RELEASING.md), and their names are free for anyone to register. A shipped
+# line that says `pip install testlookup-reporter` therefore installs whatever
+# a stranger publishes under that name, usually inside a CI job that holds an
+# API key. Only installs from a path, a wheel, a tarball or a git URL may be
+# written down.
+_BARE_INSTALL_RE = re.compile(
+    r"\b(?:pip3?|npm|pnpm|yarn)\s+(?:install|i|add)\b"
+    r"(?:\s+-{1,2}[A-Za-z][\w-]*(?:=\S+)?)*"            # flags such as -U, --save-dev
+    r"\s+['\"`]?(@?testlookup[\w.\-/]*)(.*)",
+    re.IGNORECASE,
+)
+_ARCHIVE_SUFFIXES = (".whl", ".tgz", ".tar.gz", ".zip")
+# `name @ git+https://...` / `name @ https://...` / `name @ file:...` (PEP 508 direct reference).
+_DIRECT_REFERENCE_RE = re.compile(r"^(?:\[[^\]]*\])?\s*@\s*(?:git\+|https?://|file:)")
+# Files that NAME the bare form to detect it.
+_BARE_INSTALL_EXEMPT = {
+    "scripts/quality_gate.py",
+    "scripts/test_quality_gate.py",
+}
+# Lines that name the bare form to say it must NOT be used: (path, text on the line).
+_BARE_INSTALL_MENTIONS: tuple[tuple[str, str], ...] = (
+    ("frontend/src/components/onboarding/firstRunSteps.ts",
+     "rather than `pip install testlookup-cli`"),
+    ("frontend/src/components/live/sdkSnippets.test.ts",
+     "not.toMatch(/npm install testlookup-reporter"),
+)
+
+
+def _is_bare_name_install(line: str) -> bool:
+    match = _BARE_INSTALL_RE.search(line)
+    if not match:
+        return False
+    target, rest = match.group(1), match.group(2)
+    if target.startswith("@"):
+        return True                       # a scoped npm name, never a path
+    target = target.rstrip(".,;:")
+    if "/" in target or target.lower().endswith(_ARCHIVE_SUFFIXES):
+        return False                      # a path, a wheel or a tarball
+    return not _DIRECT_REFERENCE_RE.match(rest)
+
+
+def _repo_no_bare_name_package_install() -> list[Violation]:
+    files = _git_ls_files()
+    if len(files) < 100:
+        return [Violation(REPO_ROOT / ".gitignore", 0,
+                          "git ls-files returned too little to check")]
+    violations: list[Violation] = []
+    for rel in files:
+        if rel in _BARE_INSTALL_EXEMPT or Path(rel).suffix.lower() in _TEXT_SUFFIX_SKIP:
+            continue
+        path = REPO_ROOT / rel
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if "testlookup" not in text.lower():
+            continue
+        mentions = [needle for mention_rel, needle in _BARE_INSTALL_MENTIONS if mention_rel == rel]
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if not _is_bare_name_install(line):
+                continue
+            if any(needle in line for needle in mentions):
+                continue
+            violations.append(Violation(
+                path, lineno,
+                "installs a testlookup package by bare name; the name is not "
+                "registered on PyPI or npm, so anyone could publish under it"))
+    return violations
+
+
 # ── licenses.shipped-allowlist ─────────────────────────────────────────────
 
 _LICENSE_ALLOWLIST_REL = "scripts/license-allowlist.json"
@@ -7833,6 +7906,20 @@ GUARDS: list[Guard] = [
             "repo-relative paths, a documented placeholder (qai_your_api_key_here), "
             "and put site addresses in local site configuration "
             "(TESTLOOKUP_K3S_ENV)."
+        ),
+    ),
+    Guard(
+        name="repo.no-bare-name-package-install",
+        description=(
+            "No tracked file tells a reader to `pip install testlookup...` or "
+            "`npm install testlookup...` by bare name; the names are not registered."
+        ),
+        check=_repo_no_bare_name_package_install,
+        fix_hint=(
+            "Write the supported install: a path (`pip install ./cli`, "
+            "`pip install .` in the SDK directory), the wheel or tarball the "
+            "deployment serves, or `name @ git+https://...`. A line that names the "
+            "bare form only to warn against it goes in _BARE_INSTALL_MENTIONS."
         ),
     ),
     Guard(

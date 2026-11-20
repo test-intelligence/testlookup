@@ -31,6 +31,11 @@ RAW_FRAGMENTS = (
     "w23dServicePass", "w23dSamplePass", "w23dClientSecretValue", "w23dApiKeyValue", "w23dGithubValue",
     "w23d.sample@example.test", "w23dSampleAccessToken123", "w23dsig", "samplepass", "w23dBareUserinfo",
     "w23dListPass", "w23dBlobPass", "w23dtoken", "w23dFormValue",
+    # Samples with no token shape under names only the name rules catch (headers, then query parameters).
+    "w23fSubscriptionKeyValue", "w23fFunctionsKeyValue", "w23fAuthKeyValue", "w23fPlainAuthValue",
+    "w23fAuthenticationValue", "w23fSessionHeaderValue", "w23fSessionIdHeaderValue", "w23fUnderscoreAuthValue",
+    "w23fSubKeyValue", "w23fPwdValue", "w23fPasswdValue", "w23fPassValue", "w23fSidValue", "w23fSessValue",
+    "w23fJwtValue", "otp=482915", "pin=4821", "w23fQuerySessTok", "w23fCamelValue", "w23fDbPassValue",
 )
 
 
@@ -66,7 +71,7 @@ def _server(wire: dict[str, Any]) -> dict[str, Any] | None:
 
 def test_the_vector_file_names_every_case_once_and_grows_only():
     names = [case["name"] for case in CASES]
-    assert len(names) == len(set(names)) >= 30
+    assert len(names) == len(set(names)) >= 34
     assert VECTORS["version"] == 1
     assert all(set(case) == {"name", "note", "input", "expect"} for case in CASES)
 

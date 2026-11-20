@@ -3,9 +3,24 @@
 # shared with openshift-artifactory.
 #
 # Traefik on K3s lives in kube-system, not ingress-nginx, so the base
-# allow-frontend/allow-backend/allow-mcp policies are extended below.
+# allow-frontend / allow-backend policies are extended below.
 
-# Allow Traefik (kube-system) to reach frontend, backend, and MCP.
+# Allow the Traefik pods (kube-system) to reach the frontend and the backend on
+# the ports the Ingress routes to. Nothing else in kube-system is admitted.
+#
+# Until the security audit of 2026-11-18 this rule admitted every pod in
+# kube-system to the frontend, the backend AND the MCP server on every port,
+# which included the backend's unauthenticated /metrics and the MCP port that
+# kustomization.yaml keeps off the network (it deletes the MCP Ingress; reach
+# MCP with `kubectl port-forward`, which does not pass through a NetworkPolicy).
+#
+# The pod label is the one the Traefik Helm chart sets, which is how K3s ships
+# Traefik. k3ssetup/deploy-k3s.sh checks that the cluster's Traefik pods carry
+# it before it builds or applies anything; a cluster whose ingress controller
+# is labelled differently changes this selector with a site patch
+# (K3S_PATCHES_DIR). The policy keeps its name on purpose: `kubectl apply`
+# updates the existing object, where a new name would leave the old wide rule
+# in the cluster.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -19,11 +34,23 @@ spec:
         values:
           - testlookup-frontend
           - testlookup-backend
-          - testlookup-mcp
   policyTypes:
     - Ingress
   ingress:
     - from:
+        # One peer with both selectors: pods with this label IN kube-system.
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        # The pods' own ports, not the Services': the frontend Service keeps
+        # port 80 and forwards to the container port, where nginx listens on
+        # 8080 (it runs unprivileged).
+        - protocol: TCP
+          port: 8080
+        # backend (uvicorn): /api/, /ws/, /webhooks/, /api-docs, health
+        - protocol: TCP
+          port: 8000

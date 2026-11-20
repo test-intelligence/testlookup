@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import logging
+import os
 import socket
 from dataclasses import dataclass
 from time import monotonic
@@ -59,6 +60,22 @@ PROVIDER_PROFILES: dict[str, ProviderProfile] = {
         for provider in REMOTE_PROVIDERS
     },
 }
+
+
+#: Remote providers whose client CONNECTS to the configured base URL, and the
+#: effective-config name of the key each one sends there. ``gemini`` and
+#: ``anthropic`` are absent on purpose: ``llm_factory.get_llm`` never passes
+#: them a base URL, so their key only ever goes to the provider. If one of
+#: them starts honouring ``base_url``, add it here and to
+#: ``_provider_own_origins``.
+PROVIDER_KEY_SETTINGS: dict[str, str] = {
+    "openai": "openai_api_key",
+    "openrouter": "openrouter_api_key",
+}
+
+#: The name the effective AI config uses for "these keys were stored in
+#: Settings > AI Configuration" (``ai_config_resolver`` fills it).
+STORED_KEYS_FIELD = "stored_api_keys"
 
 
 def _setting_text(name: str) -> str:
@@ -254,13 +271,118 @@ def _is_routable(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool
     )
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(url: str | None) -> tuple[str, str, int] | None:
+    """``(scheme, host, port)`` of an absolute HTTP(S) URL, else ``None``.
+
+    Compared instead of the text so that ``https://API.OpenAI.com:443/v1`` is
+    the provider and ``https://api.openai.com@other.example/`` is not.
+    """
+    try:
+        parsed = urlparse(str(url or "").strip())
+        port = parsed.port
+    except ValueError:
+        return None
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in _DEFAULT_PORTS or not parsed.hostname:
+        return None
+    return scheme, parsed.hostname.lower().rstrip("."), port or _DEFAULT_PORTS[scheme]
+
+
+def _provider_own_origins(provider: str) -> frozenset[tuple[str, str, int]]:
+    """The origins that ARE the provider, for the environment-key rule.
+
+    The provider's public endpoint, plus whatever endpoint the deployment's
+    own environment names for it: that value and the environment key have the
+    same owner, so sending one to the other gives nothing away.
+    """
+    candidates: list[str | None]
+    if provider == "openai":
+        candidates = [
+            "https://api.openai.com",
+            os.getenv("OPENAI_API_BASE"),
+            os.getenv("OPENAI_BASE_URL"),
+        ]
+    elif provider == "openrouter":
+        candidates = ["https://openrouter.ai", _setting_text("OPENROUTER_BASE_URL")]
+    else:
+        candidates = []
+    return frozenset(origin for origin in map(_origin, candidates) if origin is not None)
+
+
+def is_custom_remote_endpoint(provider: str, base_url: str | None) -> bool:
+    """True when ``base_url`` would carry a remote provider's key somewhere else.
+
+    False for local providers (they send no provider key), for remote
+    providers whose client ignores the base URL, for an empty base URL, and
+    for the provider's own origin.
+    """
+    normalized = str(provider or "").strip().lower()
+    if normalized not in PROVIDER_KEY_SETTINGS or not base_url:
+        return False
+    return _origin(base_url) not in _provider_own_origins(normalized)
+
+
+def _refuse_environment_key(provider: str, base_url: str | None) -> None:
+    origin = _origin(base_url)
+    shown = f"{origin[0]}://{origin[1]}:{origin[2]}" if origin else "the configured base URL"
+    raise LLMPolicyViolation(
+        f"The LLM base URL ({shown}) is not {provider}'s own endpoint, so the "
+        f"{provider} API key from this deployment's environment is not sent to it. "
+        "Store an API key for this endpoint in Settings > AI Configuration, "
+        "or clear the base URL to use the provider's own endpoint."
+    )
+
+
+async def _key_is_stored_in_settings(provider: str) -> bool:
+    """Whether Settings holds a stored key for ``provider``. Fails closed.
+
+    Read from the same effective config ``get_llm`` takes the key from. A
+    config that does not say where its keys came from (a cache entry written
+    by an older build) or that cannot be read is "no stored key".
+    """
+    try:
+        from app.services.ai_config_resolver import get_effective_ai_config
+
+        stored = (await get_effective_ai_config()).get(STORED_KEYS_FIELD)
+    except Exception:  # noqa: BLE001 -- no proof of a stored key is a refusal
+        return False
+    return isinstance(stored, (list, tuple)) and PROVIDER_KEY_SETTINGS[provider] in stored
+
+
+def validate_base_url_for_save(
+    provider: str,
+    base_url: str | None,
+    *,
+    key_from_settings: bool,
+) -> None:
+    """The base-URL rules a model call applies, for ``PUT /settings/ai``.
+
+    Raises :class:`LLMPolicyViolation` so the ADMIN is told at save time, not
+    by a failed model call later. Only the rules about the URL itself: its
+    form, ``AI_LLM_ALLOWED_BASE_URLS`` and the environment-key rule. A
+    provider this module does not know is left to the caller.
+    """
+    normalized = str(provider or "").strip().lower()
+    if not base_url or normalized not in PROVIDER_PROFILES:
+        return
+    _check_base_url(PROVIDER_PROFILES[normalized], base_url, key_from_settings=key_from_settings)
+
+
 def enforce_provider_policy(
     provider: str,
     *,
     offline: bool,
     base_url: str | None = None,
+    key_from_settings: bool | None = None,
 ) -> ProviderProfile:
     """Fail closed before constructing a provider client.
+
+    ``key_from_settings`` answers "was this provider's key stored in Settings
+    > AI Configuration?" for the environment-key rule. This synchronous form
+    cannot look it up, so leaving it out means "no".
 
     ``AI_OFFLINE_MODE`` remains the non-bypassable egress ceiling.  Operators
     may additionally set ``AI_LLM_PROVIDER_ALLOWLIST`` to a comma-separated
@@ -269,7 +391,9 @@ def enforce_provider_policy(
     ``AI_LLM_ALLOWED_BASE_URLS``. Provider clients still own connection
     validation and secrets never enter this policy result.
     """
-    profile, residency_host = _enforce_static_policy(provider, offline=offline, base_url=base_url)
+    profile, residency_host = _enforce_static_policy(
+        provider, offline=offline, base_url=base_url, key_from_settings=bool(key_from_settings)
+    )
     if residency_host is not None and not _resolves_only_to_local_addresses(residency_host):
         _refuse_off_box(residency_host)
     return profile
@@ -280,13 +404,24 @@ async def enforce_provider_policy_async(
     *,
     offline: bool,
     base_url: str | None = None,
+    key_from_settings: bool | None = None,
 ) -> ProviderProfile:
     """:func:`enforce_provider_policy` for async callers (re-audit N11).
 
     Identical decisions; the residency lookup runs in a worker thread so a
-    slow or failing resolver cannot stall the event loop.
+    slow or failing resolver cannot stall the event loop. When the caller does
+    not say whether the provider key was stored in Settings, this form looks
+    it up in the effective AI config (only for a custom remote endpoint).
     """
-    profile, residency_host = _enforce_static_policy(provider, offline=offline, base_url=base_url)
+    if key_from_settings is None:
+        key_from_settings = (
+            not offline
+            and is_custom_remote_endpoint(provider, base_url)
+            and await _key_is_stored_in_settings(str(provider).strip().lower())
+        )
+    profile, residency_host = _enforce_static_policy(
+        provider, offline=offline, base_url=base_url, key_from_settings=key_from_settings
+    )
     if residency_host is not None and not await host_is_local_async(residency_host):
         _refuse_off_box(residency_host)
     return profile
@@ -304,6 +439,7 @@ def _enforce_static_policy(
     *,
     offline: bool,
     base_url: str | None,
+    key_from_settings: bool = False,
 ) -> tuple[ProviderProfile, str | None]:
     """Every check that needs no name resolution.
 
@@ -321,21 +457,7 @@ def _enforce_static_policy(
             f"AI_OFFLINE_MODE=true but LLM_PROVIDER={profile.provider} — refusing to call external API"
         )
     if base_url:
-        parsed = urlparse(str(base_url).strip())
-        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-            raise LLMPolicyViolation("LLM base_url must be an absolute HTTP(S) origin")
-        # An operator's explicit allowlist is the cheapest and most specific
-        # deny, so it reports first; it needs no name resolution.
-        allowed_origins = _setting_text("AI_LLM_ALLOWED_BASE_URLS")
-        if allowed_origins:
-            candidate = f"{parsed.scheme}://{parsed.netloc}".lower()
-            allowed = {
-                item.strip().rstrip("/").lower()
-                for item in allowed_origins.split(",")
-                if item.strip()
-            }
-            if candidate not in allowed:
-                raise LLMPolicyViolation("LLM base_url is not present in AI_LLM_ALLOWED_BASE_URLS")
+        hostname = _check_base_url(profile, base_url, key_from_settings=key_from_settings)
         # Residency is a property of the ENDPOINT, not of the provider's name.
         # A nominally-local provider pointed at a public host is egress, so the
         # offline ceiling refuses it even when an allowlist permitted the origin
@@ -346,8 +468,37 @@ def _enforce_static_policy(
         # so a name that re-resolves between here and the connect is refused
         # there.
         if offline:
-            return profile, parsed.hostname
+            return profile, hostname
     return profile, None
+
+
+def _check_base_url(profile: ProviderProfile, base_url: str, *, key_from_settings: bool) -> str:
+    """The rules about the URL itself; returns its hostname."""
+    parsed = urlparse(str(base_url).strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise LLMPolicyViolation("LLM base_url must be an absolute HTTP(S) origin")
+    # An operator's explicit allowlist is the cheapest and most specific
+    # deny, so it reports first; it needs no name resolution.
+    allowed_origins = _setting_text("AI_LLM_ALLOWED_BASE_URLS")
+    if allowed_origins:
+        candidate = f"{parsed.scheme}://{parsed.netloc}".lower()
+        allowed = {
+            item.strip().rstrip("/").lower()
+            for item in allowed_origins.split(",")
+            if item.strip()
+        }
+        if candidate not in allowed:
+            raise LLMPolicyViolation("LLM base_url is not present in AI_LLM_ALLOWED_BASE_URLS")
+    # A provider key from the environment goes to the provider and nowhere
+    # else. An ADMIN can type any base URL, and the environment key belongs to
+    # whoever runs the deployment: before this rule, provider "openai" with a
+    # base URL of the ADMIN's choosing posted OPENAI_API_KEY to that host as a
+    # bearer token. A key the ADMIN stored in Settings for the endpoint is
+    # theirs to send. Listing the origin in AI_LLM_ALLOWED_BASE_URLS does not
+    # lift this: it says where prompts may go, not where the key may.
+    if not key_from_settings and is_custom_remote_endpoint(profile.provider, base_url):
+        _refuse_environment_key(profile.provider, base_url)
+    return parsed.hostname
 
 
 def sanitize_invocation(value: Any, *, stats: dict[str, int] | None = None) -> Any:

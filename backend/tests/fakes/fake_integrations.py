@@ -732,7 +732,10 @@ async def _add_comment(request: Request, state: FakeState) -> Response:
 
 _JQL_LABEL = re.compile(r'^\s*labels\s*=\s*"([^"]+)"\s*(ORDER BY created (ASC|DESC))?\s*$', re.I)
 _JQL_PROJECT = re.compile(r'^\s*project\s*=\s*"?([A-Z][A-Z0-9_]*)"?\s*$', re.I)
-_JQL_PARENT = re.compile(r'^\s*"Epic Link"\s*=\s*([A-Z0-9_-]+)\s+OR\s+parent\s*=\s*([A-Z0-9_-]+)\s*$', re.I)
+# The issue key may be quoted, as real Jira accepts and the knowledge connector sends.
+_JQL_PARENT = re.compile(
+    r'^\s*"Epic Link"\s*=\s*"?([A-Z0-9_-]+)"?\s+OR\s+parent\s*=\s*"?([A-Z0-9_-]+)"?\s*$', re.I
+)
 
 
 async def _search_jql(request: Request, state: FakeState) -> Response:

@@ -20,9 +20,16 @@ from app.services.connectors.base import (
 logger = structlog.get_logger(__name__)
 
 # Match Confluence page ID from URL patterns like /pages/123456 or /wiki/spaces/SPACE/pages/123456
-_PAGE_ID_RE = re.compile(r"/pages/(\d+)")
+_PAGE_ID_RE = re.compile(r"/pages/([0-9]+)")
 # Match /wiki/spaces/SPACE/pages/PAGEID/TITLE or similar
 _SPACE_PAGE_RE = re.compile(r"/wiki/spaces/([^/]+)/pages/(\d+)")
+# A Confluence page id. It goes into a REST path on a request that carries the
+# deployment's Confluence credential, so nothing but ASCII digits is ever used
+# (``\d`` and ``str.isdigit`` also accept other scripts' digits).
+# ``schemas.KnowledgeSourceCreate`` applies the same pattern on create; a
+# regression test keeps the two equal.
+_PAGE_ID_PATTERN = r"[0-9]+"
+_PAGE_ID_FULL_RE = re.compile(_PAGE_ID_PATTERN)
 
 
 class ConfluenceKnowledgeConnector(KnowledgeConnectorBase):
@@ -56,18 +63,26 @@ class ConfluenceKnowledgeConnector(KnowledgeConnectorBase):
         }
 
     def _extract_page_id(self, canonical_url: str, external_id: Optional[str]) -> str:
-        """Extract Confluence page ID from URL or external_id."""
-        if external_id and external_id.isdigit():
+        """The Confluence page id for a source: ``external_id`` or, failing that, the URL.
+
+        ``external_id`` is used only when the whole value is ASCII digits. Any
+        other value is ignored, never passed through: it would become part of
+        the request path. The result is always ASCII digits.
+        """
+        if external_id and _PAGE_ID_FULL_RE.fullmatch(external_id):
             return external_id
 
         match = _PAGE_ID_RE.search(canonical_url)
         if match:
             return match.group(1)
 
-        # external_id might be the page ID directly
         if external_id:
-            return external_id
-
+            raise ConnectorFetchError(
+                "Cannot extract a Confluence page ID: the source's external id is "
+                "not a numeric page id and its URL does not contain one "
+                "(/pages/<id>). Recreate the source with the page id or the "
+                "page's URL."
+            )
         raise ConnectorFetchError(
             f"Cannot extract Confluence page ID from URL: {canonical_url}"
         )

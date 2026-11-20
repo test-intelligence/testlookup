@@ -335,12 +335,19 @@ kubectl kustomize k8s/overlay > my-manifests.yaml
 Everything from 6b, plus:
 
 ```bash
-oc adm policy add-scc-to-user anyuid -z default -n testlookup
+oc adm policy add-scc-to-user anyuid -z testlookup-anyuid -n testlookup
+oc adm policy add-scc-to-user nonroot-v2 -z default -n testlookup
+oc adm policy add-scc-to-user nonroot-v2 -z testlookup-sa -n testlookup
 # Run the Kubernetes sequence above with KCLI=oc and oc in place of kubectl.
 ```
 
-The stock infra images (postgres, mongo, valkey, versitygw, nginx) run as fixed
-UIDs and need `anyuid` under `restricted-v2`. The rendered manifests already
+The stock data-store images (postgres, mongo, valkey, versitygw, chroma) and
+Ollama run as fixed UIDs and need `anyuid`; they use the `testlookup-anyuid`
+service account, so the grant goes to that account and not to `default`. The
+application pods run under `nonroot-v2`. On an install made before this
+change, run the first command BEFORE applying the new manifests, or the data
+stores are refused at admission; afterwards remove the old grant with
+`oc adm policy remove-scc-from-user anyuid -z default -n testlookup`. The rendered manifests already
 contain the OpenShift **Routes** (edge TLS, HTTP→HTTPS redirect). Supply the
 hostnames at import time:
 

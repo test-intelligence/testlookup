@@ -97,6 +97,18 @@ variable "endpoint_public_access" {
   default     = true
 }
 
+variable "enable_network_policy" {
+  description = "Make the VPC CNI enforce Kubernetes NetworkPolicy (addon setting enableNetworkPolicy). When false, EKS stores the policies and applies none of them. Before turning it on, the NetworkPolicy rules must admit the load balancer's addresses to the frontend and backend pods (the aws-eks overlay only does this for MCP), or the application stops answering through the ALB. Needs VPC CNI v1.14 or later."
+  type        = bool
+  default     = false
+}
+
+variable "require_imdsv2" {
+  description = "Start nodes from a launch template that requires IMDSv2 and sets the metadata hop limit to 1, so pods off the host network cannot read the node role's credentials. Turning it on for an existing cluster REPLACES the managed node group (every node is recreated). The AWS Load Balancer Controller, and any other controller that reads the instance metadata service, then needs its own IRSA role and explicit region and vpcId settings."
+  type        = bool
+  default     = false
+}
+
 variable "public_access_cidrs" {
   # No default: the old one, 0.0.0.0/0, opened the cluster API to the
   # internet. Set your office/VPN egress CIDRs in the tfvars file, or pass

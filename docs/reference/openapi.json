@@ -3321,6 +3321,7 @@
           "username": {
             "maxLength": 50,
             "minLength": 3,
+            "pattern": "^[\\w.-]+$",
             "title": "Username",
             "type": "string"
           }
@@ -3469,6 +3470,7 @@
           "username": {
             "maxLength": 50,
             "minLength": 3,
+            "pattern": "^[\\w.-]+$",
             "title": "Username",
             "type": "string"
           }
@@ -18729,18 +18731,18 @@
       "FrontendTelemetryBatch": {
         "properties": {
           "errors": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/FrontendError"
             },
+            "maxItems": 50,
             "title": "Errors",
             "type": "array"
           },
           "vitals": {
-            "default": [],
             "items": {
               "$ref": "#/components/schemas/WebVitalReport"
             },
+            "maxItems": 50,
             "title": "Vitals",
             "type": "array"
           }
@@ -49854,6 +49856,15 @@
           "status": {
             "anyOf": [
               {
+                "enum": [
+                  "draft",
+                  "review",
+                  "approved",
+                  "active",
+                  "suspended",
+                  "closed",
+                  "archived"
+                ],
                 "type": "string"
               },
               {
@@ -51127,6 +51138,7 @@
                 "type": "null"
               }
             ],
+            "pattern": "^[\\w.-]+$",
             "title": "Username"
           }
         },
@@ -51252,6 +51264,7 @@
           "username": {
             "maxLength": 50,
             "minLength": 3,
+            "pattern": "^[\\w.-]+$",
             "title": "Username",
             "type": "string"
           }
@@ -57264,7 +57277,7 @@
     },
     "/api/v1/ai-eval/runs": {
       "get": {
-        "description": "List evaluation runs, newest first, with the ``total`` of the filtered set.\n\nW16: ``{items, total}`` (was a bare list no client read); ``metric_kind``\n(legacy label agreement / replay) and ``status`` filter. Writes nothing.",
+        "description": "List evaluation runs, newest first, with the ``total`` of the filtered set.\n\nW16: ``{items, total}`` (was a bare list no client read); ``metric_kind``\n(legacy label agreement / replay) and ``status`` filter. Writes nothing.\n\nA run made for a project (a candidate replay) is listed only to callers\nwho can access that project; runs with no project are listed to every QA\nlead, and an instance admin sees all of them.",
         "operationId": "list_eval_runs_api_v1_ai_eval_runs_get",
         "parameters": [
           {
@@ -57490,7 +57503,7 @@
     },
     "/api/v1/ai-eval/runs/{eval_run_id}": {
       "get": {
-        "description": "One evaluation run (legacy or replay) with its aggregate scores. Writes nothing.",
+        "description": "One evaluation run (legacy or replay) with its aggregate scores. Writes nothing.\n\nA run of a project the caller cannot access answers the same 404 as a run\nthat does not exist; a run with no project is readable by every QA lead.",
         "operationId": "get_eval_run_api_v1_ai_eval_runs__eval_run_id__get",
         "parameters": [
           {
@@ -62561,7 +62574,7 @@
     },
     "/api/v1/auth/change-password": {
       "post": {
-        "description": "Change the current user's password.",
+        "description": "Change the current user's password. Interactive sessions only: an API key gets 403.\n\nA wrong current password counts toward the same account lockout as a failed\nsign-in, and a locked account answers 429 whatever was typed. Without that,\na stolen access token could be used to guess the password with no limit.",
         "operationId": "change_password_api_v1_auth_change_password_post",
         "parameters": [
           {
@@ -62701,7 +62714,7 @@
     },
     "/api/v1/auth/first-time-reset": {
       "post": {
-        "description": "Forced password reset for self-registered users on first login.\n\n- Requires a valid JWT (user must be authenticated).\n- Only permitted when must_change_password=True on the account.\n- Does NOT require the current/registration password.\n- Clears the must_change_password flag after a successful change.",
+        "description": "Forced password reset for self-registered users on first login.\n\n- Requires an interactive session (a JWT). An API key is refused with 403.\n- Only permitted when must_change_password=True on the account.\n- Does NOT require the current/registration password.\n- Clears the must_change_password flag after a successful change.",
         "operationId": "first_time_reset_api_v1_auth_first_time_reset_post",
         "parameters": [
           {
@@ -62904,9 +62917,21 @@
     },
     "/api/v1/auth/logout": {
       "post": {
-        "description": "Server-side logout — revokes the caller's access-token jti until its\nnatural expiry and revokes all live refresh tokens for the user so the\nsession cannot be re-minted via /auth/refresh.",
+        "description": "Server-side logout — revokes the caller's access-token jti until its\nnatural expiry and revokes all live refresh tokens for the user so the\nsession cannot be re-minted via /auth/refresh. Interactive sessions only:\nan API key gets 403.\n\n``?all=true`` is \"sign out everywhere\": it also writes the per-user cutoff,\nso every access token already issued to the user stops working at once.\nPlain logout leaves the user's other access tokens to expire on their own\n(they cannot be refreshed).",
         "operationId": "logout_api_v1_auth_logout_post",
         "parameters": [
+          {
+            "description": "Sign out everywhere: also end every other access token of this user, on every device. Without it only the access token that made the call ends.",
+            "in": "query",
+            "name": "all",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Sign out everywhere: also end every other access token of this user, on every device. Without it only the access token that made the call ends.",
+              "title": "All",
+              "type": "boolean"
+            }
+          },
           {
             "in": "header",
             "name": "X-API-Key",
@@ -63188,7 +63213,7 @@
     },
     "/api/v1/auth/mfa/disable": {
       "post": {
-        "description": "Turn MFA off. Requires the password **and** a live second factor.",
+        "description": "Turn MFA off. Requires the password **and** a live second factor.\n\nA wrong password or a wrong second factor counts toward the account\nlockout; a locked account answers 429.",
         "operationId": "disable_mfa_api_v1_auth_mfa_disable_post",
         "parameters": [
           {
@@ -63330,7 +63355,7 @@
     },
     "/api/v1/auth/mfa/recovery-codes": {
       "post": {
-        "description": "Replace the recovery-code set. The previous codes stop working.",
+        "description": "Replace the recovery-code set. The previous codes stop working.\n\nA wrong password or a wrong second factor counts toward the account\nlockout; a locked account answers 429.",
         "operationId": "reissue_recovery_codes_api_v1_auth_mfa_recovery_codes_post",
         "parameters": [
           {
@@ -67822,6 +67847,7 @@
     },
     "/api/v1/feedback/stats": {
       "get": {
+        "description": "Feedback counts by rating, plus the total and the not-yet-exported count.\n\nThe counts are instance-wide (every project's feedback together, no\nper-project breakdown and no feedback text) and are visible to every\nsigned-in user, whatever their role or project membership.",
         "operationId": "get_feedback_stats_api_v1_feedback_stats_get",
         "parameters": [
           {
@@ -68726,7 +68752,7 @@
     },
     "/api/v1/integration-health/probe": {
       "post": {
-        "description": "Trigger an on-demand health probe for all or a specific provider (QA_LEAD+).\n\n``project_id`` probes that project's GitHub or GitLab integration\n(``provider=github|gitlab``); the id passes ``resolve_project_scope`` before\nanything is read. Without a provider and a project: every deployment-wide\nprobe plus every per-project integration the reader may see. The request\nsession's connection is handed back before any probe makes an HTTP call.",
+        "description": "Trigger an on-demand health probe: one project's integration (QA_LEAD+)\nor the deployment-wide integrations (ADMIN).\n\n``project_id`` probes that project's GitHub or GitLab integration\n(``provider=github|gitlab``); the id passes ``resolve_project_scope`` before\nanything is read. Without a project the probe is deployment-wide and needs\nADMIN: one provider, or (no provider) every deployment-wide probe plus\nevery per-project integration. The request session's connection is handed\nback before any probe makes an HTTP call.",
         "operationId": "trigger_probe_api_v1_integration_health_probe_post",
         "parameters": [
           {
@@ -72336,7 +72362,7 @@
     },
     "/api/v1/observability/frontend": {
       "post": {
-        "description": "Accepts and logs a batch of frontend errors and Web Vitals.\nAlways returns 202 — the browser fires-and-forgets this call.",
+        "description": "Accepts and logs a batch of frontend errors and Web Vitals.\nReturns 202 for an accepted batch — the browser fires-and-forgets this call.\nA batch with more than 50 errors or 50 vitals is refused with 422.",
         "operationId": "receive_frontend_telemetry_api_v1_observability_frontend_post",
         "requestBody": {
           "content": {
@@ -77535,7 +77561,7 @@
     },
     "/api/v1/projects/{project_id}/duplicate-candidates/detect": {
       "post": {
-        "description": "Run a tiered detection sweep over the project's authored cases.\n\nThe service stages candidate rows + lazily backfills ``dup_fingerprint``;\nthis router owns the commit. ``semantic_used`` returned by the service is an\nextra key the response model ignores.",
+        "description": "Run a tiered detection sweep over the project's authored cases (QA_ENGINEER+).\n\nThe service stages candidate rows + lazily backfills ``dup_fingerprint``;\nthis router owns the commit. ``semantic_used`` returned by the service is an\nextra key the response model ignores.",
         "operationId": "run_duplicate_detection_api_v1_projects__project_id__duplicate_candidates_detect_post",
         "parameters": [
           {
@@ -87808,7 +87834,7 @@
     },
     "/api/v1/reports/runs/{run_id}/share": {
       "post": {
-        "description": "Create a time-limited share link for the run report.",
+        "description": "Create a time-limited, public share link for the run report (QA_LEAD).",
         "operationId": "create_share_link_endpoint_api_v1_reports_runs__run_id__share_post",
         "parameters": [
           {
@@ -91764,7 +91790,7 @@
     },
     "/api/v1/runs/{run_id}/recover-live": {
       "post": {
-        "description": "Re-enqueue ``persist_live_session`` for a live-stream run whose\nper-test rows never landed in PostgreSQL.\n\nLooks up the run, checks that it's a ``live_stream`` run with zero\n``test_cases`` rows, then fires the persistence task with the buffered\nevents still sitting in Redis (TTL 25h). Idempotent — the task itself\nre-checks whether work is already done before inserting.\n\nReturns 422 when the run isn't recoverable (already populated / not a\nlive run / no buffer left in Redis).",
+        "description": "Re-enqueue ``persist_live_session`` for a live-stream run whose\nper-test rows never landed in PostgreSQL (QA_ENGINEER+).\n\nLooks up the run, checks that it's a ``live_stream`` run with zero\n``test_cases`` rows, then fires the persistence task with the buffered\nevents still sitting in Redis (TTL 25h). Idempotent — the task itself\nre-checks whether work is already done before inserting.\n\nReturns 422 when the run isn't recoverable (already populated / not a\nlive run / no buffer left in Redis).",
         "operationId": "recover_live_run_from_buffer_api_v1_runs__run_id__recover_live_post",
         "parameters": [
           {
@@ -105845,6 +105871,7 @@
     },
     "/api/v1/training/export": {
       "post": {
+        "description": "Queue an export of every project's reviewed feedback as training data (ADMIN).",
         "operationId": "trigger_export_api_v1_training_export_post",
         "parameters": [
           {
@@ -105897,6 +105924,7 @@
     },
     "/api/v1/training/finetune": {
       "post": {
+        "description": "Queue a fine-tune run for one track over the instance's training data (ADMIN).",
         "operationId": "trigger_finetune_api_v1_training_finetune_post",
         "parameters": [
           {
@@ -106021,6 +106049,7 @@
     },
     "/api/v1/training/status": {
       "get": {
+        "description": "Whether fine-tuning is enabled, the model registry state and feedback totals.\n\nThe counts are instance-wide (every project's feedback together) and, with\nthe rest of this answer, are visible to every signed-in user, whatever\ntheir role or project membership.",
         "operationId": "get_training_status_api_v1_training_status_get",
         "parameters": [
           {
@@ -108248,6 +108277,7 @@
     },
     "/api/v1/webhooks/{subscription_id}/deliveries": {
       "get": {
+        "description": "Delivery history for one subscription. QA_LEAD+: each row carries the\nevent payload and the start of the receiver's response.",
         "operationId": "list_webhook_deliveries_api_v1_webhooks__subscription_id__deliveries_get",
         "parameters": [
           {
@@ -108266,6 +108296,8 @@
             "required": false,
             "schema": {
               "default": 50,
+              "maximum": 200,
+              "minimum": 1,
               "title": "Limit",
               "type": "integer"
             }
@@ -108466,8 +108498,26 @@
     },
     "/health/details": {
       "get": {
-        "description": "Full health report across all infrastructure dependencies.\nRuns all checks concurrently; returns 200 even when non-critical services are degraded.\nNot intended for K8s probes — use /health/live and /health/ready instead.\n\nEvery probe runs under a wall-clock budget, so no single dependency can\nstall the whole response: optional ones via ``_with_budget`` (reported\n``degraded``), critical ones via ``_critical`` (reported ``error``, so\nreadiness still fails closed on them).\n\nThe critical probes were previously left unwrapped, on the reasoning that\nthe readiness probe needs their honest result. A timeout *is* an honest\nfailure, and leaving them unbounded cost more than it bought: an\nunreachable Redis blocks for its 5s socket timeout, which made this\nendpoint take 5.01s and put /health/ready in a dead heat with the\nkubelet's own 5s deadline -- and a kubelet timeout discards the body that\nsays which dependency died.\n\nThe optional probes resolve their endpoints with ``use_cache=False``.\nThat cache is Redis-backed, and ``except Exception`` around it catches a\nrefusal but cannot shorten a hang, so a Redis outage used to time out the\nMinIO and ChromaDB probes and report both ``degraded`` while both were\nhealthy.",
+        "description": "Full health report across all infrastructure dependencies.\nNeeds a signed-in user or an API key (any role); anonymous callers get 401.\nRuns all checks concurrently; returns 200 even when non-critical services are degraded.\nNot intended for K8s probes — use /health/live and /health/ready instead.\n\nEvery probe runs under a wall-clock budget, so no single dependency can\nstall the whole response: optional ones via ``_with_budget`` (reported\n``degraded``), critical ones via ``_critical`` (reported ``error``, so\nreadiness still fails closed on them).\n\nThe critical probes were previously left unwrapped, on the reasoning that\nthe readiness probe needs their honest result. A timeout *is* an honest\nfailure, and leaving them unbounded cost more than it bought: an\nunreachable Redis blocks for its 5s socket timeout, which made this\nendpoint take 5.01s and put /health/ready in a dead heat with the\nkubelet's own 5s deadline -- and a kubelet timeout discards the body that\nsays which dependency died.\n\nThe optional probes resolve their endpoints with ``use_cache=False``.\nThat cache is Redis-backed, and ``except Exception`` around it catches a\nrefusal but cannot shorten a hang, so a Redis outage used to time out the\nMinIO and ChromaDB probes and report both ``degraded`` while both were\nhealthy.",
         "operationId": "health_details_health_details_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -108476,8 +108526,23 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
         "summary": "Full dependency status — for ops dashboards",
         "tags": [
           "Health"
@@ -108486,8 +108551,26 @@
     },
     "/health/ingestion": {
       "get": {
-        "description": "Surface the load + backpressure signals used by the live-stream\nadmission gates.\n\nThe output is for dashboards and for support / on-call humans when a\ncustomer reports \"my runs are slow / 429ing\" (the admission gates are\ndescribed in ``architecture/INGESTION_SCALE.md``). A single GET answers:\n\n* Is Redis approaching the memory threshold that triggers 503?\n* What's the per-minute ingest vs reject rate?\n* How many live sessions are active right now?\n* How deep are the Celery queues backing ingestion + AI analysis?\n* What thresholds is the gate using today (env-tuned, useful for\n  verifying the deployment matches the docs)?\n\nEverything is best-effort — a degraded Redis returns partial data\nrather than 500'ing the health endpoint itself.",
+        "description": "Surface the load + backpressure signals used by the live-stream\nadmission gates.\n\nNeeds a signed-in user or an API key (any role); anonymous callers get 401.\n\nThe output is for dashboards and for support / on-call humans when a\ncustomer reports \"my runs are slow / 429ing\" (the admission gates are\ndescribed in ``architecture/INGESTION_SCALE.md``). A single GET answers:\n\n* Is Redis approaching the memory threshold that triggers 503?\n* What's the per-minute ingest vs reject rate?\n* How many live sessions are active right now?\n* How deep are the Celery queues backing ingestion + AI analysis?\n* What thresholds is the gate using today (env-tuned, useful for\n  verifying the deployment matches the docs)?\n\nEverything is best-effort — a degraded Redis returns partial data\nrather than 500'ing the health endpoint itself.",
         "operationId": "health_ingestion_health_ingestion_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -108500,8 +108583,23 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
         "summary": "Live-stream ingestion health — gate + queue + memory",
         "tags": [
           "Health"

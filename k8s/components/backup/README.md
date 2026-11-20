@@ -72,6 +72,16 @@ The backup pod may reach DNS and the in-namespace Postgres (5432), MongoDB
 are external, add an egress rule for their addresses in your overlay; until
 you do, the backup fails and `TestLookupBackupJobFailed` fires.
 
+## Credentials
+
+Each container reads only its own store's keys from the `testlookup-secrets`
+Secret, one `secretKeyRef` per key: the PostgreSQL containers `DATABASE_URL`
+and `POSTGRES_PASSWORD`, the MongoDB containers `MONGO_URI`, the object-store
+containers `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY`. `finalize` and `verify`
+read none. The application's signing and encryption keys never reach a backup
+or restore pod. If your MongoDB requires a user and password, they must be in
+`MONGO_URI` (the K3s and OpenShift deploy scripts write it that way).
+
 ## Troubleshooting: "Connection refused" in the first second
 
 Each phase waits for its own store before touching it: `pg_isready` for

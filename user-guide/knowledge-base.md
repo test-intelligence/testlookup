@@ -13,7 +13,7 @@ Sources track their own health:
 - **Sync history** — when the source was last (re)indexed.
 - **Freshness** — whether the indexed copy is current with its upstream. A URL source whose page changed shows as stale until re-synced.
 
-URL sources are validated against an allowlist and scheme check before fetching — you can't point the indexer at arbitrary internal hosts.
+URL sources of both kinds are validated against an allowlist and scheme check when they are created, on every sync and for each redirect, and are not fetched in offline mode — you can't point the indexer at arbitrary internal hosts.
 
 ## Generating test cases
 

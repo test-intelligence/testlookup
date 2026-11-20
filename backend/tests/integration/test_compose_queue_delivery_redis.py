@@ -145,6 +145,9 @@ def test_supported_compose_topology_delivers_one_task_per_queue(
         **os.environ,
         "POSTGRES_PASSWORD": "h07-compose-postgres",
         "MONGO_PASSWORD": "h07-compose-mongo",
+        # Required by the release and single-VM files (${REDIS_PASSWORD:?}).
+        # The override above starts this proof's broker without a password.
+        "REDIS_PASSWORD": "h07-compose-redis",
         "MINIO_ACCESS_KEY": "h07-compose-minio",
         "MINIO_SECRET_KEY": "h07-compose-minio-secret",
         "FLOWER_PASSWORD": "h07-compose-flower",

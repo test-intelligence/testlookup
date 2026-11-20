@@ -26,7 +26,6 @@ from fastapi import (
     WebSocketDisconnect,
     status,
 )
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -34,7 +33,8 @@ from app.core.deps import (
     get_accessible_project_ids,
     get_streaming_api_key_context,
 )
-from app.core.security import JWTError, decode_token
+from app.core import session_tokens
+from app.core.session_tokens import SessionTokenRefused, authenticate_access_token
 from app.db.postgres import AsyncSessionLocal, get_db
 from app.models.postgres import User
 from app.services import ws_audit_policy
@@ -356,6 +356,25 @@ manager = ConnectionManager()
 
 # ── Authentication ─────────────────────────────────────────────────────────
 
+#: WebSocket close (code, reason) for each refusal of the shared token check.
+#: 4401 means "sign in again". 1013 ("try again later") is used only when the
+#: server could not check the token, so the client retries with the same one.
+_WS_CLOSE_FOR_REFUSAL: dict[str, tuple[int, str]] = {
+    session_tokens.REASON_INVALID_TOKEN: (4401, "Invalid token"),
+    session_tokens.REASON_EXPIRED_TOKEN: (4401, "Invalid token"),
+    session_tokens.REASON_WRONG_TOKEN_TYPE: (4401, "Wrong token type"),
+    session_tokens.REASON_REVOKED_TOKEN: (4401, "Token revoked - sign in again"),
+    session_tokens.REASON_REVOCATION_UNAVAILABLE: (
+        1013, "Cannot verify the token right now - retry shortly",
+    ),
+    session_tokens.REASON_USER_NOT_FOUND: (4401, "User not found or inactive"),
+    session_tokens.REASON_INACTIVE_USER: (4401, "User not found or inactive"),
+    session_tokens.REASON_CHANGE_REQUIRED: (
+        4401, "Temporary password - change it and sign in again",
+    ),
+}
+
+
 async def _validate_token_and_membership(
     token: str,
     project_uuid: _uuid.UUID,
@@ -367,30 +386,17 @@ async def _validate_token_and_membership(
     Returns ``(None, None, (close_code, close_reason))`` on failure so the
     caller can close the socket with the right code.
     """
-    try:
-        payload = decode_token(token)
-    except JWTError:
-        return None, None, (4401, "Invalid token")
-
-    if payload.get("type") != "access":
-        return None, None, (4401, "Wrong token type")
-
-    user_id = payload.get("sub")
-    if not user_id:
-        return None, None, (4401, "Missing sub claim")
-
-    try:
-        uid = _uuid.UUID(str(user_id))
-    except ValueError:
-        return None, None, (4401, "Invalid sub claim")
-
-    exp_raw = payload.get("exp")
-    exp_epoch: float = float(exp_raw) if isinstance(exp_raw, (int, float)) else 0.0
-
+    # The token checks are the shared ones (app/core/session_tokens.py): what
+    # get_current_user applies to a header JWT, including the revocation
+    # denylist, the per-user cutoff and the temporary-password block. This
+    # runs at the handshake and again on every ``refresh`` message.
     async with AsyncSessionLocal() as db:
-        user = (await db.execute(select(User).where(User.id == uid))).scalar_one_or_none()
-        if user is None or not user.is_active:
-            return None, None, (4401, "User not found or inactive")
+        try:
+            user, exp_epoch = await authenticate_access_token(token, db)
+        except SessionTokenRefused as refused:
+            return None, None, _WS_CLOSE_FOR_REFUSAL.get(
+                refused.reason, (4401, "Invalid token")
+            )
 
         accessible = await get_accessible_project_ids(db, user)
         if accessible is not None and project_uuid not in accessible:
@@ -903,9 +909,16 @@ async def ingest_live_event(
                     "events. The shared webhook secret names no project."
                 ),
             )
-        if not hmac.compare_digest(
-            str(x_webhook_secret), str(settings.WEBHOOK_SECRET)
-        ):
+        # Bytes, not str: compare_digest raises TypeError for a str holding a
+        # non-ASCII character (a public 500). A header arrives decoded as
+        # latin-1, so encoding it back gives the bytes the caller sent; a
+        # value that cannot be encoded is a wrong secret.
+        try:
+            presented_secret = str(x_webhook_secret).encode("latin-1")
+        except UnicodeEncodeError:
+            presented_secret = b""
+        expected_secret = str(settings.WEBHOOK_SECRET or "").encode("utf-8")
+        if not expected_secret or not hmac.compare_digest(presented_secret, expected_secret):
             logger.warning("Live event rejected — invalid webhook secret")
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN, detail="Invalid webhook secret"
@@ -953,7 +966,18 @@ async def ingest_live_event(
             )
         opening_project = str(event.get("project_id"))
         try:
-            owner = await remember_run_project(run_id, opening_project)
+            if bound_project_id:
+                # The project came from the key, so the run id is bound inside
+                # that project's own namespace: another project using the same
+                # id is neither refused nor revealed (the 409 below cannot
+                # happen on this path).
+                owner = await remember_run_project(
+                    run_id, opening_project, project_scoped=True
+                )
+            else:
+                # Legacy shared secret: the project came from the body, so the
+                # binding stays deployment-wide and the first run_start wins.
+                owner = await remember_run_project(run_id, opening_project)
         except RunProjectBindingUnavailable as exc:
             # Fail closed: an unbound run has no cross-tenant check for its
             # whole life. 503 is retryable and tells the producer why.
@@ -975,7 +999,10 @@ async def ingest_live_event(
                 ),
             )
     elif bound_project_id:
-        owner = await resolve_run_project(run_id)
+        # This project's own binding first. Without one, a deployment-wide
+        # binding (a legacy-path run, or one started before bindings were
+        # project-scoped) still refuses another project's event.
+        owner = await resolve_run_project(run_id, project_id=bound_project_id)
         if owner is not None and owner != bound_project_id:
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,

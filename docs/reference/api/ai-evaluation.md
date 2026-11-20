@@ -12,7 +12,7 @@ Run the release gate for prompt/model/routing changes across the agent stack.
 
 The returned manifest checksum makes the gated change set auditable.
 
-Source: [backend/app/routers/ai_evaluation.py:803](../../../backend/app/routers/ai_evaluation.py#L803).
+Source: [backend/app/routers/ai_evaluation.py:830](../../../backend/app/routers/ai_evaluation.py#L830).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -104,7 +104,7 @@ comparisons share the table and are read per project through
 ``GET /tier-comparison/runs`` -- listing them here showed every QA lead
 other projects' tier verdicts (W16 contract §0.4).
 
-Source: [backend/app/routers/ai_evaluation.py:982](../../../backend/app/routers/ai_evaluation.py#L982).
+Source: [backend/app/routers/ai_evaluation.py:1009](../../../backend/app/routers/ai_evaluation.py#L1009).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -219,7 +219,7 @@ List Baselines
 
 List active evaluation baselines.
 
-Source: [backend/app/routers/ai_evaluation.py:1134](../../../backend/app/routers/ai_evaluation.py#L1134).
+Source: [backend/app/routers/ai_evaluation.py:1161](../../../backend/app/routers/ai_evaluation.py#L1161).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -315,7 +315,7 @@ Set a baseline from a dataset evaluation (ADMIN only).
 Computes metrics and stores them as the active baseline for the
 specified agent/task_type. Deactivates any prior baseline.
 
-Source: [backend/app/routers/ai_evaluation.py:1100](../../../backend/app/routers/ai_evaluation.py#L1100).
+Source: [backend/app/routers/ai_evaluation.py:1127](../../../backend/app/routers/ai_evaluation.py#L1127).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -411,7 +411,7 @@ The tiers a candidate evaluation may replay, with the reason a tier is unavailab
 ADMIN (the Evaluate form is admin-only). Reads the effective AI config on
 this request's session and the ML model's metadata; writes nothing.
 
-Source: [backend/app/routers/ai_evaluation.py:415](../../../backend/app/routers/ai_evaluation.py#L415).
+Source: [backend/app/routers/ai_evaluation.py:424](../../../backend/app/routers/ai_evaluation.py#L424).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -914,7 +914,7 @@ Get Drift
 
 Detect AI quality drift by comparing current vs previous eval windows.
 
-Source: [backend/app/routers/ai_evaluation.py:552](../../../backend/app/routers/ai_evaluation.py#L552).
+Source: [backend/app/routers/ai_evaluation.py:579](../../../backend/app/routers/ai_evaluation.py#L579).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1013,7 +1013,7 @@ Get Eval Manifest
 
 Resolve the immutable eval manifest stamped on an agent pipeline run.
 
-Source: [backend/app/routers/ai_evaluation.py:1085](../../../backend/app/routers/ai_evaluation.py#L1085).
+Source: [backend/app/routers/ai_evaluation.py:1112](../../../backend/app/routers/ai_evaluation.py#L1112).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1102,7 +1102,7 @@ Seed the golden reference datasets for all evaluation categories (ADMIN only).
 Creates 4 golden datasets (classification, root_cause, duplicate_detection,
 release_decision) if they don't already exist.
 
-Source: [backend/app/routers/ai_evaluation.py:1169](../../../backend/app/routers/ai_evaluation.py#L1169).
+Source: [backend/app/routers/ai_evaluation.py:1196](../../../backend/app/routers/ai_evaluation.py#L1196).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1266,7 +1266,7 @@ or insufficient_samples
 with per-rule results. Prompt, model, or routing changes should not ship
 if the gate returns FAIL.
 
-Source: [backend/app/routers/ai_evaluation.py:775](../../../backend/app/routers/ai_evaluation.py#L775).
+Source: [backend/app/routers/ai_evaluation.py:802](../../../backend/app/routers/ai_evaluation.py#L802).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1353,7 +1353,7 @@ List Report Eval Cycles
 
 List durable report-level evaluation evidence.
 
-Source: [backend/app/routers/ai_evaluation.py:602](../../../backend/app/routers/ai_evaluation.py#L602).
+Source: [backend/app/routers/ai_evaluation.py:629](../../../backend/app/routers/ai_evaluation.py#L629).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1459,7 +1459,7 @@ Create Report Eval Cycle
 
 Evaluate and persist one bounded report corpus cycle (ADMIN only).
 
-Source: [backend/app/routers/ai_evaluation.py:641](../../../backend/app/routers/ai_evaluation.py#L641).
+Source: [backend/app/routers/ai_evaluation.py:668](../../../backend/app/routers/ai_evaluation.py#L668).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1552,7 +1552,7 @@ Get Report Eval Readiness
 
 Return the fail-closed representative-corpus pilot readiness gate.
 
-Source: [backend/app/routers/ai_evaluation.py:621](../../../backend/app/routers/ai_evaluation.py#L621).
+Source: [backend/app/routers/ai_evaluation.py:648](../../../backend/app/routers/ai_evaluation.py#L648).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1640,7 +1640,7 @@ Run Reviewer Quality
 
 Run G3 and apply its guarded second-model retirement decision.
 
-Source: [backend/app/routers/ai_evaluation.py:913](../../../backend/app/routers/ai_evaluation.py#L913).
+Source: [backend/app/routers/ai_evaluation.py:940](../../../backend/app/routers/ai_evaluation.py#L940).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1739,7 +1739,7 @@ READ-ONLY (the page never posts ``/reviewer-quality``, whose default
 ``auto_disable`` can retire the second model). The observation arrays are
 never selected. Writes nothing.
 
-Source: [backend/app/routers/ai_evaluation.py:1049](../../../backend/app/routers/ai_evaluation.py#L1049).
+Source: [backend/app/routers/ai_evaluation.py:1076](../../../backend/app/routers/ai_evaluation.py#L1076).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1834,6 +1834,10 @@ List evaluation runs, newest first, with the ``total`` of the filtered set.
 
 W16: ``{items, total}`` (was a bare list no client read); ``metric_kind``
 (legacy label agreement / replay) and ``status`` filter. Writes nothing.
+
+A run made for a project (a candidate replay) is listed only to callers
+who can access that project; runs with no project are listed to every QA
+lead, and an instance admin sees all of them.
 
 Source: [backend/app/routers/ai_evaluation.py:212](../../../backend/app/routers/ai_evaluation.py#L212).
 
@@ -1989,7 +1993,7 @@ No body: the LEGACY label-agreement evaluation, synchronous, 201 with the
 run (unchanged). A ``candidate`` body (W16 AGT-09): a queued REPLAY of the
 candidate through the real engine, 202 ``{run_id, status: "queued"}``.
 
-Source: [backend/app/routers/ai_evaluation.py:258](../../../backend/app/routers/ai_evaluation.py#L258).
+Source: [backend/app/routers/ai_evaluation.py:267](../../../backend/app/routers/ai_evaluation.py#L267).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -2103,7 +2107,10 @@ Get Eval Run
 
 One evaluation run (legacy or replay) with its aggregate scores. Writes nothing.
 
-Source: [backend/app/routers/ai_evaluation.py:437](../../../backend/app/routers/ai_evaluation.py#L437).
+A run of a project the caller cannot access answers the same 404 as a run
+that does not exist; a run with no project is readable by every QA lead.
+
+Source: [backend/app/routers/ai_evaluation.py:455](../../../backend/app/routers/ai_evaluation.py#L455).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -2188,7 +2195,7 @@ Items carry dataset text that a feedback-built dataset draws from every
 project, so QA leads see aggregates only. Inputs, expected values and
 outputs are re-sanitized here. A legacy run stored no items. Writes nothing.
 
-Source: [backend/app/routers/ai_evaluation.py:498](../../../backend/app/routers/ai_evaluation.py#L498).
+Source: [backend/app/routers/ai_evaluation.py:525](../../../backend/app/routers/ai_evaluation.py#L525).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -2313,7 +2320,7 @@ The QUERY project is checked before anything is read; ``agent_id`` and
 ``label_status`` (``all`` = every status) filter INSIDE it. Outputs are
 re-sanitized; each pair's source is resolved inside its project. Writes nothing.
 
-Source: [backend/app/routers/ai_evaluation.py:1236](../../../backend/app/routers/ai_evaluation.py#L1236).
+Source: [backend/app/routers/ai_evaluation.py:1263](../../../backend/app/routers/ai_evaluation.py#L1263).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -2448,7 +2455,7 @@ Label one live shadow pair with a person's verdict (QA lead+, interactive login 
 Every check runs before anything is written; the label, ``labelled_by``
 and the activity row share ONE commit. A label is final (no relabel).
 
-Source: [backend/app/routers/ai_evaluation.py:1285](../../../backend/app/routers/ai_evaluation.py#L1285).
+Source: [backend/app/routers/ai_evaluation.py:1312](../../../backend/app/routers/ai_evaluation.py#L1312).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_shadow_pair_access.<locals>._check`.
 
@@ -2539,7 +2546,7 @@ Run Tier Comparison
 
 Run G2 against paired golden outputs and optionally retain the decision.
 
-Source: [backend/app/routers/ai_evaluation.py:842](../../../backend/app/routers/ai_evaluation.py#L842).
+Source: [backend/app/routers/ai_evaluation.py:869](../../../backend/app/routers/ai_evaluation.py#L869).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -2635,7 +2642,7 @@ The project's recorded G2 tier comparisons, newest first, with ``total`` (W16).
 The QUERY project is checked like a body project before anything is read;
 ``agent_id`` filters INSIDE that project. Writes nothing.
 
-Source: [backend/app/routers/ai_evaluation.py:1019](../../../backend/app/routers/ai_evaluation.py#L1019).
+Source: [backend/app/routers/ai_evaluation.py:1046](../../../backend/app/routers/ai_evaluation.py#L1046).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

@@ -59,7 +59,17 @@ async def _ocp_lookup(
 ) -> Optional[tuple[str, dict, str]]:
     from app.services import ocp_client
     from app.services.evidence_sanitizer import sanitize_reference_text
+    from app.services.ocp_enrichment import namespace_refused_for_project
 
+    # The context's pod and namespace come from the ingested report. A project
+    # with its own saved namespace is limited to it (runs stored before the
+    # ingest began dropping other namespaces still carry them).
+    if namespace_refused_for_project(cfg, context.ocp_namespace):
+        logger.warning(
+            "ocp_namespace_refused: the run names a namespace other than the project's; "
+            "no OpenShift lookup (project_id=%s)", context.project_id,
+        )
+        return None
     result = await ocp_client.analyze_pod_events(
         str(context.ocp_pod_name), str(context.ocp_namespace), str(context.timestamp), config=cfg,
     )

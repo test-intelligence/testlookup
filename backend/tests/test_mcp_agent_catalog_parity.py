@@ -67,7 +67,7 @@ def test_every_agent_the_backend_can_invoke_is_invocable_through_mcp_and_nothing
 def test_every_catalog_agent_is_reachable_through_the_mcp_catalog_tools():
     source = AGENTS_TOOL.read_text(encoding="utf-8")
     assert '"/api/v1/agents/catalog"' in source
-    assert 'f"/api/v1/agents/catalog/{agent_id}"' in source
+    assert '"/api/v1/agents/catalog/{agent_id}"' in source
     assert _mcp_agent_id_pattern() == agent_catalog.AGENT_ID_PATTERN.pattern
     pattern = re.compile(_mcp_agent_id_pattern())
     unreachable = [s.capability_id for s in CAPABILITY_REGISTRY.values() if not pattern.match(s.capability_id)]

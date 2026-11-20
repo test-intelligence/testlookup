@@ -18,11 +18,12 @@ import { createElement, type ReactNode } from 'react'
 import { renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { SWRConfig } from 'swr'
-import axios from 'axios'
-
+import { api } from '@/services/api'
 import { useSystemHealth } from './useSystemHealth'
 
-vi.mock('axios')
+// The poll goes through the signed-in API client: `/health/details` needs a
+// sign-in, and that client attaches the session token and refreshes it on a 401.
+vi.mock('@/services/api', () => ({ api: { get: vi.fn() } }))
 
 function wrapper({ children }: { children: ReactNode }) {
   return createElement(SWRConfig, { value: { provider: () => new Map() } }, children)
@@ -48,7 +49,7 @@ beforeEach(() => {
 describe('useSystemHealth', () => {
   it('does not treat a skipped check as unavailable', async () => {
     // The exact live payload that produced the false banner.
-    vi.mocked(axios.get).mockResolvedValue(
+    vi.mocked(api.get).mockResolvedValue(
       healthPayload({
         postgres: { status: 'ok' },
         mongo: { status: 'ok' },
@@ -68,7 +69,7 @@ describe('useSystemHealth', () => {
 
   it('still reports a genuinely degraded service', async () => {
     // The fix must not turn the banner off altogether.
-    vi.mocked(axios.get).mockResolvedValue(
+    vi.mocked(api.get).mockResolvedValue(
       healthPayload({
         postgres: { status: 'ok' },
         ollama: { status: 'skipped' },
@@ -86,7 +87,7 @@ describe('useSystemHealth', () => {
   it('separates a critical store outage from an optional degradation', async () => {
     // postgres/mongo/redis are the critical stores; minio/ollama/chromadb are
     // optional. `criticalUnavailable` must carry only the former.
-    vi.mocked(axios.get).mockResolvedValue(
+    vi.mocked(api.get).mockResolvedValue(
       healthPayload({
         postgres: { status: 'error' },
         mongo: { status: 'ok' },
@@ -106,7 +107,7 @@ describe('useSystemHealth', () => {
   })
 
   it('leaves criticalUnavailable empty when only optional services degrade', async () => {
-    vi.mocked(axios.get).mockResolvedValue(
+    vi.mocked(api.get).mockResolvedValue(
       healthPayload({
         postgres: { status: 'ok' },
         minio: { status: 'degraded' },
@@ -124,7 +125,7 @@ describe('useSystemHealth', () => {
   it('treats an unrecognised status as a problem', async () => {
     // Fail loud, not silent: a status neither side knows should surface rather
     // than be assumed harmless.
-    vi.mocked(axios.get).mockResolvedValue(
+    vi.mocked(api.get).mockResolvedValue(
       healthPayload({ chromadb: { status: 'some_new_status' } }),
     )
 
@@ -146,7 +147,7 @@ describe('useSystemHealth', () => {
   // false alarm". `isDegraded` stays false (we have no check results to call
   // degraded), and `isUnreachable` carries the fact instead.
   it('reports unreachable -- not healthy -- when the health poll fails', async () => {
-    vi.mocked(axios.get).mockRejectedValue(new Error('network down'))
+    vi.mocked(api.get).mockRejectedValue(new Error('network down'))
 
     const { result } = renderHook(() => useSystemHealth(), { wrapper })
     await waitFor(() => expect(result.current.isUnreachable).toBe(true))
@@ -159,8 +160,23 @@ describe('useSystemHealth', () => {
     // is the whole point.
   })
 
+  it('polls through the signed-in API client, quietly', async () => {
+    // A bare `axios.get` sends no token, so every poll would answer 401 and the
+    // shell would show "backend unreachable" to every signed-in user.
+    vi.mocked(api.get).mockResolvedValue(healthPayload({ postgres: { status: 'ok' } }))
+
+    const { result } = renderHook(() => useSystemHealth(), { wrapper })
+    await waitFor(() => expect(result.current.data).not.toBeNull())
+
+    expect(api.get).toHaveBeenCalledWith(
+      '/health/details',
+      // The banner reports a failed poll itself; no error toast every minute.
+      expect.objectContaining({ suppressToast: true }),
+    )
+  })
+
   it('is not unreachable when the poll succeeds', async () => {
-    vi.mocked(axios.get).mockResolvedValue(healthPayload({ postgres: { status: 'ok' } }))
+    vi.mocked(api.get).mockResolvedValue(healthPayload({ postgres: { status: 'ok' } }))
 
     const { result } = renderHook(() => useSystemHealth(), { wrapper })
     await waitFor(() => expect(result.current.data).not.toBeNull())
@@ -170,7 +186,7 @@ describe('useSystemHealth', () => {
 
   it('a degraded dependency and an unreachable backend are different states', async () => {
     // Guards the pair against collapsing back into one flag.
-    vi.mocked(axios.get).mockResolvedValue(healthPayload({ minio: { status: 'error' } }))
+    vi.mocked(api.get).mockResolvedValue(healthPayload({ minio: { status: 'error' } }))
     const { result: degraded } = renderHook(() => useSystemHealth(), { wrapper })
     await waitFor(() => expect(degraded.current.isDegraded).toBe(true))
     expect(degraded.current.isUnreachable).toBe(false)

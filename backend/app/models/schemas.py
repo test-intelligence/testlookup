@@ -168,11 +168,38 @@ class TimestampMixin(BaseModel):
 MAX_PASSWORD_LENGTH = 128
 
 
+#: What a NEW username may hold: letters, digits, ".", "_" and "-". No "@", so
+#: a username can never equal somebody's e-mail address. Sign-in looks a name
+#: up as "username or e-mail", and a username equal to another user's e-mail
+#: made that user's sign-in fail. Applied where a person chooses a username
+#: (register, invitation accept, admin create and rename). NOT applied to SCIM,
+#: where the identity provider often sends the e-mail as ``userName``, nor to
+#: rows that already exist: those keep signing in.
+USERNAME_PATTERN = r"^[\w.-]+$"
+_USERNAME_RE = re.compile(USERNAME_PATTERN)
+USERNAME_RULE_DETAIL = (
+    "A username may contain only letters, digits, '.', '_' and '-'. "
+    "Choose a name without '@', spaces or other symbols (an e-mail address cannot be a username)."
+)
+
+
+def check_new_username(value: Optional[str]) -> Optional[str]:
+    """Refuse a new username that holds anything but letters, digits, ``.``, ``_``, ``-``."""
+    if value is not None and not _USERNAME_RE.fullmatch(value):
+        raise PydanticCustomError("username_characters", USERNAME_RULE_DETAIL)
+    return value
+
+
 class UserCreate(BaseModel):
     email: EmailStr
-    username: str = Field(..., min_length=3, max_length=50)
+    username: str = Field(..., min_length=3, max_length=50, json_schema_extra={"pattern": USERNAME_PATTERN})
     full_name: Optional[str] = Field(None, max_length=255)
     password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
+
+    @field_validator("username")
+    @classmethod
+    def _username_characters(cls, value):
+        return check_new_username(value)
 
 
 class UserResponse(TimestampMixin):
@@ -712,6 +739,18 @@ class ProjectCreate(BaseModel):
     # already have ProjectMember.role=QA_LEAD on this project (or be ADMIN).
     # The router enforces the role check.
     default_qa_lead_user_id: Optional[uuid.UUID] = None  # migration 0079
+
+    @field_validator("slug", mode="after")
+    @classmethod
+    def _slug_is_not_a_reserved_folder(cls, value: str) -> str:
+        # The object store archives HTTP uploads under "uploads/"; a project
+        # with that slug would share the folder (services/minio_sentinel.py).
+        if value == "uploads":
+            raise PydanticCustomError(
+                "reserved_slug",
+                'The slug "uploads" is reserved for stored upload files. Choose another slug.',
+            )
+        return value
 
     # W10 INT-03: validated at save (422 with a fixed sentence); an empty
     # value is stored as None on create.
@@ -4740,10 +4779,22 @@ class TestStrategyCreate(BaseModel):
     test_approach: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
 
 
+#: The statuses a test strategy may hold: the six the Strategy page's menu
+#: offers plus ``archived`` from the model. ``status`` was a free string, so any
+#: text up to the column's 30 characters was stored and shown as the sign-off.
+TestStrategyStatusLiteral = Literal[
+    "draft", "review", "approved", "active", "suspended", "closed", "archived"
+]
+TEST_STRATEGY_STATUSES: tuple[str, ...] = (
+    "draft", "review", "approved", "active", "suspended", "closed", "archived"
+)
+
+
 class TestStrategyUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=500)
     version_label: Optional[str] = Field(None, max_length=50)
-    status: Optional[str] = None
+    # Changing it needs QA_LEAD; the strategy PUT route enforces that.
+    status: Optional[TestStrategyStatusLiteral] = None
     objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     scope: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     out_of_scope: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
@@ -5476,6 +5527,26 @@ class RunContext(BaseModel):
 
 # ── Live Stream Schemas ───────────────────────────────────────────────────────
 
+_HTTP_URL = re.compile(r"https?://\S", re.IGNORECASE)
+
+
+def http_ci_run_url(value: Optional[str]) -> Optional[str]:
+    """``value`` when it is an http(s) URL, else ``None`` (the CI job link is dropped, not refused).
+
+    The value is printed as a link in the run-report e-mail and the app, and whoever
+    holds an ingest key chooses it. Anything else (``javascript:``, ``data:``, a bare
+    path) is stored as "no link" with one log line; the upload still succeeds, so a CI
+    job that sends an odd value keeps working.
+    """
+    if value is None or _HTTP_URL.match(value):
+        return value
+    if value.strip():
+        import structlog  # noqa: PLC0415
+
+        structlog.get_logger("schemas.ingest").warning("ci_run_url_dropped_not_http", length=len(value))
+    return None
+
+
 class _NulFreeInput(BaseModel):
     """Strips U+0000 from every string of an ingestion request body.
 
@@ -5541,6 +5612,7 @@ class LiveSessionCreate(_NulFreeInput):
     pr_number: Optional[int] = Field(None, ge=1)
     ci_actor: Optional[str] = Field(None, max_length=120)
     ci_run_url: Optional[str] = Field(None, max_length=1000)
+    _ci_run_url_http_only = field_validator("ci_run_url")(http_ci_run_url)
     # Commit attribution (US-8.1, air-gapped path) — optional pushed commit
     # list so air-gapped callers get suspect ranking with no VCS call. Accepts
     # either the legacy bare list or the boundary-carrying
@@ -5987,6 +6059,7 @@ class IngestPayload(_NulFreeInput):
     pr_number: Optional[int] = Field(None, ge=1)
     ci_actor: Optional[str] = Field(None, max_length=120)
     ci_run_url: Optional[str] = Field(None, max_length=1000)
+    _ci_run_url_http_only = field_validator("ci_run_url")(http_ci_run_url)
     jenkins_job: Optional[str] = Field(None, max_length=500)
     # Environment this run executed against (roadmap Phase 0, migration 0129).
     # Optional: omitting it means "not recorded", and readers derive a
@@ -6603,10 +6676,19 @@ class UpdateUserStatusRequest(BaseModel):
 class UpdateUserProfileRequest(BaseModel):
     """Editable user attributes. Only non-None fields are applied."""
     email: Optional[EmailStr] = None
-    username: Optional[str] = Field(None, min_length=3, max_length=50)
+    # The character rule applies to a rename. Leave ``username`` out to keep an
+    # existing name that predates the rule (for example one containing "@").
+    username: Optional[str] = Field(
+        None, min_length=3, max_length=50, json_schema_extra={"pattern": USERNAME_PATTERN}
+    )
     full_name: Optional[str] = None
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
+
+    @field_validator("username")
+    @classmethod
+    def _username_characters(cls, value):
+        return check_new_username(value)
 
 
 class InviteProjectMembership(BaseModel):
@@ -6670,9 +6752,14 @@ class InvitationPreviewResponse(BaseModel):
 
 class AcceptInvitationRequest(BaseModel):
     token: str = Field(..., min_length=1, max_length=256)
-    username: str = Field(..., min_length=3, max_length=50)
+    username: str = Field(..., min_length=3, max_length=50, json_schema_extra={"pattern": USERNAME_PATTERN})
     full_name: Optional[str] = Field(None, max_length=255)
     password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_LENGTH)
+
+    @field_validator("username")
+    @classmethod
+    def _username_characters(cls, value):
+        return check_new_username(value)
 
 
 class ResetLinkRequest(BaseModel):
@@ -6693,9 +6780,14 @@ class PasswordResetLinkResponse(BaseModel):
 
 class AdminCreateUserRequest(BaseModel):
     email: EmailStr
-    username: str = Field(..., min_length=3, max_length=50)
+    username: str = Field(..., min_length=3, max_length=50, json_schema_extra={"pattern": USERNAME_PATTERN})
     full_name: Optional[str] = None
     role: UserRole = UserRole.QA_ENGINEER
+
+    @field_validator("username")
+    @classmethod
+    def _username_characters(cls, value):
+        return check_new_username(value)
 
 
 class AdminCreateUserResponse(BaseModel):
@@ -8899,12 +8991,38 @@ class MemoryTimelineResponse(BaseModel):
 # ── Knowledge Source Schemas (RAG-1 / RAG-2 / RAG-3) ─────────────────────────
 
 
+# The id shapes the Jira and Confluence knowledge connectors accept (they hold
+# the same patterns; tests/regression/test_atlassian_source_ids_are_pattern_checked.py
+# keeps them equal). ASCII only, matched against the whole value.
+KNOWLEDGE_JIRA_ISSUE_KEY_PATTERN = r"[A-Z][A-Z0-9_]+-[0-9]+"
+KNOWLEDGE_CONFLUENCE_PAGE_ID_PATTERN = r"[0-9]+"
+_KNOWLEDGE_EXTERNAL_ID_RULES: Dict[str, tuple[str, str]] = {
+    "jira_issue": (KNOWLEDGE_JIRA_ISSUE_KEY_PATTERN, "a Jira issue key such as ABC-123"),
+    "jira_epic": (KNOWLEDGE_JIRA_ISSUE_KEY_PATTERN, "a Jira issue key such as ABC-123"),
+    "confluence_page": (KNOWLEDGE_CONFLUENCE_PAGE_ID_PATTERN, "a numeric Confluence page id such as 123456"),
+}
+
+
 class KnowledgeSourceCreate(BaseModel):
     source_type: str = Field(..., max_length=30)
     title: str = Field(..., min_length=1, max_length=500)
     canonical_url: str = Field(..., min_length=1, max_length=2000)
     external_id: Optional[str] = Field(None, max_length=500)
     classification: str = Field("internal", max_length=20)
+
+    @model_validator(mode="after")
+    def _external_id_matches_the_source_type(self) -> "KnowledgeSourceCreate":
+        # For a Jira or Confluence source the id becomes part of a request path
+        # (and a JQL string) sent with the deployment's credential, so only the
+        # exact id shape is accepted. Empty means "not given": the connector
+        # then takes the id from the URL. Other source types are not checked.
+        rule = _KNOWLEDGE_EXTERNAL_ID_RULES.get(self.source_type)
+        if rule and self.external_id and not re.fullmatch(rule[0], self.external_id):
+            raise ValueError(
+                f"external_id for a {self.source_type} source must be {rule[1]}. "
+                "Leave it empty to take the id from the URL."
+            )
+        return self
 
 
 class KnowledgeSourceUpdate(BaseModel):

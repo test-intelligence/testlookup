@@ -948,7 +948,11 @@ async def test_stream_service_ingest_event_batch_validates_and_refreshes_token()
     pipe_mock.execute = AsyncMock()
     redis = SimpleNamespace(get=AsyncMock(return_value=session_id), expire=AsyncMock(), pipeline=MagicMock(return_value=pipe_mock))
     batch = SimpleNamespace(session_id=session_id, run_id="run-1", events=[{"event_type": "test_result"}])
-    session = SimpleNamespace(id=uuid.UUID(session_id), run_id="run-1")
+    # started_at: a session accepts batches for 24 hours from its creation,
+    # and a row with no start time is refused.
+    session = SimpleNamespace(
+        id=uuid.UUID(session_id), run_id="run-1", started_at=datetime.now(timezone.utc),
+    )
 
     class _SessionContext:
         async def __aenter__(self):
@@ -968,6 +972,8 @@ async def test_stream_service_ingest_event_batch_validates_and_refreshes_token()
     publish_mock.assert_awaited_once()
     assert publish_mock.await_args.kwargs["run_id"] == session_id
     redis.expire.assert_awaited_once()
+    # The refresh never extends the token past 24 hours from creation.
+    assert 0 < redis.expire.await_args.args[1] <= stream_service.SESSION_MAX_AGE_SECONDS
 
 
 @pytest.mark.asyncio

@@ -84,7 +84,7 @@ def _render_gate(release: str, rid: str, gate: Optional[dict]) -> None:
     lines += [f"    - {r}" for r in reasons[:20]]
     if total > 20:
         lines.append(f"    … {total - 20} more on the release page")
-    typer.echo("\n".join(lines))
+    typer.echo(output.plain("\n".join(lines)))
 
 
 @release_app.command("gate")

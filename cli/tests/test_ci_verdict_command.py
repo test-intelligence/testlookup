@@ -323,3 +323,135 @@ def test_an_explicit_project_is_the_one_whose_manifest_is_read(api):
         path for _m, path, _p in api["calls"] if path.endswith("/quarantine/manifest")
     ]
     assert manifest_paths == [f"/api/v1/projects/{OTHER_PROJECT}/quarantine/manifest"]
+
+
+# ── a run that cannot be judged yet ──────────────────────────────────────
+#
+# The backend's run statuses are IN_PROGRESS, PASSED, FAILED and STOPPED
+# (``LaunchStatus`` in backend/app/models/postgres.py). A run still IN_PROGRESS
+# has no failed tests *yet*, and a run with zero tests has nothing to judge:
+# neither is a pass.
+
+
+@pytest.mark.parametrize("fmt", [(), ("-o", "json")])
+def test_a_run_in_progress_is_not_judged_without_a_timeout(api, fmt):
+    api["run"]["status"] = "IN_PROGRESS"
+    api["pages"] = {"FAILED": [[]], "BROKEN": [[]]}
+
+    result = _run(*fmt)
+
+    assert result.exit_code == 2, result.output
+    err = _plain(result.stderr)
+    assert "still in progress" in err
+    assert "--timeout-seconds" in err and "--allow-partial" in err
+    assert _test_pages(api, "FAILED") == [], "no verdict may be computed on a partial run"
+    assert "No failed or broken tests" not in _plain(result.output)
+    if fmt:
+        assert result.stdout.strip() == ""
+
+
+@pytest.mark.parametrize("status", ["STOPPED", "PASSED"])
+def test_a_run_with_zero_tests_is_not_judged(api, status):
+    api["run"].update(status=status, total_tests=0)
+    api["pages"] = {"FAILED": [[]], "BROKEN": [[]]}
+
+    result = _run()
+
+    assert result.exit_code == 2, result.output
+    err = _plain(result.stderr)
+    assert "has no tests" in err and "--allow-partial" in err
+    assert "No failed or broken tests" not in _plain(result.output)
+
+
+def test_a_run_with_zero_tests_is_not_judged_after_waiting_either(api, fake_clock):
+    api["run"]["total_tests"] = 0
+    api["run_statuses"] = ["IN_PROGRESS"]  # then COMPLETED, with nothing in it
+
+    result = _run("--timeout-seconds", "30")
+
+    assert result.exit_code == 2, result.output
+    assert "has no tests" in _plain(result.stderr)
+
+
+def test_fail_open_does_not_judge_a_partial_run(api):
+    """--fail-open is for a TestLookup that cannot be reached, not for a run
+    that is reachable and unfinished."""
+    api["run"]["status"] = "IN_PROGRESS"
+    api["pages"] = {"FAILED": [[]], "BROKEN": [[]]}
+
+    result = _run("--fail-open")
+
+    assert result.exit_code == 2, result.output
+    assert "still in progress" in _plain(result.stderr)
+
+
+def test_allow_partial_judges_a_run_in_progress_as_it_is_now(api):
+    api["run"]["status"] = "IN_PROGRESS"
+    api["pages"] = {"FAILED": [[]], "BROKEN": [[]]}
+
+    result = _run("--allow-partial")
+
+    assert result.exit_code == 0, result.output
+    assert "No failed or broken tests" in _plain(result.output)
+
+
+def test_allow_partial_still_blocks_on_a_real_failure_seen_so_far(api):
+    api["run"]["status"] = "IN_PROGRESS"
+
+    result = _run("--allow-partial", "-o", "json")
+
+    assert result.exit_code == 1, result.output
+    assert json.loads(result.stdout)["counts"]["real_failures"] == 1
+
+
+def test_allow_partial_accepts_a_run_with_zero_tests(api):
+    api["run"].update(status="STOPPED", total_tests=0)
+    api["pages"] = {"FAILED": [[]], "BROKEN": [[]]}
+
+    result = _run("--allow-partial")
+
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize("status", ["PASSED", "STOPPED"])
+def test_a_finished_run_with_tests_and_no_failures_passes(api, status):
+    api["run"].update(status=status, total_tests=12)
+    api["pages"] = {"FAILED": [[]], "BROKEN": [[]]}
+
+    result = _run()
+
+    assert result.exit_code == 0, result.output
+    assert "No failed or broken tests" in _plain(result.output)
+
+
+def test_a_finished_run_with_a_real_failure_still_blocks(api):
+    api["run"].update(status="FAILED", total_tests=12)
+
+    result = _run("-o", "json")
+
+    assert result.exit_code == 1, result.output
+
+
+def test_the_in_progress_names_match_the_backend_run_status_enum():
+    """Every status the CLI waits on must be one the backend can send."""
+    import ast
+    from pathlib import Path
+
+    models = Path(__file__).resolve().parents[2] / "backend" / "app" / "models" / "postgres.py"
+    if not models.exists():
+        pytest.skip("the backend source is not next to the CLI (installed package)")
+    tree = ast.parse(models.read_text(encoding="utf-8"))
+    launch = next(
+        node for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == "LaunchStatus"
+    )
+    statuses = {
+        stmt.value.value for stmt in launch.body
+        if isinstance(stmt, ast.Assign) and isinstance(stmt.value, ast.Constant)
+    }
+
+    assert statuses == {"IN_PROGRESS", "PASSED", "FAILED", "STOPPED"}
+    assert "IN_PROGRESS" in ci_verdict_mod._IN_PROGRESS_STATUSES
+    assert ci_verdict_mod._IN_PROGRESS_STATUSES & statuses == {"IN_PROGRESS"}, (
+        "PASSED, FAILED and STOPPED are terminal: ci-verdict must not wait on them"
+    )

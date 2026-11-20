@@ -22,6 +22,7 @@ from app.services.url_safety import egress_block_reason
 logger = logging.getLogger(__name__)
 
 OCP_INVALID_NAME_TEXT = "OpenShift lookup refused: the namespace or pod name is not valid."
+OCP_OTHER_NAMESPACE_TEXT = "OpenShift lookup refused: the namespace is not the one saved for this project."
 OCP_NOT_ALLOWED_TEXT = f"OpenShift lookup refused: {TARGET_NOT_ALLOWED}."
 #: The prefix of a summary that describes a pod (the server-side lookup keeps
 #: only those).
@@ -56,6 +57,17 @@ async def get_pod_metadata(
         logger.info("OCP pod lookup refused: the namespace or pod name is not a DNS-1123 name")
         if refusals is not None:
             refusals.append(OCP_INVALID_NAME_TEXT)
+        return None
+    # A project that saved its own namespace is limited to it, on every path
+    # that reaches this client (the enrichment task, the evidence lookup, the
+    # model's tool, a run stored before ingest began dropping other values).
+    # Imported here: ocp_enrichment imports this module.
+    from app.services.ocp_enrichment import namespace_refused_for_project  # noqa: PLC0415
+
+    if namespace_refused_for_project(cfg, namespace):
+        logger.info("OCP pod lookup refused: the namespace is not the project's own")
+        if refusals is not None:
+            refusals.append(OCP_OTHER_NAMESPACE_TEXT)
         return None
     block = await egress_block_reason(cfg.ocp_api_url)
     if block is not None:

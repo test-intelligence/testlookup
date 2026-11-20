@@ -76,7 +76,10 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `MAX_ARCHIVE_RATIO` | `int` | `100` |
 | `FORM_URLENCODED_MAX_BYTES` | `int` | `64 * 1024` |
 | `FORM_URLENCODED_ACS_MAX_BYTES` | `int` | `2 * 1024 * 1024` |
+| `REQUEST_BODY_MAX_BYTES` | `int` | `Field(default=10 * 1024 * 1024, ge=0)` |
+| `REQUEST_BODY_UPLOAD_MAX_BYTES` | `int` | `Field(default=100 * 1024 * 1024, ge=0)` |
 | `INGEST_MAX_RESULTS_PER_UPLOAD` | `int` | `MAX_RESULTS_PER_INGEST` |
+| `INGEST_DROP_MAX_OBJECT_BYTES` | `int` | `Field(default=50 * 1024 * 1024, ge=0)` |
 | `INGEST_REDIS_MEMORY_THRESHOLD_PCT` | `float` | `75.0` |
 | `INGEST_REDIS_MEMORY_ABSOLUTE_BYTES` | `int` | `0` |
 | `LIVE_BUFFER_MAX_EVENTS_PER_RUN` | `int` | `50000` |
@@ -184,10 +187,12 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `SEARCH_QUERY_TIMEOUT_MS` | `int` | `5000` |
 | `SEARCH_MAX_RESULTS` | `int` | `200` |
 | `DEV_AUTO_LOGIN_ENABLED` | `bool` | `False` |
+| `ALLOW_INSECURE_DEV_SECRETS` | `bool` | `False` |
 | `JWT_SECRET_KEY` | `str` | `'change-me-jwt-secret'` |
 | `JWT_ALGORITHM` | `str` | `'HS256'` |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `int` | `720` |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `int` | `30` |
 | `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `int` | `7` |
+| `JWT_REFRESH_REUSE_LEEWAY_SECONDS` | `int` | `Field(default=10, ge=0, le=60)` |
 | `AUTH_REVOCATION_FAIL_OPEN` | `bool` | `False` |
 | `REGISTRATION_ENABLED` | `bool` | `False` |
 | `DEMO_MODE` | `bool` | `False` |
@@ -274,10 +279,14 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `HTTP_CA_BUNDLE` | `Optional[str]` | `None` |
 | `WEBHOOK_SECRET` | `str` | `'change-me-webhook-secret'` |
 | `TRUSTED_PROXY_IPS` | `str` | `''` |
+| `RATE_LIMIT_SHARED_STORAGE` | `Literal['auto', 'on', 'off']` | `'auto'` |
+| `LOGIN_ATTEMPTS_PER_USERNAME_PER_MINUTE` | `int` | `Field(default=20, ge=0)` |
 | `LIVE_EVENTS_REQUIRE_PROJECT_KEY` | `bool` | `True` |
 | `OTEL_ENABLED` | `bool` | `True` |
 | `OTEL_SERVICE_NAME` | `str` | `'testlookup'` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `Optional[str]` | `None` |
 | `METRICS_ENABLED` | `bool` | `True` |
+| `METRICS_TOKEN` | `str` | `''` |
+| `API_DOCS_ENABLED` | `bool` | `True` |
 | `LOG_LEVEL` | `str` | `'INFO'` |
 | `LOG_FORMAT` | `Literal['json', 'text']` | `'json'` |

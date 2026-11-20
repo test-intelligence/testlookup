@@ -102,6 +102,7 @@
   },
   "create_share_link": {
     "params": [
+      "confirm",
       "expires_days",
       "layout",
       "run_id"

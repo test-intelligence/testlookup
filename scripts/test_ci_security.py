@@ -512,6 +512,7 @@ _REQ_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 _COMMAND_SPLIT = re.compile(r"&&|\|\||;|\|")
 _LEADING_KEYWORD = re.compile(r"^(?:RUN|then|do|else)\s+")
 _PYTHON = re.compile(r"python(?:3(?:\.\d+)?)?")
+_PIP = re.compile(r"pip(?:3(?:\.\d+)?)?")
 _FAST_CHECK = re.compile(
     r"""(from\s+['"](fast-check|@fast-check/(ava|jest|vitest))['"]"""
     r"""|require\(\s*['"](fast-check|@fast-check/(ava|jest|vitest))['"]\s*\))"""
@@ -584,11 +585,38 @@ def _scorecard_word(token: str) -> str | None:
     return token
 
 
+def _command_name(word: str) -> str:
+    """The program a shell word runs: quotes and directories dropped, so
+    `"$RUNNER_TEMP/tl-e2e/bin/pip"` and `/opt/venv/bin/pip3` both read as pip."""
+    return word.replace('"', "").replace("'", "").rsplit("/", 1)[-1]
+
+
+def _pip_subcommand(argv: list[str]) -> list[str] | None:
+    """`install ...` / `wheel ...` / `check` of a pip call, however pip is named:
+    `pip`, `pip3`, a pip called by path, or `<python> -m pip`."""
+    if not argv:
+        return None
+    name = _command_name(argv[0])
+    if _PIP.fullmatch(name):
+        return argv[1:]
+    if argv[1:3] == ["-m", "pip"] and (_PYTHON.fullmatch(name) or "$" in argv[0]):
+        return argv[3:]
+    return None
+
+
 def _pip_install_args(argv: list[str]) -> list[str] | None:
-    if len(argv) >= 2 and argv[0] in ("pip", "pip3") and argv[1] == "install":
-        return argv[2:]
-    if len(argv) >= 4 and _PYTHON.fullmatch(argv[0]) and argv[1:4] == ["-m", "pip", "install"]:
-        return argv[4:]
+    """The arguments of a pip call that downloads and runs code from the package
+    index. `pip wheel` is one: it builds in an isolated environment, for which it
+    downloads the newest build backend (hatchling, setuptools) with no pin and no
+    hash, and `--no-deps` does not cover that. Only `--no-build-isolation`, which
+    builds with what is already installed, makes `pip wheel` download nothing."""
+    rest = _pip_subcommand(argv)
+    if not rest:
+        return None
+    if rest[0] == "install":
+        return rest[1:]
+    if rest[0] == "wheel" and "--no-build-isolation" not in rest:
+        return rest[1:]
     return None
 
 
@@ -690,7 +718,148 @@ def test_the_pin_rule_matches_scorecards_reading() -> None:
     [argv] = _shell_commands('pip install --no-deps "$RUNNER_TEMP"/sdk-wheels/*.whl')
     assert not _scorecard_reads_as_pinned(_pip_install_args(argv) or [])
     assert _pip_install_args(["python", "-m", "pip", "install", "x"]) == ["x"]
-    assert _pip_install_args(["pip", "wheel", "--no-deps", "./cli"]) is None
+    # A pip called by path is still pip (release-e2e.yml installed PyYAML that way, unhashed).
+    [argv] = _shell_commands('"$RUNNER_TEMP/tl-e2e/bin/pip" install PyYAML==6.0.3')
+    assert _pip_install_args(argv) == ["PyYAML==6.0.3"]
+    assert _pip_install_args(["/opt/venv/bin/pip3", "install", "x"]) == ["x"]
+    assert _pip_install_args(['"$CLI_PY"', "-m", "pip", "install", "x"]) == ["x"]
+    assert _pip_install_args(["pip", "check"]) is None
+    assert _pip_install_args(["python3", "-m", "venv", "/tmp/pip-env"]) is None
+    # `pip wheel` downloads its build backend unless build isolation is off.
+    assert _pip_install_args(["pip", "wheel", "--no-deps", "./cli"]) == ["--no-deps", "./cli"]
+    assert not _scorecard_reads_as_pinned(["--no-deps", "--wheel-dir", "/tmp/w", "./cli"])
+    assert _pip_install_args(["python3", "-m", "pip", "wheel", "--no-deps", "--quiet", "./cli"]) is not None
+    assert _pip_install_args(["pip", "wheel", "--no-build-isolation", "--no-deps", "./cli"]) is None
+
+
+BUILD_LOCK = "scripts/requirements-build.txt"
+# Wheel builds that still download their build backend. Each is fixed in the
+# pull request named beside it; the test below fails once the file is fixed, so
+# the entry is removed and the rule covers the file from then on.
+_WHEEL_BUILDS_PENDING: dict[str, str] = {}
+
+
+def _ordered_pip_commands(script: str) -> list[list[str]]:
+    return [argv for argv in _shell_commands(script) if _pip_subcommand(argv) is not None]
+
+
+def _wheel_build_scripts() -> list[tuple[str, str]]:
+    """(where, script) for every script that can run `pip wheel`: workflow run
+    steps, Dockerfile RUN lines and the tracked shell scripts."""
+    found = []
+    for path in sorted(WORKFLOWS.glob("*.y*ml")):
+        for job_name, job in (_workflow(path).get("jobs") or {}).items():
+            for step in job.get("steps") or []:
+                if "run" in step:
+                    found.append((f"{path.name}: {job_name}: {step.get('name', '')}", step["run"]))
+    for rel in _tracked_files():
+        name = rel.rsplit("/", 1)[-1]
+        if rel.startswith("client/examples/"):
+            continue
+        if name == "Dockerfile" or (name.startswith("Dockerfile.") and not name.endswith(".dockerignore")):
+            text = (ROOT / rel).read_text(encoding="utf-8").replace("\\\n", " ")
+            found.extend((rel, line.strip()) for line in text.splitlines() if line.lstrip().startswith("RUN "))
+        elif name.endswith(".sh"):
+            found.append((rel, (ROOT / rel).read_text(encoding="utf-8")))
+    return found
+
+
+def _unlocked_wheel_builds(script: str) -> list[str]:
+    """Every `pip wheel` in the script that could download a build backend: it
+    lacks --no-build-isolation, or the same pip did not first install the hashed
+    build lock (so the backend it builds with came from somewhere else)."""
+    problems = []
+    locked: set[str] = set()                   # the pip words that installed the build lock
+    for argv in _ordered_pip_commands(script):
+        rest = _pip_subcommand(argv) or []
+        if not rest:
+            continue
+        pip_word = " ".join(argv[: len(argv) - len(rest)])
+        if rest[0] == "install":
+            files = [rest[i + 1] for i, word in enumerate(rest[:-1]) if word == "-r"]
+            if "--require-hashes" in rest and any(_command_name(f) == "requirements-build.txt" for f in files):
+                locked.add(pip_word)
+        elif rest[0] == "wheel":
+            if "--no-build-isolation" not in rest:
+                problems.append(f"{' '.join(argv)}: no --no-build-isolation")
+            elif pip_word not in locked:
+                problems.append(f"{' '.join(argv)}: {pip_word} did not install {BUILD_LOCK} with --require-hashes first")
+    return problems
+
+
+def test_every_wheel_build_uses_the_hashed_build_lock() -> None:
+    """Security audit 2026-11-18: `pip wheel --no-deps ./cli` ran in build-images
+    after the registry logins, with packages: write and id-token: write, and
+    downloaded the newest hatchling to build with. Every wheel build now installs
+    scripts/requirements-build.txt with --require-hashes and builds with
+    --no-build-isolation."""
+    builds = 0
+    for where, script in _wheel_build_scripts():
+        wheels = [argv for argv in _ordered_pip_commands(script) if (_pip_subcommand(argv) or [""])[0] == "wheel"]
+        if not wheels:
+            continue
+        pending = _WHEEL_BUILDS_PENDING.get(where)
+        problems = _unlocked_wheel_builds(script)
+        if pending:
+            assert problems, (
+                f"{where} now builds from the hashed lock: delete it from _WHEEL_BUILDS_PENDING"
+            )
+            continue
+        builds += len(wheels)
+        assert not problems, f"{where}:\n  " + "\n  ".join(problems)
+    assert builds >= 4, f"only {builds} wheel builds found; the scan cannot have looked"
+
+
+def test_the_wheel_build_rule_reads_the_shapes_this_repo_uses() -> None:
+    good = (
+        'python3 -m venv "$RUNNER_TEMP/wheel-build"\n'
+        '"$RUNNER_TEMP/wheel-build/bin/pip" install --require-hashes -r scripts/requirements-build.txt\n'
+        '"$RUNNER_TEMP/wheel-build/bin/pip" wheel --no-build-isolation --no-deps --wheel-dir /tmp/w ./cli\n'
+    )
+    assert _unlocked_wheel_builds(good) == []
+    assert _unlocked_wheel_builds(
+        "RUN /tmp/b/bin/pip install --no-cache-dir --require-hashes -r scripts/requirements-build.txt"
+        " && /tmp/b/bin/pip wheel --no-build-isolation --no-deps ./cli"
+    ) == []
+    # Isolation left on: pip downloads the backend whatever is installed.
+    assert _unlocked_wheel_builds(good.replace("--no-build-isolation ", ""))
+    # The lock installed without hashes, not installed, or installed by another pip.
+    assert _unlocked_wheel_builds(good.replace("--require-hashes ", ""))
+    assert _unlocked_wheel_builds(good.splitlines()[2])
+    assert _unlocked_wheel_builds(good.replace('"$RUNNER_TEMP/wheel-build/bin/pip" wheel', "pip wheel"))
+    assert _unlocked_wheel_builds('"$CLI_PY" -m pip wheel --no-deps --quiet --wheel-dir "$S/cli" "$R/cli"')
+
+
+def test_the_build_lock_holds_every_declared_build_requirement() -> None:
+    """--no-build-isolation builds with what the lock installed and nothing else,
+    so a build requirement added to either pyproject.toml must be in the lock."""
+    import tomllib
+
+    pins = _lock_pins(ROOT / BUILD_LOCK)
+    for project in ("cli", "client"):
+        requires = tomllib.loads((ROOT / project / "pyproject.toml").read_text(encoding="utf-8"))["build-system"]["requires"]
+        wanted = {_norm(_REQ_NAME.match(r).group(1)) for r in requires}
+        assert wanted and wanted <= set(pins), f"{project}: {wanted - set(pins)} missing from {BUILD_LOCK}"
+    # The release runner image reads the lock from its own (allow-list) build context.
+    ignore = (ROOT / "e2e-runner" / "Dockerfile.dockerignore").read_text(encoding="utf-8").splitlines()
+    assert f"!{BUILD_LOCK}" in ignore
+    assert ignore.index(f"!{BUILD_LOCK}") > ignore.index("scripts/**")
+
+
+def test_build_images_runs_no_package_manager_after_a_registry_login() -> None:
+    """Once docker/login-action has run, the job's Docker config holds registry
+    credentials with packages: write. Nothing after that point may download and
+    run code from a package index; the SDK staging step (which builds the CLI
+    wheel) therefore comes before the logins."""
+    steps = _jobs()["build-images"]["steps"]
+    logins = [i for i, s in enumerate(steps) if "docker/login-action" in s.get("uses", "")]
+    assert len(logins) == 2
+    stage = next(i for i, s in enumerate(steps) if s.get("name") == "Stage client SDKs into backend context")
+    assert stage < logins[0]
+    assert "pip" in steps[stage]["run"], "the staging step no longer builds the CLI wheel"
+    for step in steps[logins[0]:]:
+        match = re.search(r"\b(pip3?|npm|npx|pnpm|yarn|uv|go (?:install|get)|cargo|gem|curl|wget)\b", step.get("run", ""))
+        assert not match, f"{step.get('name')!r} runs {match.group(0)} after the registry login"
 
 
 def _lock_pins(path: Path) -> dict[str, str]:
@@ -773,6 +942,74 @@ def test_a_typescript_property_test_keeps_the_fuzzing_signal() -> None:
     } <= fuzzed, fuzzed
 
 
+# A release run of offline-bundle.yml: dispatched by hand, from main, with a
+# version. RELEASING.md step 6 (`gh workflow run offline-bundle.yml -f
+# version=X.Y.Z`) starts it on the default branch, so it meets all three.
+_RELEASE_BUNDLE_RUN = (
+    "env.RELEASE_TAG != '' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'"
+)
+_SIGNER = "test-intelligence/testlookup/.github/workflows/"
+_VERIFY_DOCS = ("RELEASING.md", "README.md", ".github/workflows/ci.yml", ".github/workflows/offline-bundle.yml")
+
+
+def _attestation_verify_commands(text: str) -> list[str]:
+    """Every `gh attestation verify ...` in a document or workflow comment, with
+    its backslash-continued lines joined and comment markers dropped."""
+    commands = []
+    lines = text.splitlines()
+    for at, line in enumerate(lines):
+        start = line.find("gh attestation verify")
+        if start < 0:
+            continue
+        command = line[start:]
+        while command.rstrip().endswith("\\") and at + 1 < len(lines):
+            at += 1
+            command = command.rstrip()[:-1].rstrip() + " " + lines[at].strip().lstrip("#").strip()
+        commands.append(command.split("`")[0].strip())
+    return commands
+
+
+def test_the_bundle_is_signed_only_on_a_release_run_dispatched_from_main() -> None:
+    """Security audit 2026-11-18: the attest step ran on any run that was given a
+    version, including one dispatched from a branch whose workflow file had been
+    changed, and the documented check accepted that signature. A run from another
+    ref still builds and checks the bundle; it is just not signed."""
+    workflow = _workflow(OFFLINE_BUNDLE)
+    assert workflow["env"]["RELEASE_TAG"] == "${{ inputs.version && format('v{0}', inputs.version) || '' }}"
+    triggers = workflow.get("on") or workflow.get(True)
+    assert "version" in triggers["workflow_dispatch"]["inputs"]
+    steps = workflow["jobs"]["build-bundle"]["steps"]
+    signing = [s for s in steps if "attest" in s.get("uses", "") or "steps.attest." in str(s.get("env", ""))]
+    assert len(signing) == 2
+    for step in signing:
+        condition = step["if"]
+        assert "github.ref == 'refs/heads/main'" in condition, step.get("name")
+        assert "github.event_name == 'workflow_dispatch'" in condition, step.get("name")
+        assert "env.RELEASE_TAG != ''" in condition, step.get("name")
+        assert "||" not in condition, "an `or` would let another kind of run sign"
+
+
+def test_the_documented_attestation_checks_name_the_signing_workflow_and_main() -> None:
+    """`gh attestation verify --repo ...` alone accepts a signature from ANY
+    workflow run in the repository, including one started from a branch. The
+    documented commands also bind the workflow file and the source ref."""
+    seen = 0
+    for rel in _VERIFY_DOCS:
+        commands = _attestation_verify_commands((ROOT / rel).read_text(encoding="utf-8"))
+        assert commands, f"{rel} documents no `gh attestation verify` command"
+        for command in commands:
+            seen += 1
+            signer = _SIGNER + ("ci.yml" if "oci://" in command else "offline-bundle.yml")
+            assert f"--signer-workflow {signer}" in command, f"{rel}: {command}"
+            assert "--source-ref refs/heads/main" in command, f"{rel}: {command}"
+            assert "--repo test-intelligence/testlookup" in command, f"{rel}: {command}"
+    assert seen >= 6, f"only {seen} commands found; the scan cannot have looked"
+    # The helper reads a continued command in a workflow comment as one command.
+    assert _attestation_verify_commands("  #   gh attestation verify a.tar.gz \\\n  #     --repo o/r \\\n  #     --bundle b\n  # next") == [
+        "gh attestation verify a.tar.gz --repo o/r --bundle b"
+    ]
+
+
 def test_a_release_bundle_run_attaches_signed_provenance() -> None:
     """Scorecard Signed-Releases (0/10 on 2026-11-18) reads the release assets for
     *.intoto.jsonl / *.sig files. A release run of offline-bundle.yml now attests
@@ -783,14 +1020,14 @@ def test_a_release_bundle_run_attaches_signed_provenance() -> None:
     }
     steps = job["steps"]
     [attest] = [s for s in steps if "attest-build-provenance" in s.get("uses", "")]
-    assert attest["if"] == "env.RELEASE_TAG != ''"
+    assert attest["if"] == _RELEASE_BUNDLE_RUN
     assert [p.strip() for p in attest["with"]["subject-path"].splitlines() if p.strip()] == [
         "dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz",
         "dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz.sha256",
         "dist/SHA256SUMS",
     ]
     [keep] = [s for s in steps if ".intoto.jsonl" in s.get("run", "")]
-    assert keep["if"] == "env.RELEASE_TAG != ''"
+    assert keep["if"] == _RELEASE_BUNDLE_RUN
     assert keep["env"]["BUNDLE_PATH"] == "${{ steps.attest.outputs.bundle-path }}"
     [upload] = [s for s in steps if "upload-artifact" in s.get("uses", "")]
     assert "dist/*.intoto.jsonl" in upload["with"]["path"]

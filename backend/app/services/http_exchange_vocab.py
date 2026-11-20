@@ -40,11 +40,19 @@ HEADER_DENYLIST = (                    # compared lower-case; the VALUE becomes 
     "authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key", "api-key", "x-auth-token",
     "x-access-token", "x-csrf-token", "x-xsrf-token", "x-amz-security-token", "x-goog-api-key",
     "x-session-token", "private-token", "x-gitlab-token", "x-hub-signature", "x-hub-signature-256",
+    "authentication",
 )
-HEADER_SECRET_SUFFIXES = ("token", "secret", "password", "api-key", "apikey", "signature", "credential")   # a name ENDING in one
+HEADER_SECRET_SUFFIXES = (            # a name ENDING in one loses its value ...
+    "token", "secret", "password", "api-key", "apikey", "signature", "credential",
+    "-key", "auth", "session", "sessionid",
+)
+# ... unless it is one of these: names that end in "-key" and are not credentials. The suffix rule only;
+# a HEADER_DENYLIST name is always redacted.
+HEADER_SUFFIX_EXCEPTIONS = ("idempotency-key", "x-idempotency-key", "sec-websocket-key", "surrogate-key", "x-cache-key")
 QUERY_DENYLIST = (                     # query parameter names (lower-case) whose VALUE becomes "[REDACTED]"
     "token", "access_token", "id_token", "refresh_token", "api_key", "apikey", "key", "code", "password",
     "secret", "client_secret", "sig", "signature", "x-amz-signature", "x-amz-credential", "x-amz-security-token", "auth",
+    "subscription-key", "pwd", "passwd", "pass", "sessionid", "session", "jwt", "otp", "pin",
 )
 ENDPOINT_ID_SEGMENT_RES = (            # a path segment matching any of these becomes "{id}" when the SDK sent no template
     r"^\d+$", r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",

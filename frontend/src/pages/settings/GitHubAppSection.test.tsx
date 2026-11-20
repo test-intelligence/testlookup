@@ -16,6 +16,7 @@ const app = vi.hoisted(() => ({
 vi.mock('@/services/githubIntegrationService', () => ({ githubAppService: app }))
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
+import toast from 'react-hot-toast'
 import { GitHubAppAdminCard, GitHubAuthMethod } from './GitHubAppSection'
 import { useGitHubAppCallback } from '@/hooks/useGitHubAppCallback'
 
@@ -44,6 +45,22 @@ describe('GitHubAuthMethod', () => {
     rerender(<GitHubAuthMethod projectId="p1" authKind="app" installationId={777} hasPat canEdit onChange={onChange} />)
     expect(screen.getByTestId('github-installation')).toHaveTextContent('Installation 777')
   })
+
+  // Security audit 2026-11-18: the page navigated to whatever address the server returned.
+  it.each(['javascript:alert(1)', '//attacker.example/install', '/settings', ''])(
+    'does not leave the app for an install address that is not a web link (%s)',
+    async (url) => {
+      app.installUrl.mockResolvedValue({ url, expires_in: 600 })
+      const assign = vi.fn()
+      Object.defineProperty(window, 'location', { value: { ...window.location, assign }, writable: true })
+      render(<GitHubAuthMethod projectId="p1" authKind="app" installationId={null} hasPat canEdit onChange={vi.fn()} />)
+      const button = screen.getByRole('button', { name: 'Install GitHub App' })
+      fireEvent.click(button)
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('not a secure web link')))
+      expect(assign).not.toHaveBeenCalled()
+      await waitFor(() => expect(button).toBeEnabled())
+    },
+  )
 })
 
 describe('useGitHubAppCallback', () => {

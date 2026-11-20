@@ -107,13 +107,23 @@ cp "$EXAMPLE" "$ENV_FILE"
 # Owner-only before any secret is written: .env holds every generated password
 # and the JWT signing key, and cp leaves the umask default (often 0644) that
 # lets other local users read it. The rewrites below keep this mode.
-chmod 600 "$ENV_FILE" 2>/dev/null || true
+# A failed chmod stops here, before any secret exists: carrying on would write
+# them into a file other local users may be able to read.
+if ! chmod 600 "$ENV_FILE"; then
+  rm -f "$ENV_FILE"
+  echo "error: could not make $ENV_FILE readable by you only (chmod 600 failed), so no secrets were written." >&2
+  echo "       Run this in a directory on a filesystem that keeps file permissions." >&2
+  exit 1
+fi
 
 # set_kv KEY VALUE — replace `KEY=...` in place (portable: rewrite via python).
+# The value goes to python in its environment, never as an argument: every
+# local user can read another process's arguments (ps), only the owner can
+# read its environment.
 set_kv() {
-  ENV_FILE="$ENV_FILE" "${PYTHON_CMD[@]}" - "$1" "$2" <<'PY'
+  ENV_FILE="$ENV_FILE" SET_KV_VALUE="$2" "${PYTHON_CMD[@]}" - "$1" <<'PY'
 import os, re, sys
-key, val = sys.argv[1], sys.argv[2]
+key, val = sys.argv[1], os.environ["SET_KV_VALUE"]
 p = os.environ["ENV_FILE"]
 lines = open(p, encoding="utf-8").read().splitlines()
 pat = re.compile(rf"^{re.escape(key)}=")

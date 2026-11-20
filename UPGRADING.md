@@ -33,6 +33,9 @@ backup taken in step 2 together with the previous version's images.
 
 ## After 0.1.0 (the next release)
 
+Security fixes in this release change what some roles may do and what some API
+calls answer. Nothing in the database changes and there is no migration.
+
 ### Check `.env` if you installed the release images by hand
 
 The by-hand steps in `docker-compose.release.yml`, the offline bundle's "Next
@@ -73,6 +76,125 @@ The reset on Projects > Members works only for the shared, auto-created
 QA-lead account. For a project whose default QA lead is a person's own account
 it answers 409.
 
+### Project roles decide writes together with the instance role
+
+A user has a role on the instance and a role in each project. A write into a
+project now needs the route's role in both; before, the instance role and any
+membership were enough. An instance ADMIN is not affected, and reads are
+unchanged. A member whose project role is lower than their instance role gets
+403 "Requires at least <role> role for this project" on actions their project
+role does not cover.
+
+Before upgrading, list those members and raise the project role where needed:
+
+```sql
+SELECT u.username, u.role AS instance_role, p.slug, m.role AS project_role
+FROM project_members m
+JOIN users u ON u.id = m.user_id
+JOIN projects p ON p.id = m.project_id
+WHERE u.role <> 'ADMIN' AND m.role <> u.role;
+```
+
+People added through the app normally have the same role in both places: a
+project's creator and service accounts get their instance role, and an invited
+member gets the role chosen in the invitation.
+
+### Actions that now need a role
+
+| Action | Needs | Before |
+|---|---|---|
+| Create or edit a test plan, add or remove items, record an execution; edit a test strategy | TESTER | any member |
+| Set a suite-review verdict; start AI plan, strategy or coverage generation; run the duplicate-case sweep; recover a live run | QA_ENGINEER | any member |
+| Change a strategy's status; create a public share link; read a webhook's delivery history | QA_LEAD | any member |
+| Queue the training export or a fine-tune; probe the deployment-wide integrations | ADMIN | QA_LEAD |
+
+Members below QA_LEAD see a webhook's target URL as `https://host/...`.
+
+### Sessions
+
+- Access tokens last 30 minutes by default (`JWT_ACCESS_TOKEN_EXPIRE_MINUTES`,
+  was 720). A value set in your `.env` or manifests stays as it is; the 0.1.0
+  `.env.example` set 720, so check it. `expires_in` in token responses follows
+  the setting.
+- The web app, the CLI and the MCP server renew on their own. The Python, JS
+  and Go SDKs do not refresh a password sign-in: a run longer than the token
+  lifetime should use an API key.
+- A refresh token used again more than 10 seconds after it was rotated
+  (`JWT_REFRESH_REUSE_LEEWAY_SECONDS`) signs the user out of every device.
+- The SSE and WebSocket live streams refuse a logged-out token, a refresh
+  token and an account on a temporary password, and an SSE stream ends when
+  its token expires. Clients reconnect with a fresh access token.
+- A live ingestion session ends 24 hours after it was opened, and at once when
+  its API key is revoked or its owner is deactivated or removed from the
+  project. A run longer than 24 hours opens a new session.
+
+### API answers that changed
+
+| Call | Now | Before |
+|---|---|---|
+| Sign-in on a locked account, wrong password | 429 with `Retry-After` | 401 |
+| `POST /auth/change-password`, `/auth/mfa/disable`, `/auth/mfa/recovery-codes` after repeated wrong guesses | 429 | 400 without limit |
+| `POST /auth/first-time-reset`, `/auth/change-password`, `/auth/logout` with an API key | 403 | accepted |
+| Create a user, register or accept an invitation with a username containing other than letters, digits, `.`, `_`, `-` | 422 | accepted |
+| Gate evaluate with an unknown phase id | 404 | 200 "no such phase" |
+| Link a run, or evaluate a gate, with a phase of another release | 404 | accepted |
+| `GET .../ownership/resolve/{cluster_id}` when the project has no such cluster | 404 | answered from another project's cluster |
+| `POST /search/reindex?project_id=` as QA_LEAD | 403 | queued an instance-wide reindex |
+| `GET /test-management/cases/ai-task/{task_id}` for a task that is not yours | 404 | the task's result |
+| `GET /webhooks/{id}/deliveries?limit=` above 200 | 422 | accepted |
+| Create an `uploaded_document` knowledge source with a key outside the project | 422 | accepted |
+| `GET /ai-eval/runs/{id}` for another project's run, as QA_LEAD | 404 | 200 |
+| A second project's `run_start` on `/ws/events` with a run id another project uses (project-bound keys) | 202 | 409 |
+| MCP `create_share_link` without `confirm=true` | returns a notice, creates nothing | created the link |
+
+Existing usernames that contain `@` keep working for sign-in.
+
+### Outbound calls, MCP and the Fixer
+
+- **Custom LLM endpoint.** If `openai` or `openrouter` points at a gateway (a base URL that is not the provider's own) and the key is only in the environment, store the key in Settings > AI Configuration, or set `OPENAI_API_BASE` / `OPENROUTER_BASE_URL` in the environment to the gateway. Otherwise model calls to that endpoint are refused.
+- **Knowledge sources.** `internal_url` sources stop syncing in offline mode and must be on the domain allow-list when one is set. Removing a domain from the allow-list now also stops existing sources on it. A Jira or Confluence source whose stored `external_id` is not an issue key or page id takes the id from its URL, and fails to sync if the URL has none.
+- **Fixer.** Suggest mode opens pull requests only with the `docker` runner. With `workflow_dispatch`, attempts end as errors marked "baseline only". Docker command templates that write outside `/work` and `/tmp` fail under the read-only root filesystem.
+- **OpenShift.** For a project with a saved namespace, reports naming another namespace are no longer enriched with pod data.
+- **CI job link.** A `ci_run_url` that is not an http(s) address is dropped. Runs are then matched by job and build number, as they are when no link is sent.
+- **MCP.** Put the MCP env file next to `server.py` or name it in `TESTLOOKUP_ENV_FILE`; a `.env` in the working directory is no longer read. Clients that parse resource bodies read the previous body under `data`. Ids passed to tools must be the UUIDs the list tools return.
+- **`GET /settings/ai/model-status`.** `ollama_error` is one of `refused_by_policy`, `unreachable`, `unexpected_status`, `invalid_response`.
+
+### Install and deployment files
+
+- **Redis password in Compose.** `docker-compose.release.yml` and the single-VM stack refuse to start without `REDIS_PASSWORD`. Installs made with `install.sh` or the offline bundle already have one. For a hand-made `.env`, set `REDIS_PASSWORD` and put it in `REDIS_URL`, `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` (`redis://:<password>@redis:6379/0`), then restart the stack.
+- **Request body limit.** A request body over 10 MiB (100 MiB on the ingest and import routes) answers 413. Raise `REQUEST_BODY_MAX_BYTES` / `REQUEST_BODY_UPLOAD_MAX_BYTES` if you send larger ones, and keep them at or above your proxy's limit.
+- **Installer and release tags.** `TL_REF=v0.1.0` alone now also selects the `0.1.0` images (it used to run `:latest`), and the files are checked against the release's `SHA256SUMS`. With nothing set the installer still follows `main` and `:latest`.
+- **Cloud ingresses.** EKS, GKE and AKS publish `/health/live`, `/health/ready`, `/health/version` and `/health/details` only. A monitor that called another `/health/...` path through the ingress must use one of these or the Service directly. GKE answers http with a redirect to https.
+- **`dev` overlay.** Its Ingress uses the `nginx-internal` class; reach a dev deploy through that class or `kubectl port-forward`.
+- **NetworkPolicy.** Check that your cluster enforces NetworkPolicy (EKS: the VPC CNI setting; AKS: a network policy option; GKE: Dataplane V2 or network policy). On EKS, read the guide before setting `enable_network_policy = true`: the load balancer's addresses must be admitted to the frontend and backend first.
+
+### Health routes, rate limits, CLI and SDKs
+
+- **Monitoring.** A monitor that read `/health/details` or `/health/ingestion` without a credential gets 401. Send an API key in `X-API-Key`, or use `/health/ready` (public; it names the data store that is down).
+- **Rate limits in Redis.** In production and staging the API opens a second, synchronous Redis connection for rate-limit counters. `RATE_LIMIT_SHARED_STORAGE=off` keeps per-process counters. Sign-in answers 429 after 20 attempts a minute for one account name (`LOGIN_ATTEMPTS_PER_USERNAME_PER_MINUTE`).
+- **`ci-verdict` in pipelines.** A step that ran `testlookup ci-verdict` right after an upload, with no `--timeout-seconds`, now exits 2 while the run is still in progress. Add `--timeout-seconds N` to wait for the run, or `--allow-partial` to keep the old behaviour.
+- **`testlookup auth logout`** also removes the API key stored in the profile. Scripts that expected the key to remain must set it again.
+- **JS and Go SDKs.** An endpoint that answers with a redirect to another host, port or scheme (for example http to https) now fails with a message that names the target. Configure the final address.
+- **Bucket-drop ingestion.** A dropped build with a file over 50 MiB, or over the result limit, is refused. A project whose slug is `uploads` no longer has its dropped builds ingested.
+- **Failure clusters.** The stored `failure_clusters` vector collection is no longer written; an existing one stays until it is dropped with its collection generation and can be deleted.
+- **Shared report pages** are sent with `Cache-Control: no-store`, so proxies and browsers no longer cache them.
+
+### Cluster installs (K3s, OpenShift, Kubernetes)
+
+- **K3s.** The next `k3ssetup/deploy-k3s.sh` run adds Redis and MongoDB passwords to `testlookup-secrets` and to the credentials file, creates the MongoDB root user, restarts both stores with authentication and rolls the application pods. Take a backup first. The script checks that the Traefik pods carry the label `app.kubernetes.io/name=traefik` and stops before changing anything if they do not. Do not delete `testlookup-secrets` to start clean: the MongoDB volume keeps its user.
+- **OpenShift.** The first deploy with the new script needs cluster-admin, restarts every data store once and adds a Redis password. Afterwards remove the old grant: `oc adm policy remove-scc-from-user anyuid -z default -n <namespace>` (or one run with `REVOKE_DEFAULT_ANYUID=true`). An offline-bundle install must grant `anyuid` to `testlookup-anyuid` before applying the new manifests, and should add `REDIS_PASSWORD`, `REDIS_URL`, `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` to its Secret.
+- **Frontend container port.** nginx listens on 8080 inside the container. If you publish or route to the container port yourself (your own `ports:` line, a numeric `targetPort`, a pod NetworkPolicy), change the container side from 80 to 8080, and keep the Compose file and the frontend image on the same version. A file of your own in `/etc/nginx/conf.d` must `listen 8080`.
+- **Read-only containers.** A custom patch that replaces a whole `volumes` or `volumeMounts` list on the TestLookup Deployments removes the new `emptyDir`s; append with `/-`. A pod of your own in the namespace that uses `hostPath`, a host namespace, a host port or privileged mode is refused by the `baseline` rule when next created.
+- **Backups.** With MongoDB authentication on, `MONGO_URI` in the Secret must carry the credentials (the deploy scripts write it that way).
+
+### Development starts need real secrets
+
+With `APP_ENV=development` (the default when the variable is unset) the API
+refuses to start while `JWT_SECRET_KEY` is the placeholder from the source.
+`scripts/gen-dev-env.sh` writes generated secrets; `ALLOW_INSECURE_DEV_SECRETS=true`
+starts anyway and is only for a machine nobody else can reach. Production and
+staging already refused placeholder secrets.
+
 ## 0.1.0 — the first public release
 
 0.1.0 is the first tagged release. If you run a snapshot built from the
@@ -106,7 +228,7 @@ the durable records live in PostgreSQL and MongoDB. Before switching:
 
 Starting empty means: access tokens revoked by a logout or a password change
 are accepted again until they expire (`JWT_ACCESS_TOKEN_EXPIRE_MINUTES`,
-default 720) — rotate `JWT_SECRET_KEY` during the upgrade to force everyone to
+720 by default in 0.1.0) — rotate `JWT_SECRET_KEY` during the upgrade to force everyone to
 sign in again if that matters; a promoted fine-tuned model falls back to
 `LLM_MODEL` until it is promoted again; the next search-index pass re-scans from
 the start; live sessions that were open must reconnect.

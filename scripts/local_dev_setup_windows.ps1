@@ -126,6 +126,19 @@ try {
         } else {
             Copy-Item ".env.example" ".env"
             Write-Host "Created .env from .env.example"
+            # In development the API refuses to start on the placeholder
+            # JWT_SECRET_KEY, so give this machine its own signing value now.
+            $jwtBytes = New-Object byte[] 32
+            [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($jwtBytes)
+            $jwtValue = -join ($jwtBytes | ForEach-Object { $_.ToString("x2") })
+            # .NET file calls: UTF-8 without a byte-order mark on every PowerShell version.
+            $envFullPath = (Resolve-Path ".env").Path
+            $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+            $envLines = [System.IO.File]::ReadAllLines($envFullPath, $utf8NoBom) | ForEach-Object {
+                if ($_ -match '^JWT_SECRET_KEY=(<set-|<your-|change-me-)') { "JWT_SECRET_KEY=$jwtValue" } else { $_ }
+            }
+            [System.IO.File]::WriteAllLines($envFullPath, [string[]]$envLines, $utf8NoBom)
+            Write-Host "Generated JWT_SECRET_KEY in .env"
         }
     }
 

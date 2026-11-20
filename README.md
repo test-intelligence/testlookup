@@ -115,6 +115,26 @@ The website's [quick start](https://testlookup.app/docs/next/quickstart/) uses t
 
 The [command above](#run-it-in-one-command). It pulls `ghcr.io/test-intelligence/testlookup` images and builds nothing. Sign-in is always `admin`, with the password from `.env` (`INITIAL_ADMIN_PASSWORD`). Other settings (`TESTLOOKUP_VERSION` to pin an image tag, `TL_PROFILE=local-llm` for local models, `TL_DIR`, `TL_NO_UP`) are in the [Compose guide](docs/operations/deploy-compose.md#release-images-without-a-clone). No release has been tagged yet, so the default image tag, `latest`, follows the newest build of `main`.
 
+#### Check a release before you run it
+
+CI signs every published image and the offline bundle when it builds them. With the [GitHub CLI](https://cli.github.com/) you can check that a release image or bundle was built by this repository's own workflow, in a run on `main`:
+
+```bash
+# An image (the same for frontend and mcp)
+gh attestation verify oci://ghcr.io/test-intelligence/testlookup/backend:vX.Y.Z \
+  --repo test-intelligence/testlookup \
+  --signer-workflow test-intelligence/testlookup/.github/workflows/ci.yml \
+  --source-ref refs/heads/main
+
+# The offline bundle from a release page
+gh attestation verify testlookup-offline-X.Y.Z.tar.gz \
+  --repo test-intelligence/testlookup \
+  --signer-workflow test-intelligence/testlookup/.github/workflows/offline-bundle.yml \
+  --source-ref refs/heads/main
+```
+
+Keep the last two flags: without them the command accepts a signature made by any workflow run in the repository, including one started from a branch.
+
 ### Option B: build from a clone (development)
 
 Needs Git and GNU Make as well. The sample upload step runs `curl` and `python3` on your machine.

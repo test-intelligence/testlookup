@@ -202,8 +202,9 @@ produce an insecure install:
 - **Startup fail-fast** — in production/staging, `Settings.
   critical_security_failures` (the CRITICAL subset of
   `validate_production_secrets()`) refuses to boot on default/guessable
-  secrets. Dev is never blocked (the check emits nothing outside
-  production/staging); `scripts/gen-dev-env.sh` / `make quickstart` generate
+  secrets. In development each placeholder secret is logged as a warning
+  and a placeholder `JWT_SECRET_KEY` refuses to boot unless
+  `ALLOW_INSECURE_DEV_SECRETS=true`; `scripts/gen-dev-env.sh` / `make quickstart` generate
   random local secrets and re-enable dev conveniences deliberately.
 - **Dev auto-login** is a 404 unless explicitly enabled — the endpoint that
   mints an admin JWT for local demos cannot exist in a default deployment.
@@ -444,11 +445,12 @@ an auditor will ask about:
   real and inherent to lockout. Set `lockout_enabled: false` if that trade is
   wrong for your deployment.
 - **The lockout response leaks account existence.** A locked account answers
-  429 rather than the generic 401. The lock is checked *after* password
-  verification, so only someone who already typed the correct password sees
-  it, and the pre-existing `403 Account disabled` branch leaks the same class
-  of fact. The alternative — a generic 401 — leaves a locked-out user retrying
-  forever with no idea why.
+  429 with `Retry-After` to every sign-in attempt, whatever the password, so
+  any caller who names a locked account learns that it exists and is locked.
+  The answer does not depend on the password (it used to: 401 for a wrong one,
+  429 for the right one, which confirmed a correct guess during the lock). The
+  `403 Account disabled` branch leaks the same class of fact. The alternative
+  — a generic 401 — leaves a locked-out user retrying with no idea why.
 - **`identity_events` still has no retention clock.** MFA verification
   failures and lockouts write rows there, so a sustained credential-stuffing
   campaign grows that table without bound (the retention purge does not touch

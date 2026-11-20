@@ -13,6 +13,12 @@ def _e(text: str, max_len: int = 500) -> str:
     return s[:max_len] + "..." if len(s) > max_len else s
 
 
+def _n(value: object) -> str:
+    """A count or score for HTML. Escaped like text, because the panel is a stored
+    dict and nothing guarantees the value is a number; unlike ``_e`` it keeps ``0``."""
+    return html.escape(str(value))
+
+
 _SIGNAL_COLOURS = {
     "GO": "#059669",
     "CONDITIONAL_GO": "#D97706",
@@ -41,7 +47,7 @@ def render_executive_panel_email(panel: dict) -> str:
     parts: list[str] = []
 
     # Header: headline + status badge
-    risk_html = f'<span style="color:#94a3b8;font-size:12px;margin-left:8px;">Risk {risk}/100</span>' if risk is not None else ""
+    risk_html = f'<span style="color:#94a3b8;font-size:12px;margin-left:8px;">Risk {_n(risk)}/100</span>' if risk is not None else ""
     parts.append(f"""
     <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:16px;">
       <tr>
@@ -70,7 +76,7 @@ def render_executive_panel_email(panel: dict) -> str:
     <table width="100%" cellpadding="0" cellspacing="0" style="background:#1c1917;border:1px solid #44403c;border-radius:8px;margin-bottom:12px;">
       <tr>
         <td style="padding:8px 12px;font-size:13px;color:#fbbf24;">
-          ⚠ <b>{cat}</b> — {dom.get('count', 0)} failure{'s' if dom.get('count', 0) != 1 else ''} ({dom.get('percentage', 0):.0f}%)
+          ⚠ <b>{cat}</b> — {_n(dom.get('count', 0))} failure{'s' if dom.get('count', 0) != 1 else ''} ({dom.get('percentage', 0):.0f}%)
         </td>
       </tr>
     </table>""")
@@ -91,8 +97,8 @@ def render_executive_panel_email(panel: dict) -> str:
       <tr>
         <td style="padding:8px 12px;font-size:13px;color:#94a3b8;">
           Baseline: <span style="color:{delta_colour};font-weight:600;">{delta_str}</span> pass rate
-          · {bl.get('new_failures', 0)} new failures
-          · {bl.get('resolved', 0)} resolved
+          · {_n(bl.get('new_failures', 0))} new failures
+          · {_n(bl.get('resolved', 0))} resolved
         </td>
       </tr>
     </table>""")
@@ -120,11 +126,11 @@ def render_metrics_strip_email(metrics: dict) -> str:
           <div style="font-size:11px;color:#64748b;text-transform:uppercase;">Pass Rate</div>
         </td>
         <td style="padding:10px;text-align:center;width:33%;">
-          <div style="font-size:22px;font-weight:700;color:#f1f5f9;">{metrics.get('total_tests', 0)}</div>
+          <div style="font-size:22px;font-weight:700;color:#f1f5f9;">{_n(metrics.get('total_tests', 0))}</div>
           <div style="font-size:11px;color:#64748b;text-transform:uppercase;">Total Tests</div>
         </td>
         <td style="padding:10px;text-align:center;width:33%;">
-          <div style="font-size:22px;font-weight:700;color:{fail_colour};">{failed}</div>
+          <div style="font-size:22px;font-weight:700;color:{fail_colour};">{_n(failed)}</div>
           <div style="font-size:11px;color:#64748b;text-transform:uppercase;">{'All Passed' if failed == 0 else 'Failed'}</div>
         </td>
       </tr>
@@ -162,7 +168,7 @@ def render_release_signal_email(recommendation: str, risk_score: int | None = No
     recommendation = str(recommendation)
     colour = _SIGNAL_COLOURS.get(recommendation, "#D97706")
     bg = _SIGNAL_BG.get(recommendation, "#78350f")
-    risk_html = f" · Risk {risk_score}/100" if risk_score is not None else ""
+    risk_html = f" · Risk {_n(risk_score)}/100" if risk_score is not None else ""
     return f"""
     <span style="display:inline-block;background:{bg};color:{colour};border:1px solid {colour};padding:4px 10px;border-radius:6px;font-size:12px;font-weight:700;">
       {_e(recommendation.replace('_', ' '))}{risk_html}

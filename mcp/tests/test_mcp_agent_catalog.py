@@ -127,20 +127,20 @@ def test_get_agent_refuses_a_malformed_id_without_calling_the_api(monkeypatch):
 
 
 def test_invoke_sends_the_callers_idempotency_key(monkeypatch):
-    tools, calls = _tools(monkeypatch, post={"id": "inv-1", "status": "in_progress", "review": {"state": "pending_review"}})
+    tools, calls = _tools(monkeypatch, post={"id": "66666666-6666-4666-8666-666666666666", "status": "in_progress", "review": {"state": "pending_review"}})
     out = asyncio.run(tools["invoke_agent"]("agent.summary.v1", PROJECT, RUN, idempotency_key="key-abcdefgh"))
     method, path, sent = calls[0]
     assert (method, path) == ("POST", "/api/v1/agents/agent.summary.v1/invoke")
     assert sent["headers"] == {"Idempotency-Key": "key-abcdefgh"}
     assert sent["json"]["input"]["payload"] == {"test_run_id": RUN}
     assert out == {
-        "ok": True, "invocation_id": "inv-1", "status": "in_progress", "review_state": "pending_review",
+        "ok": True, "invocation_id": "66666666-6666-4666-8666-666666666666", "status": "in_progress", "review_state": "pending_review",
         "idempotency_key": "key-abcdefgh", "note": "Poll get_agent_invocation for status and output.",
     }
 
 
 def test_invoke_forwards_config_overrides_to_the_rest_authority(monkeypatch):
-    tools, calls = _tools(monkeypatch, post={"id": "inv-1", "status": "in_progress"})
+    tools, calls = _tools(monkeypatch, post={"id": "66666666-6666-4666-8666-666666666666", "status": "in_progress"})
     override = {"model": {"tier": "deterministic"}}
     asyncio.run(
         tools["invoke_agent"](
@@ -154,7 +154,7 @@ def test_invoke_forwards_config_overrides_to_the_rest_authority(monkeypatch):
 
 
 def test_invoke_generates_a_key_and_returns_it_for_reuse(monkeypatch):
-    tools, calls = _tools(monkeypatch, post={"id": "inv-1", "status": "in_progress"})
+    tools, calls = _tools(monkeypatch, post={"id": "66666666-6666-4666-8666-666666666666", "status": "in_progress"})
     out = asyncio.run(tools["invoke_agent"]("agent.summary.v1", PROJECT, RUN))
     sent_key = calls[0][2]["headers"]["Idempotency-Key"]
     assert uuid.UUID(sent_key) and out["idempotency_key"] == sent_key
@@ -178,13 +178,13 @@ def test_invoke_turns_http_errors_into_a_structured_result(monkeypatch):
 
 def test_the_invocation_view_carries_output_and_ends_with_review_state(monkeypatch):
     tools, calls = _tools(monkeypatch, get={
-        "id": "inv-1", "agent_id": "agent.summary.v1", "status": "completed", "attempt": 1, "max_attempts": 5,
+        "id": "66666666-6666-4666-8666-666666666666", "agent_id": "agent.summary.v1", "status": "completed", "attempt": 1, "max_attempts": 5,
         "output": {"executive_summary": "Checkout regressed."},
         "review": {"state": "pending_review", "message": "Human review required before use."},
         "ai_disclaimer": "AI-generated content. Verify before acting.",
     })
-    text = asyncio.run(tools["get_agent_invocation"]("inv-1"))
-    assert calls[0][:2] == ("GET", "/api/v1/agents/invocations/inv-1")
+    text = asyncio.run(tools["get_agent_invocation"]("66666666-6666-4666-8666-666666666666"))
+    assert calls[0][:2] == ("GET", "/api/v1/agents/invocations/66666666-6666-4666-8666-666666666666")
     assert json.dumps({"executive_summary": "Checkout regressed."}, indent=2) in text
     assert "**review_state:** `pending_review`" in text
     assert text.rstrip().endswith("AI-generated content. Verify before acting.")
@@ -197,7 +197,7 @@ def test_the_invocation_view_shows_the_sanitized_frozen_config():
         "clamps": [{"field": "timeout_seconds", "layer": "env"}],
     }
     text = agents.render_invocation({
-        "id": "inv-1",
+        "id": "66666666-6666-4666-8666-666666666666",
         "agent_id": "agent.summary.v1",
         "status": "in_progress",
         "attempt": 1,
@@ -239,7 +239,7 @@ def test_invoke_body_refuses_a_payload_that_is_not_an_object(bad):
 
 
 def test_an_oversize_payload_is_refused_without_calling_the_api(monkeypatch):
-    tools, calls = _tools(monkeypatch, post={"id": "inv-1"})
+    tools, calls = _tools(monkeypatch, post={"id": "66666666-6666-4666-8666-666666666666"})
     filler = "x" * (agents.INLINE_INPUT_MAX_BYTES + 1)
     out = asyncio.run(tools["invoke_agent"]("agent.summary.v1", PROJECT, RUN, payload={"filler": filler}))
     assert out["ok"] is False and "262144" in out["error"]
@@ -251,7 +251,7 @@ def test_an_oversize_payload_is_refused_without_calling_the_api(monkeypatch):
 
 
 def test_invoke_sends_the_payload_verbatim_with_the_same_idempotency_key(monkeypatch):
-    tools, calls = _tools(monkeypatch, post={"id": "inv-1", "status": "in_progress"})
+    tools, calls = _tools(monkeypatch, post={"id": "66666666-6666-4666-8666-666666666666", "status": "in_progress"})
     out = asyncio.run(
         tools["invoke_agent"]("agent.summary.v1", PROJECT, RUN, payload=INLINE, idempotency_key="key-inline01")
     )
@@ -265,7 +265,7 @@ def test_invoke_sends_the_payload_verbatim_with_the_same_idempotency_key(monkeyp
 def test_the_invocation_view_renders_the_redacted_stored_input():
     stored = {"schema_version": 1, "failures": [{"test_name": "checkout", "root_cause": "token [REDACTED]"}]}
     text = agents.render_invocation({
-        "id": "inv-1", "agent_id": "agent.summary.v1", "status": "completed", "attempt": 1, "max_attempts": 5,
+        "id": "66666666-6666-4666-8666-666666666666", "agent_id": "agent.summary.v1", "status": "completed", "attempt": 1, "max_attempts": 5,
         "input_kind": "inline", "input_sha256": "1a2b3c4d5e6f" + "a" * 52, "input": stored,
         "review": {"state": "pending_review"},
     })
@@ -332,7 +332,7 @@ def test_post_forwards_extra_headers_but_auth_headers_win(monkeypatch):
     class _Http:
         async def post(self, path, json=None, params=None, headers=None):
             seen["headers"] = headers
-            return httpx.Response(202, json={"id": "inv-1"}, request=httpx.Request("POST", "http://backend" + path))
+            return httpx.Response(202, json={"id": "66666666-6666-4666-8666-666666666666"}, request=httpx.Request("POST", "http://backend" + path))
 
     async def _auth():
         return {"Authorization": "Bearer real"}, True
@@ -340,7 +340,7 @@ def test_post_forwards_extra_headers_but_auth_headers_win(monkeypatch):
     monkeypatch.setattr(client, "_get_client", lambda: _Http())
     monkeypatch.setattr(client, "_auth_context", _auth)
     asyncio.run(client.post(
-        "/api/v1/agents/agent.summary.v1/invoke", json_body={},
+        client.path("/api/v1/agents/{agent_id}/invoke", agent_id="agent.summary.v1"), json_body={},
         extra_headers={"Idempotency-Key": "k-12345678", "Authorization": "Bearer spoofed"},
     ))
     assert seen["headers"] == {"Idempotency-Key": "k-12345678", "Authorization": "Bearer real"}

@@ -722,8 +722,10 @@ public class TestLookupReporter {
             String effectiveSuite = opts.suiteName != null ? opts.suiteName : this.suiteName;
             if (effectiveSuite  != null) event.put("suite_name",     effectiveSuite);
             if (opts.className  != null) event.put("class_name",     opts.className);
-            if (opts.error      != null) event.put("error_message",  opts.error);
-            if (opts.stackTrace != null) event.put("stack_trace",    opts.stackTrace);
+            // Credentials that a failure message or stack trace quotes are
+            // replaced before the event is queued (the server redacts again).
+            if (opts.error      != null) event.put("error_message",  io.testlookup.http.HttpRedaction.failureText(opts.error));
+            if (opts.stackTrace != null) event.put("stack_trace",    io.testlookup.http.HttpRedaction.failureText(opts.stackTrace));
             if (opts.tags != null && !opts.tags.isEmpty()) {
                 ArrayNode arr = event.putArray("tags");
                 opts.tags.forEach(arr::add);

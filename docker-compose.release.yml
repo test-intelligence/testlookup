@@ -37,10 +37,27 @@ name: testlookup
 #
 # This stack still reads secrets from .env — generate one with
 # scripts/gen-dev-env.sh (local/demo) or supply your own for production.
+#
+# PLAIN HTTP, ON EVERY NETWORK INTERFACE: the frontend is published on port
+# 3000 of every interface and nothing in this file terminates TLS. Anyone on
+# the same network can read passwords, session tokens and API keys sent to
+# it. Before other people use the install, put a TLS-terminating reverse
+# proxy in front of it and set FRONTEND_PUBLISH_ADDR=127.0.0.1 in .env so
+# port 3000 answers only on this host (docs/operations/deploy-compose.md,
+# "Before other people use it"). Every other port is already loopback-only.
 # ============================================================
 
 x-app-image: &app-backend-image
   image: ${TESTLOOKUP_IMAGE:-ghcr.io/test-intelligence/testlookup}/backend:${TESTLOOKUP_VERSION:-latest}
+
+# The backend image's services run as a non-root user from the start, so they
+# need no Linux capability and must never gain a privilege (a setuid binary, a
+# file capability). The same two restrictions run on the public demo
+# (docker-compose.demo.yml, x-app-lockdown). The data stores and nginx start
+# as root and drop to their own user, so they are not covered here.
+x-app-lockdown: &app-lockdown
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
 
 services:
 
@@ -76,7 +93,7 @@ services:
       - testlookup_net
 
   db-budget-check:
-    <<: *app-backend-image
+    <<: [*app-backend-image, *app-lockdown]
     command: python -m app.db.compose_budget_gate
     restart: "no"
     environment:
@@ -121,12 +138,15 @@ services:
     image: valkey/valkey:8.1-alpine
     container_name: testlookup_redis
     restart: unless-stopped
-    # --requirepass is applied only when REDIS_PASSWORD is set (the container
-    # shell evaluates ${...:+...}; $$ escapes compose interpolation). Empty
-    # password → no auth, backward-compatible for a purely-internal Redis.
-    command: sh -c 'valkey-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy volatile-lru $${REDIS_PASSWORD:+--requirepass "$$REDIS_PASSWORD"}'
+    # A password is required: this is the Celery broker, the token-revocation
+    # store and the authorisation cache, and every container on testlookup_net
+    # can open a connection to it. Compose stops here when REDIS_PASSWORD is
+    # missing or empty (scripts/gen-dev-env.sh writes one, and the same value
+    # goes into every redis:// URL below). $$ escapes Compose interpolation, so
+    # the container shell reads the variable.
+    command: sh -c 'valkey-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy volatile-lru --requirepass "$$REDIS_PASSWORD"'
     environment:
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?REDIS_PASSWORD is required — generate a .env with scripts/gen-dev-env.sh, or set one (openssl rand -hex 24)}
     # Bind to loopback only: Redis is the Celery broker (task injection = code
     # execution) + JWT-revocation + authz cache and must never be reachable from
     # the LAN/internet. Internal services reach it over the compose network by
@@ -184,7 +204,7 @@ services:
   # Creates every bucket the backend writes to (idempotent) with the backend
   # image's /app/scripts/s3_setup.py (boto3) — no separate client image.
   minio-setup:
-    <<: *app-backend-image
+    <<: [*app-backend-image, *app-lockdown]
     container_name: testlookup_minio_setup
     command: ["python", "scripts/s3_setup.py"]
     restart: "no"
@@ -265,7 +285,7 @@ services:
   # PROMETHEUS_MULTIPROC_DIR makes /metrics aggregate all four processes.
   # ──────────────────────────────────────────────────────────
   db-migrate:
-    <<: *app-backend-image
+    <<: [*app-backend-image, *app-lockdown]
     # Migrate, then create the first admin on a NEW database only (an existing
     # admin is never modified). The password is INITIAL_ADMIN_PASSWORD from
     # .env; when empty, a random one is printed once in this service's logs.
@@ -291,7 +311,7 @@ services:
       - testlookup_net
 
   backend:
-    <<: *app-backend-image
+    <<: [*app-backend-image, *app-lockdown]
     # Deployment-owned command bypasses legacy image entrypoints that bundled
     # Alembic, so an immediate N-1 rollback can start against N's schema.
     command: sh -c 'rm -f "$$PROMETHEUS_MULTIPROC_DIR"/*.db && exec gunicorn -c gunicorn_conf.py app.main:app'
@@ -331,9 +351,9 @@ services:
       - CHROMA_PORT=8000
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
       - MONGO_URI=mongodb://${MONGO_USER:-testlookup}:${MONGO_PASSWORD}@mongo:27017/${MONGO_DB:-testlookup_logs}?authSource=admin
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/1
       - LIVE_INGEST_SHARD_COUNT=8
       # Secure-by-default: a naive `docker compose up` (no .env) runs in
       # production mode (dev-login off, refuses default secrets).
@@ -361,7 +381,7 @@ services:
       - chroma_net
 
   worker:
-    <<: *app-backend-image
+    <<: [*app-backend-image, *app-lockdown]
     container_name: testlookup_worker
     restart: unless-stopped
     # Keep this subscription set in lockstep with celery_app routes and the
@@ -385,9 +405,9 @@ services:
       - CHROMA_PORT=8000
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
       - MONGO_URI=mongodb://${MONGO_USER:-testlookup}:${MONGO_PASSWORD}@mongo:27017/${MONGO_DB:-testlookup_logs}?authSource=admin
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/1
       - LIVE_INGEST_SHARD_COUNT=8
       - APP_ENV=${APP_ENV:-production}
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
@@ -416,7 +436,7 @@ services:
   # investigation cannot starve ingestion/analysis; low concurrency and a short
   # max-tasks-per-child because these tasks are memory-heavy and long-running.
   worker-children:
-    <<: *app-backend-image
+    <<: [*app-backend-image, *app-lockdown]
     container_name: testlookup_worker_children
     restart: unless-stopped
     command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CHILDREN_CONCURRENCY:-1} --prefetch-multiplier=1 -Q agent_children --max-tasks-per-child=25
@@ -437,9 +457,9 @@ services:
       - CHROMA_PORT=8000
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-testlookup_user}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-testlookup}
       - MONGO_URI=mongodb://${MONGO_USER:-testlookup}:${MONGO_PASSWORD}@mongo:27017/${MONGO_DB:-testlookup_logs}?authSource=admin
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/1
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/1
       - APP_ENV=${APP_ENV:-production}
       - DEV_AUTO_LOGIN_ENABLED=${DEV_AUTO_LOGIN_ENABLED:-false}
       - PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus-multiproc
@@ -459,15 +479,15 @@ services:
       - chroma_net
 
   beat:
-    <<: *app-backend-image
+    <<: [*app-backend-image, *app-lockdown]
     container_name: testlookup_beat
     restart: unless-stopped
     command: celery -A app.worker.celery_app beat --loglevel=info
     env_file:
       - .env
     environment:
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
     # Not the image's API probe (beat serves no port): the scheduler process
     # is alive. Beat writes no ready file; the Kubernetes liveness probe makes
     # the same check. Exec form on purpose: under CMD-SHELL the `sh -c` line
@@ -490,17 +510,23 @@ services:
     image: ${TESTLOOKUP_IMAGE:-ghcr.io/test-intelligence/testlookup}/frontend:${TESTLOOKUP_VERSION:-latest}
     container_name: testlookup_frontend
     restart: unless-stopped
-    # Production image is nginx serving the built SPA on :80 and proxying /api
-    # to BACKEND_UPSTREAM (default backend:8000).
+    # Production image is nginx serving the built SPA and proxying /api to
+    # BACKEND_UPSTREAM (default backend:8000). nginx runs as a non-root user
+    # (uid 101) and listens on 8080 inside the container; the host port is
+    # still 3000.
     ports:
       # Every interface by default (unchanged); FRONTEND_PUBLISH_ADDR=127.0.0.1
       # when something on the host (a tunnel, a reverse proxy) is the only way in.
-      - "${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:80"
+      - "${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:8080"
     environment:
       - BACKEND_UPSTREAM=backend:8000
     healthcheck:
       # busybox wget ships in the nginx image; the same path as the k8s probes.
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      # 8080 is where nginx listens. The second try, on 80, is for the public
+      # demo (docker-compose.demo.yml keeps nginx on 80 for its tunnel) and for
+      # a frontend image from before the port moved (a rollback that pins an
+      # older TESTLOOKUP_VERSION, or the upgrade test's previous build).
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || wget -q -O /dev/null http://127.0.0.1:80/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -515,7 +541,7 @@ services:
   # Loads three demo projects + 30 days of history. Idempotent.
   # ──────────────────────────────────────────────────────────
   seed-init:
-    <<: *app-backend-image
+    <<: [*app-backend-image, *app-lockdown]
     container_name: testlookup_seed_init
     profiles: ["demo"]
     restart: "no"

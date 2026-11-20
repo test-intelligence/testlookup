@@ -134,11 +134,21 @@ async def _load(db, *, user_id=USER_ID, project_id=PROJECT_ID, required_role=Use
 @pytest.mark.asyncio
 async def test_a_qa_lead_member_of_the_project_passes():
     user = _user()
-    db = _ScriptedSession(user, uuid.uuid4())
+    db = _ScriptedSession(user, "QA_LEAD")  # the membership lookup answers the project role
     assert await _load(db, user_id=str(USER_ID), project_id=str(PROJECT_ID)) is user
     assert len(db.statements) == 2
     compiled = str(db.statements[1].compile(compile_kwargs={"literal_binds": True}))
     assert "project_members" in compiled and PROJECT_ID.hex in compiled.replace("-", "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("project_role", ["VIEWER", "TESTER", "QA_ENGINEER", "not-a-role"])
+async def test_an_instance_lead_with_a_lower_project_role_is_refused(project_role):
+    """The lower of the instance role and the project role decides (security audit 2026-11-18)."""
+    db = _ScriptedSession(_user(), project_role)
+    with pytest.raises(Exception) as refused:
+        await _load(db, user_id=str(USER_ID), project_id=str(PROJECT_ID))
+    assert type(refused.value) is type(base._refuse_approver())
 
 
 @pytest.mark.asyncio

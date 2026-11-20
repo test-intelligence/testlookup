@@ -55,6 +55,8 @@ patches:
   - patch: |-
       - op: remove
         path: /spec/template/spec/containers/0/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/initContainers/0/securityContext/runAsUser
     target:
       kind: Deployment
       name: testlookup-worker-critical
@@ -62,6 +64,8 @@ patches:
   - patch: |-
       - op: remove
         path: /spec/template/spec/containers/0/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/initContainers/0/securityContext/runAsUser
     target:
       kind: Deployment
       name: testlookup-worker-ingestion
@@ -69,6 +73,8 @@ patches:
   - patch: |-
       - op: remove
         path: /spec/template/spec/containers/0/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/initContainers/0/securityContext/runAsUser
     target:
       kind: Deployment
       name: testlookup-worker-ai
@@ -76,6 +82,8 @@ patches:
   - patch: |-
       - op: remove
         path: /spec/template/spec/containers/0/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/initContainers/0/securityContext/runAsUser
     target:
       kind: Deployment
       name: testlookup-worker-default
@@ -83,6 +91,8 @@ patches:
   - patch: |-
       - op: remove
         path: /spec/template/spec/containers/0/securityContext/runAsUser
+      - op: remove
+        path: /spec/template/spec/initContainers/0/securityContext/runAsUser
     target:
       kind: Deployment
       name: testlookup-beat

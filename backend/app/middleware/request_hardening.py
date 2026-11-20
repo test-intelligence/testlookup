@@ -20,10 +20,25 @@ and refusing byte ranges costs nothing:
   FileResponse. Nothing in the app serves byte ranges on purpose, so
   :class:`RangeHeaderStripMiddleware` drops ``Range``/``If-Range`` from every
   request and FileResponse always sends the whole file.
+
+Two more guards came from the 2026-11-18 security audit. Both exist because
+some deployments route ``/api/`` from the load balancer straight to the
+backend, past the frontend's nginx and whatever it enforces:
+
+* :class:`RequestBodyLimitMiddleware` bounds the request body of EVERY content
+  type while it is read. Ordinary routes get ``REQUEST_BODY_MAX_BYTES``; the
+  routes that carry test results or an archive (:func:`is_large_body_route`)
+  get ``REQUEST_BODY_UPLOAD_MAX_BYTES`` and keep their own, lower, checks.
+* :class:`StrictTransportSecurityMiddleware` adds the same
+  ``Strict-Transport-Security`` header the frontend's nginx sends, to
+  responses of requests that arrived over https.
 """
 
 from __future__ import annotations
 
+import re
+
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 
 # The exact binding starlette's Request.form() uses to pick the urlencoded
@@ -143,3 +158,178 @@ class RangeHeaderStripMiddleware:
                 scope = dict(scope)
                 scope["headers"] = kept
         await self.app(scope, receive, send)
+
+
+# ── A body limit for every content type ─────────────────────────────────────
+
+#: Routes whose body is test output or an archive, so its size follows the
+#: caller's test suite rather than a form: the JSON batch and report-file
+#: ingest, the two live batch routes, and the project import (whole and in
+#: parts). Each has its own lower check (50,000 results, a 50 MiB file, a
+#: 32 MiB part) that answers first with its own message; the limit here is the
+#: backstop for the bytes around them.
+LARGE_BODY_PATHS = frozenset(
+    {
+        "/api/v1/ingest",
+        "/api/v1/ingest/file",
+        "/api/v1/stream/events/batch",
+        "/api/v1/stream/ingest",
+        "/api/v1/projects/import",
+    }
+)
+_LARGE_BODY_PATTERNS = (
+    re.compile(r"^/api/v1/project-imports/uploads/[^/]+/parts/[^/]+$"),
+)
+
+
+def is_large_body_route(path: str) -> bool:
+    """True for the routes that get the upload limit instead of the default."""
+    path = path.rstrip("/") or "/"
+    return path in LARGE_BODY_PATHS or any(p.match(path) for p in _LARGE_BODY_PATTERNS)
+
+
+def _size_text(limit: int) -> str:
+    mib = limit / (1024 * 1024)
+    if mib >= 1:
+        return f"{limit} bytes ({mib:g} MiB)"
+    return f"{limit} bytes"
+
+
+def _too_large_detail(limit: int, large_route: bool) -> str:
+    advice = (
+        "Send the results in smaller batches or split the file."
+        if large_route
+        else "Send a smaller request."
+    )
+    return f"Request body is larger than the limit of {_size_text(limit)} for this route. {advice}"
+
+
+class RequestBodyTooLarge(StarletteHTTPException):
+    """Raised from ``receive`` when the body passes the limit while it is read.
+
+    An HTTPException on purpose: FastAPI turns any other error raised while it
+    reads a body into a 400, and lets this one through as the 413 it is.
+    """
+
+    def __init__(self, limit: int, large_route: bool):
+        self.limit = limit
+        super().__init__(status_code=413, detail=_too_large_detail(limit, large_route))
+
+
+class RequestBodyLimitMiddleware:
+    """413 for a request body over the route's limit, whatever its content type.
+
+    A declared ``Content-Length`` over the limit is refused before anything is
+    read. Otherwise the bytes are counted as the application reads them, so a
+    chunked body (no ``Content-Length``) is stopped at the limit too. Nothing
+    is buffered here: a streaming handler still sees each chunk as it arrives.
+
+    Only ``http`` scopes are touched, and only the REQUEST body: WebSockets,
+    server-sent events and streamed downloads pass through unchanged. A limit
+    of ``0`` switches that limit off.
+    """
+
+    def __init__(self, app: ASGIApp, max_bytes: int, upload_max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+        self.upload_max_bytes = upload_max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        large_route = is_large_body_route(str(scope.get("path") or ""))
+        limit = self.upload_max_bytes if large_route else self.max_bytes
+        if limit <= 0:
+            await self.app(scope, receive, send)
+            return
+
+        declared = _content_length(scope)
+        if declared is not None and declared > limit:
+            await self._reject(limit, large_route, scope, receive, send)
+            return
+
+        total = 0
+        exceeded = False
+        response_started = False
+        refusal_sent = False
+
+        async def counted_receive() -> Message:
+            nonlocal total, exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                total += len(message.get("body", b""))
+                if total > limit:
+                    exceeded = True
+                    raise RequestBodyTooLarge(limit, large_route)
+            return message
+
+        async def guarded_send(message: Message) -> None:
+            nonlocal response_started, refusal_sent
+            if exceeded and not response_started:
+                # Whatever the application made of the interrupted read, the
+                # caller gets the one 413 that states the limit.
+                if not refusal_sent:
+                    refusal_sent = True
+                    await self._reject(limit, large_route, scope, receive, send)
+                return
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, counted_receive, guarded_send)
+        except RequestBodyTooLarge:
+            if response_started or refusal_sent:
+                return
+            await self._reject(limit, large_route, scope, receive, send)
+
+    @staticmethod
+    async def _reject(
+        limit: int, large_route: bool, scope: Scope, receive: Receive, send: Send
+    ) -> None:
+        response = JSONResponse(
+            status_code=413,
+            content={"detail": _too_large_detail(limit, large_route)},
+        )
+        await response(scope, receive, send)
+
+
+# ── HSTS on responses the frontend's nginx never sees ───────────────────────
+
+#: The value frontend/nginx.conf.template sends. One year, no
+#: includeSubDomains: the hosts below an operator's hostname are not ours to
+#: pin to HTTPS. Kept equal by tests/regression/test_request_body_limit_and_hsts.py.
+HSTS_VALUE = b"max-age=31536000"
+_HSTS_HEADER = b"strict-transport-security"
+
+
+class StrictTransportSecurityMiddleware:
+    """Add ``Strict-Transport-Security`` to responses of https requests.
+
+    "https" is ``scope["scheme"]``, which the proxy trust boundary
+    (``install_proxy_boundary``) sets from ``X-Forwarded-Proto`` only when the
+    peer is listed in ``TRUSTED_PROXY_IPS``. So this must be registered INSIDE
+    that boundary, and a header from an untrusted peer changes nothing. A
+    plain-http request never gets the header, and a response that already has
+    one is left alone.
+    """
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope.get("scheme") != "https":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_hsts(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers") or [])
+                if not any(bytes(name).lower() == _HSTS_HEADER for name, _ in headers):
+                    headers.append((_HSTS_HEADER, HSTS_VALUE))
+                    message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_hsts)

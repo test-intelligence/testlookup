@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,12 +48,21 @@ _STALE_THRESHOLDS_HOURS: dict[str, int] = {
 
 # Source types whose sync fetches from an EXTERNAL / hosted system over the
 # network. These must not egress when ``AI_OFFLINE_MODE`` is on. ``INTERNAL_URL``
-# (same-network by definition) and ``UPLOADED_DOC`` (read from local/MinIO) are
-# deliberately excluded — they don't reach hosted services.
+# is in the set: the type is only a label the caller picks, and it is fetched
+# by the same connector as ``EXTERNAL_URL``, which refuses private addresses,
+# so such a source can only ever reach a public host. Only ``UPLOADED_DOC``
+# (read from the deployment's own object storage) is left out.
 _EXTERNAL_FETCH_TYPES: frozenset[str] = frozenset({
     KnowledgeSourceType.JIRA_ISSUE.value,
     KnowledgeSourceType.JIRA_EPIC.value,
     KnowledgeSourceType.CONFLUENCE_PAGE.value,
+    KnowledgeSourceType.INTERNAL_URL.value,
+    KnowledgeSourceType.EXTERNAL_URL.value,
+})
+
+# Source types fetched by the URL connector, which takes the domain allow-list.
+_URL_FETCH_TYPES: frozenset[str] = frozenset({
+    KnowledgeSourceType.INTERNAL_URL.value,
     KnowledgeSourceType.EXTERNAL_URL.value,
 })
 
@@ -113,7 +122,19 @@ async def run_sync(
 
         # Fetch content via connector
         connector = await bind_to_deployment(get_connector(source.source_type), db)
-        content = await connector.fetch_content(source.canonical_url, source.external_id)
+        fetch_kwargs: dict[str, Any] = {}
+        if source.source_type in _URL_FETCH_TYPES:
+            # The ADMIN domain allow-list as it is now: the connector applies
+            # it to the stored URL (a row created before the rule, or before
+            # the list was tightened) and to every redirect target.
+            from app.services import knowledge_source_service
+
+            fetch_kwargs["allowed_domains"] = await knowledge_source_service.get_domain_allowlist(db)
+        if source.source_type == KnowledgeSourceType.UPLOADED_DOC.value:
+            # The object key must sit under the source's own project; the
+            # document connector refuses any other key before reading storage.
+            fetch_kwargs["project_id"] = source.project_id
+        content = await connector.fetch_content(source.canonical_url, source.external_id, **fetch_kwargs)
 
         # Check for unchanged content (skip if not initial sync)
         if content.content_hash == previous_hash and trigger != "on_create":

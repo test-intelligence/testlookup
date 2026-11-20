@@ -86,9 +86,9 @@ def test_report_tools_end_with_the_review_state_and_disclaimer(monkeypatch):
     payload = _pending(executive_summary="Checkout regressed.", recommendation="PENDING_REVIEW", risk_score=40)
     tools, _ = _tools(monkeypatch, payload)
     for name, args in (
-        ("get_run_summary", ("run-1",)),
-        ("get_run_intelligence", ("run-1",)),
-        ("check_run_release_readiness", ("run-1",)),
+        ("get_run_summary", ("55555555-5555-4555-8555-555555555555",)),
+        ("get_run_intelligence", ("55555555-5555-4555-8555-555555555555",)),
+        ("check_run_release_readiness", ("55555555-5555-4555-8555-555555555555",)),
     ):
         text = asyncio.run(tools[name](*args))
         assert "**review_state:** `pending_review`" in text, name
@@ -97,7 +97,7 @@ def test_report_tools_end_with_the_review_state_and_disclaimer(monkeypatch):
 
 def test_report_tools_say_unknown_when_the_backend_sends_no_review(monkeypatch):
     tools, _ = _tools(monkeypatch, {"executive_summary": "Checkout regressed."})
-    assert "`unknown`" in asyncio.run(tools["get_run_summary"]("run-1"))
+    assert "`unknown`" in asyncio.run(tools["get_run_summary"]("55555555-5555-4555-8555-555555555555"))
 
 
 def test_list_pending_reviews_reads_the_open_queue(monkeypatch):
@@ -106,8 +106,8 @@ def test_list_pending_reviews_reads_the_open_queue(monkeypatch):
         "workflow_type": "deep", "created_at": "2026-09-12T10:00:00Z", "ai_disclaimer": DISCLAIMER,
     }]
     tools, calls = _tools(monkeypatch, rows)
-    text = asyncio.run(tools["list_pending_reviews"]("proj-1", limit=999))
-    assert calls == [("/api/v1/projects/proj-1/reviews", {"state": "pending_review", "limit": 200})]
+    text = asyncio.run(tools["list_pending_reviews"]("44444444-4444-4444-8444-444444444444", limit=999))
+    assert calls == [("/api/v1/projects/44444444-4444-4444-8444-444444444444/reviews", {"state": "pending_review", "limit": 200})]
     assert "`r1`" in text and DISCLAIMER in text
     assert "not available through MCP" in text
 
@@ -115,7 +115,7 @@ def test_list_pending_reviews_reads_the_open_queue(monkeypatch):
 def test_an_empty_queue_says_so():
     from tools import reviews
 
-    assert "No AI reports are awaiting human review" in reviews.render_pending_reviews("proj-1", [])
+    assert "No AI reports are awaiting human review" in reviews.render_pending_reviews("44444444-4444-4444-8444-444444444444", [])
 
 
 def test_the_reviews_module_is_registered_in_the_server():

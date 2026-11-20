@@ -18,11 +18,13 @@ its ``conventions`` say the same in prose):
   order, without its prompt-only steps.
 * **headers**: at most ``HEADERS_MAX`` per side (sorted by name); a name in
   ``HEADER_DENYLIST`` or ENDING in a ``HEADER_SECRET_SUFFIXES`` entry (compared
-  lower-case, ``_`` read as ``-``) keeps its name and loses its value; every other
+  lower-case, ``_`` read as ``-``; a ``HEADER_SUFFIX_EXCEPTIONS`` name is exempt
+  from the suffix rule) keeps its name and loses its value; every other
   value gets the text pass, then the ``HEADER_VALUE_MAX`` cut.
 * **url**: the userinfo password (or a bare userinfo, a token's usual place) →
   ``[REDACTED]``; path segments get the token shapes; a ``QUERY_DENYLIST`` name's
-  value → ``[REDACTED]``, every other query value the text pass; the fragment is
+  value (or a name that is secret by the JSON / form key rule) → ``[REDACTED]``,
+  every other query value the text pass; the fragment is
   dropped (never sent over HTTP); ``URL_MAX`` cut.
 * **bodies**: cut to ``BODY_WIRE_MAX_BYTES`` first (state ``too_large``); JSON →
   a walk (a key named like a secret loses its value; every string leaf gets the
@@ -69,6 +71,7 @@ _METHOD = re.compile(vocab.METHOD_RE)
 _FIELD_NAME = re.compile(vocab.FIELD_NAME_RE)
 _ID_SEGMENTS = tuple(re.compile(pattern) for pattern in vocab.ENDPOINT_ID_SEGMENT_RES)
 _HEADER_DENY = frozenset(vocab.HEADER_DENYLIST)
+_HEADER_SUFFIX_EXCEPTIONS = frozenset(vocab.HEADER_SUFFIX_EXCEPTIONS)
 _QUERY_DENY = frozenset(vocab.QUERY_DENYLIST)
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _UNUSABLE_CHARS = re.compile("[\x00\ud800-\udfff]")      # NUL and lone surrogates (Mongo / UTF-8 cannot hold them)
@@ -172,7 +175,11 @@ def _markers(text: Optional[str]) -> int:
 
 def _header_name_is_secret(name: str) -> bool:
     lowered = name.strip().lower().replace("_", "-")
-    return lowered in _HEADER_DENY or lowered.endswith(vocab.HEADER_SECRET_SUFFIXES)
+    if lowered in _HEADER_DENY:
+        return True
+    # The suffix rule has exceptions (Idempotency-Key, Sec-WebSocket-Key ...): names that end like a
+    # credential header and are not one. The denylist above has none.
+    return lowered.endswith(vocab.HEADER_SECRET_SUFFIXES) and lowered not in _HEADER_SUFFIX_EXCEPTIONS
 
 
 def _header_text(value: Any) -> Optional[str]:
@@ -222,6 +229,12 @@ def _redact_netloc(netloc: str) -> str:
     return f"{REDACTED}@{host}"
 
 
+def _query_name_is_secret(name: str) -> bool:
+    """A query parameter named in ``QUERY_DENYLIST`` (lower-cased), or named like a secret by the same
+    rule as a JSON / form key (``session_token``, ``clientSecret``, ``db_password``)."""
+    return name.lower() in _QUERY_DENY or _key_is_secret(name)
+
+
 def _redact_query(query: str) -> str:
     if not query:
         return query
@@ -229,7 +242,7 @@ def _redact_query(query: str) -> str:
     for part in query.split("&"):
         name, sep, value = part.partition("=")
         name = _token_pass(name)
-        if value and unquote_plus(name).strip().lower() in _QUERY_DENY:
+        if value and _query_name_is_secret(unquote_plus(name).strip()):
             parts.append(f"{name}={REDACTED}")
             continue
         if value:

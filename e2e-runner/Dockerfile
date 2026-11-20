@@ -46,11 +46,16 @@ COPY e2e-runner/requirements-lock.txt ./e2e-runner/
 # Hashed lock (`make lock-python`, from e2e-runner/requirements.txt,
 # mcp/requirements.txt and cli/pyproject.toml); the CLI goes in as its own
 # wheel with --no-deps, and `pip check` fails the build if it needs a package
-# the lock does not hold.
+# the lock does not hold. The wheel is built in a throwaway virtual environment
+# with the hashed build lock (hatchling) and --no-build-isolation, so pip does
+# not download the newest build backend, and none of it stays in the image.
+COPY scripts/requirements-build.txt ./scripts/
 RUN pip install --no-cache-dir --require-hashes -r e2e-runner/requirements-lock.txt \
-    && pip wheel --no-cache-dir --no-deps --wheel-dir /tmp/cli-wheel ./cli \
+    && python3 -m venv /tmp/wheel-build \
+    && /tmp/wheel-build/bin/pip install --no-cache-dir --require-hashes -r scripts/requirements-build.txt \
+    && /tmp/wheel-build/bin/pip wheel --no-cache-dir --no-build-isolation --no-deps --wheel-dir /tmp/cli-wheel ./cli \
     && pip install --no-cache-dir --no-deps /tmp/cli-wheel/*.whl \
-    && rm -rf /tmp/cli-wheel && pip check
+    && rm -rf /tmp/cli-wheel /tmp/wheel-build && pip check
 COPY e2e-runner ./e2e-runner
 COPY samples ./samples
 COPY client/*.py ./client/

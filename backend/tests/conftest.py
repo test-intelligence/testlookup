@@ -8,6 +8,12 @@ import pytest
 
 os.environ.setdefault("TESTING", "true")
 os.environ.setdefault("OTEL_ENABLED", "false")
+# The suite runs with no environment variables, so in development mode with the
+# placeholder JWT_SECRET_KEY. The API's startup guard refuses that combination
+# (``Settings.development_startup_refusal``); tests that run the real lifespan
+# opt in the way a throwaway local process would. ``setdefault``: a test of the
+# guard itself sets the value it needs.
+os.environ.setdefault("ALLOW_INSECURE_DEV_SECRETS", "true")
 
 # ``Settings.DATABASE_URL`` is the one field with no usable default (""), and
 # ``app/db/postgres.py`` parses it at *import* time. Unset, the whole suite dies

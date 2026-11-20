@@ -5,13 +5,15 @@ registry (``chroma_collections.COLLECTION_FAMILIES``, contract §2.4, §0.16).
     with a recording fake client, opens ``collection_name(...)`` with the
     generation's ``embedding_function=`` -- and on the legacy generation today's
     name with the local bundled function (``LocalMiniLMEmbeddingFunction``),
-    never no ``embedding_function`` at all (the dupdetect helper: only the
-    embedding function, on an in-memory random name).
+    never no ``embedding_function`` at all (the dupdetect and failure_clusters
+    helpers: only the embedding function, on an in-memory random name; failure
+    clustering stores nothing since the 2026-11-18 security audit).
 (b) A source scan over ``backend/app/**/*.py``: every
     ``get_or_create_collection`` / ``create_collection`` / ``get_collection`` /
     ``delete_collection`` sits in a family's owner module or
     ``chroma_collections.py``, and none passes a string literal or an f-string
     (except the owner's one ``f"dupdetect_{…}"``) -- so an eighth site fails.
+    The failure_clusters owner builds its in-memory name in a helper.
 (c) Every owner imports ``chroma_collections`` and resolves through it.
 
 No network: the client is a fake; ``current_generations`` and
@@ -88,6 +90,7 @@ class _FakeCollection:
 class _RecordingClient:
     def __init__(self):
         self.calls: list[tuple[str, str, dict]] = []
+        self.deleted: list[str] = []
 
     def get_or_create_collection(self, name, **kwargs):
         self.calls.append(("get_or_create_collection", name, kwargs))
@@ -96,6 +99,9 @@ class _RecordingClient:
     def create_collection(self, name, **kwargs):
         self.calls.append(("create_collection", name, kwargs))
         return _FakeCollection()
+
+    def delete_collection(self, name):
+        self.deleted.append(name)
 
 
 @pytest.fixture
@@ -167,9 +173,15 @@ async def _drive_open_defects(monkeypatch, client):
 
 
 async def _drive_failure_clusters(monkeypatch, client):
+    chromadb = pytest.importorskip("chromadb")
+    from app.db import chroma as chroma_db
     from app.tools import embed_and_cluster as module
 
-    monkeypatch.setattr(module, "_get_chroma_client", AsyncMock(return_value=client))
+    # In memory only: reaching for the Chroma server fails the drive (the tool
+    # would fall back to word overlap and the client would record no call).
+    refuse = AsyncMock(side_effect=AssertionError("failure clustering reached for the Chroma server"))
+    monkeypatch.setattr(chroma_db, "get_configured_chroma_client", refuse)
+    monkeypatch.setattr(chromadb, "EphemeralClient", lambda *args, **kwargs: client)
     payload = json.dumps({"test_ids": ["t1", "t2"], "error_messages": ["boom one", "boom two"]})
     await module.embed_and_cluster.coroutine(payload)
 
@@ -182,6 +194,13 @@ async def _drive_dupdetect(monkeypatch, client):
     view = SimpleNamespace(id=uuid.uuid4(), norm_text="login fails", norm_title="login")
     await duplicate_detection_service._semantic_neighbours([view])
 
+
+# Families whose helper opens an in-memory collection under a random name: the
+# generation only chooses the embedding function. ``dupdetect`` is declared
+# ephemeral; ``failure_clusters`` keeps its registry row (so an old stored
+# collection of that name is still recognised and dropped with its generation)
+# but its helper no longer stores anything.
+IN_MEMORY_FAMILIES = ("dupdetect", "failure_clusters")
 
 DRIVERS = {
     "test_case_search": _drive_test_case_search,
@@ -212,10 +231,12 @@ async def test_on_the_legacy_generation_the_helper_makes_todays_call(base, monke
     method, name, kwargs = client.calls[0]
     # Never no embedding function: chromadb would build the server's (create_kwargs).
     assert isinstance(kwargs.get("embedding_function"), LocalMiniLMEmbeddingFunction)
-    if base == "dupdetect":
+    if base in IN_MEMORY_FAMILIES:
         assert method == "create_collection"
-        assert re.fullmatch(r"dupdetect_[0-9a-f]{32}", name)
+        assert re.fullmatch(rf"{base}_[0-9a-f]{{32}}", name)
         assert list(kwargs) == ["embedding_function"]
+        if base == "failure_clusters":
+            assert client.deleted == [name]   # dropped again: nothing outlives the call
     else:
         assert method == "get_or_create_collection"
         legacy = f"{base}_{PROJECT}" if cc.family(base).per_project else base
@@ -230,8 +251,8 @@ async def test_on_another_generation_the_helper_passes_its_name_and_embedding_fu
     assert len(client.calls) == 1, client.calls
     _method, name, kwargs = client.calls[0]
     assert kwargs.get("embedding_function") is SENTINEL_EF
-    if base == "dupdetect":
-        assert re.fullmatch(r"dupdetect_[0-9a-f]{32}", name)   # in-memory: only the function changes
+    if base in IN_MEMORY_FAMILIES:
+        assert re.fullmatch(rf"{base}_[0-9a-f]{{32}}", name)   # in-memory: only the function changes
     else:
         assert name == _expected_name(base, NON_LEGACY)
         assert name.startswith("demo_") and name.endswith("__" + NON_LEGACY.embedder_tag)

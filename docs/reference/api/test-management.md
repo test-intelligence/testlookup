@@ -539,14 +539,14 @@ Ai Coverage Analysis
 
 
 
-Source: [backend/app/routers/test_management_ai.py:80](../../../backend/app/routers/test_management_ai.py#L80).
+Source: [backend/app/routers/test_management_ai.py:83](../../../backend/app/routers/test_management_ai.py#L83).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: AICoverageAnalysisRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+payload: AICoverageAnalysisRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER))
 ```
 
 ### Declared wire contract
@@ -789,7 +789,7 @@ Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_curren
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-task_id: str, current_user: User=Depends(get_current_active_user)
+task_id: str, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 ### Declared wire contract
@@ -1655,7 +1655,7 @@ Ai Review Case
 
 
 
-Source: [backend/app/routers/test_management_ai.py:69](../../../backend/app/routers/test_management_ai.py#L69).
+Source: [backend/app/routers/test_management_ai.py:72](../../../backend/app/routers/test_management_ai.py#L72).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -3015,7 +3015,7 @@ List Plans
 
 
 
-Source: [backend/app/routers/test_management_plans.py:40](../../../backend/app/routers/test_management_plans.py#L40).
+Source: [backend/app/routers/test_management_plans.py:48](../../../backend/app/routers/test_management_plans.py#L48).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3142,14 +3142,14 @@ Create Plan
 
 
 
-Source: [backend/app/routers/test_management_plans.py:66](../../../backend/app/routers/test_management_plans.py#L66).
+Source: [backend/app/routers/test_management_plans.py:74](../../../backend/app/routers/test_management_plans.py#L74).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: TestPlanCreate, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+payload: TestPlanCreate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER))
 ```
 
 ### Declared wire contract
@@ -3223,14 +3223,14 @@ Ai Create Plan
 
 
 
-Source: [backend/app/routers/test_management_plans.py:175](../../../backend/app/routers/test_management_plans.py#L175).
+Source: [backend/app/routers/test_management_plans.py:183](../../../backend/app/routers/test_management_plans.py#L183).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: AIOptimizePlanRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+payload: AIOptimizePlanRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER))
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -3310,14 +3310,14 @@ Ai Create Plan Async
 
 
 
-Source: [backend/app/routers/test_management_plans.py:225](../../../backend/app/routers/test_management_plans.py#L225).
+Source: [backend/app/routers/test_management_plans.py:233](../../../backend/app/routers/test_management_plans.py#L233).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: AIOptimizePlanRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+payload: AIOptimizePlanRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER))
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -3397,7 +3397,7 @@ Get Plan
 
 
 
-Source: [backend/app/routers/test_management_plans.py:78](../../../backend/app/routers/test_management_plans.py#L78).
+Source: [backend/app/routers/test_management_plans.py:86](../../../backend/app/routers/test_management_plans.py#L86).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`.
 
@@ -3478,14 +3478,14 @@ Update Plan
 
 
 
-Source: [backend/app/routers/test_management_plans.py:88](../../../backend/app/routers/test_management_plans.py#L88).
+Source: [backend/app/routers/test_management_plans.py:96](../../../backend/app/routers/test_management_plans.py#L96).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-plan_id: uuid.UUID, payload: TestPlanUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _plan=Depends(require_plan_access)
+plan_id: uuid.UUID, payload: TestPlanUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), _plan=Depends(require_plan_access)
 ```
 
 ### Declared wire contract
@@ -3755,7 +3755,7 @@ List Plan Items
 
 
 
-Source: [backend/app/routers/test_management_plans.py:102](../../../backend/app/routers/test_management_plans.py#L102).
+Source: [backend/app/routers/test_management_plans.py:110](../../../backend/app/routers/test_management_plans.py#L110).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`.
 
@@ -3840,14 +3840,14 @@ Add Plan Item
 
 
 
-Source: [backend/app/routers/test_management_plans.py:126](../../../backend/app/routers/test_management_plans.py#L126).
+Source: [backend/app/routers/test_management_plans.py:134](../../../backend/app/routers/test_management_plans.py#L134).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-plan_id: uuid.UUID, payload: TestPlanItemCreate, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _plan=Depends(require_plan_access)
+plan_id: uuid.UUID, payload: TestPlanItemCreate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), _plan=Depends(require_plan_access)
 ```
 
 ### Declared wire contract
@@ -3931,14 +3931,14 @@ Remove Plan Item
 
 
 
-Source: [backend/app/routers/test_management_plans.py:140](../../../backend/app/routers/test_management_plans.py#L140).
+Source: [backend/app/routers/test_management_plans.py:148](../../../backend/app/routers/test_management_plans.py#L148).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-plan_id: uuid.UUID, item_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _plan=Depends(require_plan_access)
+plan_id: uuid.UUID, item_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), _plan=Depends(require_plan_access)
 ```
 
 ### Declared wire contract
@@ -4015,14 +4015,14 @@ Record Execution
 
 
 
-Source: [backend/app/routers/test_management_plans.py:152](../../../backend/app/routers/test_management_plans.py#L152).
+Source: [backend/app/routers/test_management_plans.py:160](../../../backend/app/routers/test_management_plans.py#L160).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-plan_id: uuid.UUID, item_id: uuid.UUID, payload: ExecuteTestPlanItemRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), _plan=Depends(require_plan_access)
+plan_id: uuid.UUID, item_id: uuid.UUID, payload: ExecuteTestPlanItemRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER)), _plan=Depends(require_plan_access)
 ```
 
 ### Declared wire contract
@@ -4116,7 +4116,7 @@ List Strategies
 
 
 
-Source: [backend/app/routers/test_management_strategies.py:30](../../../backend/app/routers/test_management_strategies.py#L30).
+Source: [backend/app/routers/test_management_strategies.py:47](../../../backend/app/routers/test_management_strategies.py#L47).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4208,14 +4208,14 @@ Ai Generate Strategy
 
 
 
-Source: [backend/app/routers/test_management_strategies.py:53](../../../backend/app/routers/test_management_strategies.py#L53).
+Source: [backend/app/routers/test_management_strategies.py:70](../../../backend/app/routers/test_management_strategies.py#L70).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: AIGenerateStrategyRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+payload: AIGenerateStrategyRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER))
 ```
 
 ### Declared wire contract
@@ -4289,14 +4289,14 @@ Ai Generate Strategy Async
 
 
 
-Source: [backend/app/routers/test_management_strategies.py:68](../../../backend/app/routers/test_management_strategies.py#L68).
+Source: [backend/app/routers/test_management_strategies.py:85](../../../backend/app/routers/test_management_strategies.py#L85).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-payload: AIGenerateStrategyRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+payload: AIGenerateStrategyRequest, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER))
 ```
 
 ### Declared wire contract
@@ -4370,7 +4370,7 @@ Get Strategy
 
 
 
-Source: [backend/app/routers/test_management_strategies.py:79](../../../backend/app/routers/test_management_strategies.py#L79).
+Source: [backend/app/routers/test_management_strategies.py:96](../../../backend/app/routers/test_management_strategies.py#L96).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4451,14 +4451,20 @@ Update Strategy
 
 
 
-Source: [backend/app/routers/test_management_strategies.py:95](../../../backend/app/routers/test_management_strategies.py#L95).
+Source: [backend/app/routers/test_management_strategies.py:112](../../../backend/app/routers/test_management_strategies.py#L112).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-strategy_id: uuid.UUID, payload: TestStrategyUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+strategy_id: uuid.UUID, payload: TestStrategyUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.TESTER))
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=STRATEGY_STATUS_CHANGE_REFUSED)
 ```
 
 ### Declared wire contract
@@ -4733,7 +4739,7 @@ when neither an explicit owner nor a project manager is configured —
 callers should not rely on a 404 for the empty case so the UI can show
 a neutral "Unassigned" badge).
 
-Source: [backend/app/routers/test_management_suite_reviews.py:60](../../../backend/app/routers/test_management_suite_reviews.py#L60).
+Source: [backend/app/routers/test_management_suite_reviews.py:63](../../../backend/app/routers/test_management_suite_reviews.py#L63).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4836,7 +4842,7 @@ Set Suite Owner
 
 Assign or clear (``owner_user_id=null``) the suite's explicit owner.
 
-Source: [backend/app/routers/test_management_suite_reviews.py:128](../../../backend/app/routers/test_management_suite_reviews.py#L128).
+Source: [backend/app/routers/test_management_suite_reviews.py:131](../../../backend/app/routers/test_management_suite_reviews.py#L131).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -4936,7 +4942,7 @@ List Suite Reviews
 
 
 
-Source: [backend/app/routers/test_management_suite_reviews.py:177](../../../backend/app/routers/test_management_suite_reviews.py#L177).
+Source: [backend/app/routers/test_management_suite_reviews.py:180](../../../backend/app/routers/test_management_suite_reviews.py#L180).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5100,7 +5106,7 @@ List Reviews For Run
 
 All suite reviews for a single run (used by the run-detail page).
 
-Source: [backend/app/routers/test_management_suite_reviews.py:204](../../../backend/app/routers/test_management_suite_reviews.py#L204).
+Source: [backend/app/routers/test_management_suite_reviews.py:207](../../../backend/app/routers/test_management_suite_reviews.py#L207).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -5194,14 +5200,14 @@ Set the review state for (run, suite). Creates the row on first call.
 Non-gating: the AI pipeline already wrote ``AIAnalysis`` rows for this
 run independently. This call records the human verdict on top.
 
-Source: [backend/app/routers/test_management_suite_reviews.py:225](../../../backend/app/routers/test_management_suite_reviews.py#L225).
+Source: [backend/app/routers/test_management_suite_reviews.py:228](../../../backend/app/routers/test_management_suite_reviews.py#L228).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-test_run_id: uuid.UUID, suite_name: str, payload: SuiteReviewUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+test_run_id: uuid.UUID, suite_name: str, payload: SuiteReviewUpdate, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER))
 ```
 
 Direct handler error branches (dependency/service errors can add others):

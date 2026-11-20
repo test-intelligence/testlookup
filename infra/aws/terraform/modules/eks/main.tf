@@ -89,6 +89,42 @@ resource "aws_iam_role_policy_attachment" "node" {
 }
 
 ###############################################################################
+# Node launch template: instance metadata settings only
+###############################################################################
+# IMDSv2 only, and a hop limit of 1: a response from the instance metadata
+# service cannot cross the extra network hop into a pod, so a pod that is not
+# on the host network cannot ask for the node role's credentials. The kubelet
+# and the VPC CNI run on the node itself and are not affected. Controllers that
+# read the region or VPC id from the metadata service (the AWS Load Balancer
+# Controller does by default) must be given them as settings instead.
+#
+# Nothing else is set here on purpose. The instance types, the AMI, the
+# bootstrap user data and the disk stay with the managed node group below, as
+# they were before this template existed.
+#
+# Opt-in (var.require_imdsv2, default false). A node group that was created
+# without a launch template cannot adopt one, so turning this on for an
+# existing cluster replaces the node group. With the variable false this
+# resource does not exist and the node group is exactly as it was.
+resource "aws_launch_template" "node" {
+  count = var.require_imdsv2 ? 1 : 0
+
+  name_prefix = "${var.name}-ng-"
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
+  tags = var.tags
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+###############################################################################
 # Managed node group (private subnets only)
 ###############################################################################
 resource "aws_eks_node_group" "this" {
@@ -97,6 +133,14 @@ resource "aws_eks_node_group" "this" {
   node_role_arn   = aws_iam_role.node.arn
   subnet_ids      = var.private_subnet_ids
   instance_types  = var.node_instance_types
+
+  dynamic "launch_template" {
+    for_each = aws_launch_template.node
+    content {
+      id      = launch_template.value.id
+      version = launch_template.value.latest_version
+    }
+  }
 
   scaling_config {
     desired_size = var.node_desired_size
@@ -120,11 +164,29 @@ resource "aws_eks_node_group" "this" {
 ###############################################################################
 # Core add-ons
 ###############################################################################
+locals {
+  # Settings for one addon, keyed by addon name; an addon that is not listed
+  # keeps its defaults (configuration_values stays unset).
+  #
+  # vpc-cni: the AWS VPC CNI accepts NetworkPolicy objects and enforces none of
+  # them until enableNetworkPolicy is "true" (a string in the addon schema).
+  # Every policy in k8s/base/networkpolicy.yaml depends on this, default-deny
+  # included. It needs VPC CNI v1.14 or later.
+  #
+  # Opt-in (var.enable_network_policy, default false): once it is on,
+  # default-deny-all really applies, and a load balancer that sends straight to
+  # pod IPs is refused until allow-frontend and allow-backend admit it.
+  addon_configuration_values = var.enable_network_policy ? {
+    "vpc-cni" = jsonencode({ enableNetworkPolicy = "true" })
+  } : {}
+}
+
 resource "aws_eks_addon" "this" {
   for_each = toset(["vpc-cni", "coredns", "kube-proxy", "aws-ebs-csi-driver"])
 
   cluster_name                = aws_eks_cluster.this.name
   addon_name                  = each.value
+  configuration_values        = lookup(local.addon_configuration_values, each.value, null)
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "OVERWRITE"
 

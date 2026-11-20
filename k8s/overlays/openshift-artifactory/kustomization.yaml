@@ -31,6 +31,8 @@ resources:
   - infra-redis.yaml
   - infra-minio.yaml
   - infra-chromadb.yaml
+  # The only ServiceAccount that gets the anyuid SCC (data stores + Ollama).
+  - serviceaccount-anyuid.yaml
   - frontend-nginx-configmap.yaml
   # OpenShift Routes (HTTPS, edge-terminated, HTTP->HTTPS redirect).
   - route.yaml
@@ -100,42 +102,173 @@ patches:
       kind: PersistentVolumeClaim
       name: testlookup-backups
 
-  # ── Frontend nginx: mount the pre-rendered config + run as root ───────────
-  # Identical to the reference K3s install patch. nginx:alpine forks workers as uid 101 and
-  # needs CHOWN/SETUID/SETGID to write /var/cache/nginx; the deploy script
-  # grants the ``anyuid`` SCC to the namespace default ServiceAccount so this
-  # is permitted (a stock OpenShift image would otherwise need rebuilding to
-  # nginx-unprivileged). The ConfigMap subPath bypasses the entrypoint
-  # envsubst that mis-renders the upstream under the read-only mount.
+  # ── Frontend nginx: serve the pre-rendered server block ───────────────────
+  # The frontend image runs nginx as uid 101 on port 8080 with a read-only
+  # root filesystem (k8s/base/frontend-deployment.yaml), so this overlay no
+  # longer makes it root and it needs no ``anyuid`` SCC. Only two things
+  # differ from the base: the base's ``nginx-conf-d`` volume (mounted at
+  # /etc/nginx/conf.d) is the ConfigMap with the rendered server block instead
+  # of an emptyDir, and the command skips the image entrypoint, whose envsubst
+  # would try to render the template into that read-only directory.
   - patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/securityContext
-        value:
-          runAsNonRoot: false
-          runAsUser: 0
-          runAsGroup: 0
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: false
-          seccompProfile:
-            type: RuntimeDefault
-      - op: add
-        path: /spec/template/spec/volumes
-        value:
-          - name: nginx-conf
-            configMap:
-              name: frontend-nginx-conf
-      - op: add
-        path: /spec/template/spec/containers/0/volumeMounts
-        value:
-          - name: nginx-conf
-            mountPath: /etc/nginx/conf.d/default.conf
-            subPath: default.conf
-      - op: add
-        path: /spec/template/spec/containers/0/command
-        value: [nginx, "-g", "daemon off;"]
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: testlookup-frontend
+      spec:
+        template:
+          spec:
+            containers:
+              - name: frontend
+                command: [nginx, "-g", "daemon off;"]
+            volumes:
+              - name: nginx-conf-d
+                emptyDir: null
+                configMap:
+                  name: frontend-nginx-conf
     target:
       kind: Deployment
       name: testlookup-frontend
+
+  # ── Security context constraints: who runs under which SCC ────────────────
+  # The stock third-party images start as root or with their own UID, which
+  # only the ``anyuid`` SCC admits. The deploy script grants ``anyuid`` to ONE
+  # ServiceAccount, testlookup-anyuid (serviceaccount-anyuid.yaml), and the
+  # five bundled data stores (infra-*.yaml) plus Ollama (here) use it. Every
+  # other pod states a non-zero UID and runs under ``nonroot-v2``, granted to
+  # testlookup-sa and to ``default`` (frontend, MCP, backup jobs and the
+  # migration Job, which names no account). Pinned by
+  # backend/tests/regression/test_openshift_anyuid_is_scoped_to_the_data_stores.py.
+  - patch: |-
+      - op: add
+        path: /spec/template/spec/serviceAccountName
+        value: testlookup-anyuid
+    target:
+      kind: Deployment
+      name: testlookup-ollama
+
+  # The API and worker pods pull through their own account: the deploy
+  # script (``artifactory-pull``) and the offline-bundle procedure
+  # (``local-registry``) link their pull secret to ``default`` only. A name
+  # that does not exist in the namespace only logs a warning event.
+  - patch: |-
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: testlookup-sa
+      imagePullSecrets:
+        - name: artifactory-pull
+        - name: local-registry
+    target:
+      kind: ServiceAccount
+      name: testlookup-sa
+
+  # ── Redis password: every client reads its URLs from the Secret ───────────
+  # The bundled Valkey (infra-redis.yaml) starts with --requirepass. The base
+  # ConfigMap keeps the password-less URLs (the cloud overlays use them); here
+  # an `env` entry from testlookup-secrets wins over the ConfigMap's `envFrom`
+  # value. The deploy script generates the password and writes these three
+  # keys (ensure_redis_credentials in deploy-openshift-artifactory.sh). The
+  # keys are optional for the same reason as in infra-redis.yaml: a Secret
+  # without them (an offline-bundle install not yet upgraded) keeps the
+  # ConfigMap's URLs, which match a Valkey that has no password either. One
+  # patch per container name: the API, the five workers, beat.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: redis-clients
+      spec:
+        template:
+          spec:
+            containers:
+              - name: backend
+                env:
+                  - name: REDIS_URL
+                    valueFrom:
+                      secretKeyRef:
+                        name: testlookup-secrets
+                        key: REDIS_URL
+                        optional: true
+                  - name: CELERY_BROKER_URL
+                    valueFrom:
+                      secretKeyRef:
+                        name: testlookup-secrets
+                        key: CELERY_BROKER_URL
+                        optional: true
+                  - name: CELERY_RESULT_BACKEND
+                    valueFrom:
+                      secretKeyRef:
+                        name: testlookup-secrets
+                        key: CELERY_RESULT_BACKEND
+                        optional: true
+    target:
+      kind: Deployment
+      name: testlookup-backend
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: redis-clients
+      spec:
+        template:
+          spec:
+            containers:
+              - name: worker
+                env:
+                  - name: REDIS_URL
+                    valueFrom:
+                      secretKeyRef:
+                        name: testlookup-secrets
+                        key: REDIS_URL
+                        optional: true
+                  - name: CELERY_BROKER_URL
+                    valueFrom:
+                      secretKeyRef:
+                        name: testlookup-secrets
+                        key: CELERY_BROKER_URL
+                        optional: true
+                  - name: CELERY_RESULT_BACKEND
+                    valueFrom:
+                      secretKeyRef:
+                        name: testlookup-secrets
+                        key: CELERY_RESULT_BACKEND
+                        optional: true
+    target:
+      kind: Deployment
+      name: testlookup-worker-.*
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: redis-clients
+      spec:
+        template:
+          spec:
+            containers:
+              - name: beat
+                env:
+                  - name: REDIS_URL
+                    valueFrom:
+                      secretKeyRef:
+                        name: testlookup-secrets
+                        key: REDIS_URL
+                        optional: true
+                  - name: CELERY_BROKER_URL
+                    valueFrom:
+                      secretKeyRef:
+                        name: testlookup-secrets
+                        key: CELERY_BROKER_URL
+                        optional: true
+                  - name: CELERY_RESULT_BACKEND
+                    valueFrom:
+                      secretKeyRef:
+                        name: testlookup-secrets
+                        key: CELERY_RESULT_BACKEND
+                        optional: true
+    target:
+      kind: Deployment
+      name: testlookup-beat
 
   # ── Beat: write its schedule under /tmp (writable by the assigned uid) ────
   - patch: |-

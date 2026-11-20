@@ -1,6 +1,35 @@
-"""MCP server configuration loaded from environment variables or .env file."""
+"""MCP server configuration, loaded from environment variables and one env file.
+
+The env file is ``.env`` next to ``server.py``, or, when ``TESTLOOKUP_ENV_FILE``
+is set, only the file that variable names. It is never looked up in the working
+directory: an MCP client starts the stdio server with whatever working directory
+it likes (often the workspace the user has open), and a ``.env`` planted there
+could point ``TESTLOOKUP_API_URL`` at another host and collect the user's
+TestLookup username and password. Real environment variables win over the file.
+"""
+
+import os
+from pathlib import Path
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+#: The directory that holds ``server.py`` (and this file).
+SERVER_DIR = Path(__file__).resolve().parent
+ENV_FILE_VARIABLE = "TESTLOOKUP_ENV_FILE"
+
+
+def env_file() -> Path:
+    """The one env file the server reads; it does not have to exist.
+
+    A relative ``TESTLOOKUP_ENV_FILE`` is taken from the server's directory,
+    not from the working directory.
+    """
+    named = os.environ.get(ENV_FILE_VARIABLE, "").strip()
+    if not named:
+        return SERVER_DIR / ".env"
+    chosen = Path(named).expanduser()
+    return chosen if chosen.is_absolute() else SERVER_DIR / chosen
 
 
 class Settings(BaseSettings):
@@ -21,10 +50,17 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="TESTLOOKUP_",
-        env_file=".env",
+        # No relative default here: pydantic-settings resolves a relative
+        # ``env_file`` against the working directory. ``__init__`` passes the
+        # resolved path instead.
+        env_file=None,
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    def __init__(self, **values: Any) -> None:
+        values.setdefault("_env_file", env_file())
+        super().__init__(**values)
 
 
 settings = Settings()

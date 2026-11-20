@@ -86,6 +86,11 @@ def _processors(provider):
     return provider._active_span_processor._span_processors
 
 
+def _exporters(provider):
+    """The exporting processors: every one but the URL redaction that runs ahead of them."""
+    return [p for p in _processors(provider) if not tracing.is_url_redaction(p)]
+
+
 @pytest.mark.parametrize("environment", ["production", "staging"])
 def test_no_endpoint_outside_development_exports_nothing_and_warns_once(
     monkeypatch, caplog, environment
@@ -108,7 +113,7 @@ def test_development_keeps_the_stdout_fallback(monkeypatch):
     consoles, providers = _spy(monkeypatch)
     tracing.setup_tracing("testlookup", "test", "development", otlp_endpoint=None)
     assert len(consoles) == 1
-    assert len(_processors(providers[0])) == 1
+    assert len(_exporters(providers[0])) == 1
 
 
 def test_missing_otlp_package_in_production_does_not_fall_back_to_stdout(monkeypatch, caplog):
@@ -135,7 +140,7 @@ def test_an_endpoint_gets_the_otlp_exporter_and_no_console(monkeypatch):
     tracing.setup_tracing("testlookup", "test", "production", otlp_endpoint="http://c:4318")
     assert made == [{"endpoint": "http://c:4318/v1/traces", "timeout": 10}]
     assert consoles == []
-    assert len(_processors(providers[0])) == 1
+    assert len(_exporters(providers[0])) == 1
 
 
 class _NullProcessor:

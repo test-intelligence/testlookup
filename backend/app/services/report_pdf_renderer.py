@@ -8,6 +8,7 @@ from __future__ import annotations
 import html
 import io
 import logging
+import math
 from typing import Any
 
 logger = logging.getLogger("services.report_pdf_renderer")
@@ -30,6 +31,39 @@ def _safe(text: Any, max_len: int = 500) -> str:
     if len(s) > max_len:
         s = s[:max_len] + "..."
     return html.escape(s)
+
+
+def _float(value: Any, default: float = 0.0) -> float:
+    """``value`` as a finite float; ``default`` for anything that is not a number.
+
+    A snapshot payload can come from an imported archive, so a field that is
+    "always a number" may hold any text: a numeric format spec on a string
+    would raise."""
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        try:
+            number = float(value.strip())
+        except ValueError:
+            return default
+    else:
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _n(value: Any, missing: str = "") -> str:
+    """A value that should be a number, ready for a ReportLab ``Paragraph``
+    (which parses inline markup, ``<img src=...>`` included): a real number is
+    printed as it is, ``None`` as ``missing``, anything else as escaped text."""
+    if value is None:
+        return missing
+    if isinstance(value, bool):
+        return str(int(value))
+    if isinstance(value, (int, float)):
+        return html.escape(str(value))
+    return _safe(value, 100)
 
 
 def render_report_pdf(report: Any) -> bytes:
@@ -71,7 +105,7 @@ def render_report_pdf(report: Any) -> bytes:
     meta_text = (
         f"Build: <b>{_safe(report.build_number)}</b> | "
         f"Branch: <b>{_safe(report.branch)}</b> | "
-        f"Layout: <b>{report.layout.title()}</b>"
+        f"Layout: <b>{_safe(str(report.layout).title(), 100)}</b>"
     )
     story.append(Paragraph(meta_text, body_style))
     story.append(Spacer(1, 4 * mm))
@@ -80,7 +114,7 @@ def render_report_pdf(report: Any) -> bytes:
     summary_data = [
         ["Pass Rate", "Total", "Passed", "Failed", "Skipped"],
         [
-            f"{report.pass_rate:.1f}%",
+            f"{_float(report.pass_rate):.1f}%",
             str(report.total_tests),
             str(report.passed_tests),
             str(report.failed_tests),
@@ -106,7 +140,7 @@ def render_report_pdf(report: Any) -> bytes:
         story.append(Paragraph("Release Decision", h2_style))
         decision_data = [
             ["Recommendation", "Risk Score", "Composite Risk"],
-            [rec, str(report.risk_score), f"{report.composite_risk:.1f}"],
+            [rec, str(report.risk_score), f"{_float(report.composite_risk):.1f}"],
         ]
         dtbl = Table(decision_data, colWidths=[150, 80, 80])
         dtbl.setStyle(TableStyle([
@@ -165,9 +199,9 @@ def render_report_pdf(report: Any) -> bytes:
         for d in report.dimension_scores:
             dim_data.append([
                 _safe(d.get("label", d.get("name", ""))),
-                f"{d.get('score', 0):.1f}",
-                f"{d.get('weight', 0):.2f}",
-                f"{d.get('contribution', 0):.2f}",
+                f"{_float(d.get('score', 0)):.1f}",
+                f"{_float(d.get('weight', 0)):.2f}",
+                f"{_float(d.get('contribution', 0)):.2f}",
             ])
         dtbl = Table(dim_data, colWidths=[130, 60, 60, 80])
         dtbl.setStyle(TableStyle([
@@ -184,12 +218,12 @@ def render_report_pdf(report: Any) -> bytes:
     if report.baseline_diff and report.baseline_diff.get("pass_rate_delta") is not None:
         story.append(Paragraph("Baseline Comparison", h2_style))
         diff = report.baseline_diff
-        delta = diff.get("pass_rate_delta", 0)
+        delta = _float(diff.get("pass_rate_delta", 0))
         delta_str = f"+{delta:.1f}%" if delta >= 0 else f"{delta:.1f}%"
         story.append(Paragraph(
             f"Pass rate delta: <b>{delta_str}</b> | "
-            f"New failures: <b>{diff.get('new_failures_count', 0)}</b> | "
-            f"Resolved: <b>{diff.get('resolved_count', 0)}</b> | "
+            f"New failures: <b>{_n(diff.get('new_failures_count', 0))}</b> | "
+            f"Resolved: <b>{_n(diff.get('resolved_count', 0))}</b> | "
             f"Classification: <b>{_safe(diff.get('regression_classification', 'unclassified'), 100)}</b>",
             body_style,
         ))
@@ -198,7 +232,7 @@ def render_report_pdf(report: Any) -> bytes:
     if report.category_breakdown:
         story.append(Paragraph("Failure Category Breakdown", h2_style))
         cat_data = [["Category", "Count"]]
-        for cat, count in sorted(report.category_breakdown.items(), key=lambda x: -x[1]):
+        for cat, count in sorted(report.category_breakdown.items(), key=lambda x: -_float(x[1])):
             cat_data.append([_safe(cat), str(count)])
         ctbl = Table(cat_data, colWidths=[200, 60])
         ctbl.setStyle(TableStyle([
@@ -268,10 +302,10 @@ def render_report_pdf(report: Any) -> bytes:
     prov = report.provenance
     prov_text = (
         f"Generated by TestLookup | "
-        f"Confidence: {prov.get('confidence', 'N/A')}% | "
-        f"Sources: {', '.join(_safe(source, 100) for source in prov.get('sources_used', []))} | "
-        f"Evidence: {prov.get('evidence_count', 0)} artifacts | "
-        f"{report.generated_at}"
+        f"Confidence: {_n(prov.get('confidence', 'N/A'), 'N/A')}% | "
+        f"Sources: {', '.join(_safe(source, 100) for source in prov.get('sources_used') or [])} | "
+        f"Evidence: {_n(prov.get('evidence_count', 0), '0')} artifacts | "
+        f"{_safe(report.generated_at, 100)}"
     )
     story.append(Paragraph(prov_text, small_style))
 

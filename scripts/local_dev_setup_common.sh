@@ -96,6 +96,29 @@ require_cmd() {
   fi
 }
 
+generate_jwt_secret_in_env() {
+  # Replace a placeholder JWT_SECRET_KEY line with 32 random bytes (hex).
+  local env_file="$1" value=""
+  if ! grep -Eq '^JWT_SECRET_KEY=(<set-|<your-|change-me-)' "${env_file}"; then
+    return 0
+  fi
+  if command -v openssl >/dev/null 2>&1; then
+    value="$(openssl rand -hex 32 | tr -d '\r\n')"
+  elif command -v python3 >/dev/null 2>&1; then
+    value="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+  else
+    value="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  fi
+  if [[ ${#value} -ne 64 ]]; then
+    echo "WARNING: could not generate JWT_SECRET_KEY; set it in ${env_file} (openssl rand -hex 32)." >&2
+    return 0
+  fi
+  local tmp="${env_file}.tmp.$$"
+  awk -v v="${value}" '/^JWT_SECRET_KEY=/ { print "JWT_SECRET_KEY=" v; next } { print }' "${env_file}" > "${tmp}" \
+    && mv "${tmp}" "${env_file}"
+  echo "Generated JWT_SECRET_KEY in ${env_file}"
+}
+
 warn_if_placeholder() {
   local env_file="$1"
   if grep -Eq '(<set-|<your-|change-me-)' "${env_file}"; then
@@ -168,6 +191,13 @@ main() {
   if [[ ! -f .env ]]; then
     run_cmd cp .env.example .env
     echo "Created .env from .env.example"
+    # In development the API refuses to start on the placeholder
+    # JWT_SECRET_KEY, so give this machine its own signing value now.
+    if [[ ${DRY_RUN} -eq 1 ]]; then
+      echo "[dry-run] generate JWT_SECRET_KEY in .env"
+    else
+      generate_jwt_secret_in_env ".env"
+    fi
   fi
 
   warn_if_placeholder ".env"
@@ -197,7 +227,7 @@ TestLookup local ${STACK_LABEL} developer stack is ready.
 Useful URLs:
   - Dashboard:      http://localhost:3000
   - API Docs:       http://localhost:8000/api-docs
-  - Health:         http://localhost:8000/health/details
+  - Health:         http://localhost:8000/health/ready
   - Flower:         http://localhost:5555
   - S3 API:         http://localhost:9000  (no web console)
   - MCP SSE:        http://localhost:8002/sse

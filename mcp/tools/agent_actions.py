@@ -86,7 +86,7 @@ def register(mcp) -> None:  # noqa: ANN001
         view = view if view in VIEWS else "pending"
         limit = max(1, min(int(limit), MAX_LIMIT))
         payload = await api.get(
-            f"/api/v1/projects/{project_id}/agent-actions",
+            api.path("/api/v1/projects/{project_id}/agent-actions", project_id=api.uuid_id(project_id)),
             params={"view": view, "limit": limit},
         )
         return render_agent_actions(project_id, view, payload)

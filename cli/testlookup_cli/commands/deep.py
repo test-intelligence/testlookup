@@ -19,7 +19,7 @@ def start(
         data = asyncio.run(client.request("POST", f"/api/v1/deep-investigate/{run_id}", json_body={"mode": "deep"}, profile_name=profile_name))
         output.print_success(f"Deep investigation queued: {data.get('message', 'OK')}")
         if data.get("task_id"):
-            output.console.print(f"  Task ID: {data['task_id']}")
+            output.console.print(f"  Task ID: {output.safe(data['task_id'])}")
     except Exception as e:
         output.print_error(str(e))
         raise typer.Exit(exit_code_for(e))

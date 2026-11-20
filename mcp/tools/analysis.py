@@ -95,7 +95,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if ocp_namespace:
             body["ocp_namespace"] = ocp_namespace
 
-        data = await api.post("/api/v1/analyze", json_body=body)
+        data = await api.post(api.path("/api/v1/analyze"), json_body=body)
 
         cat = data.get("failure_category", "UNKNOWN")
         icon = _CATEGORY_ICON.get(cat, "❓")
@@ -132,7 +132,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if run_id:
             try:
                 tree = await api.get(
-                    f"/api/v1/runs/{run_id}/tests/{test_case_id}/steps"
+                    api.path("/api/v1/runs/{run_id}/tests/{test_id}/steps", run_id=api.uuid_id(run_id), test_id=api.uuid_id(test_case_id))
                 )
                 if isinstance(tree, dict):
                     step_evidence = _first_failed_step_evidence(tree)
@@ -174,7 +174,7 @@ def register(mcp) -> None:  # noqa: ANN001
             size: Results per page (1-100, default 20).
         """
         data = await api.get(
-            "/api/v1/search",
+            api.path("/api/v1/search"),
             params={
                 "q": query,
                 "project_id": project_id,

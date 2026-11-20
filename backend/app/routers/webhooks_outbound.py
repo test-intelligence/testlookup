@@ -2,31 +2,39 @@
 Outbound webhooks API — Tier 2 item 6.
 
 Customer-managed webhook subscriptions. QA_LEAD+ manages the
-subscriptions; any project member can read the list and delivery
-history so dev dashboards can show current status.
+subscriptions. Any project member can read the list and one subscription
+so dev dashboards can show current status, but below QA_LEAD (instance
+role) ``target_url`` is reduced to scheme and host followed by ``/...``:
+for Slack, Teams and Discord style receivers the URL is the credential.
+The delivery history carries event payloads and the start of the
+receiver's response, so it needs QA_LEAD like the write routes. The
+signing secret is returned to nobody (``has_secret`` only).
 
 Endpoints:
 
-* ``GET    /api/v1/webhooks``                      — list
+* ``GET    /api/v1/webhooks``                      — list (URL masked below QA_LEAD)
 * ``POST   /api/v1/webhooks``                      — create
 * ``GET    /api/v1/webhooks/events``               — supported event catalog
-* ``GET    /api/v1/webhooks/{id}``                 — detail
+* ``GET    /api/v1/webhooks/{id}``                 — detail (URL masked below QA_LEAD)
 * ``PATCH  /api/v1/webhooks/{id}``                 — partial update
 * ``DELETE /api/v1/webhooks/{id}``                 — remove
 * ``POST   /api/v1/webhooks/{id}/test``            — fire a synthetic ping event
-* ``GET    /api/v1/webhooks/{id}/deliveries``      — delivery history
+* ``GET    /api/v1/webhooks/{id}/deliveries``      — delivery history (QA_LEAD+)
 * ``POST   /api/v1/webhooks/{id}/deliveries/{delivery_id}/replay`` — retry a failed delivery
 """
 from __future__ import annotations
 
 import uuid
 from typing import Optional
+from urllib.parse import urlsplit
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
+    _ROLE_ORDER,
+    _normalize_user_role,
     get_accessible_project_ids,
     get_current_active_user,
     get_db,
@@ -47,6 +55,57 @@ from app.services import webhook_service as svc
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["Outbound Webhooks"])
 logger = structlog.get_logger("routers.webhooks_outbound")
+
+
+# ── Who sees the full target URL ───────────────────────────────────────────
+
+
+def _sees_full_target_url(user: User) -> bool:
+    """QA_LEAD and above by instance role: the roles that manage subscriptions."""
+    try:
+        idx = _ROLE_ORDER.index(_normalize_user_role(user.role))
+    except ValueError:
+        return False
+    return idx >= _ROLE_ORDER.index(UserRole.QA_LEAD)
+
+
+def _mask_target_url(target_url: str) -> str:
+    """Scheme and host followed by ``/...``; nothing at all when neither parses.
+
+    The path and query are where a receiver's token lives, and any
+    ``user:password@`` part is a credential too, so all three are dropped.
+    """
+    try:
+        parts = urlsplit(target_url or "")
+        host = parts.hostname or ""
+        port = parts.port
+    except ValueError:
+        return "..."
+    if not parts.scheme or not host:
+        return "..."
+    if ":" in host:  # IPv6 literal
+        host = f"[{host}]"
+    if port is not None:
+        host = f"{host}:{port}"
+    return f"{parts.scheme}://{host}/..."
+
+
+def _subscription_response(row, current_user: User) -> WebhookSubscriptionRead:
+    """The read model for one subscription, with the URL masked below QA_LEAD.
+
+    The one place the masking rule lives; the list and detail routes both
+    answer through it. ``last_error`` is masked the same way because a
+    delivery error can quote the URL that was called.
+    """
+    read = WebhookSubscriptionRead.model_validate(row)
+    if _sees_full_target_url(current_user):
+        return read
+    full = read.target_url
+    masked = _mask_target_url(full)
+    last_error = read.last_error
+    if last_error and full:
+        last_error = last_error.replace(full, masked)
+    return read.model_copy(update={"target_url": masked, "last_error": last_error})
 
 
 # ── Event catalog ──────────────────────────────────────────────────────────
@@ -75,9 +134,11 @@ async def list_webhook_subscriptions(
 ):
     if project_id is not None:
         await resolve_project_scope(db, current_user, str(project_id))
-        return await svc.list_subscriptions(db, project_id=project_id)
-    accessible = await get_accessible_project_ids(db, current_user)
-    return await svc.list_subscriptions(db, project_ids=accessible)
+        rows = await svc.list_subscriptions(db, project_id=project_id)
+    else:
+        accessible = await get_accessible_project_ids(db, current_user)
+        rows = await svc.list_subscriptions(db, project_ids=accessible)
+    return [_subscription_response(row, current_user) for row in rows]
 
 
 @router.post(
@@ -131,7 +192,8 @@ async def get_webhook_subscription(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    return await _load_and_scope(db, current_user, subscription_id)
+    row = await _load_and_scope(db, current_user, subscription_id)
+    return _subscription_response(row, current_user)
 
 
 @router.patch("/{subscription_id}", response_model=WebhookSubscriptionRead)
@@ -223,10 +285,14 @@ async def test_webhook_subscription(
 )
 async def list_webhook_deliveries(
     subscription_id: uuid.UUID,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    # A project-bound key keeps this read, as it keeps the writes in this file:
+    # ``_load_and_scope`` confines it to its own project's subscriptions.
+    current_user: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
 ):
+    """Delivery history for one subscription. QA_LEAD+: each row carries the
+    event payload and the start of the receiver's response."""
     await _load_and_scope(db, current_user, subscription_id)
     return await svc.list_deliveries(db, subscription_id, limit=limit)
 

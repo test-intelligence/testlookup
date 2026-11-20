@@ -22,6 +22,13 @@ spec:
         app: testlookup-frontend
         app.kubernetes.io/component: frontend
     spec:
+      # Pod-level, so every container in this pod (an init container, and any
+      # added later) inherits them. No fsGroup: OpenShift's restricted SCC
+      # refuses a fixed one, and the writable volumes are emptyDirs.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       # Drain before stop (2026-10-17: a page open during a deploy got a 504).
       # A deleted pod keeps receiving requests until the ingress drops it from
       # its endpoints; the preStop sleep keeps nginx serving through that lag,
@@ -39,7 +46,9 @@ spec:
               exec:
                 command: ["sh", "-c", "sleep 10"]
           ports:
-            - containerPort: 80
+            # nginx runs as uid 101 and listens on 8080 in the container; the
+            # Service (services.yaml) keeps port 80 and targets this port.
+            - containerPort: 8080
               name: http
           env:
             # Override the docker-compose default ("backend:8000") with the
@@ -58,7 +67,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /
-              port: 80
+              port: 8080
             initialDelaySeconds: 10
             periodSeconds: 15
             failureThreshold: 3
@@ -66,22 +75,50 @@ spec:
           readinessProbe:
             httpGet:
               path: /
-              port: 80
+              port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
             failureThreshold: 2
             timeoutSeconds: 3
           securityContext:
-            runAsNonRoot: true
             runAsUser: 101
             runAsGroup: 101
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # Everything the process writes is on a volume below.
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-            seccompProfile:
-              type: RuntimeDefault
+          volumeMounts:
+            # The root filesystem is read-only; nginx runs as uid 101. These
+            # two are everything the image writes (frontend/nginx.main.conf):
+            # the pid file and temp directories, and the server block the
+            # entrypoint renders from the template.
+            - name: tmp
+              mountPath: /tmp
+            - name: nginx-conf-d
+              mountPath: /etc/nginx/conf.d
+            # Only a frontend image from before nginx.main.conf writes these
+            # two (its stock nginx.conf keeps the pid file in /run and temp
+            # files in /var/cache/nginx). They let such an image still start
+            # under this manifest: the upgrade test runs the previous build
+            # that way. Remove both once no supported image predates the change.
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /run
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        # An overlay that ships a rendered server block (k3s,
+        # openshift-artifactory) replaces this volume's source with its
+        # ConfigMap and keeps the name.
+        - name: nginx-conf-d
+          emptyDir: {}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname

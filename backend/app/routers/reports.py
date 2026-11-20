@@ -445,9 +445,15 @@ async def create_share_link_endpoint(
     run_id: uuid.UUID,
     body: CreateShareLinkRequest,
     db: AsyncSession = Depends(get_db),
+    # QA_LEAD, like the Trends e-mail above: a share link is an unauthenticated
+    # URL, so the report leaves the system and no later access control can
+    # contain it. Membership alone let a VIEWER publish a run report. A
+    # project-bound key is let in because ``require_run_access()`` below
+    # confines it to its own project's runs (it could create links before).
+    _role: User = Depends(require_role(UserRole.QA_LEAD, allow_project_key=True)),
     current_user: User = Depends(require_run_access()),
 ):
-    """Create a time-limited share link for the run report."""
+    """Create a time-limited, public share link for the run report (QA_LEAD)."""
     from sqlalchemy import select
     from app.services.share_link_service import create_share_link
 

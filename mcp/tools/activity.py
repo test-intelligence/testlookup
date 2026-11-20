@@ -62,7 +62,7 @@ def register(mcp) -> None:  # noqa: ANN001
         params = {"limit": max(1, min(int(limit), 200)), "category": category,
                   "since": since_to_iso(since), "cursor": cursor}
         try:
-            body = await api.get(f"/api/v1/projects/{pid}/activity", params=params) or {}
+            body = await api.get(api.path("/api/v1/projects/{project_id}/activity", project_id=api.uuid_id(pid)), params=params) or {}
         except Exception as exc:
             return api.error_payload(exc)
         items = [
@@ -92,7 +92,7 @@ def register(mcp) -> None:  # noqa: ANN001
         except Exception as exc:
             return api.error_payload(exc)
         try:
-            event = await api.get(f"/api/v1/projects/{pid}/activity/{event_id}")
+            event = await api.get(api.path("/api/v1/projects/{project_id}/activity/{event_id}", project_id=api.uuid_id(pid), event_id=api.uuid_id(event_id)))
         except Exception as exc:
             return api.error_payload(exc)
         return {"ok": True, **(event or {})}

@@ -17,10 +17,18 @@ GET /health/version — Cheap build-identity probe: version + git revision +
                       (which probes six services) is too slow.
 
 GET /health/details — Full dependency status report for operations dashboards.
+                      Needs a signed-in user or an API key (any role).
                       Checks all services: PostgreSQL, MongoDB, Redis, MinIO, Ollama, ChromaDB.
                       Every probe is budgeted, so the response is bounded even
                       when several dependencies are unreachable. Still not a
                       K8s probe: it reports 200 while degraded by design.
+
+GET /health/ingestion — Live-stream ingestion load and queue depths. Needs a
+                      signed-in user or an API key (any role).
+
+The three probes are public and say little: a failed check reports the fixed
+word ``CHECK_FAILED``, never the driver's exception text, which can name
+internal hosts, ports and accounts. The exception is logged server-side.
 """
 import asyncio
 import logging
@@ -29,15 +37,20 @@ from datetime import datetime, timezone
 from typing import Any, cast
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
+from app.core.deps import get_current_active_user
 
 router = APIRouter(prefix="/health", tags=["Health"])
 logger = logging.getLogger(__name__)
 
 _START_TIME = time.time()
+
+#: What a failed check reports in place of the exception text. The probes are
+#: public, and a driver's message names hosts, ports and database accounts.
+CHECK_FAILED = "check failed; see the server log"
 
 
 # ── Individual dependency probes ──────────────────────────────────────────────
@@ -52,7 +65,7 @@ async def _check_postgres() -> dict[str, Any]:
         return {"status": "ok"}
     except Exception as exc:
         logger.warning("Postgres health check failed: %s", exc)
-        return {"status": "error", "detail": str(exc)[:200]}
+        return {"status": "error", "detail": CHECK_FAILED}
 
 
 async def _check_mongo() -> dict[str, Any]:
@@ -64,7 +77,7 @@ async def _check_mongo() -> dict[str, Any]:
         return {"status": "ok"}
     except Exception as exc:
         logger.warning("MongoDB health check failed: %s", exc)
-        return {"status": "error", "detail": str(exc)[:200]}
+        return {"status": "error", "detail": CHECK_FAILED}
 
 
 async def _check_redis() -> dict[str, Any]:
@@ -76,7 +89,7 @@ async def _check_redis() -> dict[str, Any]:
         return {"status": "ok"}
     except Exception as exc:
         logger.warning("Redis health check failed: %s", exc)
-        return {"status": "error", "detail": str(exc)[:200]}
+        return {"status": "error", "detail": CHECK_FAILED}
 
 
 # Per-probe timeout budget for the non-critical /health/details checks.
@@ -124,7 +137,8 @@ async def _check_minio() -> dict[str, Any]:
                 return {"status": "ok"}
         return {"status": "degraded", "detail": f"HTTP {status_code}"}
     except Exception as exc:
-        return {"status": "degraded", "detail": str(exc)[:200]}
+        logger.warning("Object store health check failed: %s", exc)
+        return {"status": "degraded", "detail": CHECK_FAILED}
 
 
 async def _check_ollama() -> dict[str, Any]:
@@ -164,7 +178,8 @@ async def _check_chromadb() -> dict[str, Any]:
             return {"status": "ok"}
         return {"status": "degraded", "detail": f"HTTP {resp.status_code}"}
     except Exception as exc:
-        return {"status": "degraded", "detail": str(exc)[:200]}
+        logger.warning("ChromaDB health check failed: %s", exc)
+        return {"status": "degraded", "detail": CHECK_FAILED}
 
 
 # Wall-clock budget for the three critical probes.
@@ -194,7 +209,8 @@ async def _critical(coro, label: str) -> dict[str, Any]:
             "detail": f"{label} probe timed out after {_CRITICAL_BUDGET_SECONDS}s",
         }
     except Exception as exc:  # noqa: BLE001 - a probe must not raise past itself
-        return {"status": "error", "detail": str(exc)[:200]}
+        logger.warning("%s health check failed: %s", label, exc)
+        return {"status": "error", "detail": CHECK_FAILED}
 
 
 async def _with_budget(coro, label: str) -> dict[str, Any]:
@@ -211,7 +227,8 @@ async def _with_budget(coro, label: str) -> dict[str, Any]:
     except asyncio.TimeoutError:
         return {"status": "degraded", "detail": f"{label} probe timed out after {_PROBE_BUDGET_SECONDS + 0.5}s"}
     except Exception as exc:
-        return {"status": "degraded", "detail": str(exc)[:200]}
+        logger.warning("%s health check failed: %s", label, exc)
+        return {"status": "degraded", "detail": CHECK_FAILED}
 
 
 def build_provenance() -> dict[str, str]:
@@ -298,10 +315,17 @@ async def version():
     }
 
 
-@router.get("/details", summary="Full dependency status — for ops dashboards")
+@router.get(
+    "/details",
+    summary="Full dependency status — for ops dashboards",
+    # A dashboard, not a probe: any signed-in user or API key. Declared on the
+    # route, not as a parameter, so the handler stays callable with no arguments.
+    dependencies=[Depends(get_current_active_user)],
+)
 async def health_details():
     """
     Full health report across all infrastructure dependencies.
+    Needs a signed-in user or an API key (any role); anonymous callers get 401.
     Runs all checks concurrently; returns 200 even when non-critical services are degraded.
     Not intended for K8s probes — use /health/live and /health/ready instead.
 
@@ -354,10 +378,13 @@ async def health_details():
 @router.get(
     "/ingestion",
     summary="Live-stream ingestion health — gate + queue + memory",
+    dependencies=[Depends(get_current_active_user)],
 )
 async def health_ingestion() -> dict:
     """Surface the load + backpressure signals used by the live-stream
     admission gates.
+
+    Needs a signed-in user or an API key (any role); anonymous callers get 401.
 
     The output is for dashboards and for support / on-call humans when a
     customer reports "my runs are slow / 429ing" (the admission gates are

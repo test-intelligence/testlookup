@@ -37,6 +37,7 @@ from app.agents.fixer.state import (
 )
 from app.core.deps import (
     _enforce_api_key_project_binding,
+    enforce_project_role_floor,
     get_current_active_user,
     get_db,
     require_project_access,
@@ -91,6 +92,8 @@ def require_attempt_access():
                 status_code=403,
                 detail="You do not have access to this attempt's project",
             )
+        # A write needs the route's role in this project too (core/deps.py).
+        await enforce_project_role_floor(db, current_user, project_id)
         return current_user
 
     return _check
@@ -215,8 +218,10 @@ async def start_fixer_run(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
-                "Suggest mode requires a runner (docker or workflow_dispatch). "
-                "Configure fixer.runner.type before running in suggest mode."
+                "Suggest mode requires a runner, and it opens a pull request only with "
+                "the docker runner (workflow_dispatch reruns the unpatched branch and "
+                "records a baseline-only result). Set fixer.runner.type to docker before "
+                "running in suggest mode."
             ),
         )
     except svc.FixerAlreadyRunning:

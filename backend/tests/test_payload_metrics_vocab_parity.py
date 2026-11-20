@@ -125,7 +125,7 @@ def test_the_vector_file_vocabulary_is_the_modules():
     names = ("EXCHANGES_PER_TEST_MAX", "EXCHANGES_PER_RUN_MAX", "BODY_WIRE_MAX_BYTES", "BODY_STORED_MAX_BYTES",
              "TRUNCATION_MARKER", "HEADERS_MAX", "HEADER_NAME_MAX", "HEADER_VALUE_MAX", "URL_MAX", "ENDPOINT_MAX",
              "METHOD_RE", "SCHEMA_KEYS_MAX", "FIELD_NAME_RE", "SCHEMA_STATES", "HEADER_DENYLIST",
-             "HEADER_SECRET_SUFFIXES", "QUERY_DENYLIST", "ENDPOINT_ID_SEGMENT_RES", "REDACTED")
+             "HEADER_SECRET_SUFFIXES", "HEADER_SUFFIX_EXCEPTIONS", "QUERY_DENYLIST", "ENDPOINT_ID_SEGMENT_RES", "REDACTED")
     expected: dict[str, Any] = {name: getattr(hv, name) for name in names}
     expected.update({"TOKEN_SHAPES": TOKEN_SHAPES, "JSON_DEPTH_MAX": hr.JSON_DEPTH_MAX,
                      "UNNAMED_KEYS": hr.UNNAMED_KEYS, "ERROR_MAX": hr.ERROR_MAX, "JSON_PAIR_RE": hr.JSON_PAIR_RE,
@@ -139,7 +139,11 @@ def test_the_model_bounds_are_the_vocabulary():
     assert fields["response_schema_state"].default in hv.SCHEMA_STATES
     assert any(getattr(item, "max_length", None) == hr.ERROR_MAX for item in fields["error"].metadata)
     assert len({name.lower() for name in hv.HEADER_DENYLIST}) == len(hv.HEADER_DENYLIST)
-    assert all(name == name.lower() for name in (*hv.HEADER_DENYLIST, *hv.QUERY_DENYLIST, *hv.HEADER_SECRET_SUFFIXES))
+    assert all(name == name.lower() for name in (*hv.HEADER_DENYLIST, *hv.QUERY_DENYLIST, *hv.HEADER_SECRET_SUFFIXES,
+                                                 *hv.HEADER_SUFFIX_EXCEPTIONS))
+    # An exception only makes sense for a name the suffix rule would catch and the denylist does not hold.
+    assert all(name.endswith(hv.HEADER_SECRET_SUFFIXES) for name in hv.HEADER_SUFFIX_EXCEPTIONS)
+    assert not set(hv.HEADER_SUFFIX_EXCEPTIONS) & set(hv.HEADER_DENYLIST)
     assert hv.LIST_PAGE_MAX == hv.EXCHANGES_PER_TEST_MAX
 
 

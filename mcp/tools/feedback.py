@@ -134,7 +134,7 @@ def register(mcp) -> None:  # noqa: ANN001
 
         try:
             found = await api.get(
-                f"/api/v1/projects/{project_id}/analyses/lookup",
+                api.path("/api/v1/projects/{project_id}/analyses/lookup", project_id=api.uuid_id(project_id)),
                 params={"fingerprint": fingerprint},
             )
         except Exception as exc:
@@ -153,7 +153,7 @@ def register(mcp) -> None:  # noqa: ANN001
 
         previous_category = (found or {}).get("failure_category")
         try:
-            await api.post(f"/api/v1/feedback/{analysis_id}", json_body=body)
+            await api.post(api.path("/api/v1/feedback/{analysis_id}", analysis_id=api.uuid_id(analysis_id)), json_body=body)
         except Exception as exc:
             return api.error_payload(exc)
         return {
@@ -214,7 +214,7 @@ def register(mcp) -> None:  # noqa: ANN001
 
         try:
             data = await api.post(
-                f"/api/v1/projects/{project_id}/fix-outcomes", json_body=body,
+                api.path("/api/v1/projects/{project_id}/fix-outcomes", project_id=api.uuid_id(project_id)), json_body=body,
             )
         except Exception as exc:
             return api.error_payload(exc)

@@ -31,8 +31,9 @@ Quick start (async)
 
 Pytest plugin
 -------------
-Install:
-    pip install testlookup-reporter
+Install (the package is not on PyPI; run this in the SDK directory, which is
+the Python SDK ZIP your TestLookup instance serves or ``client/`` in a clone):
+    pip install .
 
 Run:
     pytest --testlookup-url     http://localhost:8000 \\
@@ -74,7 +75,7 @@ from run_context import collect_run_context as _collect_run_context, locates_run
 # Opt-in capture of the HTTP exchanges each test makes (W23d AGT-14): OFF unless
 # --testlookup-capture-http / TESTLOOKUP_CAPTURE_HTTP / testlookup.capture_http
 # asks; redacted here, before anything is buffered; see http_capture.py.
-from http_capture import HttpCapture, capture_enabled
+from http_capture import HttpCapture, capture_enabled, failure_text_pass
 
 # Keep in step with ``version`` in pyproject.toml (pinned by a test).
 __version__ = "1.3.0"
@@ -96,6 +97,10 @@ RETRY_BASE_DELAY   = 0.5       # seconds
 # refresh window so a single bucket-empty stretch can still be ridden
 # out, but two back-to-back outages cannot silently hide.
 MAX_RETRY_TOTAL_SECONDS = 300.0
+# The same cap inside a pytest run, where the retry waits in the test process:
+# a server answering 429/503 with a long Retry-After may hold the tests this
+# long per batch, then the batch counts as failed and the run goes on.
+PYTEST_MAX_RETRY_TOTAL_SECONDS = 30.0
 # HTTP status codes that count as transient server-side back-pressure.
 # 429 → admission-gate bucket exhausted; 503 → Redis/backpressure rejection.
 RETRYABLE_STATUS_CODES = frozenset({429, 503})
@@ -896,6 +901,10 @@ class LiveSession:
     server. Back-pressure is applied if the queue grows beyond MAX_QUEUE_SIZE.
     """
 
+    #: The longest one batch may spend retrying. The pytest plugin lowers it
+    #: on its own session (``PYTEST_MAX_RETRY_TOTAL_SECONDS``).
+    retry_cap_seconds: float = MAX_RETRY_TOTAL_SECONDS
+
     def __init__(
         self,
         session_id: str,
@@ -982,8 +991,10 @@ class LiveSession:
         effective_suite = suite_name if suite_name is not None else self._default_suite_name
         if effective_suite: event["suite_name"]  = effective_suite
         if class_name:    event["class_name"]  = class_name
-        if error:         event["error_message"] = error
-        if stack_trace:   event["stack_trace"] = stack_trace
+        # Credentials that a failure message or traceback quotes are replaced
+        # before the event is queued (the server redacts again on receipt).
+        if error:         event["error_message"] = failure_text_pass(error)
+        if stack_trace:   event["stack_trace"] = failure_text_pass(stack_trace)
         if tags:          event["tags"] = tags
         if metadata:      event["metadata"] = metadata
         _add_timing(event, started_at_ms, setup_ms, call_ms, teardown_ms, worker_id)
@@ -1152,13 +1163,14 @@ class LiveSession:
                         retry_after_header=retry_after,
                         attempt=attempt,
                         total_elapsed_s=elapsed,
+                        cap_total_s=self.retry_cap_seconds,
                     )
                     if delay is None or attempt == MAX_RETRIES:
                         logger.error(
                             "Batch POST giving up after HTTP %d "
                             "(attempt=%d events=%d elapsed=%.1fs cap=%.1fs run_id=%s)",
                             resp.status_code, attempt, len(events),
-                            elapsed, MAX_RETRY_TOTAL_SECONDS, self.run_id,
+                            elapsed, self.retry_cap_seconds, self.run_id,
                         )
                         self._stats["failed"] += len(events)
                         return
@@ -1181,13 +1193,14 @@ class LiveSession:
                     retry_after_header=None,
                     attempt=attempt,
                     total_elapsed_s=elapsed,
+                    cap_total_s=self.retry_cap_seconds,
                 )
                 if delay is None or attempt == MAX_RETRIES:
                     logger.error(
                         "Batch POST failed after %d attempts "
                         "(events=%d elapsed=%.1fs cap=%.1fs run_id=%s): %s",
                         attempt, len(events), elapsed,
-                        MAX_RETRY_TOTAL_SECONDS, self.run_id, exc,
+                        self.retry_cap_seconds, self.run_id, exc,
                     )
                     self._stats["failed"] += len(events)
                     return
@@ -1495,8 +1508,10 @@ class LiveStream:
         effective_suite = suite_name if suite_name is not None else self._default_suite_name
         if effective_suite: event["suite_name"]  = effective_suite
         if class_name:    event["class_name"]  = class_name
-        if error:         event["error_message"] = error
-        if stack_trace:   event["stack_trace"] = stack_trace
+        # Credentials that a failure message or traceback quotes are replaced
+        # before the event is queued (the server redacts again on receipt).
+        if error:         event["error_message"] = failure_text_pass(error)
+        if stack_trace:   event["stack_trace"] = failure_text_pass(stack_trace)
         if tags:          event["tags"] = tags
         if metadata:      event["metadata"] = metadata
         _add_timing(event, started_at_ms, setup_ms, call_ms, teardown_ms, worker_id)
@@ -1849,13 +1864,35 @@ class _TestLookupPytestPlugin:
 
     def pytest_sessionstart(self, session):
         self._loop = asyncio.new_event_loop()
-        self._live = self._loop.run_until_complete(
-            self._reporter._create_session(
-                build_number=self._build_number,
-                branch=self._branch or None,
-                launch_name=self._launch_name or None,
+        try:
+            self._live = self._loop.run_until_complete(
+                self._reporter._create_session(
+                    build_number=self._build_number,
+                    branch=self._branch or None,
+                    launch_name=self._launch_name or None,
+                )
             )
-        )
+        except Exception as exc:  # noqa: BLE001 - reporting never stops the tests
+            # An exception here is a pytest INTERNALERROR and no test runs.
+            # A server that is down or refusing costs this run its live
+            # report, nothing else: every later hook returns at once while
+            # ``self._live`` is None.
+            logger.warning(
+                "TestLookup live reporting is off for this run: the session "
+                "could not be created (%s: %s). The tests run as normal.",
+                type(exc).__name__, exc,
+            )
+            self._live = None
+            try:
+                self._loop.run_until_complete(self._reporter.aclose())
+            except Exception:  # noqa: BLE001 - best-effort cleanup
+                pass
+            self._loop.close()
+            self._loop = None
+            return
+        # The batch POST retries inline, in the test process. Keep that wait
+        # short here; the general budget suits a long-lived service, not a CI job.
+        self._live.retry_cap_seconds = PYTEST_MAX_RETRY_TOTAL_SECONDS
         logger.info("TestLookup live session started: %s", self._live.session_id)
         if self._capture is not None:
             self._capture.install()

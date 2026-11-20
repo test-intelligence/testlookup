@@ -42,7 +42,7 @@ class _FakeMCP:
 
 def _row(i, ready=True):
     return {
-        "id": f"req-{i:02d}",
+        "id": f"00000000-0000-4000-8000-0000000000{i:02d}",
         "test_name": f"test_flaky_{i:02d}",
         "test_fingerprint": f"{i:016x}",
         "consecutive_passes": 5,
@@ -121,7 +121,7 @@ def test_promote_by_default_is_a_dry_run_that_sends_no_write(api):
     assert result["dry_run"] is True and result["ok"] is True
     assert result["count"] == 10, "the listing is capped at 10 per call"
     assert [r["request_id"] for r in result["ready_to_promote"]] == [
-        f"req-{i:02d}" for i in range(10)
+        f"00000000-0000-4000-8000-0000000000{i:02d}" for i in range(10)
     ]
     assert api["calls"] == [
         (
@@ -140,7 +140,7 @@ def test_promote_with_dry_run_false_releases_one_ready_row_exactly_once(api):
     )
 
     writes = _writes(api)
-    assert [path for path, _ in writes] == ["/api/v1/quarantine/req-01/release"]
+    assert [path for path, _ in writes] == ["/api/v1/quarantine/00000000-0000-4000-8000-000000000001/release"]
     assert "Promoted out of quarantine" in writes[0][1]["notes"]
     assert result == {
         "ok": True,
@@ -148,7 +148,7 @@ def test_promote_with_dry_run_false_releases_one_ready_row_exactly_once(api):
         "released_count": 1,
         "results": [
             {
-                "request_id": "req-01",
+                "request_id": "00000000-0000-4000-8000-000000000001",
                 "test_name": "test_flaky_01",
                 "fingerprint": f"{1:016x}",
                 "consecutive_passes": 5,
@@ -165,13 +165,13 @@ def test_promote_with_dry_run_false_releases_at_most_ten(api):
     )
 
     paths = [path for path, _ in _writes(api)]
-    assert paths == [f"/api/v1/quarantine/req-{i:02d}/release" for i in range(10)]
+    assert paths == [f"/api/v1/quarantine/00000000-0000-4000-8000-0000000000{i:02d}/release" for i in range(10)]
     assert result["released_count"] == 10
 
 
 def test_a_refused_release_is_reported_and_does_not_stop_the_batch(api):
     api["rows"] = [_row(1), _row(2), _row(3)]
-    api["post_error"]["/api/v1/quarantine/req-02/release"] = _http_error(
+    api["post_error"]["/api/v1/quarantine/00000000-0000-4000-8000-000000000002/release"] = _http_error(
         409, "Request is not in an active state"
     )
 
@@ -182,7 +182,7 @@ def test_a_refused_release_is_reported_and_does_not_stop_the_batch(api):
     assert len(_writes(api)) == 3
     assert result["ok"] is False and result["released_count"] == 2
     failed = [r for r in result["results"] if not r["released"]]
-    assert len(failed) == 1 and failed[0]["request_id"] == "req-02"
+    assert len(failed) == 1 and failed[0]["request_id"] == "00000000-0000-4000-8000-000000000002"
     assert failed[0]["status_code"] == 409
     assert failed[0]["detail"] == "Request is not in an active state"
 
@@ -260,24 +260,24 @@ def test_approve_posts_once_with_notes_and_duration(api):
     _call(
         api,
         "approve_quarantine",
-        request_id="req-05",
+        request_id="00000000-0000-4000-8000-000000000005",
         notes="flaky wait",
         quarantine_duration_days=7,
     )
 
     assert _writes(api) == [
         (
-            "/api/v1/quarantine/req-05/approve",
+            "/api/v1/quarantine/00000000-0000-4000-8000-000000000005/approve",
             {"notes": "flaky wait", "quarantine_duration_days": 7},
         )
     ]
 
 
 def test_reject_posts_once_with_notes(api):
-    text = _call(api, "reject_quarantine", request_id="req-06", notes="real failure")
+    text = _call(api, "reject_quarantine", request_id="00000000-0000-4000-8000-000000000006", notes="real failure")
 
     assert _writes(api) == [
-        ("/api/v1/quarantine/req-06/reject", {"notes": "real failure"})
+        ("/api/v1/quarantine/00000000-0000-4000-8000-000000000006/reject", {"notes": "real failure"})
     ]
     assert "rejected" in text
 
@@ -308,11 +308,11 @@ def test_propose_posts_a_proposal_and_never_approves(api):
 
 def test_release_posts_once_with_the_reason(api):
     result = _call(
-        api, "release_quarantine", request_id="req-07", reason="fix merged in #123"
+        api, "release_quarantine", request_id="00000000-0000-4000-8000-000000000007", reason="fix merged in #123"
     )
 
     assert _writes(api) == [
-        ("/api/v1/quarantine/req-07/release", {"notes": "fix merged in #123"})
+        ("/api/v1/quarantine/00000000-0000-4000-8000-000000000007/release", {"notes": "fix merged in #123"})
     ]
     assert result["ok"] is True and result["action"] == "released"
 
@@ -346,8 +346,8 @@ def test_create_project_drops_none_fields(api):
     [
         (
             "release_quarantine",
-            {"request_id": "req-08", "reason": "r"},
-            "/api/v1/quarantine/req-08/release",
+            {"request_id": "00000000-0000-4000-8000-000000000008", "reason": "r"},
+            "/api/v1/quarantine/00000000-0000-4000-8000-000000000008/release",
         ),
         (
             "propose_quarantine",

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import uuid
 from typing import Annotated, AsyncGenerator, Optional
 
@@ -49,6 +50,14 @@ router = APIRouter(prefix="/api/v1/stream", tags=["Live Stream"])
 
 _sse_subscribers: dict[str, set[asyncio.Queue]] = {}
 _sse_bootstrap_floors: dict[asyncio.Queue, str] = {}
+
+#: Seconds of silence before the SSE stream sends a heartbeat comment.
+_SSE_HEARTBEAT_SECONDS = 25.0
+
+
+def _now() -> float:
+    """Wall-clock seconds, compared with a token's ``exp``. A seam for tests."""
+    return time.time()
 
 
 @router.post("/sessions", response_model=stream_service.LiveSessionResponse, status_code=201)
@@ -358,36 +367,36 @@ async def sse_stream(
     # headers on EventSource requests) and the handler streams forever. We
     # inline the equivalent membership check against a short-lived DB session
     # so the streaming generator doesn't hold a pool slot.
+    #
+    # The token is checked by the same helper the live WebSocket uses, which
+    # applies what get_current_user applies to a header JWT: access tokens
+    # only, not revoked, account active and not on a temporary password.
     import uuid as _uuid
 
     from sqlalchemy import select as _select
 
-    from app.core.security import JWTError, decode_token
+    from app.core.session_tokens import SessionTokenRefused, authenticate_access_token
     from app.db.postgres import AsyncSessionLocal
-    from app.models.postgres import ProjectMember, User, UserRole
-
-    try:
-        claims = decode_token(token)
-        user_id = claims.get("sub", "")
-        if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except (JWTError, Exception):
-        raise HTTPException(status_code=401, detail="Invalid token")
+    from app.models.postgres import ProjectMember, UserRole
 
     try:
         project_uuid = _uuid.UUID(project_id)
-        user_uuid = _uuid.UUID(user_id)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid project or user ID")
+        raise HTTPException(status_code=400, detail="Invalid project ID")
 
     async with AsyncSessionLocal() as _db:
-        user = (await _db.execute(_select(User).where(User.id == user_uuid))).scalar_one_or_none()
-        if user is None or not user.is_active:
-            raise HTTPException(status_code=401, detail="Invalid token")
+        try:
+            user, token_expires_at = await authenticate_access_token(token, _db)
+        except SessionTokenRefused as refused:
+            raise HTTPException(
+                status_code=refused.status_code,
+                detail=refused.detail,
+                headers={"Retry-After": "5"} if refused.status_code == 503 else None,
+            ) from None
         if user.role != UserRole.ADMIN and str(user.role) != UserRole.ADMIN.value:
             member = (await _db.execute(
                 _select(ProjectMember.id).where(
-                    ProjectMember.user_id == user_uuid,
+                    ProjectMember.user_id == user.id,
                     ProjectMember.project_id == project_uuid,
                 )
             )).scalar_one_or_none()
@@ -441,8 +450,16 @@ async def sse_stream(
             while True:
                 if await request.is_disconnected():
                     break
+                # The stream must not outlive the token that opened it. The
+                # client reconnects with a fresh access token.
+                remaining = token_expires_at - _now()
+                if remaining <= 0:
+                    yield "data: " + json.dumps({"type": "token_expired"}) + "\n\n"
+                    break
                 try:
-                    msg = await asyncio.wait_for(queue.get(), timeout=25.0)
+                    msg = await asyncio.wait_for(
+                        queue.get(), timeout=min(_SSE_HEARTBEAT_SECONDS, remaining)
+                    )
                     sequence_id = msg.get("sequence_id")
                     id_line = f"id: {sequence_id}\n" if sequence_id else ""
                     yield id_line + "data: " + json.dumps(msg) + "\n\n"

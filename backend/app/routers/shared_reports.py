@@ -16,6 +16,23 @@ logger = logging.getLogger("routers.shared_reports")
 
 router = APIRouter(prefix="/api/v1/shared", tags=["Shared Reports"])
 
+# Sent with every share response (the report page, the refusal page, the PDF).
+# The page is opened by anyone holding the link, on the API's own origin, and
+# prints values from a snapshot that may have been imported. It is built from
+# inline styles only (no script, image, font or frame), so the policy allows
+# exactly that and nothing else; a share link is also never cached, never
+# indexed and never leaked through a Referer header.
+SHARE_RESPONSE_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; "
+        "form-action 'none'; frame-ancestors 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+    "X-Robots-Tag": "noindex",
+}
+
 
 def _wants_html(request: Optional[Request]) -> bool:
     """A browser opening the link asks for ``text/html``; the SPA and API
@@ -86,6 +103,7 @@ async def view_shared_report(
             return HTMLResponse(
                 content=_refusal_page(str(detail["message"])),
                 status_code=status.HTTP_409_CONFLICT,
+                headers=dict(SHARE_RESPONSE_HEADERS),
             )
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
     report.draft_watermark = decision.watermark or ""
@@ -106,7 +124,7 @@ async def view_shared_report(
     ))
     await db.commit()
 
-    return HTMLResponse(content=html_content)
+    return HTMLResponse(content=html_content, headers=dict(SHARE_RESPONSE_HEADERS))
 
 
 @router.get("/reports/{token}/pdf")
@@ -163,5 +181,8 @@ async def download_shared_report_pdf(
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="shared-report-{str(link.run_id)[:8]}.pdf"'},
+        headers={
+            **SHARE_RESPONSE_HEADERS,
+            "Content-Disposition": f'attachment; filename="shared-report-{str(link.run_id)[:8]}.pdf"',
+        },
     )

@@ -441,23 +441,36 @@ async def get_feedback_stats(
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_active_user),
 ):
+    """Feedback counts by rating, plus the total and the not-yet-exported count.
+
+    The counts are instance-wide (every project's feedback together, no
+    per-project breakdown and no feedback text) and are visible to every
+    signed-in user, whatever their role or project membership.
+    """
     return await feedback_service.get_feedback_stats(db)
 
 
 # ── Training management endpoints ─────────────────────────────────────────────
 
+# ADMIN for the export and the fine-tune request, like ``/training/promote``:
+# both work on every project's feedback, so a role that is granted per project
+# (QA_LEAD) is not enough. A project-bound API key is refused for the same
+# reason (``require_role`` does that for ADMIN unless a route opts in).
+
 @router.post("/training/export", status_code=202)
 async def trigger_export(
-    _=Depends(require_role(UserRole.QA_LEAD)),
+    _=Depends(require_role(UserRole.ADMIN)),
 ):
+    """Queue an export of every project's reviewed feedback as training data (ADMIN)."""
     return feedback_service.trigger_export()
 
 
 @router.post("/training/finetune", status_code=202)
 async def trigger_finetune(
     track: str = Body(..., embed=True),
-    _=Depends(require_role(UserRole.QA_LEAD)),
+    _=Depends(require_role(UserRole.ADMIN)),
 ):
+    """Queue a fine-tune run for one track over the instance's training data (ADMIN)."""
     return feedback_service.trigger_finetune(track)
 
 
@@ -477,6 +490,12 @@ async def get_training_status(
     db: AsyncSession = Depends(get_db),
     _=Depends(get_current_active_user),
 ):
+    """Whether fine-tuning is enabled, the model registry state and feedback totals.
+
+    The counts are instance-wide (every project's feedback together) and, with
+    the rest of this answer, are visible to every signed-in user, whatever
+    their role or project membership.
+    """
     return await feedback_service.get_training_status(db, settings)
 
 

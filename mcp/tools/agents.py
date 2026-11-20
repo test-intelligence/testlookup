@@ -206,7 +206,7 @@ def register(mcp) -> None:  # noqa: ANN001
         it can be invoked on its own, whether it can run synchronously, and
         whether its output is a report that needs human review.
         """
-        return render_catalog(await api.get("/api/v1/agents/catalog"))
+        return render_catalog(await api.get(api.path("/api/v1/agents/catalog")))
 
     @mcp.tool()
     async def get_agent(agent_id: str) -> str:
@@ -219,7 +219,7 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         if not AGENT_ID_PATTERN.match(agent_id or ""):
             return "agent_id must look like agent.<name>.v<version>, for example agent.summary.v1"
-        return render_agent(await api.get(f"/api/v1/agents/catalog/{agent_id}"))
+        return render_agent(await api.get(api.path("/api/v1/agents/catalog/{agent_id}", agent_id=agent_id)))
 
     @mcp.tool()
     async def invoke_agent(
@@ -276,7 +276,7 @@ def register(mcp) -> None:  # noqa: ANN001
         key = idempotency_key or str(uuid.uuid4())
         try:
             data = await api.post(
-                f"/api/v1/agents/{agent_id}/invoke",
+                api.path("/api/v1/agents/{agent_id}/invoke", agent_id=agent_id),
                 json_body=body,
                 extra_headers={"Idempotency-Key": key},
             )
@@ -300,4 +300,4 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             invocation_id: The invocation_id returned by invoke_agent.
         """
-        return render_invocation(await api.get(f"/api/v1/agents/invocations/{invocation_id}"))
+        return render_invocation(await api.get(api.path("/api/v1/agents/invocations/{invocation_id}", invocation_id=api.uuid_id(invocation_id))))

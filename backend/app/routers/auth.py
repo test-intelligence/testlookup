@@ -1,4 +1,5 @@
 """Authentication endpoints — register, login, refresh, me, change-password."""
+import hashlib
 import logging
 import uuid as _uuid
 from datetime import datetime, timezone
@@ -7,11 +8,12 @@ from typing import Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy import func, or_, select, update
+from limits import parse as parse_rate_limit
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import get_current_active_user, oauth2_scheme
+from app.core.deps import get_current_active_user, oauth2_scheme, require_interactive_session
 from app.core.security import (
     MFA_CHALLENGE_TOKEN_TYPE,
     MFA_ENROLLMENT_TOKEN_TYPE,
@@ -27,6 +29,7 @@ from app.services import mfa_service, ui_dismissal_service
 from app.services.auth_session_tokens import issue_access_jwt, issue_mfa_jwt
 from app.services.refresh_token_service import (
     RefreshTokenError,
+    RefreshTokenReplayError,
     _revoke_family as _revoke_refresh_family,
     issue_refresh_token,
     rotate_refresh_token,
@@ -350,12 +353,15 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
 
     refuse_reserved_username(username=payload.username, email=payload.email)  # W31 E-4
 
+    # E-mail addresses are compared without regard to case (the password-reset
+    # lookup is too, and expects one row). ``first()``: the e-mail and the
+    # username may clash with two different accounts, which is still one 409.
     existing = await db.execute(
-        select(User).where(
-            (User.email == payload.email) | (User.username == payload.username)
-        )
+        select(User.id).where(
+            (func.lower(User.email) == str(payload.email).lower()) | (User.username == payload.username)
+        ).limit(1)
     )
-    if existing.scalar_one_or_none():
+    if existing.first() is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email or username already registered",
@@ -376,27 +382,82 @@ async def register(payload: UserCreate, db: AsyncSession = Depends(get_db)):
     return user
 
 
-def _locked_response(until: datetime) -> HTTPException:
+def _locked_response(until: datetime, *, attempts: str = "sign-in") -> HTTPException:
     """429 + Retry-After for a locked account.
 
-    Enumeration note, stated rather than hidden: this response tells the caller
-    the account exists. It is only ever reached by someone who has just typed
-    the *correct* password (the lock is checked after verification, so a wrong
-    password on a locked account is indistinguishable from a wrong password on
-    any other account), and the pre-existing ``403 Account disabled`` branch
-    already leaks the same class of fact. The alternative — a generic 401 —
-    would leave a locked-out user retrying forever with no idea why, which is
-    how lockout turns into a support ticket instead of a control.
+    ``attempts`` names what was being tried ("sign-in", "password") so the
+    message is true on the signed-in routes that share the lockout.
+
+    Every sign-in attempt on a locked account gets this answer, whatever the
+    password was. It must not depend on the password: when a wrong password
+    answered 401 and the correct one 429, the lock told a guesser which guess
+    was right.
+
+    Enumeration note, stated rather than hidden: this response tells any caller
+    that the account exists and is locked. The ``403 Account disabled`` branch
+    already leaks the same class of fact. The alternative — a generic 401 for
+    every attempt — would leave a locked-out user retrying forever with no idea
+    why, which is how lockout turns into a support ticket instead of a control.
     """
     retry = max(1, int((until - datetime.now(timezone.utc)).total_seconds()))
     return HTTPException(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         detail=(
-            "Account temporarily locked after repeated failed sign-in attempts. "
+            f"Account temporarily locked after repeated failed {attempts} attempts. "
             f"Try again in about {max(1, retry // 60)} minute(s)."
         ),
         headers={"Retry-After": str(retry)},
     )
+
+
+LOGIN_NAME_LIMIT_DETAIL = (
+    "Too many sign-in attempts for this account name. Wait a minute and try again."
+)
+
+
+def enforce_login_name_limit(typed_name: str) -> None:
+    """Per-name ceiling on ``/auth/login``: 429 once one typed name has been tried too often.
+
+    The per-address limit (``app.main._AUTH_RATE_LIMITS``) bounds one address
+    against many accounts. This bounds many addresses against one account
+    name: ``LOGIN_ATTEMPTS_PER_USERNAME_PER_MINUTE`` attempts a minute, right
+    or wrong password, counted before the account is looked up. So the answer
+    is the same for a name that does not exist, and it does not depend on the
+    account lockout (which counts wrong passwords on real accounts, in
+    Postgres).
+
+    The counter lives in the application's rate limiter, so it is shared
+    across workers wherever that one is (Redis in production). The key is a
+    SHA-256 of the lower-cased name, never the typed text, and it expires with
+    its one-minute window. Development keeps the relaxed 200 a minute of the
+    other sign-in limits. If the counter cannot be reached the sign-in goes
+    ahead: the per-address limit and the lockout still apply, and a Redis
+    outage must not stop everyone signing in.
+    """
+    per_minute = settings.LOGIN_ATTEMPTS_PER_USERNAME_PER_MINUTE
+    if per_minute <= 0:
+        return
+    if settings.APP_ENV == "development":
+        per_minute = max(per_minute, 200)
+    digest = hashlib.sha256(typed_name.strip().lower().encode("utf-8")).hexdigest()
+    try:
+        from app.main import limiter  # noqa: PLC0415 - app.main imports this router
+
+        allowed = limiter.limiter.hit(parse_rate_limit(f"{per_minute}/minute"), "login-name", digest)
+    except Exception as exc:  # noqa: BLE001 - fail open, see the docstring
+        logger.warning(
+            "Per-name sign-in counter unavailable (%s); the per-address limit and the "
+            "account lockout still apply",
+            type(exc).__name__,
+        )
+        return
+    if not allowed:
+        logger.warning("Sign-in refused, too many attempts for one account name")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=LOGIN_NAME_LIMIT_DETAIL,
+            headers={"Retry-After": "60"},
+        )
 
 
 @router.post(
@@ -422,12 +483,20 @@ async def login(
     ``core/security.create_mfa_token`` for why a claim on a real access token
     would have been a complete bypass.
     """
+    enforce_login_name_limit(form_data.username)
+
+    # The typed name may match one account's e-mail and another account's
+    # username (usernames written before the "@" rule, or by SCIM). The e-mail
+    # match wins and exactly one row is taken, so that pair signs the e-mail's
+    # owner in instead of failing with "multiple rows" (a 500).
     result = await db.execute(
-        select(User).where(
-            (User.username == form_data.username) | (User.email == form_data.username)
-        ).with_for_update()
+        select(User)
+        .where((User.username == form_data.username) | (User.email == form_data.username))
+        .order_by(case((User.email == form_data.username, 0), else_=1), User.created_at, User.id)
+        .limit(1)
+        .with_for_update()
     )
-    user = result.scalar_one_or_none()
+    user = result.scalars().first()
 
     # Compare against a fixed dummy hash when the user doesn't exist so the
     # response time doesn't reveal whether the username/email is registered
@@ -441,17 +510,26 @@ async def login(
     policy = await mfa_service.load_policy(db)
     lock_expires = mfa_service.locked_until(user) if user is not None else None
 
+    # A locked account answers the same 429 for every attempt, whatever the
+    # password (see _locked_response). The password was still verified above so
+    # the response time does not change. Nothing is counted here: an attacker
+    # hammering a locked account must not be able to keep extending the lock,
+    # or the legitimate owner could never wait it out.
+    if user is not None and lock_expires is not None:
+        logger.warning("Sign-in refused, account locked (user_id=%s)", user.id)
+        raise _locked_response(lock_expires)
+
     if not user or not password_ok:
         # W31 E-10: never the typed username / e-mail — the account id when there is one
         logger.warning("Failed login attempt (user_id=%s)", str(user.id) if user is not None else "unknown")
-        # Only count against a real account, and never while it is already
-        # locked — otherwise an attacker hammering a locked account would keep
-        # extending the lock and the legitimate owner could never wait it out.
-        # Failures against usernames that do not exist are the IP rate
-        # limiter's problem; counting them would need a per-username store
-        # keyed on unverified input, which is a memory-exhaustion and
-        # enumeration vector on its own.
-        if user is not None and lock_expires is None:
+        # Only count against a real account (a locked one never reaches this
+        # point).
+        # Failures against usernames that do not exist are the rate limiters'
+        # problem (per address, and per typed name: enforce_login_name_limit,
+        # whose keys are hashes that expire with their minute). A lasting
+        # per-username failure store keyed on unverified input would be a
+        # memory-exhaustion and enumeration vector on its own.
+        if user is not None:
             await mfa_service.register_failed_attempt(
                 db, user, policy,
                 reason="password",
@@ -469,10 +547,6 @@ async def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account disabled",
         )
-
-    # Checked *after* password verification on purpose — see _locked_response.
-    if lock_expires is not None:
-        raise _locked_response(lock_expires)
 
     # ── SSO enforcement check ────────────────────────────────────
     # When SSO is enforced (SSO_REQUIRED mode), only ADMIN users with the
@@ -759,13 +833,13 @@ async def demo_login(db: AsyncSession = Depends(get_db)):
 @router.post("/first-time-reset", status_code=204)
 async def first_time_reset(
     payload: FirstTimeResetRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(require_interactive_session),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Forced password reset for self-registered users on first login.
 
-    - Requires a valid JWT (user must be authenticated).
+    - Requires an interactive session (a JWT). An API key is refused with 403.
     - Only permitted when must_change_password=True on the account.
     - Does NOT require the current/registration password.
     - Clears the must_change_password flag after a successful change.
@@ -864,6 +938,21 @@ async def refresh_tokens(
     except RefreshTokenError as exc:
         await db.commit()  # persist any family revocation from replay detection
         logger.warning("Refresh token rejected for user_id=%s: %s", user.id, exc)
+        if isinstance(exc, RefreshTokenReplayError):
+            # A rotated refresh token came back: someone else holds a copy.
+            # Revoking the refresh family (committed above) stops new access
+            # tokens; this ends the ones already issued, on every device.
+            # After the commit on purpose: if the cutoff cannot be written,
+            # the family revocation must still stand.
+            try:
+                await revoke_all_user_tokens(user.id, db)
+                await db.commit()
+            except RevocationUnavailable:
+                await db.rollback()
+                logger.error(
+                    "Refresh token replay: access tokens could not be revoked "
+                    "(revocation store unavailable) user_id=%s", user.id,
+                )
         raise credentials_exception
 
     new_access = await issue_access_jwt(db, str(user.id))
@@ -934,15 +1023,46 @@ async def update_me(
 
 @router.post("/logout", status_code=204)
 async def logout(
-    current_user: User = Depends(get_current_active_user),
+    everywhere: bool = Query(
+        False,
+        alias="all",
+        description=(
+            "Sign out everywhere: also end every other access token of this user, "
+            "on every device. Without it only the access token that made the call ends."
+        ),
+    ),
+    current_user: User = Depends(require_interactive_session),
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Server-side logout — revokes the caller's access-token jti until its
     natural expiry and revokes all live refresh tokens for the user so the
-    session cannot be re-minted via /auth/refresh.
+    session cannot be re-minted via /auth/refresh. Interactive sessions only:
+    an API key gets 403.
+
+    ``?all=true`` is "sign out everywhere": it also writes the per-user cutoff,
+    so every access token already issued to the user stops working at once.
+    Plain logout leaves the user's other access tokens to expire on their own
+    (they cannot be refreshed).
     """
+    if everywhere:
+        # Same order as a password change: take the user row lock so a sign-in
+        # racing this call either finishes before the cutoff or waits for it.
+        await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
+        await _revoke_refresh_family(db, current_user.id, reason="logout_all")
+        try:
+            await revoke_all_user_tokens(current_user.id, db)
+        except RevocationUnavailable as exc:
+            await db.rollback()
+            raise HTTPException(
+                status_code=503,
+                detail="Token revocation store unavailable; you were not signed out. Try again.",
+            ) from exc
+        await db.commit()
+        logger.info("User logged out everywhere: user_id=%s", current_user.id)
+        return None
+
     try:
         payload = decode_token(token)
         jti = payload.get("jti")
@@ -998,17 +1118,37 @@ async def list_users(
 @router.post("/change-password", status_code=204)
 async def change_password(
     payload: ChangePasswordRequest,
-    current_user: User = Depends(get_current_active_user),
+    request: Request,
+    current_user: User = Depends(require_interactive_session),
     db: AsyncSession = Depends(get_db),
 ):
-    """Change the current user's password."""
+    """Change the current user's password. Interactive sessions only: an API key gets 403.
+
+    A wrong current password counts toward the same account lockout as a failed
+    sign-in, and a locked account answers 429 whatever was typed. Without that,
+    a stolen access token could be used to guess the password with no limit.
+    """
     await db.execute(select(User.id).where(User.id == current_user.id).with_for_update())
     await db.refresh(current_user)
+    lock_expires = mfa_service.locked_until(current_user)
+    if lock_expires is not None:
+        raise _locked_response(lock_expires, attempts="password")
     if not verify_password(payload.current_password, current_user.hashed_password):
+        logger.warning("Wrong current password on change-password (user_id=%s)", current_user.id)
+        policy = await mfa_service.load_policy(db)
+        locked = await mfa_service.register_failed_attempt(
+            db, current_user, policy,
+            reason="change_password",
+            ip_address=request.client.host if request.client else None,
+        )
+        await db.commit()  # get_db rolls back on the raise below
+        if locked is not None:
+            raise _locked_response(locked, attempts="password")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect",
         )
+    current_user.failed_login_attempts = 0
     current_user.hashed_password = get_password_hash(payload.new_password)
     # A password change is an explicit "revoke every existing session"
     # signal — wipe refresh tokens in Postgres and set the access-token

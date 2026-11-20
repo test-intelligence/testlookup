@@ -149,10 +149,22 @@ pinning a datastore image an existing install was created with — see
 [UPGRADING.md](../../UPGRADING.md) for the Redis to Valkey and object-store
 changes.
 
+## Data-store passwords, digests and the ingress rule
+
+- **Redis and MongoDB need a password.** Step 4c of the deploy generates both on the first run after this change, adds them to the `testlookup-secrets` Secret and to the credentials file, creates the MongoDB root user in the running database, and only then applies the manifests that turn authentication on. A later run keeps the values. `kubectl exec ... redis-cli` keeps working; `mongosh` in the MongoDB pod needs `-u testlookup_root -p --authenticationDatabase admin`. Applying `k8s/overlays/k3s` by hand to an existing install is not supported, and a site patch that replaces the Redis `command` must keep `--requirepass`.
+- **Images are deployed by digest.** The overlay the script renders pins each TestLookup image as `@sha256:...`, so a later push under the same tag is not pulled. A site patch may not set a TestLookup image.
+- **Only Traefik reaches the site's pods.** The NetworkPolicy admits `kube-system` pods labelled `app.kubernetes.io/name=traefik` to the frontend (8080) and the backend (8000). Step 0 stops if no such pod exists; `SKIP_TRAEFIK_LABEL_CHECK=true` skips the check for a differently labelled ingress controller, which then needs a site patch. MCP is reached with `kubectl port-forward` only.
+- **Health paths.** The ingress publishes `/health/live`, `/health/ready`, `/health/version` and `/health/details` (the last needs a sign-in).
+- **The image registry** the script deploys is still plain HTTP with no login on a NodePort; keep that port off untrusted networks.
+
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
+| The deploy stops in Step 0 naming the Traefik label | No `kube-system` pod carries `app.kubernetes.io/name=traefik`. Check `kubectl -n kube-system get pods --show-labels`; with another ingress controller add a site patch for `allow-traefik-ingress` and set `SKIP_TRAEFIK_LABEL_CHECK=true` |
+| "Could not create or verify the MongoDB root user" | MongoDB already enforces authentication with another password (the Secret was deleted and regenerated). Run `kubectl -n testlookup set env deployment/testlookup-mongo MONGO_INITDB_ROOT_USERNAME- MONGO_INITDB_ROOT_PASSWORD-`, then deploy again |
+| "Redis answered a client that sent NO password" at the end of a deploy | The Redis pod did not restart with the new command; read `kubectl -n testlookup describe deploy testlookup-redis` |
+| A pod logs `Read-only file system` | The container's root filesystem is read-only; the path needs a volume. Until fixed, a site patch can set `readOnlyRootFilesystem: false` for that Deployment |
 | Every TestLookup pod is `ImagePullBackOff` | The node's `/etc/rancher/k3s/registries.yaml` has no mirror for `K3S_REGISTRY` (the deploy checks this before applying and prints the fix), or the name does not resolve on the node |
 | `docker push` fails with "server gave HTTP response to HTTPS client" | The build machine's engine does not trust the registry as insecure, or it resolved a different name than the one it trusts |
 | The deploy stops with "already serves TestLookup on host ..." | Your site config did not load, or names another host. Fix `TESTLOOKUP_K3S_ENV`, or set `ALLOW_HOST_CHANGE=true` |

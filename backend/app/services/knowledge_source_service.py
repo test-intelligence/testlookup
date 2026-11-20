@@ -31,6 +31,13 @@ ALLOWLIST_SETTINGS_KEY = "knowledge_rag.domain_allowlist"
 VALID_SOURCE_TYPES = {e.value for e in KnowledgeSourceType}
 VALID_CLASSIFICATIONS = {e.value for e in KnowledgeClassification}
 
+#: Source types fetched over HTTP from a caller-supplied URL. The domain
+#: allow-list applies to all of them, on create and again at fetch time.
+URL_SOURCE_TYPES = frozenset({
+    KnowledgeSourceType.INTERNAL_URL.value,
+    KnowledgeSourceType.EXTERNAL_URL.value,
+})
+
 
 # ── Feature gate ──────────────────────────────────────────────────────────────
 #
@@ -182,8 +189,20 @@ async def create_source(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    # RAG-3: Enforce domain allowlist for external URLs
-    if source_type == KnowledgeSourceType.EXTERNAL_URL.value:
+    # For an uploaded document canonical_url is the object key in the shared
+    # knowledge bucket: it must sit under this project's prefix. The connector
+    # repeats the check at fetch time for rows stored before this one existed.
+    if source_type == KnowledgeSourceType.UPLOADED_DOC.value:
+        from app.services.connectors.document_connector import uploaded_document_key_error
+
+        key_error = uploaded_document_key_error(canonical_url, project_id)
+        if key_error is not None:
+            raise HTTPException(status_code=422, detail=key_error)
+
+    # RAG-3: enforce the domain allow-list for both URL source types. The type
+    # is a label the caller picks and both are fetched by the same public-only
+    # connector, so "internal_url" gets no exemption.
+    if source_type in URL_SOURCE_TYPES:
         allowlist = await get_domain_allowlist(db)
         _validate_url_domain(canonical_url, allowlist)
 
@@ -365,11 +384,11 @@ async def set_domain_allowlist(db: AsyncSession, domains: list[str]) -> list[str
 
 
 def _validate_url_domain(url: str, allowlist: list[str]) -> None:
-    if not allowlist:
-        return  # empty allowlist = permissive
-    parsed = urlparse(url)
-    hostname = (parsed.hostname or "").lower()
-    if not any(hostname == d or hostname.endswith(f".{d}") for d in allowlist):
+    # Same rule the URL connector applies at fetch time (empty list = permissive).
+    from app.services.connectors.url_connector import url_host_on_allowlist
+
+    if not url_host_on_allowlist(url, allowlist):
+        hostname = (urlparse(url).hostname or "").lower()
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Domain '{hostname}' is not in the approved domain allowlist",

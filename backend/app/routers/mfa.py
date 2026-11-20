@@ -436,6 +436,29 @@ async def verify_mfa(
 # ── Self-service management ──────────────────────────────────────────────────
 
 
+async def _lock_account_row(db: AsyncSession, user: User) -> None:
+    """Take the row lock and re-read the user, so concurrent guesses are counted one by one."""
+    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await db.refresh(user)
+
+
+async def _count_failed_attempt(
+    db: AsyncSession, user: User, request: Request, *, reason: str
+) -> None:
+    """Count a wrong password or second factor on a signed-in MFA route.
+
+    Same per-account lockout as sign-in. Commits the count, and raises 429 when
+    this attempt locked the account; otherwise returns and the caller raises
+    its own 400.
+    """
+    policy = await mfa_service.load_policy(db)
+    await mfa_service.register_failed_attempt(
+        db, user, policy, reason=reason, ip_address=_client_ip(request)
+    )
+    await db.commit()
+    _assert_not_locked(user)
+
+
 async def _verify_second_factor(
     db: AsyncSession, user: User, code: Optional[str], recovery_code: Optional[str]
 ) -> bool:
@@ -461,13 +484,20 @@ async def disable_mfa(
     current_user: User = Depends(_require_interactive_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Turn MFA off. Requires the password **and** a live second factor."""
+    """Turn MFA off. Requires the password **and** a live second factor.
+
+    A wrong password or a wrong second factor counts toward the account
+    lockout; a locked account answers 429.
+    """
+    await _lock_account_row(db, current_user)
     if not current_user.mfa_enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="MFA is not enabled for this account.",
         )
+    _assert_not_locked(current_user)
     if not verify_password(payload.password, current_user.hashed_password):
+        await _count_failed_attempt(db, current_user, request, reason="mfa_disable_password")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Password is incorrect"
         )
@@ -488,12 +518,13 @@ async def disable_mfa(
         )
 
     if not await _verify_second_factor(db, current_user, payload.code, payload.recovery_code):
-        await db.commit()
+        await _count_failed_attempt(db, current_user, request, reason="mfa_disable_code")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A valid authenticator code or recovery code is required to disable MFA.",
         )
 
+    current_user.failed_login_attempts = 0
     await mfa_service.disable_mfa(db, current_user)
     await log_identity_event(
         db,
@@ -516,23 +547,31 @@ async def reissue_recovery_codes(
     current_user: User = Depends(_require_interactive_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Replace the recovery-code set. The previous codes stop working."""
+    """Replace the recovery-code set. The previous codes stop working.
+
+    A wrong password or a wrong second factor counts toward the account
+    lockout; a locked account answers 429.
+    """
+    await _lock_account_row(db, current_user)
     if not current_user.mfa_enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="MFA is not enabled for this account.",
         )
+    _assert_not_locked(current_user)
     if not verify_password(payload.password, current_user.hashed_password):
+        await _count_failed_attempt(db, current_user, request, reason="mfa_recovery_codes_password")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Password is incorrect"
         )
     if not await _verify_second_factor(db, current_user, payload.code, payload.recovery_code):
-        await db.commit()
+        await _count_failed_attempt(db, current_user, request, reason="mfa_recovery_codes_code")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A valid authenticator code or recovery code is required.",
         )
 
+    current_user.failed_login_attempts = 0
     codes = await mfa_service.issue_recovery_codes(db, current_user)
     await log_identity_event(
         db,

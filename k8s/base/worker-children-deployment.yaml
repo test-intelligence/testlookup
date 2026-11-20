@@ -30,6 +30,13 @@ spec:
         app.kubernetes.io/component: worker
         queue: agent_children
     spec:
+      # Pod-level, so every container in this pod (an init container, and any
+      # added later) inherits them. No fsGroup: OpenShift's restricted SCC
+      # refuses a fixed one, and the writable volumes are emptyDirs.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccountName: testlookup-sa
       terminationGracePeriodSeconds: 960
       initContainers:
@@ -43,6 +50,15 @@ spec:
                 echo "wait-for-redis: Redis unavailable, retrying in 2s"
                 sleep 2
               done
+          # The same restrictions as the main container below. busybox's own
+          # default user is root, so the uid is stated.
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
       containers:
         - name: worker
           image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
@@ -83,6 +99,10 @@ spec:
             - name: CHROMA_ONNX_MODEL_DIR
               value: /var/cache/testlookup/chroma-onnx
           volumeMounts:
+            # The root filesystem is read-only. /tmp is HOME in the image, and
+            # holds temp files, uploads being parsed and the worker's ready file.
+            - name: tmp
+              mountPath: /tmp
             - name: prometheus-multiproc
               mountPath: /tmp/prometheus-multiproc
             - name: embedder-model-cache
@@ -119,16 +139,17 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
-            runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
+            # Everything the process writes is on a volume below.
+            readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
-            seccompProfile:
-              type: RuntimeDefault
       volumes:
+        # Writable /tmp for a read-only root filesystem.
+        - name: tmp
+          emptyDir: {}
         - name: prometheus-multiproc
           emptyDir: {}
         # ChromaDB's all-MiniLM ONNX weights (79 MB) — see the note in

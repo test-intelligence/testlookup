@@ -39,6 +39,18 @@ testlookup auth whoami                                 # active profile, URL, au
 testlookup doctor                                      # profile, reachability, auth in one verdict
 ```
 
+In a script, give the password on stdin with `--password-stdin` (it needs
+`--username`). `--password` / `-p` still works but prints a warning: other
+users of the machine and CI logs can see a command line.
+
+```bash
+printenv TL_PASSWORD | testlookup auth login --url https://testlookup.example.com -u ci --password-stdin
+```
+
+When the server URL is plain `http://` and the host is not this machine, the
+CLI prints one warning before it sends a password, token or API key: anyone on
+the network path can read them. Use an `https://` URL.
+
 **API key (CI).** Set `TESTLOOKUP_URL` and `TESTLOOKUP_API_KEY` and do not run
 `auth login` on the runner. The key is sent as the `X-API-Key` header. Create a
 key in the web UI under **Settings → API Keys**, or with
@@ -79,7 +91,14 @@ example `TESTLOOKUP_PROFILE=env`) to use the environment variables instead.
 There is no global `--url` option; `auth login --url` sets the URL of the
 profile it saves.
 
-`auth logout` removes the stored tokens and keeps the profile's URL.
+`auth logout` ends the session on the server (`POST /api/v1/auth/logout`, which
+also revokes the user's refresh tokens), then removes the stored access token,
+refresh token and API key from the profile and keeps its URL. It prints what it
+removed. If the server cannot be reached, the stored credentials are still
+removed and a warning says the session stays valid on the server until it
+expires. Removing a stored API key does not revoke it: use `keys revoke` for
+that. For a profile that is not saved (credentials from `TESTLOOKUP_API_KEY`),
+`auth logout` changes nothing and says so.
 
 ## Command reference
 
@@ -87,7 +106,7 @@ Every group has `--help`, for example `testlookup upload file --help`.
 
 | Group | Subcommands | Purpose |
 |---|---|---|
-| `auth` | `login`, `logout`, `whoami` | Log in with username and password (saves a JWT profile), clear stored tokens, show the active profile |
+| `auth` | `login`, `logout`, `whoami` | Log in with username and password (saves a JWT profile; `--password-stdin` for scripts), end the session and remove the stored credentials, show the active profile |
 | `doctor` | (none; run `testlookup doctor`) | One-shot setup check: profile, server reachability and build, credentials |
 | `health` | (none; run `testlookup health`) | Server readiness from `GET /health/ready`, with per-dependency detail |
 | `projects` | `list`, `get <project-id>`, `export <project>`, `import <zip>` | List accessible projects, show one project; export a project's settings and test catalog as a signed ZIP (QA lead), import one as a NEW project (admin) (see [Exporting and importing a project](#exporting-and-importing-a-project)) |
@@ -197,15 +216,20 @@ blockers, or "Pending" when the window has no executions); given a
 | `--run <run-id>` | Run to judge (required) |
 | `-p`, `--project <project-id>` | Project; inferred from the run when omitted |
 | `--strict` | Exit 1 on any failure, quarantined ones included |
-| `--fail-open` | On an API or network error, exit 0 with a warning instead of 2 |
-| `--timeout-seconds N` | Wait up to N seconds (polling every 5 s) for an in-progress run to finish; default 0 judges the current state |
+| `--fail-open` | On an API or network error, exit 0 with a warning instead of 2. It does not apply to a run that is still in progress or empty |
+| `--timeout-seconds N` | Wait up to N seconds (polling every 5 s) for an in-progress run to finish. Default 0 does not wait: a run that is still in progress exits 2 |
+| `--allow-partial` | Judge the run as it is now, even when it is still in progress or holds zero tests |
 | `--profile`, `-o`/`--output` | Profile to use; `table` or `json` (the full partition) |
 
 | Exit code | Meaning |
 |---|---|
 | `0` | No real failures; quarantined failures do not block (also: an infrastructure error with `--fail-open`) |
 | `1` | At least one real (non-quarantined) failure, or any failure with `--strict` |
-| `2` | API or network error, or the run was still in progress after `--timeout-seconds`. Fails closed by default. |
+| `2` | API or network error, or the run was still in progress after `--timeout-seconds`. Fails closed by default. Also: the run is still in progress and no `--timeout-seconds` was given, or the run holds zero tests (nothing was ingested); pass `--allow-partial` to judge such a run anyway |
+
+A run that is still in progress has no failed tests yet, and a run with zero
+tests has nothing to judge, so neither counts as a pass. In a pipeline, upload
+with `--wait` or give `ci-verdict` a `--timeout-seconds`.
 
 CI recipes for GitHub Actions, Jenkins and GitLab are in
 [Flaky tests](../user-guide/flaky-tests.md#gating-ci-on-real-failures-only-testlookup-ci-verdict).

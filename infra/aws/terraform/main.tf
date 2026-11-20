@@ -52,6 +52,8 @@ module "eks" {
   node_max_size          = var.node_max_size
   endpoint_public_access = var.endpoint_public_access
   public_access_cidrs    = var.public_access_cidrs
+  enable_network_policy  = var.enable_network_policy
+  require_imdsv2         = var.require_imdsv2
 
   tags = local.tags
 }

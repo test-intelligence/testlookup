@@ -79,11 +79,11 @@ A production-mode installation has no passwordless login. `scripts/create_admin.
 
 | Mode | How traffic reaches TestLookup | TLS |
 |---|---|---|
-| Compose | Frontend on host port 3000 (source build) or 3000 mapped to nginx port 80 (release images); backend 8000; MCP 8002 bound to loopback | None built in. Put a reverse proxy (nginx, Caddy, Traefik) in front and terminate TLS there |
+| Compose | Frontend on host port 3000 (source build) or 3000 mapped to nginx port 8080 inside the container (release images); backend 8000; MCP 8002 bound to loopback | None built in. Put a reverse proxy (nginx, Caddy, Traefik) in front and terminate TLS there |
 | Single VM | Frontend nginx on port 80 | Add a reverse proxy or load balancer with a certificate before exposing it publicly |
-| Kubernetes `prod` / `self-hosted` / `azure-aks` | NGINX Ingress `testlookup-ingress` (`/api/`, `/api-docs`, `/ws/`, `/webhooks/`, `/health/`, `/metrics` to the backend, `/` to the frontend) and `testlookup-mcp-ingress` on its own host | cert-manager annotation `cert-manager.io/cluster-issuer: letsencrypt-prod`, Secrets `testlookup-tls-cert` and `testlookup-mcp-tls-cert` |
-| GKE | GCE Ingress | Google-managed certificate (`managed-cert.yaml`) |
-| EKS | AWS Load Balancer Controller (ALB) | ACM certificate ARN annotation |
+| Kubernetes `prod` / `self-hosted` / `azure-aks` | NGINX Ingress `testlookup-ingress` (`/api/`, `/api-docs`, `/ws/`, `/webhooks/` and the health endpoints to the backend, `/` to the frontend; `/metrics` is not routed) and `testlookup-mcp-ingress` on its own host. `prod` and `self-hosted` publish the whole `/health/` prefix; `azure-aks` publishes `/health/live`, `/health/ready`, `/health/version` and `/health/details` by exact path | cert-manager annotation `cert-manager.io/cluster-issuer: letsencrypt-prod`, Secrets `testlookup-tls-cert` and `testlookup-mcp-tls-cert` |
+| GKE | GCE Ingress for the application and MCP hosts, with the same four health endpoints by exact path | Google-managed certificate (`managed-cert.yaml`); plain HTTP is redirected to HTTPS by a `FrontendConfig` |
+| EKS | AWS Load Balancer Controller (ALB), with the same four health endpoints by exact path | ACM certificate ARN annotation; port 80 redirects to 443 |
 | OpenShift | Routes with edge termination and HTTP-to-HTTPS redirect | Router default wildcard certificate, or your own PEM files |
 | Single-node K3s | Traefik on plain HTTP | Private networks only; see [single-node K3s](deploy-k3s.md) |
 

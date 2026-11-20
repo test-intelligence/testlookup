@@ -8,8 +8,8 @@
     "Idempotence: redacting expect again yields expect, so the server's re-validation and an SDK's own first pass never change an already-redacted exchange.",
     "An SDK applies the same rules BEFORE it buffers anything; it may skip the BODY_STORED_MAX_BYTES cut (the server makes it) but no other rule. started_at is sent as ISO-8601 UTC with a Z suffix and stored as sent.",
     "The text pass (header values, query values, JSON string leaves and keys, non-JSON bodies, error): secret-named pairs (JSON_PAIR_RE / FORM_PAIR_RE whose key is secret-named), then TOKEN_SHAPES whole-token, then the server's redact_text patterns (credentials, JWTs, e-mail / phone / card / IPv4 shapes), then TOKEN_SHAPES again.",
-    "Headers: at most HEADERS_MAX per side, sorted by name; a name in HEADER_DENYLIST or ending in a HEADER_SECRET_SUFFIXES entry (lower-cased, _ read as -) keeps its name and its value becomes [REDACTED]; a numeric value becomes its text; any other non-text value is skipped.",
-    "The url: the userinfo password (or a bare userinfo) becomes [REDACTED]; a QUERY_DENYLIST name's value becomes [REDACTED], every other query value gets the text pass; the fragment is dropped; URL_MAX characters. The url is split by RFC 3986 appendix B (URL_PARTS_RE), never by a parser that refuses a bracket in the userinfo.",
+    "Headers: at most HEADERS_MAX per side, sorted by name; a name in HEADER_DENYLIST or ending in a HEADER_SECRET_SUFFIXES entry (lower-cased, _ read as -) keeps its name and its value becomes [REDACTED], except that a HEADER_SUFFIX_EXCEPTIONS name is exempt from the suffix rule (never from the denylist) and gets the text pass like any other header; a numeric value becomes its text; any other non-text value is skipped.",
+    "The url: the userinfo password (or a bare userinfo) becomes [REDACTED]; a QUERY_DENYLIST name's value becomes [REDACTED], and so does the value of a name that is secret-named by the body key rule (the percent-decoded, trimmed name: exact secret names, the _token / _password ... suffixes, - read as _, camelCase split); every other query value gets the text pass; the fragment is dropped; URL_MAX characters. The url is split by RFC 3986 appendix B (URL_PARTS_RE), never by a parser that refuses a bracket in the userinfo.",
     "The endpoint: an SDK-sent template keeps its segments (scheme, host, query stripped); otherwise the url's path with every segment matching ENDPOINT_ID_SEGMENT_RES replaced by {id}; ENDPOINT_MAX characters.",
     "Bodies: cut to BODY_WIRE_MAX_BYTES UTF-8 bytes first (state too_large, not parsed); JSON (no NaN / Infinity) is walked: a secret-named key's non-null, non-boolean value becomes [REDACTED], every list item is walked (no 100-item cut), a container deeper than JSON_DEPTH_MAX becomes [REDACTED], then re-serialised compact (the $json rule); other text gets the text pass; then cut to BODY_STORED_MAX_BYTES with TRUNCATION_MARKER ({omitted} = the bytes not stored). body_bytes = the size before the store cut.",
     "response_schema: top-level key -> JSON type of the redacted response body (state parsed only); a key outside FIELD_NAME_RE or beyond SCHEMA_KEYS_MAX is counted under UNNAMED_KEYS. A client-sent schema, state or redaction_counts is recomputed. redaction_counts counts the [REDACTED markers per part."
@@ -58,7 +58,8 @@
       "private-token",
       "x-gitlab-token",
       "x-hub-signature",
-      "x-hub-signature-256"
+      "x-hub-signature-256",
+      "authentication"
     ],
     "HEADER_SECRET_SUFFIXES": [
       "token",
@@ -67,7 +68,18 @@
       "api-key",
       "apikey",
       "signature",
-      "credential"
+      "credential",
+      "-key",
+      "auth",
+      "session",
+      "sessionid"
+    ],
+    "HEADER_SUFFIX_EXCEPTIONS": [
+      "idempotency-key",
+      "x-idempotency-key",
+      "sec-websocket-key",
+      "surrogate-key",
+      "x-cache-key"
     ],
     "QUERY_DENYLIST": [
       "token",
@@ -86,7 +98,16 @@
       "x-amz-signature",
       "x-amz-credential",
       "x-amz-security-token",
-      "auth"
+      "auth",
+      "subscription-key",
+      "pwd",
+      "passwd",
+      "pass",
+      "sessionid",
+      "session",
+      "jwt",
+      "otp",
+      "pin"
     ],
     "ENDPOINT_ID_SEGMENT_RES": [
       "^\\d+$",
@@ -1532,6 +1553,200 @@
         "status": 200
       },
       "expect": null
+    },
+    {
+      "name": "key_auth_and_session_suffix_headers",
+      "note": "A header name ending in -key, auth, session or sessionid (_ reads as -) loses its value, and so does Authentication (denylisted); none of these values has a token shape, so only the name rule can catch them.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-11-20T09:15:00Z",
+        "request": {
+          "headers": {
+            "Ocp-Apim-Subscription-Key": "w23fSubscriptionKeyValue",
+            "X-Functions-Key": "w23fFunctionsKeyValue",
+            "X-Auth-Key": "w23fAuthKeyValue",
+            "X-Auth": "w23fPlainAuthValue",
+            "Authentication": "w23fAuthenticationValue",
+            "X-Session": "w23fSessionHeaderValue",
+            "X-SessionId": "w23fSessionIdHeaderValue",
+            "X_Upstream_Auth": "w23fUnderscoreAuthValue"
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-11-20T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {
+            "Ocp-Apim-Subscription-Key": "[REDACTED]",
+            "X-Functions-Key": "[REDACTED]",
+            "X-Auth-Key": "[REDACTED]",
+            "X-Auth": "[REDACTED]",
+            "Authentication": "[REDACTED]",
+            "X-Session": "[REDACTED]",
+            "X-SessionId": "[REDACTED]",
+            "X_Upstream_Auth": "[REDACTED]"
+          },
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 8,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "non_secret_key_headers_keep_their_values",
+      "note": "HEADER_SUFFIX_EXCEPTIONS: these names end in -key and are not credentials, so their values are kept (they still get the text pass); X-Request-Id matches no rule.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-11-20T09:15:00Z",
+        "request": {
+          "headers": {
+            "Idempotency-Key": "order-w23f-0001",
+            "X-Idempotency-Key": "order-w23f-0002",
+            "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+            "Surrogate-Key": "product-7 products",
+            "X-Cache-Key": "/L/1/api/products/7",
+            "X-Request-Id": "req-w23f-1"
+          }
+        }
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/products/7",
+        "endpoint": "/api/products/{id}",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-11-20T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {
+            "Idempotency-Key": "order-w23f-0001",
+            "X-Idempotency-Key": "order-w23f-0002",
+            "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+            "Surrogate-Key": "product-7 products",
+            "X-Cache-Key": "/L/1/api/products/7",
+            "X-Request-Id": "req-w23f-1"
+          },
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 0,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "password_session_and_one_time_code_query_names",
+      "note": "The QUERY_DENYLIST names added for subscription keys, passwords, sessions, JWTs and one-time codes; page survives.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/login?subscription-key=w23fSubKeyValue&pwd=w23fPwdValue&passwd=w23fPasswdValue&pass=w23fPassValue&sessionid=w23fSidValue&session=w23fSessValue&jwt=w23fJwtValue&otp=482915&pin=4821&page=2",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-11-20T09:15:00Z"
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/login?subscription-key=[REDACTED]&pwd=[REDACTED]&passwd=[REDACTED]&pass=[REDACTED]&sessionid=[REDACTED]&session=[REDACTED]&jwt=[REDACTED]&otp=[REDACTED]&pin=[REDACTED]&page=2",
+        "endpoint": "/api/login",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-11-20T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 9,
+          "body": 0
+        }
+      }
+    },
+    {
+      "name": "query_names_follow_the_secret_key_rule",
+      "note": "A query name outside QUERY_DENYLIST that is secret-named by the JSON / form key rule (exact names, the _token / _password suffixes, camelCase split) loses its value too; next_page_token is that rule's exception and survives, like sort.",
+      "input": {
+        "method": "GET",
+        "url": "https://api.example.test/api/items?session_token=w23fQuerySessTok&clientSecret=w23fCamelValue&db_password=w23fDbPassValue&next_page_token=w23fCursorValue&sort=name",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-11-20T09:15:00Z"
+      },
+      "expect": {
+        "method": "GET",
+        "url": "https://api.example.test/api/items?session_token=[REDACTED]&clientSecret=[REDACTED]&db_password=[REDACTED]&next_page_token=w23fCursorValue&sort=name",
+        "endpoint": "/api/items",
+        "status": 200,
+        "duration_ms": 42,
+        "started_at": "2026-11-20T09:15:00Z",
+        "error": null,
+        "request": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response": {
+          "headers": {},
+          "body": null,
+          "body_truncated": false,
+          "body_bytes": 0
+        },
+        "response_schema": null,
+        "response_schema_state": "empty",
+        "redaction_counts": {
+          "headers": 0,
+          "query": 3,
+          "body": 0
+        }
+      }
     }
   ]
 }

@@ -4175,6 +4175,69 @@ def test_private_markers_are_found_and_the_lookalikes_are_not(monkeypatch, tmp_p
     ]
 
 
+def test_a_bare_name_testlookup_install_fails_and_a_path_wheel_tarball_or_git_install_passes(
+    monkeypatch, tmp_path,
+) -> None:
+    """The SDK, CLI and reporter names are not registered on PyPI or npm, so a
+    shipped `pip install testlookup-reporter` installs whatever a stranger
+    registers under that name. Only installs from a path, a wheel, a tarball or
+    a git URL may be written down."""
+    _redirect_repo_root(monkeypatch, tmp_path)
+    _write(tmp_path / "client/bad.py", '''
+        """Install:
+            pip install testlookup-reporter
+        """
+    ''')
+    _write(tmp_path / "client/bad.yaml", '''
+        # dependency: pip install "testlookup-reporter[yaml]".
+        # run: python -m pip install --upgrade testlookup-cli==1.2.0
+        # run: pip3 install -U 'testlookup'
+        # run: npm install --save-dev testlookup-reporter
+        # run: npm i @testlookup/reporter
+        # run: yarn add testlookup-reporter
+    ''')
+    _write(tmp_path / "docs/good.md", '''
+        pip install ./cli
+        pip install -e cli/
+        pip install ".[yaml]"
+        pip install "./testlookup/client[yaml]"
+        pip install testlookup/client
+        pip install "$RUNNER_TEMP"/sdk-wheels/testlookup_cli-1.0.0-py3-none-any.whl
+        pip install testlookup_cli-1.0.0-py3-none-any.whl
+        pip install https://tl.example.com/api/v1/sdk/cli/testlookup_cli-1.0.0-py3-none-any.whl
+        pip install "testlookup-cli @ git+https://gitlab.example.com/G/testlookup.git#subdirectory=cli"
+        npm install --save-dev /path/to/testlookup/client/js/testlookup-reporter-1.0.0.tgz
+        npm install --save-dev testlookup-reporter-1.0.0.tgz
+        npm install ./testlookup-reporter-1.0.0.tgz
+        pip install pytest
+        the testlookup-reporter package; run pip install . in that directory
+    ''')
+    _fake_tracked(monkeypatch, _FILLER + ["client/bad.py", "client/bad.yaml", "docs/good.md"])
+    found = sorted((v.relpath, v.line) for v in qg._repo_no_bare_name_package_install())
+    assert found == [("client/bad.py", 2)] + [("client/bad.yaml", n) for n in range(1, 7)]
+
+
+def test_a_bare_name_install_is_tolerated_only_on_the_listed_line(monkeypatch, tmp_path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    rel = "frontend/src/components/onboarding/firstRunSteps.ts"
+    assert any(path == rel for path, _ in qg._BARE_INSTALL_MENTIONS)
+    _write(tmp_path / rel, """
+        // installed editable from source rather than `pip install testlookup-cli`.
+        export const WRONG = 'pip install testlookup-cli'
+    """)
+    _fake_tracked(monkeypatch, _FILLER + [rel])
+    assert [(v.relpath, v.line) for v in qg._repo_no_bare_name_package_install()] == [(rel, 2)]
+
+
+def test_no_shipped_text_installs_a_testlookup_package_by_bare_name() -> None:
+    """Runs against the real tree: the Python SDK docstring and the YAML example
+    both said `pip install testlookup-reporter` (security audit 2026-11-18)."""
+    assert [v.format() for v in qg._repo_no_bare_name_package_install()] == []
+    # Every tolerated mention still exists, or the entry is dead weight.
+    for rel, text in qg._BARE_INSTALL_MENTIONS:
+        assert text in (qg.REPO_ROOT / rel).read_text(encoding="utf-8"), (rel, text)
+
+
 def test_the_license_rules() -> None:
     allowed = {"MIT", "Apache-2.0", "BSD-3-Clause", "MPL-2.0"}
     assert qg._license_allowed("MIT", allowed)

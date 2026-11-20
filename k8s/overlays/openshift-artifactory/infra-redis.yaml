@@ -29,19 +29,50 @@ spec:
       # No Kubernetes API calls here, so no service-account token in the pod
       # (OSS review 2026-11-12, L-8).
       automountServiceAccountToken: false
+      # The stock image starts with its own UID: the only account with the
+      # anyuid SCC (serviceaccount-anyuid.yaml).
+      serviceAccountName: testlookup-anyuid
       containers:
         - name: redis
           image: valkey/valkey:8.1-alpine
+          # Clients must authenticate when testlookup-secrets holds
+          # REDIS_PASSWORD: Valkey then starts with --requirepass. The deploy
+          # script (openshiftsetup/deploy-openshift-artifactory.sh) always
+          # generates the key, together with the three URLs that carry it.
+          #
+          # The key is optional because the offline bundle renders this same
+          # overlay for installs whose Secret was made by hand
+          # (user-guide/air-gapped-install.md): without the key Valkey starts
+          # exactly as it did before, instead of not starting at all. Such an
+          # install is protected by its NetworkPolicy only until the four
+          # keys are added to its Secret.
+          #
+          # `exec` keeps valkey-server as PID 1, so it still gets the stop signal.
           command:
-            - valkey-server
-            - --appendonly
-            - "yes"
-            - --appendfsync
-            - everysec
-            - --maxmemory
-            - 512mb
-            - --maxmemory-policy
-            - volatile-lru
+            - sh
+            - -c
+            - >-
+              exec valkey-server
+              --appendonly yes
+              --appendfsync everysec
+              --maxmemory 512mb
+              --maxmemory-policy volatile-lru
+              ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: testlookup-secrets
+                  key: REDIS_PASSWORD
+                  optional: true
+            # valkey-cli reads this, so `oc exec ... valkey-cli` signs in
+            # without a flag.
+            - name: REDISCLI_AUTH
+              valueFrom:
+                secretKeyRef:
+                  name: testlookup-secrets
+                  key: REDIS_PASSWORD
+                  optional: true
           ports:
             - containerPort: 6379
           resources:
@@ -51,14 +82,17 @@ spec:
             limits:
               cpu: 500m
               memory: 768Mi
+          # The probes sign in and require the PONG: a bare `valkey-cli ping`
+          # gets a "NOAUTH" error reply, and a probe that only looks at the
+          # exit status could report a server nobody can use as healthy.
           readinessProbe:
             exec:
-              command: ["valkey-cli", "ping"]
+              command: ["sh", "-c", "if [ -n \"$REDIS_PASSWORD\" ]; then valkey-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping; else valkey-cli ping; fi | grep -q PONG"]
             initialDelaySeconds: 5
             periodSeconds: 10
           livenessProbe:
             exec:
-              command: ["valkey-cli", "ping"]
+              command: ["sh", "-c", "if [ -n \"$REDIS_PASSWORD\" ]; then valkey-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping; else valkey-cli ping; fi | grep -q PONG"]
             initialDelaySeconds: 15
             periodSeconds: 30
           volumeMounts:

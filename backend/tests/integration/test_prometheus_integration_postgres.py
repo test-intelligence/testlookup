@@ -195,7 +195,12 @@ async def test_the_probe_and_the_log_stage_answer_against_the_fake(world):
     # The stage's p95 template is a default one: hand the defaults back.
     assert (await world.call("PUT", PATH, json={"prometheus_metric_templates": []})).status_code == 200
 
+    # The deployment-wide probe dials with the deployment's credentials: ADMIN
+    # only. A QA lead is refused before anything is read or dialled.
     world.current.user = world.lead
+    refused = await world.call("POST", "/api/v1/integration-health/probe", params={"provider": "prometheus"})
+    assert refused.status_code == 403, refused.text
+    world.current.user = world.admin
     probe = await world.call("POST", "/api/v1/integration-health/probe", params={"provider": "prometheus"})
     assert probe.status_code == 200, probe.text
     (row,) = probe.json()
@@ -216,7 +221,12 @@ async def test_offline_mode_skips_the_probe_and_the_stage_with_zero_requests(wor
     world.state.reset()
     monkeypatch.setattr(world.settings, "AI_OFFLINE_MODE", True)
 
+    # The deployment-wide probe dials with the deployment's credentials: ADMIN
+    # only. A QA lead is refused before anything is read or dialled.
     world.current.user = world.lead
+    refused = await world.call("POST", "/api/v1/integration-health/probe", params={"provider": "prometheus"})
+    assert refused.status_code == 403, refused.text
+    world.current.user = world.admin
     probe = await world.call("POST", "/api/v1/integration-health/probe", params={"provider": "prometheus"})
     (row,) = probe.json()
     assert row["status"] == "skipped" and "AI_OFFLINE_MODE=true" in row["message"]

@@ -396,13 +396,15 @@ def _proxying(directives: list) -> list:
 def test_the_ticket_download_streams_unbuffered_and_keeps_the_headers(name: str) -> None:
     for server in _servers(parse(CONFIGS[name])):
         locations = _locations(server)
-        download = locations.get(TICKET_DOWNLOAD)
-        assert download is not None, f"{name}: no `location {TICKET_DOWNLOAD}`"
+        # `^~`: a proxied prefix is final, so the static-asset regex is never
+        # tried for it (test_nginx_proxied_paths_skip_the_static_regex.py).
+        download = locations.get(f"^~ {TICKET_DOWNLOAD}")
+        assert download is not None, f"{name}: no `location ^~ {TICKET_DOWNLOAD}`"
         settings = {n: args for n, args, _ in download}
         assert settings.get("proxy_buffering") == ["off"], name
         assert settings.get("proxy_read_timeout") == ["300s"], name
         assert settings.get("proxy_send_timeout") == ["300s"], name
-        assert _proxying(download) == _proxying(locations["/api/"]), f"{name}: proxies unlike /api/"
+        assert _proxying(download) == _proxying(locations["^~ /api/"]), f"{name}: proxies unlike /api/"
         assert _headers(download) == {}, f"{name}: an add_header here would drop the server's headers"
         assert _effective_headers(server, download) == _headers(server)
         assert SECURITY_HEADERS <= set(_effective_headers(server, download))
@@ -413,7 +415,10 @@ def test_nginx_picks_the_ticket_download_location_for_a_download(name: str) -> N
     """The longest matching prefix wins unless a regex location matches: no regex matches a download URL."""
     for server in _servers(parse(CONFIGS[name])):
         locations = _locations(server)
-        prefixes = [loc for loc in locations if not loc.startswith(("~", "=")) and TICKET_DOWNLOAD_SAMPLE.startswith(loc)]
+        prefixes = [
+            loc.removeprefix("^~ ") for loc in locations
+            if not loc.startswith(("~", "=")) and TICKET_DOWNLOAD_SAMPLE.startswith(loc.removeprefix("^~ "))
+        ]
         assert max(prefixes, key=len) == TICKET_DOWNLOAD, (name, prefixes)
         for loc in locations:
             if loc.startswith("~"):

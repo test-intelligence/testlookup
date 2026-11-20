@@ -76,7 +76,7 @@ def _print_lines(lines: list[str]) -> None:
     console = _console()
     for line in lines:
         # Text, never markup: a test name of ``[bold]`` is that text.
-        console.print(Text(line), soft_wrap=True)
+        console.print(Text(output.plain(line)), soft_wrap=True)
 
 
 def _glyphs() -> dict:

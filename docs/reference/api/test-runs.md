@@ -762,7 +762,7 @@ with ``Held: <reason>`` FIRST in ``blockers`` (the hold read lives in
 202 also lists the links the delete breaks (``references_broken``, a
 warning) and says the keep-last floor does not apply to explicit deletes.
 
-Source: [backend/app/routers/runs.py:978](../../../backend/app/routers/runs.py#L978).
+Source: [backend/app/routers/runs.py:982](../../../backend/app/routers/runs.py#L982).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -1336,7 +1336,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Recover Live Run From Buffer
 
 Re-enqueue ``persist_live_session`` for a live-stream run whose
-per-test rows never landed in PostgreSQL.
+per-test rows never landed in PostgreSQL (QA_ENGINEER+).
 
 Looks up the run, checks that it's a ``live_stream`` run with zero
 ``test_cases`` rows, then fires the persistence task with the buffered
@@ -1348,12 +1348,12 @@ live run / no buffer left in Redis).
 
 Source: [backend/app/routers/runs.py:800](../../../backend/app/routers/runs.py#L800).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-run_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_run_access())
+run_id: uuid.UUID, db: AsyncSession=Depends(get_db), _role: User=Depends(require_role(UserRole.QA_ENGINEER)), current_user: User=Depends(require_run_access())
 ```
 
 Direct handler error branches (dependency/service errors can add others):

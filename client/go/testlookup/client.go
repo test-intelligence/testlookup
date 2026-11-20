@@ -49,6 +49,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -131,16 +132,91 @@ func (c *Config) withDefaults() Config {
 	if out.BatchSize > maxBatchSize { out.BatchSize = maxBatchSize }
 	if out.BatchInterval <= 0 { out.BatchInterval = defaultBatchInterval }
 	if out.HTTPClient == nil {
-		out.HTTPClient = &http.Client{
-			Timeout: defaultRequestTimeout,
-			Transport: &http.Transport{
-				ResponseHeaderTimeout: defaultRequestTimeout,
-				TLSHandshakeTimeout:   defaultConnectTimeout,
-			},
-		}
+		out.HTTPClient = newHTTPClient()
+	} else if out.HTTPClient.CheckRedirect == nil {
+		// A caller's client keeps its transport, jar and timeout; it gets the
+		// same-origin redirect policy on a copy unless it brings its own.
+		withPolicy := *out.HTTPClient
+		withPolicy.CheckRedirect = sameOriginRedirect
+		out.HTTPClient = &withPolicy
 	}
 	out.BaseURL = strings.TrimRight(out.BaseURL, "/")
 	return out
+}
+
+// ── HTTP client and redirect policy ──────────────────────────────────────────
+
+const maxRedirects = 10
+
+// newHTTPClient is the SDK's default client: request timeouts, and redirects
+// followed only on the configured server's own origin.
+func newHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout:       defaultRequestTimeout,
+		CheckRedirect: sameOriginRedirect,
+		Transport: &http.Transport{
+			ResponseHeaderTimeout: defaultRequestTimeout,
+			TLSHandshakeTimeout:   defaultConnectTimeout,
+		},
+	}
+}
+
+// loginClient serves Login, which has no Config to take a client from.
+var loginClient = newHTTPClient()
+
+// redirectRefusedError is returned when the server answers with a redirect to
+// another origin. Nothing is sent to that origin.
+type redirectRefusedError struct {
+	from, to string
+}
+
+func (e *redirectRefusedError) Error() string {
+	return fmt.Sprintf(
+		"testlookup: %s answered with a redirect to another host (%s); the request and its credentials "+
+			"were not sent there. Set the TestLookup URL to the final URL of the server", e.from, e.to)
+}
+
+// sameOriginRedirect follows a redirect only when its target has the same
+// scheme, host and port as the first request (the configured BaseURL). So a
+// path or trailing-slash redirect keeps working, and the token, the session
+// token and the login form never leave the configured server; https is never
+// downgraded to http. Go would otherwise re-send custom headers such as
+// X-Session-Token, and the body on a 307 / 308, to the new host.
+func sameOriginRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if !sameOrigin(via[0].URL, req.URL) {
+		return &redirectRefusedError{from: originOf(via[0].URL), to: originOf(req.URL)}
+	}
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("testlookup: stopped after %d redirects", maxRedirects)
+	}
+	return nil
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) &&
+		strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		effectivePort(a) == effectivePort(b)
+}
+
+func effectivePort(u *url.URL) string {
+	if port := u.Port(); port != "" {
+		return port
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	}
+	return ""
+}
+
+// originOf is scheme://host[:port] for an error message: no path, query or userinfo.
+func originOf(u *url.URL) string {
+	return strings.ToLower(u.Scheme) + "://" + u.Host
 }
 
 // ── SessionOptions ────────────────────────────────────────────────────────────
@@ -295,7 +371,9 @@ func (r *Reporter) CloseSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-// Login obtains a JWT access token via username/password.
+// Login obtains a JWT access token via username/password. The request has a
+// 30-second timeout, and a redirect to another host is an error (the form is
+// never sent there): pass the server's final URL.
 //
 //	token, err := testlookup.Login(ctx, "http://localhost:8000", "<username>", "<password>")
 func Login(ctx context.Context, baseURL, username, password string) (string, error) {
@@ -310,7 +388,7 @@ func Login(ctx context.Context, baseURL, username, password string) (string, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := loginClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("testlookup: login request: %w", err)
 	}
@@ -521,6 +599,13 @@ func (s *Session) postBatch(ctx context.Context, events []liveEvent) {
 		req.Header.Set("X-Session-Token", s.sessionToken)
 
 		resp, err := s.reporter.cfg.HTTPClient.Do(req)
+		var refused *redirectRefusedError
+		if errors.As(err, &refused) {
+			// The next attempt would be redirected the same way: no retry.
+			// Counted as failed (Stats), like a refused session token.
+			s.statFailed.Add(int64(len(events)))
+			return
+		}
 		if err == nil {
 			defer resp.Body.Close()
 			if resp.StatusCode == http.StatusUnauthorized {

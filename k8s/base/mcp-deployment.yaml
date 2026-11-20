@@ -21,6 +21,13 @@ spec:
         app: testlookup-mcp
         app.kubernetes.io/component: mcp-server
     spec:
+      # Pod-level, so every container in this pod (an init container, and any
+      # added later) inherits them. No fsGroup: OpenShift's restricted SCC
+      # refuses a fixed one, and the writable volumes are emptyDirs.
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       # No Kubernetes API calls here, so no service-account token in the pod
       # (OSS review 2026-11-12, L-8).
       automountServiceAccountToken: false
@@ -59,7 +66,6 @@ spec:
             failureThreshold: 3
             timeoutSeconds: 6
           securityContext:
-            runAsNonRoot: true
             runAsUser: 1000
             runAsGroup: 1000
             allowPrivilegeEscalation: false
@@ -67,8 +73,6 @@ spec:
             capabilities:
               drop:
                 - ALL
-            seccompProfile:
-              type: RuntimeDefault
           livenessProbe:
             httpGet:
               path: /health/live
