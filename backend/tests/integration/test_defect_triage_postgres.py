@@ -77,7 +77,9 @@ async def world():
         synthetic=_user(UserRole.QA_LEAD, tag, "Default Lead", synthetic=True),
     )
     async with sessions.begin() as db:
-        db.add_all([Project(id=pid, name=f"triage-{tag}", slug=f"triage-{tag}", is_active=True),
+        # Bound to Jira project ABC: the key the link tests name is inside it.
+        db.add_all([Project(id=pid, name=f"triage-{tag}", slug=f"triage-{tag}", is_active=True,
+                            jira_project_key="ABC"),
                     Project(id=qid, name=f"triage-q-{tag}", slug=f"triage-q-{tag}", is_active=True)])
         db.add_all(list(vars(people).values()))
         await db.flush()

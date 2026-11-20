@@ -728,6 +728,8 @@ class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=255)
     slug: str = Field(..., min_length=2, max_length=100, pattern=r"^[a-z0-9-]+$")
     description: Optional[str] = Field(None, max_length=2000)
+    # Instance ADMIN only (routers/projects.refuse_jira_key_change): it binds
+    # the Jira project this project's members may reach.
     jira_project_key: Optional[str] = Field(None, max_length=50)
     splunk_index: Optional[str] = Field(None, max_length=255)
     ocp_namespace: Optional[str] = Field(None, max_length=255)
@@ -769,6 +771,7 @@ class ProjectUpdate(BaseModel):
     """Partial update for project attributes. None = keep existing."""
     name: Optional[str] = Field(None, min_length=2, max_length=255)
     description: Optional[str] = Field(None, max_length=2000)
+    # A CHANGED value needs an instance ADMIN (routers/projects.refuse_jira_key_change).
     jira_project_key: Optional[str] = Field(None, max_length=50)
     splunk_index: Optional[str] = Field(None, max_length=255)
     ocp_namespace: Optional[str] = Field(None, max_length=255)
@@ -4051,7 +4054,8 @@ class DefectWriteBackResult(BaseModel):
     """The Jira status write-back after a status change. ``status``: "sent" | "skipped" | "not_sent" | "failed"."""
     status: str
     # skipped: "already_in_status" | "no_transition"; not_sent: an availability
-    # reason; failed: "HTTP 4xx" | "<ExceptionClass>".
+    # reason, or "jira_key_not_allowed" (the stored key is outside the Jira
+    # project this project may reach); failed: "HTTP 4xx" | "<ExceptionClass>".
     reason: Optional[str] = None
 
 
@@ -4106,6 +4110,8 @@ class JiraDefectCreateRequest(BaseModel):
     fingerprint: Optional[str] = Field(None, min_length=1, max_length=64)
     cluster_id: Optional[str] = Field(None, min_length=1, max_length=255)
     issue_type: str = Field("Bug", max_length=100)
+    # Must be a Jira project this caller may use from this project (422
+    # otherwise); null files under the project's key, else the instance default.
     jira_project_key: Optional[str] = Field(None, max_length=50)
     assignee: Optional[str] = Field(None, max_length=128)  # Jira accountId
     extra_comment: Optional[str] = Field(None, max_length=2000)
@@ -4176,8 +4182,10 @@ class JiraDefectMetadataResponse(BaseModel):
     the UI uses it to disable the action with a tooltip."""
     available: bool
     reason: Optional[str] = None                  # offline_mode | disabled | not_configured | unreachable | jira_http_NNN
+    # Only the Jira projects this caller may file under from this project.
     projects: List[JiraProjectOption] = []
     issue_types: List[str] = []
+    # The Jira project a create uses when none is named: the project's key, else the instance default.
     default_project_key: Optional[str] = None
     webhook_available: bool = False
 
@@ -7202,6 +7210,14 @@ class SSOConfigCreate(BaseModel):
     default_role: UserRole = UserRole.VIEWER
     group_attribute: Optional[str] = Field(None, max_length=255)
     enforcement_mode: SSOEnforcementMode = SSOEnforcementMode.OPTIONAL
+    link_existing_accounts_by_email: bool = Field(
+        False,
+        description=(
+            "Link a first SSO sign-in to an existing local account with the same e-mail "
+            "(OIDC: verified e-mail only; SAML: the NameID must be that e-mail). Off: such a sign-in is refused. "
+            "An ADMIN account is never linked."
+        ),
+    )
 
     @model_validator(mode="after")
     def _fields_for_provider(self) -> "SSOConfigCreate":
@@ -7236,6 +7252,8 @@ class SSOConfigUpdate(BaseModel):
     oidc_scopes: Optional[str] = Field(None, max_length=500)
     oidc_groups_claim: Optional[str] = Field(None, max_length=255)
     enforcement_mode: Optional[SSOEnforcementMode] = None
+    #: See ``SSOConfigCreate``. Omit it (or send null) to keep the stored value.
+    link_existing_accounts_by_email: Optional[bool] = None
     is_active: Optional[bool] = None
 
 
@@ -7263,6 +7281,8 @@ class SSOConfigResponse(BaseModel):
     default_role: UserRole
     group_attribute: Optional[str] = None
     enforcement_mode: SSOEnforcementMode
+    #: Whether a first SSO sign-in may be linked to an existing local account with the same e-mail.
+    link_existing_accounts_by_email: bool = False
     is_active: bool
     last_test_at: Optional[datetime] = None
     last_test_success: Optional[bool] = None

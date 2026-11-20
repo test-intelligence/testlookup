@@ -26,7 +26,7 @@ from sqlalchemy import func, select
 from app.core.deps import get_current_active_user
 from app.core.security import get_password_hash, verify_password
 from app.db.postgres import get_db
-from app.models.postgres import Base, User, UserRole
+from app.models.postgres import Base, FederatedIdentity, IdentityEvent, IdentityEventType, User, UserRole
 from app.routers import users as users_routes
 from app.services import scim_service
 from app.services.subject_rights_vocab import ERASED_HASH_MARKER, ERROR_SENTENCES
@@ -190,9 +190,14 @@ async def test_scim_refuses_the_reserved_prefix(maker: Any, world: SimpleNamespa
                 await scim_service.scim_create_user(db, username=username, email=email)
             assert refused.value.status_code == 400
             assert refused.value.detail == {"detail": RESERVED, "scimType": "invalidValue"}
+        # a userName / e-mail change needs a token bound to the directory the account is linked to
+        directory = uuid.uuid4()
+        db.add(FederatedIdentity(id=uuid.uuid4(), user_id=world.subject.id, sso_config_id=directory,
+                                 external_id="ext-zqxwsubj"))
+        await db.flush()
         for change in ({"username": "erased-0a1b"}, {"email": "erased-0a1b@example.org"}):
             with pytest.raises(HTTPException) as refused:
-                await scim_service.scim_update_user(db, world.subject.id, **change)
+                await scim_service.scim_update_user(db, world.subject.id, sso_config_id=directory, **change)
             assert refused.value.status_code == 400 and refused.value.detail["scimType"] == "invalidValue"
         await db.rollback()
         assert (await db.get(User, world.subject.id)).username == "zqxwsubj"
@@ -201,6 +206,12 @@ async def test_scim_refuses_the_reserved_prefix(maker: Any, world: SimpleNamespa
 async def test_scim_patch_active_true_of_an_erased_account_is_409(maker: Any, erased: SimpleNamespace) -> None:
     from app.routers import scim as scim_routes
 
+    # An unbound token reaches only accounts provisioning manages: this person was created over SCIM (the
+    # erasure keeps identity events and drops the federated link).
+    async with maker.session() as db:
+        db.add(IdentityEvent(id=uuid.uuid4(), event_type=IdentityEventType.SCIM_USER_CREATED.value,
+                             user_id=erased.user_id, success=True))
+        await db.commit()
     app = FastAPI()
     app.include_router(scim_routes.router)
 

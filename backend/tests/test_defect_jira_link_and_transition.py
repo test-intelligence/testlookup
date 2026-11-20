@@ -33,6 +33,7 @@ from tests.fakes.fake_defect_world import (
     make_app,
     membership,
     patch_jira_config,
+    project,
     user,
 )
 
@@ -192,7 +193,9 @@ def world(monkeypatch, http):
     row = defect(PID)
     pool = OneConnectionPool()
     journal: list[str] = []
-    db = MemDB([engineer, row, membership(engineer, PID)], pool=pool, journal=journal)
+    # The project is bound to Jira project ABC: every key these tests link is inside it. A key
+    # outside it: tests/regression/test_jira_keys_are_bound_to_the_project.py.
+    db = MemDB([engineer, row, membership(engineer, PID), project(PID, "ABC")], pool=pool, journal=journal)
     checked_out_during_jira: list[int] = []
 
     original_send = http.send

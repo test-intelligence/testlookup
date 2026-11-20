@@ -124,6 +124,32 @@ def _role_value(user: User) -> str:
     return str(getattr(role, "value", role) or "")
 
 
+#: What a caller who is not an instance administrator is told when a request
+#: would set or change ``projects.jira_project_key``.
+JIRA_KEY_NEEDS_ADMIN_DETAIL = (
+    "Only an instance administrator can set or change a project's Jira key: it decides which "
+    "Jira project this project can reach through the shared Jira account. Leave the Jira key "
+    "as it is, or ask an administrator to change it."
+)
+
+
+def refuse_jira_key_change(current_user: User, current: str | None, requested: str | None) -> None:
+    """403 when ``requested`` differs from ``current`` and the caller is not an instance ADMIN.
+
+    ``projects.jira_project_key`` binds every Jira key the project's members
+    may use (``defect_jira_service.JiraKeyScope``), so a QA_LEAD who could set
+    it could point the project at any Jira project. The other fields of the
+    same request keep the route's own floor. Re-sending the stored value is
+    not a change. An API key bound to one project is refused whatever its
+    owner's role: it is a pipeline's credential, not an administrator.
+    """
+    if (requested or "").strip() == (current or "").strip():
+        return
+    if _role_value(current_user) == UserRole.ADMIN.value and _api_key_bound_project(current_user) is None:
+        return
+    raise HTTPException(status_code=403, detail=JIRA_KEY_NEEDS_ADMIN_DETAIL)
+
+
 @router.post(
     "",
     response_model=ProjectResponse,
@@ -135,6 +161,7 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    refuse_jira_key_change(current_user, None, payload.jira_project_key)
     existing = await db.execute(select(Project).where(Project.slug == payload.slug))
     if existing.scalar_one_or_none():
         raise HTTPException(status_code=409, detail=f"Project with slug '{payload.slug}' already exists")
@@ -202,6 +229,8 @@ async def update_project(
         raise HTTPException(status_code=404, detail="Project not found")
 
     updates = payload.model_dump(exclude_none=True)
+    if "jira_project_key" in updates:
+        refuse_jira_key_change(current_user, project.jira_project_key, updates["jira_project_key"])
 
     # 0079: validate default_qa_lead_user_id, if changing, before persisting.
     # ``exclude_none=True`` means the key is only present when the caller

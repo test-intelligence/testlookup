@@ -67,9 +67,11 @@ from app.models.postgres import (
     AppSetting,
     Defect,
     FailureCluster,
+    Project,
     TestCase,
     TestRun,
     User,
+    UserRole,
 )
 from app.services import tool_call_idempotency as tci
 from app.services.defect_status import ACTIVE_STATUSES, parse_jira_key
@@ -169,6 +171,178 @@ _REASON_DETAIL = {
 
 def _raise_unavailable(reason: str) -> None:
     raise HTTPException(status_code=503, detail=_REASON_DETAIL.get(reason, reason))
+
+
+# ── Which Jira project a TestLookup project may reach ───────────────────────
+#
+# Jira is configured once for the deployment, with one service account, so the
+# account's reach is every Jira project it can see. A Jira project key or issue
+# key that comes from a request is therefore checked against the TestLookup
+# project before anything is sent to Jira or stored:
+#
+# * ``projects.jira_project_key`` is set: only that Jira project (and issues
+#   whose key starts with it), for every role;
+# * it is not set: a caller below QA_LEAD in that project may use only the
+#   instance default Jira project; a QA_LEAD or an ADMIN may name another;
+# * a path with no person (an agent, a Celery task: ``user=None``) is held to
+#   the project's key or the instance default.
+#
+# ``tests/regression/test_jira_keys_are_bound_to_the_project.py`` fails for a
+# route that takes such a key and calls none of these.
+
+#: The ``reason`` a skipped write-back / filing carries for an out-of-scope key.
+JIRA_KEY_NOT_ALLOWED = "jira_key_not_allowed"
+
+_ASK_ADMIN = "ask an administrator to change the project's Jira key in the project settings"
+
+
+def _clean_project_key(value: Any) -> Optional[str]:
+    """``value`` stripped and upper-cased (Jira project keys are upper case), or ``None``."""
+    if not isinstance(value, str):
+        return None
+    key = value.strip().upper()
+    return key or None
+
+
+@dataclass(frozen=True)
+class JiraKeyScope:
+    """The Jira project(s) one caller may reach from one TestLookup project.
+
+    ``project_key``: the project's own Jira key (``None``: not set).
+    ``default_key``: the instance default Jira project key (``None``: not set).
+    ``any_key``: the project has no key of its own and the caller holds
+    QA_LEAD there (or is an ADMIN), so they may name another Jira project.
+    """
+
+    project_key: Optional[str]
+    default_key: Optional[str]
+    any_key: bool
+
+    @property
+    def bound_key(self) -> Optional[str]:
+        """The Jira project used when the request names none."""
+        return self.project_key or self.default_key
+
+    def allows(self, jira_project: Any) -> bool:
+        wanted = _clean_project_key(jira_project)
+        if wanted is None:
+            return False
+        if self.project_key:
+            return wanted == self.project_key
+        if self.any_key:
+            return True
+        return self.default_key is not None and wanted == self.default_key
+
+    def refusal(self, key: Any) -> Optional[str]:
+        """Why ``key`` (a Jira project key or an issue key) is refused, or ``None`` when it is allowed."""
+        cleaned = _clean_project_key(key)
+        if cleaned is None:
+            return "A Jira project key or issue key is required."
+        issue_key = parse_jira_key(cleaned)
+        jira_project = issue_key.rsplit("-", 1)[0] if issue_key else cleaned
+        if self.allows(jira_project):
+            return None
+        what = f"Jira issue {issue_key}" if issue_key else f"Jira project {cleaned}"
+        if self.project_key:
+            use = (
+                f"Link an issue whose key starts with {self.project_key}-" if issue_key
+                else f"Use {self.project_key}"
+            )
+            return (
+                f"{what} is not allowed here: this project is bound to Jira project "
+                f"{self.project_key}. {use}, or {_ASK_ADMIN}."
+            )
+        if self.default_key:
+            use = (
+                f"Link an issue whose key starts with {self.default_key}-" if issue_key
+                else f"Use {self.default_key}"
+            )
+            return (
+                f"{what} is not allowed here: this project has no Jira key of its own, so it "
+                f"uses the default Jira project {self.default_key}. {use}, ask a QA lead of "
+                f"this project to do it, or {_ASK_ADMIN}."
+            )
+        return (
+            f"{what} is not allowed here: this project has no Jira key and there is no "
+            f"default Jira project. Ask a QA lead of this project to do it, or {_ASK_ADMIN}."
+        )
+
+    def resolve(self, requested: Any) -> Optional[str]:
+        """The Jira project key to use for ``requested`` (``None`` / blank: none named). 422 when refused.
+
+        With no key named: the project's key, else the instance default. When
+        neither exists a QA_LEAD / ADMIN gets ``None`` (Jira then answers as it
+        always did) and anyone else is told what to set.
+        """
+        wanted = _clean_project_key(requested)
+        if wanted is None:
+            if self.bound_key or self.any_key:
+                return self.bound_key
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "No Jira project can be used here: this project has no Jira key and there "
+                    f"is no default Jira project. To file in Jira, {_ASK_ADMIN}."
+                ),
+            )
+        refusal = self.refusal(wanted)
+        if refusal is not None:
+            raise HTTPException(status_code=422, detail=refusal)
+        return wanted
+
+
+async def jira_key_scope(
+    db: AsyncSession, project_id: Any, user: Any, *, cfg: Optional[dict[str, Any]] = None,
+) -> JiraKeyScope:
+    """Read what ``user`` may reach in Jira from ``project_id``. ``user=None``: a path with no person.
+
+    One read of ``projects.jira_project_key``. Only when the project has no
+    key: the instance default is needed (``cfg`` is ``resolve_jira_config``'s
+    dict when the caller already has it, else it is read here), and a QA_LEAD
+    who is not an ADMIN costs one membership read.
+    """
+    # Imported here: app.core.deps loads most of the application.
+    from app.core.deps import holds_role_for_project_write  # noqa: PLC0415
+
+    pid = project_id if isinstance(project_id, _uuid.UUID) else _uuid.UUID(str(project_id))
+    stored = (
+        await db.execute(select(Project.jira_project_key).where(Project.id == pid))
+    ).scalar_one_or_none()
+    project_key = _clean_project_key(stored)
+    if project_key is not None:
+        # A set key binds every role: the default and the caller's role are not consulted.
+        return JiraKeyScope(
+            project_key=project_key,
+            default_key=_clean_project_key((cfg or {}).get("default_project_key")),
+            any_key=False,
+        )
+    if cfg is None:
+        cfg = await resolve_jira_config(db)
+    # An actor that carries no role (nobody signed in) is never treated as a lead.
+    any_key = getattr(user, "role", None) is not None and await holds_role_for_project_write(
+        db, user, pid, UserRole.QA_LEAD,
+    )
+    return JiraKeyScope(
+        project_key=None,
+        default_key=_clean_project_key(cfg.get("default_project_key")),
+        any_key=any_key,
+    )
+
+
+async def resolve_jira_project_key(
+    db: AsyncSession, project_id: Any, user: Any, requested: Any, *, cfg: Optional[dict[str, Any]] = None,
+) -> Optional[str]:
+    """The Jira project key ``user`` files under from ``project_id``; 422 for one they may not use."""
+    return (await jira_key_scope(db, project_id, user, cfg=cfg)).resolve(requested)
+
+
+async def assert_jira_key_allowed(
+    db: AsyncSession, project_id: Any, key: Any, user: Any, *, cfg: Optional[dict[str, Any]] = None,
+) -> None:
+    """422 unless ``key`` (a Jira project key or an issue key) is inside what ``user`` may reach."""
+    refusal = (await jira_key_scope(db, project_id, user, cfg=cfg)).refusal(key)
+    if refusal is not None:
+        raise HTTPException(status_code=422, detail=refusal)
 
 
 # ── Jira HTTP helpers ────────────────────────────────────────────────────────
@@ -758,6 +932,7 @@ async def _file_or_reuse(
     labels: tuple[str, ...] = ("testlookup", "one-click-defect"),
     target_type: str = "failure_signature",
     description: Optional[dict] = None,
+    key_scope: Optional[JiraKeyScope] = None,
 ) -> _Filing:
     """The filing core shared by the one-click create and the approval path.
 
@@ -774,8 +949,16 @@ async def _file_or_reuse(
     row's) let the cluster-epic filing reuse this core in its own namespace;
     ``description`` (an ADF document) replaces the defect wording of
     ``_adf_from_prefill``. The defaults are the one-click request byte for byte.
+
+    The Jira project is decided HERE for every caller (``JiraKeyScope``): the
+    requested key is refused with 422 before the lock when ``actor`` may not
+    use it from this project, and no key means the project's key, then the
+    instance default. ``key_scope`` is the caller's already-read scope.
     """
     signature = prefill["signature"]
+    if key_scope is None:
+        key_scope = await jira_key_scope(db, pid, actor, cfg=cfg)
+    project_key = key_scope.resolve(jira_project_key)
 
     # Serialize creates for this signature. A double-submit waits here until
     # the first request commits or rolls back, then finds its Defect row in the
@@ -789,9 +972,19 @@ async def _file_or_reuse(
     if existing is not None:
         existing.recurrence_count = int(existing.recurrence_count or 0) + 1
         existing.last_recurrence_at = datetime.now(timezone.utc)
-        commented = await _post_recurrence_comment(
-            cfg, existing.jira_ticket_id, prefill, existing.recurrence_count,
-        )
+        # A key stored before Jira keys were bound to the project may point
+        # outside it: the recurrence is still counted here, but nothing is
+        # written to that issue.
+        commented = False
+        if existing.jira_ticket_id and key_scope.refusal(existing.jira_ticket_id) is None:
+            commented = await _post_recurrence_comment(
+                cfg, existing.jira_ticket_id, prefill, existing.recurrence_count,
+            )
+        else:
+            logger.info(
+                "jira_recurrence_comment_skipped",
+                project_id=str(pid), issue_key=existing.jira_ticket_id, reason=JIRA_KEY_NOT_ALLOWED,
+            )
         await db.flush()
         return _Filing(
             how="deduplicated",
@@ -812,7 +1005,6 @@ async def _file_or_reuse(
     )
     label = _signature_label(key)
 
-    project_key = jira_project_key or cfg["default_project_key"]
     fields: dict[str, Any] = {
         "project": {"key": project_key},
         "summary": prefill["summary"],
@@ -1522,26 +1714,38 @@ async def get_metadata(
     response carries ``available=false`` + a machine-readable ``reason``
     so the UI can disable the action with a tooltip. Successful Jira
     fetches are cached ~5 minutes.
+
+    ``projects`` lists only the Jira projects ``user`` may file under from this
+    project (``JiraKeyScope``; no ``user``: the project's key or the instance
+    default), and ``default_project_key`` is the one used when none is named.
     """
     pid = _uuid.UUID(str(project_id))
     cfg = await resolve_jira_config(db)
     reason = availability_reason(cfg)
     webhook_available = await _webhook_target_available(db, pid, user=user)
+    # The cache holds everything the Jira account can see; each answer is cut
+    # down to what THIS caller may use from THIS project.
+    scope = await jira_key_scope(db, pid, user, cfg=cfg)
 
-    base = {
+    base: dict[str, Any] = {
         "available": False,
         "reason": reason,
         "projects": [],
         "issue_types": [],
-        "default_project_key": cfg.get("default_project_key"),
+        # The Jira project a create files under when the request names none.
+        "default_project_key": scope.bound_key,
         "webhook_available": webhook_available,
     }
     if reason:
         return base
 
+    def _answer(fetched: dict[str, Any]) -> dict[str, Any]:
+        allowed = [p for p in fetched["projects"] if scope.allows(p.get("key"))]
+        return {**base, **fetched, "projects": allowed, "available": True, "reason": None}
+
     cached = _metadata_cache_get()
     if cached is not None:
-        return {**base, **cached, "available": True, "reason": None}
+        return _answer(cached)
 
     try:
         projects_resp = await _jira_get(
@@ -1567,7 +1771,7 @@ async def get_metadata(
 
     fetched = {"projects": projects, "issue_types": issue_types}
     _metadata_cache_put(fetched)
-    return {**base, **fetched, "available": True, "reason": None}
+    return _answer(fetched)
 
 
 # ── Status sync-back (US-6.2) ────────────────────────────────────────────────
@@ -1631,11 +1835,34 @@ async def sync_external_statuses(
         )
     ).scalars().all()
 
+    # A project with a Jira key of its own reaches only that Jira project. A
+    # key stored before that rule (or through an older route) is left alone:
+    # its status is not read. Projects without a key are not narrowed here,
+    # because a QA lead may have linked another Jira project on purpose.
+    bound: dict[Any, str] = {}
+    project_ids = {defect.project_id for defect in rows}
+    if project_ids:
+        for project_id, stored_key in (
+            await db.execute(
+                select(Project.id, Project.jira_project_key).where(Project.id.in_(project_ids))
+            )
+        ).all():
+            cleaned = _clean_project_key(stored_key)
+            if cleaned:
+                bound[project_id] = cleaned
+
     checked = 0
     conflicts = 0
     errors = 0
+    out_of_scope = 0
     now = datetime.now(timezone.utc)
     for defect in rows:
+        project_key = bound.get(defect.project_id)
+        if project_key and str(defect.jira_ticket_id or "").upper().rsplit("-", 1)[0] != project_key:
+            out_of_scope += 1
+            # Stamped so the row does not hold a place in every capped cycle.
+            defect.external_status_at = now
+            continue
         try:
             resp = await _jira_get(
                 cfg,
@@ -1673,6 +1900,6 @@ async def sync_external_statuses(
     await db.flush()
     logger.info(
         "jira_status_sync_complete",
-        checked=checked, conflicts=conflicts, errors=errors, batch=len(rows),
+        checked=checked, conflicts=conflicts, errors=errors, out_of_scope=out_of_scope, batch=len(rows),
     )
-    return {"checked": checked, "conflicts": conflicts, "errors": errors}
+    return {"checked": checked, "conflicts": conflicts, "errors": errors, "out_of_scope": out_of_scope}

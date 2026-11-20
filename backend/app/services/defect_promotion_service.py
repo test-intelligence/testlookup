@@ -225,7 +225,21 @@ async def promote_cluster(
     promotion that takes effect at once (``approved`` / ``executed``) stages
     the ``defect.promoted`` ledger row on this session (DEF-07); the router
     sends the webhook after its commit.
+
+    A Jira project key in the request is checked first, before anything is
+    read or staged: it must be one ``actor`` may use from this project
+    (``defect_jira_service.resolve_jira_project_key``; no ``actor``: the
+    project's key or the instance default), else 422.
     """
+    requested_key = request.get("project_key")
+    if requested_key is not None and str(requested_key).strip():
+        from app.services.defect_jira_service import resolve_jira_project_key
+
+        request = {
+            **request,
+            "project_key": await resolve_jira_project_key(db, project_id, actor, requested_key),
+        }
+
     # Load cluster for evidence bundle
     cluster_result = await db.execute(
         select(FailureCluster).where(

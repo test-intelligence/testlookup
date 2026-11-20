@@ -31,6 +31,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+from tests.fakes.fake_defect_world import patch_jira_key_scope
 from tests.fakes.fake_integrations import FakeState, adf_problems, create_app, slack_problems
 
 DOMAIN = "fake-jira.example.test"
@@ -110,6 +111,8 @@ async def test_defect_dialog_lists_jira_projects_and_issue_types(fake, monkeypat
     monkeypatch.setattr(svc, "get_http_client", lambda: fake.client)
     monkeypatch.setattr(svc, "resolve_jira_config", resolved)
     monkeypatch.setattr(svc, "_webhook_target_available", no_webhook)
+    # A lead on a project without a Jira key sees every Jira project the account can.
+    patch_jira_key_scope(monkeypatch)
     svc._metadata_cache_clear()
     try:
         meta = await svc.get_metadata(None, str(uuid.uuid4()))
@@ -134,6 +137,7 @@ async def test_defect_dialog_reports_rejected_credentials_instead_of_empty_picke
     monkeypatch.setattr(svc, "get_http_client", lambda: fake.client)
     monkeypatch.setattr(svc, "resolve_jira_config", resolved)
     monkeypatch.setattr(svc, "_webhook_target_available", no_webhook)
+    patch_jira_key_scope(monkeypatch)
     svc._metadata_cache_clear()
     meta = await svc.get_metadata(None, str(uuid.uuid4()))
     assert meta["available"] is False and meta["reason"] == "jira_http_401"

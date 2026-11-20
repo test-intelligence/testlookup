@@ -211,6 +211,7 @@ class DefectCommander(BaseAgent):
         test_run_id: str = state["test_run_id"]
         project_id: str = state["project_id"]
         project_key: Optional[str] = state.get("project_key")
+        key_refused: Optional[str] = None
 
         async with AsyncSessionLocal() as db:
             # Load cluster
@@ -241,6 +242,15 @@ class DefectCommander(BaseAgent):
                 project_id=project_id,
                 duplicate_hint=cluster.label,
                 db=db,
+            )
+
+            # The Jira account is shared by every project. Whatever handed this
+            # agent a key, it files only under one the project may use: the
+            # route's signed-in person decides for the standalone run, and a
+            # pipeline run (nobody signed in) is held to the project's key or
+            # the instance default.
+            project_key, key_refused = await project_key_for_filing(
+                db, project_id, project_key, state.get("jira_key_actor"),
             )
 
         # Compute 7-dimension criticality score via criticality_service
@@ -314,6 +324,8 @@ class DefectCommander(BaseAgent):
         jira_ticket: Optional[dict] = None
         if duplicate_detected:
             jira_blocked_reason: Optional[str] = "duplicate_detected"
+        elif key_refused:
+            jira_blocked_reason = key_refused
         elif not project_key:
             jira_blocked_reason = "no_jira_project_key"
         elif offline:
@@ -452,13 +464,41 @@ class DefectCommander(BaseAgent):
 
 # ── Standalone runner ─────────────────────────────────────────────────────────
 
+async def project_key_for_filing(
+    db: Any, project_id: str, project_key: Optional[str], actor: Any,
+) -> tuple[Optional[str], Optional[str]]:
+    """``(key to file under, why it was dropped)`` for a Jira project key handed to the agent.
+
+    No key: ``(None, None)``, nothing is filed (as before). A key the project
+    may not use for ``actor`` (``None``: nobody signed in) is dropped with the
+    blocked reason ``jira_key_not_allowed``: the defect is still saved locally.
+    """
+    if not project_key or not str(project_key).strip():
+        return None, None
+    from fastapi import HTTPException
+
+    from app.services.defect_jira_service import JIRA_KEY_NOT_ALLOWED, resolve_jira_project_key
+
+    try:
+        return await resolve_jira_project_key(db, project_id, actor, project_key), None
+    except HTTPException:
+        logger.warning("Defect commander dropped a Jira project key the project may not use")
+        return None, JIRA_KEY_NOT_ALLOWED
+
+
 async def run_defect_commander(
     cluster_id: str,
     test_run_id: str,
     project_id: str,
     project_key: Optional[str] = None,
+    *,
+    actor: Any = None,
 ) -> dict:
-    """Standalone entry point for POST /api/v1/agents/defect-command."""
+    """Standalone entry point for POST /api/v1/agents/defect-command.
+
+    ``actor`` is the signed-in person of that route: their role in the project
+    decides which Jira project key the run may file under.
+    """
     import uuid
 
     fake_pipeline_id = str(uuid.uuid4())
@@ -468,6 +508,8 @@ async def run_defect_commander(
         "test_run_id": test_run_id,
         "project_id": project_id,
         "project_key": project_key,
+        # Never serialised: this state lives for one in-process call.
+        "jira_key_actor": actor,
     }
 
     from app.services.llm_cost_reservation import cost_budget_scope

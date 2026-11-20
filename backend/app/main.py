@@ -394,7 +394,36 @@ _AUTH_RATE_LIMITS: dict[str, tuple[str, str]] = {
         "10/minute",
         "Too many reset attempts. Try again in a minute.",
     ),
+    # ── SSO: the public routes ─────────────────────────────────────────────
+    # None takes a credential. Each parks a key in Redis or parses up to 1 MB
+    # of XML, and a refused sign-in after a valid signature writes an audit
+    # row. One sign-in uses each path once, so 60 a minute per address leaves
+    # room for an office behind one address signing in together.
+    # /login-url and /oidc/login are GETs: see _AUTH_RATE_LIMITED_GETS.
+    "/api/v1/sso/login-url": (
+        "60/minute",
+        "Too many sign-in attempts. Try again in a minute.",
+    ),
+    "/api/v1/sso/oidc/login": (
+        "60/minute",
+        "Too many sign-in attempts. Try again in a minute.",
+    ),
+    "/api/v1/sso/acs": (
+        "60/minute",
+        "Too many sign-in attempts. Try again in a minute.",
+    ),
+    "/api/v1/sso/exchange": (
+        "60/minute",
+        "Too many sign-in attempts. Try again in a minute.",
+    ),
 }
+
+# The middleware below throttles POSTs. These entries of _AUTH_RATE_LIMITS are
+# GET routes that start a sign-in, so their GETs are throttled as well.
+_AUTH_RATE_LIMITED_GETS: frozenset[str] = frozenset({
+    "/api/v1/sso/login-url",
+    "/api/v1/sso/oidc/login",
+})
 
 
 def _auth_rate_limit_key(request: Request) -> str:
@@ -462,8 +491,10 @@ async def rate_limit_auth(request: Request, call_next):
     Production: login 10/min, register 5/min, MFA verify 12/min.
     Development: 200/min for all (no friction during dev).
     """
-    entry = _AUTH_LIMITERS.get(routed_path(request))
-    if request.method == "POST" and entry:
+    path = routed_path(request)
+    entry = _AUTH_LIMITERS.get(path)
+    throttled = request.method == "POST" or (request.method == "GET" and path in _AUTH_RATE_LIMITED_GETS)
+    if throttled and entry:
         limited, error_msg = entry
         try:
             await limited(request)

@@ -25,6 +25,8 @@ export interface SSOConfig {
   default_role: string;
   group_attribute: string | null;
   enforcement_mode: 'OPTIONAL' | 'SSO_REQUIRED';
+  /** Off by default: a first SSO sign-in with the e-mail of an existing account is refused. */
+  link_existing_accounts_by_email?: boolean;
   is_active: boolean;
   last_test_at: string | null;
   last_test_success: boolean | null;
@@ -73,6 +75,7 @@ export interface SSOConfigUpdate {
   default_role?: string;
   group_attribute?: string;
   enforcement_mode?: 'OPTIONAL' | 'SSO_REQUIRED';
+  link_existing_accounts_by_email?: boolean;
   is_active?: boolean;
 }
 

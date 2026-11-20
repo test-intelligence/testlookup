@@ -211,6 +211,7 @@ export default function ProjectsPage() {
               <div>
                 <label htmlFor="np-jira" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jira Project Key</label>
                 <input id="np-jira" type="text" className="input font-mono text-sm" placeholder="e.g. PAY"
+                  disabled={!isAdmin} title={isAdmin ? undefined : 'Only an administrator can change this: it decides which Jira project this project may use.'}
                   value={form.jira_project_key} onChange={e => { setForm(f => ({ ...f, jira_project_key: e.target.value.toUpperCase() })); setNewErrors(x => withoutError(x, 'jira_project_key')) }}
                   aria-describedby={describedBy(newErrors.jira_project_key && 'np-jira-error')} />
                 <FieldError id="np-jira-error" field="jira_project_key" message={newErrors.jira_project_key} />
@@ -406,6 +407,7 @@ function ArchivedProjects({ onRestored }: { onRestored: () => void }) {
 // ── Edit Project (in the page, after its card) ──────────────────────────────────────────────────────
 
 function EditProjectModal({ project, onClose, onSaved, slot }: { project: Project; onClose: () => void; onSaved: () => void; slot?: InlineSlot }) {
+  const { isAdmin } = usePermissions()
   const [name, setName] = useState(project.name)
   const [description, setDescription] = useState(project.description ?? '')
   const [jiraKey, setJiraKey] = useState(project.jira_project_key ?? '')
@@ -432,7 +434,7 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
       const updates: ProjectUpdate = {}
       if (name !== project.name) updates.name = name.trim()
       if (description !== (project.description ?? '')) updates.description = description || null
-      if (jiraKey !== (project.jira_project_key ?? '')) updates.jira_project_key = jiraKey.toUpperCase() || null
+      if (jiraKey !== (project.jira_project_key ?? '')) updates.jira_project_key = jiraKey.toUpperCase()
       // A cleared index / namespace is sent as "" (a null was dropped by the PUT, so it could not be cleared);
       // a stored "" reads as unset, handing the key back to the deployment's value.
       if (splunkIndex !== (project.splunk_index ?? '')) updates.splunk_index = splunkIndex
@@ -562,6 +564,7 @@ function EditProjectModal({ project, onClose, onSaved, slot }: { project: Projec
               <div className="min-w-0">
                 <label htmlFor="ep-jira" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jira Project Key</label>
                 <input id="ep-jira" type="text" className="input font-mono text-sm" value={jiraKey}
+                  disabled={!isAdmin} title={isAdmin ? undefined : 'Only an administrator can change this: it decides which Jira project this project may use.'}
                   onChange={e => { setJiraKey(e.target.value.toUpperCase()); clearError('jira_project_key') }} placeholder="PAY"
                   aria-describedby={describedBy(errors.jira_project_key && 'ep-jira-error')} />
                 <FieldError id="ep-jira-error" field="jira_project_key" message={errors.jira_project_key} />

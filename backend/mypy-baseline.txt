@@ -48,7 +48,7 @@
 4 app/services/decision_report_eval_cycle_service.py
 8 app/services/decision_report_eval_service.py
 1 app/services/default_qa_lead_service.py
-3 app/services/defect_jira_service.py
+1 app/services/defect_jira_service.py
 1 app/services/defect_promotion_service.py
 1 app/services/deletion_job_service.py
 4 app/services/duplicate_detection_service.py

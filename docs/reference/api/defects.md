@@ -14,7 +14,7 @@ The user reviews the prefilled payload in the dialog first — this
 endpoint re-assembles it server-side (never trusts a client-edited
 stack trace) and applies dedup before filing anything.
 
-Source: [backend/app/routers/defect_jira.py:104](../../../backend/app/routers/defect_jira.py#L104).
+Source: [backend/app/routers/defect_jira.py:113](../../../backend/app/routers/defect_jira.py#L113).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -103,17 +103,19 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 Jira Defect Metadata
 
-Jira projects + issue types for the create dialog. Never 5xxs for a
-broken Jira — returns ``available=false`` + ``reason`` instead.
+Jira projects + issue types for the create dialog. QA_ENGINEER+, like the
+create it serves: the list says what the shared Jira account can see, cut
+down to the Jira projects this caller may file under from this project.
+Never 5xxs for a broken Jira — returns ``available=false`` + ``reason`` instead.
 
-Source: [backend/app/routers/defect_jira.py:69](../../../backend/app/routers/defect_jira.py#L69).
+Source: [backend/app/routers/defect_jira.py:75](../../../backend/app/routers/defect_jira.py#L75).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_project_access())
+project_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_ENGINEER)), _: User=Depends(require_project_access())
 ```
 
 ### Declared wire contract
@@ -190,7 +192,7 @@ Pre-filled Jira payload for the dialog's read-only preview.
 422 when neither ``fingerprint`` nor ``cluster_id`` is given; 404 when
 the signature matches nothing in the project.
 
-Source: [backend/app/routers/defect_jira.py:83](../../../backend/app/routers/defect_jira.py#L83).
+Source: [backend/app/routers/defect_jira.py:92](../../../backend/app/routers/defect_jira.py#L92).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -313,7 +315,7 @@ back and BEFORE any write; the writes and their ledger rows commit
 together; the Jira status write-back runs after the commit and never
 undoes it.
 
-Source: [backend/app/routers/defect_jira.py:144](../../../backend/app/routers/defect_jira.py#L144).
+Source: [backend/app/routers/defect_jira.py:153](../../../backend/app/routers/defect_jira.py#L153).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -327,6 +329,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=409, detail={'code': triage.REOPEN_CONFLICT, 'message': 'This test already has an open defect. Close that one first, or link this failure to it.', 'defect_id': None})
+HTTPException(status_code=422, detail=refusal)
 HTTPException(status_code=422, detail=triage.NOTHING_TO_CHANGE)
 ```
 
@@ -421,7 +424,7 @@ Cluster Epic Status
 
 The cluster list's one status read (reads only; no Jira call while Jira is unavailable).
 
-Source: [backend/app/routers/defect_jira.py:241](../../../backend/app/routers/defect_jira.py#L241).
+Source: [backend/app/routers/defect_jira.py:267](../../../backend/app/routers/defect_jira.py#L267).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -506,7 +509,7 @@ File one Jira epic for a recurring cluster (QA_ENGINEER+, the project's opt-in o
 already stored for this member set (nothing is sent to Jira). The router owns the unit of work:
 the link row and its activity row commit together.
 
-Source: [backend/app/routers/defect_jira.py:273](../../../backend/app/routers/defect_jira.py#L273).
+Source: [backend/app/routers/defect_jira.py:299](../../../backend/app/routers/defect_jira.py#L299).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -608,7 +611,7 @@ Cluster Epic Preview
 The epic this person would file for this cluster (its description names them as the filer).
 404 gone, 422 ``not_recurring``.
 
-Source: [backend/app/routers/defect_jira.py:256](../../../backend/app/routers/defect_jira.py#L256).
+Source: [backend/app/routers/defect_jira.py:282](../../../backend/app/routers/defect_jira.py#L282).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 

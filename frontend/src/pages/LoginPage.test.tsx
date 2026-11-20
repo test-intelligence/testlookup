@@ -395,7 +395,7 @@ describe('LoginPage — single sign-on', () => {
     )
     fireEvent.click(await screen.findByRole('button', { name: /sign in with sso/i }))
     await waitFor(() =>
-      expect(mockApiGet).toHaveBeenCalledWith('/api/v1/sso/login-url', { params: { next: '/runs/r1?tab=analysis' } }),
+      expect(mockApiGet).toHaveBeenCalledWith('/api/v1/sso/login-url', { params: { next: '/runs/r1?tab=analysis' }, withCredentials: true }),
     )
   })
 

@@ -175,8 +175,11 @@ def pkce_pair() -> tuple[str, str]:
     return verifier, _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
 
 
-async def start_login(config: Any, *, next_path: Optional[str]) -> str:
-    """Mint state / nonce / PKCE for ``config``, park them (single use, 10 min) and return the IdP URL."""
+async def start_login(config: Any, *, next_path: Optional[str], browser_hash: Optional[str] = None) -> str:
+    """Mint state / nonce / PKCE for ``config``, park them (single use, 10 min) and return the IdP URL.
+
+    ``browser_hash`` is the SHA-256 of the sign-in cookie set in the browser that starts this login; it is
+    parked with the state, and the callback refuses a browser that does not send that cookie."""
     from app.db.redis_client import get_redis
 
     doc = await discover(config.oidc_issuer)
@@ -193,6 +196,7 @@ async def start_login(config: Any, *, next_path: Optional[str]) -> str:
             "code_verifier": verifier,
             "redirect_uri": redirect_uri,
             "next": next_path,
+            "browser_hash": browser_hash,
         }),
         ex=_STATE_TTL_SECONDS,
     )

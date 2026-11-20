@@ -32,6 +32,7 @@ from tests.fakes.fake_defect_world import (
     make_app,
     membership,
     patch_jira_config,
+    patch_jira_key_scope,
     user,
 )
 
@@ -327,7 +328,11 @@ async def test_a_status_change_records_labels_not_words(world):
     assert row.actor_id == world.engineer.id
 
 
-async def test_a_link_records_ticket_linked_with_its_validation(world):
+async def test_a_link_records_ticket_linked_with_its_validation(world, monkeypatch):
+    # The project is bound to Jira project ABC (the rule itself:
+    # tests/regression/test_jira_keys_are_bound_to_the_project.py).
+    patch_jira_key_scope(monkeypatch, project_key="ABC", any_key=False)
+
     response = await world.patch({"jira_key": "abc-123"})
 
     assert response.status_code == 200, response.text

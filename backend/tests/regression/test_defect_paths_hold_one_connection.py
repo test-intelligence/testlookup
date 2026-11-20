@@ -47,6 +47,7 @@ from tests.fakes.fake_defect_world import (
     make_app,
     membership,
     patch_jira_config,
+    project,
     user,
 )
 
@@ -104,7 +105,8 @@ async def test_the_triage_patch_calls_jira_with_no_connection_held(monkeypatch, 
     http.route("POST", "/rest/api/3/issue/ABC-123/transitions", (204, None))
     engineer = user(UserRole.QA_ENGINEER)
     row = defect(PID)
-    rows = [engineer, row, membership(engineer, PID)]
+    # The project is bound to Jira project ABC: the key linked below is inside it.
+    rows = [engineer, row, membership(engineer, PID), project(PID, "ABC")]
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", lambda: MemDB(rows, pool=pool))
     monkeypatch.setattr("app.services.cache_service.bump_analytics_epoch", AsyncMock())
 

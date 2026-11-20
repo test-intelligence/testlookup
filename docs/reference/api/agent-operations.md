@@ -1826,7 +1826,7 @@ Run the Regression Watchman on an existing test run.
 Returns classification of each failure cluster as:
   - new_regression | known_flaky_recurrence | environmental_anomaly
 
-Source: [backend/app/routers/agents.py:1693](../../../backend/app/routers/agents.py#L1693).
+Source: [backend/app/routers/agents.py:1704](../../../backend/app/routers/agents.py#L1704).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

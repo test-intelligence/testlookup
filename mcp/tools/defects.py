@@ -146,7 +146,9 @@ def register(mcp) -> None:  # noqa: ANN001
                 defect.create_requested event to outbound-webhook
                 subscribers instead (for shops without Jira).
             issue_type: Jira issue type (default "Bug").
-            jira_project_key: Override the project's configured Jira key.
+            jira_project_key: Jira project to file under. It must be the project's own Jira key
+                when it has one; without one only a QA lead or administrator may name a key
+                other than the default (a refused key answers 422 with the allowed one).
             assignee: Jira accountId to assign the issue to.
             extra_comment: Extra context appended to the issue description.
             dry_run: True = return the server's preview payload only.

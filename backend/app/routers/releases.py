@@ -194,7 +194,8 @@ class ReleaseSyncIn(BaseModel):
     #: than a silent no-op that reports "0 created" and looks like an empty
     #: milestone list.
     source: Literal["github", "jira", "gitlab"]  # W19 INT-05: gitlab = project milestones
-    #: Jira only. Falls back to the deployment's configured default key.
+    #: Jira only. Must be a Jira project this caller may use from the project
+    #: (422 otherwise); null reads the project's own key, else the configured default.
     jira_project_key: Optional[str] = None
 
 
@@ -521,9 +522,13 @@ async def sync_releases_from_external(
         elif body.source == "gitlab":
             summary = await gitlab_release_sync.sync_milestones(db, scoped)
         else:
-            summary = await jira_release_sync.sync_fix_versions(
-                db, scoped, body.jira_project_key
-            )
+            # The Jira account is shared by every project: fix versions are
+            # read from the project's own Jira project (else the instance
+            # default; a lead on a project without a key may name another).
+            from app.services.defect_jira_service import resolve_jira_project_key
+
+            jira_key = await resolve_jira_project_key(db, scoped, current_user, body.jira_project_key)
+            summary = await jira_release_sync.sync_fix_versions(db, scoped, jira_key)
     except (
         github_release_sync.GitHubSyncUnavailable,
         gitlab_release_sync.GitLabSyncUnavailable,

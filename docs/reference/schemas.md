@@ -21452,6 +21452,7 @@ These are the full generated JSON Schema definitions, including required fields,
     "ADMIN_FALLBACK_LOGIN",
     "JIT_PROVISIONED",
     "ROLE_MAPPED",
+    "ACCOUNT_LINKED",
     "SSO_LOGOUT",
     "MFA_ENROLL_STARTED",
     "MFA_ENABLED",
@@ -43768,6 +43769,12 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Idp Sso Url"
     },
+    "link_existing_accounts_by_email": {
+      "default": false,
+      "description": "Link a first SSO sign-in to an existing local account with the same e-mail (OIDC: verified e-mail only; SAML: the NameID must be that e-mail). Off: such a sign-in is refused. An ADMIN account is never linked.",
+      "title": "Link Existing Accounts By Email",
+      "type": "boolean"
+    },
     "oidc_client_id": {
       "anyOf": [
         {
@@ -44005,6 +44012,11 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Last Test Success"
+    },
+    "link_existing_accounts_by_email": {
+      "default": false,
+      "title": "Link Existing Accounts By Email",
+      "type": "boolean"
     },
     "oidc_client_id": {
       "anyOf": [
@@ -44252,6 +44264,17 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Is Active"
+    },
+    "link_existing_accounts_by_email": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Link Existing Accounts By Email"
     },
     "oidc_client_id": {
       "anyOf": [

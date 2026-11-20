@@ -26,6 +26,7 @@ from tests.fakes.fake_defect_world import (
     make_app,
     membership,
     patch_jira_config,
+    project,
     user,
 )
 
@@ -42,7 +43,8 @@ def world(monkeypatch):
     engineer = user(UserRole.QA_ENGINEER)
     row = defect(PID, test_case_id=uuid.uuid4())
     journal: list[str] = []
-    db = MemDB([engineer, row, membership(engineer, PID)], journal=journal)
+    # Bound to Jira project ABC, so the "link" case names a key the project may use.
+    db = MemDB([engineer, row, membership(engineer, PID), project(PID, "ABC")], journal=journal)
 
     async def _bump(project_id):
         journal.append(f"bump {project_id}")

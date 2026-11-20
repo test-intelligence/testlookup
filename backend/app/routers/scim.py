@@ -36,6 +36,7 @@ from app.models.schemas import (
 from app.services.scim_service import (
     SCIMInvalidFilterError,
     SCIMUserNotFoundError,
+    _scope_user_query,
     create_scim_token,
     normalize_scim_pagination,
     scim_create_user,
@@ -44,6 +45,7 @@ from app.services.scim_service import (
     scim_identity_map,
     scim_list_users,
     scim_update_user,
+    scim_visible_user_ids,
     user_to_scim_resource,
     validate_scim_token,
 )
@@ -810,8 +812,12 @@ async def scim_delete(
     out at once (sessions, tokens and keys) in this request's one commit, the person's data is pseudonymised by the
     worker afterwards, and a pending erasure request of theirs is accepted. A retry while that erasure runs, or a
     ``DELETE`` of an erased account, changes nothing. When the erasure is refused (a service account, an export
-    still running, the last active administrator) the account is deactivated instead and the refusal is recorded
-    as a failed identity event. Every case answers 204 with no body.
+    still running) the account is deactivated instead and the refusal is recorded as a failed identity event.
+    Each of those cases answers 204 with no body.
+
+    The last active administrator is never deactivated or erased over SCIM: the request is refused with 409 and
+    the account stays active. A token that is not bound to an identity provider reaches only accounts that SCIM
+    created or that have a federated link; any other id answers 404.
     """
     client_ip = request.client.host if request.client else None
 
@@ -881,17 +887,31 @@ async def _load_group(db: AsyncSession, group_id: uuid.UUID):
     return group
 
 
-async def _group_members(db: AsyncSession, group_id: uuid.UUID) -> list:
+async def _group_members(db: AsyncSession, group_id: uuid.UUID, sso_config_id: uuid.UUID | None) -> list:
+    """The group's members the token may see (the user routes' scope), by username."""
     from app.models.postgres import SCIMGroupMember
 
-    return list((await db.execute(
+    query = (
         select(User).join(SCIMGroupMember, SCIMGroupMember.user_id == User.id)
         .where(SCIMGroupMember.group_id == group_id).order_by(User.username)
-    )).scalars().all())
+    )
+    return list((await db.execute(_scope_user_query(query, sso_config_id))).scalars().all())
 
 
-async def _member_ids(db: AsyncSession, refs: object) -> set[uuid.UUID]:
-    """SCIM ``members`` → user ids; an unknown or malformed value is a 400 invalidValue."""
+async def _with_unseen_members(
+    db: AsyncSession, group_id: uuid.UUID, target: set[uuid.UUID], sso_config_id: uuid.UUID | None,
+) -> set[uuid.UUID]:
+    """``target`` plus the group's current members the token cannot see, so a member write (replace, remove,
+    PUT) never drops a user who is outside the token's scope."""
+    from app.services import scim_group_service as sgs
+
+    current = set(await sgs.group_member_ids(db, group_id))
+    return target | (current - await scim_visible_user_ids(db, current, sso_config_id))
+
+
+async def _member_ids(db: AsyncSession, refs: object, sso_config_id: uuid.UUID | None) -> set[uuid.UUID]:
+    """SCIM ``members`` → user ids; an unknown or malformed value is a 400 invalidValue. A user the token
+    cannot see (the user routes' scope) is unknown here too, so a group never takes one as a member."""
     if refs in (None, ""):
         return set()
     if not isinstance(refs, list):
@@ -904,7 +924,7 @@ async def _member_ids(db: AsyncSession, refs: object) -> set[uuid.UUID]:
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail={"detail": f"Invalid member value {raw!r}", "scimType": "invalidValue"})
     if ids:
-        found = set((await db.execute(select(User.id).where(User.id.in_(list(ids))))).scalars().all())
+        found = await scim_visible_user_ids(db, ids, sso_config_id)
         if ids - found:
             raise HTTPException(status_code=400, detail={"detail": "Unknown member id(s)", "scimType": "invalidValue"})
     return ids
@@ -949,7 +969,7 @@ async def scim_list_groups(
         query = query.where(sa_func.lower(SCIMGroup.display_name) == m.group(1).lower())
     groups = list((await db.execute(query.order_by(SCIMGroup.display_name))).scalars().all())
     page = groups[startIndex - 1:startIndex - 1 + count]
-    resources = [_group_resource(g, await _group_members(db, g.id), _base(request)) for g in page]
+    resources = [_group_resource(g, await _group_members(db, g.id, scim_token.sso_config_id), _base(request)) for g in page]
     return {"schemas": ["urn:ietf:params:scim:api:messages:2.0:ListResponse"], "totalResults": len(groups),
             "startIndex": startIndex, "itemsPerPage": len(resources), "Resources": resources}
 
@@ -963,7 +983,7 @@ async def scim_get_group(
 ):
     """SCIM 2.0: one group with its members."""
     group = await _load_group(db, group_id)
-    return _group_resource(group, await _group_members(db, group.id), _base(request))
+    return _group_resource(group, await _group_members(db, group.id, scim_token.sso_config_id), _base(request))
 
 
 @router.post("/Groups", status_code=201)
@@ -980,7 +1000,7 @@ async def scim_create_group(
     name = str(body.get("displayName") or "").strip()
     if not name or len(name) > 255:
         raise HTTPException(status_code=400, detail={"detail": "displayName is required", "scimType": "invalidValue"})
-    ids = await _member_ids(db, body.get("members"))
+    ids = await _member_ids(db, body.get("members"), scim_token.sso_config_id)
     external = str(body.get("externalId"))[:255] if body.get("externalId") else None
     group = SCIMGroup(display_name=name, external_id=external, version=0)
     db.add(group)
@@ -992,7 +1012,7 @@ async def scim_create_group(
     changed = await sgs.set_members(db, group.id, ids)
     await _commit_group_change(db, group, changed)
     await db.refresh(group)
-    return _group_resource(group, await _group_members(db, group.id), _base(request))
+    return _group_resource(group, await _group_members(db, group.id, scim_token.sso_config_id), _base(request))
 
 
 @router.put("/Groups/{group_id}")
@@ -1013,10 +1033,11 @@ async def scim_replace_group(
     group.display_name = name[:255]
     if "externalId" in body:
         group.external_id = str(body["externalId"])[:255] if body["externalId"] else None
-    changed = await sgs.set_members(db, group.id, await _member_ids(db, body.get("members")))
+    ids = await _member_ids(db, body.get("members"), scim_token.sso_config_id)
+    changed = await sgs.set_members(db, group.id, await _with_unseen_members(db, group.id, ids, scim_token.sso_config_id))
     await _commit_group_change(db, group, changed)
     await db.refresh(group)
-    return _group_resource(group, await _group_members(db, group.id), _base(request))
+    return _group_resource(group, await _group_members(db, group.id, scim_token.sso_config_id), _base(request))
 
 
 @router.patch("/Groups/{group_id}")
@@ -1042,7 +1063,7 @@ async def scim_patch_group(
         member_path = _MEMBER_PATH.match(path)
         if path.lower() == "members" or (not path and kind in ("add", "replace") and isinstance(value, dict) and "members" in value):
             refs = value.get("members") if isinstance(value, dict) else value
-            ids = await _member_ids(db, refs)
+            ids = await _member_ids(db, refs, scim_token.sso_config_id)
             if kind == "add":
                 target |= ids
             elif kind == "remove":
@@ -1062,10 +1083,11 @@ async def scim_patch_group(
             group.display_name = value["displayName"].strip()[:255]
         else:
             raise HTTPException(status_code=400, detail={"detail": f"Unsupported patch path {path!r}", "scimType": "invalidPath"})
+    target = await _with_unseen_members(db, group.id, target, scim_token.sso_config_id)
     changed = await sgs.set_members(db, group.id, target)
     await _commit_group_change(db, group, changed)
     await db.refresh(group)
-    return _group_resource(group, await _group_members(db, group.id), _base(request))
+    return _group_resource(group, await _group_members(db, group.id, scim_token.sso_config_id), _base(request))
 
 
 @router.delete("/Groups/{group_id}", status_code=204, response_class=Response)

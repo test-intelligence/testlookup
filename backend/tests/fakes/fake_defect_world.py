@@ -352,6 +352,16 @@ def membership(user_obj, project_id, role=None):
                          role=role or "QA_ENGINEER")
 
 
+def project(project_id, jira_project_key: Optional[str] = None, **fields):
+    """The project row. ``jira_project_key`` is the one Jira project its members may reach."""
+    from app.models.postgres import Project
+
+    base = dict(id=project_id, name="Payments", slug=f"p-{project_id.hex[:8]}",
+                jira_project_key=jira_project_key)
+    base.update(fields)
+    return Project(**base)
+
+
 def defect(project_id, **fields):
     from app.models.postgres import Defect
 
@@ -384,6 +394,26 @@ def patch_jira_config(monkeypatch, cfg: Optional[dict] = None) -> dict:
 
     monkeypatch.setattr(svc, "resolve_jira_config", _cfg)
     return resolved
+
+
+def patch_jira_key_scope(monkeypatch, *, project_key: Optional[str] = None,
+                         default_key: Optional[str] = "QA", any_key: bool = True):
+    """``jira_key_scope`` answers one fixed scope without reading the project.
+
+    The default is a QA lead on a project with no Jira key of its own, who may
+    name any Jira project: for tests whose subject is not which Jira project a
+    caller may reach (``tests/regression/test_jira_keys_are_bound_to_the_project.py``
+    is the one that reads the real scope).
+    """
+    from app.services import defect_jira_service as svc
+
+    scope = svc.JiraKeyScope(project_key=project_key, default_key=default_key, any_key=any_key)
+
+    async def _scope(db, project_id, user, *, cfg=None):
+        return scope
+
+    monkeypatch.setattr(svc, "jira_key_scope", _scope)
+    return scope
 
 
 def jira_issue_payload(key: str, *, name: str = "To Do", category: str = "new",

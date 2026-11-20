@@ -4973,6 +4973,10 @@ class IdentityEventType(str, PyEnum):
     ADMIN_FALLBACK_LOGIN = "ADMIN_FALLBACK_LOGIN"
     JIT_PROVISIONED = "JIT_PROVISIONED"
     ROLE_MAPPED = "ROLE_MAPPED"
+    # A first SSO sign-in was linked to an existing local account (only while the configuration's
+    # ``link_existing_accounts_by_email`` is on, never for an ADMIN). ``user_id`` is the account,
+    # ``detail`` holds the IdP subject (``external_id``), the e-mail and the provider type.
+    ACCOUNT_LINKED = "ACCOUNT_LINKED"
     # W20 ADM-08c: the IdP's signed LogoutRequest ended a user's sessions (only after the signature verified).
     SSO_LOGOUT = "SSO_LOGOUT"
     # ── MFA + account lockout (0117) ─────────────────────────────────────
@@ -5056,6 +5060,12 @@ class SSOConfiguration(Base):
     # Enforcement
     enforcement_mode: Mapped[SSOEnforcementMode] = mapped_column(
         String(20), nullable=False, default=SSOEnforcementMode.OPTIONAL.value
+    )
+    # Migration 0257. Off: a first SSO sign-in whose e-mail belongs to an existing local account is refused.
+    # On: it is linked to that account (OIDC: only a verified e-mail; SAML: only when the NameID is that
+    # e-mail). An ADMIN account is never linked, whatever this says (sso_service.jit_provision_or_link).
+    link_existing_accounts_by_email: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=False)
     last_test_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

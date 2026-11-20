@@ -10,8 +10,9 @@ FastAPI app over this module's own engine, against real rows and the real CHECKs
   ``decided_by_id`` NULL, the actor-less ``subject_erasure_requested`` row with ``via: scim`` and
   ``SCIM_USER_ERASURE_STARTED``; the dispatch comes after the commit; a retry and a DELETE of an erased person are
   no-ops; two concurrent DELETEs serialise on the person's row → one job;
-* a running export / the last active administrator → deactivated + ``SCIM_ERASURE_REFUSED`` (the last-admin case
-  deactivates the other admins inside a transaction that is rolled back, so a shared CI database never changes);
+* a running export → deactivated + ``SCIM_ERASURE_REFUSED``; the last active administrator → refused with 409 and
+  left active (that case deactivates the other admins inside a transaction that is rolled back, so a shared CI
+  database never changes);
 * the setting: an admin API key's PUT → 403 ``instance_interactive_only`` (nothing written); a signed-in admin's
   PUT → the row + ``settings_audit_log`` + ``SCIM_DELETE_ACTION_UPDATED`` in one commit;
 * no mail anywhere: no ``pending`` notification row for our people, ``aiosmtplib.send`` never called.
@@ -111,6 +112,13 @@ async def world(sessions: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
                 full_name=f"{name.title()} {tag.title()}", hashed_password="!unusable", role=role, is_active=active,
                 erased_at=datetime.now(timezone.utc) if erased else None,
             ))
+        await db.flush()
+        # The token of these tests is unbound: it reaches only accounts SCIM created (or with a federated link).
+        # Each person gets the row ``scim_create_user`` writes; ``_events`` leaves it out of what it compares.
+        await db.execute(text(
+            "INSERT INTO identity_events (id, event_type, user_id, success) "
+            "SELECT gen_random_uuid(), 'SCIM_USER_CREATED', id, true FROM users WHERE id = ANY(:u)"),
+            {"u": list(ids.values())})
         await db.commit()
     w = SimpleNamespace(sessions=sessions, tag=tag, ids=ids, mailed=mailed, dispatched=dispatched)
     try:
@@ -203,7 +211,8 @@ async def _rows(w: Any, sql: str, **params: Any) -> list[Any]:
 
 async def _events(w: Any, name: str) -> list[tuple[Any, ...]]:
     rows = await _rows(w, "SELECT event_type, detail, actor_id, actor_name, sso_config_id, success, error_message "
-                          "FROM identity_events WHERE user_id = :u ORDER BY created_at, event_type", u=w.ids[name])
+                          "FROM identity_events WHERE user_id = :u AND event_type <> 'SCIM_USER_CREATED' "
+                          "ORDER BY created_at, event_type", u=w.ids[name])
     return [tuple(row.values()) for row in rows]
 
 
@@ -365,12 +374,14 @@ async def test_a_running_export_falls_back_to_deactivation(world: Any) -> None:
     await _assert_no_mail(w)
 
 
-async def test_the_last_active_admin_is_deactivated_not_erased(world: Any) -> None:
+async def test_the_last_active_admin_is_refused_and_stays_active(world: Any) -> None:
     """Every OTHER active admin of the (possibly shared) database is deactivated inside a transaction that is
-    rolled back: the real service sees ada as the last active administrator, stages the fallback, and nothing
-    of it is ever committed."""
+    rolled back: the real service sees ada as the last active administrator and refuses the DELETE with 409.
+    (Was: it fell back to the deactivation, which left the instance with no administrator.)"""
+    from fastapi import HTTPException
+
     from app.services import scim_delete_setting
-    from app.services.scim_service import scim_delete_user
+    from app.services.scim_service import LAST_ADMIN_DEACTIVATION_DETAIL, scim_delete_user
 
     w, ada = world, world.ids["ada"]
     await _set_mode(w, "erase")
@@ -378,21 +389,20 @@ async def test_the_last_active_admin_is_deactivated_not_erased(world: Any) -> No
         await db.execute(text("UPDATE users SET is_active = false WHERE role = 'ADMIN' AND is_active AND id <> :a"),
                          {"a": ada})
         assert await scim_delete_setting.get_action(db) == "erase"
-        job_id = await scim_delete_user(db, user_id=ada, sso_config_id=None, scim_token_id=TOKEN_ID,
-                                        ip_address="127.0.0.1")
+        with pytest.raises(HTTPException) as refused:
+            await scim_delete_user(db, user_id=ada, sso_config_id=None, scim_token_id=TOKEN_ID,
+                                   ip_address="127.0.0.1")
         staged = (await db.execute(text(
-            "SELECT event_type, detail, success FROM identity_events WHERE user_id = :u ORDER BY created_at, id"),
+            "SELECT event_type, detail, success FROM identity_events WHERE user_id = :u "
+            "AND event_type <> 'SCIM_USER_CREATED' ORDER BY created_at, id"),
             {"u": ada})).all()
         active = (await db.execute(text("SELECT is_active FROM users WHERE id = :u"), {"u": ada})).scalar_one()
         jobs = (await db.execute(text("SELECT count(*) FROM subject_rights_jobs WHERE subject_user_id = :u"),
                                  {"u": ada})).scalar_one()
         await db.rollback()
-    assert job_id is None and active is False and jobs == 0
-    assert sorted((row[0], str(row[1]), row[2]) for row in staged) == [
-        ("SCIM_ERASURE_REFUSED", str({"code": "last_admin"}), False),
-        ("SCIM_USER_DEACTIVATED", str({"deactivated": True}), True),
-    ]
-    assert await _events(w, "ada") == []        # rolled back: nothing of it reached the database
+    assert refused.value.status_code == 409 and refused.value.detail == LAST_ADMIN_DEACTIVATION_DETAIL
+    assert active is True and jobs == 0 and staged == []      # nothing staged: no deactivation, no refusal row
+    assert await _events(w, "ada") == []
     (row,) = await _rows(w, "SELECT is_active FROM users WHERE id = :u", u=ada)
     assert row["is_active"] is True
 
