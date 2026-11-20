@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/playwright:v1.64.1-noble@sha256:ee15712262f017b8157421b212b12099146645f44b1bc5c0514cbbe6a229b1d0 AS ubuntu-packages
+FROM mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579 AS ubuntu-packages
 ARG OS_PATCH_DAY=unset
 ARG UBUNTU_ARCHIVE_HOST=archive.ubuntu.com
 # The hosted build must receive complete signed indexes, including security updates.
