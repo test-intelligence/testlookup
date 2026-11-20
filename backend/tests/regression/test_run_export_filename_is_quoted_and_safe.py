@@ -48,7 +48,7 @@ def _intelligence(**overrides) -> dict:
 
 
 async def _export(monkeypatch, intelligence: dict):
-    monkeypatch.setattr(run_intelligence, "get_mongo_db", lambda: object())
+    monkeypatch.setattr(run_intelligence, "get_mongo_db", object)
     monkeypatch.setattr(run_intelligence, "get_run_intelligence", AsyncMock(return_value=intelligence))
     monkeypatch.setattr(run_intelligence, "get_run_mode_summary", AsyncMock(return_value=None))
     monkeypatch.setattr(run_intelligence, "review_envelope_for_run", AsyncMock(return_value=ReviewEnvelope(
