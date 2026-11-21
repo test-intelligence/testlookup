@@ -144,7 +144,8 @@ test('the Run page ⋯ Trigger pipeline opens the same strip under the header, q
   await page.getByRole('menuitem', { name: 'Trigger pipeline' }).click()
   const strip = page.getByRole('region', { name: 'Trigger a pipeline' })
   await expect(strip).toBeVisible()
-  await expect(strip.getByRole('combobox', { name: 'Workflow' }).locator('option')).toHaveCount(3)
+  // Project default, built-in offline, built-in deep (offered in Rules mode since D-03), the fork.
+  await expect(strip.getByRole('combobox', { name: 'Workflow' }).locator('option')).toHaveCount(4)
   // Under the header, above the page's tab content.
   const header = await page.locator('[data-page-header]').boundingBox()
   const box = await strip.boundingBox()
