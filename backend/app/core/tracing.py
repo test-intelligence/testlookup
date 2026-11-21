@@ -12,6 +12,7 @@ Initialises a global TracerProvider with:
 Exports get_tracer() and get_current_trace_id() helpers for use across the codebase.
 """
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -53,6 +54,17 @@ WEBHOOK_HOSTS: tuple[str, ...] = (
     "chat.googleapis.com",
 )
 
+#: Paths of this application whose next segment is a bearer credential: a
+#: report share link (``routers/shared_reports.py``) is opened by whoever holds
+#: its token. Slashes may be doubled; the segment after the prefix is replaced.
+_BEARER_PATH_RE = re.compile(r"^(/+api/+v1/+shared/+reports/+)[^/?#]+", re.IGNORECASE)
+
+
+def _redact_bearer_path(path: str) -> str:
+    """``path`` with a share link's token replaced; any other path unchanged."""
+    return _BEARER_PATH_RE.sub(lambda match: match.group(1) + REDACTED, path, count=1)
+
+
 #: Attributes that hold a whole URL.
 _FULL_URL_ATTRIBUTES = ("http.url", "url.full")
 #: Attributes that hold the host a client span talks to.
@@ -77,19 +89,19 @@ def _redact_full_url(value: str) -> str:
     if not parts.scheme or not host:
         # Not something we can take apart: keep what precedes any query.
         head = value.split("?", 1)[0].split("#", 1)[0]
-        return head + ("?" + REDACTED if "?" in value else "")
+        return _redact_bearer_path(head) + ("?" + REDACTED if "?" in value else "")
     if ":" in host:  # an IPv6 literal
         host = "[" + host + "]"
     origin = parts.scheme + "://" + host + (":" + str(parts.port) if parts.port else "")
     if _is_webhook_host(parts.hostname):
         return origin + "/" + REDACTED
-    return origin + parts.path + ("?" + REDACTED if parts.query else "")
+    return origin + _redact_bearer_path(parts.path) + ("?" + REDACTED if parts.query else "")
 
 
 def _redact_target(value: str) -> str:
-    """``/path?query`` with the query replaced."""
+    """``/path?query`` with the query, and a share link's token, replaced."""
     head, mark, _ = value.partition("?")
-    return head.split("#", 1)[0] + ("?" + REDACTED if mark else "")
+    return _redact_bearer_path(head.split("#", 1)[0]) + ("?" + REDACTED if mark else "")
 
 
 def redact_span_attributes(attributes: Mapping[str, Any]) -> Optional[dict[str, Any]]:
@@ -107,8 +119,8 @@ def redact_span_attributes(attributes: Mapping[str, Any]) -> Optional[dict[str, 
     if isinstance(target, str) and target:
         changed["http.target"] = "/" + REDACTED if to_webhook else _redact_target(target)
     path = attributes.get("url.path")
-    if to_webhook and isinstance(path, str) and path:
-        changed["url.path"] = "/" + REDACTED
+    if isinstance(path, str) and path:
+        changed["url.path"] = "/" + REDACTED if to_webhook else _redact_bearer_path(path)
     changed = {key: value for key, value in changed.items() if attributes.get(key) != value}
     if not changed:
         return None

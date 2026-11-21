@@ -52,3 +52,8 @@ output "kubeconfig_command" {
   description = "Run this to configure kubectl against the new cluster."
   value       = "aws eks update-kubeconfig --region ${var.region} --name ${module.eks.cluster_name}"
 }
+
+output "public_subnet_cidrs" {
+  description = "CIDR blocks of the public subnets, where the ALB lives. Use them as the ipBlock source of allow-frontend, allow-backend and allow-mcp in the aws-eks overlay in place of 0.0.0.0/0."
+  value       = module.network.public_subnet_cidrs
+}

@@ -69,7 +69,7 @@ Never commit `.env`, `openshiftsetup/artifactory.env` or a filled-in Secret mani
 
 ### The first administrator
 
-A production-mode installation has no passwordless login. `scripts/create_admin.py` creates the first `ADMIN` user on a database that has none (an existing admin is never modified); when no password is supplied it generates one, prints it once, and requires a password change at the first sign-in.
+A production-mode installation has no passwordless login. `scripts/create_admin.py` creates the first `ADMIN` user on a database that has none (an existing admin is never modified); when no password is supplied and it runs in a terminal it generates one, shows it once, and requires a password change at the first sign-in; with no password and no terminal (a service log) it creates no admin.
 
 - **Release install (`install.sh`)**: the installer prints the admin login once; the password is stored in `.env` as `INITIAL_ADMIN_PASSWORD`, and the `db-migrate` service creates the user `admin` with it on first start. See [release images](deploy-compose.md#release-images-without-a-clone).
 - **Source-built Compose**: `make create-admin` runs the script in the backend container. The local/demo stack (`make quickstart`, `make dev`) runs in development mode with passwordless Quick Login instead.

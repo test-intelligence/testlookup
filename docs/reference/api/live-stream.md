@@ -631,14 +631,14 @@ Sse Stream
 
 
 
-Source: [backend/app/routers/stream.py:359](../../../backend/app/routers/stream.py#L359).
+Source: [backend/app/routers/stream.py:389](../../../backend/app/routers/stream.py#L389).
 
-Dependency chain: .
+Dependency chain: `sse_bearer_token`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: str, request: Request, token: str
+project_id: str, request: Request, token: str=Depends(sse_bearer_token)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -664,15 +664,6 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
       "required": true,
       "schema": {
         "title": "Project Id",
-        "type": "string"
-      }
-    },
-    {
-      "in": "query",
-      "name": "token",
-      "required": true,
-      "schema": {
-        "title": "Token",
         "type": "string"
       }
     }

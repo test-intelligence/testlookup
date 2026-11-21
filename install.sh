@@ -9,12 +9,20 @@
 #
 # Environment overrides:
 #   TL_DIR=<path>            install directory          (default ./testlookup)
-#   TL_REF=<branch|sha|tag>  raw-file ref to download   (default main)
-#   TESTLOOKUP_VERSION=<tag> image tag to run           (default latest)
+#   TL_REF=<branch|sha|tag>  raw-file ref to download   (default: the latest
+#                            published release)
+#   TESTLOOKUP_VERSION=<tag> image tag to run           (default: that release)
 #                            A release tag (vX.Y.Z) in either one installs that
 #                            release: the other follows it unless you set it
 #                            too, and the downloaded files are checked against
 #                            the release's SHA256SUMS before anything runs.
+#                            With neither set, the installer asks GitHub which
+#                            release is the latest and installs that one, files
+#                            and images together, checked the same way. The
+#                            unreleased tip is TL_REF=main: nothing vouches for
+#                            those files and the images are the moving `latest`.
+#   TL_LATEST_RELEASE_URL=<url>  where the latest release is looked up (a
+#                            mirror; default the GitHub API's releases/latest)
 #   TL_PROFILE=demo          add a compose profile       (demo = demo projects, the
 #                            documented default for an evaluation; or local-llm)
 #   TL_NO_UP=1               download + gen .env only, don't `up`
@@ -33,7 +41,9 @@ set -euo pipefail
 
 REPO_RAW="${TL_RAW_BASE:-https://raw.githubusercontent.com/test-intelligence/testlookup}"
 RELEASE_DOWNLOADS="${TL_RELEASE_BASE:-https://github.com/test-intelligence/testlookup/releases/download}"
-REF="${TL_REF:-main}"
+LATEST_RELEASE_URL="${TL_LATEST_RELEASE_URL:-https://api.github.com/repos/test-intelligence/testlookup/releases/latest}"
+# Empty until main() decides: a release tag you named, or the latest release.
+REF="${TL_REF:-}"
 DIR="${TL_DIR:-testlookup}"
 COMPOSE_FILE="docker-compose.release.yml"
 # Every file this script downloads. The release's SHA256SUMS lists each one.
@@ -51,6 +61,19 @@ fetch() {  # fetch <remote-path> <local-path>
 
 is_release_tag() {  # vX.Y.Z, the form the release workflow accepts
   [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+# latest_release_tag -> the tag (vX.Y.Z) of the latest published release.
+# Fails when the lookup fails or the answer is not a release tag: the caller
+# stops, it does not fall back to an unreleased branch.
+latest_release_tag() {
+  local answer tag
+  answer="$(mktemp)" || return 1
+  $DL "$answer" "$LATEST_RELEASE_URL" 2>/dev/null || { rm -f "$answer"; return 1; }
+  tag="$(tr -d '\r' < "$answer" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+  rm -f "$answer"
+  is_release_tag "$tag" || return 1
+  printf '%s\n' "$tag"
 }
 
 sha256_of() {  # sha256_of <file> -> hex digest; fails when no tool is installed
@@ -102,8 +125,21 @@ main() {
   # A release tag in TESTLOOKUP_VERSION alone also selects that release's
   # files, and a release tag in TL_REF alone also selects its images, so the
   # Compose file and the images it starts come from the same release.
+  #
+  # With neither set, install the latest published release, not the tip of
+  # main: a release's files are checked against its SHA256SUMS and its images
+  # carry its tag, while main changes under you and `latest` is whatever was
+  # pushed last (security review 2026-11-20, TL-06). When the lookup fails the
+  # install stops and says how to name a release; it never falls back to main
+  # by itself. An image tag that is not a release (TESTLOOKUP_VERSION=<sha>)
+  # keeps the files of main, as before, and says they are not verified.
   if [ -z "${TL_REF:-}" ] && is_release_tag "${TESTLOOKUP_VERSION:-}"; then
     REF="$TESTLOOKUP_VERSION"
+  elif [ -z "${TL_REF:-}" ] && [ -z "${TESTLOOKUP_VERSION:-}" ]; then
+    REF="$(latest_release_tag)" || die "could not find the latest TestLookup release ($LATEST_RELEASE_URL). Nothing was installed or run. Name a release yourself, for example TL_REF=v0.1.0 (the list is at https://github.com/test-intelligence/testlookup/releases), or set TL_REF=main to install the unreleased tip, which is not checked against any checksum."
+    say "Latest release: $REF"
+  elif [ -z "${TL_REF:-}" ]; then
+    REF="main"
   fi
   if [ -n "${TESTLOOKUP_VERSION:-}" ]; then
     IMAGE_VERSION="$TESTLOOKUP_VERSION"
@@ -165,7 +201,7 @@ main() {
   if grep -q '^INITIAL_ADMIN_PASSWORD=.' .env; then
     PASSWORD_HINT="in .env (readable by you only): grep '^INITIAL_ADMIN_PASSWORD=' .env"
   else
-    PASSWORD_HINT="generated at first start: $DC -f $COMPOSE_FILE logs db-migrate"
+    PASSWORD_HINT="not set (.env has no INITIAL_ADMIN_PASSWORD), so no admin was created. Create one, with a password shown once in your terminal: $DC -f $COMPOSE_FILE exec backend python /app/scripts/create_admin.py"
   fi
 
   say "Pulling images and starting the stack (first boot pulls a few GB)…"

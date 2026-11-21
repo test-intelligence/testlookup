@@ -31,6 +31,20 @@ class ConnectorFetchError(Exception):
         self.retryable = retryable
 
 
+class ConnectorScopeRefused(ConnectorFetchError):
+    """The source names content its project may not read from the provider.
+
+    Not an outage: the provider answered, or was not asked, and the answer is
+    "this project is not entitled to it". Never retried. A sync that ends this
+    way also retires what an earlier sync indexed for the source
+    (``knowledge_sync_service.run_sync``), so content imported before the rule,
+    or before an entitlement was withdrawn, stops being retrieved.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, retryable=False)
+
+
 class KnowledgeConnectorBase(abc.ABC):
     """
     Interface every knowledge connector must implement.

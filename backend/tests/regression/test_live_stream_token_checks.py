@@ -1,8 +1,8 @@
 """A live stream accepts a token only if the ordinary API would accept it.
 
-The rule: the SSE route (``GET /api/v1/stream/sse/{project_id}?token=``) and
-the live WebSocket (``/ws/live/{project_id}``) take their JWT outside the
-``Authorization`` header, so they cannot use ``get_current_user``. They must
+The rule: the SSE route (``GET /api/v1/stream/sse/{project_id}``, which streams
+forever) and the live WebSocket (``/ws/live/{project_id}``, whose JWT arrives
+in the first frame) cannot use ``get_current_user``. They must
 still refuse everything it refuses:
 
 * a refresh token, an MFA challenge token, an MFA enrolment token;

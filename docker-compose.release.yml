@@ -288,7 +288,9 @@ services:
     <<: [*app-backend-image, *app-lockdown]
     # Migrate, then create the first admin on a NEW database only (an existing
     # admin is never modified). The password is INITIAL_ADMIN_PASSWORD from
-    # .env; when empty, a random one is printed once in this service's logs.
+    # .env. When it is empty no admin is created here: a password generated in
+    # this service would be kept in its logs (create_admin.py). Create one from
+    # a terminal with: docker compose exec backend python /app/scripts/create_admin.py
     command: ["sh", "-c", "alembic upgrade head && python /app/scripts/create_admin.py"]
     restart: "no"
     env_file:

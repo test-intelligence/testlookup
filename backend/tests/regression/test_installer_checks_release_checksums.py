@@ -10,7 +10,10 @@ The rule: when the ref being installed is a release tag (``vX.Y.Z`` in
 ``SHA256SUMS`` and compares every file it fetched BEFORE it writes into the
 install directory or runs anything it downloaded. A mismatch, a file the sums
 do not list, or a missing sums file stops the install. For an untagged ref
-(the default, ``main``) there is nothing to compare with, and it says so.
+(``TL_REF=main``, the unreleased tip, only when asked for) there is nothing to
+compare with, and it says so. With no ref and no version given, the installer
+looks up the latest published release and installs that one, checked the same
+way; when the lookup fails it stops.
 
 No network: the fake release is a directory read through ``file://`` URLs
 (``TL_RAW_BASE`` / ``TL_RELEASE_BASE``), and ``docker`` is a stub on ``PATH``.
@@ -142,13 +145,66 @@ def test_a_release_without_published_checksums_is_refused(tmp_path):
     assert not (tmp_path / "install" / "scripts").exists()
 
 
-def test_the_default_ref_installs_and_says_it_is_not_verified(tmp_path):
+def test_the_unreleased_tip_installs_only_when_named_and_says_it_is_not_verified(tmp_path):
     env = _release(tmp_path, "main", sums=False)
+    env["TL_REF"] = "main"
     result = _install(tmp_path, env)
     assert result.returncode == 0, result.stderr
     assert "no checksum is available for an untagged ref (main)" in result.stderr
     assert (tmp_path / "install" / ".env").exists()
     assert "TESTLOOKUP_VERSION=latest " in result.stdout
+
+
+# Security review 2026-11-20, TL-06: with nothing set, the installer took its
+# files from the tip of main, unchecked, and ran the `latest` images. The
+# default is now the latest published release, files and images together.
+
+
+def _latest(tmp_path: Path, env: dict[str, str], answer: str | None) -> None:
+    """Point the latest-release lookup at a local file (or at nothing)."""
+    api = tmp_path / "served" / "latest.json"
+    if answer is not None:
+        api.write_text(answer, encoding="utf-8")
+    env["TL_LATEST_RELEASE_URL"] = api.as_uri()
+
+
+def test_the_default_install_is_the_latest_release_checked_and_pinned(tmp_path):
+    env = _release(tmp_path, TAG)
+    _latest(tmp_path, env, '{\n  "url": "x",\n  "tag_name": "%s",\n  "name": "TestLookup"\n}\n' % TAG)
+    result = _install(tmp_path, env)
+    assert result.returncode == 0, result.stderr
+    assert f"Latest release: {TAG}" in result.stdout
+    assert f"Checked 4 downloaded files against the {TAG} SHA256SUMS" in result.stdout
+    assert f"TESTLOOKUP_VERSION={TAG} " in result.stdout, "the images must be the release's, not latest"
+    assert "untagged ref" not in result.stderr
+
+
+@pytest.mark.parametrize("answer", [
+    None,                                         # the lookup fails (offline, rate limited)
+    '{"message": "API rate limit exceeded"}',     # an answer without a release
+    '{"tag_name": "main"}',                       # an answer that is not a release tag
+    '{"tag_name": "v1.2.3; rm -rf ~"}',
+], ids=["lookup-fails", "no-tag", "branch-name", "not-a-version"])
+def test_without_a_known_latest_release_nothing_is_installed(tmp_path, answer):
+    """It stops; it does not fall back to main by itself."""
+    env = _release(tmp_path, "main", sums=False)
+    _latest(tmp_path, env, answer)
+    result = _install(tmp_path, env)
+    assert result.returncode != 0
+    assert "could not find the latest TestLookup release" in result.stderr
+    assert "TL_REF=main" in result.stderr, "the message must say how to install the tip on purpose"
+    assert not (tmp_path / "install" / ".env").exists()
+    assert not (tmp_path / "install" / "scripts").exists()
+
+
+def test_an_image_tag_that_is_not_a_release_keeps_the_unverified_files_of_main(tmp_path):
+    env = _release(tmp_path, "main", sums=False)
+    env["TESTLOOKUP_VERSION"] = "0123abc"
+    _latest(tmp_path, env, None)  # must not be asked: a failing lookup would stop the install
+    result = _install(tmp_path, env)
+    assert result.returncode == 0, result.stderr
+    assert "no checksum is available for an untagged ref (main)" in result.stderr
+    assert "TESTLOOKUP_VERSION=0123abc " in result.stdout
 
 
 def test_the_installer_checks_the_files_the_release_publishes_checksums_for():
@@ -160,4 +216,6 @@ def test_the_installer_checks_the_files_the_release_publishes_checksums_for():
         assert relative in sums_step, f"the release does not publish a checksum for {relative}"
     script = INSTALLER.read_text(encoding="utf-8")
     assert 'FILES=("$COMPOSE_FILE" ".env.example" "scripts/gen-dev-env.sh" "scripts/init-db.sql")' in script
-    assert 'REF="${TL_REF:-main}"' in script, "main stays the default ref"
+    assert 'REF="${TL_REF:-}"' in script and 'REF="$(latest_release_tag)"' in script, (
+        "the default ref is the latest published release, never a branch"
+    )

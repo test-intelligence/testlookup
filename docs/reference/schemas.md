@@ -24631,6 +24631,42 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## KnowledgeConfluenceSpaceScopeUpdate
+
+```json
+{
+  "description": "The Confluence spaces knowledge sources may read (security review 2026-11-20, TL-01).",
+  "properties": {
+    "default": {
+      "description": "Space keys every project may read, e.g. ['QA', 'DOCS']. Empty: a project without its own entry may read no Confluence page.",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 500,
+      "title": "Default",
+      "type": "array"
+    },
+    "projects": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "description": "Per project id, the space keys that project may read INSTEAD of the default. An empty list takes the project out of the default.",
+      "maxProperties": 2000,
+      "propertyNames": {
+        "format": "uuid"
+      },
+      "title": "Projects",
+      "type": "object"
+    }
+  },
+  "title": "KnowledgeConfluenceSpaceScopeUpdate",
+  "type": "object"
+}
+```
+
 ## KnowledgeDomainAllowlistUpdate
 
 ```json

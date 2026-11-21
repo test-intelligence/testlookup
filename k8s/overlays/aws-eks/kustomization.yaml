@@ -152,6 +152,41 @@ patches:
       kind: NetworkPolicy
       name: allow-mcp
 
+  # The same for the frontend (8080) and the backend API (8000): with
+  # target-type ip the ALB sends straight to those pods too. Without these two
+  # rules, turning NetworkPolicy enforcement on (Terraform
+  # enable_network_policy, the VPC CNI's enableNetworkPolicy) made
+  # default-deny-all refuse the load balancer and the application stopped
+  # answering, which is why enforcement was left off (security review
+  # 2026-11-20, TL-05). The rule opens only the port each policy already
+  # names; the data stores, workers and model services stay closed to
+  # everything but the pods the base policies list.
+  #
+  # 0.0.0.0/0 because the ALB's addresses are your VPC's public subnets, which
+  # this file cannot know. Narrow it in your copy: replace the CIDR in all
+  # three rules with those subnets (Terraform output public_subnet_cidrs, or
+  # the subnets tagged kubernetes.io/role/elb). Pods get VPC addresses from
+  # the private subnets, so that also stops other workloads in the cluster
+  # from skipping the load balancer.
+  - patch: |-
+      - op: add
+        path: /spec/ingress/0/from/-
+        value:
+          ipBlock:
+            cidr: 0.0.0.0/0
+    target:
+      kind: NetworkPolicy
+      name: allow-frontend
+  - patch: |-
+      - op: add
+        path: /spec/ingress/0/from/-
+        value:
+          ipBlock:
+            cidr: 0.0.0.0/0
+    target:
+      kind: NetworkPolicy
+      name: allow-backend
+
 images:
   # Replace ACCOUNT/REGION below with your ECR registry path before applying.
   # Example: docker tag ghcr.io/test-intelligence/testlookup/backend:v0.1.0 \

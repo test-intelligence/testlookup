@@ -9097,6 +9097,59 @@ class ConnectorConfigTestRequest(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
+#: A Confluence space key (a personal space starts with ``~``), or ``*`` for
+#: "any space the deployment's Confluence account reads".
+KNOWLEDGE_CONFLUENCE_SPACE_KEY_PATTERN = r"\*|~?[A-Za-z0-9][A-Za-z0-9_.\-]{0,254}"
+
+
+def _confluence_space_keys(value: List[str]) -> List[str]:
+    import re as _re
+
+    cleaned: List[str] = []
+    for raw in value:
+        key = raw.strip()
+        if not key:
+            continue
+        if not _re.fullmatch(KNOWLEDGE_CONFLUENCE_SPACE_KEY_PATTERN, key):
+            raise ValueError(
+                f"Invalid Confluence space key '{raw}': use the key from the space's URL "
+                "(/wiki/spaces/<KEY>/...), or * for any space"
+            )
+        cleaned.append(key.upper())
+    return sorted(set(cleaned))
+
+
+class KnowledgeConfluenceSpaceScopeUpdate(BaseModel):
+    """The Confluence spaces knowledge sources may read (security review 2026-11-20, TL-01)."""
+
+    default: List[str] = Field(
+        default_factory=list,
+        max_length=500,
+        description=(
+            "Space keys every project may read, e.g. ['QA', 'DOCS']. Empty: a project "
+            "without its own entry may read no Confluence page."
+        ),
+    )
+    projects: Dict[uuid.UUID, List[str]] = Field(
+        default_factory=dict,
+        max_length=2000,
+        description=(
+            "Per project id, the space keys that project may read INSTEAD of the default. "
+            "An empty list takes the project out of the default."
+        ),
+    )
+
+    @field_validator("default")
+    @classmethod
+    def _validate_default(cls, value: List[str]) -> List[str]:
+        return _confluence_space_keys(value)
+
+    @field_validator("projects")
+    @classmethod
+    def _validate_projects(cls, value: Dict[uuid.UUID, List[str]]) -> Dict[uuid.UUID, List[str]]:
+        return {pid: _confluence_space_keys(keys) for pid, keys in value.items()}
+
+
 class KnowledgeDomainAllowlistUpdate(BaseModel):
     domains: List[str] = Field(
         ...,
