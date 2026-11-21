@@ -53,6 +53,13 @@ vi.mock('@/hooks/useRunIntelligence', async (importOriginal) => {
 // The verdict banner reads the stored release decision for its override state
 // (GATE-01); no request leaves the test (src/test/networkGuard.ts).
 const { mockUseReleaseCouncil } = vi.hoisted(() => ({ mockUseReleaseCouncil: vi.fn() }))
+// D-129: the verdict banner reads the AI mode (the Settings › AI toggle); answered here so no request
+// leaves the test (src/test/networkGuard.ts).
+const aiModeState = vi.hoisted(() => ({ current: undefined as undefined | Record<string, unknown> }))
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),
+  useAIConfig: () => ({ data: aiModeState.current }),
+}))
 vi.mock('@/hooks/useReleaseCouncil', () => ({ useReleaseCouncil: mockUseReleaseCouncil }))
 
 vi.mock('@/store/projectStore', () => ({
@@ -328,6 +335,7 @@ describe('RunIntelligencePage', () => {
     mockCompleteStep.mockReset()
     mockCompleteStep.mockResolvedValue(undefined)
     mockProjectState.activeProjectId = 'proj-1'
+    aiModeState.current = undefined
   })
 
   // Regression: the "View Run Intelligence" onboarding step has no DB signal
@@ -947,6 +955,7 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
     mockCompleteStep.mockReset()
     mockCompleteStep.mockResolvedValue(undefined)
     mockProjectState.activeProjectId = 'proj-1'
+    aiModeState.current = undefined
   })
 
   function renderBody(afterPrimary?: ReactNode) {
@@ -987,12 +996,31 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
   // Browser E2E pass (2026-10-08): with no clusters, any run with failures
   // read "per-test detail missing ... the per-test rows aren't available" --
   // every run not yet analysed, one with all 22 rows on its Tests tab.
+  // D-14: this test used the fixture's non-empty category_breakdown (analysed tests) and pinned "not
+  // analysed yet" for it; a run with no stored analysis has an empty breakdown.
   it('failures with their rows but no analysis: "not analysed yet", linking to the failed tests', () => {
-    mockHooks({ intelligence: { ...MOCK_INTELLIGENCE, failure_clusters: [] } })
+    mockHooks({ intelligence: { ...MOCK_INTELLIGENCE, failure_clusters: [], category_breakdown: {} as typeof MOCK_INTELLIGENCE.category_breakdown } })
     renderBody()
     const primary = screen.getByRole('region', { name: 'What failed' })
     expect(primary).toHaveTextContent('15 failures · not analysed yet')
     expect(primary).not.toHaveTextContent(/per-test detail missing|aren't available/)
+    expect(within(primary).getByRole('link', { name: 'Open the failed tests →' }))
+      .toHaveAttribute('href', '/runs/run-abc?tab=tests&status=FAILED')
+  })
+
+  it('D-14: analysed failures with no clusters (a rules analysis) say they were analysed, not "no analysis has run"', () => {
+    mockHooks({
+      intelligence: {
+        ...MOCK_INTELLIGENCE,
+        failure_clusters: [],
+        category_breakdown: { PRODUCT_BUG: 3, INFRASTRUCTURE: 1 } as unknown as typeof MOCK_INTELLIGENCE.category_breakdown,
+      },
+    })
+    renderBody()
+    const primary = screen.getByRole('region', { name: 'What failed' })
+    expect(primary).toHaveTextContent('4 failures analysed · not grouped into clusters')
+    expect(primary).toHaveTextContent('4 of 15 failures analysed: each has a category on the Tests tab.')
+    expect(primary).not.toHaveTextContent(/not analysed yet|no analysis has run/)
     expect(within(primary).getByRole('link', { name: 'Open the failed tests →' }))
       .toHaveAttribute('href', '/runs/run-abc?tab=tests&status=FAILED')
   })
@@ -1245,6 +1273,7 @@ describe('RunIntelligenceBody — Hold / Approve with conditions / Override (GAT
     mockCompleteStep.mockReset()
     mockCompleteStep.mockResolvedValue(undefined)
     mockProjectState.activeProjectId = 'proj-1'
+    aiModeState.current = undefined
   })
   afterEach(() => {
     useAuthStore.setState({ user: null } as never)
@@ -1316,6 +1345,20 @@ describe('RunIntelligenceBody — Hold / Approve with conditions / Override (GAT
     fireEvent.click(screen.getByRole('button', { name: 'Hold' }))
     expect(screen.queryByRole('heading', { name: 'QA Lead Override' })).toBeNull()
     expect(override).not.toHaveBeenCalled()
+  })
+
+  it('D-129: with deep investigation turned off, a quick look does not tell a QA lead to run it first', () => {
+    asRole('QA_LEAD')
+    aiModeState.current = { analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_enabled: false }
+    withCouncil(storedCouncil({ synthesized: true, created_at: null }))
+    renderBody()
+    const sentence = 'There is no stored release decision to override, and deep investigation, which stores one, is turned off in Settings › AI.'
+    for (const name of ['Hold', 'Approve with conditions', 'Override → Go']) {
+      const button = screen.getByRole('button', { name })
+      expect(button).toBeDisabled()
+      expect(button).toHaveAttribute('title', sentence)
+    }
+    expect(screen.queryByText(/Run deep investigation first/)).toBeNull()
   })
 
   it('a persisted override is the verdict: the banner says overridden, by whom, why and when', () => {

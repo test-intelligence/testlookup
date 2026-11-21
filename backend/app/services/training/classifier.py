@@ -77,16 +77,27 @@ class FastClassifier:
         measured 0 parse failures for this path across 9,657 events -- not
         because there were none, but because nothing ever recorded one.
         """
-        # Determine which model to use
-        if endpoint is None:
-            fine_tuned = await ModelRegistry.get_active_model("classifier")
-            model_name = fine_tuned or settings.CLASSIFIER_MODEL or settings.LLM_MODEL
-            llm = await get_llm(model=model_name, temperature=0.0)
-        else:
-            model_name = endpoint.model
-            llm = await get_llm(
-                endpoint=endpoint.model_copy(update={"temperature": 0.0})
+        # Determine which model to use. Building the client is part of the
+        # call: ``get_llm`` raises when the provider policy refuses the model
+        # (offline mode with an unreachable host). Raised outside the ``try``,
+        # that skipped the caller's rules fallback and stored "Analysis failed"
+        # for every failure on a default install (D-01).
+        try:
+            if endpoint is None:
+                fine_tuned = await ModelRegistry.get_active_model("classifier")
+                model_name = fine_tuned or settings.CLASSIFIER_MODEL or settings.LLM_MODEL
+                llm = await get_llm(model=model_name, temperature=0.0)
+            else:
+                model_name = endpoint.model
+                llm = await get_llm(
+                    endpoint=endpoint.model_copy(update={"temperature": 0.0})
+                )
+        except Exception as exc:
+            logger.warning(
+                "fast_classifier_call_failed",
+                extra={"error_type": type(exc).__name__, "stage": "get_llm"},
             )
+            return None, "call_failed"
 
         user_content = (
             f"Test: {test_name}\n"

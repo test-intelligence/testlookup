@@ -152,7 +152,7 @@ A trigger that does not choose a workflow runs the project's default for that ki
 
 If a pipeline is already queued or running for that run, a new request is not started twice: a bulk request counts such runs as already running instead of queuing them.
 
-The deep-investigation buttons are offered only while **Deep Investigation** is ticked under **Settings › AI** and the analysis mode is not **Rules**. Otherwise the run's page, its **Analysis** tab and the **Deep Investigation** page show a note saying why instead (**Runs** keeps its deep actions; the server refuses them with the same reason). When a run's last deep investigation failed, the **Deep Investigation** page and the run's **Analysis** tab offer **Retry from last successful stage**: it resumes that investigation, keeping the stages it completed, or starts a new one when the analysis configuration changed since it ran.
+The deep-investigation buttons are offered only while **Deep Investigation** is ticked under **Settings › AI**, in every analysis mode (in **Rules** mode each stage uses its rules instead of a model). Otherwise the run's page, its **Analysis** tab and the **Deep Investigation** page show a note saying why instead, and the deep actions on **Runs** are turned off with the same reason. When a run's last deep investigation failed, the **Deep Investigation** page and the run's **Analysis** tab offer **Retry from last successful stage**: it resumes that investigation, keeping the stages it completed, or starts a new one when the analysis configuration changed since it ran.
 
 ## Pipeline runs
 

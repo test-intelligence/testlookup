@@ -18,6 +18,9 @@ from app.models.postgres import FailureCategory, TestCase
 
 _VALID = {c.value for c in FailureCategory}
 
+SOURCE_HUMAN = "human"
+SOURCE_ANALYSIS = "analysis"
+
 
 def _category_value(category: Any) -> str | None:
     value = getattr(category, "value", category)
@@ -28,11 +31,14 @@ def _category_value(category: Any) -> str | None:
 
 
 async def mirror_ai_category(db, test_case_id, category: Any) -> None:
-    """Copy an analysis's category onto its test case when it has none.
+    """Copy an analysis's category onto its test case.
 
-    Never overrides a label someone set (a correction, the bulk Classify): a
-    re-run pipeline must not undo a human decision. UNKNOWN is not a category
-    worth copying -- it is what an unset one already reads as.
+    Never overrides a label a person set (a correction, the bulk Classify): a
+    re-run pipeline must not undo a human decision. It does replace an earlier
+    analysis's label. It used to fill only an empty column, so the first
+    analysis won for good and the Tests tab kept reading Flaky after a later
+    analysis said Product Bug (D-85, D-150). UNKNOWN is not a category worth
+    copying -- it is what an unset one already reads as.
     """
     value = _category_value(category)
     if value is None or value == FailureCategory.UNKNOWN.value:
@@ -42,11 +48,11 @@ async def mirror_ai_category(db, test_case_id, category: Any) -> None:
         .where(
             TestCase.id == test_case_id,
             or_(
-                TestCase.failure_category.is_(None),
-                TestCase.failure_category == FailureCategory.UNKNOWN.value,
+                TestCase.failure_category_source.is_(None),
+                TestCase.failure_category_source != SOURCE_HUMAN,
             ),
         )
-        .values(failure_category=value)
+        .values(failure_category=value, failure_category_source=SOURCE_ANALYSIS)
     )
 
 
@@ -56,5 +62,7 @@ async def apply_human_category(db, test_case_id, category: Any) -> None:
     if value is None:
         return
     await db.execute(
-        update(TestCase).where(TestCase.id == test_case_id).values(failure_category=value)
+        update(TestCase)
+        .where(TestCase.id == test_case_id)
+        .values(failure_category=value, failure_category_source=SOURCE_HUMAN)
     )

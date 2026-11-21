@@ -383,10 +383,13 @@ async def test_llm_dispatch_forwards_authoritative_scope_and_runtime_context():
         "run_id": "run-1",
         "project_id": "project-1",
         "test_fingerprint": "fp-1",
+        # The rules fallback inside the triage agent classifies with the same
+        # history as Rules mode (S-A-9, D-151); none was passed here.
+        "history": None,
     }
 
 
-# ── generate_summary() ───────────────────────────────────────────────────────
+# ── generate_summary()───────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio

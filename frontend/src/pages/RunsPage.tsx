@@ -101,6 +101,7 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { usePermissions } from '@/hooks/usePermissions'
+import { deepInvestigationAvailability, useAIConfig, type DeepInvestigationAvailability } from '@/hooks/useAIConfig'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import agentService, { newClientToken } from '@/services/agentService'
 import { pipelineActionError } from '@/services/pipelineActions'
@@ -1009,7 +1010,7 @@ function RunsTable({
   runs, signatures, signatureRequest, verdictOf, verdictsLoading,
   selectedIds, setSelectedIds, onTrigger, onDeep,
   onCompareWithPrevious, onOpenSignatures,
-  isQaEngineer,
+  isQaEngineer, deepAvailability,
   page, pages, total, onPageChange,
   datetimeSortDir, onToggleDatetimeSort,
   filtered, loading, onClearFilters,
@@ -1038,6 +1039,9 @@ function RunsTable({
   /** A row's signature chip opens the failure-signature side panel. */
   onOpenSignatures: () => void
   isQaEngineer: boolean
+  /** D-03: whether deep investigation can be triggered (the Settings › AI toggle), from the same
+   *  helper as the run page and /deep-investigate. */
+  deepAvailability: DeepInvestigationAvailability
   /** Pagination props — parent computes pages from full ``runs.length``. */
   page: number
   pages: number
@@ -1049,6 +1053,11 @@ function RunsTable({
   const allSelected = runs.length > 0 && runs.every(r => selectedIds.has(r.id))
   const someSelected = runs.some(r => selectedIds.has(r.id))
   const selectedCount = selectedIds.size
+  // D-03: the deep controls follow the role AND the Settings › AI toggle. The row icon used to check
+  // the role only, so it stayed enabled with deep investigation off and the click ended in a 422.
+  const deepBlocked = !isQaEngineer || !deepAvailability.available
+  const deepTitle = (allowed: string) =>
+    !isQaEngineer ? 'QA Engineer role required' : (deepAvailability.message ?? allowed)
 
   const toggleAll = () => {
     if (allSelected) setSelectedIds(new Set())
@@ -1075,9 +1084,9 @@ function RunsTable({
             Bulk trigger
           </GhostBtn>
           <GhostBtn
-            disabled={selectedCount === 0 || !isQaEngineer}
+            disabled={selectedCount === 0 || deepBlocked}
             onClick={() => onDeep('__bulk__')}
-            title={isQaEngineer ? 'Run deep investigation on selected runs' : 'QA Engineer role required'}
+            title={deepTitle('Run deep investigation on selected runs')}
           >
             Bulk deep
           </GhostBtn>
@@ -1282,8 +1291,8 @@ function RunsTable({
                       <button
                         type="button"
                         onClick={() => onDeep(r.id)}
-                        disabled={!isQaEngineer}
-                        title={isQaEngineer ? 'Trigger deep investigation' : 'QA Engineer role required'}
+                        disabled={deepBlocked}
+                        title={deepTitle('Trigger deep investigation')}
                         className="inline-flex items-center justify-center h-6 w-6 rounded-md border text-[var(--color-text-muted)] hover:text-[var(--color-text)] disabled:opacity-50"
                         style={{ borderColor: 'var(--color-border)' }}
                       >
@@ -1395,6 +1404,8 @@ export default function RunsPage() {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   const { isQaEngineer } = usePermissions()
+  const { data: aiMode } = useAIConfig()
+  const deepAvailability = deepInvestigationAvailability(aiMode)
   // Rollout gate (MRU-17): the upload UI is hidden until an admin enables the
   // `manual_upload` feature flag.
   const uploadEnabled = useFeatureEnabled('manual_upload')
@@ -1855,7 +1866,8 @@ export default function RunsPage() {
       label: `Deep all failed (${model.failedRuns})`,
       icon: <Stethoscope className="h-3.5 w-3.5" />,
       onClick: () => void handleDeepAllFailed(),
-      disabled: !isQaEngineer || model.failedRuns === 0,
+      // D-03: follows the Settings › AI toggle too, like the row icon.
+      disabled: !isQaEngineer || !deepAvailability.available || model.failedRuns === 0,
     },
     {
       // The list answer's COUNT (`total`), not the rows on screen; the confirm names it before anything is sent.
@@ -2065,6 +2077,7 @@ export default function RunsPage() {
           onCompareWithPrevious={(run) => void handleCompareWithPrevious(run)}
           onOpenSignatures={openSignatures}
           isQaEngineer={isQaEngineer}
+          deepAvailability={deepAvailability}
           page={tablePage}
           pages={tableTotalPages}
           total={runs.length}

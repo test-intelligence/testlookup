@@ -550,8 +550,11 @@ async def _gather_training_data() -> tuple[list[dict], list[str], list[str]]:
             # Build a set of test case IDs to batch-fetch history
             tc_ids = [row.tc_id for row in human_rows] + [row.tc_id for row in analysis_rows]
 
-            # Batch-fetch historical stats per test (by test_name matching)
-            # Using a subquery to compute pass/fail counts from prior runs
+            # Batch-fetch historical stats per test: the same test (fingerprint)
+            # in the same project, from results recorded before the labelled one.
+            # This used to join on test_name alone, so a sample's features
+            # counted every same-named test in every project, including later
+            # results (S-A-3).
             history_map: dict[str, dict] = {}
             if tc_ids:
                 hist_result = await db.execute(text("""
@@ -563,9 +566,14 @@ async def _gather_training_data() -> tuple[list[dict], list[str], list[str]]:
                         PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY tc_hist.duration_ms)
                             FILTER (WHERE tc_hist.duration_ms IS NOT NULL) AS median_duration_ms
                     FROM test_cases tc_current
+                    JOIN test_runs run_current ON run_current.id = tc_current.test_run_id
                     JOIN test_cases tc_hist
-                        ON tc_hist.test_name = tc_current.test_name
+                        ON tc_hist.test_fingerprint = tc_current.test_fingerprint
                         AND tc_hist.id != tc_current.id
+                        AND tc_hist.created_at < tc_current.created_at
+                    JOIN test_runs run_hist
+                        ON run_hist.id = tc_hist.test_run_id
+                        AND run_hist.project_id = run_current.project_id
                     WHERE tc_current.id = ANY(:tc_ids)
                     GROUP BY tc_current.id
                 """), {"tc_ids": tc_ids})

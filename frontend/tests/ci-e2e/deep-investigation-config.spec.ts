@@ -17,7 +17,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { expectNoOverlay } from '../lib/inPage'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { deepPreScanBody, PROJECT_ID, RUN_ID } from '../visual/production/fixtures'
-import { deepConfigWorld, RULES_SENTENCE } from '../visual/production/fixtures-agent-ops-b'
+import { deepConfigWorld, GATE_REFUSAL_SENTENCE } from '../visual/production/fixtures-agent-ops-b'
 
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
@@ -66,14 +66,14 @@ test('the pre-scan, the history and the measured estimate; Estimate re-asks; Run
   assertHermetic(api, errors)
 })
 
-test('the estimate\'s gate resolves to Rules: no Run CTA anywhere, the gate\'s sentence, nothing posted', async ({ page }) => {
-  const world = deepConfigWorld({ gate: 'rules' })
+test('the estimate\'s gate refuses: no Run CTA anywhere, the gate\'s sentence, nothing posted', async ({ page }) => {
+  const world = deepConfigWorld({ gate: 'refused' })
   const { api, errors } = await openRollout(page, DEEP_PAGE, { handlers: world.handlers, ready: verdict })
-  await expect(page.getByTestId('deep-disabled-note')).toHaveText([RULES_SENTENCE, RULES_SENTENCE])
+  await expect(page.getByTestId('deep-disabled-note')).toHaveText([GATE_REFUSAL_SENTENCE, GATE_REFUSAL_SENTENCE])
   await expect(page.getByRole('button', { name: 'Run Deep Analysis' })).toHaveCount(0)
   await expect(verdict(page).getByRole('button', { name: /Run on all/ })).toHaveCount(0)
   await expect(config(page).getByRole('button', { name: 'Run on selection' })).toHaveCount(0)
-  await expect(config(page).getByTestId('deep-config-gate-note')).toHaveText(RULES_SENTENCE)
+  await expect(config(page).getByTestId('deep-config-gate-note')).toHaveText(GATE_REFUSAL_SENTENCE)
   // Estimating stays possible: it is a read.
   await expect(config(page).getByRole('button', { name: 'Estimate' })).toBeEnabled()
   await networkQuiet(page, api)

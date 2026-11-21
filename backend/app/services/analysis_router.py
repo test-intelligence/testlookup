@@ -328,6 +328,7 @@ async def classify_root_cause_tiered(
         project_id=str(test_case.get("project_id")) if test_case.get("project_id") else None,
         test_fingerprint=test_case.get("test_fingerprint"),
         endpoint=decision.choice.endpoint,
+        history=history,
         skip_fast_classifier=True,
         skip_cache=True,
     )
@@ -404,9 +405,14 @@ async def _probe_ollama_model_async(
 
     Probes the EFFECTIVE provider/model (Settings > AI over env): the explicit
     arguments, else the module caches refresh_analysis_mode_from_cache() writes,
-    else env. Returns True if the model is installed, False if Ollama is
-    reachable but the model is missing, None if the probe itself could not run
-    (or the provider is not Ollama).
+    else env. Returns True if the model is installed, False if it cannot be
+    used, None only when the provider is not Ollama.
+
+    "Cannot be used" covers a missing model and also a refusal by the provider
+    policy or a server that does not answer. A model call would fail the same
+    way, and Auto falls back to rules only on False: on the default install the
+    host ``ollama`` does not resolve, the probe used to answer None, and Auto
+    picked the model for every failure, which stored "Analysis failed" (D-01).
     """
     provider = _pick(provider, _effective_provider, settings.LLM_PROVIDER)
     model = _pick(model, _effective_model, settings.LLM_MODEL) or ""
@@ -425,7 +431,7 @@ async def _probe_ollama_model_async(
         await enforce_provider_policy_async("ollama", offline=offline, base_url=str(base_url))
     except Exception as exc:  # LLMPolicyViolation, or the check itself failing
         logger.debug("ollama_probe_refused", error=type(exc).__name__)
-        return None
+        return False
     try:
         client_cm: Any
         if offline:
@@ -440,7 +446,7 @@ async def _probe_ollama_model_async(
         async with client_cm as client:
             resp = await client.get(f"{str(base_url).rstrip('/')}/api/tags")
         if resp.status_code != 200:
-            return None
+            return False
         installed = [m.get("name", "") for m in resp.json().get("models", [])]
         model_base = model.split(":")[0]
         return any(
@@ -449,7 +455,7 @@ async def _probe_ollama_model_async(
         )
     except Exception as exc:
         logger.debug("ollama_probe_failed", error=type(exc).__name__)
-        return None
+        return False
 
 
 def _pick(explicit: str | None, cached: str | None, env: str | None) -> str | None:
@@ -965,6 +971,7 @@ async def _classify_llm(
                 run_id=test_case.get("run_id") or (run_context or {}).get("run_id"),
                 project_id=str(_pid) if _pid else None,
                 test_fingerprint=test_case.get("test_fingerprint"),
+                history=history,
             )
     except Exception as exc:  # noqa: BLE001
         reason = f"llm_error: {type(exc).__name__}: {exc}"

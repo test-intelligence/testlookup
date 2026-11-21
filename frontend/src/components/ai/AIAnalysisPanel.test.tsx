@@ -256,12 +256,18 @@ describe('AIAnalysisPanel', () => {
       expect(screen.getByText('Investigate DB connection pool')).toBeInTheDocument()
     })
 
-    it('Re-analyse button resets to idle state', async () => {
-      await renderResolvedResult()
-      fireEvent.click(screen.getByRole('button', { name: /Re-analyse/i }))
-      await waitFor(() => {
-        expect(screen.getByRole('button', { name: /Analyse Root Cause/i })).toBeInTheDocument()
-      })
+    // D-157: this test used to pin the bug ("Re-analyse button resets to idle state"): the click only
+    // cleared the result and the user had to press "Analyse Root Cause" as well.
+    it('D-157: Re-analyse on a stored analysis sends the analysis request in one click', async () => {
+      const { aiService } = await import('@/services/aiService')
+      ;(aiService.getAnalysis as ReturnType<typeof vi.fn>).mockResolvedValueOnce(MOCK_ANALYSIS)
+      ;(aiService.analyze as ReturnType<typeof vi.fn>).mockImplementation(() => new Promise(() => {}))
+      render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
+      fireEvent.click(await screen.findByRole('button', { name: /Re-analyse/i }))
+      expect(aiService.analyze).toHaveBeenCalledTimes(1)
+      expect(aiService.analyze).toHaveBeenCalledWith(expect.objectContaining({ test_case_id: 'tc-1' }))
+      expect(await screen.findByText(/Investigating/i)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Analyse Root Cause/i })).toBeNull()
     })
 
     it('Create Jira Defect button is disabled when requires_human_review is true', async () => {
@@ -479,6 +485,52 @@ describe('AIAnalysisPanel', () => {
       await renderResolvedResult({ analysis_id: 'an-42' })
       fireEvent.click(screen.getByRole('button', { name: /Correct/i }))
       expect(await screen.findByRole('region', { name: /Correct classification/i })).toBeInTheDocument()
+    })
+
+    it('D-06: a saved correction re-reads the stored analysis and the card shows it without reopening', async () => {
+      const { aiService } = await import('@/services/aiService')
+      const flaky = {
+        ...MOCK_ANALYSIS,
+        analysis_id: 'an-42',
+        failure_category: 'FLAKY',
+        is_flaky: true,
+        recommended_actions: ['Quarantine test until fixed'],
+      }
+      const corrected = {
+        ...flaky,
+        failure_category: 'PRODUCT_BUG',
+        is_flaky: false,
+        confidence_score: 95,
+        recommended_actions: ['File a product defect'],
+        confidence_why: { ...MOCK_ANALYSIS.confidence_why, confidence_basis: 'human_corrected' as const },
+        provenance: { mode_used: 'human_corrected' },
+      }
+      const getAnalysis = aiService.getAnalysis as ReturnType<typeof vi.fn>
+      getAnalysis.mockResolvedValueOnce(flaky).mockResolvedValueOnce(corrected)
+      render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
+      expect(await screen.findByText(/High Flakiness/)).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: /^Correct$/i }))
+      fireEvent.click(await screen.findByRole('radio', { name: /Product Bug/i }))
+      fireEvent.click(screen.getByRole('button', { name: /Record correction/i }))
+
+      expect(await screen.findByText('PRODUCT BUG')).toBeInTheDocument()
+      expect(screen.queryByText(/High Flakiness/)).not.toBeInTheDocument()
+      expect(screen.queryByText('Quarantine test until fixed')).not.toBeInTheDocument()
+      expect(screen.getByTestId('ai-provenance')).toHaveTextContent('Produced by human review')
+      expect(screen.getByTestId('ai-basis-chip')).toHaveTextContent('human-corrected')
+      expect(getAnalysis).toHaveBeenCalledTimes(2)
+      expect(screen.queryByRole('region', { name: /Correct classification/i })).not.toBeInTheDocument()
+    })
+
+    it('S-A-1: the header prints no "unknown · unknown" when the read has no provider or model', async () => {
+      await renderResolvedResult({
+        llm_provider: 'unknown',
+        llm_model: 'unknown',
+        provenance: { mode_used: null, mode_requested: 'auto', fallback_reason: 'llm_error' },
+      })
+      expect(screen.queryByText(/unknown/)).not.toBeInTheDocument()
+      expect(screen.getByTestId('ai-provenance')).toHaveTextContent('No engine answered')
     })
 
     it('renders evidence through the chrome', async () => {

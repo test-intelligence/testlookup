@@ -80,11 +80,40 @@ def _apply_correction(analysis, body) -> None:
 
     Staged only -- the router commits, and the semantic cache is evicted after
     that commit by ``evict_corrected_analysis_cache``.
+
+    The whole card follows the category (D-06). Only the category and the
+    summary used to change, so a test corrected from Flaky to Product Bug kept
+    "High Flakiness", "Exhibits flaky behavior", the quarantine and retry
+    actions and "estimated 85%", with nothing saying a person had set it. The
+    row now matches what the pipeline's replay of a correction stores
+    (``analysis_corrections.build_corrected_analysis``).
     """
-    analysis.failure_category = body.corrected_category
+    from app.services.analysis_corrections import (  # noqa: PLC0415
+        _HUMAN_CORRECTION_CONFIDENCE,
+    )
+    from app.services.rules_engine import _default_actions  # noqa: PLC0415
+
+    category = body.corrected_category
+    changed = str(analysis.failure_category or "").upper() != str(category).upper()
+    analysis.failure_category = category
     if body.corrected_root_cause:
         analysis.root_cause_summary = body.corrected_root_cause
+    elif changed:
+        # The automatic explanation argued for the old category.
+        analysis.root_cause_summary = (
+            "Classification set by human review (a prior automatic verdict was corrected)."
+        )
+    analysis.is_flaky = str(category).upper() == "FLAKY"
+    analysis.recommended_actions = _default_actions(str(category).upper())
+    analysis.confidence_score = _HUMAN_CORRECTION_CONFIDENCE
     analysis.requires_human_review = False
+    routing = dict(getattr(analysis, "routing_metadata", None) or {})
+    routing.update({
+        "analysis_mode": "human_corrected",
+        "confidence_basis": "human_corrected",
+        "human_corrected": True,
+    })
+    analysis.routing_metadata = routing
 
 
 async def corrected_project_id(db: AsyncSession, analysis_id: uuid.UUID, body) -> Optional[uuid.UUID]:

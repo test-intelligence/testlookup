@@ -19,9 +19,9 @@ import Disclosure from '@/components/ui/Disclosure'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
 import OverrideDecisionForm from '@/components/release/OverrideDecisionForm'
-import { NO_STORED_DECISION } from '@/components/release/overridePrerequisite'
+import { noStoredDecisionReason } from '@/components/release/overridePrerequisite'
 import ShareReportDialog from '@/components/reports/ShareReportDialog'
-import { useAIConfig, isLLMAvailable } from '@/hooks/useAIConfig'
+import { deepInvestigationAvailability, useAIConfig, isLLMAvailable } from '@/hooks/useAIConfig'
 import { usePermissions } from '@/hooks/usePermissions'
 import type { OverrideAuditEntry, ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 import { useRuns } from '@/hooks/useRuns'
@@ -178,7 +178,8 @@ export default function ReleaseGatePage() {
   const [overrideMode, setOverrideMode] = useState(false)
   // D-0007: an override needs a STORED decision (the API answers 404 without one); a quick-look
   // (synthesized) view has none, so the control is withheld and says why, as on the Analysis tab.
-  const overrideBlocked = decision?.synthesized ? NO_STORED_DECISION : null
+  // D-129: the sentence follows deep-investigation availability, so it never points at a turned-off feature.
+  const overrideBlocked = decision?.synthesized ? noStoredDecisionReason(deepInvestigationAvailability(aiConfig)) : null
   // GATE-06: Share opens a dialog (layout, expiry, the run's links, revoke).
   const [shareOpen, setShareOpen] = useState(false)
   const workflow = decision ? buildReleaseGateWorkflow(decision) : null

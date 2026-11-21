@@ -191,7 +191,8 @@ async def test_offline_the_mode_probe_sends_nothing_to_a_public_base_url(router_
     plain, pinned = router_clients
     monkeypatch.setattr(settings, "AI_OFFLINE_MODE", True)
 
-    assert await analysis_router._probe_ollama_model_async("ollama", "llama3:8b", PUBLIC_URL) is None
+    # Refused by the policy: the model cannot be used, so Auto must not pick it (D-01).
+    assert await analysis_router._probe_ollama_model_async("ollama", "llama3:8b", PUBLIC_URL) is False
 
     assert plain.urls == [] and pinned.urls == []
 
@@ -203,7 +204,8 @@ async def test_the_mode_probe_obeys_the_offline_switch_saved_in_settings(router_
     # What the refresh caches from Settings > AI.
     monkeypatch.setattr(analysis_router, "_effective_offline", True, raising=False)
 
-    assert await analysis_router._probe_ollama_model_async("ollama", "llama3:8b", PUBLIC_URL) is None
+    # Refused by the policy: the model cannot be used, so Auto must not pick it (D-01).
+    assert await analysis_router._probe_ollama_model_async("ollama", "llama3:8b", PUBLIC_URL) is False
 
     assert plain.urls == [] and pinned.urls == []
 

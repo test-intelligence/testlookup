@@ -101,15 +101,21 @@ class TestApplyingACorrection:
         assert analysis.failure_category == "flaky_test"
         assert analysis.requires_human_review is False
 
-    def test_the_root_cause_is_replaced_only_when_supplied(self):
-        # An edit that revises the category but not the prose must not blank
-        # the summary the report renders.
+    def test_the_root_cause_is_never_blanked(self):
+        # An edit that keeps the category and gives no prose keeps the summary.
         analysis = _analysis()
-        svc._apply_correction(analysis, _body(root_cause=None))
+        svc._apply_correction(analysis, _body(category="product_bug", root_cause=None))
         assert analysis.root_cause_summary == "the original AI summary"
 
         svc._apply_correction(analysis, _body(root_cause="a human explanation"))
         assert analysis.root_cause_summary == "a human explanation"
+
+    def test_a_new_category_without_prose_drops_the_old_argument(self):
+        # D-06: "Exhibits flaky behavior" stayed on a card corrected to Product Bug.
+        analysis = _analysis(failure_category="FLAKY", root_cause_summary="Exhibits flaky behavior")
+        svc._apply_correction(analysis, _body(category="PRODUCT_BUG", root_cause=None))
+        assert "flaky" not in analysis.root_cause_summary.lower()
+        assert "human review" in analysis.root_cause_summary
 
 
 class TestTheEditPathIsAuthorized:

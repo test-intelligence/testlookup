@@ -834,7 +834,11 @@ async def refresh_flaky_coach(
                 TestCase.test_name,
                 TestCase.suite_name,
             )
-            .where(TestCase.test_fingerprint.in_(fps))
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .where(
+                TestRun.project_id == project_id,
+                TestCase.test_fingerprint.in_(fps),
+            )
             .order_by(TestCase.test_fingerprint, TestCase.created_at.desc())
             .distinct(TestCase.test_fingerprint)
         )

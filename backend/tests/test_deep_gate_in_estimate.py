@@ -25,7 +25,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.sql.elements import TextClause
 
 from app.core.config import settings
-from app.services.deep_investigation_gate import MESSAGE_RULES_MODE
 from tests.ai_config_fakes import (
     RUN_ID,
     RecordingRedis,
@@ -92,7 +91,7 @@ async def _read(db) -> tuple[dict, dict]:
 
 
 @pytest.mark.asyncio
-async def test_a_configured_auto_that_resolves_to_rules_is_refused_in_the_estimate(monkeypatch):
+async def test_a_configured_auto_that_resolves_to_rules_is_allowed_in_the_estimate(monkeypatch):
     opened = install(monkeypatch, redis=RecordingRedis())
     db = _EstimateSession({
         "analysis_mode": "auto", "llm_provider": "none", "deep_investigation_enabled": True,
@@ -103,9 +102,9 @@ async def test_a_configured_auto_that_resolves_to_rules_is_refused_in_the_estima
     assert mode["analysis_mode"] == "auto"            # what the page used to trust
     assert mode["deep_investigation_enabled"] is True
     assert estimate["gate"] == {
-        "allowed": False,
-        "reason_code": "rules_mode",
-        "message": MESSAGE_RULES_MODE,
+        "allowed": True,                              # D-03: rules mode runs deep too
+        "reason_code": None,
+        "message": None,
         "analysis_mode": "rules",                     # the RESOLVED mode
         "deep_investigation_enabled": True,
     }

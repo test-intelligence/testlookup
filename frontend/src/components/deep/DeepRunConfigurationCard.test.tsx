@@ -113,7 +113,8 @@ describe('DeepRunConfigurationCard', () => {
 
   it('Estimate re-asks the estimate (no run); the gate\'s sentence replaces Run on selection', () => {
     const onEstimate = vi.fn()
-    const gate = 'Deep investigation requires LLM or Auto mode. Current mode: rules.'
+    // D-03: the server's only refusal now is the Settings › AI toggle (the Rules-mode sentence is gone).
+    const gate = 'Deep investigation is disabled in Settings › AI. Ask an administrator to enable it.'
     render(<Harness onEstimate={onEstimate} blockedMessage={gate} />)
     fireEvent.click(screen.getByRole('button', { name: 'Estimate' }))
     expect(onEstimate).toHaveBeenCalledTimes(1)

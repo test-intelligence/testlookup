@@ -238,3 +238,47 @@ def compute_intermittency_signals(
         in_run_retry_rate=round(in_run_retry_rate, 3),
         intermittency_label=label,
     )
+
+
+def is_regression_history(history: dict | None) -> bool:
+    """True when the history reads as a test that broke, not one that flips.
+
+    The test passed at least three runs in a row and then failed every run
+    since, either with no earlier failure in the window or with a streak of
+    three or more that ``flaky_signals`` labels a persistent regression (same
+    error, rarely flips). This is the verdict the Failures page already shows
+    ("looks like a real regression, not a flake").
+    """
+    if not history:
+        return False
+    streak = int(history.get("consecutive_failures") or 0)
+    before = int(history.get("consecutive_passes") or 0)
+    fail_count = int(history.get("fail_count") or 0)
+    if streak < 1 or before < 3:
+        return False
+    if streak == fail_count:
+        diversity = history.get("error_signature_diversity")
+        return diversity is None or float(diversity) < 0.5
+    return streak >= 3 and history.get("intermittency_label") == "persistent_regression"
+
+
+def history_is_flaky(history: dict | None) -> bool:
+    """True when the history shows a test that passes and fails at random.
+
+    Both passes and failures, a failure rate between 10 % and 90 %, and not a
+    regression. With an ordered history the intermittency label decides: a
+    ``persistent_regression`` is never flaky. A history carrying counts only
+    (older callers) keeps the plain rate rule.
+    """
+    if not history:
+        return False
+    passes = int(history.get("pass_count") or 0)
+    failures = int(history.get("fail_count") or 0)
+    total = passes + failures
+    if total == 0 or passes == 0 or failures == 0:
+        return False
+    if not 0.10 <= failures / total <= 0.90:
+        return False
+    if is_regression_history(history):
+        return False
+    return history.get("intermittency_label") != "persistent_regression"

@@ -47,6 +47,12 @@ vi.mock('@/hooks/useAIHistory', () => {
     usePreviousRun: () => idle,
   }
 })
+// D-129: the verdict banner reads the AI mode (the Settings › AI toggle); answered here so no request
+// leaves the test (src/test/networkGuard.ts).
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),
+  useAIConfig: () => ({ data: undefined }),
+}))
 vi.mock('@/hooks/useReleaseCouncil', () => ({
   useReleaseCouncil: () => ({ council: undefined, isLoading: false, isError: false, refresh: vi.fn() }),
 }))

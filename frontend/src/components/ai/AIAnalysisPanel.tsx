@@ -14,7 +14,7 @@ import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
 import { failureCategoryColor } from '@/components/charts/failureTaxonomy'
 import RoleActionCard from '@/components/ai/RoleActionCard'
 import ReviewStateControl from '@/components/ai/ReviewStateControl'
-import AISuggestion, { BasisChip, normalizeProvenance } from '@/components/ai/AISuggestion'
+import AISuggestion, { BasisChip, isKnownValue, normalizeProvenance } from '@/components/ai/AISuggestion'
 import CorrectClassificationModal from '@/components/ai/CorrectClassificationModal'
 import { aiFeedbackService } from '@/services/aiFeedbackService'
 
@@ -248,6 +248,21 @@ export default function AIAnalysisPanel({
     }
   }
 
+  // D-06: a saved correction rewrites the stored analysis (category, is_flaky, actions, basis). Read the stored
+  // row again so the card shows the corrected verdict now, not after the test is reopened.
+  const handleCorrectionSaved = async () => {
+    setCorrectOpen(false)
+    try {
+      const fresh = await aiService.getAnalysis(testCaseId)
+      if (fresh) {
+        setResult(fresh)
+        setConfirmed(false)
+      }
+    } catch {
+      /* keep the card as it was; the correction itself was recorded */
+    }
+  }
+
   const handleCreateJira = async () => {
     if (!result || !projectKey) return
     setCreatingJira(true)
@@ -360,6 +375,7 @@ export default function AIAnalysisPanel({
   // are all optional on the wire and legitimately absent on older rows.
   const analysisId = result.analysis_id ?? null
   const provenance = normalizeProvenance(result)
+  const modelLine = [result.llm_provider, result.llm_model].filter(v => isKnownValue(v)).join(' · ')
   const lowConfidence = result.low_confidence ?? result.requires_human_review
   const evidenceLinks = (result.evidence_references ?? []).map(ev => ({
     label: ev.source,
@@ -390,7 +406,9 @@ export default function AIAnalysisPanel({
           </div>
           <div>
             <p className="font-semibold text-[var(--color-text)]">AI Triage Result</p>
-            <p className="text-xs text-[var(--color-text-muted)]">{result.llm_provider} · {result.llm_model}</p>
+            {/* S-A-1: the read fills a missing provider/model with "unknown"; say nothing rather than
+                "unknown · unknown". */}
+            {modelLine && <p className="text-xs text-[var(--color-text-muted)]">{modelLine}</p>}
           </div>
         </div>
         <button onClick={() => setExpanded(x => !x)} className="btn-ghost p-1">
@@ -497,9 +515,11 @@ export default function AIAnalysisPanel({
 
       {/* Actions */}
       <div className="flex items-center gap-3 pt-1">
+        {/* D-157: Re-analyse sends the request. It used to clear the result only, so the panel fell back to
+            the idle "Analyse Root Cause" button and the user had to click twice. */}
         <button
           className="btn-secondary text-sm flex items-center gap-2"
-          onClick={() => { setResult(null); setHasError(false) }}
+          onClick={handleAnalyze}
         >
           <Zap className="h-3.5 w-3.5" />
           Re-analyse
@@ -536,6 +556,7 @@ export default function AIAnalysisPanel({
           currentCategory={result.failure_category}
           testName={testName}
           onClose={() => setCorrectOpen(false)}
+          onSaved={handleCorrectionSaved}
         />
       )}
     </div>

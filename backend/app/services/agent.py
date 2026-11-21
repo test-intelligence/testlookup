@@ -239,9 +239,13 @@ async def run_triage_agent(
     endpoint: ResolvedEndpoint | None = None,
     skip_fast_classifier: bool = False,
     skip_cache: bool = False,
+    history: Optional[dict] = None,
 ) -> dict:
     """
     Execute the LangChain ReAct triage agent for a failed test case.
+
+    ``history`` is the test's project-scoped history; when the model fails the
+    rules engine classifies with it, as Rules mode would.
 
     Fast path: tries the FastClassifier first (single LLM call, ~50ms).
     If the classifier is confident enough (>= CLASSIFIER_CONFIDENCE_THRESHOLD),
@@ -587,55 +591,56 @@ async def run_triage_agent(
                 ) or (
                     "404" in error_str and ("model" in error_str or "pull" in error_str)
                 )
+                # Every model failure falls back to the rules engine with the
+                # test's history. Only a missing model used to; any other error
+                # (connection refused after the probe, a 500, a parse crash)
+                # returned a canned UNKNOWN stub with the raw exception text in
+                # the summary shown to users (S-A-9).
                 if _model_not_found:
                     logger.warning(
                         "LLM model '%s' not available (%s) — falling back to rules engine",
                         settings.LLM_MODEL, str(e)[:120],
                     )
-                    try:
-                        from app.services.rules_engine import RulesEngine
-                        # classify_test takes no stack_trace: passing one raised
-                        # TypeError, so this fallback always ended in the canned
-                        # stub instead of a rules analysis. The trace stands in
-                        # for a missing message.
-                        analysis = RulesEngine.classify_test(
-                            error_message=error_message or stack_trace,
-                            test_name=test_name,
-                        )
-                        analysis["llm_provider"] = settings.LLM_PROVIDER
-                        analysis["llm_model"] = settings.LLM_MODEL
-                        analysis["analysis_engine"] = "rules"
-                        analysis["llm_unavailable_reason"] = _model_missing_hint(settings.LLM_MODEL)
-                        # US-15.1: THE case this story exists for — the card
-                        # must say "the LLM was unavailable, this is the rules
-                        # engine" instead of presenting heuristics as model output.
-                        routing["mode_used"] = "rules"
-                        routing["fallback_from"] = "llm"
-                        routing["fallback_reason"] = "llm_model_not_available"
-                    except Exception as rules_exc:
-                        logger.error("Rules engine fallback also failed: %s", rules_exc)
-                        analysis = _fallback_analysis(_model_missing_hint(settings.LLM_MODEL))
-                        # No engine produced this — a canned stub did. mode_used
-                        # stays None so nothing claims authorship.
-                        routing["mode_used"] = None
-                        routing["fallback_from"] = "llm"
-                        routing["fallback_reason"] = "llm_model_not_available_and_rules_failed"
-
-                # ── Token limit ───────────────────────────────────────────────────
+                    reason = "llm_model_not_available"
                 elif any(kw in error_str for kw in ("token", "context length", "maximum context", "too long")):
-                    logger.warning("Token limit exceeded — returning fallback with truncation hint")
-                    analysis = _fallback_analysis(
-                        f"Input exceeded LLM context window. Error: {str(e)[:200]}. "
-                        "Consider reducing stack trace length or enabling a model with larger context."
-                    )
-                    routing["mode_used"] = None
-                    routing["fallback_from"] = "llm"
-                    routing["fallback_reason"] = "context_window_exceeded"
+                    logger.warning("Token limit exceeded — falling back to rules engine")
+                    reason = "context_window_exceeded"
                 else:
-                    analysis = _fallback_analysis(str(e))
+                    reason = f"llm_error: {type(e).__name__}"
+                try:
+                    from app.services.rules_engine import RulesEngine
+                    # classify_test takes no stack_trace: passing one raised
+                    # TypeError, so this fallback always ended in the canned
+                    # stub instead of a rules analysis. The trace stands in
+                    # for a missing message.
+                    analysis = RulesEngine.classify_test(
+                        error_message=error_message or stack_trace,
+                        test_name=test_name,
+                        history=history,
+                    )
+                    analysis["llm_provider"] = settings.LLM_PROVIDER
+                    analysis["llm_model"] = settings.LLM_MODEL
+                    analysis["analysis_engine"] = "rules"
+                    if _model_not_found:
+                        analysis["llm_unavailable_reason"] = _model_missing_hint(settings.LLM_MODEL)
+                    # US-15.1: the card must say "the LLM was unavailable, this
+                    # is the rules engine" instead of presenting heuristics as
+                    # model output.
+                    routing["mode_used"] = "rules"
+                    routing["fallback_from"] = "llm"
+                    routing["fallback_reason"] = reason
+                except Exception as rules_exc:
+                    logger.error("Rules engine fallback also failed: %s", rules_exc)
+                    analysis = _fallback_analysis(
+                        _model_missing_hint(settings.LLM_MODEL)
+                        if _model_not_found
+                        else "the model and the rules engine both failed"
+                    )
+                    # No engine produced this — a canned stub did. mode_used
+                    # stays None so nothing claims authorship.
                     routing["mode_used"] = None
                     routing["fallback_from"] = "llm"
-                    routing["fallback_reason"] = "llm_error"
+                    routing["fallback_reason"] = f"{reason}; rules_failed"
                 # W10 D-4: the model failed, the server-side evidence did not.
                 intermediate_steps = list(server_steps)
 

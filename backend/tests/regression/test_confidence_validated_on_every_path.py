@@ -173,6 +173,11 @@ async def test_post_analyze_persists_the_validated_number(monkeypatch):
 
     monkeypatch.setattr(analyze_router, "resolve_authorized_test_case", _fake_resolve)
     monkeypatch.setattr(analyze_router.analysis_router, "classify_test", _fake_classify)
+    # No correction, history or stored mode: the session below answers only the
+    # queries this test is about.
+    monkeypatch.setattr(
+        analyze_router, "_manual_analysis_context", AsyncMock(return_value=(None, None, None))
+    )
 
     created: list = []
 
@@ -237,6 +242,11 @@ async def test_post_analyze_does_not_downgrade_a_well_evidenced_score(monkeypatc
 
     monkeypatch.setattr(analyze_router, "resolve_authorized_test_case", _fake_resolve)
     monkeypatch.setattr(analyze_router.analysis_router, "classify_test", _fake_classify)
+    # No correction, history or stored mode: the session below answers only the
+    # queries this test is about.
+    monkeypatch.setattr(
+        analyze_router, "_manual_analysis_context", AsyncMock(return_value=(None, None, None))
+    )
 
     created: list = []
     none_result = MagicMock()

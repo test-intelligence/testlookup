@@ -62,6 +62,13 @@ vi.mock('@/hooks/useFeatureFlags', async (importOriginal) => ({
   useFeatureEnabled: (key: string) => flags[key] ?? false,
 }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => perms }))
+// D-03: the deep controls read the AI mode (the Settings › AI toggle); answered here so no request
+// leaves the test (src/test/networkGuard.ts).
+const aiModeState = vi.hoisted(() => ({ current: undefined as undefined | Record<string, unknown> }))
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),
+  useAIConfig: () => ({ data: aiModeState.current }),
+}))
 vi.mock('@/components/runs/UploadReportModal', () => ({
   default: () => <div data-testid="upload-report-modal" />,
 }))
@@ -523,6 +530,7 @@ const follows = (a: Element, b: Element) => Boolean(a.compareDocumentPosition(b)
 beforeEach(() => {
   flags.manual_upload = false
   perms.isQaEngineer = false
+  aiModeState.current = undefined
   useTimeWindowStore.setState({ days: 30 })
   vi.mocked(agentService.bulkTriggerPipelines).mockClear()
   api.verdicts = {}
@@ -704,6 +712,53 @@ describe('RunsPage — the page template (P3)', () => {
     expect(useTimeWindowStore.getState().days).toBe(7)
     expect(vi.mocked(useRuns).mock.lastCall?.[0]).toMatchObject({ days: 7, size: 500, order: 'newest' })
     expect(screen.getByRole('combobox', { name: 'Run status' })).toBeInTheDocument()
+  })
+})
+
+// D-03: the row's deep icon checked the role only, so with deep investigation turned off it stayed
+// enabled and the click ended in the server's 422. It now reads the same availability helper as the
+// run page and /deep-investigate; Rules mode no longer refuses (owner decision 2026-11-21).
+describe('RunsPage — the deep controls follow deep-investigation availability (D-03)', () => {
+  const deepIcons = () => screen.getAllByRole('button').filter((b) => b.querySelector('svg.lucide-stethoscope'))
+
+  it('toggle off: every row\'s deep icon, Bulk deep and Deep all failed are disabled and say why', () => {
+    perms.isQaEngineer = true
+    aiModeState.current = { analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_enabled: false }
+    renderRunsPage(brokenWindow())
+    const icons = deepIcons()
+    expect(icons).toHaveLength(4)
+    for (const icon of icons) {
+      expect(icon).toBeDisabled()
+      expect(icon).toHaveAttribute('title', 'Deep investigation is turned off in Settings › AI.')
+    }
+    // The standard pipeline trigger beside it is not affected.
+    for (const icon of screen.getAllByTitle('Re-trigger standard pipeline')) expect(icon).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Bulk deep' })).toHaveAttribute('title', 'Deep investigation is turned off in Settings › AI.')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Deep all failed (3)' })).toBeDisabled()
+    expect(screen.getByRole('menuitem', { name: 'Trigger all failed (3)' })).toBeEnabled()
+  })
+
+  it('Rules mode with the toggle on: the deep icon and Deep all failed are offered', () => {
+    perms.isQaEngineer = true
+    aiModeState.current = { analysis_mode: 'rules', ai_offline_mode: true, deep_investigation_enabled: true }
+    renderRunsPage(brokenWindow())
+    const icons = deepIcons()
+    for (const icon of icons) {
+      expect(icon).toBeEnabled()
+      expect(icon).toHaveAttribute('title', 'Trigger deep investigation')
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(screen.getByRole('menuitem', { name: 'Deep all failed (3)' })).toBeEnabled()
+  })
+
+  it('the role still comes first: without QA Engineer the icon names the role, whatever the toggle', () => {
+    aiModeState.current = { analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_enabled: false }
+    renderRunsPage(brokenWindow())
+    for (const icon of deepIcons()) {
+      expect(icon).toBeDisabled()
+      expect(icon).toHaveAttribute('title', 'QA Engineer role required')
+    }
   })
 })
 

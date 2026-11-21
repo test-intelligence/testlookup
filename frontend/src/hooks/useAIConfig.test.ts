@@ -27,7 +27,6 @@ import type { MLStatusRead } from '@/services/appSettingsService'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 import {
   DEEP_DISABLED_MESSAGE,
-  DEEP_RULES_MODE_MESSAGE,
   ML_STATUS_TRAINING_REFRESH_MS,
   deepInvestigationAvailability,
   isDeepEnabled,
@@ -60,7 +59,7 @@ describe('useAIConfig', () => {
 /**
  * W04 §4.5: the deep CTAs follow the Settings › AI toggle and the mode, from
  * the read every role may make (`GET /settings/ai/mode`). Mirrors the server's
- * gate: the toggle wins over the mode; only Rules refuses.
+ * gate: only the toggle refuses (D-03: Rules mode no longer does).
  */
 describe('deepInvestigationAvailability', () => {
   it('offers deep investigation while the mode is still loading', () => {
@@ -76,14 +75,15 @@ describe('deepInvestigationAvailability', () => {
     expect(DEEP_DISABLED_MESSAGE).toBe('Deep investigation is turned off in Settings › AI.')
   })
 
-  it('is off in Rules mode with the toggle on', () => {
+  // D-03 (owner decision 2026-11-21): this test used to pin the Rules-mode refusal
+  // ("is off in Rules mode with the toggle on" -> reason 'rules_mode').
+  it('D-03: is on in Rules mode with the toggle on', () => {
     expect(deepInvestigationAvailability({ analysis_mode: 'rules', ai_offline_mode: true, deep_investigation_enabled: true }))
-      .toEqual({ available: false, reason: 'rules_mode', message: DEEP_RULES_MODE_MESSAGE })
-    expect(DEEP_RULES_MODE_MESSAGE).toBe('Deep investigation needs LLM or Auto mode (current mode: Rules).')
+      .toEqual({ available: true, reason: null, message: null })
   })
 
-  it('is on in LLM, Auto and ML mode with the toggle on', () => {
-    for (const mode of ['auto', 'llm', 'ml'] as const) {
+  it('is on in LLM, Auto, ML and Rules mode with the toggle on', () => {
+    for (const mode of ['auto', 'llm', 'ml', 'rules'] as const) {
       const config = { analysis_mode: mode, ai_offline_mode: false, deep_investigation_enabled: true }
       expect(deepInvestigationAvailability(config)).toEqual({ available: true, reason: null, message: null })
       expect(isDeepEnabled(config)).toBe(true)
@@ -92,7 +92,7 @@ describe('deepInvestigationAvailability', () => {
 
   it('treats a missing toggle (a pod of the previous build) as on', () => {
     expect(deepInvestigationAvailability({ analysis_mode: 'auto', ai_offline_mode: true }).available).toBe(true)
-    expect(isDeepEnabled({ analysis_mode: 'rules', ai_offline_mode: true })).toBe(false)
+    expect(isDeepEnabled({ analysis_mode: 'rules', ai_offline_mode: true })).toBe(true)
   })
 })
 

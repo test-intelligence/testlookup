@@ -239,4 +239,5 @@ async def test_a_flushed_redis_is_reseeded_from_the_stored_row(stores):
 
     assert await redis.get("config:analysis_mode") == "rules"
     assert await redis.ttl("config:analysis_mode") == -1
-    assert decision.allowed is False and decision.reason_code == "rules_mode"
+    # D-03: the stored mode is read, and rules mode is allowed to run deep.
+    assert decision.analysis_mode == "rules" and decision.allowed is True

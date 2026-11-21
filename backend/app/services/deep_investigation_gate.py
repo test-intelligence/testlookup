@@ -15,6 +15,14 @@ stalls for 30 s (``tests/regression/test_deep_investigation_uses_one_connection.
 
 Not gated on purpose: a same-id RESUME (it replays accepted work under its
 frozen snapshot), single-stage ``agent_invoke`` calls, and cancelling.
+
+Rules mode is allowed (owner decision, product finding D-03). It used to be
+refused, although every deep stage has a deterministic fallback and a deep run
+with no model completes in about a second. A model-free team then had to choose
+between failure categories (Rules) and the release-decision features that need
+a deep run (stored verdict, override, compliance pack), and making Auto resolve
+to rules when no model answers (D-01) would have switched deep investigation
+off on every default install.
 """
 from __future__ import annotations
 
@@ -28,18 +36,16 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 REASON_DISABLED = "disabled"
-REASON_RULES_MODE = "rules_mode"
 
-# Exact texts (contract W04 §2.2). ``disabled`` wins over ``rules_mode``.
+# Exact text (contract W04 §2.2).
 MESSAGE_DISABLED = (
     "Deep investigation is disabled in Settings › AI. Ask an administrator to enable it."
 )
-MESSAGE_RULES_MODE = "Deep investigation requires LLM or Auto mode. Current mode: rules."
 
 
 class DeepGateDecision(NamedTuple):
     allowed: bool
-    reason_code: str | None  # "disabled" | "rules_mode" | None
+    reason_code: str | None  # "disabled" | None
     message: str | None
     analysis_mode: str  # the RESOLVED mode (auto resolved through the effective provider / ML)
     deep_investigation_enabled: bool
@@ -49,7 +55,7 @@ class DeepGateDecision(NamedTuple):
 async def deep_investigation_gate(db: "AsyncSession") -> DeepGateDecision:
     """Decide whether a deep investigation may start. Pure read; uses ``db`` only."""
     from app.services.ai_config_resolver import SOURCE_ENV_DEFAULT, get_effective_ai_config
-    from app.services.analysis_router import AnalysisMode, resolve_effective_analysis_mode
+    from app.services.analysis_router import resolve_effective_analysis_mode
 
     cfg = await get_effective_ai_config(db=db)
     enabled = cfg.get("deep_investigation_enabled")
@@ -61,8 +67,6 @@ async def deep_investigation_gate(db: "AsyncSession") -> DeepGateDecision:
 
     if not enabled:
         return DeepGateDecision(False, REASON_DISABLED, MESSAGE_DISABLED, resolved, enabled, source)
-    if resolved == AnalysisMode.RULES:
-        return DeepGateDecision(False, REASON_RULES_MODE, MESSAGE_RULES_MODE, resolved, enabled, source)
     return DeepGateDecision(True, None, None, resolved, enabled, source)
 
 

@@ -48,7 +48,7 @@ When the job finishes, the runs list refreshes once. A queued pipeline that neve
 
 **Re-trigger all matching (N)** re-runs the standard pipeline for every run the current filters match — the project, the global release, the window, status, suite, search, branch and AI verdict — exactly the runs the table lists, newest first. N is the list's total, and a confirmation names the count before anything is queued.
 
-**Bulk deep** and **Deep all failed** are refused as a whole, with the reason shown in the panel's place, while deep investigation is off under **Settings › AI** or the analysis mode is **Rules**: nothing is queued.
+**Bulk deep** and **Deep all failed** are refused as a whole, with the reason shown in the panel's place, while deep investigation is off under **Settings › AI**: nothing is queued.
 
 Only the person who started a job, or an administrator, can open or cancel it. Starting and cancelling a job are recorded in the project's activity.
 

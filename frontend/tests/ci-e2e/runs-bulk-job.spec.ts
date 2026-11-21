@@ -16,7 +16,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { expectNoOverlay } from '../lib/inPage'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
 import { PROJECT_ID, runs } from '../visual/production/fixtures'
-import { BULK_JOB_IDS, bulkJobWorld, retriggerWorld, RULES_SENTENCE } from '../visual/production/fixtures-agent-ops-b'
+import { BULK_JOB_IDS, bulkJobWorld, retriggerWorld, GATE_REFUSAL_SENTENCE } from '../visual/production/fixtures-agent-ops-b'
 
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
@@ -99,7 +99,7 @@ test('a second job is cancelled through its own question; its reads stop', async
   assertHermetic(api, errors)
 })
 
-test('bulk deep under Rules: ONE refused request, the server\'s sentence, no job', async ({ page }) => {
+test('bulk deep refused by the server gate: ONE refused request, the server\'s sentence, no job', async ({ page }) => {
   const world = bulkJobWorld({ deepRefused: true })
   const { api, errors } = await openRollout(page, '/runs', { handlers: world.handlers, ready })
   for (const run of failedRuns.slice(0, 3)) {
@@ -107,7 +107,7 @@ test('bulk deep under Rules: ONE refused request, the server\'s sentence, no job
   }
   await page.getByRole('button', { name: 'Bulk deep' }).click()
   const note = page.locator('[data-bulk-note]')
-  await expect(note).toHaveText(RULES_SENTENCE)
+  await expect(note).toHaveText(GATE_REFUSAL_SENTENCE)
   await expect(note).toHaveAttribute('role', 'note')
   await expect(panel(page)).toHaveCount(0)
   expect(world.state.writes).toHaveLength(1)

@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import structlog
 
+from app.services.flaky_signals import history_is_flaky
+
 logger = structlog.get_logger("services.confidence_validation")
 
 UNKNOWN_CATEGORY = "UNKNOWN"
@@ -80,6 +82,15 @@ def validate_confidence(analysis: dict) -> dict:
     if analysis.get("confidence_validated"):
         return analysis
 
+    # A label a person set is already reviewed. The evidence caps below are
+    # for engine output; applied here they showed a human correction as
+    # "confidence 50, needs review" and sent it back to the queue (S-A-8).
+    if analysis.get("human_corrected"):
+        analysis["requires_human_review"] = False
+        analysis["low_confidence"] = False
+        analysis["confidence_validated"] = True
+        return analysis
+
     raw_confidence = analysis.get("confidence_score", 0)
 
     # Ensure integer in valid range
@@ -129,23 +140,16 @@ def validate_confidence(analysis: dict) -> dict:
 
     # P2-6: Validate flakiness using actual historical data instead of LLM guess.
     # A test is flaky only if it has both passes AND failures historically,
-    # with a pass rate between 10-90% (indicating non-deterministic behavior).
+    # with a pass rate between 10-90%, and the ordered history is not a
+    # regression (passing streak, then failing every run since). The rate
+    # alone marked a fresh regression flaky, which dropped it from the release
+    # score's product bugs (S-A-6, D-97).
     flakiness_data = analysis.get("flakiness_data") or {}
     if flakiness_data:
         hist_passes = flakiness_data.get("pass_count", 0)
         hist_failures = flakiness_data.get("fail_count", 0)
-        total_hist = hist_passes + hist_failures
-        if total_hist > 0:
-            hist_pass_rate = (hist_passes / total_hist) * 100
-            is_actually_flaky = (
-                hist_passes > 0
-                and hist_failures > 0
-                and 10 <= hist_pass_rate <= 90
-            )
-            analysis["is_flaky"] = is_actually_flaky
-            if not is_actually_flaky and hist_failures > 0 and hist_passes == 0:
-                # Never passed — this is broken, not flaky
-                analysis["is_flaky"] = False
+        if hist_passes + hist_failures > 0:
+            analysis["is_flaky"] = history_is_flaky(flakiness_data)
 
     # Penalty: no tools used and not a cache hit (suspicious high confidence)
     if not has_tools and not analysis.get("cache_hit") and not analysis.get("classified_by") and confidence > 60:

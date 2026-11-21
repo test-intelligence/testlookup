@@ -233,7 +233,10 @@ async def test_a_failed_model_call_still_carries_the_server_side_evidence(world,
     analysis = await _triage(monkeypatch, llm)
 
     assert analysis["_routing"]["fallback_from"] == "llm"
-    assert analysis["_routing"]["fallback_reason"] == "llm_error"
+    # S-A-9: any model failure is classified by the rules engine; the reason
+    # names the error type, never its text.
+    assert analysis["_routing"]["fallback_reason"] == "llm_error: ConnectError"
+    assert analysis["_routing"]["mode_used"] == "rules"
     assert analysis["tools_used"] == ["query_splunk_logs"]
     assert any("db pool exhausted" in excerpt for excerpt in _excerpts(analysis))
     assert len(world.state.splunk_searches) == 1

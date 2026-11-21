@@ -76,7 +76,8 @@ import { useDecisionReportVersions, useRunIntelligence } from '@/hooks/useRunInt
 import { usePermissions } from '@/hooks/usePermissions'
 import { useReleaseCouncil } from '@/hooks/useReleaseCouncil'
 import OverrideDecisionForm, { type OverrideRecommendation } from '@/components/release/OverrideDecisionForm'
-import { NO_STORED_DECISION } from '@/components/release/overridePrerequisite'
+import { noStoredDecisionReason } from '@/components/release/overridePrerequisite'
+import { deepInvestigationAvailability, useAIConfig } from '@/hooks/useAIConfig'
 import type { ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
 import ReviewBanner from '@/components/reviews/ReviewBanner'
@@ -602,6 +603,7 @@ function WhatFailedCard({
   aggregateFailedTests,
   aggregateTotalTests,
   failedTestRows,
+  analysedTests = 0,
 }: {
   clusters: FailureClusterIntel[]
   runId: string
@@ -619,7 +621,36 @@ function WhatFailedCard({
   /** Failed or broken per-test rows the run actually has (``affected_suites``
    *  is counted from them). */
   failedTestRows: number
+  /** D-14: tests with a stored AI analysis (the sum of ``category_breakdown``). A rules analysis
+   *  stores these and no clusters, so zero clusters alone does not mean "not analysed". */
+  analysedTests?: number
 }) {
+  const plural = (n: number) => `failure${n === 1 ? '' : 's'}`
+  if (clusters.length === 0 && aggregateFailedTests > 0 && failedTestRows > 0 && analysedTests > 0) {
+    // D-14: a rules analysis stores a category per test and no clusters. "No clusters" is not "no
+    // analysis": the page said "no analysis has run for this run" while the Tests tab showed the
+    // categories.
+    const shown = Math.min(analysedTests, aggregateFailedTests)
+    return (
+      <Panel
+        title="What failed"
+        actions={<span>{shown} {plural(shown)} analysed · not grouped into clusters</span>}
+      >
+        <div className="px-4 py-4 text-sm space-y-2">
+          <p className="m-0 text-[var(--color-text-secondary)]">
+            <strong className="text-[var(--color-text)]">
+              {shown === aggregateFailedTests ? `${shown} ${plural(shown)}` : `${shown} of ${aggregateFailedTests} failures`}
+            </strong>{' '}
+            analysed: each has a category on the Tests tab. They are not grouped into clusters yet.
+            Analyze failures (below) groups them and looks for a shared root cause.
+          </p>
+          <Link to={`/runs/${runId}?tab=tests&status=FAILED`} className="text-xs text-[var(--color-accent)] hover:underline">
+            Open the failed tests →
+          </Link>
+        </div>
+      </Panel>
+    )
+  }
   if (clusters.length === 0 && aggregateFailedTests > 0 && failedTestRows > 0) {
     // The rows are there; only the analysis is not. It said "per-test detail
     // missing ... the per-test rows aren't available" on every run with
@@ -1281,6 +1312,8 @@ function VerdictBanner({
 }) {
   const { council, isLoading: councilLoading, isError: councilError, refresh: refreshCouncil } = useReleaseCouncil(runId)
   const { isQaLead } = usePermissions()
+  // D-129: the no-stored-decision sentence follows deep-investigation availability (the Settings › AI toggle).
+  const { data: aiMode } = useAIConfig()
   const [overrideTo, setOverrideTo] = useState<OverrideRecommendation | null>(null)
 
   // A human override is the decision: it outranks the computed verdict.
@@ -1302,7 +1335,7 @@ function VerdictBanner({
     : councilError
       ? 'The stored release decision could not be loaded.'
       : !council || council.synthesized
-        ? NO_STORED_DECISION
+        ? noStoredDecisionReason(deepInvestigationAvailability(aiMode))
         : null
   return (
     <section aria-label="Release verdict" aria-live="polite" className="space-y-1.5">
@@ -1579,6 +1612,7 @@ export function RunIntelligenceBody({
           aggregateFailedTests={(run.failed_tests ?? 0) + (run.broken_tests ?? 0)}
           aggregateTotalTests={run.total_tests ?? 0}
           failedTestRows={(intelligence.affected_suites ?? []).reduce((n, s) => n + (s.failed_count ?? 0), 0)}
+          analysedTests={Object.values(category_breakdown ?? {}).reduce((n, c) => n + (Number(c) || 0), 0)}
         />
       </section>
 
