@@ -171,6 +171,13 @@ async def upsert_integration(
         )
         db.add(row)
     else:
+        # A stored token was entered for one host. Moving the integration to
+        # another host without a new token in the same request clears it, so
+        # no later call can deliver it there.
+        from app.services.url_safety import url_origin
+
+        if pat is None and row.has_pat and url_origin(row.api_base_url) != url_origin(api_base_url):
+            pat = ""
         row.repo_owner = repo_owner
         row.repo_name = repo_name
         row.api_base_url = api_base_url.rstrip("/")

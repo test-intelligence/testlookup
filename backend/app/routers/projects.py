@@ -505,16 +505,32 @@ async def reset_default_qa_lead_password_endpoint(
     the new password so the operator can hand it off; the response is
     not persisted anywhere else.
     """
-    from app.services.default_qa_lead_service import (
-        reset_default_qa_lead_password,
-    )
+    from app.services import default_qa_lead_service
+    from app.services.access_audit_service import log_access_change
 
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    user, password = await reset_default_qa_lead_password(db, project)
+    try:
+        # Looked up on the module at call time so a test can replace it.
+        user, password = await default_qa_lead_service.reset_default_qa_lead_password(db, project)
+    except default_qa_lead_service.DefaultQaLeadIsPersonalAccount as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This project's default QA lead is a personal account, not the "
+                "shared QA-lead account, so its password cannot be reset here. "
+                "The person changes it from their own profile or with the "
+                "forgot-password link."
+            ),
+        ) from exc
+    # Who rotated the shared login, and for which project. Never the value.
+    await log_access_change(
+        db, "default_qa_lead_password_reset", current_user,
+        target_user_id=user.id, project_id=project.id,
+    )
     await db.commit()
     return {
         "user_id": str(user.id),

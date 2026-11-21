@@ -149,6 +149,7 @@ async def test_reset_default_qa_lead_password_returns_a_fresh_secret_when_blank(
         id=existing_user_id,
         role=UserRole.QA_LEAD.value,
         hashed_password="legacy-hash",
+        is_synthetic=True,  # the shared account the reset is for
         must_change_password=True,
     )
     project = _project(default_qa_lead_user_id=existing_user_id)
@@ -178,6 +179,7 @@ async def test_reset_default_qa_lead_password_accepts_custom_value():
         id=existing_user_id,
         role=UserRole.QA_LEAD.value,
         hashed_password="legacy",
+        is_synthetic=True,  # the shared account the reset is for
         must_change_password=False,
     )
     project = _project(default_qa_lead_user_id=existing_user_id)

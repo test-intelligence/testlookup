@@ -248,7 +248,7 @@ Pick your target:
 
 ── Docker Compose ─────────────────────────────────────────────────────────
   cd compose
-  bash scripts/gen-dev-env.sh           # or copy .env.example and fill it in
+  bash scripts/gen-dev-env.sh --release # or copy .env.example and fill it in
   cat >> .env <<'ENV'
   TESTLOOKUP_REGISTRY=${REGISTRY}
   TESTLOOKUP_VERSION=${VERSION}

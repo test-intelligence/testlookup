@@ -819,7 +819,7 @@ async def create_sso_config(
     # (unrelated tables, so the unit of work may otherwise insert identity_events first → FK violation).
     await db.flush()
     if is_oidc and payload.oidc_client_secret:
-        await store_secret(db, OIDC_SECRET_SCOPE, str(config.id), payload.oidc_client_secret, actor_id=current_user.id)
+        await store_secret(db, OIDC_SECRET_SCOPE, str(config.id), payload.oidc_client_secret, actor_id=current_user.id, allow_reference=True)
 
     client_ip = request.client.host if request.client else None
     await log_identity_event(
@@ -914,7 +914,7 @@ async def update_sso_config(
             changes[field] = {"old": str(old_val) if field != "idp_certificate" else "(masked)", "new": str(value) if field != "idp_certificate" else "(masked)"}
             setattr(config, field, value)
     if new_secret and _is_oidc(config):
-        await store_secret(db, OIDC_SECRET_SCOPE, str(config.id), new_secret, actor_id=current_user.id)
+        await store_secret(db, OIDC_SECRET_SCOPE, str(config.id), new_secret, actor_id=current_user.id, allow_reference=True)
         changes["oidc_client_secret"] = {"old": "(masked)", "new": "(masked)"}
     if deactivated_count:
         changes["deactivated_other_configs"] = deactivated_count

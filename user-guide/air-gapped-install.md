@@ -245,7 +245,7 @@ target on the same host, not enough for a cluster.
 
 ```bash
 cd compose
-bash scripts/gen-dev-env.sh            # or copy .env.example and fill it in
+bash scripts/gen-dev-env.sh --release  # or copy .env.example and fill it in
 
 cat >> .env <<'ENV'
 TESTLOOKUP_REGISTRY=registry.internal

@@ -37,6 +37,46 @@ Security fixes in this release change what some roles may do and what some API
 calls answer. There is one migration (`0257`, a new column on SSO configurations);
 the release's migration step runs it.
 
+### Check `.env` if you installed the release images by hand
+
+The by-hand steps in `docker-compose.release.yml`, the offline bundle's "Next
+steps" and the air-gapped guide used to run `scripts/gen-dev-env.sh` without
+`--release`. That writes the local-development settings. Open `.env`; it must
+have:
+
+```
+APP_ENV=production
+APP_DEBUG=false
+DEV_AUTO_LOGIN_ENABLED=false
+```
+
+If it has `APP_ENV=development` and `DEV_AUTO_LOGIN_ENABLED=true`, anyone who
+can reach the UI port can sign in as an administrator without a password.
+Correct the three lines and run
+`docker compose -f docker-compose.release.yml up -d`. Installs made with
+`install.sh` already have the safe values.
+
+### GitHub App on GitHub Enterprise Server
+
+The deployment's GitHub App now signs in only at `GITHUB_APP_API_BASE_URL`
+(default `https://api.github.com`). On GitHub Enterprise Server set
+`GITHUB_APP_API_BASE_URL=https://<your-host>/api/v3` for the API and the
+workers. A project whose integration names another API base gets no App token.
+Personal access tokens are not affected.
+
+### Integration tokens and base URLs
+
+Changing a GitHub or GitLab integration's base URL to a different host clears
+the stored token; enter it again in the same form. A `vault:` reference is
+accepted only on the administrator settings pages, not in a project's
+integration token or a webhook signing secret.
+
+### Default QA lead password reset
+
+The reset on Projects > Members works only for the shared, auto-created
+QA-lead account. For a project whose default QA lead is a person's own account
+it answers 409.
+
 ### Project roles decide writes together with the instance role
 
 A user has a role on the instance and a role in each project. A write into a

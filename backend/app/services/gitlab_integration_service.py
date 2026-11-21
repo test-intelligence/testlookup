@@ -198,6 +198,12 @@ async def upsert_integration(
         )
         db.add(row)
     else:
+        # Same rule as the GitHub integration: a stored token does not follow
+        # the integration to a different host.
+        from app.services.url_safety import url_origin
+
+        if token is None and row.has_pat and url_origin(row.base_url) != url_origin(_normalize_base_url(base_url)):
+            token = ""
         row.base_url = _normalize_base_url(base_url)
         row.project_path = (project_path or "").strip()
         row.enabled = enabled

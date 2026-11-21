@@ -132,7 +132,7 @@ async def put_github_app_settings(
             await secret_service.expire_secret(db, github_auth.APP_SCOPE, name)
             changed.append(name)
         elif field is not None:
-            await secret_service.store_secret(db, github_auth.APP_SCOPE, name, field, current_user.id)
+            await secret_service.store_secret(db, github_auth.APP_SCOPE, name, field, current_user.id, allow_reference=True)
             changed.append(name)
     row = await _app_row(db)
     value = {"app_id": payload.app_id, "slug": payload.slug}

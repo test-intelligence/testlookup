@@ -148,7 +148,7 @@ async def update_smtp_config(
         await expire_secret(db, _SMTP_KEY, _SMTP_SECRET_FIELD)
         stored_password_set = False
     elif payload.password is not None:
-        await store_secret(db, _SMTP_KEY, _SMTP_SECRET_FIELD, payload.password, actor_id=current_user.id)
+        await store_secret(db, _SMTP_KEY, _SMTP_SECRET_FIELD, payload.password, actor_id=current_user.id, allow_reference=True)
         stored_password_set = True
 
     # Store non-secret metadata only
@@ -869,7 +869,7 @@ async def update_ai_config(
     # Store secrets separately in secret_refs
     secrets = extract_secrets_from_config(_AI_CONFIG_KEY, updates)
     for key_name, raw_value in secrets.items():
-        await store_secret(db, _AI_CONFIG_KEY, key_name, raw_value, actor_id=current_user.id)
+        await store_secret(db, _AI_CONFIG_KEY, key_name, raw_value, actor_id=current_user.id, allow_reference=True)
 
     # Store only non-secret metadata in app_settings. The offline provenance
     # fields are derived from the environment on every read — persisting them
@@ -1230,6 +1230,7 @@ async def update_integrations_config(
                 key_name,
                 raw_value,
                 actor_id=current_user.id,
+                allow_reference=True,
             )
 
     # Session factory uses autoflush=False. Flush secret upserts/expirations so

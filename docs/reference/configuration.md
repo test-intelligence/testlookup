@@ -274,6 +274,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `PROMETHEUS_URL` | `Optional[str]` | `None` |
 | `SLOW_QUERY_MS` | `int` | `500` |
 | `GITHUB_TOKEN` | `Optional[str]` | `None` |
+| `GITHUB_APP_API_BASE_URL` | `str` | `'https://api.github.com'` |
 | `GITHUB_REPO` | `Optional[str]` | `None` |
 | `COMMIT_RANGE_FILE_FETCH_LIMIT` | `int` | `25` |
 | `HTTP_VERIFY_TLS` | `bool` | `True` |
