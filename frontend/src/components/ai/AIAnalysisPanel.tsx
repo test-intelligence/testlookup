@@ -14,7 +14,7 @@ import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
 import { failureCategoryColor } from '@/components/charts/failureTaxonomy'
 import RoleActionCard from '@/components/ai/RoleActionCard'
 import ReviewStateControl from '@/components/ai/ReviewStateControl'
-import AISuggestion, { BasisChip, isKnownValue, normalizeProvenance } from '@/components/ai/AISuggestion'
+import AISuggestion, { isKnownValue, normalizeProvenance } from '@/components/ai/AISuggestion'
 import CorrectClassificationModal from '@/components/ai/CorrectClassificationModal'
 import { aiFeedbackService } from '@/services/aiFeedbackService'
 
