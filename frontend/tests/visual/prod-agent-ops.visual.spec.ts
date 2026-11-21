@@ -75,7 +75,13 @@ for (const theme of THEMES_WITH_PAPER) {
   })
 
   test(`agents workflow picker — ${theme}`, async ({ page }) => {
-    const { handlers } = workflowDefaultWorld()
+    const { handlers: world } = workflowDefaultWorld()
+    // The baseline lists no "Built-in deep". Rules mode used to hide it; since D-03 only the Settings › AI
+    // toggle does, so the toggle is what this region now answers off.
+    const handlers: typeof world = [
+      ['/api/v1/settings/ai/mode', () => ({ analysis_mode: 'rules', deep_investigation_enabled: false })],
+      ...world,
+    ]
     const { api, errors } = await openRollout(page, `/agents?run=${RUN_ID}`, { theme, handlers, ready })
     await page.getByRole('button', { name: 'Choose workflow' }).click()
     const strip = page.locator('[data-workflow-picker]')

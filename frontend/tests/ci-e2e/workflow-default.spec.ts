@@ -82,7 +82,8 @@ test('/agents: Trigger pipeline stays one click; Choose workflow opens the picke
   await expect(workflow.locator('option')).toHaveText([
     'Project default — built-in offline',
     'Built-in offline',
-    // Built-in deep is not offered: this project's mode is Rules (the deep gate).
+    // Built-in deep is offered in Rules mode too (D-03): only the Settings › AI toggle hides it.
+    'Built-in deep',
     `My fork · ${FORK_ID}@1`,
   ])
   await networkQuiet(page, api)
