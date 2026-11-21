@@ -39,8 +39,9 @@
 #   --teardown-all   Delete namespace + all data (DESTRUCTIVE)
 #
 # First install: the script generates every secret (database, object store,
-# signing keys) and a random password for the initial admin account, prints
-# them ONCE and saves them to the credentials file (K3S_CREDENTIALS_FILE).
+# signing keys) and a random password for the initial admin account, and saves
+# them to the owner-only credentials file (K3S_CREDENTIALS_FILE). It prints
+# where they are, never the values.
 # Re-runs never regenerate a secret that exists and never change an existing
 # admin's password.
 #
@@ -54,6 +55,14 @@
 #   SKIP_TRAEFIK_LABEL_CHECK=true  do not check that the Traefik pods carry the
 #                                  label the NetworkPolicy admits (preflight)
 #   ALLOW_HOST_CHANGE=true         move an existing install to another K3S_HOST
+#   K3S_BUILD_RECORD_DIR=<dir>     where builds record the digests they pushed
+#                                  (default: .k3s-build-records beside the
+#                                  credentials file); --skip-build reads it
+#   K3S_BACKEND_DIGEST, K3S_FRONTEND_DIGEST, K3S_MCP_DIGEST
+#                                  with --skip-build: deploy exactly these
+#                                  sha256 digests (from a build you trust)
+#   K3S_TRUST_REGISTRY_DIGESTS=true  with --skip-build and no build record:
+#                                  deploy what the registry says the tag is
 # ============================================================
 
 set -euo pipefail
@@ -68,6 +77,18 @@ load_site_config
 # the loopback address on most systems; any other name needs a DNS or hosts
 # entry pointing at the Traefik LoadBalancer IP (Step 9 prints it).
 K3S_HOST="${K3S_HOST:-testlookup.localhost}"
+# How people reach that host: http (the default; what the bundled ingress
+# serves) or https, for a site that terminates TLS itself, with a certificate
+# on Traefik added by a site patch or a TLS proxy in front of it. With https
+# the application's public URL and CORS origin are https://, so the links,
+# callbacks and cookies it generates never point people at the plain port,
+# and a deploy leaves the site's TLS resources alone. This script does not
+# create a certificate.
+K3S_PUBLIC_SCHEME="${K3S_PUBLIC_SCHEME:-http}"
+case "$K3S_PUBLIC_SCHEME" in
+  http|https) ;;
+  *) echo "K3S_PUBLIC_SCHEME must be http or https, got '${K3S_PUBLIC_SCHEME}'." >&2; exit 1 ;;
+esac
 # The registry the cluster pulls TestLookup images from. Must match the
 # containerd mirror in /etc/rancher/k3s/registries.yaml on every node.
 REGISTRY="${K3S_REGISTRY:-registry.local:30500}"
@@ -89,6 +110,10 @@ LEGACY_CREDS_FILE="$REPO_ROOT/homelabsetup/.homelab-credentials"
 if [ -z "${K3S_CREDENTIALS_FILE:-}" ] && [ ! -f "$CREDS_FILE" ] && [ -f "$LEGACY_CREDS_FILE" ]; then
   CREDS_FILE="$LEGACY_CREDS_FILE"
 fi
+# Where each build records the digests it pushed (write_build_record), beside
+# the credentials file so a --skip-build from another checkout finds it when
+# K3S_CREDENTIALS_FILE points both at one place. Nothing in it is secret.
+BUILD_RECORD_DIR="${K3S_BUILD_RECORD_DIR:-$(dirname "$CREDS_FILE")/.k3s-build-records}"
 # The per-deploy overlay rendered from the site configuration (gitignored).
 RENDER_DIR="$REPO_ROOT/k3ssetup/.render"
 # Image names the tracked overlay rewrites the app images to; the rendered
@@ -229,6 +254,111 @@ registry_manifest_digest() {
     | awk 'tolower($1) == "docker-content-digest:" { print $2; exit }')
   printf '%s\n' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$' || return 1
   printf '%s\n' "$digest"
+}
+
+# ── Which image is "the build": the builder says, the registry only stores ──
+#
+# Security review 2026-11-20, TL-02. The bundled registry speaks plain HTTP
+# with no authentication, and this script used to ASK IT which digest a tag
+# has, then deploy and migrate with whatever it answered. Anyone who can write
+# to the registry, or stand between it and this host, could name the image
+# that receives the database and every secret.
+#
+# The cluster is still given digests, and containerd checks the bytes it
+# pulls against the digest. What changes is where the digest comes from:
+#
+#   * a build takes it from the container engine that built and pushed the
+#     image (push_image), and the registry's answer must agree;
+#   * --skip-build takes it from the record a build on this machine wrote
+#     (write_build_record), or from K3S_BACKEND_DIGEST / K3S_FRONTEND_DIGEST /
+#     K3S_MCP_DIGEST when you supply digests from a build you trust;
+#   * the old behaviour, trusting the registry's answer, needs
+#     K3S_TRUST_REGISTRY_DIGESTS=true and says so in the output.
+
+# push_image REF: push REF and print the manifest digest(s) the ENGINE reports
+# for what it pushed, one per line. Podman writes the pushed digest to a file.
+# Docker has no such flag; it records the pushed digest among the image's
+# RepoDigests, which can hold older pushes of the same image too.
+push_image() {
+  local ref=$1 repo file digests
+  repo="${ref%:*}"
+  if "$CONTAINER_ENGINE" --version 2>/dev/null | grep -qi podman; then
+    file=$(mktemp) || return 1
+    "$CONTAINER_ENGINE" push --digestfile "$file" "$ref" >&2 || { rm -f "$file"; return 1; }
+    digests=$(tr -d '\r' < "$file")
+    rm -f "$file"
+  else
+    "$CONTAINER_ENGINE" push "$ref" >&2 || return 1
+    digests=$("$CONTAINER_ENGINE" image inspect \
+        --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" 2>/dev/null \
+      | tr -d '\r' | grep -F "${repo}@" | sed 's/^.*@//') || true
+  fi
+  digests=$(printf '%s\n' "$digests" | grep -E '^sha256:[0-9a-f]{64}$' | sort -u) || return 1
+  [ -n "$digests" ] || return 1
+  printf '%s\n' "$digests"
+}
+
+# confirm_pushed_digest REGISTRY IMAGE TAG ENGINE_DIGESTS: print the digest the
+# registry serves for the tag, but only when the engine reported that digest.
+# A registry that answers with anything else is not believed.
+confirm_pushed_digest() {
+  local registry=$1 image=$2 tag=$3 engine_digests=$4 served
+  served=$(registry_manifest_digest "$registry" "$image" "$tag") || return 1
+  printf '%s\n' "$engine_digests" | grep -Fxq "$served" || return 1
+  printf '%s\n' "$served"
+}
+
+# write_build_record DIR TAG BACKEND FRONTEND MCP REVISION: what a later
+# --skip-build of TAG deploys. Written whole, then renamed.
+write_build_record() {
+  local dir=$1 tag=$2 tmp
+  mkdir -p "$dir" || return 1
+  tmp="$dir/.${tag}.digests.tmp"
+  printf 'backend=%s\nfrontend=%s\nmcp=%s\nrevision=%s\n' "$3" "$4" "$5" "$6" > "$tmp" || return 1
+  mv "$tmp" "$dir/${tag}.digests"
+}
+
+# reused_image_digest DIR TAG IMAGE OPERATOR_DIGEST REGISTRY: the digest a
+# --skip-build deploys for IMAGE (backend|frontend|mcp). Fails, with the
+# reason on stderr, rather than fall back to the registry's word.
+reused_image_digest() {
+  local dir=$1 tag=$2 image=$3 expected=$4 registry=$5 served source
+  source="the K3S_$(printf '%s' "$image" | tr '[:lower:]' '[:upper:]')_DIGEST you supplied"
+  if [ -z "$expected" ] && [ -f "$dir/${tag}.digests" ]; then
+    expected=$(sed -n "s/^${image}=//p" "$dir/${tag}.digests" | sed -n '1p' | tr -d '\r')
+    source="the build record $dir/${tag}.digests"
+  fi
+  served=$(registry_manifest_digest "$registry" "$image" "$tag") || {
+    echo "The registry has no single-platform ${image} manifest for ${tag}." >&2
+    return 1
+  }
+  if [ -n "$expected" ]; then
+    printf '%s\n' "$expected" | grep -Eq '^sha256:[0-9a-f]{64}$' || {
+      echo "${source} is not a sha256 digest for ${image}." >&2
+      return 1
+    }
+    [ "$served" = "$expected" ] || {
+      echo "The registry serves ${served} as ${image}:${tag}, but ${source} says ${expected}." >&2
+      echo "The image under that tag is not the one that was built. Nothing was deployed." >&2
+      return 1
+    }
+    printf '%s\n' "$expected"
+    return 0
+  fi
+  if [ "${K3S_TRUST_REGISTRY_DIGESTS:-false}" = "true" ]; then
+    echo "WARNING: no build record for ${tag}; deploying ${image} as the registry describes it (K3S_TRUST_REGISTRY_DIGESTS=true)." >&2
+    printf '%s\n' "$served"
+    return 0
+  fi
+  cat >&2 <<EOF
+There is no build record for ${tag} in ${dir}, so nothing on this machine says
+which ${image} image that tag should be, and the registry's own answer is not
+proof (it is unauthenticated). Nothing was deployed. Do one of:
+  * build here:            run without --skip-build
+  * supply trusted digests: K3S_BACKEND_DIGEST, K3S_FRONTEND_DIGEST, K3S_MCP_DIGEST
+  * accept the registry's answer for this run: K3S_TRUST_REGISTRY_DIGESTS=true
+EOF
+  return 1
 }
 
 # Every LIVE pod carrying the Deployment's labels must be Ready on the exact
@@ -381,8 +511,8 @@ metadata:
   name: testlookup-config
   namespace: ${NAMESPACE}
 data:
-  CORS_ORIGINS: "http://${K3S_HOST}"
-  PUBLIC_BASE_URL: "http://${K3S_HOST}"
+  CORS_ORIGINS: "${K3S_PUBLIC_SCHEME:-http}://${K3S_HOST}"
+  PUBLIC_BASE_URL: "${K3S_PUBLIC_SCHEME:-http}://${K3S_HOST}"
 EOF
   if [ -n "$K3S_PATCHES_DIR" ]; then
     local patches_dir="$K3S_PATCHES_DIR"
@@ -492,14 +622,35 @@ new_datastore_password() {
 
 # Merge keys into the app Secret. Arguments are KEY=value pairs whose values
 # are letters, digits and URL punctuation only (checked by the callers).
+#
+# The values travel in an owner-only temporary file, never in an argument:
+# every local user can read a running process's command line (security review
+# 2026-11-20, TL-08).
 patch_app_secret() {
-  local pair json="" sep=""
+  local pair json="" sep="" patch status=0
   for pair in "$@"; do
     json="${json}${sep}\"${pair%%=*}\":\"${pair#*=}\""
     sep=","
   done
+  patch="$(umask 077; mktemp)" || return 1
+  printf '{"stringData":{%s}}\n' "$json" > "$patch"
   kubectl -n "$NAMESPACE" patch secret testlookup-secrets --type=merge \
-    -p "{\"stringData\":{${json}}}" >/dev/null
+    --patch-file "$patch" >/dev/null || status=$?
+  rm -f "$patch"
+  return "$status"
+}
+
+# create_app_secret KEY=value [KEY=value ...]: create testlookup-secrets from a
+# manifest on stdin. `kubectl create secret --from-literal=KEY=value` would put
+# every value on kubectl's command line.
+create_app_secret() {
+  local pair
+  {
+    printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: testlookup-secrets\ntype: Opaque\ndata:\n'
+    for pair in "$@"; do
+      printf '  "%s": %s\n' "${pair%%=*}" "$(printf '%s' "${pair#*=}" | base64 | tr -d '\r\n')"
+    done
+  } | kubectl -n "$NAMESPACE" create -f - >/dev/null
 }
 
 # Make sure the app Secret holds a Redis password, the three Redis URLs that
@@ -1140,19 +1291,29 @@ if [ "$SKIP_BUILD" = false ]; then
   trap - EXIT INT TERM
 
   log "Pushing images to registry..."
-  "$CONTAINER_ENGINE" push "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}"
-  "$CONTAINER_ENGINE" push "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}"
-  "$CONTAINER_ENGINE" push "${PUSH_REGISTRY}/testlookup/mcp:${BUILD_TAG}"
+  # The digest of each image comes from the engine that pushed it. The
+  # registry is then asked what it serves under the tag, and must agree: a
+  # registry that answers with another image stops the deploy here, before
+  # the migration or any workload uses it.
+  BACKEND_PUSHED=$(push_image "${PUSH_REGISTRY}/testlookup/backend:${BUILD_TAG}") \
+    || error "Could not push the backend image, or ${CONTAINER_ENGINE} did not report its digest."
+  FRONTEND_PUSHED=$(push_image "${PUSH_REGISTRY}/testlookup/frontend:${BUILD_TAG}") \
+    || error "Could not push the frontend image, or ${CONTAINER_ENGINE} did not report its digest."
+  MCP_PUSHED=$(push_image "${PUSH_REGISTRY}/testlookup/mcp:${BUILD_TAG}") \
+    || error "Could not push the MCP image, or ${CONTAINER_ENGINE} did not report its digest."
 
-  # Capture the registry manifest digests so every serving application pod can
-  # be compared with the exact immutable manifest that was just pushed.
-  BACKEND_DIGEST=$(registry_manifest_digest "$PUSH_REGISTRY" backend "$BUILD_TAG") \
-    || error "Could not resolve a single-platform backend manifest digest."
-  FRONTEND_DIGEST=$(registry_manifest_digest "$PUSH_REGISTRY" frontend "$BUILD_TAG") \
-    || error "Could not resolve a single-platform frontend manifest digest."
-  MCP_DIGEST=$(registry_manifest_digest "$PUSH_REGISTRY" mcp "$BUILD_TAG") \
-    || error "Could not resolve a single-platform MCP manifest digest."
+  BACKEND_DIGEST=$(confirm_pushed_digest "$PUSH_REGISTRY" backend "$BUILD_TAG" "$BACKEND_PUSHED") \
+    || error "The registry does not serve the backend image that was just pushed (expected one of: $(echo $BACKEND_PUSHED)). Nothing was deployed."
+  FRONTEND_DIGEST=$(confirm_pushed_digest "$PUSH_REGISTRY" frontend "$BUILD_TAG" "$FRONTEND_PUSHED") \
+    || error "The registry does not serve the frontend image that was just pushed (expected one of: $(echo $FRONTEND_PUSHED)). Nothing was deployed."
+  MCP_DIGEST=$(confirm_pushed_digest "$PUSH_REGISTRY" mcp "$BUILD_TAG" "$MCP_PUSHED") \
+    || error "The registry does not serve the MCP image that was just pushed (expected one of: $(echo $MCP_PUSHED)). Nothing was deployed."
   log "Pushed manifest digests: backend=${BACKEND_DIGEST}, frontend=${FRONTEND_DIGEST}, mcp=${MCP_DIGEST}"
+
+  # What a later --skip-build of this tag deploys.
+  write_build_record "$BUILD_RECORD_DIR" "$BUILD_TAG" "$BACKEND_DIGEST" "$FRONTEND_DIGEST" "$MCP_DIGEST" \
+      "$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)" \
+    || warn "Could not write the build record in ${BUILD_RECORD_DIR}; --skip-build will not be able to reuse ${BUILD_TAG}."
 
   log "Images pushed. Registry catalog:"
   curl -s "http://${PUSH_REGISTRY}/v2/_catalog" 2>/dev/null || warn "Could not query registry catalog"
@@ -1237,14 +1398,16 @@ EOF
   fi
   log "Resolved BUILD_TAG=${BUILD_TAG} (newest tag present in all three image catalogs)"
 
-  # The cluster is given digests, never the tag (see render_overlay), so read
-  # the digest each image has under that tag right now.
-  BACKEND_DIGEST=$(registry_manifest_digest "$LOOKUP_REGISTRY" backend "$BUILD_TAG") \
-    || error "Could not resolve a single-platform backend manifest digest for ${BUILD_TAG}."
-  FRONTEND_DIGEST=$(registry_manifest_digest "$LOOKUP_REGISTRY" frontend "$BUILD_TAG") \
-    || error "Could not resolve a single-platform frontend manifest digest for ${BUILD_TAG}."
-  MCP_DIGEST=$(registry_manifest_digest "$LOOKUP_REGISTRY" mcp "$BUILD_TAG") \
-    || error "Could not resolve a single-platform MCP manifest digest for ${BUILD_TAG}."
+  # The cluster is given digests, never the tag (see render_overlay). Which
+  # digest each image has comes from the record its build wrote here, or from
+  # the digests you supply; the registry must serve exactly that. Its own
+  # answer is used only with K3S_TRUST_REGISTRY_DIGESTS=true.
+  BACKEND_DIGEST=$(reused_image_digest "$BUILD_RECORD_DIR" "$BUILD_TAG" backend "${K3S_BACKEND_DIGEST:-}" "$LOOKUP_REGISTRY") \
+    || error "Could not establish which backend image ${BUILD_TAG} is."
+  FRONTEND_DIGEST=$(reused_image_digest "$BUILD_RECORD_DIR" "$BUILD_TAG" frontend "${K3S_FRONTEND_DIGEST:-}" "$LOOKUP_REGISTRY") \
+    || error "Could not establish which frontend image ${BUILD_TAG} is."
+  MCP_DIGEST=$(reused_image_digest "$BUILD_RECORD_DIR" "$BUILD_TAG" mcp "${K3S_MCP_DIGEST:-}" "$LOOKUP_REGISTRY") \
+    || error "Could not establish which MCP image ${BUILD_TAG} is."
   log "Digests of ${BUILD_TAG}: backend=${BACKEND_DIGEST}, frontend=${FRONTEND_DIGEST}, mcp=${MCP_DIGEST}"
 fi
 
@@ -1301,26 +1464,21 @@ else
   DATABASE_URL="postgresql+asyncpg://testlookup_user:${PG_PASSWORD}@testlookup-postgres:5432/testlookup"
   MONGO_URI="mongodb://testlookup-mongo:27017"
 
-  kubectl -n "$NAMESPACE" create secret generic testlookup-secrets \
-    --from-literal=APP_SECRET_KEY="${APP_SECRET}" \
-    --from-literal=JWT_SECRET_KEY="${JWT_SECRET}" \
-    --from-literal=DATABASE_URL="${DATABASE_URL}" \
-    --from-literal=POSTGRES_PASSWORD="${PG_PASSWORD}" \
-    --from-literal=MINIO_ACCESS_KEY="${MINIO_ACCESS}" \
-    --from-literal=MINIO_SECRET_KEY="${MINIO_SECRET}" \
-    --from-literal=MONGO_URI="${MONGO_URI}" \
-    --from-literal=WEBHOOK_SECRET="${WEBHOOK_SECRET}"
+  create_app_secret \
+    "APP_SECRET_KEY=${APP_SECRET}" \
+    "JWT_SECRET_KEY=${JWT_SECRET}" \
+    "DATABASE_URL=${DATABASE_URL}" \
+    "POSTGRES_PASSWORD=${PG_PASSWORD}" \
+    "MINIO_ACCESS_KEY=${MINIO_ACCESS}" \
+    "MINIO_SECRET_KEY=${MINIO_SECRET}" \
+    "MONGO_URI=${MONGO_URI}" \
+    "WEBHOOK_SECRET=${WEBHOOK_SECRET}" \
+    || error "Could not create Secret testlookup-secrets."
 
-  log "Secrets created."
-  echo ""
-  echo -e "${YELLOW}╔══════════════════════════════════════════════════════╗${NC}"
-  echo -e "${YELLOW}║  SAVE THESE CREDENTIALS — SHOWN ONLY ONCE          ║${NC}"
-  echo -e "${YELLOW}╠══════════════════════════════════════════════════════╣${NC}"
-  echo -e "${YELLOW}║${NC}  PostgreSQL password: ${PG_PASSWORD}"
-  echo -e "${YELLOW}║${NC}  MinIO access key:    ${MINIO_ACCESS}"
-  echo -e "${YELLOW}║${NC}  MinIO secret key:    ${MINIO_SECRET}"
-  echo -e "${YELLOW}╚══════════════════════════════════════════════════════╝${NC}"
-  echo ""
+  # The values are not printed: this output is often kept (a CI log, a shared
+  # terminal, a ticket). They are in the Secret and in the owner-only file
+  # written below.
+  log "Secrets created. The values are in Secret testlookup-secrets and, readable by you only, in ${CREDS_FILE}."
 
   # Save credentials to a local file (gitignored by default location)
   mkdir -p "$(dirname "$CREDS_FILE")"
@@ -1344,11 +1502,18 @@ header "Step 4b — TLS Certificate (skipped)"
 # a certificate with a site patch, if the cluster is reachable beyond a
 # trusted network. The overlay does not reference testlookup-tls-cert.
 #
-# If the Secret already exists from a prior HTTPS deploy, Step 5 below
-# prunes it along with the other orphaned redirect/middleware resources.
-# To re-enable HTTPS later, restore middleware-redirect-https.yaml + the
-# split ingresses from git history and reinstate the openssl block.
-log "Skipping TLS cert generation (ingress is HTTP-only)."
+# A site that does serve TLS sets K3S_PUBLIC_SCHEME=https: the application
+# then uses https:// in its public URL and CORS origin, and Step 5 leaves the
+# site's certificate and redirect resources alone. With the default (http),
+# Step 5 removes the redirect Ingress and Middleware an older HTTPS deploy
+# left behind; a TLS Secret is never deleted.
+if [ "$K3S_PUBLIC_SCHEME" = "https" ]; then
+  log "K3S_PUBLIC_SCHEME=https: TLS is served by the site's own certificate (none is generated here)."
+else
+  log "Skipping TLS cert generation (ingress is HTTP-only)."
+  warn "Plain HTTP: passwords, session tokens and API keys cross the network unencrypted."
+  warn "Keep this host on a trusted network, or serve TLS and set K3S_PUBLIC_SCHEME=https."
+fi
 
 # ── Step 4c: Data-store passwords (Redis, MongoDB) ─────────
 header "Step 4c — Data-store Passwords (Redis, MongoDB)"
@@ -1495,15 +1660,24 @@ trap - EXIT INT TERM
 # resources that were removed from the manifest. Explicitly remove orphans
 # left over from previous HTTPS-enabled deploys, otherwise the old redirect
 # Ingress keeps 308'ing http://<host>/ to https://. Idempotent.
-log "Pruning HTTPS-era orphans (if present)..."
-kubectl -n "$NAMESPACE" delete ingress testlookup-traefik-redirect \
-  --ignore-not-found=true >/dev/null
-kubectl -n "$NAMESPACE" delete middleware redirect-https \
-  --ignore-not-found=true >/dev/null
-# The TLS Secret is harmless to leave but cleaner to drop too.
-kubectl -n "$NAMESPACE" delete secret testlookup-tls-cert \
-  --ignore-not-found=true >/dev/null
-log "Orphan prune complete."
+#
+# Only for a site that serves plain HTTP. With K3S_PUBLIC_SCHEME=https the
+# operator serves TLS (a certificate and redirect of their own, added with a
+# site patch or in front of Traefik), and a deploy must not delete it: every
+# re-deploy used to remove these three names, which put a site that had added
+# TLS back on plain HTTP (security review 2026-11-20, TL-03). The TLS Secret
+# is never deleted now: it holds a private key the operator may still need,
+# and leaving it changes nothing.
+if [ "$K3S_PUBLIC_SCHEME" = "https" ]; then
+  log "K3S_PUBLIC_SCHEME=https: leaving the site's TLS and redirect resources in place."
+else
+  log "Pruning HTTPS-era redirect orphans (if present)..."
+  kubectl -n "$NAMESPACE" delete ingress testlookup-traefik-redirect \
+    --ignore-not-found=true >/dev/null
+  kubectl -n "$NAMESPACE" delete middleware redirect-https \
+    --ignore-not-found=true >/dev/null
+  log "Orphan prune complete."
+fi
 
 # ── Step 5b: Force rollout for app deployments ─────────────
 # Each deploy names its images by digest, so kubectl apply -k creates a new
@@ -1799,15 +1973,16 @@ if wait_for_pods "$BACKEND_POD_SELECTOR" 120; then
     log "Running /app/scripts/create_admin.py in the backend pod (idempotent)..."
     # The image ships the script. `env ...` sets the per-invocation values
     # without changing the pod's environment, and `sh -c` keeps Git Bash from
-    # rewriting the in-pod path. The script does not print a password it was
-    # given; this script shows the generated one once below.
-    if ADMIN_OUTPUT=$(kubectl -n "$NAMESPACE" exec "$BACKEND_POD" -- \
+    # rewriting the in-pod path. The password is piped to the pod and read
+    # there from stdin: as an `env` argument it would be on kubectl's command
+    # line, which every local user can read. Neither script prints it.
+    if ADMIN_OUTPUT=$(printf '%s\n' "$ADMIN_PASSWORD" | kubectl -n "$NAMESPACE" exec -i "$BACKEND_POD" -- \
         env \
           ADMIN_USERNAME="$ADMIN_USERNAME" \
-          ADMIN_PASSWORD="$ADMIN_PASSWORD" \
           ADMIN_EMAIL="$ADMIN_EMAIL" \
           ADMIN_FULL_NAME="$ADMIN_FULL_NAME" \
           ADMIN_PASSWORD_GENERATED="$ADMIN_PASSWORD_GENERATED" \
+          sh -c 'IFS= read -r ADMIN_PASSWORD && export ADMIN_PASSWORD && exec "$@"' read-admin-password \
           sh -c "python /app/scripts/create_admin.py" 2>&1); then
       echo "$ADMIN_OUTPUT"
       if echo "$ADMIN_OUTPUT" | grep -q "^admin user created"; then
@@ -1817,15 +1992,15 @@ if wait_for_pods "$BACKEND_POD_SELECTOR" 120; then
       warn "create_admin.py failed inside the backend pod. Output:"
       echo "$ADMIN_OUTPUT"
       warn "Run it manually once the backend is healthy (it generates a password when"
-      warn "ADMIN_PASSWORD is unset and shows it once):"
-      warn "  kubectl -n $NAMESPACE exec deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
+      warn "ADMIN_PASSWORD is unset and shows it once, in a terminal only):"
+      warn "  kubectl -n $NAMESPACE exec -it deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
     fi
   else
     warn "Could not find backend pod. Create admin user manually later."
   fi
 else
   warn "Backend not ready. Create admin user manually after backend starts:"
-  echo "  kubectl -n $NAMESPACE exec deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
+  echo "  kubectl -n $NAMESPACE exec -it deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
 fi
 
 if [ "$ADMIN_CREATED" = true ]; then
@@ -1846,11 +2021,18 @@ CREDS
 
   echo ""
   echo -e "${YELLOW}╔══════════════════════════════════════════════════════╗${NC}"
-  echo -e "${YELLOW}║  ADMIN LOGIN — SHOWN ONCE, SAVE IT NOW               ║${NC}"
+  echo -e "${YELLOW}║  ADMIN LOGIN                                         ║${NC}"
   echo -e "${YELLOW}╠══════════════════════════════════════════════════════╣${NC}"
-  echo -e "${YELLOW}║${NC}  URL:      http://${K3S_HOST}"
+  echo -e "${YELLOW}║${NC}  URL:      ${K3S_PUBLIC_SCHEME}://${K3S_HOST}"
   echo -e "${YELLOW}║${NC}  Username: ${ADMIN_USERNAME}"
-  echo -e "${YELLOW}║${NC}  Password: ${ADMIN_PASSWORD}"
+  # Where the password is, never the value: this output is often kept.
+  if [ "$ADMIN_PASSWORD_GENERATED" = true ]; then
+    echo -e "${YELLOW}║${NC}  Password: generated; read it from ${CREDS_FILE}"
+    echo -e "${YELLOW}║${NC}            (grep '^ADMIN_PASSWORD=' on that file). You must change it"
+    echo -e "${YELLOW}║${NC}            at the first sign-in; then delete that line."
+  else
+    echo -e "${YELLOW}║${NC}  Password: the ADMIN_PASSWORD you supplied."
+  fi
   echo -e "${YELLOW}║${NC}  Email:    ${ADMIN_EMAIL}"
   echo -e "${YELLOW}╚══════════════════════════════════════════════════════╝${NC}"
   echo ""
@@ -1997,10 +2179,10 @@ header "Deployment Complete"
 
 echo -e "${GREEN}TestLookup has been deployed to your K3s cluster.${NC}"
 echo ""
-echo "  Dashboard:      http://${K3S_HOST}"
-echo "  User Docs:      http://${K3S_HOST}/docs"
-echo "  API Reference:  http://${K3S_HOST}/api-docs"
-echo "  Health Check:   http://${K3S_HOST}/health/live"
+echo "  Dashboard:      ${K3S_PUBLIC_SCHEME}://${K3S_HOST}"
+echo "  User Docs:      ${K3S_PUBLIC_SCHEME}://${K3S_HOST}/docs"
+echo "  API Reference:  ${K3S_PUBLIC_SCHEME}://${K3S_HOST}/api-docs"
+echo "  Health Check:   ${K3S_PUBLIC_SCHEME}://${K3S_HOST}/health/live"
 echo ""
 echo "  Note: the ingress is HTTP-only. If a browser keeps redirecting"
 echo "        to https://, clear the site's HSTS cache (chrome://net-internals/#hsts)."

@@ -15,6 +15,7 @@ from app.models.postgres import User, UserRole
 from app.models.schemas import (
     ConnectorConfigTestRequest,
     ConnectorTestResult,
+    KnowledgeConfluenceSpaceScopeUpdate,
     KnowledgeDomainAllowlistUpdate,
     KnowledgeSourceCreate,
     KnowledgeSourceFreshnessResponse,
@@ -242,3 +243,45 @@ async def update_domain_allowlist(
     domains = await svc.set_domain_allowlist(db, payload.domains)
     await db.commit()
     return {"domains": domains}
+
+
+# ── Confluence space scope (security review 2026-11-20, TL-01) ────────────────
+#
+# Which Confluence spaces a project's knowledge sources may read with the
+# deployment's Confluence account. ADMIN only, reads included: the answer
+# lists project ids and the spaces of other teams.
+
+
+@router.get(
+    "/governance/confluence-spaces",
+    dependencies=[Depends(require_role(UserRole.ADMIN))],
+)
+async def get_confluence_space_scope(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_active_user),
+):
+    return await svc.get_confluence_space_scope(db)
+
+
+# activity: none -- an instance setting an ADMIN changes for every project at once; it has no single project's feed. Recorded in settings_audit_log.
+@router.put(
+    "/governance/confluence-spaces",
+    dependencies=[Depends(require_role(UserRole.ADMIN))],
+)
+async def update_confluence_space_scope(
+    payload: KnowledgeConfluenceSpaceScopeUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    from app.services.settings_audit_service import log_settings_change
+
+    scope = await svc.set_confluence_space_scope(
+        db, payload.default, {str(pid): keys for pid, keys in payload.projects.items()},
+    )
+    # Who widened or narrowed what the Confluence account may copy, and when.
+    await log_settings_change(
+        db, svc.CONFLUENCE_SPACE_SCOPE_SETTINGS_KEY, "updated", current_user,
+        changed_fields=["default", "projects"],
+    )
+    await db.commit()
+    return scope

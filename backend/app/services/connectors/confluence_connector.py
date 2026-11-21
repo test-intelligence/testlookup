@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.http_client import get_http_client
 from app.services.connectors.base import (
     ConnectorFetchError,
+    ConnectorScopeRefused,
     FetchedContent,
     KnowledgeConnectorBase,
 )
@@ -30,6 +31,9 @@ _SPACE_PAGE_RE = re.compile(r"/wiki/spaces/([^/]+)/pages/(\d+)")
 # regression test keeps the two equal.
 _PAGE_ID_PATTERN = r"[0-9]+"
 _PAGE_ID_FULL_RE = re.compile(_PAGE_ID_PATTERN)
+# In an allowed-space set: any space the account reads. An ADMIN writes it on
+# purpose (knowledge_source_service.ANY_CONFLUENCE_SPACE is the same value).
+ANY_SPACE = "*"
 
 
 class ConfluenceKnowledgeConnector(KnowledgeConnectorBase):
@@ -132,7 +136,22 @@ class ConfluenceKnowledgeConnector(KnowledgeConnectorBase):
         self,
         canonical_url: str,
         external_id: Optional[str] = None,
+        *,
+        allowed_space_keys: Optional[frozenset[str]] = None,
     ) -> FetchedContent:
+        """``allowed_space_keys``: the Confluence spaces the source's TestLookup
+        project may read (upper case; ``*`` = any space the account reads).
+
+        The request carries the deployment's Confluence credential, which
+        reads more than one project should. The page is only used when
+        Confluence says it is the page asked for, in one of those spaces.
+        Without the argument nothing is fetched: there is no caller that may
+        read every space by leaving it out.
+        """
+        if not allowed_space_keys:
+            raise ConnectorScopeRefused(
+                "No Confluence space is approved for this source's project. Nothing was fetched."
+            )
         page_id = self._extract_page_id(canonical_url, external_id)
 
         # Fetch page content using REST API v1 (storage format)
@@ -164,8 +183,28 @@ class ConfluenceKnowledgeConnector(KnowledgeConnectorBase):
                 f"Failed to fetch Confluence page {page_id}: {exc}", retryable=True
             )
 
-        title = data.get("title", "Untitled")
+        # Before any of the page is read: it must be the page asked for, in a
+        # space this project may read. A response that does not say which
+        # space it is in cannot be placed, so it is refused as well.
+        returned_id = data.get("id")
+        if returned_id is None or str(returned_id) != page_id:
+            raise ConnectorScopeRefused(
+                f"Confluence answered the request for page {page_id} with a different page. "
+                "Nothing was imported."
+            )
         space_key = (data.get("space") or {}).get("key", "")
+        if not isinstance(space_key, str) or not space_key:
+            raise ConnectorScopeRefused(
+                f"Confluence did not say which space page {page_id} is in. Nothing was imported."
+            )
+        if ANY_SPACE not in allowed_space_keys and space_key.upper() not in allowed_space_keys:
+            raise ConnectorScopeRefused(
+                f"Confluence page {page_id} is in a space that is not approved for this project. "
+                "Nothing was imported. An administrator approves Confluence spaces under "
+                "knowledge-source governance."
+            )
+
+        title = data.get("title", "Untitled")
         version = (data.get("version") or {}).get("number", 0)
 
         # Extract storage-format HTML body and convert to text

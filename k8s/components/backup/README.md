@@ -150,9 +150,26 @@ every MinIO object from the archive.
    kubectl -n testlookup logs job/restore-now --all-containers
    ```
 
-   `verify` checks every sha256 in `manifest.json` before any data is
-   touched. A corrupt or altered archive stops the Job there. Postgres is
-   restored in a single transaction.
+   `verify` reads the archive's listing before it unpacks anything. The
+   archive must hold exactly `manifest.json` and the three component files,
+   each once and each a regular file, and the manifest must name each of
+   those files with its sha256. Anything else (an extra member, a link, a
+   missing file, a digest that does not match, a manifest schema other than
+   2) stops the Job there, with nothing left in the staging volume and no
+   datastore touched. Set `RESTORE_MAX_ARCHIVE_BYTES` in
+   `testlookup-restore-request` to also refuse an archive larger than you
+   expect. Postgres is restored in a single transaction.
+
+   These checks show that the archive is intact and is what the backup job
+   wrote. They do not show who wrote it: a digest inside an archive cannot
+   vouch for that archive. Restore only from the backups volume this
+   component writes, or from a copy whose checksum you recorded yourself
+   when you took it off the cluster.
+
+   If the Job fails after `postgres` succeeded (in `mongo` or `minio`), the
+   stores no longer match each other. Keep the application scaled down, fix
+   the cause, and run the whole restore again from the same archive: each
+   phase replaces its store, so a second run converges.
 
 5. **Migrate, then start.** The backup may predate the running code. Run the
    migrations with the deployed backend image, then scale the app back up.

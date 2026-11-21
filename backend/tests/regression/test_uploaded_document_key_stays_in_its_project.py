@@ -78,6 +78,7 @@ async def _create(db, source_type: str, canonical_url: str):
     with patch.object(svc, "require_rag_enabled_async", AsyncMock()), \
          patch.object(svc, "_check_project_access", AsyncMock()), \
          patch.object(svc, "get_domain_allowlist", AsyncMock(return_value=[])), \
+         patch.object(svc, "confluence_spaces_for_project", AsyncMock(return_value=["DOCS"])), \
          patch.object(svc, "_validate_url_domain", MagicMock()):
         return await svc.create_source(
             db,

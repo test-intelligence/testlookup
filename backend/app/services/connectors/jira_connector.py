@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.http_client import get_http_client
 from app.services.connectors.base import (
     ConnectorFetchError,
+    ConnectorScopeRefused,
     FetchedContent,
     KnowledgeConnectorBase,
 )
@@ -153,9 +154,12 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
         are searched in that Jira project only. The caller has already checked
         the issue key itself against it."""
         issue_key = self._extract_issue_key(canonical_url, external_id)
+        if jira_project_key is not None and not _PROJECT_KEY_FULL_RE.fullmatch(jira_project_key):
+            # Refused before anything is asked of Jira; it would also go into the JQL.
+            raise ConnectorFetchError(f"Not a Jira project key: {jira_project_key!r}")
 
         url = f"{self._base_url()}/rest/api/3/issue/{issue_key}"
-        params = {"fields": "summary,description,issuetype,status,priority,labels,subtasks,comment"}
+        params = {"fields": "summary,description,issuetype,status,priority,labels,subtasks,comment,project"}
 
         try:
             client = get_http_client()
@@ -181,12 +185,23 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
             raise ConnectorFetchError(f"Failed to fetch Jira issue {issue_key}: {exc}", retryable=True)
 
         fields = data.get("fields", {})
+        # Jira answers a key it no longer uses with the issue it now belongs to:
+        # an issue moved to another Jira project is still returned for its old
+        # key, under its new one. The key that was authorised is the one asked
+        # for, so what came back must be that issue, in that Jira project,
+        # before any of it is read.
+        allowed_project = jira_project_key or issue_key.rsplit("-", 1)[0]
+        self._require_same_issue(issue_key, allowed_project, data, fields)
         raw_text = self._normalize_issue(issue_key, fields)
 
         # For epics, fetch child issues
         issue_type = (fields.get("issuetype") or {}).get("name", "").lower()
         if issue_type == "epic":
-            children_text = await self._fetch_epic_children(issue_key, jira_project_key)
+            # Children are read inside the epic's own Jira project (which is
+            # ``jira_project_key`` when the caller gave one, already checked
+            # equal above): a child can sit in any Jira project the account
+            # reads, and nobody authorised those.
+            children_text = await self._fetch_epic_children(issue_key, allowed_project)
             if children_text:
                 raw_text += f"\n\n## Epic Child Issues\n\n{children_text}"
 
@@ -203,6 +218,31 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
                 "priority": (fields.get("priority") or {}).get("name"),
             },
         )
+
+    @staticmethod
+    def _require_same_issue(issue_key: str, allowed_project: str, data: dict, fields: dict) -> None:
+        """Refuse a response that is not ``issue_key`` inside ``allowed_project``.
+
+        Jira always returns the issue's current ``key``. A response without
+        one cannot be tied to what was asked for, so it is refused too. The
+        ``project`` field is checked when Jira returned it.
+        """
+        returned_key = data.get("key")
+        if not isinstance(returned_key, str) or returned_key.upper() != issue_key.upper():
+            raise ConnectorScopeRefused(
+                f"Jira answered the request for {issue_key} with a different issue "
+                f"({returned_key or 'no key'}): the issue was moved or renamed. "
+                "Nothing was imported. Recreate the source with the issue's current key."
+            )
+        returned_project = (fields.get("project") or {}).get("key")
+        projects = {returned_key.rsplit("-", 1)[0].upper()}
+        if isinstance(returned_project, str) and returned_project:
+            projects.add(returned_project.upper())
+        if projects != {allowed_project.upper()}:
+            raise ConnectorScopeRefused(
+                f"Jira issue {issue_key} is not in the Jira project {allowed_project} "
+                "this source may read. Nothing was imported."
+            )
 
     def _normalize_issue(self, issue_key: str, fields: dict) -> str:
         """Convert Jira issue fields to normalized text."""
@@ -322,6 +362,16 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
             children_parts: list[str] = []
             for issue in data.get("issues", []):
                 key = issue.get("key", "")
+                # The JQL already keeps to the Jira project; a child whose own
+                # key says otherwise is left out, whatever the search returned.
+                if jira_project_key is not None and (
+                    not isinstance(key, str) or key.rsplit("-", 1)[0].upper() != jira_project_key.upper()
+                ):
+                    logger.warning(
+                        "jira_epic_child_outside_project_skipped",
+                        epic_key=epic_key, jira_project_key=jira_project_key,
+                    )
+                    continue
                 fields = issue.get("fields", {})
                 summary = fields.get("summary", "")
                 status = (fields.get("status") or {}).get("name", "")

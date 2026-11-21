@@ -271,6 +271,124 @@ def test_restore_refuses_an_altered_archive(box: Path) -> None:
     assert "digest mismatch" in result.stderr
 
 
+# Security review 2026-11-20, TL-07: verify used to extract the whole archive
+# into the staging directory the later phases read, and only then look at it.
+# It also took the three digests from whichever manifest rows had one, so the
+# rows were not tied to the files pg_restore, mongorestore and the object
+# restore actually consume. An archive is now judged by its listing first, and
+# a refused archive leaves nothing in staging.
+
+
+def _rewrite(box: Path, name: str, change) -> None:
+    """Rewrite the archive: ``change(members)`` edits ``{name: bytes}`` or returns TarInfo extras."""
+    path = box / "backups" / name
+    with tarfile.open(path) as tar:
+        members = {m.name: tar.extractfile(m).read() for m in tar if m.isfile()}
+    extras = change(members) or []
+    with tarfile.open(path, "w:gz") as tar:
+        for member_name, data in members.items():
+            info = tarfile.TarInfo(member_name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        for info, data in extras:
+            tar.addfile(info, io.BytesIO(data) if data is not None else None)
+
+
+def _link(name: str, target: str, kind: bytes) -> tuple[tarfile.TarInfo, None]:
+    info = tarfile.TarInfo(name)
+    info.type, info.linkname = kind, target
+    return info, None
+
+
+def _file(name: str, data: bytes) -> tuple[tarfile.TarInfo, bytes]:
+    info = tarfile.TarInfo(name)
+    info.size = len(data)
+    return info, data
+
+
+def _swap_manifest_rows(members: dict) -> None:
+    """Each digest stays valid for SOME file in the archive, but not for the file its row names."""
+    manifest = members["manifest.json"].decode()
+    pg = hashlib.sha256(members["postgres.dump"]).hexdigest()
+    mongo = hashlib.sha256(members["mongo.archive.gz"]).hexdigest()
+    swapped = manifest.replace(pg, "X" * 64).replace(mongo, pg).replace("X" * 64, mongo)
+    assert swapped != manifest
+    members["manifest.json"] = swapped.encode()
+
+
+def _edit_manifest(old: str, new: str):
+    def change(members: dict) -> None:
+        text = members["manifest.json"].decode()
+        assert old in text
+        members["manifest.json"] = text.replace(old, new).encode()
+    return change
+
+
+def _drop(member: str):
+    def change(members: dict) -> None:
+        del members[member]
+    return change
+
+
+@needs_sh
+@pytest.mark.parametrize("change", [
+    lambda m: [_file("extra.sql", b"DROP TABLE users;")],
+    lambda m: [_file("../outside-staging", b"escaped")],
+    lambda m: [_file("nested/postgres.dump", b"PGDMP-other")],
+    lambda m: [_file("postgres.dump", b"PGDMP-second-copy")],
+    lambda m: [_link("pg.link", "/etc/passwd", tarfile.SYMTYPE)],
+    lambda m: [_link("pg.hard", "postgres.dump", tarfile.LNKTYPE)],
+    _drop("mongo.archive.gz"),
+    _drop("manifest.json"),
+    _swap_manifest_rows,
+    _edit_manifest('"schema_version": 2,', '"schema_version": 3,'),
+    _edit_manifest('{"name": "mongo", "file": "mongo.archive.gz"', '{"name": "mongo", "file": "postgres.dump"'),
+    _edit_manifest('"excluded": [', '"extra": {"file": "x"},\n  "excluded": ['),
+], ids=[
+    "an-extra-member", "a-member-outside-the-archive-root", "a-nested-member", "a-duplicate-member",
+    "a-symbolic-link", "a-hard-link", "a-missing-component", "no-manifest", "digests-on-the-wrong-rows",
+    "an-unsupported-schema", "two-rows-for-one-file", "a-fourth-file-row",
+])
+def test_restore_refuses_a_malformed_archive_and_stages_nothing(box: Path, change) -> None:
+    name = _archive_name(box)
+    for f in (box / "staging").iterdir():
+        f.unlink()
+    _rewrite(box, name, change)
+
+    result = _run(box, "restore.sh", "verify", RESTORE_FILE=name, RESTORE_CONFIRM="yes")
+
+    assert result.returncode != 0, result.stdout
+    assert "ERROR" in result.stderr
+    # Nothing the postgres, mongo or minio phase would read exists.
+    staged = sorted(p.name for p in (box / "staging").iterdir())
+    assert staged == [], staged
+    assert not (box / "outside-staging").exists()
+    # And no datastore tool was started.
+    assert "pg_restore" not in _log(box) and "mongorestore" not in _log(box)
+
+
+@needs_sh
+def test_a_failed_verify_clears_what_an_earlier_restore_staged(box: Path) -> None:
+    name = _archive_name(box)
+    assert _run(box, "restore.sh", "verify", RESTORE_FILE=name, RESTORE_CONFIRM="yes").returncode == 0
+    assert (box / "staging" / "postgres.dump").exists()
+    _rewrite(box, name, lambda m: m.__setitem__("postgres.dump", b"tampered"))
+
+    result = _run(box, "restore.sh", "verify", RESTORE_FILE=name, RESTORE_CONFIRM="yes")
+
+    assert result.returncode != 0 and "digest mismatch" in result.stderr
+    assert list((box / "staging").iterdir()) == []
+
+
+@needs_sh
+def test_restore_refuses_an_archive_over_the_size_limit(box: Path) -> None:
+    name = _archive_name(box)
+    result = _run(box, "restore.sh", "verify", RESTORE_FILE=name, RESTORE_CONFIRM="yes",
+                  RESTORE_MAX_ARCHIVE_BYTES="10")
+    assert result.returncode != 0
+    assert "RESTORE_MAX_ARCHIVE_BYTES" in result.stderr
+
+
 @needs_sh
 @pytest.mark.parametrize("env,message", [
     ({"RESTORE_CONFIRM": "no"}, "RESTORE_CONFIRM"),

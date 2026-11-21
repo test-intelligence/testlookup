@@ -206,15 +206,22 @@ def test_a_tag_or_a_malformed_digest_is_refused(tmp_path: Path):
 
 def test_the_deploy_passes_the_resolved_digests_all_the_way_through():
     source = DEPLOY.read_text(encoding="utf-8")
-    # Both ways of choosing the build end with three digests read from the registry.
+    # Both ways of choosing the build end with three digests. Neither takes the
+    # registry's word for them (test_k3s_registry_does_not_choose_the_image.py):
+    # a build asks the engine that pushed, a reuse asks the build record.
     build_path = source[source.index('header "Step 2 — Build and Push Container Images"'):]
     reuse_path = build_path[build_path.index("Skipping image builds (--skip-build)"):]
     reuse_path = reuse_path[: reuse_path.index("# ── Step 3: Create Namespace")]
+    build_only = build_path[: build_path.index("Skipping image builds (--skip-build)")]
     for name in ("BACKEND", "FRONTEND", "MCP"):
-        assert f'{name}_DIGEST=$(registry_manifest_digest "$PUSH_REGISTRY"' in build_path
-        assert f'{name}_DIGEST=$(registry_manifest_digest "$LOOKUP_REGISTRY"' in reuse_path, (
+        image = name.lower()
+        assert f'{name}_DIGEST=$(confirm_pushed_digest "$PUSH_REGISTRY" {image} "$BUILD_TAG" "${name}_PUSHED")' in build_only
+        assert f'{name}_DIGEST=$(reused_image_digest "$BUILD_RECORD_DIR" "$BUILD_TAG" {image} ' in reuse_path, (
             f"--skip-build must resolve the {name.lower()} digest too, or it would deploy by tag"
         )
+    assert "_DIGEST=$(registry_manifest_digest" not in build_path, (
+        "a digest is taken straight from the registry's answer again"
+    )
     assert (
         'render_overlay "$RENDER_DIR" "$BUILD_TAG" "$BACKEND_DIGEST" "$FRONTEND_DIGEST" "$MCP_DIGEST"'
         in source

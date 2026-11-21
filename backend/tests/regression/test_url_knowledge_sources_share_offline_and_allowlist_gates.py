@@ -98,9 +98,13 @@ async def test_other_source_types_are_not_handed_an_allow_list():
     db.add = MagicMock()
     with patch.object(settings, "AI_OFFLINE_MODE", False), \
          patch.object(sync_svc, "get_connector", MagicMock(return_value=connector)), \
-         patch.object(sync_svc, "bind_to_deployment", AsyncMock(return_value=connector)):
+         patch.object(sync_svc, "bind_to_deployment", AsyncMock(return_value=connector)), \
+         patch.object(source_svc, "confluence_spaces_for_project", AsyncMock(return_value=["DOCS"])):
         await sync_svc.run_sync(db, _source("confluence_page"), trigger="manual")
 
+    # A Confluence page is held to its project's approved spaces instead
+    # (test_confluence_knowledge_sources_stay_in_approved_spaces.py).
+    assert connector.fetch_content.await_args.kwargs["allowed_space_keys"] == ["DOCS"]
     assert "allowed_domains" not in connector.fetch_content.await_args.kwargs
 
 

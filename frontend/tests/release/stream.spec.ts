@@ -18,8 +18,11 @@ async function subscribe(page: Page, project: string, token: string, cursor = ''
     const feed: NonNullable<Observer['feed']> = { stop: new AbortController(), events: [] }
     win.feed = feed
     void (async () => {
-      const response = await fetch('/api/v1/stream/sse/' + project + '?token=' + encodeURIComponent(token), {
-        signal: feed.stop.signal, headers: cursor ? { 'Last-Event-ID': cursor } : {},
+      // The access token goes in the Authorization header: the route refuses
+      // one in the URL, where proxy logs and browser history would keep it.
+      const response = await fetch('/api/v1/stream/sse/' + project, {
+        signal: feed.stop.signal,
+        headers: { Authorization: 'Bearer ' + token, ...(cursor ? { 'Last-Event-ID': cursor } : {}) },
       })
       if (response.status !== 200 || !response.body) throw Error('Subscription HTTP ' + response.status)
       const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
