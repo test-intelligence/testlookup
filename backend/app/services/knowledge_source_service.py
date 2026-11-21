@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 import structlog
@@ -230,6 +230,17 @@ async def create_source(
     if source_type in JIRA_SOURCE_TYPES:
         await _require_jira_issue_in_scope(db, project_id, canonical_url, payload.get("external_id"), user)
 
+    # A Confluence page is read with the deployment's one Confluence account.
+    # The page's space is only known once it has been fetched, so the sync
+    # makes the real decision (connectors/confluence_connector.py); here a
+    # project with no approved space at all is told so before a row exists.
+    if source_type == KnowledgeSourceType.CONFLUENCE_PAGE.value:
+        if not await confluence_spaces_for_project(db, project_id):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"No Confluence space is approved for this project. {CONFLUENCE_SCOPE_HINT}",
+            )
+
     # RAG-3: enforce the domain allow-list for both URL source types. The type
     # is a label the caller picks and both are fetched by the same public-only
     # connector, so "internal_url" gets no exemption.
@@ -412,6 +423,91 @@ async def set_domain_allowlist(db: AsyncSession, domains: list[str]) -> list[str
         db.add(AppSetting(key=ALLOWLIST_SETTINGS_KEY, value=json.dumps(cleaned)))
     logger.info("domain_allowlist_updated_domains", cleaned_count=len(cleaned))
     return cleaned
+
+
+# ── Confluence space scope (security review 2026-11-20, TL-01) ────────────────
+#
+# A Confluence source is fetched with the deployment's one Confluence account,
+# which usually reads far more spaces than any single TestLookup project
+# should. Project membership says who may ADD a source to a project; it says
+# nothing about which Confluence content that project may copy. An ADMIN
+# states that here: the spaces every project may read (``default``) and, per
+# project, the spaces that project may read instead (``projects``).
+#
+# Nothing is approved until an ADMIN approves it: with no entry, a Confluence
+# page is neither accepted as a source nor fetched by a sync. ``*`` in a list
+# is the explicit "any space the account reads" exception.
+
+CONFLUENCE_SPACE_SCOPE_SETTINGS_KEY = "knowledge_rag.confluence_space_scope"
+ANY_CONFLUENCE_SPACE = "*"
+CONFLUENCE_SCOPE_HINT = (
+    "An administrator approves Confluence spaces with "
+    "PUT /api/v1/knowledge-sources/governance/confluence-spaces."
+)
+
+
+def _clean_space_keys(keys: Any) -> list[str]:
+    if not isinstance(keys, (list, tuple, set, frozenset)):
+        return []
+    return sorted({str(k).strip().upper() for k in keys if isinstance(k, str) and k.strip()})
+
+
+async def get_confluence_space_scope(db: AsyncSession) -> dict[str, Any]:
+    """``{"default": [...], "projects": {project_id: [...]}}`` as stored; empty when unset or unreadable."""
+    row = (
+        await db.execute(select(AppSetting.value).where(AppSetting.key == CONFLUENCE_SPACE_SCOPE_SETTINGS_KEY))
+    ).scalar_one_or_none()
+    stored: Any = {}
+    if isinstance(row, dict):
+        stored = row
+    elif row:
+        try:
+            stored = json.loads(row)
+        except (json.JSONDecodeError, TypeError):
+            stored = {}
+    if not isinstance(stored, dict):
+        stored = {}
+    projects = stored.get("projects")
+    return {
+        "default": _clean_space_keys(stored.get("default")),
+        "projects": {
+            str(pid): _clean_space_keys(keys) for pid, keys in (projects.items() if isinstance(projects, dict) else [])
+        },
+    }
+
+
+async def set_confluence_space_scope(
+    db: AsyncSession, default: list[str], projects: dict[str, list[str]],
+) -> dict[str, Any]:
+    """Stage the Confluence space scope. Handler commits."""
+    cleaned = {
+        "default": _clean_space_keys(default),
+        "projects": {str(uuid.UUID(str(pid))): _clean_space_keys(keys) for pid, keys in projects.items()},
+    }
+    setting = (
+        await db.execute(select(AppSetting).where(AppSetting.key == CONFLUENCE_SPACE_SCOPE_SETTINGS_KEY))
+    ).scalar_one_or_none()
+    # The column is JSON: the mapping is stored as it is, not as a string of JSON.
+    if setting:
+        setting.value = cleaned
+    else:
+        db.add(AppSetting(key=CONFLUENCE_SPACE_SCOPE_SETTINGS_KEY, value=cleaned))
+    logger.info(
+        "confluence_space_scope_updated",
+        default_count=len(cleaned["default"]), project_count=len(cleaned["projects"]),
+    )
+    return cleaned
+
+
+async def confluence_spaces_for_project(db: AsyncSession, project_id: Any) -> frozenset[str]:
+    """The Confluence space keys ``project_id`` may read (upper case; may hold ``*``; empty = none).
+
+    A project with its own entry uses that entry alone, also when it is empty:
+    an ADMIN can take a project out of the default.
+    """
+    scope = await get_confluence_space_scope(db)
+    own = scope["projects"].get(str(project_id))
+    return frozenset(scope["default"] if own is None else own)
 
 
 def _validate_url_domain(url: str, allowlist: list[str]) -> None:

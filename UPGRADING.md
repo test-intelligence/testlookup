@@ -160,11 +160,30 @@ Existing usernames that contain `@` keep working for sign-in.
 - **MCP.** Put the MCP env file next to `server.py` or name it in `TESTLOOKUP_ENV_FILE`; a `.env` in the working directory is no longer read. Clients that parse resource bodies read the previous body under `data`. Ids passed to tools must be the UUIDs the list tools return.
 - **`GET /settings/ai/model-status`.** `ollama_error` is one of `refused_by_policy`, `unreachable`, `unexpected_status`, `invalid_response`.
 
+### Live stream, knowledge sources and logs (security review of 20 November 2026)
+
+- **Live-session SSE.** A client that reads `GET /api/v1/stream/sse/{project_id}?token=...` gets 400. Send the same access token as `Authorization: Bearer <token>` and drop the query parameter. `Last-Event-ID` and the events are unchanged. The web UI uses the WebSocket and is not affected.
+- **Confluence knowledge sources stop syncing until you approve their spaces.** As an administrator, send the space keys once:
+
+  ```bash
+  curl -X PUT "$TL_URL/api/v1/knowledge-sources/governance/confluence-spaces" \
+    -H "Authorization: Bearer $TL_TOKEN" -H "Content-Type: application/json" \
+    -d '{"default": ["QA", "DOCS"], "projects": {"<project id>": ["TEAM"]}}'
+  ```
+
+  `default` applies to every project; a project listed under `projects` uses its own list instead. `*` in a list means any space the Confluence account reads. Until a space is approved, creating a Confluence source answers 422, and the next sync of an existing source fails with the reason and removes that source's indexed content from knowledge search. After you approve the space, **Sync** on the source indexes it again.
+- **Jira knowledge sources.** A source whose issue was moved to another Jira project fails its next sync, and its indexed content is removed from knowledge search; recreate the source with the issue's current key. An epic source no longer includes child issues from other Jira projects.
+- **Frontend access log format.** The request is logged as method, path and protocol, without the query string, and the Referer field is gone; three fields are added at the end (`rt=`, `us=`, `urt=`). The nginx error log is at level `crit`. Update a log parser that expects nginx's combined format.
+- **Logs you already have.** Access logs written before this release can hold report share tokens (in `/api/v1/shared/reports/...` paths) and, if a client used the SSE route, access tokens. Access tokens expire on their own (30 minutes by default). Restrict or delete those logs, and revoke share links that were open while the logs were readable by people who should not open the reports.
+
 ### Install and deployment files
+
+- **Installer default.** `install.sh` with nothing set installs the latest published release, with that release's images, instead of `main` and `:latest`. To install the unreleased tip as before, set `TL_REF=main`. A mirror sets `TL_LATEST_RELEASE_URL`, or names the release with `TL_REF=vX.Y.Z`.
+- **First admin without a password.** The release stack with an empty `INITIAL_ADMIN_PASSWORD` no longer creates an admin with a password printed in the `db-migrate` log; it creates none. Set `INITIAL_ADMIN_PASSWORD` in `.env` (the installer does), or run `docker compose -f docker-compose.release.yml exec backend python /app/scripts/create_admin.py` in a terminal, which shows a generated password once.
 
 - **Redis password in Compose.** `docker-compose.release.yml` and the single-VM stack refuse to start without `REDIS_PASSWORD`. Installs made with `install.sh` or the offline bundle already have one. For a hand-made `.env`, set `REDIS_PASSWORD` and put it in `REDIS_URL`, `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` (`redis://:<password>@redis:6379/0`), then restart the stack.
 - **Request body limit.** A request body over 10 MiB (100 MiB on the ingest and import routes) answers 413. Raise `REQUEST_BODY_MAX_BYTES` / `REQUEST_BODY_UPLOAD_MAX_BYTES` if you send larger ones, and keep them at or above your proxy's limit.
-- **Installer and release tags.** `TL_REF=v0.1.0` alone now also selects the `0.1.0` images (it used to run `:latest`), and the files are checked against the release's `SHA256SUMS`. With nothing set the installer still follows `main` and `:latest`.
+- **Installer and release tags.** `TL_REF=v0.1.0` alone now also selects the `0.1.0` images (it used to run `:latest`), and the files are checked against the release's `SHA256SUMS`.
 - **Cloud ingresses.** EKS, GKE and AKS publish `/health/live`, `/health/ready`, `/health/version` and `/health/details` only. A monitor that called another `/health/...` path through the ingress must use one of these or the Service directly. GKE answers http with a redirect to https.
 - **`dev` overlay.** Its Ingress uses the `nginx-internal` class; reach a dev deploy through that class or `kubectl port-forward`.
 - **NetworkPolicy.** Check that your cluster enforces NetworkPolicy (EKS: the VPC CNI setting; AKS: a network policy option; GKE: Dataplane V2 or network policy). On EKS, read the guide before setting `enable_network_policy = true`: the load balancer's addresses must be admitted to the frontend and backend first.
@@ -192,6 +211,13 @@ Existing usernames that contain `@` keep working for sign-in.
 - **API clients.** New 422 answers on the Jira filing, linking and release-sync routes; 403 from the Jira picker route for viewers and testers; the Jira status sync result has an `out_of_scope` count; `/sso/login-url` and `/sso/oidc/login` can answer 429.
 
 ### Cluster installs (K3s, OpenShift, Kubernetes)
+
+- **K3s `--skip-build`.** A build now records the image digests it pushed in `.k3s-build-records`, beside the credentials file, and `--skip-build` deploys from that record. A tag built before this release has no record, so the first `--skip-build` after upgrading stops with the choices: build once without `--skip-build`, supply `K3S_BACKEND_DIGEST`, `K3S_FRONTEND_DIGEST` and `K3S_MCP_DIGEST`, or accept the registry's answer for that run with `K3S_TRUST_REGISTRY_DIGESTS=true`. If you deploy from more than one checkout, point `K3S_CREDENTIALS_FILE` (or `K3S_BUILD_RECORD_DIR`) at one shared place so they see the same records.
+- **K3s deploy output.** The script no longer prints the database, object-store or admin password. Read them from the credentials file (`k3ssetup/.k3s-credentials` by default) or from the Secret `testlookup-secrets`. If an earlier deploy's output was saved somewhere other people can read (a CI log, a ticket), change the passwords it shows.
+- **K3s with TLS.** If you serve TLS for the site, set `K3S_PUBLIC_SCHEME=https` in your site file. Deploys then keep your redirect Ingress and Middleware and write `https://` as the public URL and CORS origin. Without it the script behaves as before, except that it no longer deletes the Secret `testlookup-tls-cert`.
+- **Generic Kubernetes and OpenShift.** A generated admin password is no longer shown, on a terminal or in the summary. It is in the Secret `testlookup-initial-admin`; the script prints the command that reads it. Delete that Secret after the first sign-in.
+- **Kubernetes restore.** `verify` refuses an archive that holds anything but `manifest.json` and the three component files. Archives written by the backup CronJob pass; an archive you repacked by hand (an extra file, a `./` prefix on the names) must be repacked with exactly those four names.
+- **EKS.** If you keep your own copy of the `aws-eks` overlay, add the two new rules that admit the load balancer to `allow-frontend` and `allow-backend` before you set `enable_network_policy = true`.
 
 - **K3s.** The next `k3ssetup/deploy-k3s.sh` run adds Redis and MongoDB passwords to `testlookup-secrets` and to the credentials file, creates the MongoDB root user, restarts both stores with authentication and rolls the application pods. Take a backup first. The script checks that the Traefik pods carry the label `app.kubernetes.io/name=traefik` and stops before changing anything if they do not. Do not delete `testlookup-secrets` to start clean: the MongoDB volume keeps its user.
 - **OpenShift.** The first deploy with the new script needs cluster-admin, restarts every data store once and adds a Redis password. Afterwards remove the old grant: `oc adm policy remove-scc-from-user anyuid -z default -n <namespace>` (or one run with `REVOKE_DEFAULT_ANYUID=true`). An offline-bundle install must grant `anyuid` to `testlookup-anyuid` before applying the new manifests, and should add `REDIS_PASSWORD`, `REDIS_URL`, `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` to its Secret.

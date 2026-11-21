@@ -748,16 +748,27 @@ if [ "$SKIP_ADMIN" = false ]; then
       if printf '%s\n' "$ADMIN_OUT" | grep -q 'admin user created'; then
         ADMIN_CREATED=true
         log "Admin user created ($ADMIN_USERNAME)"
+        if [ "$ADMIN_PASSWORD_GENERATED" = true ]; then
+          # A generated password is kept where the cluster's own access
+          # control decides who reads it, not in this script's output, which
+          # is often saved (a pipeline log, a ticket). The manifest goes to
+          # the API on stdin (create_secret).
+          "$KCLI" -n "$NAMESPACE" delete secret testlookup-initial-admin --ignore-not-found >/dev/null
+          create_secret testlookup-initial-admin Opaque \
+            username "$ADMIN_USERNAME" password "$ADMIN_PASSWORD" >/dev/null \
+            && ADMIN_PASSWORD_STORED=true \
+            || warn "Could not store the generated admin password in Secret testlookup-initial-admin."
+        fi
       else
         log "Admin user already exists ($ADMIN_USERNAME) — its password was NOT changed."
       fi
     else
       printf '%s\n' "$ADMIN_OUT" | grep -iv 'password:' || true
       warn "create_admin.py failed — run it manually once the backend is healthy:"
-      warn "  $KCLI -n $NAMESPACE exec deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
+      warn "  $KCLI -n $NAMESPACE exec -it deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
     fi
   else
-    warn "Backend pod not found — create the admin user later: $KCLI -n $NAMESPACE exec deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
+    warn "Backend pod not found — create the admin user later: $KCLI -n $NAMESPACE exec -it deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'"
   fi
 fi
 
@@ -782,10 +793,14 @@ echo ""
 echo "  Dashboard:  https://${ROUTE_HOST_FRONTEND}"
 echo "  API:        https://${ROUTE_HOST_API}/api-docs"
 echo "  MCP (SSE):  https://${ROUTE_HOST_MCP}/sse"
-if [ "$ADMIN_CREATED" = true ] && [ "$ADMIN_PASSWORD_GENERATED" = true ]; then
+if [ "$ADMIN_CREATED" = true ] && [ "$ADMIN_PASSWORD_GENERATED" = true ] && [ "${ADMIN_PASSWORD_STORED:-false}" = true ]; then
   echo "  Admin:      ${ADMIN_USERNAME}"
-  echo "  Password:   ${ADMIN_PASSWORD}"
-  echo -e "  ${YELLOW}Generated for this install and shown only once — store it in your password manager now.${NC}"
+  echo "  Password:   generated, and not printed. Read it from the Secret testlookup-initial-admin:"
+  echo "                $KCLI -n $NAMESPACE get secret testlookup-initial-admin -o jsonpath='{.data.password}' | base64 -d"
+  echo -e "  ${YELLOW}You must change it at the first sign-in; then delete that Secret.${NC}"
+elif [ "$ADMIN_CREATED" = true ] && [ "$ADMIN_PASSWORD_GENERATED" = true ]; then
+  echo "  Admin:      ${ADMIN_USERNAME}"
+  echo -e "  ${YELLOW}The generated password could not be stored and is not printed. Set a new one with scripts/getUser.py.${NC}"
 elif [ "$ADMIN_CREATED" = true ]; then
   echo "  Admin:      ${ADMIN_USERNAME} (password: the ADMIN_PASSWORD you supplied)"
 else

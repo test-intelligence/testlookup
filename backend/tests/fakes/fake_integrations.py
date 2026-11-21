@@ -736,6 +736,11 @@ _JQL_PROJECT = re.compile(r'^\s*project\s*=\s*"?([A-Z][A-Z0-9_]*)"?\s*$', re.I)
 _JQL_PARENT = re.compile(
     r'^\s*"Epic Link"\s*=\s*"?([A-Z0-9_-]+)"?\s+OR\s+parent\s*=\s*"?([A-Z0-9_-]+)"?\s*$', re.I
 )
+# The same search kept to one Jira project: what the knowledge connector sends.
+_JQL_PARENT_IN_PROJECT = re.compile(
+    r'^\s*\(\s*"Epic Link"\s*=\s*"?([A-Z0-9_-]+)"?\s+OR\s+parent\s*=\s*"?([A-Z0-9_-]+)"?\s*\)'
+    r'\s+AND\s+project\s*=\s*"?([A-Z][A-Z0-9_]*)"?\s*$', re.I
+)
 
 
 async def _search_jql(request: Request, state: FakeState) -> Response:
@@ -749,6 +754,12 @@ async def _search_jql(request: Request, state: FakeState) -> Response:
         found = [i for i in issues if i["fields"]["project"]["key"] == m.group(1).upper()]
     elif (m := _JQL_PARENT.match(jql)):
         found = [i for i in issues if (i["fields"].get("parent") or {}).get("key") in (m.group(1), m.group(2))]
+    elif (m := _JQL_PARENT_IN_PROJECT.match(jql)):
+        found = [
+            i for i in issues
+            if (i["fields"].get("parent") or {}).get("key") in (m.group(1), m.group(2))
+            and i["fields"]["project"]["key"] == m.group(3).upper()
+        ]
     else:
         return _jira_error(400, [f"The fake understands only label, project and epic-children JQL, not: {jql}"])
     wanted = {n.strip() for n in request.query_params.get("fields", "").split(",") if n.strip()}

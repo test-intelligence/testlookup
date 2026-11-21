@@ -96,8 +96,8 @@ The installer also ends with a warning that port 3000 is plain HTTP on every net
 | Variable | Default | Effect |
 |---|---|---|
 | `TL_DIR` | `testlookup` | Install directory |
-| `TL_REF` | `main` | Branch, tag or commit the files are downloaded from. With a release tag (`vX.Y.Z`) the images default to the same tag |
-| `TESTLOOKUP_VERSION` | `latest` | Image tag to run. With a release tag (`vX.Y.Z`) and no `TL_REF`, the files are downloaded from the same tag |
+| `TL_REF` | the latest published release | Branch, tag or commit the files are downloaded from. With a release tag (`vX.Y.Z`) the images default to the same tag and the files are checked against that release's `SHA256SUMS`. With neither this nor `TESTLOOKUP_VERSION` set, the installer looks up the latest release and installs it; if the lookup fails it stops. `TL_REF=main` installs the unreleased tip: its files are not checked and its images are `latest` |
+| `TESTLOOKUP_VERSION` | the release in `TL_REF` | Image tag to run. With a release tag (`vX.Y.Z`) and no `TL_REF`, the files are downloaded from the same tag |
 | `TL_RAW_BASE` | `https://raw.githubusercontent.com/test-intelligence/testlookup` | Where the files are downloaded from (a mirror) |
 | `TL_RELEASE_BASE` | `https://github.com/test-intelligence/testlookup/releases/download` | Where a release's `SHA256SUMS` is downloaded from (a mirror) |
 | `TL_PROFILE` | none | Adds a Compose profile: `demo` (seed data) or `local-llm` (Ollama and ChromaDB) |
@@ -105,7 +105,7 @@ The installer also ends with a warning that port 3000 is plain HTTP on every net
 
 Pass them before `bash`, for example `curl -fsSL .../install.sh | TL_PROFILE=demo bash`. For an evaluation, `TL_PROFILE=demo` is the documented default (README, [GETTING_STARTED.md](../../GETTING_STARTED.md)): without it the first dashboard is empty until you send a report. For a team instance, leave it out. The images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026).
 
-To install a release instead of the tip of `main`, name its tag: `curl -fsSL .../install.sh | TL_REF=vX.Y.Z bash`. The installer then downloads that release's `SHA256SUMS` from the GitHub release and compares the four files it fetched before it writes them into the install directory or runs anything. It stops, with nothing installed, on a mismatch, on a file the sums do not list, or when the release has no `SHA256SUMS`. For `main`, or any other branch or commit, no checksum exists and the installer says the files are not verified. The check covers the files the installer downloads, not the installer itself: to check that too, download `install.sh` and `SHA256SUMS` from the release page, run `sha256sum -c --ignore-missing SHA256SUMS`, then run the script.
+With nothing set, the installer installs the latest published release. To install a particular release, name its tag: `curl -fsSL .../install.sh | TL_REF=vX.Y.Z bash`. Either way the installer downloads that release's `SHA256SUMS` from the GitHub release and compares the four files it fetched before it writes them into the install directory or runs anything. It stops, with nothing installed, on a mismatch, on a file the sums do not list, or when the release has no `SHA256SUMS`. For `main`, or any other branch or commit, no checksum exists and the installer says the files are not verified. The check covers the files the installer downloads, not the installer itself: to check that too, download `install.sh` and `SHA256SUMS` from the release page, run `sha256sum -c --ignore-missing SHA256SUMS`, then run the script.
 
 ### Image tags
 

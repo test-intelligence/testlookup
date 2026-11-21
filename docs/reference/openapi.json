@@ -22961,6 +22961,37 @@
         "title": "JiraProjectOption",
         "type": "object"
       },
+      "KnowledgeConfluenceSpaceScopeUpdate": {
+        "description": "The Confluence spaces knowledge sources may read (security review 2026-11-20, TL-01).",
+        "properties": {
+          "default": {
+            "description": "Space keys every project may read, e.g. ['QA', 'DOCS']. Empty: a project without its own entry may read no Confluence page.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 500,
+            "title": "Default",
+            "type": "array"
+          },
+          "projects": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "description": "Per project id, the space keys that project may read INSTEAD of the default. An empty list takes the project out of the default.",
+            "maxProperties": 2000,
+            "propertyNames": {
+              "format": "uuid"
+            },
+            "title": "Projects",
+            "type": "object"
+          }
+        },
+        "title": "KnowledgeConfluenceSpaceScopeUpdate",
+        "type": "object"
+      },
       "KnowledgeDomainAllowlistUpdate": {
         "properties": {
           "domains": {
@@ -69672,6 +69703,118 @@
         ]
       }
     },
+    "/api/v1/knowledge-sources/governance/confluence-spaces": {
+      "get": {
+        "operationId": "get_confluence_space_scope_api_v1_knowledge_sources_governance_confluence_spaces_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Get Confluence Space Scope",
+        "tags": [
+          "Knowledge Sources"
+        ]
+      },
+      "put": {
+        "operationId": "update_confluence_space_scope_api_v1_knowledge_sources_governance_confluence_spaces_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeConfluenceSpaceScopeUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Update Confluence Space Scope",
+        "tags": [
+          "Knowledge Sources"
+        ]
+      }
+    },
     "/api/v1/knowledge-sources/governance/domain-allowlist": {
       "get": {
         "operationId": "get_domain_allowlist_api_v1_knowledge_sources_governance_domain_allowlist_get",
@@ -99179,15 +99322,6 @@
             "required": true,
             "schema": {
               "title": "Project Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "token",
-            "required": true,
-            "schema": {
-              "title": "Token",
               "type": "string"
             }
           }

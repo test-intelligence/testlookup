@@ -356,17 +356,47 @@ async def list_active_sessions(
     )
 
 
+def sse_bearer_token(request: Request) -> str:
+    """The access token of a live-session SSE request: ``Authorization: Bearer`` only.
+
+    The route used to read the account's access JWT from ``?token=``. A request
+    URL is written to proxy access logs, browser history and traces, and that
+    token is good for every REST route its owner may call, not only this
+    stream. A ``token`` query parameter is refused outright, with a message
+    that names the header, so a client that still sends one learns why instead
+    of streaming with a credential in its URL. ``EventSource`` cannot set
+    headers: read the stream with ``fetch`` (or any HTTP client) instead.
+    """
+    if "token" in request.query_params:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "The token query parameter is no longer accepted on this stream: "
+                "send the access token in an Authorization: Bearer header."
+            ),
+        )
+    scheme, _, credential = (request.headers.get("authorization") or "").partition(" ")
+    credential = credential.strip()
+    if scheme.lower() != "bearer" or not credential:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return credential
+
+
 @router.get("/sse/{project_id}")
 async def sse_stream(
     project_id: str,
     request: Request,
-    token: str,
+    token: str = Depends(sse_bearer_token),
 ):
     # SSE routes can't go through the usual require_project_access dependency
-    # because the token arrives as a query param (browsers don't send auth
-    # headers on EventSource requests) and the handler streams forever. We
-    # inline the equivalent membership check against a short-lived DB session
-    # so the streaming generator doesn't hold a pool slot.
+    # because the handler streams forever. We inline the equivalent membership
+    # check against a short-lived DB session so the streaming generator doesn't
+    # hold a pool slot. The token comes from the Authorization header
+    # (sse_bearer_token), never from the URL.
     #
     # The token is checked by the same helper the live WebSocket uses, which
     # applies what get_current_user applies to a header JWT: access tokens

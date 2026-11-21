@@ -90,6 +90,7 @@ async def _create(db, source_type: str, *, external_id: str | None = None, url: 
     with patch.object(sources, "require_rag_enabled_async", AsyncMock()), \
          patch.object(sources, "_check_project_access", AsyncMock()), \
          patch.object(sources, "get_domain_allowlist", AsyncMock(return_value=[])), \
+         patch.object(sources, "confluence_spaces_for_project", AsyncMock(return_value=frozenset({"QA"}))), \
          patch.object(sources, "_validate_url_domain", MagicMock()):
         return await sources.create_source(db, project_id=PROJECT, payload=payload, user=user), user
 
@@ -247,7 +248,7 @@ class _Http:
         self.calls.append({"url": url, "params": params or {}})
         if "/search/" in url:
             return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: {"issues": []})
-        return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: {"fields": {
+        return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: {"key": "TEAM-7", "fields": {
             "summary": "Checkout", "issuetype": {"name": "Epic"}, "status": {"name": "Open"},
         }})
 
@@ -271,9 +272,89 @@ async def test_an_epics_children_are_searched_only_in_the_projects_jira_project(
 
 
 @pytest.mark.asyncio
-async def test_without_a_project_key_the_child_search_is_as_before(monkeypatch):
+async def test_without_a_project_key_the_child_search_stays_in_the_epics_own_jira_project(monkeypatch):
+    """Security review 2026-11-20, TL-01: nobody authorised the other Jira projects.
+
+    A TestLookup project without a Jira key is not narrowed to one key at
+    sync, but an epic's children were then read from every Jira project the
+    account can see. They are read from the epic's own Jira project.
+    """
     jql = await _fetch_epic(monkeypatch)
-    assert jql == '"Epic Link" = "TEAM-7" OR parent = "TEAM-7"'
+    assert jql == '("Epic Link" = "TEAM-7" OR parent = "TEAM-7") AND project = "TEAM"'
+
+
+# ── what Jira returned must be what was asked for (TL-01) ────────────────────
+
+
+class _Answer:
+    """One issue response and one child-search response."""
+
+    def __init__(self, issue: dict, children: list[dict] | None = None) -> None:
+        self.issue, self.children = issue, children or []
+
+    async def get(self, url, headers=None, params=None, timeout=None):
+        body = {"issues": self.children} if "/search/" in url else self.issue
+        return SimpleNamespace(status_code=200, raise_for_status=lambda: None, json=lambda: body)
+
+
+async def _fetch(monkeypatch, answer: _Answer, **kwargs) -> FetchedContent:
+    monkeypatch.setattr(jira_connector, "get_http_client", lambda: answer)
+    connector = JiraKnowledgeConnector().with_config(
+        {"domain": "jira.example.test", "email": "bot@example.test", "api_token": "not-a-real-token"},
+    )
+    return await connector.fetch_content(f"{BROWSE}TEAM-7", "TEAM-7", **kwargs)
+
+
+_STORY = {"summary": "Private roadmap", "issuetype": {"name": "Story"}, "status": {"name": "Open"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "issue",
+    [
+        # Moved: Jira answers the old key with the issue under its new one.
+        {"key": "SECRET-41", "fields": {**_STORY, "project": {"key": "SECRET"}}},
+        # The key matches but the project Jira reports does not.
+        {"key": "TEAM-7", "fields": {**_STORY, "project": {"key": "SECRET"}}},
+        # Nothing ties the response to the request.
+        {"fields": _STORY},
+        {"key": None, "fields": _STORY},
+    ],
+    ids=["moved-to-another-project", "project-field-disagrees", "no-key", "null-key"],
+)
+@pytest.mark.parametrize("kwargs", [{}, {"jira_project_key": "TEAM"}], ids=["unkeyed", "keyed"])
+async def test_a_response_that_is_not_the_requested_issue_is_not_imported(monkeypatch, issue, kwargs):
+    with pytest.raises(ConnectorFetchError) as refused:
+        await _fetch(monkeypatch, _Answer(issue), **kwargs)
+
+    assert "Nothing was imported" in str(refused.value)
+    assert "Private roadmap" not in str(refused.value)
+    assert refused.value.retryable is False
+
+
+@pytest.mark.asyncio
+async def test_the_requested_issue_in_its_own_project_is_imported(monkeypatch):
+    content = await _fetch(
+        monkeypatch, _Answer({"key": "TEAM-7", "fields": {**_STORY, "project": {"key": "TEAM"}}}),
+    )
+
+    assert "Private roadmap" in content.raw_text
+
+
+@pytest.mark.asyncio
+async def test_a_child_from_another_jira_project_is_left_out_whatever_the_search_returned(monkeypatch):
+    epic = {"key": "TEAM-7", "fields": {"summary": "Checkout", "issuetype": {"name": "Epic"}, "project": {"key": "TEAM"}}}
+    children = [
+        {"key": "TEAM-8", "fields": {"summary": "Totals off by tax"}},
+        {"key": "SECRET-9", "fields": {"summary": "Acquisition plan"}},
+        {"fields": {"summary": "No key at all"}},
+    ]
+
+    content = await _fetch(monkeypatch, _Answer(epic, children))
+
+    assert "TEAM-8: Totals off by tax" in content.raw_text
+    assert "Acquisition plan" not in content.raw_text
+    assert "No key at all" not in content.raw_text
 
 
 @pytest.mark.asyncio

@@ -44,7 +44,7 @@ variable "public_access_cidrs" {
 }
 
 variable "enable_network_policy" {
-  description = "Make the VPC CNI enforce Kubernetes NetworkPolicy (addon setting enableNetworkPolicy). When false, EKS stores the policies and applies none of them. Before turning it on, the NetworkPolicy rules must admit the load balancer's addresses to the frontend and backend pods (the aws-eks overlay only does this for MCP), or the application stops answering through the ALB. Needs VPC CNI v1.14 or later."
+  description = "Make the VPC CNI enforce Kubernetes NetworkPolicy (addon setting enableNetworkPolicy). When false, EKS stores the policies and applies none of them. Turn it on for any cluster that other workloads share: without it nothing isolates the data stores. The aws-eks overlay admits the load balancer to the frontend, backend and MCP pods; if you render your own manifests, admit the ALB subnets (output public_subnet_cidrs) to allow-frontend and allow-backend first, or the application stops answering through the ALB. Needs VPC CNI v1.14 or later."
   type        = bool
   default     = false
 }

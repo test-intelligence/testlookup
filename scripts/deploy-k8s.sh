@@ -266,9 +266,9 @@ kubectl -n "$NAMESPACE" rollout status deployment/testlookup-frontend --timeout=
 # ── Create initial admin user ────────────────────────────────────────────────
 # Created ONCE, on a fresh install. There is no default password: ADMIN_PASSWORD
 # when you set one, otherwise a random one generated here. A generated password
-# is stored in the Secret testlookup-initial-admin (never printed into CI logs;
-# shown on the terminal only for an interactive run) and must be changed at
-# first sign-in. An existing admin is never modified.
+# is stored in the Secret testlookup-initial-admin (never printed, on a
+# terminal or into a CI log) and must be changed at first sign-in. An existing
+# admin is never modified.
 # Override with env vars: ADMIN_USERNAME, ADMIN_PASSWORD, ADMIN_EMAIL.
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
@@ -285,19 +285,22 @@ BACKEND_POD=$(kubectl -n "$NAMESPACE" get pod -l app=testlookup-backend,app.kube
 ADMIN_RAN=0
 ADMIN_OUTPUT=""
 if [[ -n "$BACKEND_POD" ]]; then
-  ADMIN_OUTPUT=$(kubectl -n "$NAMESPACE" exec "$BACKEND_POD" -- \
+  # The password is piped to the pod and read there from stdin. As an `env`
+  # argument it would be on kubectl's command line, which every local user
+  # can read while it runs (security review 2026-11-20, TL-08).
+  ADMIN_OUTPUT=$(printf '%s\n' "$ADMIN_PASSWORD" | kubectl -n "$NAMESPACE" exec -i "$BACKEND_POD" -- \
     env \
       ADMIN_USERNAME="$ADMIN_USERNAME" \
-      ADMIN_PASSWORD="$ADMIN_PASSWORD" \
       ADMIN_EMAIL="$ADMIN_EMAIL" \
       ADMIN_FULL_NAME="$ADMIN_FULL_NAME" \
       ADMIN_PASSWORD_GENERATED="$ADMIN_PASSWORD_GENERATED" \
+      sh -c 'IFS= read -r ADMIN_PASSWORD && export ADMIN_PASSWORD && exec "$@"' read-admin-password \
       sh -c "python /app/scripts/create_admin.py" 2>&1) && ADMIN_RAN=1 || true
   echo "$ADMIN_OUTPUT"
   if [[ $ADMIN_RAN -ne 1 ]]; then
     echo "WARN: create_admin.py failed. Run it manually once the backend is ready" >&2
-    echo "      (it generates and prints a password when ADMIN_PASSWORD is unset):" >&2
-    echo "      kubectl -n $NAMESPACE exec deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'" >&2
+    echo "      (in a terminal it generates a password when ADMIN_PASSWORD is unset and shows it once):" >&2
+    echo "      kubectl -n $NAMESPACE exec -it deployment/testlookup-backend -- sh -c 'python /app/scripts/create_admin.py'" >&2
   fi
 else
   echo "WARN: backend pod not found — skipping admin user creation." >&2
@@ -305,10 +308,15 @@ fi
 
 if [[ $ADMIN_RAN -eq 1 ]] && grep -q "^admin user created" <<<"$ADMIN_OUTPUT"; then
   if [[ "$ADMIN_PASSWORD_GENERATED" == true ]]; then
-    kubectl -n "$NAMESPACE" create secret generic testlookup-initial-admin \
-      --from-literal=username="$ADMIN_USERNAME" \
-      --from-literal=password="$ADMIN_PASSWORD" \
-      --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+    # A manifest on stdin: --from-literal would put the password on kubectl's
+    # command line. Replaced, not applied: `apply` would also copy the value
+    # into the last-applied-configuration annotation.
+    kubectl -n "$NAMESPACE" delete secret testlookup-initial-admin --ignore-not-found >/dev/null
+    {
+      printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: testlookup-initial-admin\ntype: Opaque\ndata:\n'
+      printf '  username: %s\n' "$(printf '%s' "$ADMIN_USERNAME" | base64 | tr -d '\r\n')"
+      printf '  password: %s\n' "$(printf '%s' "$ADMIN_PASSWORD" | base64 | tr -d '\r\n')"
+    } | kubectl -n "$NAMESPACE" create -f - >/dev/null
   fi
   cat <<BANNER
 
@@ -320,10 +328,7 @@ if [[ $ADMIN_RAN -eq 1 ]] && grep -q "^admin user created" <<<"$ADMIN_OUTPUT"; t
 ╚══════════════════════════════════════════════════════╝
 BANNER
   if [[ "$ADMIN_PASSWORD_GENERATED" == true ]]; then
-    if [[ -t 1 ]]; then
-      echo "  Password: $ADMIN_PASSWORD   (generated; shown once)"
-    fi
-    echo "  The generated password is stored in the Secret testlookup-initial-admin:"
+    echo "  The generated password is not printed. It is stored in the Secret testlookup-initial-admin:"
     echo "    kubectl -n $NAMESPACE get secret testlookup-initial-admin -o jsonpath='{.data.password}' | base64 -d"
     echo "  You must change it at first sign-in; then delete that Secret."
   else

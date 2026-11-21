@@ -28,7 +28,7 @@ from app.models.postgres import (
 )
 import structlog
 
-from app.services.connectors.base import ConnectorFetchError, FetchedContent
+from app.services.connectors.base import ConnectorFetchError, ConnectorScopeRefused, FetchedContent
 from app.services.connectors.registry import bind_to_deployment, get_connector
 
 logger = structlog.get_logger(__name__)
@@ -151,8 +151,23 @@ async def run_sync(
                 issue_key = JiraKnowledgeConnector()._extract_issue_key(source.canonical_url, source.external_id)
                 refusal = scope.refusal(issue_key)
                 if refusal is not None:
-                    raise ConnectorFetchError(refusal, retryable=False)
+                    raise ConnectorScopeRefused(refusal)
                 fetch_kwargs["jira_project_key"] = scope.project_key
+        if source.source_type == KnowledgeSourceType.CONFLUENCE_PAGE.value:
+            # The Confluence spaces an ADMIN approved for this project, as they
+            # are now: read at every sync, so a space taken off the list stops
+            # being fetched, and a source stored before the rule is held to it.
+            # The connector compares them with the space of the page Confluence
+            # returns, before any of the page is read.
+            from app.services import knowledge_source_service
+
+            allowed_spaces = await knowledge_source_service.confluence_spaces_for_project(db, source.project_id)
+            if not allowed_spaces:
+                raise ConnectorScopeRefused(
+                    "No Confluence space is approved for this project, so the page was not fetched. "
+                    + knowledge_source_service.CONFLUENCE_SCOPE_HINT,
+                )
+            fetch_kwargs["allowed_space_keys"] = allowed_spaces
         if source.source_type == KnowledgeSourceType.UPLOADED_DOC.value:
             # The object key must sit under the source's own project; the
             # document connector refuses any other key before reading storage.
@@ -268,6 +283,29 @@ async def run_sync(
         duration_ms = int((time.monotonic() - t_start) * 1000)
         source.sync_status = KnowledgeSyncStatus.FAILED.value
         source.sync_error = str(exc)[:500]
+
+        if isinstance(exc, ConnectorScopeRefused):
+            # The project is not entitled to this content (any more): what an
+            # earlier sync indexed for the source must stop being retrieved,
+            # not only stop being refreshed. Retrieval requires an active
+            # chunk row. The stored hash is cleared so that a later, allowed
+            # sync indexes the content again instead of skipping it as
+            # unchanged. A failure here must not hide the refusal itself.
+            try:
+                from app.services.knowledge_chunking_service import retire_chunks_for_source
+
+                retired = await retire_chunks_for_source(db, source.id)
+                source.content_hash = None
+                if retired:
+                    logger.warning(
+                        "knowledge_source_scope_refused_chunks_retired",
+                        source_id=str(source.id), retired=retired,
+                    )
+            except Exception as retire_exc:  # noqa: BLE001
+                logger.error(
+                    "knowledge_source_scope_refused_retire_failed",
+                    source_id=str(source.id), error=str(retire_exc),
+                )
 
         event = KnowledgeSyncEvent(
             source_id=source.id,

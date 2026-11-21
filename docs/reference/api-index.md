@@ -221,6 +221,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/knowledge-sources` | List Knowledge Sources | [Knowledge Sources](api/knowledge-sources.md) |
 | POST | `/api/v1/knowledge-sources` | Create Knowledge Source | [Knowledge Sources](api/knowledge-sources.md) |
 | POST | `/api/v1/knowledge-sources/connectors/test` | Test Connector | [Knowledge Sources](api/knowledge-sources.md) |
+| GET | `/api/v1/knowledge-sources/governance/confluence-spaces` | Get Confluence Space Scope | [Knowledge Sources](api/knowledge-sources.md) |
+| PUT | `/api/v1/knowledge-sources/governance/confluence-spaces` | Update Confluence Space Scope | [Knowledge Sources](api/knowledge-sources.md) |
 | GET | `/api/v1/knowledge-sources/governance/domain-allowlist` | Get Domain Allowlist | [Knowledge Sources](api/knowledge-sources.md) |
 | PUT | `/api/v1/knowledge-sources/governance/domain-allowlist` | Update Domain Allowlist | [Knowledge Sources](api/knowledge-sources.md) |
 | DELETE | `/api/v1/knowledge-sources/{source_id}` | Delete Knowledge Source | [Knowledge Sources](api/knowledge-sources.md) |
@@ -751,4 +753,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **742 HTTP operations**, **629 paths**, **92 domain pages**.
+Total: **744 HTTP operations**, **630 paths**, **92 domain pages**.

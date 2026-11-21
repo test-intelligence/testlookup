@@ -204,7 +204,9 @@ def _b64(value: str) -> str:
 
 
 # A fake kubectl that keeps the Secret in ./secret.env (KEY=<base64>), applies
-# `patch secret ... -p <json>` to it with sed-free shell, and logs every call.
+# `patch secret ... --patch-file <file>` to it with sed-free shell, and logs
+# every call. A patch whose values arrive as an argument (`-p <json>`) is
+# flagged: any local user can read a command line (security review 2026-11-20, TL-08).
 FAKE_SECRET_KUBECTL = textwrap.dedent(
     r"""
     kubectl() {
@@ -215,7 +217,11 @@ FAKE_SECRET_KUBECTL = textwrap.dedent(
           cat secret.env ;;
         *" patch secret "*)
           local json=""
-          while [ "$#" -gt 0 ]; do [ "$1" = -p ] && json=$2; shift; done
+          while [ "$#" -gt 0 ]; do
+            [ "$1" = -p ] && echo SECRET_ON_ARGV >> kubectl.log
+            [ "$1" = --patch-file ] && json=$(cat "$2")
+            shift
+          done
           printf '%s\n' "$json" > last-patch.json
           printf '%s\n' "$json" | sed -e 's/^{"stringData":{//' -e 's/}}$//' | tr ',' '\n' \
             | sed -E 's/^"([A-Z_]+)":"(.*)"$/\1 \2/' | while read -r key value; do
@@ -269,6 +275,7 @@ def test_passwords_are_generated_once_kept_on_a_rerun_and_never_on_a_failed_read
     assert "SECOND_RUN_CHANGED_NOTHING" in out
     # The API not answering is not "the key is absent": no new password, no patch.
     assert "BLIP=refused" in out and "BLIP patches=1" in out
+    assert "SECRET_ON_ARGV" not in (tmp_path / "kubectl.log").read_text(encoding="utf-8")
 
     secret = _secret(tmp_path)
     redis_pw, mongo_pw = secret["REDIS_PASSWORD"], secret["MONGO_ROOT_PASSWORD"]
@@ -301,7 +308,12 @@ FAKE_MONGO_KUBECTL = textwrap.dedent(
     kubectl() {
       case " $* " in
         *" get secret "*) cat secret.env; return 0 ;;
-        *" patch secret "*) echo "patch" >> calls.log; printf '%s\n' "$*" > last-patch.txt; return 0 ;;
+        *" patch secret "*)
+          echo "patch" >> calls.log
+          # The new value travels in a file, never as an argument of kubectl.
+          case " $* " in *fakepw123*) echo "PASSWORD_ON_ARGV" >> calls.log ;; esac
+          while [ "$#" -gt 0 ]; do [ "$1" = --patch-file ] && cat "$2" > last-patch.txt; shift; done
+          return 0 ;;
         *" get deployment "*) [ "$MONGO_DEPLOYED" = true ] && echo deployment.apps/testlookup-mongo; return 0 ;;
         *" get pod "*) [ "$MONGO_POD_RUNNING" = true ] && echo "testlookup-mongo-5d8f-abcde <none>"; return 0 ;;
         *" exec "*) ;;
