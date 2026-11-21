@@ -504,7 +504,7 @@ export default function LoginPage() {
                     onClick={async () => {
                       try {
                         // `next`: where to land after the identity provider (the SAML RelayState, or kept with the OIDC state).
-                        const { data } = await api.get('/api/v1/sso/login-url', { params: { next: from } });
+                        const { data } = await api.get('/api/v1/sso/login-url', { params: { next: from }, withCredentials: true });
                         if (!isSafeExternalUrl(data?.redirect_url)) {
                           toast.error('SSO login URL rejected');
                           return;

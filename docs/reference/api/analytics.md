@@ -14,7 +14,7 @@ VIZ-202: ``release_id`` / ``suite_name`` (repeatable) count the analyses
 of executions in those releases (run's primary release) and suites
 (effective suite).
 
-Source: [backend/app/routers/analytics.py:773](../../../backend/app/routers/analytics.py#L773).
+Source: [backend/app/routers/analytics.py:781](../../../backend/app/routers/analytics.py#L781).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -172,7 +172,7 @@ so the table view and CSV export need no transformation. Each point carries
 panel of the Explorer's small multiples; ``meta.definitions.facet`` states
 it.
 
-Source: [backend/app/routers/analytics.py:1036](../../../backend/app/routers/analytics.py#L1036).
+Source: [backend/app/routers/analytics.py:1044](../../../backend/app/routers/analytics.py#L1044).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -860,7 +860,7 @@ Used by the Failures page "Classify" CTA when the AI classifier left a
 large chunk of failures uncategorized — lets the user tag them all in
 one shot rather than per-test.
 
-Source: [backend/app/routers/analytics.py:887](../../../backend/app/routers/analytics.py#L887).
+Source: [backend/app/routers/analytics.py:895](../../../backend/app/routers/analytics.py#L895).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -3541,7 +3541,7 @@ review feature: explicit ``test_suite_owners`` row → ``Project.manager_user_id
 Returns ``{queued: false, reason}`` when no owner can be resolved instead
 of erroring, so the UI can show a clear actionable message.
 
-Source: [backend/app/routers/analytics.py:799](../../../backend/app/routers/analytics.py#L799).
+Source: [backend/app/routers/analytics.py:807](../../../backend/app/routers/analytics.py#L807).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

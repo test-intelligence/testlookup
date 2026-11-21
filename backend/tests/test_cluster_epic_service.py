@@ -94,7 +94,7 @@ MEMBERS = [("fp-a", "test_checkout_total"), ("fp-b", "test_refund"), ("fp-c", No
 @pytest.fixture
 def world(monkeypatch):
     """Opted in, Jira online with an Epic type, a recurring cluster of three, no stored link."""
-    state = SimpleNamespace(enabled=True, project_key=None, cluster=_cluster(), members=list(MEMBERS),
+    state = SimpleNamespace(enabled=True, project_key=None, lead=False, cluster=_cluster(), members=list(MEMBERS),
                             links=[None], posts=[], gets=[], activity=[], metadata_calls=0, cfg_calls=0,
                             issue_types=["Bug", "Task", "Epic"], metadata_available=True, ledger=_Ledger(),
                             filings=0)
@@ -102,6 +102,11 @@ def world(monkeypatch):
 
     async def _settings(db, pid):
         return state.enabled, state.project_key
+
+    async def _scope(db, pid, user, *, cfg=None):
+        # What ``jira_key_scope`` reads: the project's Jira key, the default, the actor's role there.
+        return svc.JiraKeyScope(project_key=state.project_key, default_key=CFG["default_project_key"],
+                                any_key=state.lead and state.project_key is None)
 
     async def _current(db, pid, key):
         return state.cluster
@@ -140,6 +145,7 @@ def world(monkeypatch):
         return await real_file(*args, **kwargs)
 
     monkeypatch.setattr(ces, "_project_settings", _settings)
+    monkeypatch.setattr(svc, "jira_key_scope", _scope)
     monkeypatch.setattr(ces, "_current_cluster", _current)
     monkeypatch.setattr(ces, "_members", _members)
     monkeypatch.setattr(ces, "_stored_link", _stored)
@@ -281,15 +287,32 @@ async def test_the_epic_request_its_claim_and_the_link_without_a_defect(world):
 
 @pytest.mark.parametrize(
     ("requested", "on_project", "expected"),
-    [("REQ", "PRJ", "REQ"), (None, "PRJ", "PRJ"), ("  ", "PRJ", "PRJ"), (None, None, "DEF")],
+    [("PRJ", "PRJ", "PRJ"), ("prj", "PRJ", "PRJ"), (None, "PRJ", "PRJ"), ("  ", "PRJ", "PRJ"),
+     (None, None, "DEF"), ("DEF", None, "DEF")],
 )
-async def test_the_jira_project_key_is_the_request_then_the_project_then_the_default(
+async def test_the_jira_project_key_is_the_projects_then_the_default(
     world, requested, on_project, expected,
 ):
     world.project_key = on_project
     await _create(jira_project_key=requested)
     ((_path, body),) = world.posts
     assert body["fields"]["project"] == {"key": expected}
+
+
+@pytest.mark.parametrize("on_project", ["PRJ", None])
+async def test_a_request_for_another_jira_project_is_refused_before_anything_is_read_from_jira(world, on_project):
+    """The request's key used to win over the project's: any engineer could file an epic in any Jira project."""
+    world.project_key = on_project
+    refused = await _refused(jira_project_key="REQ")
+    assert refused.status_code == 422 and "REQ" in refused.detail
+    assert _nothing_sent(world) and world.metadata_calls == 0
+
+
+async def test_a_lead_on_a_project_without_a_jira_key_may_name_another_jira_project(world):
+    world.lead = True
+    await _create(jira_project_key="REQ")
+    ((_path, body),) = world.posts
+    assert body["fields"]["project"] == {"key": "REQ"}
 
 
 async def test_an_edited_summary_is_sent_on_one_line_within_255(world):

@@ -101,6 +101,13 @@ def online(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def scoped(monkeypatch):
+    # Which Jira project the sync may read is its own rule
+    # (tests/regression/test_jira_keys_are_bound_to_the_project.py): here a
+    # lead on a project without a Jira key syncs the instance default, PAY.
+    from tests.fakes.fake_defect_world import patch_jira_key_scope
+
+    patch_jira_key_scope(monkeypatch, default_key="PAY")
+
     async def _scope(_db, _user, _pid):
         return PROJECT, None
 

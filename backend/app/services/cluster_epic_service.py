@@ -404,16 +404,20 @@ async def create_epic_for_cluster(
     ``no_epic_issue_type``), a stored link (returned, ``created: false``, nothing sent). Then the shared
     filing core in the ``cluster-epic:{pid}`` namespace (409 ``jira_outcome_unknown`` /
     ``confirm_not_filed`` as the defect create), the link row and the ``cluster.epic_created`` activity.
-    No ``Defect`` row. The Jira project key: the request's, else the project's, else the configured default.
+    No ``Defect`` row. The Jira project key: the project's own, else the configured default; the
+    request's key must be one the actor may use from this project (``jira.JiraKeyScope``), else 422
+    before anything is read from Jira.
     """
     pid = _pid(project_id)
-    enabled, project_key = await _project_settings(db, pid)
+    enabled, _project_key = await _project_settings(db, pid)
     if not enabled:
         raise HTTPException(status_code=403, detail=OPT_IN_OFF_DETAIL)
     cfg = await jira.resolve_jira_config(db)
     reason = jira.availability_reason(cfg)
     if reason:
         jira._raise_unavailable(reason)
+    key_scope = await jira.jira_key_scope(db, pid, actor, cfg=cfg)
+    key_scope.resolve(jira_project_key)
     prefill = await build_epic_prefill(db, pid, membership_key, filer=getattr(actor, "username", None))
     _require_recurring(prefill)
     issue_type = await _require_epic_type(db, pid, actor)
@@ -425,7 +429,8 @@ async def create_epic_for_cluster(
         prefill = {**prefill, "summary": " ".join(summary.split())[:SUMMARY_MAX]}
     filing = await jira._file_or_reuse(
         db, pid, actor, prefill, cfg,
-        jira_project_key=(jira_project_key or "").strip() or project_key or cfg.get("default_project_key"),
+        jira_project_key=jira_project_key,
+        key_scope=key_scope,
         issue_type=issue_type,
         assignee=None,
         extra_comment=None,

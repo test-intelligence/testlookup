@@ -23,6 +23,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 pytest.importorskip("asyncpg")
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
+# An unbound token: it reaches only accounts SCIM created (or that have a federated link), so the fixture
+# records each user as SCIM-created; the group routes look members up inside that scope.
+_TOKEN = SimpleNamespace(sso_config_id=None)
+
 
 def _dsn() -> str:
     value = os.getenv("TESTLOOKUP_POSTGRES_TEST_DSN", "").strip()
@@ -43,7 +47,15 @@ class _Req:
 
 @pytest.fixture
 async def world(monkeypatch):
-    from app.models.postgres import ProjectMember, Project, SCIMGroup, User, UserRole
+    from app.models.postgres import (
+        IdentityEvent,
+        IdentityEventType,
+        Project,
+        ProjectMember,
+        SCIMGroup,
+        User,
+        UserRole,
+    )
     from app.services import scim_group_service as sgs
 
     async def _no_cache(user_ids):
@@ -62,6 +74,8 @@ async def world(monkeypatch):
     async with factory() as db:
         db.add_all([*users, admin, *projects])
         await db.flush()
+        db.add_all([IdentityEvent(event_type=IdentityEventType.SCIM_USER_CREATED.value, user_id=u.id, success=True)
+                    for u in users])
         # user 2 was granted Payment by a person, as QA_LEAD
         db.add(ProjectMember(user_id=users[2].id, project_id=projects[0].id, role="QA_LEAD"))
         await db.commit()
@@ -77,6 +91,7 @@ async def world(monkeypatch):
             await db.execute(delete(ProjectActivityEvent).where(ProjectActivityEvent.project_id.in_([p.id for p in projects])))
             await db.execute(delete(ProjectMember).where(ProjectMember.project_id.in_([p.id for p in projects])))
             await db.execute(delete(Project).where(Project.id.in_([p.id for p in projects])))
+            await db.execute(delete(IdentityEvent).where(IdentityEvent.user_id.in_([u.id for u in users])))
             await db.execute(delete(User).where(User.id.in_([u.id for u in [*users, admin]])))
             await db.commit()
         await engine.dispose()
@@ -94,7 +109,7 @@ async def _create(w, name, user_ids):
     from app.routers.scim import scim_create_group
 
     body = {"displayName": name, "members": [{"value": str(u)} for u in user_ids]}
-    return await scim_create_group(_Req(body), scim_token=None, db=w.db)
+    return await scim_create_group(_Req(body), scim_token=_TOKEN, db=w.db)
 
 
 async def _map(w, group_id, pairs):
@@ -123,13 +138,13 @@ async def test_group_members_get_the_mapped_project_and_a_removal_removes_only_t
     assert sorted(e for e, _ in events) == ["member.added", "member.added"], "one ledger row per SCIM-granted membership"
 
     patch = {"Operations": [{"op": "remove", "path": f'members[value eq "{u[0].id}"]'}]}
-    g2 = await scim_patch_group(uuid.UUID(g["id"]), _Req(patch), scim_token=None, db=world.db)
+    g2 = await scim_patch_group(uuid.UUID(g["id"]), _Req(patch), scim_token=_TOKEN, db=world.db)
     assert {x["value"] for x in g2["members"]} == {str(u[1].id), str(u[2].id)}
     m = await _members(world, pay.id)
     assert u[0].id not in m and m[u[1].id][0] == "QA_ENGINEER" and m[u[2].id] == ("QA_LEAD", None)
 
     patch = {"Operations": [{"op": "remove", "path": "members", "value": [{"value": str(u[2].id)}]}]}
-    await scim_patch_group(uuid.UUID(g["id"]), _Req(patch), scim_token=None, db=world.db)
+    await scim_patch_group(uuid.UUID(g["id"]), _Req(patch), scim_token=_TOKEN, db=world.db)
     assert (await _members(world, pay.id))[u[2].id] == ("QA_LEAD", None), "removing a group member keeps the manual row"
 
 
@@ -142,7 +157,7 @@ async def test_the_highest_role_wins_and_deleting_a_group_removes_its_grant(worl
     await _map(world, qa["id"], [(pay.id, "TESTER"), (gw.id, "QA_ENGINEER")])
     await _map(world, leads["id"], [(pay.id, "QA_LEAD")])
     assert (await _members(world, pay.id))[u[3].id] == ("QA_LEAD", f"scim:{world.names[1]}")
-    await scim_delete_group(uuid.UUID(leads["id"]), scim_token=None, db=world.db)
+    await scim_delete_group(uuid.UUID(leads["id"]), scim_token=_TOKEN, db=world.db)
     assert (await _members(world, pay.id))[u[3].id] == ("TESTER", f"scim:{world.names[0]}")
     await _map(world, qa["id"], [])
     assert u[3].id not in await _members(world, pay.id) and u[3].id not in await _members(world, gw.id)
@@ -152,7 +167,7 @@ async def test_filter_conflict_and_unknown_member(world):
     from app.routers.scim import scim_list_groups
 
     await _create(world, world.names[0], [])
-    listed = await scim_list_groups(_Req(), scim_token=None, db=world.db, filter=f'displayName eq "{world.names[0].upper()}"',
+    listed = await scim_list_groups(_Req(), scim_token=_TOKEN, db=world.db, filter=f'displayName eq "{world.names[0].upper()}"',
                                     startIndex=1, count=100)
     assert listed["totalResults"] == 1 and listed["Resources"][0]["displayName"] == world.names[0]
     with pytest.raises(HTTPException) as exc:
@@ -162,5 +177,5 @@ async def test_filter_conflict_and_unknown_member(world):
         await _create(world, world.names[1], [uuid.uuid4()])
     assert exc.value.status_code == 400
     with pytest.raises(HTTPException) as exc:
-        await scim_list_groups(_Req(), scim_token=None, db=world.db, filter='members eq "x"', startIndex=1, count=10)
+        await scim_list_groups(_Req(), scim_token=_TOKEN, db=world.db, filter='members eq "x"', startIndex=1, count=10)
     assert exc.value.status_code == 400

@@ -34,7 +34,8 @@ backup taken in step 2 together with the previous version's images.
 ## After 0.1.0 (the next release)
 
 Security fixes in this release change what some roles may do and what some API
-calls answer. Nothing in the database changes and there is no migration.
+calls answer. There is one migration (`0257`, a new column on SSO configurations);
+the release's migration step runs it.
 
 ### Check `.env` if you installed the release images by hand
 
@@ -178,6 +179,16 @@ Existing usernames that contain `@` keep working for sign-in.
 - **Bucket-drop ingestion.** A dropped build with a file over 50 MiB, or over the result limit, is refused. A project whose slug is `uploads` no longer has its dropped builds ingested.
 - **Failure clusters.** The stored `failure_clusters` vector collection is no longer written; an existing one stays until it is dropped with its collection generation and can be deleted.
 - **Shared report pages** are sent with `Cache-Control: no-store`, so proxies and browsers no longer cache them.
+
+### Single sign-on, SCIM and Jira
+
+- **SSO and existing accounts.** A person whose first SSO sign-in carries the e-mail of an account that already exists is refused until an administrator turns on "Link existing accounts by verified e-mail" on the SSO configuration (Settings, SSO). Administrator accounts are never linked and keep signing in with their password. With SAML the NameID must be the account's e-mail for a link.
+- **SAML needs HTTPS.** Sign-in is tied to the browser with a `Secure` cookie. On a plain-HTTP site set `SAML_BROWSER_BINDING=false`, or `/sso/login-url` answers 400. The ACS URL and the OIDC redirect URI (from `SAML_BASE_URL`) must be on the host the browser uses for the API, and a proxy of your own must pass `Cookie` and `Set-Cookie` for `/api/v1/sso`. A sign-in in flight during the upgrade fails once.
+- **SAML assertions.** An identity provider whose assertions lack `Recipient` or `NotOnOrAfter`, or stay usable for more than 10 minutes with no shorter `SubjectConfirmationData` time, is refused. Shorten the lifetime at the provider or raise `SAML_MAX_ASSERTION_LIFETIME_SECONDS`. Test a sign-in after the upgrade while the admin fallback is on.
+- **SCIM with an unbound token.** Accounts that were created in TestLookup (not over SCIM) and have never signed in through SSO are invisible to it: a `userName eq` filter returns nothing and the provider's follow-up create fails with 409. Bind the token to the SSO configuration and have those people sign in through SSO once, or manage those accounts in TestLookup. Renames and e-mail changes pushed with an unbound token fail with 403. Do not prune `identity_events` by hand: the `SCIM_USER_CREATED` rows mark the accounts such a token manages.
+- **SCIM and the last administrator.** A provider that tries to deactivate or delete the only active administrator gets 409. Make a second administrator active first.
+- **Jira keys.** Before upgrading, an administrator should set the Jira key on each project (Projects, edit) whose team files into a Jira project other than the default. Afterwards QA engineers on a project without a key can file and link only in the default Jira project, and QA leads can no longer set the key. One key per project: for a team that files into several Jira projects leave the key empty and have a QA lead file the exceptions. A pending approval that carries another Jira project is approved without a ticket and shows the reason.
+- **API clients.** New 422 answers on the Jira filing, linking and release-sync routes; 403 from the Jira picker route for viewers and testers; the Jira status sync result has an `out_of_scope` count; `/sso/login-url` and `/sso/oidc/login` can answer 429.
 
 ### Cluster installs (K3s, OpenShift, Kubernetes)
 

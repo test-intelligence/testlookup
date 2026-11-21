@@ -1,6 +1,7 @@
 """SSO / SAML service — configuration management, assertion validation, JIT provisioning."""
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import secrets
@@ -149,6 +150,15 @@ _NS = {
 }
 
 
+class SignedAssertionRefused(ValueError):
+    """A SAML response whose signature verified, refused for what it says.
+
+    ``parse_saml_response`` raises a plain ``ValueError`` for anything it
+    refuses before the signature check passes (anyone can send those, so the
+    ACS only logs them) and this for a refusal after it (which the ACS audits).
+    """
+
+
 def _verify_xml_signature(xml_bytes: bytes, idp_certificate_pem: str):
     """
     Cryptographically verify an XML-DSig signature on a SAML Response using
@@ -254,7 +264,8 @@ def parse_saml_response(
 
     Raises ValueError on malformed/invalid/unsigned responses, on a missing
     or empty certificate, or when the signed subtree does not contain exactly
-    one Assertion / Subject / NameID (XML Signature Wrapping defence).
+    one Assertion / Subject / NameID (XML Signature Wrapping defence). A
+    refusal after the signature verified is a :class:`SignedAssertionRefused`.
     """
     import base64
 
@@ -284,7 +295,10 @@ def parse_saml_response(
     except ElementTree.ParseError as exc:
         raise ValueError(f"Malformed SAML XML: {exc}") from exc
 
-    return _extract_saml_claims(root)
+    try:
+        return _extract_saml_claims(root)
+    except ValueError as exc:
+        raise SignedAssertionRefused(str(exc)) from exc
 
 
 def parse_saml_response_unverified(saml_response_b64: str) -> dict:
@@ -368,12 +382,14 @@ def _extract_saml_claims(root) -> dict:
     # used for response binding (replay protection).
     recipient = None
     subject_in_response_to = None
+    subject_not_on_or_after = None
     scd = subjects[0].find(
         "saml:SubjectConfirmation/saml:SubjectConfirmationData", _NS
     )
     if scd is not None:
         recipient = scd.get("Recipient")
         subject_in_response_to = scd.get("InResponseTo")
+        subject_not_on_or_after = scd.get("NotOnOrAfter")
 
     # InResponseTo may also appear on the Response wrapper.
     response_in_response_to = root.get("InResponseTo") if not root.tag.endswith("Assertion") else None
@@ -435,6 +451,7 @@ def _extract_saml_claims(root) -> dict:
         "in_response_to": in_response_to,
         "assertion_id": assertion_id,
         "not_on_or_after": not_on_or_after,
+        "subject_not_on_or_after": subject_not_on_or_after,
         "conditions_present": conditions_present,
     }
 
@@ -451,37 +468,57 @@ _SAML_REQUEST_PREFIX = "saml:authnreq:"
 _SAML_ASSERTION_PREFIX = "saml:assertion:"
 # An SP-initiated login must round-trip through the IdP within this window.
 _SAML_REQUEST_TTL_SECONDS = 600  # 10 minutes
-# Fallback single-use cache lifetime when the assertion carries no NotOnOrAfter.
-_SAML_ASSERTION_DEFAULT_TTL = 600
-_SAML_ASSERTION_MAX_TTL = 24 * 3600
+# What is stored for a request that was started without a browser cookie
+# (SAML_BROWSER_BINDING off). It is not a SHA-256, so no cookie ever matches it.
+_SAML_REQUEST_UNBOUND = "1"
 
 
-async def remember_saml_request(request_id: str, ttl: int = _SAML_REQUEST_TTL_SECONDS) -> None:
+def browser_binding_hash(token: str) -> str:
+    """What the server keeps of a sign-in cookie: its SHA-256, never the value."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def browser_binding_matches(token: Optional[str], stored_hash: object) -> bool:
+    """Whether ``token`` (the cookie the browser sent) is the one whose hash was
+    stored when the sign-in started. Constant-time; nothing matches a missing
+    cookie or a sign-in that was stored without a hash."""
+    if not token or not isinstance(stored_hash, str) or len(stored_hash) != 64:
+        return False
+    return hmac.compare_digest(browser_binding_hash(token), stored_hash)
+
+
+async def remember_saml_request(
+    request_id: str, ttl: int = _SAML_REQUEST_TTL_SECONDS, *, browser_hash: Optional[str] = None,
+) -> None:
     """Persist a freshly-minted SP-initiated request id so the ACS can later
-    bind the IdP's response to it (single-use). Best-effort: a Redis failure
-    here only means the eventual login falls back to IdP-initiated handling."""
+    bind the IdP's response to it (single-use), together with the hash of the
+    cookie set in the browser that started the sign-in (``browser_hash``)."""
     if not request_id:
         return
     from app.db.redis_client import get_redis
 
     redis = get_redis()
-    await redis.set(f"{_SAML_REQUEST_PREFIX}{request_id}", "1", ex=ttl)
+    await redis.set(f"{_SAML_REQUEST_PREFIX}{request_id}", browser_hash or _SAML_REQUEST_UNBOUND, ex=ttl)
 
 
-async def consume_saml_request(request_id: str) -> bool:
+async def consume_saml_request(request_id: str) -> Optional[str]:
     """Atomically consume a stored SP-initiated request id.
 
-    Returns True iff the id existed and was pending (and is now burned, so it
-    can never be replayed). Fails CLOSED — a Redis error raises so the ACS
-    rejects the assertion rather than silently skipping the binding check.
+    Returns what was stored with it (the browser cookie's hash, or the
+    "started without a cookie" marker) when the id existed and was pending; it
+    is now burned, so it can never be replayed. Returns None otherwise. Fails
+    CLOSED — a Redis error raises so the ACS rejects the assertion rather than
+    silently skipping the binding check.
     """
     if not request_id:
-        return False
+        return None
     from app.db.redis_client import get_redis
 
     redis = get_redis()
-    deleted = await _getdel(redis, f"{_SAML_REQUEST_PREFIX}{request_id}")
-    return deleted is not None
+    stored = await _getdel(redis, f"{_SAML_REQUEST_PREFIX}{request_id}")
+    if isinstance(stored, bytes):
+        stored = stored.decode("utf-8", "replace")
+    return stored if isinstance(stored, str) and stored else None
 
 
 async def _getdel(redis, key: str):
@@ -613,17 +650,22 @@ async def claim_sso_login(code: str) -> Optional[dict]:
     return json.loads(raw) if raw else None
 
 
-def _assertion_ttl_seconds(not_on_or_after: Optional[str]) -> int:
-    """Seconds to retain an assertion id in the single-use cache: until just
-    past its NotOnOrAfter (capped), so replays can't outlive the assertion."""
-    if not not_on_or_after:
-        return _SAML_ASSERTION_DEFAULT_TTL
+def _saml_instant(raw: str, what: str) -> datetime:
+    """A SAML ``xs:dateTime`` attribute as an aware UTC datetime (ValueError when it is not one)."""
     try:
-        noa = datetime.fromisoformat(not_on_or_after.replace("Z", "+00:00"))
-    except ValueError:
-        return _SAML_ASSERTION_DEFAULT_TTL
-    delta = int((noa - datetime.now(timezone.utc)).total_seconds()) + 60
-    return max(1, min(delta, _SAML_ASSERTION_MAX_TTL))
+        instant = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"SAML Assertion {what} is not a valid time") from exc
+    return instant if instant.tzinfo else instant.replace(tzinfo=timezone.utc)
+
+
+def _assertion_ttl_seconds(expires_at: datetime, skew: timedelta) -> int:
+    """Seconds to retain an assertion id in the single-use cache: a minute past
+    the last moment the assertion is accepted (its expiry plus the clock skew),
+    so a replay can never outlive its record. ``enforce_saml_security`` has
+    already bounded the expiry by SAML_MAX_ASSERTION_LIFETIME_SECONDS."""
+    remaining = expires_at + skew - datetime.now(timezone.utc)
+    return max(1, int(remaining.total_seconds()) + 60)
 
 
 async def claim_assertion_id(assertion_id: str, ttl: int) -> bool:
@@ -638,21 +680,53 @@ async def claim_assertion_id(assertion_id: str, ttl: int) -> bool:
     return bool(ok)
 
 
-async def enforce_saml_security(parsed: dict, config: SSOConfiguration) -> None:
+async def enforce_saml_security(
+    parsed: dict, config: SSOConfiguration, browser_token: Optional[str] = None,
+) -> None:
     """Validate the response-binding and anti-replay properties of a
     signature-verified assertion. Raises ValueError on any failure.
 
+    ``browser_token`` is the sign-in cookie the browser sent to the ACS.
+
     Checks, in order:
-      1. ``<Conditions>`` present (a bounded validity window is mandatory).
+      1. ``<Conditions>`` present with a ``NotOnOrAfter``; the assertion stops
+         being usable (the earlier of that and ``SubjectConfirmationData``'s
+         ``NotOnOrAfter``) within SAML_MAX_ASSERTION_LIFETIME_SECONDS plus the
+         clock skew.
       2. ``AudienceRestriction`` contains this SP (blocks cross-SP reuse).
-      3. ``Recipient`` matches the configured ACS URL when present.
-      4. ``InResponseTo`` matches and consumes a pending SP-initiated request
-         (or, when absent, IdP-initiated must be explicitly enabled).
+      3. ``Recipient`` is present and matches the configured ACS URL.
+      4. ``InResponseTo`` matches and consumes a pending SP-initiated request,
+         and the response came back through the browser that started it (or,
+         when ``InResponseTo`` is absent, IdP-initiated must be explicitly
+         enabled; such a response has no starting browser).
       5. The assertion ID has not been seen before (single-use replay cache).
     """
     if not parsed.get("conditions_present"):
         raise ValueError(
             "SAML Assertion has no <Conditions> — refusing an assertion with no bounded validity window"
+        )
+
+    # 1. A bounded, short validity window.
+    if not parsed.get("not_on_or_after"):
+        raise ValueError(
+            "SAML Assertion has no NotOnOrAfter in <Conditions> — refusing an assertion that never expires"
+        )
+    now = datetime.now(timezone.utc)
+    skew = timedelta(seconds=max(0, settings.SAML_CLOCK_SKEW_SECONDS))
+    expires_at = _saml_instant(parsed["not_on_or_after"], "Conditions NotOnOrAfter")
+    if parsed.get("subject_not_on_or_after"):
+        expires_at = min(
+            expires_at,
+            _saml_instant(parsed["subject_not_on_or_after"], "SubjectConfirmationData NotOnOrAfter"),
+        )
+    if now >= expires_at + skew:
+        raise ValueError("SAML Assertion has expired (NotOnOrAfter)")
+    max_lifetime = timedelta(seconds=settings.SAML_MAX_ASSERTION_LIFETIME_SECONDS)
+    if expires_at - now > max_lifetime + skew:
+        raise ValueError(
+            "SAML Assertion stays valid for longer than SAML_MAX_ASSERTION_LIFETIME_SECONDS "
+            f"({settings.SAML_MAX_ASSERTION_LIFETIME_SECONDS} s, plus the clock skew) allows; shorten the "
+            "assertion lifetime at the identity provider or raise the setting"
         )
 
     # 2. Audience restriction must name this SP.
@@ -663,18 +737,28 @@ async def enforce_saml_security(parsed: dict, config: SSOConfiguration) -> None:
     if expected and not (audiences & expected):
         raise ValueError("SAML Assertion audience does not match this service provider")
 
-    # 3. Recipient (SubjectConfirmationData) must match the ACS URL.
+    # 3. Recipient (SubjectConfirmationData) must be present and match the ACS URL.
     recipient = parsed.get("recipient")
     expected_acs = (config.sp_acs_url or "").rstrip("/")
-    if recipient and expected_acs and recipient.rstrip("/") != expected_acs:
+    if not recipient:
+        raise ValueError("SAML Assertion has no Recipient in SubjectConfirmationData")
+    if expected_acs and recipient.rstrip("/") != expected_acs:
         raise ValueError("SAML Assertion Recipient does not match the configured ACS URL")
 
-    # 4. Response binding (anti-replay leg #1): consume the SP-initiated request.
+    # 4. Response binding (anti-replay leg #1): consume the SP-initiated request,
+    #    then require the cookie of the browser that started it. The request id
+    #    is spent first, so a refused response cannot be tried with another cookie.
     in_response_to = parsed.get("in_response_to")
     if in_response_to:
-        if not await consume_saml_request(in_response_to):
+        stored = await consume_saml_request(in_response_to)
+        if not stored:
             raise ValueError(
                 "SAML Assertion InResponseTo does not match a pending login request (possible replay)"
+            )
+        if settings.SAML_BROWSER_BINDING and not browser_binding_matches(browser_token, stored):
+            raise ValueError(
+                "SAML response did not come back through the browser that started the sign-in "
+                "(the sign-in cookie is missing or different)"
             )
     elif not settings.SAML_ALLOW_IDP_INITIATED:
         raise ValueError(
@@ -685,7 +769,7 @@ async def enforce_saml_security(parsed: dict, config: SSOConfiguration) -> None:
     assertion_id = parsed.get("assertion_id")
     if not assertion_id:
         raise ValueError("SAML Assertion has no ID — cannot enforce single-use")
-    ttl = _assertion_ttl_seconds(parsed.get("not_on_or_after"))
+    ttl = _assertion_ttl_seconds(expires_at, skew)
     if not await claim_assertion_id(assertion_id, ttl):
         raise ValueError("SAML Assertion has already been used (replay detected)")
 
@@ -842,8 +926,18 @@ async def jit_provision_or_link(
 
     W20 ADM-08b: an OIDC sign-in passes ``name_id`` = the ID token's ``sub``, its claims
     as ``attributes`` and ``email_verified``; the groups come from ``oidc_groups_claim``.
-    An IdP that says the email is NOT verified never links to an existing local account
-    with that email (that would hand the account to whoever typed the address).
+
+    A subject with no federated link yet whose e-mail belongs to an existing local account
+    is refused (``ValueError``) unless the configuration's ``link_existing_accounts_by_email``
+    is on, and then still refused when:
+
+    * the account is an ADMIN (never linked: whoever controls that e-mail at the IdP would
+      become an administrator);
+    * OIDC: the ID token does not say ``email_verified: true`` (a missing claim is not enough);
+    * SAML: the account's e-mail is not the NameID. An e-mail *attribute* never selects an
+      existing account, because many IdPs let a user edit it.
+
+    A refusal creates nothing: no link and no second account with the same e-mail.
 
     Returns (user, is_new_user).
     """
@@ -907,12 +1001,50 @@ async def jit_provision_or_link(
                 ip_address=ip_address,
             )
     else:
-        # Check if a user with this email already exists
-        user_result = await db.execute(select(User).where(User.email == email))
-        user = user_result.scalar_one_or_none()
+        # No link yet. Which existing account, if any, does this sign-in name?
+        # OIDC: the e-mail claim. SAML: the NameID only.
+        is_oidc = config.provider_type == SSOProviderType.OIDC
+        user = await _existing_user_by_email(db, email if is_oidc else name_id)
+        if not is_oidc and email.lower() != name_id.lower():
+            claimed = await _existing_user_by_email(db, email)
+            if claimed is not None and (user is None or claimed.id != user.id):
+                raise ValueError(
+                    "An account with this e-mail already exists, but the sign-in's NameID is a different value, "
+                    "so the account was not linked. Ask an administrator to have the identity provider send the "
+                    "e-mail address as the SAML NameID"
+                )
 
-        if user is not None and email_verified is False:
-            raise ValueError("The identity provider has not verified this email; it cannot sign in to an existing account")
+        if user is not None:
+            if user.role == UserRole.ADMIN:
+                raise ValueError(
+                    "An account with this e-mail already exists and is an administrator account. "
+                    "Administrator accounts are never linked to an SSO identity automatically; "
+                    "sign in with the account's password"
+                )
+            if not getattr(config, "link_existing_accounts_by_email", False):
+                raise ValueError(
+                    "An account with this e-mail already exists; ask an administrator to enable linking "
+                    "for this SSO configuration"
+                )
+            if is_oidc and email_verified is not True:
+                raise ValueError(
+                    "An account with this e-mail already exists, and the identity provider did not say the "
+                    "e-mail is verified, so the account was not linked. Verify the e-mail at the identity "
+                    "provider, or ask an administrator"
+                )
+            await _log_identity_event(
+                db,
+                IdentityEventType.ACCOUNT_LINKED,
+                user_id=user.id,
+                sso_config_id=config.id,
+                detail={
+                    "external_id": name_id,
+                    "email": user.email,
+                    "role": str(getattr(user.role, "value", user.role)),
+                    "provider_type": "OIDC" if is_oidc else "SAML",
+                },
+                ip_address=ip_address,
+            )
 
         if user is None:
             # JIT provision new user
@@ -967,6 +1099,14 @@ async def jit_provision_or_link(
         db.add(fed_identity)
 
     return user, is_new_user
+
+
+async def _existing_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
+    """The local account with this e-mail, compared without case (as account creation does)."""
+    result = await db.execute(
+        select(User).where(func.lower(User.email) == email.lower()).order_by(User.created_at, User.id).limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 # ── Identity Event logging ──────────────────────────────────────────────────

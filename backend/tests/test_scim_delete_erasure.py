@@ -6,7 +6,9 @@ The real SCIM router on a bare FastAPI app over the SQLite world of ``test_subje
 namespace carrying ``sso_config_id`` and the token ``id``). Deactivate (the default) is today's soft delete, event for
 event; erase starts the W31 erasure in ONE commit (job ``source="scim"``, no requester, the lock-out, the pending
 request accepted, ``SCIM_USER_ERASURE_STARTED``) and dispatches AFTER the commit; a retry / an erased person is a
-no-op; a refused erasure falls back to the deactivation + ``SCIM_ERASURE_REFUSED``; scope and 404 as today. Real
+no-op; a refused erasure falls back to the deactivation + ``SCIM_ERASURE_REFUSED``, except for the last active
+administrator, whose DELETE is refused with 409 in both modes (the account stays active); an unbound token reaches
+only accounts provisioning manages (here: a federated link), anything else is 404. Real
 Postgres: ``tests/integration/test_scim_delete_erasure_postgres.py``.
 """
 from __future__ import annotations
@@ -45,7 +47,26 @@ from tests.test_subject_erasure_service import maker as _sqlite_maker
 from tests.test_subject_erasure_service import world as _sqlite_world
 
 maker = pytest.fixture(name="maker")(_sqlite_maker.__wrapped__)  # type: ignore[attr-defined]
-world = pytest.fixture(name="world")(_sqlite_world.__wrapped__)  # type: ignore[attr-defined]
+_local_world = pytest.fixture(name="_local_world")(_sqlite_world.__wrapped__)  # type: ignore[attr-defined]
+
+DIRECTORY_ID = uuid.UUID("5c1a0000-0000-4000-8000-0000000d17ec")
+
+
+async def _manage(maker: Any, *people: User) -> None:
+    """Put ``people`` in an unbound token's scope: it reaches only accounts SCIM created or that have a
+    federated link (``scim_service._scope_user_query``). A link, so that the identity events stay the route's own."""
+    async with maker.session() as db:
+        for person in people:
+            db.add(FederatedIdentity(id=uuid.uuid4(), user_id=person.id, sso_config_id=DIRECTORY_ID,
+                                     external_id=f"ext-{person.id.hex}"))
+        await db.commit()
+
+
+@pytest.fixture
+async def world(maker: Any, _local_world: SimpleNamespace) -> SimpleNamespace:
+    """The erasure tests' people, every one of them managed by provisioning."""
+    await _manage(maker, *vars(_local_world).values())
+    return _local_world
 
 USERS = "/api/v1/scim/v2/Users"
 TOKEN_ID = uuid.UUID("5c1a0000-0000-4000-8000-00000000abcd")
@@ -169,6 +190,7 @@ async def test_deactivate_mode_is_todays_soft_delete(maker: Any, world: SimpleNa
     async with maker.session() as db:
         db.add(twin)
         await db.commit()
+    await _manage(maker, twin)
     if stored is not None:
         await _set_mode(maker, stored)
     await _seed_sessions_and_keys(maker, subject)
@@ -203,6 +225,7 @@ async def test_deactivate_mode_leaves_a_pending_request_and_an_erased_row_alone(
         erased = _user(UserRole.TESTER, "zqxwgone", is_active=False, erased_at=datetime.now(timezone.utc))
         db.add(erased)
         await db.commit()
+    await _manage(maker, erased)
     assert (await _delete(maker, events, world.subject.id)).status_code == 204
     assert (await _delete(maker, events, erased.id)).status_code == 204
     assert [e.detail for e in await _events_of(maker, erased.id)] == [{"no_changes": True}]
@@ -353,12 +376,10 @@ async def _refusing(maker: Any, world: SimpleNamespace, code: str) -> User:
             db.add(_job(world.subject, world.admin, kind="export", status="running"))
             await db.commit()
         return world.subject
-    if code == "last_admin":
-        return world.admin            # the only active administrator of the world
     return world.bot                  # not_a_person (a service account)
 
 
-@pytest.mark.parametrize("code", ["not_a_person", "export_blocks_erasure", "last_admin"])
+@pytest.mark.parametrize("code", ["not_a_person", "export_blocks_erasure"])
 async def test_a_refused_erasure_deactivates_and_records_the_refusal(maker: Any, world: SimpleNamespace,
                                                                     events: list[Any], code: str) -> None:
     await _set_mode(maker, "erase")
@@ -378,6 +399,41 @@ async def test_a_refused_erasure_deactivates_and_records_the_refusal(maker: Any,
         assert (await db.get(SubjectErasureRequest, request_id)).status == "pending"
     assert await _count(maker, SubjectRightsJob, SubjectRightsJob.kind == "erasure") == 0
     assert await _count(maker, AccessAuditLog) == 0
+
+
+@pytest.mark.parametrize("mode", ["deactivate", "erase"])
+async def test_the_last_active_administrator_is_neither_erased_nor_deactivated(
+    maker: Any, world: SimpleNamespace, events: list[Any], mode: str,
+) -> None:
+    """Was: the ``last_admin`` refusal fell back to the deactivation, which locked every administrator out. Now the
+    DELETE is refused (409, a sentence that says what to do) and nothing is written."""
+    await _set_mode(maker, mode)
+    request_id = await _seed_request(maker, world.admin)     # the only active administrator of the world
+    response = await _delete(maker, events, world.admin.id)
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == scim_service.LAST_ADMIN_DEACTIVATION_DETAIL
+    assert events == []                                       # no commit, no revocation, no dispatch
+    assert await _events_of(maker, world.admin.id) == []
+    async with maker.session() as db:
+        assert (await db.get(User, world.admin.id)).is_active is True
+        assert (await db.get(SubjectErasureRequest, request_id)).status == "pending"
+    assert await _count(maker, SubjectRightsJob) == 0 and await _count(maker, AccessAuditLog) == 0
+
+
+@pytest.mark.parametrize("mode", ["deactivate", "erase"])
+async def test_a_local_only_account_is_out_of_an_unbound_tokens_scope(
+    maker: Any, world: SimpleNamespace, events: list[Any], mode: str,
+) -> None:
+    local = _user(UserRole.TESTER, "zqxwlocal")              # no SCIM_USER_CREATED event, no federated link
+    async with maker.session() as db:
+        db.add(local)
+        await db.commit()
+    await _set_mode(maker, mode)
+    response = await _delete(maker, events, local.id)
+    assert response.status_code == 404 and response.json()["detail"] == f"User {local.id} not found"
+    assert events == [] and await _count(maker, IdentityEvent) == 0
+    async with maker.session() as db:
+        assert (await db.get(User, local.id)).is_active is True
 
 
 async def test_a_synthetic_account_falls_back_too(maker: Any, world: SimpleNamespace, events: list[Any]) -> None:

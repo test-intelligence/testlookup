@@ -9,12 +9,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_password_hash
 from app.models.postgres import (
     FederatedIdentity,
+    IdentityEvent,
     IdentityEventType,
     SCIMToken,
     SSOConfiguration,
@@ -30,6 +31,7 @@ from app.services.subject_rights_vocab import ERROR_SENTENCES, SOURCE_SCIM
 from app.services.user_account_guards import (
     USER_ERASED_DETAIL,
     USERNAME_RESERVED_DETAIL,
+    assert_not_last_admin,
     is_erased,
     is_reserved_identity,
 )
@@ -70,6 +72,40 @@ def _reserved_value_refused() -> HTTPException:
 def _erased_refused() -> HTTPException:
     """W31 §3.2: an erased account is never changed or restored by an IdP (SCIM 409)."""
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=USER_ERASED_DETAIL)
+
+
+LAST_ADMIN_DEACTIVATION_DETAIL = (
+    "This account is the last active administrator, so it was not deactivated or deleted. "
+    "Make another administrator active first, then send the request again."
+)
+LAST_ADMIN_ROLE_DETAIL = (
+    "This account is the last active administrator, so its role was not lowered. "
+    "Make another administrator active first, then send the group change again."
+)
+IDENTITY_CHANGE_REFUSED_DETAIL = (
+    "This SCIM token may not change a user's userName or e-mail. Use a token that is bound to the "
+    "identity provider the account signs in with, or ask an administrator to change it."
+)
+
+
+async def _refuse_last_admin(db: AsyncSession, user: User, detail: str) -> None:
+    """No SCIM token locks the instance out: the last active administrator is never deactivated, deleted
+    or demoted over SCIM. The shared guard decides; its refusal becomes a SCIM 409 with a plain sentence."""
+    try:
+        await assert_not_last_admin(db, user)
+    except HTTPException as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail) from exc
+
+
+def _refuse_identity_change(sso_config_id: uuid.UUID | None, current: str, new: str) -> None:
+    """A userName or e-mail change needs a token bound to the directory the account is linked to.
+
+    Every account can ask for a password-reset mail (a SCIM-created one too: its first password is random),
+    so whoever sets the address can take the account over. A bound token only ever loads accounts linked to
+    its own directory (:func:`_scope_user_query`), so "bound" is the whole test here. Re-sending the stored
+    value in another letter case is not a change (a full PUT always repeats both)."""
+    if sso_config_id is None and new != current.strip().casefold():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=IDENTITY_CHANGE_REFUSED_DETAIL)
 
 
 def normalize_scim_pagination(start_index: int, count: int) -> tuple[int, int]:
@@ -201,8 +237,9 @@ async def validate_scim_token(db: AsyncSession, bearer_token: str) -> Optional[S
 
     # A token bound to an IdP is delegated authority from that configuration.
     # Replacing or disabling the IdP must therefore revoke that authority even
-    # when the token row itself has not been manually revoked. Unbound tokens
-    # remain intentionally system-wide.
+    # when the token row itself has not been manually revoked. An unbound token
+    # has no configuration to follow; it reaches only the accounts provisioning
+    # manages (see ``_scope_user_query``).
     if token.sso_config_id is not None:
         config_result = await db.execute(
             select(SSOConfiguration.is_active).where(
@@ -389,6 +426,7 @@ async def scim_update_user(
     if username is not None:
         username = _canonical_scim_username(username)
     if username is not None and username != user.username:
+        _refuse_identity_change(sso_config_id, user.username, username)
         if is_reserved_identity(username=username):
             raise _reserved_value_refused()
         # Check uniqueness
@@ -403,6 +441,7 @@ async def scim_update_user(
     if email is not None:
         email = _canonical_scim_email(email)
     if email is not None and email != user.email:
+        _refuse_identity_change(sso_config_id, user.email, email)
         if is_reserved_identity(email=email):
             raise _reserved_value_refused()
         dup = await db.execute(
@@ -424,6 +463,8 @@ async def scim_update_user(
 
     if active is not None:
         old_active = user.is_active
+        if old_active and not active:
+            await _refuse_last_admin(db, user, LAST_ADMIN_DEACTIVATION_DETAIL)
         user.is_active = active
         if old_active and not active:
             changes["deactivated"] = True
@@ -439,6 +480,8 @@ async def scim_update_user(
         if config:
             new_role = resolve_role_from_groups(groups, config.role_mapping, config.default_role)
             if user.role != new_role:
+                if new_role != UserRole.ADMIN:
+                    await _refuse_last_admin(db, user, LAST_ADMIN_ROLE_DETAIL)
                 changes["role"] = {"old": str(user.role), "new": str(new_role)}
                 user.role = new_role
 
@@ -520,7 +563,10 @@ async def scim_delete_user(
 ) -> Optional[uuid.UUID]:
     """SCIM ``DELETE /Users/{id}`` (W38, W31 F-2; contract D-8..D-10). Returns the erasure job's id when this call
     STARTED an erasure (the route dispatches the worker after its commit), else None. Stages only; the route
-    commits ONE transaction. The token's scope and the 404 are exactly today's.
+    commits ONE transaction. The token's scope and the 404 are :func:`_scope_user_query`'s.
+
+    The last active administrator is never deactivated here, in either mode: the call is refused with 409
+    (:func:`_refuse_last_admin`) and the account stays active.
 
     * ``deactivate`` (the operator setting's default): today's soft delete, byte-identical —
       :func:`scim_update_user` with ``active=False`` (``SCIM_USER_DEACTIVATED`` / ``SCIM_USER_UPDATED
@@ -528,8 +574,9 @@ async def scim_delete_user(
     * ``erase``, D-10 (idempotent): a live erasure job → one ``SCIM_USER_UPDATED {"no_changes": true,
       "erasure_job_id"}``, nothing else; an erased person → today's no-op.
     * ``erase``, D-9 (never leaves the account active): a refused erasure (``not_a_person``,
-      ``export_blocks_erasure``, ``last_admin``) → today's deactivation + ``SCIM_ERASURE_REFUSED``
+      ``export_blocks_erasure``) → today's deactivation + ``SCIM_ERASURE_REFUSED``
       (``success=False``, ``detail={"code"}``) so an administrator sees it and can erase by hand.
+      The one exception is ``last_admin``: the deactivation is refused too (409) and nothing is recorded.
     * ``erase``: the W31 erasure with no human actor — job ``source="scim"`` (``requested_by_id`` NULL), the person's
       pending erasure request accepted (``decided_by_id`` NULL), the lock-out (audit row actor NULL, ``after_value``
       + ``{"via": "scim", "scim_token_id"}`` and the request id), then ``SCIM_USER_ERASURE_STARTED``
@@ -598,16 +645,48 @@ async def _erasure_already_started(
 
 
 def _scope_user_query(query, sso_config_id: uuid.UUID | None):
-    """Restrict a user query to identities delegated to one SSO configuration."""
-    if sso_config_id is None:
-        return query
-    return query.where(
-        User.id.in_(
-            select(FederatedIdentity.user_id).where(
-                FederatedIdentity.sso_config_id == sso_config_id
+    """Restrict a user query to the accounts a SCIM token may read and write.
+
+    * A token bound to an SSO configuration: the accounts linked to that directory.
+    * An unbound token: the accounts provisioning manages. That is an account SCIM created (a
+      ``SCIM_USER_CREATED`` identity event names it; :func:`scim_create_user` writes that row in the same
+      transaction as the user, every time, and nothing else writes one) or an account with a federated link
+      to any directory. A local-only account, a local administrator included, is out of scope and answers
+      404 like any unknown id.
+
+    Every user read and write in this module, and the group routes' member lookups, go through here.
+    """
+    if sso_config_id is not None:
+        return query.where(
+            User.id.in_(
+                select(FederatedIdentity.user_id).where(
+                    FederatedIdentity.sso_config_id == sso_config_id
+                )
             )
         )
+    return query.where(
+        or_(
+            User.id.in_(select(FederatedIdentity.user_id)),
+            User.id.in_(
+                select(IdentityEvent.user_id).where(
+                    IdentityEvent.event_type == IdentityEventType.SCIM_USER_CREATED,
+                    IdentityEvent.user_id.is_not(None),
+                )
+            ),
+        )
     )
+
+
+async def scim_visible_user_ids(
+    db: AsyncSession,
+    user_ids: set[uuid.UUID],
+    sso_config_id: uuid.UUID | None,
+) -> set[uuid.UUID]:
+    """The subset of ``user_ids`` the token may read and write (the group routes' member check)."""
+    if not user_ids:
+        return set()
+    query = _scope_user_query(select(User.id).where(User.id.in_(list(user_ids))), sso_config_id)
+    return set((await db.execute(query)).scalars().all())
 
 
 async def scim_get_user(

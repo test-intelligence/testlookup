@@ -109,8 +109,8 @@ async def world(monkeypatch):
         await engine.dispose()
 
 
-def _req():
-    return SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"), headers={})
+def _req(cookies=None):
+    return SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"), headers={}, cookies=cookies or {})
 
 
 async def _create_active_oidc(w, **over):
@@ -136,6 +136,9 @@ async def _login_and_authorize(w, username: str) -> tuple[str, str]:
     async with w.factory() as db:
         start = await sso.oidc_login(next="/runs", db=db)
     assert start.status_code == 302
+    # The sign-in cookie this "browser" got; the callback is refused without it.
+    w.sso_cookie = start.headers["set-cookie"].split(";", 1)[0].split("=", 1)[1]
+    assert start.headers["set-cookie"].startswith(f"{sso.OIDC_BINDING_COOKIE}=")
     idp_url = start.headers["location"]
     assert idp_url.startswith(ISSUER + "/authorize?")
     answer = await w.idp.get(idp_url + f"&login_hint={username}")
@@ -146,11 +149,12 @@ async def _login_and_authorize(w, username: str) -> tuple[str, str]:
     return q["code"], q["state"]
 
 
-async def _callback(w, **params):
+async def _callback(w, with_cookie: bool = True, **params):
     from app.routers import sso
 
+    cookies = {sso.OIDC_BINDING_COOKIE: w.sso_cookie} if with_cookie else {}
     async with w.factory() as db:
-        return await sso.oidc_callback(_req(), db=db, **params)
+        return await sso.oidc_callback(_req(cookies), db=db, **params)
 
 
 async def _failures(w, config_id) -> list[str]:
@@ -236,11 +240,13 @@ async def test_an_idp_error_and_a_wrong_secret_are_refused(world):
 async def test_an_unverified_email_never_takes_over_an_existing_account(world):
     from app.models.postgres import FederatedIdentity
 
-    config = await _create_active_oidc(world)
+    # Linking is switched on, so the only thing in the way is the unverified e-mail.
+    config = await _create_active_oidc(world, link_existing_accounts_by_email=True)
+    assert config.link_existing_accounts_by_email is True
     code, state = await _login_and_authorize(world, "taken")
     refused = await _callback(world, code=code, state=state)
     assert refused.headers["location"].endswith("/login?sso_error=1")
-    assert any("not verified" in e for e in await _failures(world, config.id))
+    assert any("did not say the e-mail is verified" in e for e in await _failures(world, config.id))
     async with world.factory() as db:
         links = (await db.execute(select(FederatedIdentity).where(
             FederatedIdentity.user_id == world.existing.id))).scalars().all()
@@ -268,3 +274,41 @@ async def test_the_check_constraint_keeps_a_saml_row_complete(world):
         db.add(SSOConfiguration(display_name="half", provider_type="SAML", idp_entity_id="e"))
         with pytest.raises(IntegrityError, match="ck_sso_config_fields_by_provider"):
             await db.commit()
+
+
+async def test_an_existing_account_is_linked_only_when_the_switch_is_on(world):
+    from app.models.postgres import FederatedIdentity, IdentityEvent
+    from app.models.schemas import SSOConfigUpdate
+    from app.routers import sso
+
+    world.state.oidc_users["taken"]["email_verified"] = True
+    config = await _create_active_oidc(world)
+    assert config.link_existing_accounts_by_email is False  # the default
+
+    code, state = await _login_and_authorize(world, "taken")
+    refused = await _callback(world, code=code, state=state)
+    assert refused.headers["location"].endswith("/login?sso_error=1")
+    assert any("enable linking" in e for e in await _failures(world, config.id))
+    async with world.factory() as db:
+        assert (await db.execute(select(FederatedIdentity).where(
+            FederatedIdentity.user_id == world.existing.id))).scalars().all() == []
+        await sso.update_sso_config(config.id, SSOConfigUpdate(link_existing_accounts_by_email=True), _req(),
+                                    current_user=world.admin, db=db)
+
+    code, state = await _login_and_authorize(world, "taken")
+    done = await _callback(world, code=code, state=state)
+    assert "/sso/callback#code=" in done.headers["location"]
+    async with world.factory() as db:
+        link = (await db.execute(select(FederatedIdentity).where(
+            FederatedIdentity.user_id == world.existing.id))).scalar_one()
+        event = (await db.execute(select(IdentityEvent).where(
+            IdentityEvent.sso_config_id == config.id, IdentityEvent.event_type == "ACCOUNT_LINKED"))).scalar_one()
+    assert link.external_id == "fake-sub-taken" and event.user_id == world.existing.id
+
+
+async def test_a_callback_in_another_browser_is_refused(world):
+    config = await _create_active_oidc(world)
+    code, state = await _login_and_authorize(world, "lead")
+    refused = await _callback(world, with_cookie=False, code=code, state=state)
+    assert refused.headers["location"].endswith("/login?sso_error=1")
+    assert await _failures(world, config.id) == []  # a log line, not an identity event

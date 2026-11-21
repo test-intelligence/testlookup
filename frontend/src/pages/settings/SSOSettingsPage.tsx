@@ -123,6 +123,15 @@ export default function SSOSettingsPage() {
     }
   };
 
+  const handleToggleLinking = async (config: SSOConfig, allowed: boolean) => {
+    try {
+      await updateSSOConfig(config.id, { link_existing_accounts_by_email: allowed });
+      refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to change account linking');
+    }
+  };
+
   const handleTestConnection = async (configId: string) => {
     try {
       const result = await testSSOConnection(configId);
@@ -498,6 +507,21 @@ export default function SSOSettingsPage() {
                       </button>
                     </div>
                   )}
+                  <label className="flex items-start gap-2 pt-1 text-xs text-[var(--color-text-secondary)]">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={Boolean(config.link_existing_accounts_by_email)}
+                      onChange={e => void handleToggleLinking(config, e.target.checked)}
+                    />
+                    <span>
+                      Link existing accounts by verified e-mail
+                      <span className="block text-[var(--color-text-muted)]">
+                        When off, a first SSO sign-in with the e-mail of an existing account is refused.
+                        Administrator accounts are never linked; they sign in with their password.
+                      </span>
+                    </span>
+                  </label>
                   <SSORoleMappingEditor key={`${config.id}-${config.updated_at ?? ''}`} config={config} onSaved={refresh} />
                   {config.last_test_at && (
                     <p className="text-xs text-[var(--color-text-muted)]">

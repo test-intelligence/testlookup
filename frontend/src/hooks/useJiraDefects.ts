@@ -7,6 +7,7 @@ import {
   type JiraDefectMetadata,
   type JiraDefectPreview,
 } from '@/services/defectJiraService'
+import { usePermissions } from '@/hooks/usePermissions'
 
 /**
  * Jira picker metadata + availability for the one-click defect dialog
@@ -16,7 +17,9 @@ import {
  * server-side; SWR dedupes on top.
  */
 export function useJiraDefectMetadata(projectId: string | null | undefined) {
-  const key = projectId ? ['jira-defect-metadata', projectId] : null
+  // The route needs QA engineer; a lower role is not asked, so it sees no refusal.
+  const { isQaEngineer } = usePermissions()
+  const key = projectId && isQaEngineer ? ['jira-defect-metadata', projectId] : null
   const { data, error, isLoading } = useSWR<JiraDefectMetadata>(
     key,
     () => defectJiraService.metadata(projectId as string),

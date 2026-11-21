@@ -404,3 +404,29 @@ describe('single logout on a SAML card (W20 ADM-08c)', () => {
     expect(lines[1]).toBe('Single logout: off (no IdP SLO URL)')
   })
 })
+
+describe('linking existing accounts is an explicit switch', () => {
+  it('shows the switch off by default and sends the change', async () => {
+    renderWith([config({ enforcement_mode: 'OPTIONAL', is_active: true })])
+
+    const box = screen.getByRole('checkbox', { name: /Link existing accounts by verified e-mail/ }) as HTMLInputElement
+    expect(box.checked).toBe(false)
+    fireEvent.click(box)
+
+    await waitFor(() =>
+      expect(mockUpdateSSOConfig).toHaveBeenCalledWith('cfg-1', { link_existing_accounts_by_email: true }),
+    )
+  })
+
+  it('shows a configuration that allows linking as checked, and can turn it off', async () => {
+    renderWith([config({ enforcement_mode: 'OPTIONAL', is_active: true, link_existing_accounts_by_email: true })])
+
+    const box = screen.getByRole('checkbox', { name: /Link existing accounts by verified e-mail/ }) as HTMLInputElement
+    expect(box.checked).toBe(true)
+    fireEvent.click(box)
+
+    await waitFor(() =>
+      expect(mockUpdateSSOConfig).toHaveBeenCalledWith('cfg-1', { link_existing_accounts_by_email: false }),
+    )
+  })
+})

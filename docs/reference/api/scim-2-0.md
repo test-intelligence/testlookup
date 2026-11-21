@@ -10,7 +10,7 @@ Scim List Groups
 
 SCIM 2.0: list groups (W20 ADM-09); ``filter=displayName eq "<name>"`` only.
 
-Source: [backend/app/routers/scim.py:930](../../../backend/app/routers/scim.py#L930).
+Source: [backend/app/routers/scim.py:950](../../../backend/app/routers/scim.py#L950).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -120,7 +120,7 @@ Scim Create Group
 
 SCIM 2.0: create a group; its members' project memberships follow the group's mappings.
 
-Source: [backend/app/routers/scim.py:969](../../../backend/app/routers/scim.py#L969).
+Source: [backend/app/routers/scim.py:989](../../../backend/app/routers/scim.py#L989).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -181,7 +181,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-_group_resource(group, await _group_members(db, group.id), _base(request))
+_group_resource(group, await _group_members(db, group.id, scim_token.sso_config_id), _base(request))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -192,7 +192,7 @@ Scim Delete Group
 
 SCIM 2.0: delete a group; memberships it alone granted are removed.
 
-Source: [backend/app/routers/scim.py:1071](../../../backend/app/routers/scim.py#L1071).
+Source: [backend/app/routers/scim.py:1093](../../../backend/app/routers/scim.py#L1093).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -254,7 +254,7 @@ Scim Get Group
 
 SCIM 2.0: one group with its members.
 
-Source: [backend/app/routers/scim.py:957](../../../backend/app/routers/scim.py#L957).
+Source: [backend/app/routers/scim.py:977](../../../backend/app/routers/scim.py#L977).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -318,7 +318,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-_group_resource(group, await _group_members(db, group.id), _base(request))
+_group_resource(group, await _group_members(db, group.id, scim_token.sso_config_id), _base(request))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -329,7 +329,7 @@ Scim Patch Group
 
 SCIM 2.0 PatchOp on ``members`` (add / remove / replace, and ``members[value eq "<id>"]``) and ``displayName``.
 
-Source: [backend/app/routers/scim.py:1022](../../../backend/app/routers/scim.py#L1022).
+Source: [backend/app/routers/scim.py:1043](../../../backend/app/routers/scim.py#L1043).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -402,7 +402,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-_group_resource(group, await _group_members(db, group.id), _base(request))
+_group_resource(group, await _group_members(db, group.id, scim_token.sso_config_id), _base(request))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -413,7 +413,7 @@ Scim Replace Group
 
 SCIM 2.0: replace a group's name and members.
 
-Source: [backend/app/routers/scim.py:998](../../../backend/app/routers/scim.py#L998).
+Source: [backend/app/routers/scim.py:1018](../../../backend/app/routers/scim.py#L1018).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -483,7 +483,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-_group_resource(group, await _group_members(db, group.id), _base(request))
+_group_resource(group, await _group_members(db, group.id, scim_token.sso_config_id), _base(request))
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -494,7 +494,7 @@ Scim Resource Types
 
 SCIM 2.0: List provisionable resource types.
 
-Source: [backend/app/routers/scim.py:339](../../../backend/app/routers/scim.py#L339).
+Source: [backend/app/routers/scim.py:341](../../../backend/app/routers/scim.py#L341).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -559,7 +559,7 @@ Scim Resource Type
 
 SCIM 2.0: Retrieve one provisionable resource type.
 
-Source: [backend/app/routers/scim.py:348](../../../backend/app/routers/scim.py#L348).
+Source: [backend/app/routers/scim.py:350](../../../backend/app/routers/scim.py#L350).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -640,7 +640,7 @@ Scim Schemas
 
 SCIM 2.0: List supported resource schemas.
 
-Source: [backend/app/routers/scim.py:362](../../../backend/app/routers/scim.py#L362).
+Source: [backend/app/routers/scim.py:364](../../../backend/app/routers/scim.py#L364).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -763,7 +763,7 @@ Scim Service Provider Config
 
 SCIM 2.0: Discover implemented protocol capabilities.
 
-Source: [backend/app/routers/scim.py:330](../../../backend/app/routers/scim.py#L330).
+Source: [backend/app/routers/scim.py:332](../../../backend/app/routers/scim.py#L332).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -828,7 +828,7 @@ Scim List
 
 SCIM 2.0: List users.
 
-Source: [backend/app/routers/scim.py:385](../../../backend/app/routers/scim.py#L385).
+Source: [backend/app/routers/scim.py:387](../../../backend/app/routers/scim.py#L387).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -972,7 +972,7 @@ Scim Create
 
 SCIM 2.0: Create a user.
 
-Source: [backend/app/routers/scim.py:467](../../../backend/app/routers/scim.py#L467).
+Source: [backend/app/routers/scim.py:469](../../../backend/app/routers/scim.py#L469).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -1095,10 +1095,14 @@ Deactivate (the default): the account is switched off and kept; a later ``GET`` 
 out at once (sessions, tokens and keys) in this request's one commit, the person's data is pseudonymised by the
 worker afterwards, and a pending erasure request of theirs is accepted. A retry while that erasure runs, or a
 ``DELETE`` of an erased account, changes nothing. When the erasure is refused (a service account, an export
-still running, the last active administrator) the account is deactivated instead and the refusal is recorded
-as a failed identity event. Every case answers 204 with no body.
+still running) the account is deactivated instead and the refusal is recorded as a failed identity event.
+Each of those cases answers 204 with no body.
 
-Source: [backend/app/routers/scim.py:798](../../../backend/app/routers/scim.py#L798).
+The last active administrator is never deactivated or erased over SCIM: the request is refused with 409 and
+the account stays active. A token that is not bound to an identity provider reaches only accounts that SCIM
+created or that have a federated link; any other id answers 404.
+
+Source: [backend/app/routers/scim.py:800](../../../backend/app/routers/scim.py#L800).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -1166,7 +1170,7 @@ Scim Get
 
 SCIM 2.0: Get a single user.
 
-Source: [backend/app/routers/scim.py:442](../../../backend/app/routers/scim.py#L442).
+Source: [backend/app/routers/scim.py:444](../../../backend/app/routers/scim.py#L444).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -1279,7 +1283,7 @@ Scim Patch
 
 SCIM 2.0: Patch (partial update) a user.
 
-Source: [backend/app/routers/scim.py:609](../../../backend/app/routers/scim.py#L609).
+Source: [backend/app/routers/scim.py:611](../../../backend/app/routers/scim.py#L611).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 
@@ -1411,7 +1415,7 @@ Scim Replace
 
 SCIM 2.0: Replace (full update) a user.
 
-Source: [backend/app/routers/scim.py:534](../../../backend/app/routers/scim.py#L534).
+Source: [backend/app/routers/scim.py:536](../../../backend/app/routers/scim.py#L536).
 
 Dependency chain: `get_db`, `verify_scim_bearer`.
 

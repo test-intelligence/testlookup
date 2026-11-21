@@ -101,6 +101,7 @@ async def _drive_promote(*, offline: bool, jira_spy: AsyncMock):
     # member_test_ids=[] → analyses + tc_id queries are skipped; execute is
     # called for cluster, the run's release, then the finding.
     db.execute = AsyncMock(side_effect=[
+        _ScalarsResult(scalar="PROJ"),       # the project's own Jira key: the request's key is checked first
         _ScalarsResult(scalar=_cluster()),   # cluster load
         _ScalarsResult(scalar=None),         # run release load
         _ScalarsResult(scalar=None),         # deep finding load

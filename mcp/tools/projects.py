@@ -79,7 +79,8 @@ def register(mcp) -> None:  # noqa: ANN001
             name: Human-readable project name (e.g., "Payments Service").
             slug: URL-safe identifier, lowercase, hyphens (e.g., "payments-service").
             description: Optional description of the project.
-            jira_project_key: Jira project key for auto-ticket creation (e.g., "PAY").
+            jira_project_key: Jira project key for auto-ticket creation (e.g., "PAY"). Only an
+                administrator's credential that is not bound to a project may set it.
             splunk_index: Splunk index the AI log lookups use for this project (empty: the deployment's index).
             ocp_namespace: OpenShift namespace used for a run that names a pod but no namespace.
             jenkins_job_pattern: Stored for older clients; TestLookup does not use it.

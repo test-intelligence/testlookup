@@ -456,8 +456,11 @@ an auditor will ask about:
   campaign grows that table without bound (the retention purge does not touch
   it — the table has no project scope). This is why there is deliberately *no*
   per-attempt `LOGIN_FAILED` event: the MFA events that exist are either
-  operator-initiated or bounded by the lockout threshold. Prune out-of-band if
-  volume becomes a problem.
+  operator-initiated or bounded by the lockout threshold. A SAML response
+  refused before its signature verifies is logged, not stored, and the SSO
+  sign-in routes are rate limited. Prune out-of-band if volume becomes a
+  problem, but keep the `SCIM_USER_CREATED` rows: they mark the accounts an
+  unbound SCIM token may manage.
 - **Recovery codes are 80-bit values protected by a plain SHA-256 digest**,
   not a password KDF. That is adequate because there is nothing to
   brute-force at that entropy — the same reasoning as `ApiKey.key_hash` — but

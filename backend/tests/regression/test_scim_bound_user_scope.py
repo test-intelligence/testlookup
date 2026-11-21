@@ -37,7 +37,7 @@ async def test_bound_list_scopes_count_and_page_to_federated_identity():
 
 
 @pytest.mark.asyncio
-async def test_bound_get_scopes_lookup_but_unbound_get_remains_global():
+async def test_bound_get_scopes_lookup_and_unbound_get_reaches_only_managed_accounts():
     from app.services.scim_service import scim_get_user
 
     config_id = uuid.uuid4()
@@ -49,9 +49,14 @@ async def test_bound_get_scopes_lookup_but_unbound_get_remains_global():
     assert "federated_identities.sso_config_id" in str(bound_query)
     assert config_id in bound_query.params.values()
 
+    # Was "unbound stays global". An unbound token now reaches only accounts SCIM created or that have a
+    # federated link (any directory); tests/regression/test_scim_unbound_token_scope.py runs it on real rows.
     await scim_get_user(db, uuid.uuid4())
     unbound_query = db.execute.await_args.args[0].compile()
-    assert "federated_identities" not in str(unbound_query)
+    unbound_sql = str(unbound_query)
+    assert "federated_identities.sso_config_id" not in unbound_sql
+    assert "FROM federated_identities" in unbound_sql and "FROM identity_events" in unbound_sql
+    assert "SCIM_USER_CREATED" in unbound_query.params.values()
 
 
 @pytest.mark.asyncio

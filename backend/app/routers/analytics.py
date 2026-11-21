@@ -738,6 +738,14 @@ async def create_defect(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have access to this project",
         )
+    # A pasted Jira link stores the issue key on the defect, where the status
+    # sync and a later status change act on it through the shared Jira
+    # account: the issue must belong to a Jira project this project may use.
+    linked_key = analytics_service._jira_key_from_url(payload.jira_ticket_url)
+    if linked_key:
+        from app.services.defect_jira_service import assert_jira_key_allowed
+
+        await assert_jira_key_allowed(db, payload.project_id, linked_key, current_user)
     body = payload.model_dump()  # model_dump() already coerces Enum → its .value string
     # ``create_manual_defect`` flushes so id + server defaults (created_at) are
     # populated on the row. VIZ-212: commit HERE rather than leaving it to the
