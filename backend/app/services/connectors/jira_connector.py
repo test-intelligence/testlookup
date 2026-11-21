@@ -27,6 +27,8 @@ logger = structlog.get_logger(__name__)
 _ISSUE_KEY_PATTERN = r"[A-Z][A-Z0-9_]+-[0-9]+"
 _ISSUE_KEY_RE = re.compile(f"({_ISSUE_KEY_PATTERN})")
 _ISSUE_KEY_FULL_RE = re.compile(_ISSUE_KEY_PATTERN)
+# A Jira project key, as it goes into the child search's JQL.
+_PROJECT_KEY_FULL_RE = re.compile(r"[A-Z][A-Z0-9_]+")
 
 
 class JiraKnowledgeConnector(KnowledgeConnectorBase):
@@ -143,7 +145,13 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
         self,
         canonical_url: str,
         external_id: Optional[str] = None,
+        *,
+        jira_project_key: Optional[str] = None,
     ) -> FetchedContent:
+        """``jira_project_key``: the one Jira project the source's TestLookup
+        project may read (its own Jira key). When given, an epic's child issues
+        are searched in that Jira project only. The caller has already checked
+        the issue key itself against it."""
         issue_key = self._extract_issue_key(canonical_url, external_id)
 
         url = f"{self._base_url()}/rest/api/3/issue/{issue_key}"
@@ -178,7 +186,7 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
         # For epics, fetch child issues
         issue_type = (fields.get("issuetype") or {}).get("name", "").lower()
         if issue_type == "epic":
-            children_text = await self._fetch_epic_children(issue_key)
+            children_text = await self._fetch_epic_children(issue_key, jira_project_key)
             if children_text:
                 raw_text += f"\n\n## Epic Child Issues\n\n{children_text}"
 
@@ -274,8 +282,11 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
 
         return joined
 
-    async def _fetch_epic_children(self, epic_key: str) -> str:
-        """Fetch child issues of an epic via JQL search."""
+    async def _fetch_epic_children(self, epic_key: str, jira_project_key: Optional[str] = None) -> str:
+        """Fetch child issues of an epic via JQL search (inside ``jira_project_key`` when given)."""
+        if jira_project_key is not None and not _PROJECT_KEY_FULL_RE.fullmatch(jira_project_key):
+            # It goes into the JQL: anything that is not key-shaped is refused, not quoted.
+            raise ConnectorFetchError(f"Not a Jira project key: {jira_project_key!r}")
         try:
             # /rest/api/3/search answers 410 Gone on Jira Cloud (Atlassian
             # CHANGE-2046); its replacement takes the same jql/fields/maxResults
@@ -287,6 +298,9 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
             if not _ISSUE_KEY_FULL_RE.fullmatch(epic_key):
                 raise ConnectorFetchError(f"Not a Jira issue key: {epic_key!r}")
             jql = f'"Epic Link" = "{epic_key}" OR parent = "{epic_key}"'
+            if jira_project_key is not None:
+                # Children can sit in any Jira project the account reads; keep to this one.
+                jql = f'({jql}) AND project = "{jira_project_key}"'
             params = {
                 "jql": jql,
                 "fields": "summary,description,issuetype,status,priority",

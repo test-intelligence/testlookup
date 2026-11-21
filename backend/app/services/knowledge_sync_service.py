@@ -60,6 +60,12 @@ _EXTERNAL_FETCH_TYPES: frozenset[str] = frozenset({
     KnowledgeSourceType.EXTERNAL_URL.value,
 })
 
+# Source types read through the deployment's one Jira account.
+_JIRA_FETCH_TYPES: frozenset[str] = frozenset({
+    KnowledgeSourceType.JIRA_ISSUE.value,
+    KnowledgeSourceType.JIRA_EPIC.value,
+})
+
 # Source types fetched by the URL connector, which takes the domain allow-list.
 _URL_FETCH_TYPES: frozenset[str] = frozenset({
     KnowledgeSourceType.INTERNAL_URL.value,
@@ -130,6 +136,23 @@ async def run_sync(
             from app.services import knowledge_source_service
 
             fetch_kwargs["allowed_domains"] = await knowledge_source_service.get_domain_allowlist(db)
+        if source.source_type in _JIRA_FETCH_TYPES:
+            # The project's own Jira key, when it has one, is the only Jira
+            # project its sources may read: a source stored before that rule
+            # (or before the key was set) with another project's issue is not
+            # fetched, and an epic's children are read inside the key only.
+            # A project without a key is not narrowed here: a QA lead may have
+            # named another Jira project on purpose, and a sync has no caller.
+            from app.services import defect_jira_service
+            from app.services.connectors.jira_connector import JiraKnowledgeConnector
+
+            scope = await defect_jira_service.jira_key_scope(db, source.project_id, None)
+            if scope.project_key:
+                issue_key = JiraKnowledgeConnector()._extract_issue_key(source.canonical_url, source.external_id)
+                refusal = scope.refusal(issue_key)
+                if refusal is not None:
+                    raise ConnectorFetchError(refusal, retryable=False)
+                fetch_kwargs["jira_project_key"] = scope.project_key
         if source.source_type == KnowledgeSourceType.UPLOADED_DOC.value:
             # The object key must sit under the source's own project; the
             # document connector refuses any other key before reading storage.
