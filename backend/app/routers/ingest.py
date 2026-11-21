@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import ensure_ingest_role, get_api_key_context, get_db, resolve_project_scope
 from app.models.postgres import IngestionSource, User
 from app.services.activity.service import ActorRef, record as record_activity
+from app.services.run_tombstone_service import run_is_tombstoned
 from app.models.schemas import (
     BUILD_NUMBER_MAX_LENGTH, IngestPayload, IngestResponse, UploadStatusResponse, http_ci_run_url,
 )
@@ -147,6 +148,7 @@ async def ingest_batch(
         ci_run_url=payload.ci_run_url,
         jenkins_job=payload.jenkins_job,
     )
+    await _refuse_deleted_build(db, run_id, payload.build_number)
     import json
     batch_storage_key = f"uploads/{target_project_id}/{run_id}/queued/{uuid.uuid4().hex}.json"
     try:
@@ -196,6 +198,26 @@ async def ingest_batch(
         run_id=run_id,
         task_id=task.id,
         total_results=len(payload.results),
+    )
+
+
+async def _refuse_deleted_build(db, run_id: str, build_number: str | None) -> None:
+    """Answer 409 when this delivery resolves to a run an operator deleted.
+
+    A run id is derived from the build's identity, so re-sending a deleted
+    build lands on the tombstoned id. The worker refuses to re-create it, but
+    by then the caller has a 202: the CI job reads success and the run never
+    appears. Refuse here, before anything is stored or queued.
+    """
+    if not await run_is_tombstoned(db, run_id):
+        return
+    label = f"Build {build_number!r}" if build_number else "This run"
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            f"{label} was deleted from this project and is not accepted again. "
+            "Send the results under a new build number."
+        ),
     )
 
 

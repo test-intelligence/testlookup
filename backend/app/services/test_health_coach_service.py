@@ -659,7 +659,7 @@ async def get_flaky_coach(
             1 for e in entries if history_is_intermittent(e.status_history)
         ),
         quarantine_candidates=sum(
-            1 for e in entries if getattr(e, "quarantine_recommended", False)
+            1 for e in entries if e.quarantine_recommendation == "QUARANTINE"
         ) if release_id is not None else quarantine_count,
         entries=entries,
         scope=FlakyCoachScope(

@@ -485,7 +485,7 @@ def render_decision_markdown(decision: dict[str, Any]) -> str:
     verification_status = str(verification.get("status") or "pending").upper()
     repairs = verification.get("repairs") or []
     unresolved = verification.get("unresolved_failures") or []
-    return "\\n\\n".join([
+    return "\n\n".join([
         "## Final Decision Intelligence",
         f"**Report status:** {str(decision.get('status') or 'degraded').upper()}",
         f"**Release recommendation:** {risk_text}",
@@ -533,7 +533,7 @@ class DecisionReportAgent(BaseAgent):
             structured = deepcopy(_as_dict(state.get("structured_summary")))
             structured["decision_intelligence"] = decision
             preliminary_markdown = str(state.get("summary_markdown") or "").strip()
-            final_markdown = "\\n\\n".join(
+            final_markdown = "\n\n".join(
                 part for part in (preliminary_markdown, render_decision_markdown(decision)) if part
             )
             confidence = 70 if decision["status"] == "degraded" else 95
