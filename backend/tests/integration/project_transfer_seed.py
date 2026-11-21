@@ -460,7 +460,10 @@ async def _seed_what_must_not_travel(db: AsyncSession, seed: SeededProject, s: S
             None if before is None else {column: getattr(before, column) for column in _SECRET_COLUMNS})
     await secret_service.store_secret(db, "smtp_config", "password", s.smtp_password, seed.admin_id)
     await secret_service.store_secret(db, "ai_config", "anthropic_api_key", s.anthropic_key, seed.admin_id)
-    await secret_service.store_secret(db, "integrations_config", "jira_api_token", s.vault_ref, seed.admin_id)
+    # An administrator's settings page is the one place a vault: reference may be stored.
+    await secret_service.store_secret(
+        db, "integrations_config", "jira_api_token", s.vault_ref, seed.admin_id, allow_reference=True,
+    )
     await db.flush()
 
 
