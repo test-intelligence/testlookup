@@ -82,9 +82,17 @@ async def test_online_external_proceeds_to_fetch():
     conn.fetch_content = AsyncMock(side_effect=ConnectorFetchError("stop", retryable=False))
     db = AsyncMock()
     db.add = MagicMock()
+    from app.services import defect_jira_service
+
+    # A Jira source first asks which Jira project its project may read: here
+    # the project has no Jira key, so the sync is not narrowed.
+    no_key = AsyncMock(return_value=defect_jira_service.JiraKeyScope(project_key=None, default_key=None, any_key=False))
     with patch.object(settings, "AI_OFFLINE_MODE", False), \
+         patch.object(defect_jira_service, "jira_key_scope", no_key), \
+         patch.object(svc, "bind_to_deployment", AsyncMock(return_value=conn)), \
          patch.object(svc, "get_connector", MagicMock(return_value=conn)) as gc:
         result = await svc.run_sync(db, _source(KnowledgeSourceType.JIRA_ISSUE.value))
 
-    gc.assert_called_once()       # online → external fetch attempted
+    conn.fetch_content.assert_awaited_once()
+    gc.assert_called_once()     # online → external fetch attempted
     assert result["status"] == "failed"

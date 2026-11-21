@@ -33,6 +33,12 @@ VALID_CLASSIFICATIONS = {e.value for e in KnowledgeClassification}
 
 #: Source types fetched over HTTP from a caller-supplied URL. The domain
 #: allow-list applies to all of them, on create and again at fetch time.
+# Source types that name an issue in the deployment's one Jira account.
+JIRA_SOURCE_TYPES = frozenset({
+    KnowledgeSourceType.JIRA_ISSUE.value,
+    KnowledgeSourceType.JIRA_EPIC.value,
+})
+
 URL_SOURCE_TYPES = frozenset({
     KnowledgeSourceType.INTERNAL_URL.value,
     KnowledgeSourceType.EXTERNAL_URL.value,
@@ -152,6 +158,24 @@ async def list_sources(
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
+async def _require_jira_issue_in_scope(
+    db: AsyncSession, project_id: uuid.UUID, canonical_url: str, external_id: Optional[str], user: User,
+) -> None:
+    """422 unless the Jira issue a new source names is one ``user`` may read from ``project_id``."""
+    from app.services import defect_jira_service
+    from app.services.connectors.base import ConnectorFetchError
+    from app.services.connectors.jira_connector import JiraKnowledgeConnector
+
+    try:
+        issue_key = JiraKnowledgeConnector()._extract_issue_key(canonical_url, external_id)
+    except ConnectorFetchError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="A Jira source needs a Jira issue key such as ABC-123, as its id or inside its URL.",
+        ) from exc
+    await defect_jira_service.assert_jira_key_allowed(db, project_id, issue_key, user)
+
+
 async def create_source(
     db: AsyncSession,
     project_id: uuid.UUID,
@@ -198,6 +222,13 @@ async def create_source(
         key_error = uploaded_document_key_error(canonical_url, project_id)
         if key_error is not None:
             raise HTTPException(status_code=422, detail=key_error)
+
+    # A Jira source names an issue the deployment's one Jira account will read
+    # into this project's knowledge base: the issue must be in the Jira project
+    # this caller may reach from this project (the rule filing and linking use).
+    # run_sync repeats the check for rows stored before this one existed.
+    if source_type in JIRA_SOURCE_TYPES:
+        await _require_jira_issue_in_scope(db, project_id, canonical_url, payload.get("external_id"), user)
 
     # RAG-3: enforce the domain allow-list for both URL source types. The type
     # is a label the caller picks and both are fetched by the same public-only

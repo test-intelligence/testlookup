@@ -109,7 +109,8 @@ async def test_create_accepts_a_key_under_the_sources_project():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("source_type", ["external_url", "internal_url", "confluence_page", "jira_issue"])
+# Jira sources have a rule of their own (test_jira_knowledge_sources_follow_the_project_key.py).
+@pytest.mark.parametrize("source_type", ["external_url", "internal_url", "confluence_page"])
 async def test_other_source_types_are_not_object_keys(source_type):
     db = _db()
     source = await _create(db, source_type, "https://docs.example.test/page")
