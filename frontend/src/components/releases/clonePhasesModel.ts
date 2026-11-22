@@ -98,14 +98,42 @@ export function sourceSpanDays(phases: readonly ReleasePhase[]): number {
 /**
  * "First phase starts", prefilled: the target's cutoff start, else its
  * planned date minus the source's span (so the copied schedule ends on it),
- * else today. A UTC day.
+ * never earlier than today (D-110: a 36-day source before a planned date ten
+ * days out started the copy in the past), else today. A UTC day.
  */
 export function defaultFirstStart(target: ReleaseWithCutoff, source: Pick<Release, 'phases'>, today: Date): string {
+  return firstStartDefault(target, source, today).day
+}
+
+/** The default day, and whether the clamp to today moved it (then the copy ends after the planned date). */
+export function firstStartDefault(
+  target: ReleaseWithCutoff, source: Pick<Release, 'phases'>, today: Date,
+): { day: string; clamped: boolean } {
   const cutoff = time(target.cutoff_start_at)
-  if (cutoff != null) return utcDay(cutoff)
+  if (cutoff != null) return { day: utcDay(cutoff), clamped: false }
+  const todayStart = midnight(today.getTime())
   const planned = time(target.planned_date)
-  if (planned != null) return utcDay(planned - sourceSpanDays(source.phases ?? []) * DAY_MS)
-  return utcDay(today.getTime())
+  if (planned != null) {
+    const computed = planned - sourceSpanDays(source.phases ?? []) * DAY_MS
+    return computed < todayStart
+      ? { day: utcDay(todayStart), clamped: true }
+      : { day: utcDay(computed), clamped: false }
+  }
+  return { day: utcDay(todayStart), clamped: false }
+}
+
+/** Shown under "First phase starts" while it holds the clamped default (D-110). */
+export const ENDS_AFTER_PLANNED_NOTE = 'The copied schedule ends after the planned date.'
+
+/**
+ * The note, or `null`: shown while "First phase starts" holds a default the
+ * clamp moved to today. A day somebody typed is theirs and carries no note.
+ */
+export function clampedDefaultNote(
+  target: ReleaseWithCutoff, source: Pick<Release, 'phases'>, today: Date, firstStart: string | null,
+): string | null {
+  const { day, clamped } = firstStartDefault(target, source, today)
+  return clamped && firstStart === day ? ENDS_AFTER_PLANNED_NOTE : null
 }
 
 export interface ClonePreviewRow {

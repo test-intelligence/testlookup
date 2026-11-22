@@ -48,8 +48,19 @@ async def evaluate_phase(
     *,
     record: bool = True,
     created_by_id: uuid.UUID | str | None = None,
+    include_release_blockers: bool = False,
+    release_blockers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Roll one phase up and decide whether it may be exited.
+
+    ``release_blockers`` (D-113): the RELEASE's open CRITICAL/HIGH defects.
+    Defects are release-scoped, not phase-scoped, so they do not change this
+    phase's verdict or ``may_exit``; they travel beside it so a phase whose
+    tests all pass over an open CRITICAL does not read as the whole story.
+    ``evaluate_all_phases`` reads them once and passes them in; the single-phase
+    evaluate endpoint asks with ``include_release_blockers=True``; the
+    enforcement preview leaves the default (False) and skips the read because
+    it only needs the verdict.
 
     The phase must be a phase of ``release_id``. A caller is checked against
     the release only, so a phase loaded by its id alone could belong to a
@@ -68,8 +79,10 @@ async def evaluate_phase(
         raise HTTPException(status_code=404, detail="Phase not found") from None
 
     rollup = await rollup_svc.build_rollup(db, release_id, phase_id=phase_id)
-    verdict, blocking = rollup_svc.decide(rollup)
+    verdict, blocking = rollup_svc.decide(rollup, scope="phase")
     scorecard = rollup_svc.summarise(rollup)
+    if include_release_blockers and release_blockers is None:
+        release_blockers = await release_blockers_for(db, release_id)
 
     # The phase's own exit criteria join the policy stack as the NARROWEST
     # layer, merged key-wise over the project's. Before S7b this would have
@@ -129,7 +142,32 @@ async def evaluate_phase(
         # and "may_exit: false" for an unevaluated phase reads identically to
         # one that failed unless the reason travels with it.
         "may_exit": verdict == "GO",
+        # D-113: the release's open blocking defects, beside the verdict and
+        # outside it (see the docstring). Empty when there are none.
+        "release_blockers": list(release_blockers or []),
+        # S-B-2: the phase's exit criteria are merged into ``policy`` and
+        # stored with a recorded decision, but ``decide`` does not read them:
+        # the verdict comes from test results and the evidence floor alone.
+        # Said here so nobody reads a configured criterion as a checked one.
+        "exit_criteria_evaluated": False,
     }
+
+
+async def release_blockers_for(
+    db: AsyncSession, release_id: uuid.UUID | str
+) -> list[dict[str, Any]]:
+    """The release's open CRITICAL/HIGH defects, ``[{id, title, severity}]``.
+
+    The same rule the release gate uses (``defects_for_release``), so a phase
+    chip and the release gate never disagree on what is open.
+    """
+    from app.services import release_defect_service as defect_svc
+
+    project_id = await _project_of(db, release_id)
+    if project_id is None:
+        return []
+    found = await defect_svc.defects_for_release(db, release_id, project_id)
+    return list(found.get("blocking") or [])
 
 
 async def evaluate_all_phases(
@@ -155,8 +193,10 @@ async def evaluate_all_phases(
         .scalars()
         .all()
     )
+    # D-113: one defect read for the release, shared by every phase.
+    blockers = await release_blockers_for(db, release_id) if phases else []
     return [
-        await evaluate_phase(db, release_id, p.id, record=record)
+        await evaluate_phase(db, release_id, p.id, record=record, release_blockers=blockers)
         for p in phases
     ]
 

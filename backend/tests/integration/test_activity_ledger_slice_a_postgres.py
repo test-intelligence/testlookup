@@ -116,15 +116,17 @@ async def test_phase_add_update_advance_delete_each_write_a_row(world):
         await r.delete_phase(str(w.release.id), phase_id, db=db, current_user=w.lead, __=w.lead)
 
     rows = await _rows(w)
+    # D-112: the advance is ONE row; it no longer arrives with a generic
+    # "changed: actual_start, status" twin, and it carries the status diff.
     assert [x.event_type for x in rows] == [
-        "release.phase_added", "release.phase_updated", "release.phase_advanced", "release.phase_deleted",
+        "release.phase_added", "release.phase_advanced", "release.phase_deleted",
     ]
     assert all(x.actor_id == w.lead.id and x.release_id == w.release.id for x in rows)
     assert rows[0].summary == f"Phase Soak was added to release {w.release.name}"
+    assert rows[1].summary == f"Release {w.release.name} advanced to Soak"
     assert rows[1].diff["changed_fields"] == ["actual_start", "status"]
     assert rows[1].diff["after"] == {"status": "in_progress"}
-    assert rows[2].summary == f"Release {w.release.name} advanced to Soak"
-    assert rows[3].summary == f"Phase Soak was removed from release {w.release.name}"
+    assert rows[2].summary == f"Phase Soak was removed from release {w.release.name}"
 
 
 async def test_link_writes_both_ends_and_unlink_writes_one(world):

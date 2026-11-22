@@ -157,9 +157,113 @@ async def test_verify_checks_the_stored_bytes_and_counts_the_result(monkeypatch)
     result = await routes.verify_compliance_pack(pack_id=pack.id, current_user=_user(), db=_ReadSession([]))
 
     assert (result.result, result.signature, result.chain) == ("verified", "valid", "intact")
-    assert result.summary == f"Verified · 1 files · signed by key {key.key_id}"
+    assert result.summary == (
+        f"Verified · 1 file matches the manifest, plus manifest.json and signature.json · signed by key {key.key_id}"
+    )
     after = metrics.compliance_pack_verifications_total.labels(result="verified", signature="valid")._value.get()
     assert after == before + 1
+
+
+# ── D-109: a gated release whose run had no deep investigation ──────────────
+
+
+def _no_run_decision_world(monkeypatch, *, release_gate):
+    """The real payload, signing and verification over stubbed sections: one
+    linked run, NO run-level ReleaseDecision, and the given release gate."""
+    from tests.test_compliance_pack_verify import install_world
+
+    world = install_world(monkeypatch)
+    world.run = SimpleNamespace(id=uuid.uuid4(), build_number="88", project_id=world.release.project_id)
+
+    async def _no_decision(db, release):
+        return None, None
+
+    async def _linked_run(db, release):
+        return world.run
+
+    async def _gate(db, release_id):
+        return release_gate
+
+    monkeypatch.setattr(svc, "_gather_decision_and_run", _no_decision)
+    monkeypatch.setattr(svc, "_gather_linked_run", _linked_run)
+    monkeypatch.setattr(svc, "_gather_release_gate", _gate)
+    return world
+
+
+async def test_a_gated_release_without_a_run_decision_gets_a_pack_that_verifies(monkeypatch):
+    import io
+    import zipfile
+
+    from tests.test_compliance_pack_verify import _DB
+
+    gate = {"evaluated": True, "current": {"verdict": "GO", "release_id": "r"}, "history": []}
+    world = _no_run_decision_world(monkeypatch, release_gate=gate)
+
+    row = await svc.generate_pack(_DB(), world.release, actor=SimpleNamespace(id=uuid.uuid4(), username="lee"))
+
+    (stored,) = world.storage.objects.values()
+    with zipfile.ZipFile(io.BytesIO(stored)) as zf:
+        decision = json.loads(zf.read("decision.json"))
+        release_gate = json.loads(zf.read("release_gate_decision.json"))
+        readme = zf.read("README.md").decode()
+        manifest = json.loads(zf.read("manifest.json"))
+    assert decision == {"available": False, "reason": "no deep investigation was run for the linked run"}
+    assert release_gate["evaluated"] is True and release_gate["current"]["verdict"] == "GO"
+    assert "no deep investigation was run for the linked run" in readme
+    assert manifest["test_run_id"] == str(world.run.id) and manifest["recommendation"] is None
+    assert row.test_run_id == world.run.id
+    assert row.metadata_snapshot["recommendation"] is None
+
+    # It verifies through the verify route.
+    monkeypatch.setattr(svc, "get_pack", AsyncMock(return_value=SimpleNamespace(
+        id=row.id, project_id=row.project_id, release_id=row.release_id, minio_key=row.minio_key,
+        manifest_sha256=row.manifest_sha256, signature=row.signature, signing_key_id=row.signing_key_id,
+    )))
+    monkeypatch.setattr(svc, "load_pack_bytes", AsyncMock(return_value=stored))
+    monkeypatch.setattr(signing, "public_keys", AsyncMock(return_value={world.key.key_id: world.key.public_key_pem}))
+    result = await routes.verify_compliance_pack(pack_id=row.id, current_user=_user(), db=_ReadSession([]))
+    assert (result.result, result.signature, result.chain) == ("verified", "valid", "intact")
+
+
+async def test_a_release_with_neither_a_gate_decision_nor_a_run_decision_is_refused(monkeypatch):
+    from tests.test_compliance_pack_verify import _DB
+
+    gate = {"evaluated": False, "reason": "this release has no gate decision on record", "history": []}
+    world = _no_run_decision_world(monkeypatch, release_gate=gate)
+
+    with pytest.raises(svc.CompliancePackNotAvailableError, match="no gate decision on record"):
+        await svc.generate_pack(_DB(), world.release, actor=SimpleNamespace(id=uuid.uuid4(), username="lee"))
+    assert world.storage.objects == {}
+
+
+async def test_a_release_with_no_linked_run_is_refused(monkeypatch):
+    from tests.test_compliance_pack_verify import _DB
+
+    world = _no_run_decision_world(monkeypatch, release_gate={"evaluated": True, "current": {}, "history": []})
+
+    async def _none(db, release):
+        return None
+
+    monkeypatch.setattr(svc, "_gather_linked_run", _none)
+    with pytest.raises(svc.CompliancePackNotAvailableError, match="no linked test run"):
+        await svc.generate_pack(_DB(), world.release, actor=SimpleNamespace(id=uuid.uuid4(), username="lee"))
+
+
+async def test_the_linked_run_query_is_same_project_and_needs_no_decision():
+    from sqlalchemy.dialects import postgresql
+
+    statements: list[str] = []
+
+    class _DB:
+        async def execute(self, stmt):
+            statements.append(str(stmt.compile(dialect=postgresql.dialect())))
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(first=lambda: None))
+
+    release = SimpleNamespace(id=uuid.uuid4(), project_id=PROJECT)
+    assert await svc._gather_linked_run(_DB(), release) is None
+    sql = " ".join(statements[0].split())
+    assert "release_test_run_links" in sql and "test_runs.project_id" in sql
+    assert "release_decisions" not in sql
 
 
 # ── the key routes, through the real router ─────────────────────────────────

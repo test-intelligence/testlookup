@@ -37,6 +37,8 @@ export interface ReleaseCouncilDecision {
   reasoning: string | null
   score_model_version: number | null
   input_snapshot: Record<string, unknown> | null
+  /** The run's project (D-102); absent on an older API. */
+  project_id?: string | null
   cluster_insights: FailureClusterIntel[]
   baseline_diff: BaselineDiff | null
   open_defects_by_component: Array<{ component: string; count: number }>

@@ -26,10 +26,8 @@ interface Props {
 
 export default function ExecutiveSummaryPanel({ panel, compact = false }: Props) {
   // The one decision vocabulary (W29a UIX-03): Go / Conditional / No-Go, the decision's tint and border, and
-  // its legible ink as text. An unknown signal reads as conditional, as before.
-  const decision = decisionKey(panel.status_signal) ?? 'conditional'
-  const statusToken = DECISION_TOKEN[decision]
-  const statusLabel = DECISION_LABEL[decision]
+  // its legible ink as text. S-B-5: an empty or unknown signal is no decision pill at all, never "Conditional".
+  const decision = decisionKey(panel.status_signal)
   const { metrics } = panel
 
   return (
@@ -45,16 +43,30 @@ export default function ExecutiveSummaryPanel({ panel, compact = false }: Props)
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <span
-            role="status"
-            aria-label={`Release readiness: ${statusLabel}`}
-            data-decision={decision}
-            className="px-2.5 py-1 rounded-md text-xs font-bold border"
-            style={{ background: statusToken.tint, borderColor: statusToken.border, color: statusToken.ink }}
-            title="Release readiness assessment"
-          >
-            {statusLabel}
-          </span>
+          {decision ? (
+            <span
+              role="status"
+              aria-label={`Release readiness: ${DECISION_LABEL[decision]}`}
+              data-decision={decision}
+              className="px-2.5 py-1 rounded-md text-xs font-bold border"
+              style={{
+                background: DECISION_TOKEN[decision].tint,
+                borderColor: DECISION_TOKEN[decision].border,
+                color: DECISION_TOKEN[decision].ink,
+              }}
+              title="Release readiness assessment"
+            >
+              {DECISION_LABEL[decision]}
+            </span>
+          ) : (
+            <span
+              data-decision="none"
+              className="text-xs text-[var(--color-text-muted)]"
+              title="No stored release decision for this run yet"
+            >
+              No release signal
+            </span>
+          )}
           {panel.risk_score != null && (
             <span
               className="text-xs text-[var(--color-text-muted)] tabular-nums"

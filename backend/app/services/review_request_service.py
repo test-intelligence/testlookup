@@ -59,6 +59,7 @@ __all__ = [
     "reviewer_evidence_hash_from",
     "investigation_evidence_hash",
     "report_stages",
+    "report_was_model_written",
     "settle_review",
     "stage_run_review_request",
 ]
@@ -80,6 +81,28 @@ def report_stages(stage_rows: Iterable[Any]) -> list[str]:
         for row in stage_rows
         if getattr(row, "status", None) == "completed" and is_report_producing(str(row.stage_name))
     ]
+
+
+def report_was_model_written(
+    final_state: Optional[Mapping[str, Any]],
+    stage_rows: Iterable[Any],
+) -> bool:
+    """False only when no model wrote any of the run's report (D-45).
+
+    The same fact the review envelope's ``ai_generated`` stands for, decided at
+    Finalize: a run whose frozen analysis mode is ``rules`` and where no stage
+    recorded a model call was built deterministically, and asking a person to
+    "accept" it sends them to review something no model wrote. Fails closed:
+    an unknown mode, or any recorded model call, counts as model-written.
+    """
+    for row in stage_rows:
+        try:
+            if int(getattr(row, "llm_calls_count", 0) or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            return True
+    mode = str((final_state or {}).get("analysis_mode_resolved") or "").strip().lower()
+    return mode != "rules"
 
 
 def evidence_hash_from(final_state: Optional[Mapping[str, Any]]) -> Optional[str]:

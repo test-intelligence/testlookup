@@ -120,9 +120,15 @@ def verify_summary(v: Mapping[str, Any]) -> str:
     if result == "unreadable":
         return UNREADABLE_STORAGE_SENTENCE if reason == REASON_STORAGE else UNREADABLE_ZIP_SENTENCE
     if result == "verified":
+        # D-107: account for EVERY member of the ZIP, not only the listed ones,
+        # so the count reconciles with the pack's row ("13 files" = 12 + the
+        # manifest). A verified pack holds signature.json exactly when signed:
+        # present-but-unsigned is impossible (a present file is checked).
+        matched = f"{files_checked} file matches" if files_checked == 1 else f"{files_checked} files match"
+        matched += " the manifest"
         if signature == "valid":
-            return f"Verified · {files_checked} files · signed by key {key_id}"
-        return f"Verified · {files_checked} files · unsigned (tamper-evident only)"
+            return f"Verified · {matched}, plus {MANIFEST_FILENAME} and {SIGNATURE_FILENAME} · signed by key {key_id}"
+        return f"Verified · {matched}, plus {MANIFEST_FILENAME} · unsigned (tamper-evident only)"
     if reason == REASON_MANIFEST_MISSING:
         return "Tampered: manifest.json is missing from the pack"
     if reason == REASON_MANIFEST_UNREADABLE:

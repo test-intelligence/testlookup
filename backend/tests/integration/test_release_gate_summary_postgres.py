@@ -197,7 +197,7 @@ async def test_the_statement_count_is_constant_in_the_number_of_releases(world):
     assert count_one == count_twenty == 2, (count_one, count_twenty)
     for summary in twenty.values():
         assert summary["blocking_reasons"] == [
-            "test_pay (checkout-e2e) is FAILED", "CRITICAL defect open: Totals",
+            "test_pay (checkout-e2e) is FAILED", "P0 defect open: Totals",
         ]
 
 

@@ -6909,6 +6909,9 @@ class ReleaseCouncilResponse(BaseModel):
     # Test run context
     pass_rate: Optional[float] = None
     build_number: Optional[str] = None
+    # The run's project (D-102): the gate page keeps an open run when the user
+    # picks that run's own project in the top bar, instead of jumping away.
+    project_id: Optional[str] = None
     # Policy context (ENT-02). These describe the STORED decision — what the
     # release-risk agent used when it wrote the row. They are not necessarily
     # the provenance of ``recommendation`` below; see ``band_policy_*``.

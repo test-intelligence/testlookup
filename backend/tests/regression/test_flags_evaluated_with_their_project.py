@@ -393,7 +393,7 @@ async def test_phase_gate_enforcement_applies_to_the_allow_listed_project(flag_r
     project.return_value = OTHER
     assert await svc._enforce_phase_gate(
         AsyncMock(), str(uuid.uuid4()), phase, {"status": "skipped"},
-    ) is None
+    ) is False  # D-112: False = "recorded no phase event of its own"
 
 
 # ── knowledge_rag ────────────────────────────────────────────────────────────

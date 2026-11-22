@@ -23,11 +23,12 @@ from tools.metrics import (  # type: ignore[import]
     SUMMARY_KPIS,
     describe_downgrade,
     kpi_value,
-    readiness_heading,
     readiness_of,
 )
 
 _GATE_ICON = {"GO": "🟢", "CONDITIONAL_GO": "🟡", "NO_GO": "🔴", "NOT_EVALUATED": "⚪"}
+#: The project signal's icons (the same as ``tools.metrics``'s heading uses).
+_READINESS_ICON = {"GREEN": "🟢", "AMBER": "🟡", "RED": "🔴"}
 
 
 def _reason_text(reason: Any) -> str:
@@ -87,8 +88,8 @@ def register(mcp) -> None:  # noqa: ANN001
     @mcp.tool()
     async def get_release_gate(release: str, project: str | None = None, evaluate: bool = False) -> dict:
         """
-        A release's gate verdict (GO / CONDITIONAL_GO / NO_GO / NOT_EVALUATED)
-        as data: verdict, pass rate, evidence, blockers and when it was decided.
+        A release's gate verdict (GO / NO_GO / NOT_EVALUATED; the release
+        gate has no conditional verdict) as data: verdict, pass rate, evidence, blockers and when it was decided.
         Reads the stored decision the release page shows; ``evaluate=True``
         records a fresh one first (QA lead or a project API key; it is appended
         to the release's gate history).
@@ -147,17 +148,20 @@ def register(mcp) -> None:  # noqa: ANN001
         release_id: str | None = None,
     ) -> str:
         """
-        Is this project ready to release? Returns the same GREEN / AMBER / RED
-        verdict as the /overview page, decided by the server from the project's
-        release-gate policy, and lists the policy hard caps that fired as
-        blockers. "Pending" means no executions in the window, not RED.
+        Is this project ready to release? Without ``release_id``: the stored
+        gate verdict of each in-progress release of the project (GO / NO_GO /
+        NOT_EVALUATED, led by any NO_GO), then the project's windowed
+        readiness signal (GREEN / AMBER / RED, the /overview page's, decided
+        by the server from the release-gate policy) with the hard caps that
+        fired. The project signal is not a release verdict. "Pending" means no
+        executions in the window, not RED.
 
         With ``release_id``, returns that release's stored gate decision
         (GO / NO_GO / NOT_EVALUATED) and its blocking reasons instead.
 
         Args:
             project_id: Project UUID.
-            days: Analysis window for the project verdict (1-90, default 7).
+            days: Analysis window for the project signal (1-90, default 7).
             release_id: Optional release UUID; reads the release's own gate decision.
         """
         if release_id:
@@ -180,9 +184,31 @@ def register(mcp) -> None:  # noqa: ANN001
         pass_rate = kpi_value(data, "avg_pass_rate_7d")
         total_executions = int(kpi_value(data, "total_executions_7d"))
 
-        lines = [
-            f"## {readiness_heading(data)}",
-            f"*Assessment over the last {days} days — {total_executions} test execution(s)*",
+        # D-120: the release answer is the release's stored gate, not the
+        # project's windowed signal. Read the in-progress releases first so a
+        # NO_GO release leads instead of hiding under an AMBER project.
+        active, active_error = await _active_release_gates(project_id)
+        no_go = [r for r in active if r["verdict"] == "NO_GO"]
+
+        lines: list[str] = []
+        for r in no_go:
+            lines += [
+                f"## 🔴 Active release {r['name']}: **NO_GO**, {_blockers_text(r['blocking_total'])}",
+                "*The release's stored gate decision"
+                + (f", decided {r['decided_at']}" if r.get("decided_at") else "")
+                + ".*",
+            ]
+            lines += [f"- {reason}" for reason in r["reasons"]]
+            lines.append("")
+        if no_go:
+            lines.append(f"### {_project_heading(data, days)}")
+        else:
+            lines.append(f"## {_project_heading(data, days)}")
+        lines += [
+            (
+                f"*Project signal over the last {days} days — {total_executions} test execution(s); "
+                "not a release verdict*"
+            ),
             "",
             "### Key Metrics",
             "| Metric | Value |",
@@ -213,15 +239,37 @@ def register(mcp) -> None:  # noqa: ANN001
             lines += ["", "### ❌ Blockers (policy hard caps that fired)"]
             lines += [f"- {describe_downgrade(d)}" for d in downgrades]
 
+        others = [r for r in active if r["verdict"] != "NO_GO"]
+        if others or active_error:
+            lines += ["", "### Active releases"]
+            for r in others:
+                if r["verdict"] is None:
+                    lines.append(f"- {r['name']}: gate not evaluated yet")
+                else:
+                    lines.append(
+                        f"- {r['name']}: {_GATE_ICON.get(r['verdict'], '⚪')} **{r['verdict']}**"
+                        + (f", {_blockers_text(r['blocking_total'])}" if r["blocking_total"] else "")
+                    )
+            if active_error:
+                lines.append(f"- The project's in-progress releases could not be read ({active_error}).")
+
         lines += ["", "### Recommendation"]
-        if readiness is None:
+        if no_go:
+            names = ", ".join(r["name"] for r in no_go)
+            lines.append(
+                f"🔴 **No-Go** — the stored gate of {names} says NO_GO. Resolve its blockers, "
+                "then record a fresh verdict with `get_release_gate(evaluate=True)`."
+            )
+        elif readiness is None:
             lines.append("⚪ **No verdict yet** — run the suites for this window first.")
         elif readiness == "GREEN":
             lines.append("✅ **Go** — the server's readiness verdict is GREEN.")
         elif readiness == "AMBER":
+            # D-120: AMBER is a project signal, not a release recommendation.
             lines.append(
-                "🟡 **Conditional Go** — review before release; deploy with monitoring "
-                "and a rollback plan ready."
+                "🟡 **AMBER — review first.** The project's recent results sit below the "
+                "GREEN band. This is not a release verdict: read the release's own gate "
+                "with `get_release_gate` before deciding."
             )
         else:
             lines.append(
@@ -230,3 +278,53 @@ def register(mcp) -> None:  # noqa: ANN001
             )
 
         return "\n".join(lines)
+
+
+def _blockers_text(count: int) -> str:
+    return f"{count} blocker{'' if count == 1 else 's'}"
+
+
+def _project_heading(data: dict, days: int) -> str:
+    """D-120: "Project readiness (last N days)", never "Release Readiness":
+    the windowed project signal is not a release's verdict."""
+    readiness = readiness_of(data)
+    label = f"Project readiness (last {days} days)"
+    if readiness is None:
+        return f"⚪ {label}: **{PENDING_TEXT}**"
+    band = data.get("release_readiness_band")
+    band_text = f" (policy band: {band})" if isinstance(band, str) and band else ""
+    return f"{_READINESS_ICON.get(readiness, '⚪')} {label}: **{readiness}**{band_text}"
+
+
+async def _active_release_gates(project_id: str) -> tuple[list[dict], str | None]:
+    """The project's in-progress releases with their stored gate summary.
+
+    ``GET /api/v1/releases?status=in_progress`` carries each release's last
+    recorded gate (``gate``: verdict, blocking reasons and total, decided_at;
+    ``null`` when never evaluated). A failure to read them is reported, never
+    allowed to sink the project answer.
+    """
+    try:
+        body = await api.get(
+            api.path("/api/v1/releases"),
+            params={"project_id": project_id, "status": "in_progress"},
+        )
+    except Exception as exc:  # noqa: BLE001 - reported in the answer
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        return [], f"HTTP {status}" if status else type(exc).__name__
+    items = body.get("items") if isinstance(body, dict) else body
+    out: list[dict] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        gate = item.get("gate") if isinstance(item.get("gate"), dict) else None
+        reasons = [_reason_text(r) for r in (gate or {}).get("blocking_reasons") or []]
+        total = (gate or {}).get("blocking_total")
+        out.append({
+            "name": str(item.get("name") or item.get("version") or item.get("id") or "?"),
+            "verdict": str(gate["verdict"]) if gate and gate.get("verdict") else None,
+            "reasons": reasons,
+            "blocking_total": int(total) if isinstance(total, int) else len(reasons),
+            "decided_at": (gate or {}).get("decided_at"),
+        })
+    return out, None

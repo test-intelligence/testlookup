@@ -34290,6 +34290,17 @@
             ],
             "title": "Policy Version"
           },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
           "reasoning": {
             "anyOf": [
               {

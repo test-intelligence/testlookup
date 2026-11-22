@@ -73,6 +73,32 @@ def _structured_summary_projection(summary_doc: dict[str, Any]) -> dict[str, Any
         "schema_version": summary_doc.get("schema_version", 1),
     }
 
+def apply_stored_release_signal(
+    structured_summary: Optional[dict[str, Any]],
+    release_decision: Optional[dict[str, Any]],
+) -> None:
+    """Set the report's release signal from the stored decision, or clear it (D-145, S-B-5).
+
+    ``executive_panel.status_signal`` and ``layer2_incident.release_impact`` are
+    the stored ``ReleaseDecision``'s recommendation when there is one, and
+    ``None`` otherwise. A summary written before this rule carries the model's
+    own guess, or a CONDITIONAL_GO default; neither is ever served. Mutates
+    ``structured_summary`` in place (the payload's projection, not the stored
+    document).
+    """
+    if not structured_summary:
+        return
+    signal = release_decision.get("recommendation") if release_decision else None
+    layer2_view = structured_summary.get("layer2_incident")
+    if isinstance(layer2_view, dict) and "release_impact" in layer2_view:
+        structured_summary["layer2_incident"] = {**layer2_view, "release_impact": signal}
+    panel = structured_summary.get("executive_panel")
+    if isinstance(panel, dict):
+        panel["status_signal"] = signal
+        if release_decision:
+            panel["risk_score"] = release_decision.get("risk_score")
+
+
 def _criticality_from_cluster_size(size: int) -> str:
     if size >= 20:
         return CriticalityLevel.CRITICAL
@@ -383,6 +409,8 @@ async def get_run_intelligence(
             "blocking_issues": release_rec.blocking_issues or [],
             "conditions_for_go": release_rec.conditions_for_go or [],
             "reasoning": release_rec.reasoning,
+            # D-99: the Runs list reducers let a person's override win.
+            "human_override": release_rec.human_override,
         }
         dim_scores_raw = release_rec.dimension_scores or {}
         dimension_scores = [
@@ -519,12 +547,10 @@ async def get_run_intelligence(
     )
 
     # ── Enrich executive_panel with live data ──────────────────────────
+    apply_stored_release_signal(structured_summary, release_decision)
     if structured_summary and structured_summary.get("executive_panel"):
         panel = structured_summary["executive_panel"]
         panel.setdefault("metrics", {})["failure_clusters"] = len(failure_clusters)
-        if release_decision:
-            panel["risk_score"] = release_decision.get("risk_score")
-            panel["status_signal"] = release_decision.get("recommendation", panel.get("status_signal"))
         if what_changed:
             panel["baseline_comparison"] = {
                 "pass_rate_delta": round(float(what_changed.get("pass_rate_delta") or 0), 1),
@@ -1195,7 +1221,7 @@ def _render_manager_markdown(layer1: Any, layer2: Any, layer4: Any) -> str:
         sections.append(
             f"## Impact\n"
             f"**Criticality:** {layer2.get('criticality', '—')}\n"
-            f"**Release impact:** {layer2.get('release_impact', '—')}\n"
+            f"**Release impact:** {layer2.get('release_impact') or '—'}\n"
             f"**Scope:** {layer2.get('scope', '—')}"
         )
     if layer4:
@@ -1216,6 +1242,6 @@ def _render_executive_markdown(layer1: Any, layer2: Any) -> str:
     if layer2:
         sections.append(
             f"**Criticality:** {layer2.get('criticality', '—')} | "
-            f"**Release impact:** {layer2.get('release_impact', '—')}"
+            f"**Release impact:** {layer2.get('release_impact') or '—'}"
         )
     return "\n\n".join(s for s in sections if s).strip()

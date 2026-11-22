@@ -306,6 +306,41 @@ describe('ReleaseGatePage', () => {
 
     expect(await screen.findByText(/No run selected/i)).toBeInTheDocument()
   })
+
+  it("D-102: picking the open run's own project keeps the run open", async () => {
+    const { useReleaseCouncil } = await import('@/hooks/useReleaseCouncil')
+    const { useRuns } = await import('@/hooks/useRuns')
+    mockProjectState.activeProjectId = '__ALL__'
+    mockProjectState.activeProject = { id: '__ALL__', name: 'All Projects' }
+    ;(useReleaseCouncil as ReturnType<typeof vi.fn>).mockReturnValue({
+      council: flooredDecision({ project_id: 'proj-7' }),
+      isLoading: false,
+      isError: false,
+      refresh: vi.fn(),
+    })
+    ;(useRuns as ReturnType<typeof vi.fn>).mockReturnValue({ data: { items: [{ id: 'run-newest', status: 'failed' }] } })
+    function Where() {
+      return <p data-testid="where">{useLocation().pathname}</p>
+    }
+    const tree = () => (
+      <MemoryRouter initialEntries={['/release-gate/run-1']}>
+        <Where />
+        <Routes>
+          <Route path="/release-gate" element={<ReleaseGatePage />} />
+          <Route path="/release-gate/:runId" element={<ReleaseGatePage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+    const { rerender } = render(tree())
+    expect(await screen.findByText(/Build ui-6/)).toBeInTheDocument()
+
+    mockProjectState.activeProjectId = 'proj-7'
+    mockProjectState.activeProject = { id: 'proj-7', name: 'Project Seven' }
+    rerender(tree())
+
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/release-gate/run-1'))
+    expect(screen.queryByText(/No run selected/i)).toBeNull()
+  })
 })
 
 // ── Which run /release-gate opens (browser E2E pass, 2026-10-08) ──────────
@@ -475,6 +510,24 @@ describe('ReleaseGatePage — the risk score explains itself', () => {
     }))
     expect(await screen.findByText(/Build ui-6 — AI-powered/)).toBeInTheDocument()
     expect(screen.queryByText(/raised to the NO-GO floor/i)).not.toBeInTheDocument()
+  })
+
+  it('S-B-4: a scorer failure shows "Not scored", not a ring at the stand-in 50', async () => {
+    await renderGate(flooredDecision({
+      recommendation: 'CONDITIONAL_GO',
+      risk_score: 50,
+      composite_risk: 50,
+      dimension_scores: [],
+      input_snapshot: { verdict_driver: 'scorer_failed' },
+    }))
+    expect(await screen.findByText('Not scored: the risk model failed')).toBeInTheDocument()
+    expect(screen.queryByRole('meter', { name: 'Risk Score' })).toBeNull()
+  })
+
+  it('S-B-4: a scored decision keeps its ring and says nothing about a failure', async () => {
+    await renderGate(flooredDecision())
+    expect(await screen.findByRole('meter', { name: 'Risk Score' })).toBeInTheDocument()
+    expect(screen.queryByText(/Not scored/)).toBeNull()
   })
 
   it('does not present the dimension total as the verdict risk score', async () => {
@@ -1063,6 +1116,19 @@ describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
     expect(screen.getByRole('heading', { name: 'Override History (1)' })).toBeInTheDocument()
     expect(screen.getByText('Known infra flake')).toBeInTheDocument()
     expect(screen.getByText('by Dana')).toBeInTheDocument()
+  })
+
+  it('D-101: History reads "No-Go → Go" in the page\'s words, never the raw values', async () => {
+    await renderAt('/release-gate/run-1?tab=history', flooredDecision({
+      override_audit: [{
+        timestamp: '2026-09-01T10:00:00Z', actor_name: 'Dana Quinn', before_recommendation: 'NO_GO',
+        after_recommendation: 'CONDITIONAL_GO', reason: 'Known infra flake',
+      } as ReleaseCouncilDecision['override_audit'][number]],
+    }))
+    const entry = screen.getByText('Known infra flake').parentElement as HTMLElement
+    expect(within(entry).getByText('No-Go')).toBeInTheDocument()
+    expect(within(entry).getByText('Conditional')).toBeInTheDocument()
+    expect(entry.textContent).not.toMatch(/NO_GO|CONDITIONAL_GO/)
   })
 
   it("links to the run page's Analysis tab, never to the URLs P4 merged away", async () => {

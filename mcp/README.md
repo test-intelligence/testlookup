@@ -266,7 +266,7 @@ touched a suite whole, so under a suite filter it differs from
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `check_release_readiness` | `project_id`, `days?`, `release_id?` | Project GREEN/AMBER/RED from the server's policy verdict over a time window, or a release's stored gate decision when `release_id` is given |
+| `check_release_readiness` | `project_id`, `days?`, `release_id?` | Without `release_id`: the stored gate verdict (GO/NO_GO/NOT_EVALUATED) of each in-progress release, led by any NO_GO ("Active release 2026.11: NO_GO, 5 blockers"), then "Project readiness (last N days)", the project's GREEN/AMBER/RED policy signal, which is not a release verdict. With `release_id`: that release's stored gate decision |
 | `get_release_gate` | `release`, `project?`, `evaluate?` | A release's gate verdict as data (verdict, pass rate, evidence, blockers, decided_at); `release` is an id or a name / version (an ambiguous name lists the candidates); `evaluate=true` records a fresh verdict (QA lead); never evaluated is `evaluated: false` |
 | `check_run_release_readiness` | `run_id` | Single-run GO/CONDITIONAL_GO/NO_GO with risk score and blocking issues |
 | `create_share_link` | `run_id`, `expires_days?`, `layout?`, `confirm?` | Public, time-limited share URL for a run report (QA_LEAD). Sends nothing until `confirm` is true |

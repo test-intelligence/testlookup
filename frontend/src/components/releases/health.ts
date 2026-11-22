@@ -8,7 +8,7 @@
  */
 import type { BannerFact } from '@/components/ui/StatusBanner'
 import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
-import { formatWeekday } from '@/utils/formatters'
+import { formatMonthDay, formatWeekday } from '@/utils/formatters'
 import type { DerivedRelease } from './types'
 
 /** The release counts, each counted from the list. */
@@ -75,16 +75,33 @@ export function passRateText(passRate: number | null): string {
   return passRate != null ? `${passRate.toFixed(1)}%` : '—'
 }
 
+const DAY_MS = 24 * 3600 * 1000
+
+/**
+ * The due day as a reader can place it (D-105): the weekday within six days
+ * of `now` either way (`Thursday`), else the date (`Nov 26`), since a bare
+ * weekday is ambiguous further out. `past` says whether it has gone by.
+ * `null` when there is no (parseable) due date.
+ */
+export function dueDay(dueAt: string | null, now: number = Date.now()): { label: string; past: boolean } | null {
+  if (!dueAt) return null
+  const due = new Date(dueAt).getTime()
+  if (!Number.isFinite(due)) return null
+  const label = Math.abs(due - now) > 6 * DAY_MS ? formatMonthDay(dueAt) : formatWeekday(dueAt, 'long')
+  return { label, past: due < now }
+}
+
 /** The sentence about the release that ships next (the former verdict band's headline). */
-export function releaseHeadline(highlighted: DerivedRelease): string {
+export function releaseHeadline(highlighted: DerivedRelease, now: number = Date.now()): string {
   const name = nameOf(highlighted)
-  const dueLabel = highlighted.dueAt ? formatWeekday(highlighted.dueAt, 'long') : null
+  const due = dueDay(highlighted.dueAt, now)
+  const dueLabel = due?.label ?? null
   const blockers = highlighted.blockerCount
   switch (highlighted.gate.decision) {
     case 'go':
       return `${name} is ready to release`
     case 'no_go':
-      return `${name} is blocked${dueLabel ? ` — was due ${dueLabel}` : ''}`
+      return `${name} is blocked${due ? ` — ${due.past ? 'was due' : 'due'} ${due.label}` : ''}`
     case 'conditional':
       return `${name} is on track — ${blockers} item${blockers === 1 ? '' : 's'} to clear${dueLabel ? ` before ${dueLabel}` : ''}`
     default:

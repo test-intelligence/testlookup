@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import PhaseReasonDialog from './PhaseReasonDialog'
 
-const NO_GO = "This phase's gate says NO_GO: test_pay (checkout-e2e) is FAILED. Fix it, or supply gate_override_reason to complete it anyway."
+const NO_GO = "This phase's gate says NO_GO: test_pay (checkout-e2e) is FAILED. Fix it, or complete it anyway with a reason."
 
 function renderDialog(action: 'complete' | 'skip' = 'complete', busy = false) {
   const onSubmit = vi.fn()

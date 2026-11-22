@@ -59,7 +59,7 @@ def _row(run_id, *, snapshot: bool) -> dict:
         "ver_type": None, "ver_truthy": False, "ver_status": None,
         "att_type": None, "att_truthy": False, "att_status": None, "att_v_status": None,
         "rd_type": "object" if snapshot else None, "rd_truthy": snapshot,
-        "rd_rec": '"GO"' if snapshot else None,
+        "rd_rec": '"GO"' if snapshot else None, "rd_override": None,
         "ia_truthy": snapshot, "ta_type": None, "ta_length": None,
     }
 
@@ -168,7 +168,9 @@ async def test_twenty_five_runs_with_snapshots_on_one_connection_in_two_statemen
     assert response.status_code == 200, response.text
     body = response.json()
     assert [item["run_id"] for item in body["items"]] == [str(i) for i in ids]
-    assert body["items"][0]["verdict_inputs"]["release_decision"] == {"recommendation": "GO"}
+    assert body["items"][0]["verdict_inputs"]["release_decision"] == {
+        "recommendation": "GO", "human_override": None,
+    }
     assert body["items"][0]["review"] == {"state": "pending_review"}
     assert harness.pool.max_held == 1, "the read never needed a second connection"
     assert len(harness.sessions) == 1

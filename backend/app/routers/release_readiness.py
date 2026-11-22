@@ -180,7 +180,9 @@ async def override_release_decision(
                 event_type="release.decision_overridden",
                 actor=ActorRef.from_user(current_user),
                 entity_id=run_id,
-                entity_label=str(run_id),
+                # D-100: the Activity log names the run by its build number,
+                # not its raw id (the id stays in ``context``).
+                entity_label=council.build_number or str(run_id),
                 # The catalog template interpolates {recommendation}.
                 context={
                     "recommendation": council.recommendation,
@@ -205,6 +207,17 @@ async def override_release_decision(
         )
 
     await db.commit()
+    # D-99 / S-B-3: the invalidation above deleted the snapshot and cleared
+    # ``test_runs.ai_recommendation``, the column behind the Runs list and its
+    # ``?recommendation=`` filter. Rebuild it now, after the commit (so the
+    # task reads the override), instead of waiting for someone to open the
+    # run's Analysis tab. Queued only; the helper never raises.
+    try:
+        from app.worker.tasks import _enqueue_snapshot_rebuild  # noqa: PLC0415
+
+        _enqueue_snapshot_rebuild(None, str(run_id))
+    except Exception as exc:  # noqa: BLE001 — the committed override stands
+        logger.warning("snapshot rebuild not queued for run %s: %s", run_id, exc)
     # Outbound ``release.decided`` for the override. It runs after the commit,
     # never before: a rolled-back override must not reach a subscriber. The
     # emitter opens its own session and never raises. The guard also covers a

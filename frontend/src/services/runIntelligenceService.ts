@@ -59,7 +59,8 @@ export interface BaselineComparisonPanel {
 
 export interface ExecutivePanel {
   headline: string
-  status_signal: 'GO' | 'CONDITIONAL_GO' | 'NO_GO'
+  /** The stored release decision's recommendation; null when there is none (D-145). */
+  status_signal: 'GO' | 'CONDITIONAL_GO' | 'NO_GO' | null
   risk_score: number | null
   metrics: ExecutivePanelMetrics
   dominant_failure: DominantFailure | null
@@ -306,6 +307,8 @@ export interface ReleaseDecisionIntel {
   blocking_issues: string[]
   conditions_for_go: string[]
   reasoning: string
+  /** The reason a person gave when overriding the decision; null when nobody did (D-99). */
+  human_override?: string | null
 }
 
 export interface PipelineStage {

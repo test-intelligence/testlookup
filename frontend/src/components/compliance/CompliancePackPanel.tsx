@@ -10,6 +10,7 @@ import {
   packSizeText,
   type CompliancePackVerification,
 } from '@/services/compliancePackService'
+import { extractErrorMessage } from '@/services/apiErrors'
 import { usePermissions } from '@/hooks/usePermissions'
 import { formatCompactDateTime } from '@/utils/formatters'
 import PackLifecycleControls, { PackHoldChip } from './PackLifecycleControls'
@@ -97,8 +98,9 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
         `Compliance pack generated (${packSizeText(pack.bytes)})`,
       )
     } catch (err) {
-      const msg = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-      toast.error(msg || `Failed to generate: ${(err as Error).message}`)
+      // D-108: the ONE toast for a refusal (the request opts out of the global one).
+      const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail
+      toast.error(extractErrorMessage(detail, `Failed to generate: ${(err as Error).message}`))
     } finally {
       setGenerating(false)
     }

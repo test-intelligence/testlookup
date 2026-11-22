@@ -133,6 +133,20 @@ describe('DraftPhasesForm — the badge', () => {
   })
 })
 
+describe('DraftPhasesForm — exit criteria are notes (S-B-2)', () => {
+  it('a draft with an "Exit criteria:" line says the phase gate does not check it', async () => {
+    const { form } = await draftFrom('## UAT')
+    expect(within(form()).getByText('Exit criteria are notes; the phase gate does not check them yet.')).toBeInTheDocument()
+  })
+
+  it('a draft without exit criteria shows no note', async () => {
+    const { form } = await draftFrom('## Smoke', draft({
+      phases: [{ name: 'Smoke testing', phase_type: 'qa_testing', description: 'Run it.', exit_criteria_text: null, planned_days: 2 }],
+    }))
+    expect(within(form()).queryByText(/Exit criteria are notes/)).toBeNull()
+  })
+})
+
 describe('DraftPhasesForm — the preview and Create', () => {
   it('edit, remove, add, a first start → ONE bulk body with consecutive windows and the draft\'s source', async () => {
     const answer = draft({ source: 'llm', model_name: 'qwen2.5:7b', fallback_reason: null })

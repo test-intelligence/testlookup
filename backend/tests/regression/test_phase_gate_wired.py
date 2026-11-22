@@ -148,8 +148,10 @@ async def test_a_failing_phase_outranks_an_unevaluated_one():
 async def test_evaluating_one_phase_records_and_commits():
     seen = {}
 
-    async def _one(db, release_id, phase_id, record=True, created_by_id=None):
-        seen.update(record=record, created_by_id=created_by_id)
+    async def _one(db, release_id, phase_id, record=True, created_by_id=None,
+                   include_release_blockers=False):
+        seen.update(record=record, created_by_id=created_by_id,
+                    include_release_blockers=include_release_blockers)
         return _phase_result("QA", "GO")
 
     db = _Session()
@@ -163,6 +165,8 @@ async def test_evaluating_one_phase_records_and_commits():
     assert seen["record"] is True
     assert seen["created_by_id"] == _User.id, "the verdict has no author"
     assert db.commits == 1, "the service stages the row; the router must commit"
+    # D-113: the evaluate endpoint carries the release's blocking defects too.
+    assert seen["include_release_blockers"] is True
 
 
 def test_recording_is_the_DEFAULT_for_an_explicit_evaluation():
@@ -190,7 +194,8 @@ def test_recording_is_the_DEFAULT_for_an_explicit_evaluation():
 async def test_a_preview_does_not_record():
     seen = {}
 
-    async def _one(db, release_id, phase_id, record=True, created_by_id=None):
+    async def _one(db, release_id, phase_id, record=True, created_by_id=None,
+                   include_release_blockers=False):
         seen["record"] = record
         return _phase_result("QA", "GO")
 

@@ -178,8 +178,32 @@ async def review_envelope_for_run(
         await db.execute(stmt.order_by(ReviewRequest.created_at.desc()).limit(1))
     ).scalars().first()
     if row is None:
+        if await _newest_pipeline_needs_no_review(db, run_uuid):
+            return not_ai_generated()
         return _unreviewed()
     return envelope_from_review(row)
+
+
+async def _newest_pipeline_needs_no_review(db: Any, run_uuid: uuid.UUID) -> bool:
+    """True when the run's newest pipeline recorded that its report needs no review.
+
+    D-45: a pipeline whose report no model wrote stages no review request and
+    records ``review_policy = not_applicable``. Without this read the run would
+    read ``pending_review`` with no request anyone could accept, and an enforced
+    review gate would withhold its exports and notifications for good.
+    """
+    from app.models.postgres import AgentPipelineRun  # noqa: PLC0415
+    from app.services.workflow_run_state import REVIEW_NOT_APPLICABLE  # noqa: PLC0415
+
+    policy = (
+        await db.execute(
+            select(AgentPipelineRun.review_policy)
+            .where(AgentPipelineRun.test_run_id == run_uuid)
+            .order_by(AgentPipelineRun.created_at.desc())
+            .limit(1)
+        )
+    ).scalars().first()
+    return bool(policy == REVIEW_NOT_APPLICABLE)
 
 
 def run_report_review_filters(*, workflow_type: Optional[str] = None) -> list:

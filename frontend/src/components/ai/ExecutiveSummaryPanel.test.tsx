@@ -77,6 +77,18 @@ describe('ExecutiveSummaryPanel', () => {
     expect(noGo.container.innerHTML).not.toMatch(RAW_PALETTE)
   })
 
+  it('S-B-5: an empty or unknown signal renders no decision pill, never Conditional', () => {
+    for (const signal of [null, 'MAYBE', ''] as const) {
+      const view = render(
+        <ExecutiveSummaryPanel panel={makePanel({ status_signal: signal as ExecutivePanel['status_signal'] })} />,
+      )
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(screen.queryByText('Conditional')).toBeNull()
+      expect(screen.getByText('No release signal')).toBeInTheDocument()
+      view.unmount()
+    }
+  })
+
   it('renders dominant-failure and baseline sections without raw palette classes', () => {
     const { container } = render(
       <ExecutiveSummaryPanel

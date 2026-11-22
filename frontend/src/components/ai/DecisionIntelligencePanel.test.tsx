@@ -270,10 +270,20 @@ describe('DecisionIntelligencePanel', () => {
     expect(screen.queryByText('NO_GO')).toBeNull()
   })
 
-  it('fails closed when verification metadata is missing or inconsistent', () => {
+  it('names the disagreement and shows the earlier verified report for reference (D-154)', () => {
     renderPanel(report(), passed, rejected)
     expect(screen.getByText('Verification unavailable')).toBeTruthy()
-    expect(screen.getByText(/not decision-ready/)).toBeTruthy()
+    expect(screen.getByText(/The latest attempt failed verification; an earlier report passed\./)).toBeTruthy()
+    expect(screen.getByText(/Showing the last verified report for reference\. It is not decision-ready\./)).toBeTruthy()
+    expect(screen.queryByText(/missing or inconsistent/)).toBeNull()
+    // The report that passed is shown, as the stale case does.
+    expect(screen.getByText('NO_GO')).toBeTruthy()
+  })
+
+  it('fails closed with a named disagreement when no report passed verification', () => {
+    renderPanel(report({ verification: { status: 'failed' } }), passed, published)
+    expect(screen.getByText('Verification unavailable')).toBeTruthy()
+    expect(screen.getByText(/recorded as published, but its report failed verification\. This report is not decision-ready\./)).toBeTruthy()
     expect(screen.queryByText('NO_GO')).toBeNull()
   })
 

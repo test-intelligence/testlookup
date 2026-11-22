@@ -13,8 +13,8 @@
  * summary is not built yet; the worker rebuilds it after every pipeline).
  *
  * WHAT IT SAYS. The recommendation the run's Analysis tab shows, chosen the
- * same way (`RunIntelligencePage`): a verified decision report's
- * recommendation wins; when a report envelope exists but none of it is
+ * same way (`RunIntelligencePage`): a person's override wins; then a verified
+ * decision report's recommendation; when a report envelope exists but none of it is
  * displayable, there is no verdict; otherwise the persisted release decision.
  * ONE reducer (`aiVerdictOf`) runs over the full payload (the Analysis tab)
  * and over the slim one (this column), so the two agree by construction; the
@@ -77,8 +77,13 @@ export function aiVerdictOf(intel: Partial<RunIntelligence> | null | undefined):
   const attempt = summary?.latest_decision_attempt ?? null
   const hasReportEnvelope = Boolean(report || verification || attempt)
   const trust = deriveDecisionTrustState(report, verification, attempt)
+  // D-99: a person's override wins over the report and its verification state.
+  const fromOverride = intel.release_decision?.human_override
+    ? asRecommendation(intel.release_decision.recommendation)
+    : null
   const fromReport = trust.displayReport ? asRecommendation(trust.displayReport.release_decision?.recommendation) : null
-  const recommendation = fromReport ?? (hasReportEnvelope ? null : asRecommendation(intel.release_decision?.recommendation))
+  const recommendation =
+    fromOverride ?? fromReport ?? (hasReportEnvelope ? null : asRecommendation(intel.release_decision?.recommendation))
   if (recommendation) {
     const state = intel.review?.state
     return {

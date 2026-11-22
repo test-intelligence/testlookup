@@ -47,14 +47,14 @@ def test_one_project_reads_test_names_and_passes_the_rest_through():
         db, uuid.uuid4(),
         ["Checkout::abc123 is FAILED", "Checkout::zzz is BROKEN", "CRITICAL defect open: Totals"],
     ))
-    assert out == ["test_pay (Checkout) is FAILED", "Checkout::zzz is BROKEN", "CRITICAL defect open: Totals"]
+    assert out == ["test_pay (Checkout) is FAILED", "Checkout::zzz is BROKEN", "P0 defect open: Totals"]
     assert len(db.statements) == 1
 
 
 def test_no_query_when_no_reason_names_a_test():
     db = _Db([])
     out = asyncio.run(reasons.readable_reasons(db, uuid.uuid4(), ["CRITICAL defect open: Totals"]))
-    assert out == ["CRITICAL defect open: Totals"]
+    assert out == ["P0 defect open: Totals"]
     assert db.statements == []
     project = uuid.uuid4()
     assert asyncio.run(reasons.display_reasons_by_project(db, {project: ["a defect"]})) == {
@@ -95,3 +95,29 @@ def test_the_release_form_resolves_its_project_inside_the_one_query():
     assert len(db.statements) == 1
     sql = " ".join(db.statements[0].split())
     assert "test_runs.project_id = (SELECT releases.project_id" in sql
+
+
+def test_a_defect_reason_reads_in_the_defects_page_priority_words():
+    """D-103: the stored "HIGH defect open: X" displays as "P1 defect open: X",
+    the word the Defects page shows for the same defect."""
+    db = _Db([])
+    out = asyncio.run(reasons.readable_reasons(db, uuid.uuid4(), [
+        "CRITICAL defect open: Totals", "HIGH defect open: Login 500s",
+        "MEDIUM defect open: is slow", "LOW defect open: typo", "WEIRD defect open: x",
+        "2 open defect(s) have no severity, so the blocking criterion cannot be evaluated",
+    ]))
+    assert out == [
+        "P0 defect open: Totals", "P1 defect open: Login 500s",
+        "P2 defect open: is slow", "P3 defect open: typo", "WEIRD defect open: x",
+        "2 open defect(s) have no severity, so the blocking criterion cannot be evaluated",
+    ]
+    project = uuid.uuid4()
+    assert asyncio.run(reasons.display_reasons_by_project(db, {project: ["HIGH defect open: X"]})) == {
+        project: ["P1 defect open: X"]
+    }
+    assert asyncio.run(reasons.display_reasons_for_release(db, uuid.uuid4(), ["HIGH defect open: X"])) == [
+        "P1 defect open: X"
+    ]
+    assert db.statements == []
+    # The stored text is untouched and still parses as a non-test reason.
+    assert reasons.reason_key("HIGH defect open: X") == (None, None, "HIGH defect open: X")

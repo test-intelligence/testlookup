@@ -20,7 +20,7 @@ from app.core.release_planning import (
     DRAFT_WARNING_UNTYPED,
     PHASE_TYPES,
 )
-from app.services.release_phase_generator import draft_by_rules, extract_prd_text
+from app.services.release_phase_generator import draft_by_rules, extract_prd_text, untyped_warning
 
 FIXTURES = Path(__file__).parent / "fixtures" / "prd"
 
@@ -81,7 +81,9 @@ def test_mobile_release_setext_text():
         "The device lab runs the smoke pack on every nightly build, then the full "
         "regression on the freeze build:"
     )
-    assert warnings == [DRAFT_WARNING_UNTYPED]
+    assert warnings == [
+        'These headings name no phase type and were drafted as QA testing: "Store release". Check each type.'
+    ]
 
 
 @pytest.fixture
@@ -125,7 +127,29 @@ def test_payments_docx_with_heading_styles(payments_docx):
 def test_an_untyped_heading_warns_once():
     phases, warnings = draft_by_rules("## Dry run\n\n## Rehearsal two\n\n## Smoke\n")
     assert [p["phase_type"] for p in phases] == ["qa_testing", "qa_testing", "qa_testing"]
-    assert warnings == [DRAFT_WARNING_UNTYPED]
+    # D-111: one warning, naming the headings it means.
+    assert warnings == [untyped_warning(["Dry run", "Rehearsal two"])]
+    assert '"Dry run", "Rehearsal two"' in warnings[0]
+
+
+def test_fix_and_code_review_drafts_as_development():
+    """D-111: "Fix and code review" fell through to QA testing."""
+    phases, warnings = draft_by_rules(
+        "## Fix and code review\n\n## Bug fix sprint\n\n## Refactor payments\n\n## Review round 2\n"
+    )
+    assert [p["phase_type"] for p in phases] == ["development"] * 4
+    assert warnings == []
+
+
+def test_a_bare_review_does_not_steal_a_heading_another_word_types():
+    phases, _ = draft_by_rules(
+        "## UAT review\n\n## Security review\n\n## Design review\n\n## Staging review\n"
+    )
+    assert [p["phase_type"] for p in phases] == ["uat", "qa_testing", "planning", "staging"]
+
+
+def test_the_untyped_warning_without_names_falls_back_to_the_generic_sentence():
+    assert untyped_warning([]) == DRAFT_WARNING_UNTYPED
 
 
 def test_31_headings_draft_30_and_say_so():

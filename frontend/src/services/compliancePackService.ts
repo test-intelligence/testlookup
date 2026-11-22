@@ -147,16 +147,22 @@ export const compliancePackService = {
       },
     }),
 
+  /**
+   * D-108: quiet on failure. The panel toasts the refusal itself (the server's
+   * sentence); the global interceptor toasting it as well showed it twice.
+   */
   generate: (releaseId: string, body: CompliancePackGenerateBody = {}) =>
     postData<CompliancePackRead>(
       `/api/v1/releases/${releaseId}/compliance-pack`,
       body,
+      { suppressToast: true },
     ),
 
-  /** Download the pack as a browser-saved blob. */
+  /** Download the pack as a browser-saved blob. Quiet on failure: the panel toasts it (D-108). */
   download: async (packId: string, filename?: string): Promise<void> => {
     const response = await api.get(`/api/v1/compliance-packs/${packId}/download`, {
       responseType: 'blob',
+      suppressToast: true,
     })
     const blob = response.data as Blob
     const url = URL.createObjectURL(blob)
@@ -196,11 +202,14 @@ export const compliancePackService = {
   /** Every signing key's public half (deployment-wide); never creates one. */
   signingKeys: () => getData<CompliancePackSigningKeys>('/api/v1/compliance-packs/signing-keys'),
 
-  /** Save one public key as `testlookup-compliance-<key>.pem` (an authenticated blob read). */
+  /**
+   * Save one public key as `testlookup-compliance-<key>.pem` (an authenticated
+   * blob read). Quiet on failure: the panel toasts it (D-108).
+   */
   downloadPublicKey: async (keyId: string): Promise<void> => {
     const response = await api.get(
       `/api/v1/compliance-packs/signing-keys/${encodeURIComponent(keyId)}/pem`,
-      { responseType: 'blob' },
+      { responseType: 'blob', suppressToast: true },
     )
     downloadBlob(response.data as Blob, `testlookup-compliance-${keyId}.pem`)
   },

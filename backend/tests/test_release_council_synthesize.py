@@ -243,3 +243,19 @@ async def test_a_finished_run_at_zero_percent_is_still_graded():
     assert result.pass_rate == 0.0
     assert result.recommendation == "NO_GO"
     assert result.input_snapshot["verdict_driver"] == "pass_rate_floor"
+
+
+@pytest.mark.asyncio
+async def test_the_council_names_the_runs_project():
+    """D-102: the gate page keeps an open run when the user picks its own project."""
+    from app.services.release_council_service import _synthesize_release_council
+
+    project = uuid.uuid4()
+    graded = _run(pass_rate=100.0, project_id=project)
+    result = await _synthesize_release_council(graded.id, _db_with(graded))
+    assert result.project_id == str(project)
+
+    unmeasured = _run(pass_rate=None, project_id=project)
+    unmeasured.status = "PASSED"
+    db = SimpleNamespace(execute=AsyncMock(side_effect=[_ScalarResult(unmeasured)]))
+    assert (await _synthesize_release_council(unmeasured.id, db)).project_id == str(project)

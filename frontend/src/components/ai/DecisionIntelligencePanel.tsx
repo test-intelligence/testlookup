@@ -277,7 +277,12 @@ export default function DecisionIntelligencePanel({
   const detailsId = useId()
   const headingId = useId()
   if (!report && !latestAttempt && !latestVerification) return null
-  const { state, displayReport } = deriveDecisionTrustState(report, latestVerification, latestAttempt)
+  const trust = deriveDecisionTrustState(report, latestVerification, latestAttempt)
+  const { state, disagreement } = trust
+  // D-154: when the records disagree but a report itself passed verification,
+  // show it for reference (as 'rejected_stale' does). It is still not a
+  // verdict: the gate and the Runs list read trust.displayReport, not this.
+  const displayReport = trust.displayReport ?? trust.earlierVerifiedReport
   const verified = state === 'verified' || state === 'verified_gaps'
     || state === 'verified_degraded'
   const coverage = readAnalysisCoverage(displayReport?.quality_review?.gap_report)
@@ -363,7 +368,10 @@ export default function DecisionIntelligencePanel({
 
       {state === 'inconsistent' && (
         <p className="mt-3 mb-0 text-sm text-[var(--status-failed)]">
-          Verification metadata is missing or inconsistent. This report is not decision-ready.
+          {disagreement}{' '}
+          {trust.earlierVerifiedReport
+            ? 'Showing the last verified report for reference. It is not decision-ready.'
+            : 'This report is not decision-ready.'}
         </p>
       )}
 

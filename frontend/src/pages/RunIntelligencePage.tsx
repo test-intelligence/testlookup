@@ -1212,6 +1212,11 @@ interface Verdict {
   decision: ReleaseDecisionIntel | null
   /** A verified (terminal) decision report backs the verdict. */
   terminalBacked: boolean
+  /**
+   * D-145: a decision report exists but is not verified, so the verdict is the
+   * stored release decision, labelled "report not verified" (not Pending).
+   */
+  reportNotVerified: boolean
   lede?: string
   affectedSuite?: string
   dimensions: DimensionScore[]
@@ -1221,8 +1226,10 @@ interface Verdict {
 
 /**
  * The verdict one intelligence payload states. A verified decision report
- * wins over the pipeline's own release decision; with a report envelope but
- * no verified report there is no verdict (PENDING), never the legacy one.
+ * wins over the pipeline's own release decision. With a report envelope but no
+ * verified report, the stored release decision answers, flagged
+ * `reportNotVerified` (D-145: the gate page showed Go while this banner said
+ * Pending for the same build); with neither there is no verdict (PENDING).
  */
 function deriveVerdict(intelligence: RunIntelligence): Verdict {
   const { structured_summary, release_decision, failure_clusters, affected_suites } = intelligence
@@ -1242,13 +1249,15 @@ function deriveVerdict(intelligence: RunIntelligence): Verdict {
       }
     : null
   const hasEnvelope = Boolean(decisionReport || latestVerification || latestAttempt)
-  const decision = retained ?? (hasEnvelope ? null : release_decision)
+  const unverifiedFallback = !retained && hasEnvelope && release_decision?.recommendation ? release_decision : null
+  const decision = retained ?? (hasEnvelope ? unverifiedFallback : release_decision)
   const terminalBacked = Boolean(decisionTrust.displayReport)
   const rawScore = decision?.composite_risk ?? decision?.risk_score
   return {
     gate: gateOf(decision),
     decision,
     terminalBacked,
+    reportNotVerified: unverifiedFallback !== null,
     lede: terminalBacked
       ? (decision?.reasoning || undefined)
       : (decision?.reasoning ?? structured_summary?.executive_summary ?? undefined),
@@ -1345,7 +1354,16 @@ function VerdictBanner({
           decision it was overridden to, by whom and why. */}
       <StatusBanner
         state={t.banner}
-        title={<span>{override ? `Overridden · ${t.action}` : t.action}</span>}
+        title={
+          <span>
+            {override ? `Overridden · ${t.action}` : t.action}
+            {!override && verdict.reportNotVerified && (
+              <span data-verdict-unverified="" className="font-normal text-[var(--color-text-muted)]">
+                {' · report not verified'}
+              </span>
+            )}
+          </span>
+        }
         facts={facts}
         action={{ label: 'Decision trail', onClick: onDecisionTrail }}
       />

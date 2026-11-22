@@ -29,7 +29,8 @@ class TestBuildExecutivePanelAllGreen:
             category_counts={},
         )
         assert "All 100 tests passed" in panel["headline"]
-        assert panel["status_signal"] == "CONDITIONAL_GO"  # default, enriched later by release decision
+        # D-145 / S-B-5: no signal until a stored release decision supplies one.
+        assert panel["status_signal"] is None
         assert panel["dominant_failure"] is None
         assert panel["metrics"]["failed"] == 0
         assert panel["metrics"]["pass_rate"] == 100.0
@@ -246,14 +247,16 @@ class TestExecutivePanelSchema:
         panel = ExecutivePanel(status_signal="go")
         assert panel.status_signal == "GO"
 
-    def test_invalid_status_defaults_to_conditional(self):
+    def test_invalid_status_is_no_signal_not_conditional(self):
+        # S-B-5: a garbled value used to become a Conditional verdict.
         panel = ExecutivePanel(status_signal="MAYBE")
-        assert panel.status_signal == "CONDITIONAL_GO"
+        assert panel.status_signal is None
+        assert ExecutivePanel(status_signal="").status_signal is None
 
     def test_defaults(self):
         panel = ExecutivePanel()
         assert panel.headline == ""
-        assert panel.status_signal == "CONDITIONAL_GO"
+        assert panel.status_signal is None
         assert panel.risk_score is None
         assert panel.dominant_failure is None
         assert panel.baseline_comparison is None
