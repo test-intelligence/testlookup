@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup E2E Quality"
+  short_description: "Review E2E coverage and verify TestLookup releases"
+  default_prompt: "Use $testlookup-e2e-quality to review TestLookup changes, verify critical journeys, and update the regression coverage ledger."
