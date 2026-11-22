@@ -175,7 +175,9 @@ class TestInputSnapshotAssembly:
         assert snapshot["flaky_finding_count"] == 1
         assert snapshot["test_health_finding_count"] == 0
         assert "assembled_at" in snapshot
-        assert snapshot["score_model_version"] == 1
+        from app.services.criticality_service import SCORE_MODEL_VERSION
+
+        assert snapshot["score_model_version"] == SCORE_MODEL_VERSION
 
     @pytest.mark.asyncio
     async def test_snapshot_empty_state(self):

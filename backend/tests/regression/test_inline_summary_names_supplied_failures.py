@@ -74,12 +74,15 @@ def test_the_fallback_derives_no_release_signal_from_supplied_failures():
     assert hint.startswith("These are failures supplied with the request, not this run's results")
 
 
-def test_a_stored_runs_fallback_still_states_its_release_signal():
+def test_a_stored_runs_fallback_states_no_release_verdict():
+    """D-119: the summary runs before the release decision exists, so a verdict in
+    its prose was a pass-rate guess that outlived the decision and any override."""
     from app.agents.summary_agent import SummaryAgent
 
     agent = object.__new__(SummaryAgent)
     run_data = {"build_number": "b-1", "branch": "main", "total_tests": 10, "failed_tests": 5, "passed_tests": 5,
                 "pass_rate": 50.0, "status": "FAILED"}
     report = agent._build_fallback_structured_report(run_data, "", [], {})
-    assert "the current release signal is NO GO" in report["layer1_executive_summary"]
-    assert report["layer4_action_plan"]["owner_hints"]["release_manager"].startswith("Treat this run as NO GO")
+    assert "release signal" not in report["layer1_executive_summary"]
+    hint = report["layer4_action_plan"]["owner_hints"]["release_manager"]
+    assert "NO GO" not in hint and "release gate" in hint

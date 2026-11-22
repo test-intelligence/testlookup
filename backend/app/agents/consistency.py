@@ -454,6 +454,15 @@ def _replayed_recommendation(decision: dict) -> str | None:
         # escalation, and is recorded as applied only when it survived.
         if evaluation.get("kind_rule_applied") and recommendation == "NO_GO":
             recommendation = "CONDITIONAL_GO"
+        floor = evaluation.get("verdict_floor")
+        if isinstance(floor, dict):
+            from app.services.criticality_service import apply_verdict_floor
+
+            recommendation, _reasons = apply_verdict_floor(
+                recommendation,
+                blocking_failures=int(floor.get("blocking_failures") or 0),
+                blocking_defects=int(floor.get("blocking_defects") or 0),
+            )
         recommendation, _overall = escalate_recommendation(
             recommendation, evaluation.get("rule_evaluations")
         )

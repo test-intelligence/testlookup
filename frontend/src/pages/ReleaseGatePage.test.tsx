@@ -7,7 +7,7 @@ import { REDUCED_MOTION_QUERY } from '@/components/charts/motion'
 import { releaseCouncilService, type ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 import type { Release } from '@/types/releases'
 
-import ReleaseGatePage from './ReleaseGatePage'
+import ReleaseGatePage, { RISK_SCORE_BANDS } from './ReleaseGatePage'
 import { useAuthStore } from '@/store/authStore'
 
 const { mockProjectState } = vi.hoisted(() => ({
@@ -519,17 +519,21 @@ describe('ReleaseGatePage — the risk ring (OD-6)', () => {
     expect(ring.querySelector('[role="application"]')).toBeNull()
   })
 
-  it('lower is better: 60 sits in the 40-70 warning band (amber)', async () => {
+  it('lower is better: the bands are the verdict thresholds, 20 and 55 (S-B-1)', async () => {
+    // They were 40 and 70, so a Conditional risk of 30 drew green and a No-Go risk of 60 drew amber.
+    expect(RISK_SCORE_BANDS).toEqual({ direction: 'lower-is-better', thresholds: [20, 55] })
     await renderGate(flooredDecision())
     await screen.findByRole('meter', { name: 'Risk Score' })
-    // 60 is in the 40-70 warning band.
-    expect(arc()).toHaveAttribute('fill', 'var(--status-broken)')
+    // 60 is at or above the No-Go threshold.
+    expect(arc()).toHaveAttribute('fill', 'var(--status-failed)')
   })
 
   it.each([
     [85, 'var(--status-failed)'],
-    [70, 'var(--status-failed)'],
-    [39, 'var(--status-passed)'],
+    [55, 'var(--status-failed)'],
+    [39, 'var(--status-broken)'],
+    [20, 'var(--status-broken)'],
+    [19, 'var(--status-passed)'],
   ])('colours a risk of %s with %s', async (score, fill) => {
     await renderGate(flooredDecision({ risk_score: score, composite_risk: score, input_snapshot: {} }))
     await screen.findByRole('meter', { name: 'Risk Score' })

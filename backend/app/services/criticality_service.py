@@ -12,14 +12,34 @@ Replaces the inline _WEIGHTS + _compute_dimension_scores in release_risk_agent.p
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Mapping
 
 from app.models.postgres import FailureCategory
 
 if TYPE_CHECKING:
     from app.models.postgres import ReleaseGatePolicy
 
-SCORE_MODEL_VERSION = 1
+# 2 (product findings D-04, D-95, D-146): open defects weigh by severity; a
+# product bug counts whether or not it carries the flaky flag; and
+# ``apply_verdict_floor`` holds GO back while a release-blocking failure or
+# defect is open. Decisions stored under model 1 keep their own version and
+# are not replayed under this one.
+SCORE_MODEL_VERSION = 2
+
+#: Raw ``user_impact`` points per open defect, by severity. It was 2 for any
+#: defect, so an open P1 added 0.5 to the composite.
+DEFECT_SEVERITY_PRESSURE: dict[str, float] = {
+    "CRITICAL": 40.0,
+    "HIGH": 20.0,
+    "MEDIUM": 5.0,
+    "LOW": 2.0,
+}
+_DEFECT_PRESSURE_OTHER = 2.0
+
+#: A product bug that also carries the flaky flag counts half. The flag used to
+#: remove it from ``user_impact`` entirely, so a consistent regression mislabelled
+#: flaky scored as no product impact at all (D-146).
+_FLAKY_PRODUCT_BUG_WEIGHT = 0.5
 
 # Thresholds for composite risk → recommendation
 _GO_THRESHOLD = 20    # composite_risk < 20  → GO
@@ -52,7 +72,8 @@ def _weights() -> dict[str, float]:
 # and consumed by the frontend CriticalityMatrix "Why this score?" tooltip.
 _DIMENSION_DESCRIPTIONS: dict[str, str] = {
     "user_impact": (
-        "Proportion of PRODUCT_BUG failures multiplied by open defect pressure. "
+        "Proportion of PRODUCT_BUG failures plus open defect pressure, weighted "
+        "by severity (critical 40, high 20, medium 5, low 2 points). "
         "High when core user-visible features are broken."
     ),
     "env_sensitivity": (
@@ -89,7 +110,7 @@ def compute_dimension_scores(
     is_regression: bool,
     regression_tests: list[str],
     failure_clusters: list[dict],
-    open_defects: int,
+    open_defects: int | Mapping[str, int],
 ) -> dict[str, float]:
     """
     Compute all 7 risk dimensions from run-level pipeline data.
@@ -98,10 +119,11 @@ def compute_dimension_scores(
     """
     total_analysed = len(analyses) or 1
 
-    product_bugs = [
-        a for a in analyses.values()
-        if a.get("failure_category") == FailureCategory.PRODUCT_BUG and not a.get("is_flaky")
-    ]
+    product_bug_weight = sum(
+        _FLAKY_PRODUCT_BUG_WEIGHT if a.get("is_flaky") else 1.0
+        for a in analyses.values()
+        if a.get("failure_category") == FailureCategory.PRODUCT_BUG
+    )
     infra_failures = [
         a for a in analyses.values()
         if a.get("failure_category") == FailureCategory.INFRASTRUCTURE
@@ -110,7 +132,9 @@ def compute_dimension_scores(
     non_flaky = total_analysed - flaky_count
 
     # 1. User impact: product bug rate + open defect pressure
-    user_impact = min(100.0, (len(product_bugs) / total_analysed) * 80 + open_defects * 2)
+    user_impact = min(
+        100.0, (product_bug_weight / total_analysed) * 80 + defect_pressure(open_defects)
+    )
 
     # 2. Env sensitivity: infra failures + severe anomaly count
     severe_anomalies = sum(1 for a in anomalies if a.get("severity") == "HIGH")
@@ -155,6 +179,54 @@ def compute_dimension_scores(
         "blast_radius":      round(blast_radius, 1),
         "diagnosis_conf":    round(diagnosis_conf, 1),
     }
+
+
+def defect_pressure(open_defects: int | Mapping[str, int] | None) -> float:
+    """Raw ``user_impact`` points for the project's open defects.
+
+    A severity breakdown weighs each defect by ``DEFECT_SEVERITY_PRESSURE``. A
+    bare count (older callers and stored snapshots) keeps 2 points a defect.
+    """
+    if not open_defects:
+        return 0.0
+    if isinstance(open_defects, Mapping):
+        return float(sum(
+            DEFECT_SEVERITY_PRESSURE.get(str(severity).upper(), _DEFECT_PRESSURE_OTHER) * int(count or 0)
+            for severity, count in open_defects.items()
+        ))
+    return float(open_defects) * _DEFECT_PRESSURE_OTHER
+
+
+def apply_verdict_floor(
+    recommendation: str,
+    *,
+    blocking_failures: int = 0,
+    blocking_defects: int = 0,
+) -> tuple[str, list[str]]:
+    """The verdict a run's open problems allow, and the reasons it was lowered.
+
+    * An open CRITICAL or HIGH defect means NO_GO, as it does for the release
+      (``release_defect_service.BLOCKING_SEVERITIES``).
+    * A failed test that is not quarantined and not classed flaky or
+      infrastructure means at best CONDITIONAL_GO.
+
+    Applied after the score and the failure-kind budgets, before policy rules
+    escalate. It never raises a verdict. Before it, a run with four product
+    failures and an open P1 defect read GO ("release cleared"), while the
+    release containing it read NO_GO (D-04, D-83, D-146).
+    """
+    reasons: list[str] = []
+    if blocking_defects > 0 and recommendation != "NO_GO":
+        noun = "defect" if blocking_defects == 1 else "defects"
+        reasons.append(f"{blocking_defects} open critical or high {noun}")
+        return "NO_GO", reasons
+    if blocking_failures > 0 and recommendation == "GO":
+        noun = "failure" if blocking_failures == 1 else "failures"
+        reasons.append(
+            f"{blocking_failures} {noun} not quarantined and not classed flaky or infrastructure"
+        )
+        return "CONDITIONAL_GO", reasons
+    return recommendation, reasons
 
 
 def compute_composite(

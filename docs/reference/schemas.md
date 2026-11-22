@@ -33204,6 +33204,14 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "Side-by-side comparison: original vs simulated policy result.",
   "properties": {
+    "band_downgrades": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Band Downgrades",
+      "type": "array"
+    },
     "diff_summary": {
       "title": "Diff Summary",
       "type": "string"
@@ -33215,6 +33223,17 @@ These are the full generated JSON Schema definitions, including required fields,
     "original_recommendation": {
       "title": "Original Recommendation",
       "type": "string"
+    },
+    "release_readiness_band": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Release Readiness Band"
     },
     "rule_evaluations": {
       "default": [],

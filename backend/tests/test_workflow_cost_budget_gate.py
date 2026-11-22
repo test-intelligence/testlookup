@@ -440,6 +440,12 @@ async def test_release_risk_downgrade_never_constructs_llm(monkeypatch, mode):
         "_load_release_memory_context",
         AsyncMock(return_value={"open_defects": 0, "source": "test"}),
     )
+    # The run's release signals (D-04) are a DB read; none here.
+    monkeypatch.setattr(
+        agent,
+        "_load_run_release_signals",
+        AsyncMock(return_value={"blocking_failures": 0, "blocking_defects": 0, "open_defects_by_severity": {}}),
+    )
     monkeypatch.setattr(
         release_risk_agent,
         "compute_dimension_scores",

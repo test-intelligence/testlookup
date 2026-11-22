@@ -387,8 +387,7 @@ class RulesEngine:
             exec_summary = (
                 f"Build {build} on {branch} completed successfully with all "
                 f"{total} tests passing ({pass_rate:.1f}% pass rate). "
-                f"No failures detected across any test suite. "
-                f"Release signal is GO."
+                f"No failures detected across any test suite."
             )
         elif pass_rate >= 90:
             exec_summary = (
@@ -396,8 +395,7 @@ class RulesEngine:
                 f"out of {total} tests ({pass_rate:.1f}% pass rate). "
                 f"The dominant failure category is {top_category.lower().replace('_', ' ')} "
                 f"({top_count} occurrences)"
-                f"{f', with {len(flaky_ids)} known flaky tests' if flaky_ids else ''}. "
-                f"Release signal is {release_impact.replace('_', ' ')}."
+                f"{f', with {len(flaky_ids)} known flaky tests' if flaky_ids else ''}."
             )
         else:
             exec_summary = (
@@ -406,8 +404,7 @@ class RulesEngine:
                 f"quality issues. {top_count} failures classified as "
                 f"{top_category.lower().replace('_', ' ')}"
                 f"{f', {len(flaky_ids)} flaky tests identified' if flaky_ids else ''}. "
-                f"Immediate investigation required — release signal is "
-                f"{release_impact.replace('_', ' ')}."
+                f"Immediate investigation required."
             )
 
         # ── Layer 2: Incident view ──────────────────────────────────────

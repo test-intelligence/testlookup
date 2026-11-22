@@ -207,6 +207,15 @@ describe('threshold semantics are described accurately', () => {
     expect(screen.getByText(/composite at or above this → NO_GO/i)).toBeInTheDocument()
   })
 
+  it('says a hard cap forces No-Go and which verdict each cap applies to (D-132, D-136)', () => {
+    renderAt('/policies/new')
+    fireEvent.click(disclosure('Hard caps'))
+    // The classifier pins a breached cap to red / NO_GO; the editor said it stepped down one band.
+    const caps = screen.getByText(/Exceeding any cap forces No-Go, whatever the pass rate/)
+    expect(caps.textContent).not.toMatch(/one step/i)
+    expect(caps.textContent).toMatch(/flaky and new-failure caps apply to the project readiness verdict on Home/)
+  })
+
   it('says GO applies strictly below the GO threshold', () => {
     renderAt('/policies/new')
     // `composite < go_threshold -> GO`; AT the value it is CONDITIONAL_GO, so

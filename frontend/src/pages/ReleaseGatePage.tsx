@@ -71,11 +71,12 @@ const GATE_TABS = ['why', 'context', 'history'] as const
 type GateTab = (typeof GATE_TABS)[number]
 
 /**
- * The risk arc's bands: 70 and up is bad, 40 and up a warning, below is good.
- * LOWER is better — the reverse of a pass rate — and the direction is said
- * here, not buried in a colour ternary.
+ * The risk arc's bands follow the verdict's own thresholds: under 20 is GO, 55 and up is NO_GO, between is
+ * CONDITIONAL_GO (`criticality_service._GO_THRESHOLD` / `_NO_GO_THRESHOLD`). They were 40 and 70, so a
+ * Conditional risk of 30 drew green and a No-Go risk of 60 drew amber (S-B-1). LOWER is better — the reverse
+ * of a pass rate — and the direction is said here, not buried in a colour ternary.
  */
-export const RISK_SCORE_BANDS: GaugeBands = { direction: 'lower-is-better', thresholds: [40, 70] }
+export const RISK_SCORE_BANDS: GaugeBands = { direction: 'lower-is-better', thresholds: [20, 55] }
 const riskTone = bandsTone(RISK_SCORE_BANDS)
 
 /**

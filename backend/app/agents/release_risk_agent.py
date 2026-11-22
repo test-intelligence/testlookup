@@ -48,6 +48,7 @@ from app.models.postgres import Defect, ReleaseDecision
 from app.services.defect_status import ACTIVE_STATUSES
 from app.services.criticality_service import (
     SCORE_MODEL_VERSION,
+    apply_verdict_floor,
     compute_composite,
     compute_dimension_scores,
     score_to_recommendation,
@@ -73,6 +74,27 @@ _REASONING_PROMPT = get_prompt_text("release_risk_reasoning")
 # Composite risk thresholds below which LLM is skipped (cost optimization)
 _EXTREME_GO_THRESHOLD = 10         # Clearly safe — skip LLM
 _EXTREME_NO_GO_THRESHOLD = 75      # Clearly blocked — skip LLM
+
+
+REASONING_FALLBACK = "fallback"
+_FALLBACK_MARKER = "LLM reasoning unavailable"
+
+
+def _keeps_stored_reasoning(record, decision: dict) -> bool:
+    """True when a retry has only the fallback text for the same scores.
+
+    A deep run whose first attempt was reaped and second resumed wrote the row
+    twice: the model's paragraph and its blockers, then "LLM reasoning
+    unavailable" with none, a minute later and with no user action (D-147).
+    The fallback says nothing the model's answer for the same dimension scores
+    did not, so the stored explanation stays. New scores always replace it.
+    """
+    if decision.get("reasoning_source") != REASONING_FALLBACK:
+        return False
+    stored = getattr(record, "reasoning", None) or ""
+    if not stored or _FALLBACK_MARKER in stored:
+        return False
+    return getattr(record, "dimension_scores", None) == decision.get("dimension_scores")
 
 
 class ReleaseRiskAgent(BaseAgent):
@@ -209,6 +231,14 @@ class ReleaseRiskAgent(BaseAgent):
 
         release_memory_context = await self._load_release_memory_context(state["project_id"])
         open_defects = int(release_memory_context.get("open_defects") or 0)
+        # D-04: the run's unquarantined real failures and the project's open
+        # defects by severity. The score saw failures only through the pass
+        # rate and every defect as 2 points, so four product failures and an
+        # open P1 read GO.
+        signals = await self._load_run_release_signals(state)
+        by_severity = signals.get("open_defects_by_severity") or {}
+        blocking_failures = int(signals.get("blocking_failures") or 0)
+        blocking_defects = int(signals.get("blocking_defects") or 0)
 
         # ── Step 1: deterministic dimension scoring ───────────────────────────
         dim_scores = compute_dimension_scores(
@@ -218,7 +248,7 @@ class ReleaseRiskAgent(BaseAgent):
             is_regression=is_regression,
             regression_tests=regression_tests,
             failure_clusters=failure_clusters,
-            open_defects=open_defects,
+            open_defects=by_severity or open_defects,
         )
 
         composite = compute_composite(dim_scores)
@@ -232,6 +262,9 @@ class ReleaseRiskAgent(BaseAgent):
             "open_defects": open_defects,
             "open_defects_source": release_memory_context.get("source"),
             "regression_test_count": len(regression_tests),
+            "blocking_failures": blocking_failures,
+            "blocking_defects": blocking_defects,
+            "open_defects_by_severity": dict(by_severity),
             "failure_kind_counts": self._failure_kind_counts(analyses),
             "failure_kind_confidences": self._failure_kind_confidences(analyses),
         }
@@ -294,6 +327,11 @@ class ReleaseRiskAgent(BaseAgent):
                 if pass_rate < threshold * 0.7:
                     composite = max(composite, 60.0)
                 recommendation = score_to_recommendation(composite, pass_rate, threshold)
+                recommendation, _reasons = apply_verdict_floor(
+                    recommendation,
+                    blocking_failures=blocking_failures,
+                    blocking_defects=blocking_defects,
+                )
 
         # ── Step 2: LLM reasoning (non-blocking — failures gracefully degrade) ─
         # Cost optimization: skip LLM for extreme scores (saves ~10K tokens/day)
@@ -303,7 +341,7 @@ class ReleaseRiskAgent(BaseAgent):
         if deterministic_only:
             llm_extras = {
                 "reasoning": (
-                    f"Composite risk score {composite:.0f}/100. "
+                    f"Composite risk score {composite:.1f}/100. "
                     "Narrative enrichment was skipped by the persisted cost-budget "
                     "decision; the recommendation and risk score remain deterministic."
                 ),
@@ -313,7 +351,7 @@ class ReleaseRiskAgent(BaseAgent):
         elif composite < _EXTREME_GO_THRESHOLD:
             llm_extras = {
                 "reasoning": (
-                    f"Composite risk score {composite:.0f}/100 — all dimensions in the green zone. "
+                    f"Composite risk score {composite:.1f}/100 — all dimensions in the green zone. "
                     f"Pass rate {pass_rate:.1f}% is well above threshold. No LLM reasoning required."
                 ),
                 "blocking_issues": [],
@@ -323,7 +361,7 @@ class ReleaseRiskAgent(BaseAgent):
             blocking = self._deterministic_blocking_issues(dim_scores)
             llm_extras = {
                 "reasoning": (
-                    f"Composite risk score {composite:.0f}/100 — critical risk across multiple dimensions. "
+                    f"Composite risk score {composite:.1f}/100 — critical risk across multiple dimensions. "
                     f"Pass rate {pass_rate:.1f}%. Release is strongly blocked."
                 ),
                 "blocking_issues": blocking,
@@ -344,7 +382,8 @@ class ReleaseRiskAgent(BaseAgent):
             "dimension_scores": dim_scores,
             "blocking_issues": llm_extras.get("blocking_issues", []),
             "conditions_for_go": llm_extras.get("conditions_for_go", []),
-            "reasoning": llm_extras.get("reasoning", f"Composite risk {composite:.0f}/100."),
+            "reasoning": llm_extras.get("reasoning", f"Composite risk {composite:.1f}/100."),
+            "reasoning_source": llm_extras.get("reasoning_source", "deterministic"),
             "score_model_version": SCORE_MODEL_VERSION,
             "memory_context": release_memory_context,
             "policy_replay_context": policy_context,
@@ -466,7 +505,7 @@ class ReleaseRiskAgent(BaseAgent):
             scores_json=json.dumps(dim_scores, indent=2),
             composite=composite,
             recommendation=recommendation,
-            summary=executive_summary or f"Composite risk: {composite:.0f}/100",
+            summary=executive_summary or f"Composite risk: {composite:.1f}/100",
             failures="\n".join(failure_lines) if failure_lines else "No failures",
         ))
 
@@ -488,7 +527,7 @@ class ReleaseRiskAgent(BaseAgent):
                 validated = validate_llm_output(
                     ReleaseReasoning, parsed, context="release_risk_reasoning",
                 )
-                return validated
+                return {**validated, "reasoning_source": "llm"}
             logger.warning("LLM reasoning parse issue", reason=error)
         except asyncio.TimeoutError:
             logger.warning("LLM reasoning timed out", timeout=timeout)
@@ -499,12 +538,13 @@ class ReleaseRiskAgent(BaseAgent):
         blocking = self._deterministic_blocking_issues(dim_scores)
         return {
             "reasoning": (
-                f"Composite risk score {composite:.0f}/100 (weights: user_impact=25%, "
+                f"Composite risk score {composite:.1f}/100 (weights: user_impact=25%, "
                 f"regression=20%, blast_radius=15%, reproducibility=15%). "
                 f"Recommendation derived deterministically — LLM reasoning unavailable."
             ),
             "blocking_issues": blocking,
             "conditions_for_go": ["Resolve product bugs and rerun failing suites"] if blocking else [],
+            "reasoning_source": REASONING_FALLBACK,
         }
 
     @staticmethod
@@ -606,6 +646,16 @@ class ReleaseRiskAgent(BaseAgent):
         return int(context.get("open_defects") or 0)
 
     @staticmethod
+    async def _load_run_release_signals(state: dict) -> dict:
+        """The run's blocking failures and the project's open defects by severity."""
+        from app.services.run_release_signals import load_run_release_signals
+
+        async with AsyncSessionLocal() as db:
+            return await load_run_release_signals(
+                db, state.get("test_run_id"), state.get("project_id")
+            )
+
+    @staticmethod
     async def _count_open_defects_from_db(db, project_id: str) -> int:
         from sqlalchemy import func as sa_func, select
         result = await db.execute(
@@ -642,9 +692,10 @@ class ReleaseRiskAgent(BaseAgent):
                 # verdict and original_* remains its immutable pre-override
                 # snapshot. The row lock serializes this with apply_override,
                 # whichever transaction starts first.
-                record.blocking_issues = decision.get("blocking_issues", [])
-                record.conditions_for_go = decision.get("conditions_for_go", [])
-                record.reasoning = decision.get("reasoning", "")
+                if not _keeps_stored_reasoning(record, decision):
+                    record.blocking_issues = decision.get("blocking_issues", [])
+                    record.conditions_for_go = decision.get("conditions_for_go", [])
+                    record.reasoning = decision.get("reasoning", "")
                 record.dimension_scores = decision.get("dimension_scores")
                 record.composite_risk = decision.get("composite_risk")
                 record.score_model_version = decision.get("score_model_version")
