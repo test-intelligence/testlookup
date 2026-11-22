@@ -237,7 +237,7 @@ describe('REL-01: the #gate deep link', () => {
 })
 
 describe('REL-10: a phase-gate 409 asks for the reason', () => {
-  const NO_GO_DETAIL = "This phase's gate says NO_GO: test_pay (checkout-e2e) is FAILED. Fix it, or supply gate_override_reason to complete it anyway."
+  const NO_GO_DETAIL = "This phase's gate says NO_GO: test_pay (checkout-e2e) is FAILED. Fix it, or complete it anyway with a reason."
   const SKIP_DETAIL = "Skipping a phase needs a reason — it counts as done in the release's all-phases check, so an unexplained skip is indistinguishable from work that passed."
 
   function openPanelPhaseSelect() {

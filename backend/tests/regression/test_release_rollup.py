@@ -143,6 +143,18 @@ class TestTheEvidenceFloor:
         assert r.denominator == 20
         assert svc.decide(r)[0] == "NOT_EVALUATED"
 
+    def test_a_phase_with_no_results_says_so_not_0_of_0(self):
+        """D-106: an empty phase read "only 0 of 0 tests carry evidence"."""
+        r = rollup_of()
+
+        verdict, reasons = svc.decide(r, scope="phase")
+
+        assert verdict == "NOT_EVALUATED"
+        assert reasons == [
+            f"no test results are linked to this phase yet; {svc.MIN_EVIDENCE} are needed for a verdict"
+        ]
+        assert "0 of 0" not in svc.decide(r)[1][0]
+
 
 class TestTheScorecardCarriesItsOwnCaveats:
     def test_the_denominator_travels_with_the_pass_rate(self):

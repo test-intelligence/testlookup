@@ -653,6 +653,8 @@ async def test_the_export_bundle_is_pure_json_oldest_first_with_the_consecutive_
     )
     db = _DB([
         ("FROM review_requests", _Res(rows=[])),
+        # D-45: no review row, so the envelope reads the newest pipeline's policy.
+        ("FROM agent_pipeline_runs", _Res(rows=[])),
         ("count(*)", _Res(value=1)),
         ("FROM ai_analysis_versions JOIN test_cases", _Res(rows=[(version_row, "test_pay")])),
         ("FROM users", _Res(rows=[SimpleNamespace(id=actor, full_name=None, username="anna")])),

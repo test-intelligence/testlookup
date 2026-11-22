@@ -15,6 +15,7 @@ import { deriveRelease } from './mapping'
 import {
   NEVER_EVALUATED_LEDE,
   countReleases,
+  dueDay,
   openBlockerCount,
   releaseHeadline,
   releaseHealthFacts,
@@ -155,7 +156,19 @@ describe('blocker counts are the server\'s totals', () => {
   // W29a UIX-10: the due day is the fixed-locale weekday (formatWeekday), whatever the browser's language.
   it('names the due day in the fixed en-US weekday', () => {
     const nogo = deriveRelease(release({ name: 'Checkout', version: 'Checkout', planned_date: '2026-10-16T12:00:00Z', gate: gate({ verdict: 'NO_GO', blocking_total: 1 }) }))
-    expect(releaseHeadline(nogo)).toBe('Checkout is blocked — was due Friday')
+    expect(releaseHeadline(nogo, NOW)).toBe('Checkout is blocked — due Friday')
+  })
+
+  // D-105: "was due" only once the date has gone by; a far date reads as a date.
+  it('says "due" for a future date, "was due" for a past one, and a date beyond six days', () => {
+    const at = (planned_date: string) => deriveRelease(release({ name: 'Checkout', version: 'Checkout', planned_date, gate: gate({ verdict: 'NO_GO', blocking_total: 1 }) }))
+    expect(releaseHeadline(at('2026-10-16T12:00:00Z'), NOW)).toBe('Checkout is blocked — due Friday')
+    expect(releaseHeadline(at('2026-10-13T12:00:00Z'), NOW)).toBe('Checkout is blocked — was due Tuesday')
+    expect(releaseHeadline(at('2026-10-21T12:00:00Z'), NOW)).toBe('Checkout is blocked — due Wednesday')
+    expect(releaseHeadline(at('2026-10-26T12:00:00Z'), NOW)).toBe('Checkout is blocked — due Oct 26')
+    expect(releaseHeadline(at('2026-10-01T12:00:00Z'), NOW)).toBe('Checkout is blocked — was due Oct 1')
+    expect(dueDay(null, NOW)).toBeNull()
+    expect(dueDay('not a date', NOW)).toBeNull()
   })
 })
 

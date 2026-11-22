@@ -238,8 +238,17 @@ _TYPE_TABLE: tuple[tuple[str, re.Pattern[str]], ...] = (
         r"performance|load|security)",
         re.IGNORECASE,
     )),
-    ("development", re.compile(r"\b(?:develop|implementation|build|coding|sprint)", re.IGNORECASE)),
+    # D-111: "Fix and code review" fell through to QA testing.
+    ("development", re.compile(
+        r"\b(?:develop|implementation|build|coding|sprint|fix|bug ?fix|code review|refactor)",
+        re.IGNORECASE,
+    )),
     ("planning", re.compile(r"\b(?:plan|planning|kickoff|design|discovery)", re.IGNORECASE)),
+    # A bare "review" is the weakest signal, so it is LAST: "UAT review",
+    # "Security review" and "Design review" keep the type their other word
+    # names, and only a heading that says nothing else ("Review round 2")
+    # drafts as development.
+    ("development", re.compile(r"\breview", re.IGNORECASE)),
 )
 
 _DAYS = re.compile(r"(?<!\d)(\d{1,2})\s*(?:business\s+|working\s+)?days?\b", re.IGNORECASE)
@@ -302,6 +311,21 @@ def _clean_name(heading: str) -> str:
     name = _DURATION_PAREN.sub("", name)            # "Regression (5 days)"
     name = name.strip().rstrip(":").strip()
     return name[:NAME_MAX]
+
+
+def untyped_warning(names: list[str]) -> str:
+    """D-111: the untyped-heading warning, naming the headings it means.
+
+    ``DRAFT_WARNING_UNTYPED`` said "some headings", leaving the reader to find
+    which rows to check.
+    """
+    if not names:
+        return DRAFT_WARNING_UNTYPED
+    quoted = ", ".join(f'"{n}"' for n in names)
+    return (
+        f"These headings name no phase type and were drafted as QA testing: {quoted}. "
+        "Check each type."
+    )
 
 
 def _phase_type(heading: str) -> Optional[str]:
@@ -442,7 +466,8 @@ def draft_by_rules(text: str) -> tuple[list[dict], list[str]]:
     * Each kept heading is a phase named by its text (Markdown links /
       emphasis / backticks, a leading number, a trailing colon and a
       parenthesised duration removed); its type is the first keyword table
-      that matches, else ``qa_testing`` with ``DRAFT_WARNING_UNTYPED``.
+      that matches, else ``qa_testing`` with a warning naming those headings
+      (``untyped_warning``).
     * Its body (to the next heading of level <= 3, or the next candidate) gives
       the description (the first paragraph) and the exit criteria (a line
       starting "Exit criteria" / "Done when" / "Definition of done" /
@@ -503,7 +528,7 @@ def draft_by_rules(text: str) -> tuple[list[dict], list[str]]:
     phases, untyped = phases[:MAX_BULK_PHASES], untyped[:MAX_BULK_PHASES]
     warnings: list[str] = []
     if any(untyped):
-        warnings.append(DRAFT_WARNING_UNTYPED)
+        warnings.append(untyped_warning([p["name"] for p, u in zip(phases, untyped) if u]))
     if truncated:
         warnings.append(DRAFT_WARNING_TRUNCATED)
     return phases, warnings

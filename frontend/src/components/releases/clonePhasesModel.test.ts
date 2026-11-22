@@ -9,7 +9,10 @@ import type { Release, ReleasePhase } from '@/types/releases'
 import {
   cloneSources,
   copiedToast,
+  clampedDefaultNote,
   defaultFirstStart,
+  ENDS_AFTER_PLANNED_NOTE,
+  firstStartDefault,
   hasDatedPhases,
   shiftTo,
   shiftedPreview,
@@ -91,6 +94,26 @@ describe('defaultFirstStart', () => {
   })
   it('else today (a UTC day)', () => {
     expect(defaultFirstStart(rel('t'), source, today)).toBe('2026-10-23')
+  })
+  // D-110: planned date 10 days out, a 19-day source: planned minus span is in the past.
+  it('is never earlier than today, and then notes that the copy ends after the planned date', () => {
+    const target = rel('t', { planned_date: '2026-11-02T00:00:00Z' })
+    expect(sourceSpanDays(FOUR)).toBe(19)
+    const day = defaultFirstStart(target, source, today)
+    expect(day).toBe('2026-10-23')
+    expect(firstStartDefault(target, source, today)).toEqual({ day: '2026-10-23', clamped: true })
+    expect(clampedDefaultNote(target, source, today, day)).toBe(ENDS_AFTER_PLANNED_NOTE)
+    expect(ENDS_AFTER_PLANNED_NOTE).toBe('The copied schedule ends after the planned date.')
+    // A day somebody typed carries no note.
+    expect(clampedDefaultNote(target, source, today, '2026-10-30')).toBeNull()
+  })
+  it('notes nothing when the default was not clamped', () => {
+    const target = rel('t', { planned_date: '2026-12-20T00:00:00Z' })
+    expect(firstStartDefault(target, source, today)).toEqual({ day: '2026-12-01', clamped: false })
+    expect(clampedDefaultNote(target, source, today, '2026-12-01')).toBeNull()
+    expect(clampedDefaultNote(rel('t'), source, today, '2026-10-23')).toBeNull()
+    const cutoffInThePast = rel('t', { cutoff_start_at: '2026-10-01T00:00:00Z', planned_date: '2026-11-02T00:00:00Z' })
+    expect(firstStartDefault(cutoffInThePast, source, today)).toEqual({ day: '2026-10-01', clamped: false })
   })
 })
 

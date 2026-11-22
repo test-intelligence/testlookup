@@ -122,12 +122,13 @@ function OverrideHistory({ entries }: { entries: OverrideAuditEntry[] }) {
               <span className="text-[var(--color-text-muted)] text-xs">by {entry.actor_name ?? 'Unknown'}</span>
             </div>
             <div className="flex items-center gap-2">
+              {/* D-101: "Go → No-Go", not the raw "GO → NO_GO". */}
               <span className={clsx('text-xs font-medium', REC_CONFIG[entry.before_recommendation as Recommendation]?.colour ?? 'text-[var(--color-text-muted)]')}>
-                {entry.before_recommendation}
+                {REC_CONFIG[entry.before_recommendation as Recommendation]?.label ?? entry.before_recommendation}
               </span>
               <span className="text-[var(--color-text-faint)]">→</span>
               <span className={clsx('text-xs font-medium', REC_CONFIG[entry.after_recommendation as Recommendation]?.colour ?? 'text-[var(--color-text-muted)]')}>
-                {entry.after_recommendation}
+                {REC_CONFIG[entry.after_recommendation as Recommendation]?.label ?? entry.after_recommendation}
               </span>
             </div>
             <p className="text-xs text-[var(--color-text-muted)] mt-1">{entry.reason}</p>
@@ -185,7 +186,11 @@ export default function ReleaseGatePage() {
   const [shareOpen, setShareOpen] = useState(false)
   const workflow = decision ? buildReleaseGateWorkflow(decision) : null
 
-  useProjectChangeRedirect('/release-gate', Boolean(runId))
+  // D-102: landing on /release-gate/<id> in All Projects and then picking that
+  // run's own project used to jump to the project's newest run. The open run
+  // already belongs to the new project, so it stays.
+  const openRunInActiveProject = Boolean(decision?.project_id && decision.project_id === activeProjectId)
+  useProjectChangeRedirect(openRunInActiveProject ? null : '/release-gate', Boolean(runId))
   // W11 GATE-08a: another release in the top bar (or All releases) re-opens
   // the gate on that scope's newest finished run (the effect below picks it).
   useReleaseChangeRedirect('/release-gate', Boolean(runId))
@@ -335,6 +340,9 @@ export default function ReleaseGatePage() {
   // means the composite was floored rather than computed from the dimensions.
   const snapshot = (decision.input_snapshot ?? {}) as Record<string, unknown>
   const floorApplied = snapshot.verdict_driver === 'pass_rate_floor'
+  // S-B-4: when the risk model raised, the agent stores a stand-in verdict at
+  // risk 50 with no dimension scores. That 50 was never measured, so no ring.
+  const scorerFailed = snapshot.verdict_driver === 'scorer_failed'
   const floorPct =
     typeof snapshot.no_go_floor_pct === 'number' ? snapshot.no_go_floor_pct : null
   const cfg = hasEvidence
@@ -487,7 +495,15 @@ export default function ReleaseGatePage() {
               </p>
             )}
           </div>
-          {hasEvidence && <RiskGauge score={decision.risk_score} />}
+          {hasEvidence && !scorerFailed && <RiskGauge score={decision.risk_score} />}
+          {hasEvidence && scorerFailed && (
+            <p
+              data-risk-not-scored=""
+              className="max-w-[12rem] text-right text-sm font-medium text-[var(--ui-warning)]"
+            >
+              Not scored: the risk model failed
+            </p>
+          )}
         </div>
 
         {/* Why the gauge can disagree with the dimension breakdown in Why.

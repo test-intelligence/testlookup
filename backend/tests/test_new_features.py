@@ -400,7 +400,9 @@ class TestSummaryAgentParsing:
         )
 
         assert "LLM was unavailable" in structured["layer1_executive_summary"]
-        assert structured["layer2_incident_view"]["release_impact"] == "CONDITIONAL_GO"
+        # D-145: the fallback guesses no release verdict from the pass rate.
+        assert structured["layer2_incident_view"]["release_impact"] is None
+        assert structured["executive_panel"]["status_signal"] is None
         assert structured["layer3_evidence_pack"]["data_sources_used"] == ["stacktrace"]
         assert "Increase DB pool size" in structured["layer4_action_plan"]["fix_recommendations"]
 

@@ -337,6 +337,7 @@ def _unmeasured_quick_look(
     )
     return ReleaseCouncilResponse(
         run_id=str(run_id),
+        project_id=str(run.project_id) if run.project_id else None,
         recommendation="NO_GO",
         risk_score=0,
         composite_risk=None,
@@ -468,6 +469,7 @@ async def _synthesize_release_council(
 
     return ReleaseCouncilResponse(
         run_id=str(run_id),
+        project_id=str(run.project_id) if run.project_id else None,
         recommendation=recommendation,
         release_readiness_band=band,
         band_downgrades=band_downgrades,
@@ -662,6 +664,7 @@ async def get_release_council(
 
     return ReleaseCouncilResponse(
         run_id=str(run_id),
+        project_id=str(project_id) if project_id else None,
         recommendation=final_recommendation,
         risk_score=decision.risk_score,
         composite_risk=decision.composite_risk,
@@ -730,13 +733,28 @@ async def apply_override(
     # ── Policy override constraints (ENT-02) ─────────────────────────────
     from app.services.policy_evaluator_service import check_override_constraints, resolve_effective_policy
 
-    # Resolve project_id from the test run
-    run_result = await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
-    project_id = run_result.scalar_one_or_none()
+    # Resolve project_id (and the pass rate the band floor reads) from the run
+    run_result = await db.execute(
+        select(TestRun.project_id, TestRun.pass_rate).where(TestRun.id == run_id)
+    )
+    run_row = run_result.one_or_none()
+    project_id = run_row[0] if run_row else None
+    pass_rate = run_row[1] if run_row else None
+
+    # S-B-6: the constraints and the audit's "before" use the recommendation
+    # the gate page SHOWS, not the stored one. ``get_release_council`` layers
+    # the active policy's band floor over a decision nobody has overridden yet,
+    # so a stored GO can read No-Go on screen; checking the stored GO let a
+    # policy that forbids No-Go -> Go be bypassed.
+    displayed_recommendation = decision.recommendation
+    if decision.human_override is None:
+        displayed_recommendation, _band, _downgrades, _band_policy = await _apply_band_floor(
+            db, project_id, decision.recommendation, pass_rate or 0.0,
+        )
 
     policy, policy_level = await resolve_effective_policy(project_id, db)
     allowed, constraint_error = check_override_constraints(
-        policy, decision.recommendation, override_recommendation, reason,
+        policy, displayed_recommendation, override_recommendation, reason,
     )
     if not allowed:
         from fastapi import HTTPException, status
@@ -754,8 +772,9 @@ async def apply_override(
     audit_entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "actor_id": str(actor.id) if actor else None,
-        "actor_name": getattr(actor, "username", None) or getattr(actor, "full_name", None),
-        "before_recommendation": decision.recommendation,
+        # D-101: the history names a person; ``actor_id`` keeps the identity.
+        "actor_name": getattr(actor, "full_name", None) or getattr(actor, "username", None),
+        "before_recommendation": displayed_recommendation,
         "before_risk_score": decision.risk_score,
         "after_recommendation": override_recommendation,
         "reason": reason,
@@ -772,7 +791,7 @@ async def apply_override(
     # only stages the mutation so the override row, any follow-up
     # ``mark_stale`` on the intelligence snapshot, and the metrics
     # counter can all land atomically under one commit.
-    before_rec = decision.recommendation
+    before_rec = displayed_recommendation
     decision.recommendation = override_recommendation
     decision.human_override = reason
     decision.overridden_by = actor.id if actor else None

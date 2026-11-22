@@ -24,13 +24,28 @@ logger = structlog.get_logger("models.llm_schemas")
 # ── Summary Agent Layer Schemas ──────────────────────────────────────────────
 
 
+def _release_signal_or_none(v: Any) -> str | None:
+    """GO / CONDITIONAL_GO / NO_GO, or ``None`` for anything else (D-145, S-B-5).
+
+    An omitted or garbled value is no release signal; it used to become
+    CONDITIONAL_GO and render as a Conditional verdict nobody computed.
+    """
+    if v is None:
+        return None
+    val = str(v).strip().upper().replace(" ", "_")
+    return val if val in {"GO", "CONDITIONAL_GO", "NO_GO"} else None
+
+
 class IncidentView(BaseModel):
     """Layer 2: Structured incident view from summary agent."""
     what_failed: str = ""
     likely_cause: str = ""
     scope: str = ""
     criticality: str = Field(default="MEDIUM")
-    release_impact: str = Field(default="CONDITIONAL_GO")
+    # D-145 / S-B-5: never a default verdict. The summary stage runs before the
+    # release-risk stage, so it has no decision to report; the read fills this
+    # from the stored ReleaseDecision, or leaves it empty.
+    release_impact: str | None = None
     failure_breakdown: dict[str, int] = Field(default_factory=dict)
     # F-3: ids the model cites, resolved server-side against the evidence
     # catalogue and replaced by ``citations`` before the layer is stored.
@@ -48,10 +63,8 @@ class IncidentView(BaseModel):
 
     @field_validator("release_impact", mode="before")
     @classmethod
-    def normalize_release_impact(cls, v: Any) -> str:
-        allowed = {"GO", "CONDITIONAL_GO", "NO_GO"}
-        val = str(v).strip().upper().replace(" ", "_")
-        return val if val in allowed else "CONDITIONAL_GO"
+    def normalize_release_impact(cls, v: Any) -> str | None:
+        return _release_signal_or_none(v)
 
 
 class EvidencePack(BaseModel):
@@ -156,7 +169,9 @@ class BaselineComparison(BaseModel):
 class ExecutivePanel(BaseModel):
     """Structured executive summary panel — deterministically generated."""
     headline: str = ""
-    status_signal: str = Field(default="CONDITIONAL_GO")
+    # D-145 / S-B-5: empty unless a stored release decision supplies it; an
+    # unknown value is no signal, never "Conditional".
+    status_signal: str | None = None
     risk_score: int | None = None
     metrics: ExecutivePanelMetrics = Field(default_factory=ExecutivePanelMetrics)
     dominant_failure: DominantFailure | None = None
@@ -166,10 +181,8 @@ class ExecutivePanel(BaseModel):
 
     @field_validator("status_signal", mode="before")
     @classmethod
-    def normalize_status_signal(cls, v: Any) -> str:
-        allowed = {"GO", "CONDITIONAL_GO", "NO_GO"}
-        val = str(v).strip().upper().replace(" ", "_")
-        return val if val in allowed else "CONDITIONAL_GO"
+    def normalize_status_signal(cls, v: Any) -> str | None:
+        return _release_signal_or_none(v)
 
 
 # ── Regression Watchman Schemas ──────────────────────────────────────────────

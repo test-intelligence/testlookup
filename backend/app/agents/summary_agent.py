@@ -1137,6 +1137,12 @@ class SummaryAgent(BaseAgent):
                     },
                 )
         layer2 = grounded_layers["layer2_incident_view"]
+        # D-145 / S-B-5: the release verdict is not the model's to choose. This
+        # stage runs before the release-risk stage, so whatever the model wrote
+        # here was a free guess that changed on every regeneration and could
+        # contradict the gate. The read fills it from the stored decision.
+        if isinstance(layer2, dict) and "release_impact" in layer2:
+            layer2["release_impact"] = None
         layer3 = grounded_layers["layer3_evidence_pack"]
         layer4 = grounded_layers["layer4_action_plan"]
         citation_coverage = coverage_summary(grounding_records)
@@ -1179,17 +1185,15 @@ class SummaryAgent(BaseAgent):
                 if a_text and a_text not in ep_actions:
                     ep_actions.append(a_text)
 
-        ep_release_impact = "CONDITIONAL_GO"
-        if isinstance(layer2, dict):
-            ep_release_impact = layer2.get("release_impact", "CONDITIONAL_GO")
-
+        # No release signal at this stage (D-145): the read fills it from the
+        # stored decision, or the panel shows none.
         executive_panel = build_executive_panel(
             run_data=run_data,
             category_counts=category_counts,
             flaky_count=flaky_count,
             anomaly_count=len(anomalies),
             cluster_count=0,
-            release_impact=ep_release_impact,
+            release_impact=None,
             recommended_actions=ep_actions[:3],
         )
 
@@ -1569,17 +1573,16 @@ class SummaryAgent(BaseAgent):
             else "UNKNOWN"
         )
         if failed == 0:
-            release_impact = "GO"
             criticality = "LOW"
         elif pass_rate >= 90:
-            release_impact = "CONDITIONAL_GO"
             criticality = "MEDIUM"
         elif pass_rate >= 75:
-            release_impact = "CONDITIONAL_GO"
             criticality = "HIGH"
         else:
-            release_impact = "NO_GO"
             criticality = "CRITICAL"
+        # D-145 / S-B-5: no release verdict guessed from the pass rate. The
+        # read fills it from the stored release decision, or leaves it empty.
+        release_impact = None
 
         # W23c F-1: an inline invocation's counts are the caller's supplied failures, not the build's.
         # D-119: no release verdict in the sentence. This stage runs before the release-risk stage, so it could
@@ -1703,7 +1706,7 @@ class SummaryAgent(BaseAgent):
                 f"**Likely cause:** {layer2.get('likely_cause', '—')}\n"
                 f"**Scope:** {layer2.get('scope', '—')}\n"
                 f"**Criticality:** {layer2.get('criticality', '—')}\n"
-                f"**Release impact:** {layer2.get('release_impact', '—')}"
+                f"**Release impact:** {layer2.get('release_impact') or '—'}"
             )
 
         if layer3:

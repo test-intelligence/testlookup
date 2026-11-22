@@ -191,7 +191,7 @@ async def test_gate_reasons_name_the_test_and_pass_others_through():
     out = await rr._readable_reasons(
         db, "p1", ["Checkout::abc123 is FAILED", "Checkout::zzz is BROKEN", "CRITICAL defect open: Totals"]
     )
-    assert out == ["test_pay (Checkout) is FAILED", "Checkout::zzz is BROKEN", "CRITICAL defect open: Totals"]
+    assert out == ["test_pay (Checkout) is FAILED", "Checkout::zzz is BROKEN", "P0 defect open: Totals"]
 
 
 # ── The email around it ──────────────────────────────────────────────────────

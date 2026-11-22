@@ -4141,6 +4141,27 @@ async def _mark_pipeline_done(
                 from app.services import review_request_service  # noqa: PLC0415
 
                 produced = review_request_service.report_stages(stages)
+                # D-45: a report no model wrote any of (rules mode, no stage
+                # recorded a model call) has nothing for a reviewer to accept.
+                # Staging one filled a rules-only install's approvals queue with
+                # "Offline Report · Awaiting review". The reviewer gate asking
+                # for a human still stages one below.
+                if (
+                    produced
+                    and not reviewer_requires_human
+                    and not review_request_service.report_was_model_written(final_state, stages)
+                ):
+                    produced = []
+                    run.review_policy = REVIEW_NOT_APPLICABLE
+                    if not has_degraded_stages:
+                        # Same settlement as a run with no report (E7.5): a
+                        # client waiting for ``passed | failed`` must not wait
+                        # forever on a review that will never exist.
+                        apply_transition(run, PipelineRunStatus.PASSED)
+                    logger.info(
+                        "review_request_not_staged_deterministic_report",
+                        pipeline_run_id=pipeline_run_id,
+                    )
                 if reviewer_requires_human and not produced:
                     reviewed_steps = reviewer_verdict.get("reviewed_steps") or []
                     produced = [
@@ -4215,9 +4236,19 @@ async def _mark_pipeline_done(
                     )
 
                     decision = final_state.get("decision_intelligence") or {}
+                    # D-158: a report that did not pass terminal verification
+                    # files no review item: it is not decision-ready, so there
+                    # is nothing for a reviewer to acknowledge.
+                    _verification = (
+                        decision.get("verification") if isinstance(decision, dict) else None
+                    )
+                    _report_verified = (
+                        isinstance(_verification, dict)
+                        and _verification.get("status") == "passed"
+                    )
                     proposed_actions = (
                         decision.get("proposed_actions")
-                        if isinstance(decision, dict) and not inline_plan
+                        if isinstance(decision, dict) and not inline_plan and _report_verified
                         else []
                     )
                     # W15 §0.5: the decision report's FROZEN mode, hashed into

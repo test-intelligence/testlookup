@@ -30,6 +30,13 @@ function renderCard(estimate: DeepEstimate | undefined, over: Partial<React.Comp
 const card = () => document.querySelector('[data-deep-estimate]') as HTMLElement
 
 describe('DeepEstimateCard', () => {
+  it('says a deep run may add one review item to Approvals (D-158)', () => {
+    renderCard(ESTIMATE_FIXTURE)
+    expect(card().querySelector('[data-review-item-note]')).toHaveTextContent(
+      'If the report passes its checks and lists release blockers or conditions, the run adds one item to Approvals for a reviewer.',
+    )
+  })
+
   it('measured on a local model: $0.00 "local model — no charge", the p50 minutes, the sample, the slowest stages', () => {
     renderCard(ESTIMATE_FIXTURE)
     expect(card()).toHaveTextContent('$0.00')

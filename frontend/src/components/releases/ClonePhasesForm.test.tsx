@@ -81,6 +81,19 @@ describe('ClonePhasesForm', () => {
     expect(rows[0]).toHaveTextContent('2026-12-01 → 2026-12-05')
   })
 
+  // D-110: planned date 5 days out, a 19-day source: the default is today, with the note.
+  it('never prefills a past day, and says when the copy ends after the planned date', () => {
+    const today = new Date().toISOString().slice(0, 10)
+    const planned = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10)
+    const target = rel('2026.12', { status: 'planning', planned_date: `${planned}T00:00:00Z` })
+    render(<ClonePhasesForm release={target} releases={[target, SOURCE]} onDone={vi.fn()} onCancel={vi.fn()} />)
+    const form = screen.getByRole('region', { name: 'Copy phases' })
+    expect(within(form).getByLabelText('First phase starts')).toHaveValue(today)
+    expect(within(form).getByText('The copied schedule ends after the planned date.')).toBeInTheDocument()
+    fireEvent.change(within(form).getByLabelText('First phase starts'), { target: { value: '2020-01-01' } })
+    expect(within(form).queryByText('The copied schedule ends after the planned date.')).toBeNull()
+  })
+
   it('a phase name is shown whole (it wraps in the narrow pane, never truncated), its title the full name', () => {
     const long = 'Regression across every payment provider and every market we ship to'
     const source = rel('2026.10', { phases: [phase(long, 0, '2026-09-01T00:00:00Z', '2026-09-05T00:00:00Z')] })

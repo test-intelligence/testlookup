@@ -53,13 +53,21 @@ def _phase(name="QA", phase_id=None, exit_criteria=None, order=0):
 
 
 class _Session:
-    def __init__(self, phase=None, phases=None):
+    def __init__(self, phase=None, phases=None, project_id=None, defects=None):
         self._phase = phase
         self._phases = phases or []
+        self._project_id = project_id
+        self._defects = defects or []
 
     async def execute(self, stmt, *a, **kw):
         sql = " ".join(str(stmt).split())
-        rows = self._phases if "ORDER BY" in sql else [self._phase]
+        if sql.startswith("SELECT releases.project_id"):
+            # D-113: the release-blocker read looks the project up first.
+            rows = [self._project_id]
+        elif "FROM defects" in sql:
+            rows = list(self._defects)
+        else:
+            rows = self._phases if "ORDER BY" in sql else [self._phase]
 
         class _R:
             def scalar_one_or_none(_self):
@@ -304,3 +312,70 @@ class TestReadingIsNotRecording:
         # noise, and the history is the point of that table.
         assert len(results) == 2
         assert all(r["recorded"] is False for r in results)
+
+
+def _defect(severity, title, status="OPEN"):
+    return SimpleNamespace(
+        id=uuid.uuid4(), title=title, severity=severity, resolution_status=status,
+        affects_releases=None, release_id=REL,
+    )
+
+
+class TestReleaseBlockersTravelBesideThePhaseVerdict:
+    """D-113: the release gate merges open CRITICAL/HIGH defects; the phase gate
+    did not, so an all-passing phase over an open HIGH read GO with nothing
+    beside it."""
+
+    def test_an_all_passing_phase_carries_the_open_high_defect(self, monkeypatch):
+        _stub(monkeypatch, _rollup(**{f"t{i}": "PASSED" for i in range(9)}))
+        phase = _phase("QA")
+        db = _Session(phase, [phase], project_id=uuid.uuid4(),
+                      defects=[_defect("HIGH", "Checkout double-charges"),
+                               _defect("LOW", "Typo on receipt")])
+
+        (result,) = asyncio.run(gate.evaluate_all_phases(db, REL))
+
+        assert [b["title"] for b in result["release_blockers"]] == ["Checkout double-charges"]
+        assert result["release_blockers"][0]["severity"] == "HIGH"
+        # Scope decision: defects are release-scoped, so the phase verdict and
+        # may_exit are unchanged.
+        assert result["verdict"] == "GO"
+        assert result["may_exit"] is True
+
+    def test_no_open_blocking_defect_is_an_empty_list(self, monkeypatch):
+        _stub(monkeypatch, _rollup(**{f"t{i}": "PASSED" for i in range(9)}))
+        phase = _phase("QA")
+        db = _Session(phase, [phase], project_id=uuid.uuid4(), defects=[])
+
+        (result,) = asyncio.run(gate.evaluate_all_phases(db, REL))
+
+        assert result["release_blockers"] == []
+
+    def test_the_single_phase_evaluate_can_ask_for_them(self, monkeypatch):
+        _stub(monkeypatch, _rollup(**{f"t{i}": "PASSED" for i in range(9)}))
+        phase = _phase("QA")
+        db = _Session(phase, [phase], project_id=uuid.uuid4(),
+                      defects=[_defect("CRITICAL", "Data loss on save")])
+
+        result = asyncio.run(gate.evaluate_phase(
+            db, REL, phase.id, record=False, include_release_blockers=True
+        ))
+
+        assert [b["severity"] for b in result["release_blockers"]] == ["CRITICAL"]
+
+
+class TestExitCriteriaAreSaidToBeNotes:
+    """S-B-2: exit criteria are merged into the policy snapshot but ``decide``
+    never reads them. The response must say so rather than imply a check."""
+
+    def test_two_phases_with_different_criteria_get_the_same_verdict_and_say_why(self, monkeypatch):
+        _stub(monkeypatch, _rollup(**{f"t{i}": "PASSED" for i in range(9)}, bad="FAILED"))
+        strict = _phase("QA", exit_criteria={"thresholds": {"go": 99}})
+        lax = _phase("UAT", exit_criteria={"thresholds": {"go": 10}})
+
+        a = asyncio.run(gate.evaluate_phase(_Session(strict), REL, strict.id, record=False))
+        b = asyncio.run(gate.evaluate_phase(_Session(lax), REL, lax.id, record=False))
+
+        assert a["verdict"] == b["verdict"] == "NO_GO"
+        assert a["exit_criteria_evaluated"] is False
+        assert b["exit_criteria_evaluated"] is False

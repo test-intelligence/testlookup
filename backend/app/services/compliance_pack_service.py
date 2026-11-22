@@ -10,7 +10,9 @@ GO/NO_GO, and by what policy?":
   * ``README.md``            — human-readable description of the pack
   * ``release.json``         — release row snapshot
   * ``run.json``             — test run snapshot
-  * ``decision.json``        — ReleaseDecision row + override audit chain
+  * ``decision.json``        — ReleaseDecision row + override audit chain, or
+                               ``{"available": false, ...}`` when the linked run
+                               had no deep investigation (D-109)
   * ``release_gate_decision.json`` — the RELEASE-level verdict + its history
   * ``policy_snapshot.json`` — the exact ReleaseGatePolicy that was in force
   * ``decision_trail.json``  — full AI decision trail from Tier 0B
@@ -205,6 +207,32 @@ async def _gather_decision_and_run(
         return None, None
     decision, run = row
     return decision, run
+
+
+async def _gather_linked_run(db: AsyncSession, release: Release) -> Optional[TestRun]:
+    """The newest run linked to this release (same project), decided or not.
+
+    D-109: a release can be gated and released without any of its runs ever
+    having a run-level ``ReleaseDecision`` (a deep investigation; none on a
+    model-free install). Its pack snapshots this run instead and says the run
+    decision is unavailable.
+    """
+    from app.models.postgres import ReleaseTestRunLink
+    stmt = (
+        select(TestRun)
+        .join(ReleaseTestRunLink, ReleaseTestRunLink.test_run_id == TestRun.id)
+        .where(
+            ReleaseTestRunLink.release_id == release.id,
+            TestRun.project_id == release.project_id,  # same guard as above
+        )
+        .order_by(TestRun.start_time.desc().nulls_last())
+        .limit(1)
+    )
+    return (await db.execute(stmt)).scalars().first()
+
+
+#: ``decision.json`` when the linked run has no run-level ``ReleaseDecision`` (D-109).
+NO_RUN_DECISION_REASON = "no deep investigation was run for the linked run"
 
 
 async def _gather_policy_snapshot(
@@ -489,6 +517,13 @@ def _build_readme(
             lines.append(
                 f"**Original recommendation (pre-override):** {decision.original_recommendation}"
             )
+    else:
+        # D-109: the pack is still valid; its release-level verdict is in
+        # release_gate_decision.json. Say why decision.json holds no row.
+        lines.append(
+            f"**Run decision:** not available ({NO_RUN_DECISION_REASON}). "
+            "`decision.json` says so; the release verdict is in `release_gate_decision.json`."
+        )
     lines.append("")
     lines.append("## Files")
     lines.append("")
@@ -497,7 +532,10 @@ def _build_readme(
     lines.append("| `manifest.json` | SHA-256 digest of every other file + generation metadata. Root of the pack's tamper-evidence chain. |")
     lines.append("| `release.json` | Frozen snapshot of the release row. |")
     lines.append("| `run.json` | Frozen snapshot of the test run row used for the decision. |")
-    lines.append("| `decision.json` | `ReleaseDecision` row including the override audit chain. |")
+    lines.append(
+        "| `decision.json` | `ReleaseDecision` row including the override audit chain. "
+        "`available: false` when no deep investigation was run for the linked run. |"
+    )
     # Listed, or a reviewer has no way to know it is there. The pack's README
     # IS its index — a file present in the ZIP but absent from this table is
     # undiscoverable to the person the pack exists for.
@@ -845,14 +883,25 @@ async def _build_pack_payload(
     """Assemble the full ZIP and a metadata_snapshot for the DB row.
 
     Returns ``(zip_bytes, metadata)``. Raises ``CompliancePackNotAvailableError``
-    if the release has no linked run to snapshot.
+    if the release has no linked run to snapshot, or no decision on record at
+    either level (D-109: a release-level gate decision is enough; the run-level
+    ``ReleaseDecision`` is then reported unavailable in ``decision.json``).
     """
     generated_at = datetime.now(timezone.utc)
 
     decision, run = await _gather_decision_and_run(db, release)
-    if run is None or decision is None:
+    if run is None:
+        run = await _gather_linked_run(db, release)
+    if run is None:
         raise CompliancePackNotAvailableError(
-            "Release has no linked test run with a decision — nothing to snapshot yet"
+            "Release has no linked test run — nothing to snapshot yet"
+        )
+    # A CORE snapshot, not best-effort: a pack missing the release verdict
+    # cannot justify the release, which is what the pack is for.
+    release_gate = await _gather_release_gate(db, release.id)
+    if decision is None and not release_gate.get("evaluated"):
+        raise CompliancePackNotAvailableError(
+            "Release has no gate decision on record — evaluate the release gate first"
         )
 
     # Gather every section. Each helper returns plain dicts/lists so we
@@ -867,11 +916,11 @@ async def _build_pack_payload(
     # incomplete artifact that a reviewer would trust as authoritative.
     release_snapshot = await _gather_release_snapshot(db, release)
     run_snapshot = _to_jsonable(run)
-    decision_snapshot = _to_jsonable(decision)
+    decision_snapshot = (
+        _to_jsonable(decision) if decision is not None
+        else {"available": False, "reason": NO_RUN_DECISION_REASON}
+    )
     policy_snapshot = await _gather_policy_snapshot(db, decision, release.project_id)
-    # A CORE snapshot, not best-effort: a pack missing the release verdict
-    # cannot justify the release, which is what the pack is for.
-    release_gate = await _gather_release_gate(db, release.id)
     decision_trail = await _gather_decision_trail(db, run.id)
     clusters = await _gather_clusters(db, run.id)
     defects = await _gather_defects(db, release.project_id, run.id)
@@ -919,9 +968,9 @@ async def _build_pack_payload(
         "generated_at": generated_at.isoformat(),
         "release_name": release.name,
         "release_version": release.version,
-        "recommendation": decision.recommendation,
-        "risk_score": decision.risk_score,
-        "policy_id": str(decision.policy_id) if decision.policy_id else None,
+        "recommendation": decision.recommendation if decision else None,
+        "risk_score": decision.risk_score if decision else None,
+        "policy_id": str(decision.policy_id) if decision and decision.policy_id else None,
         "policy_source": policy_snapshot.get("source") if policy_snapshot else None,
         "run_id": str(run.id),
         "build_number": run.build_number,

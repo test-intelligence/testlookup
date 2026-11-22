@@ -1127,7 +1127,8 @@ async def evaluate_release_phase_gate(
     of looking — which is also why the read endpoint above never records.
     """
     result = await release_phase_gate_service.evaluate_phase(
-        db, release_id, phase_id, record=record, created_by_id=current_user.id
+        db, release_id, phase_id, record=record, created_by_id=current_user.id,
+        include_release_blockers=True,
     )
     # The service stages the decision row; the router owns the transaction.
     await db.commit()

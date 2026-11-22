@@ -119,6 +119,10 @@ export interface PhaseGateResult {
   may_exit: boolean
   recorded: boolean
   scorecard: { evidence_count: number; denominator: number; pass_rate: number | null; measured: boolean } | null
+  /** D-113: the RELEASE's open CRITICAL/HIGH defects; beside the verdict, never inside it. */
+  release_blockers?: { id: string; title: string | null; severity: string | null }[]
+  /** S-B-2: always false today; exit criteria are stored, not checked. */
+  exit_criteria_evaluated?: boolean
 }
 
 export interface ReleasePhaseGates {

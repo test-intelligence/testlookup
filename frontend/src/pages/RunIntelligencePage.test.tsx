@@ -448,7 +448,30 @@ describe('RunIntelligencePage', () => {
     expect(screen.getByText(/No verified decision report is available/)).toBeInTheDocument()
     expect(screen.queryByText(/Override applied by you/)).toBeNull()
     expect(screen.queryByRole('button', { name: /Override gate/i })).toBeNull()
+    // D-145: the stored release decision (NO_GO), labelled, not "awaiting evidence".
+    expect(screen.getByText(/release blocked/i)).toBeInTheDocument()
+    expect(document.querySelector('[data-verdict-unverified]')).toHaveTextContent('report not verified')
+    expect(screen.queryByText(/awaiting evidence/i)).toBeNull()
+  })
+
+  it('D-145: an unverified report with no stored decision is still Pending', () => {
+    const intelligence = structuredClone(MOCK_INTELLIGENCE) as typeof MOCK_INTELLIGENCE & {
+      structured_summary: typeof MOCK_INTELLIGENCE.structured_summary & Record<string, unknown>
+    }
+    ;(intelligence as { release_decision: unknown }).release_decision = null
+    intelligence.structured_summary.decision_intelligence = null
+    intelligence.structured_summary.decision_report_verification = { status: 'failed', checks: [] }
+    intelligence.structured_summary.latest_decision_attempt = {
+      pipeline_run_id: 'pipeline-2', status: 'rejected', verification_status: 'failed', at: '2026-08-11T19:02:00Z',
+    }
+    mockHooks({ intelligence })
+    render(
+      <MemoryRouter initialEntries={['/runs/run-abc/intelligence']}>
+        <Routes><Route path="/runs/:runId/intelligence" element={<RunIntelligencePage />} /></Routes>
+      </MemoryRouter>,
+    )
     expect(screen.getByText(/awaiting evidence/i)).toBeInTheDocument()
+    expect(document.querySelector('[data-verdict-unverified]')).toBeNull()
   })
 
   it('uses only terminal-report verdict provenance and ignores persona and legacy decision fields', () => {

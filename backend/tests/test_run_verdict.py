@@ -1,6 +1,6 @@
 """The run verdict, computed exactly as the Runs table computes it (W07 FAIL-04 / FAIL-05).
 
-``CASES`` is the parity table of contract §1.2: the SAME 16 rows, in the SAME
+``CASES`` is the parity table of contract §1.2: the SAME 19 rows, in the SAME
 order, are a literal in ``frontend/src/pages/runsList/aiVerdict.test.ts``
 (``VERDICT_CASES``), where ``aiVerdictOf(full)`` and ``aiVerdictOf(slim)`` must
 both equal ``verdict``. Here:
@@ -76,7 +76,7 @@ CASES: list[dict] = [
                 "decision_report_verification": _SLIM_PUBLISHED_VER,
                 "latest_decision_attempt": _SLIM_PUBLISHED_ATT,
             },
-            "release_decision": {"recommendation": "NO_GO"},
+            "release_decision": {"recommendation": "NO_GO", "human_override": None},
             "intelligence_available": True,
             "top_analyses": [True],
         },
@@ -105,7 +105,7 @@ CASES: list[dict] = [
                 "decision_report_verification": {"status": "failed"},
                 "latest_decision_attempt": {"status": "rejected", "verification_status": "failed"},
             },
-            "release_decision": {"recommendation": "GO"},
+            "release_decision": {"recommendation": "GO", "human_override": None},
             "intelligence_available": False,
             "top_analyses": None,
         },
@@ -134,7 +134,7 @@ CASES: list[dict] = [
                 "decision_report_verification": {"status": "pending"},
                 "latest_decision_attempt": None,
             },
-            "release_decision": {"recommendation": "GO"},
+            "release_decision": {"recommendation": "GO", "human_override": None},
             "intelligence_available": True,
             "top_analyses": None,
         },
@@ -151,7 +151,7 @@ CASES: list[dict] = [
         },
         "slim": {
             "structured_summary": None,
-            "release_decision": {"recommendation": "NO_GO"},
+            "release_decision": {"recommendation": "NO_GO", "human_override": None},
             "intelligence_available": True,
             "top_analyses": [],
         },
@@ -170,7 +170,7 @@ CASES: list[dict] = [
                 "decision_report_verification": None,
                 "latest_decision_attempt": None,
             },
-            "release_decision": {"recommendation": "MAYBE"},
+            "release_decision": {"recommendation": "MAYBE", "human_override": None},
             "intelligence_available": False,
             "top_analyses": None,
         },
@@ -192,7 +192,7 @@ CASES: list[dict] = [
                 "decision_report_verification": None,
                 "latest_decision_attempt": None,
             },
-            "release_decision": {"recommendation": "GO"},
+            "release_decision": {"recommendation": "GO", "human_override": None},
             "intelligence_available": False,
             "top_analyses": None,
         },
@@ -211,7 +211,7 @@ CASES: list[dict] = [
                 "decision_report_verification": None,
                 "latest_decision_attempt": None,
             },
-            "release_decision": {"recommendation": "GO"},
+            "release_decision": {"recommendation": "GO", "human_override": None},
             "intelligence_available": False,
             "top_analyses": None,
         },
@@ -230,7 +230,7 @@ CASES: list[dict] = [
                 "decision_report_verification": None,
                 "latest_decision_attempt": None,
             },
-            "release_decision": {"recommendation": "GO"},
+            "release_decision": {"recommendation": "GO", "human_override": None},
             "intelligence_available": False,
             "top_analyses": None,
         },
@@ -249,7 +249,7 @@ CASES: list[dict] = [
                 "decision_report_verification": None,
                 "latest_decision_attempt": None,
             },
-            "release_decision": {"recommendation": "CONDITIONAL_GO"},
+            "release_decision": {"recommendation": "CONDITIONAL_GO", "human_override": None},
             "intelligence_available": False,
             "top_analyses": None,
         },
@@ -268,7 +268,7 @@ CASES: list[dict] = [
                 "decision_report_verification": None,
                 "latest_decision_attempt": None,
             },
-            "release_decision": {"recommendation": "NO_GO"},
+            "release_decision": {"recommendation": "NO_GO", "human_override": None},
             "intelligence_available": False,
             "top_analyses": None,
         },
@@ -297,7 +297,7 @@ CASES: list[dict] = [
                 "decision_report_verification": _SLIM_PUBLISHED_VER,
                 "latest_decision_attempt": _SLIM_PUBLISHED_ATT,
             },
-            "release_decision": {"recommendation": "GO"},
+            "release_decision": {"recommendation": "GO", "human_override": None},
             "intelligence_available": False,
             "top_analyses": None,
         },
@@ -326,7 +326,7 @@ CASES: list[dict] = [
                 "decision_report_verification": _SLIM_PUBLISHED_VER,
                 "latest_decision_attempt": _SLIM_PUBLISHED_ATT,
             },
-            "release_decision": {"recommendation": "GO"},
+            "release_decision": {"recommendation": "GO", "human_override": None},
             "intelligence_available": False,
             "top_analyses": None,
         },
@@ -392,20 +392,113 @@ CASES: list[dict] = [
                 "decision_report_verification": _SLIM_PUBLISHED_VER,
                 "latest_decision_attempt": _SLIM_PUBLISHED_ATT,
             },
-            "release_decision": {"recommendation": "GO"},
+            "release_decision": {"recommendation": "GO", "human_override": None},
             "intelligence_available": True,
             "top_analyses": None,
         },
         "verdict": _none("not-verified"),
         "recommendation": None,
     },
+    {   # 17
+        "name": "a human override beats a verified published report",
+        "full": {
+            "intelligence_available": True,
+            "release_decision": {
+                "recommendation": "NO_GO",
+                "human_override": "Payments regression found in manual check",
+            },
+            "structured_summary": {
+                "decision_intelligence": {
+                    "verification": {"status": "passed"},
+                    "release_decision": {"recommendation": "GO"},
+                },
+                "decision_report_verification": _PUBLISHED_VER,
+                "latest_decision_attempt": _PUBLISHED_ATT,
+            },
+        },
+        "slim": {
+            "structured_summary": {
+                "decision_intelligence": {
+                    "verification": {"status": "passed"},
+                    "release_decision": {"recommendation": "GO"},
+                },
+                "decision_report_verification": _SLIM_PUBLISHED_VER,
+                "latest_decision_attempt": _SLIM_PUBLISHED_ATT,
+            },
+            "release_decision": {
+                "recommendation": "NO_GO",
+                "human_override": "Payments regression found in manual check",
+            },
+            "intelligence_available": True,
+            "top_analyses": None,
+        },
+        "verdict": _verdict("NO_GO"),
+        "recommendation": "NO_GO",
+    },
+    {   # 18
+        "name": "a human override answers even when the report is not verified",
+        "full": {
+            "release_decision": {"recommendation": "GO", "human_override": "Known flake, accepted"},
+            "structured_summary": {
+                "decision_intelligence": {
+                    "verification": {"status": "pending"},
+                    "release_decision": {"recommendation": "NO_GO"},
+                },
+                "decision_report_verification": {"status": "pending"},
+            },
+        },
+        "slim": {
+            "structured_summary": {
+                "decision_intelligence": {
+                    "verification": {"status": "pending"},
+                    "release_decision": {"recommendation": "NO_GO"},
+                },
+                "decision_report_verification": {"status": "pending"},
+                "latest_decision_attempt": None,
+            },
+            "release_decision": {"recommendation": "GO", "human_override": "Known flake, accepted"},
+            "intelligence_available": False,
+            "top_analyses": None,
+        },
+        "verdict": _verdict("GO"),
+        "recommendation": "GO",
+    },
+    {   # 19
+        "name": "an empty override reason is no override: the report still wins",
+        "full": {
+            "release_decision": {"recommendation": "NO_GO", "human_override": ""},
+            "structured_summary": {
+                "decision_intelligence": {
+                    "verification": {"status": "passed"},
+                    "release_decision": {"recommendation": "GO"},
+                },
+                "decision_report_verification": _PUBLISHED_VER,
+                "latest_decision_attempt": _PUBLISHED_ATT,
+            },
+        },
+        "slim": {
+            "structured_summary": {
+                "decision_intelligence": {
+                    "verification": {"status": "passed"},
+                    "release_decision": {"recommendation": "GO"},
+                },
+                "decision_report_verification": _SLIM_PUBLISHED_VER,
+                "latest_decision_attempt": _SLIM_PUBLISHED_ATT,
+            },
+            "release_decision": {"recommendation": "NO_GO", "human_override": ""},
+            "intelligence_available": False,
+            "top_analyses": None,
+        },
+        "verdict": _verdict("GO"),
+        "recommendation": "GO",
+    },
 ]
 
 
-def test_the_table_has_the_contracts_sixteen_rows():
+def test_the_table_has_the_contracts_nineteen_rows():
     # The frontend copy asserts the same count; a row added on one side only fails here or there.
-    assert len(CASES) == 16
-    assert len({case["name"] for case in CASES}) == 16
+    assert len(CASES) == 19
+    assert len({case["name"] for case in CASES}) == 19
 
 
 @pytest.mark.parametrize("case", CASES, ids=[c["name"] for c in CASES])

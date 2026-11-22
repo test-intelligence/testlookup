@@ -78,12 +78,13 @@ def _pipeline():
     )
 
 
-def _stage(name, status="completed"):
-    return SimpleNamespace(stage_name=name, status=status)
+def _stage(name, status="completed", llm_calls_count=None):
+    return SimpleNamespace(stage_name=name, status=status, llm_calls_count=llm_calls_count)
 
 
 async def _finalize(
-    monkeypatch, stages, *, success=True, stage_review=None, final_state=None
+    monkeypatch, stages, *, success=True, stage_review=None, final_state=None,
+    persist_actions=None,
 ):
     from app.agents import workflow
     from app.services import agent_action_ledger_service, review_request_service, run_downstream_outbox
@@ -93,7 +94,11 @@ async def _finalize(
     stage_review = stage_review or AsyncMock(return_value=None)
     monkeypatch.setattr(workflow, "AsyncSessionLocal", lambda: session)
     monkeypatch.setattr(review_request_service, "stage_run_review_request", stage_review)
-    monkeypatch.setattr(agent_action_ledger_service, "persist_report_action_proposals", AsyncMock())
+    monkeypatch.setattr(
+        agent_action_ledger_service,
+        "persist_report_action_proposals",
+        persist_actions or AsyncMock(),
+    )
     monkeypatch.setattr(run_downstream_outbox, "stage_ai_summary_notification_operation", AsyncMock())
     await workflow._mark_pipeline_done(
         str(pipeline.id),
@@ -189,3 +194,135 @@ async def test_a_review_failure_never_strands_the_run(monkeypatch):
     )
     assert pipeline.status == "completed"
     assert session.committed is True
+
+
+# ── D-45: a report no model wrote is not queued for review ───────────────────
+
+
+def _rules_state(**extra):
+    return {
+        "project_id": str(PROJECT),
+        "test_run_id": str(uuid.uuid4()),
+        "analysis_mode_resolved": "rules",
+        **extra,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_rules_mode_report_with_no_model_call_stages_no_review(monkeypatch):
+    pipeline, session, stage_review = await _finalize(
+        monkeypatch,
+        [_stage("ingestion"), _stage("summary", llm_calls_count=0)],
+        final_state=_rules_state(),
+    )
+
+    stage_review.assert_not_awaited()
+    # Nothing will ever accept it, so it settles like a run with no report.
+    assert pipeline.status == "passed"
+    assert pipeline.review_policy == "not_applicable"
+    assert session.committed is True
+
+
+@pytest.mark.asyncio
+async def test_a_degraded_rules_mode_report_stages_no_review_and_stays_completed(monkeypatch):
+    pipeline, _, stage_review = await _finalize(
+        monkeypatch,
+        [_stage("summary"), _stage("anomaly_detection", status="failed")],
+        final_state=_rules_state(),
+    )
+
+    stage_review.assert_not_awaited()
+    assert pipeline.status == "completed"
+    assert pipeline.review_policy == "not_applicable"
+
+
+@pytest.mark.asyncio
+async def test_a_report_with_a_model_call_still_stages_its_review(monkeypatch):
+    pipeline, _, stage_review = await _finalize(
+        monkeypatch,
+        [_stage("ingestion"), _stage("summary", llm_calls_count=2)],
+        final_state=_rules_state(),
+    )
+
+    stage_review.assert_awaited_once()
+    assert stage_review.await_args.kwargs["report_stage_names"] == ["summary"]
+    assert pipeline.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_a_model_mode_report_still_stages_its_review(monkeypatch):
+    _, _, stage_review = await _finalize(
+        monkeypatch,
+        [_stage("summary")],
+        final_state=_rules_state(analysis_mode_resolved="llm"),
+    )
+
+    stage_review.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_the_reviewer_gate_still_forces_a_review_of_a_rules_report(monkeypatch):
+    _, _, stage_review = await _finalize(
+        monkeypatch,
+        [_stage("summary"), _stage("reviewer")],
+        final_state=_rules_state(
+            review_verdict={"reviewed_steps": ["summary"], "requires_human_review": True},
+        ),
+    )
+
+    stage_review.assert_awaited_once()
+
+
+def test_report_was_model_written_fails_closed():
+    from app.services.review_request_service import report_was_model_written
+
+    assert report_was_model_written(None, []) is True
+    assert report_was_model_written({"analysis_mode_resolved": "auto"}, []) is True
+    assert report_was_model_written({"analysis_mode_resolved": "rules"}, [_stage("summary")]) is False
+    assert report_was_model_written(
+        {"analysis_mode_resolved": "rules"}, [_stage("summary", llm_calls_count=1)]
+    ) is True
+
+
+# ── D-158: a report that failed verification files no review item ────────────
+
+
+def _deep_state(verification_status):
+    return {
+        "project_id": str(PROJECT),
+        "test_run_id": str(uuid.uuid4()),
+        "decision_intelligence": {
+            "evidence_bundle_sha256": "c" * 64,
+            "verification": {"status": verification_status},
+            "proposed_actions": [{
+                "action_id": "release.review",
+                "title": "Review release blockers (4)",
+                "idempotency_key": "release-review:" + "c" * 64,
+            }],
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_verified_report_files_its_review_item(monkeypatch):
+    persist = AsyncMock()
+    await _finalize(
+        monkeypatch, [_stage("decision_report")],
+        final_state=_deep_state("passed"), persist_actions=persist,
+    )
+
+    persist.assert_awaited_once()
+    actions = persist.await_args.kwargs["proposed_actions"]
+    assert [a["action_id"] for a in actions] == ["release.review"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["failed", "pending", None])
+async def test_a_report_that_did_not_pass_verification_files_none(monkeypatch, status):
+    persist = AsyncMock()
+    await _finalize(
+        monkeypatch, [_stage("decision_report")],
+        final_state=_deep_state(status), persist_actions=persist,
+    )
+
+    assert persist.await_args.kwargs["proposed_actions"] == []

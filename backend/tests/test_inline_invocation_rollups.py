@@ -191,7 +191,11 @@ async def _finalize(monkeypatch, *, inline: bool, subject=_SUBJECT):
     final_state = {
         "project_id": str(project_id), "test_run_id": str(test_run_id), "build_number": "1042",
         "initial_workflow_plan": plan,
-        "decision_intelligence": {"proposed_actions": [{"action_id": "a-1", "idempotency_key": "k-1"}]},
+        # D-158: only a report that passed verification files its review item.
+        "decision_intelligence": {
+            "verification": {"status": "passed"},
+            "proposed_actions": [{"action_id": "a-1", "idempotency_key": "k-1"}],
+        },
         "structured_summary": {"layer1_executive_summary": "Checkout failed.", "_provenance": {}},
     }
     await workflow._mark_pipeline_done(str(pipeline.id), success=True, final_state=final_state)

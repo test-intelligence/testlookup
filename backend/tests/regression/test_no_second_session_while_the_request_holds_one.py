@@ -217,6 +217,7 @@ async def test_the_release_override_runs_on_the_requests_session(pool, monkeypat
     # The old handler opened its own session here, on the same pool.
     monkeypatch.setattr(release_readiness, "AsyncSessionLocal", lambda: _Session(pool), raising=False)
     monkeypatch.setattr("app.services.intelligence_snapshot_service.stage_invalidate", AsyncMock())
+    monkeypatch.setattr("app.worker.tasks._enqueue_snapshot_rebuild", lambda *a, **k: True)  # D-99: no broker here
     monkeypatch.setattr("app.services.release_decision_webhook.emit_release_decided", AsyncMock())
 
     app = FastAPI()
@@ -287,6 +288,7 @@ async def test_a_no_go_override_stages_its_notification_on_the_requests_session(
     monkeypatch.setattr(release_readiness, "record_activity", AsyncMock())
     monkeypatch.setattr(release_readiness, "AsyncSessionLocal", lambda: _Session(pool), raising=False)
     monkeypatch.setattr("app.services.intelligence_snapshot_service.stage_invalidate", AsyncMock())
+    monkeypatch.setattr("app.worker.tasks._enqueue_snapshot_rebuild", lambda *a, **k: True)  # D-99: no broker here
     monkeypatch.setattr("app.services.release_decision_webhook.emit_release_decided", AsyncMock())
     monkeypatch.setattr(gate_notifications.manager, "stage_scoped_preference_deliveries", stage)
 
