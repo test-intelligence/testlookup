@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Safety and Fail-safe Behaviour"
+  short_description: "Verify safe TestLookup releases and agent actions"
+  default_prompt: "Use $testlookup-safety to review fail-safe behaviour for a TestLookup release or action workflow."

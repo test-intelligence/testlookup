@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Maintainability"
+  short_description: "Review TestLookup change impact and testability"
+  default_prompt: "Use $testlookup-maintainability to assess how safely this TestLookup feature can be changed and tested."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Compatibility and Interoperability"
+  short_description: "Verify TestLookup client and integration compatibility"
+  default_prompt: "Use $testlookup-compatibility to verify that this TestLookup change works with supported clients and integrations."

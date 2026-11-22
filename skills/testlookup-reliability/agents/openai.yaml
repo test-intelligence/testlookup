@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Reliability and Recovery"
+  short_description: "Verify TestLookup availability and durable recovery"
+  default_prompt: "Use $testlookup-reliability to verify availability or recovery for this TestLookup service or workflow."

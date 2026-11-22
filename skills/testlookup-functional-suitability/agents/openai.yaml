@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Functional Suitability"
+  short_description: "Verify complete and correct TestLookup workflows"
+  default_prompt: "Use $testlookup-functional-suitability to verify the expected outcomes for this TestLookup workflow."

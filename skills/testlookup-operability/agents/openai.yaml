@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Operability and Supportability"
+  short_description: "Verify TestLookup operator workflows and runbooks"
+  default_prompt: "Use $testlookup-operability to verify how an operator detects, diagnoses, and handles a TestLookup incident."

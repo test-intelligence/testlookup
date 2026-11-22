@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Data Quality and Durability"
+  short_description: "Verify TestLookup data fidelity and durability"
+  default_prompt: "Use $testlookup-data-quality to reconcile source records with the TestLookup results and evidence they produce."

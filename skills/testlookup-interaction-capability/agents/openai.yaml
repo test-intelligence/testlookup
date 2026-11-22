@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Interaction Capability"
+  short_description: "Evaluate TestLookup usability and accessibility"
+  default_prompt: "Use $testlookup-interaction-capability to verify how a user completes this TestLookup task."

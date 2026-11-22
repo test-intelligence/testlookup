@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Sustainability and Resource Efficiency"
+  short_description: "Measure resource use per TestLookup outcome"
+  default_prompt: "Use $testlookup-sustainability to compare the resource footprint of this TestLookup workload."
