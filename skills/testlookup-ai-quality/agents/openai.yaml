@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup AI and Agent Quality"
+  short_description: "Verify agent execution, evidence, and review gates"
+  default_prompt: "Use $testlookup-ai-quality to review a TestLookup AI workflow change and verify deterministic behavior and review authority."

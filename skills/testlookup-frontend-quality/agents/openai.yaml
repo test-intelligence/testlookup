@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Frontend Quality"
+  short_description: "Verify SPA behavior, accessibility, and UI regressions"
+  default_prompt: "Use $testlookup-frontend-quality to review a TestLookup UI change and verify the affected user journeys."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Contract and Documentation Quality"
+  short_description: "Verify generated references and cross-client contracts"
+  default_prompt: "Use $testlookup-contract-docs-quality to review a TestLookup contract change and validate the shipped references and examples."

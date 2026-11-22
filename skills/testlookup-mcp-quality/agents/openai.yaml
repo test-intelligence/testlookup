@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup MCP Quality"
+  short_description: "Verify MCP transport identity and backend tool parity"
+  default_prompt: "Use $testlookup-mcp-quality to verify a TestLookup MCP tool change in its applicable transports."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Backend Quality"
+  short_description: "Verify API contracts and durable domain behavior"
+  default_prompt: "Use $testlookup-backend-quality to review a TestLookup API change and verify its domain and persistence contracts."

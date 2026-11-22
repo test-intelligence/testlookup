@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup SDK and Reporter Quality"
+  short_description: "Verify SDK wire contracts and real runner reporters"
+  default_prompt: "Use $testlookup-sdk-quality to review a TestLookup SDK or reporter change and verify wire and persisted results."

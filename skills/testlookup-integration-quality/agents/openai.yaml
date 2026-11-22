@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Integration Quality"
+  short_description: "Verify connectors, webhooks, and delivery recovery"
+  default_prompt: "Use $testlookup-integration-quality to review a TestLookup integration change using a deterministic receiver and scoped fixtures."
