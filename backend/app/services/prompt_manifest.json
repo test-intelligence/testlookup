@@ -54,8 +54,8 @@
       "version": 1
     },
     "mcp.release_readiness_report": {
-      "content_hash": "952071abb759",
-      "version": 1
+      "content_hash": "9b907492d754",
+      "version": 2
     },
     "mcp.suite_health_check": {
       "content_hash": "b6bfbd9fe1cd",
@@ -106,20 +106,20 @@
       "version": 2
     },
     "summary_executive": {
-      "content_hash": "c2c9f1ea9b26",
-      "version": 2
+      "content_hash": "cf1ba2c86529",
+      "version": 3
     },
     "summary_incident_view": {
-      "content_hash": "674423db4627",
-      "version": 2
+      "content_hash": "4cd5a618f203",
+      "version": 3
     },
     "summary_renderer_developer": {
       "content_hash": "58d153d90e99",
       "version": 1
     },
     "summary_renderer_manager": {
-      "content_hash": "fb02a6a74429",
-      "version": 1
+      "content_hash": "40ccaf2bc2b4",
+      "version": 2
     },
     "summary_renderer_system": {
       "content_hash": "42fc12956d2f",

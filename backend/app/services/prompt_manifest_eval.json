@@ -1,8 +1,8 @@
 {
-  "attested_at": "2026-11-17T16:24:54.004667+00:00",
-  "change_id": "GPT6-D-0010",
+  "attested_at": "2026-11-22T21:26:46.005850+00:00",
+  "change_id": "prompts-no-release-verdict-2026-11-22",
   "eval_gate_run_id": null,
-  "eval_manifest_checksum": "3d2a80f15635b4f21fdc8c08700c1b42f147c8b20e4138e2ee4efdf4c8a8ff65",
+  "eval_manifest_checksum": "6e795e50f961461750848f793cd93d7785adf125bc6e5ff7f4734c8f7392726c",
   "gate_results": [
     {
       "agent_name": "AnalysisAgent",
@@ -93,9 +93,9 @@
       "task_type": "release_decision"
     }
   ],
-  "manifest_digest": "7fa198b1eec6e5ffe3dc7ecd200b2d00f69037d9f043fccc1f3a7e376d08cb56",
+  "manifest_digest": "7f6ae1695c5325a297cdf451c1aacc2ff91f63eeb450ff849d7b49279abf48af",
   "mode": "source_review",
-  "notes": "chat_system v4 -> v5 (D-0010, GPT-6 exploratory round, owner plan P6): one rule - each build and test the answer names from the snapshot or a tool result is shown as a link under the answer (up to eight), so the model never writes URLs, never says it cannot provide links and never tells the reader to search for a build or test it named. GPT-6 asked for links and the model said it could not give any, above the three links the app rendered. The prompt feeds no scored task and is not gated in prompt_eval_recordings (the W11-REL-07 / W23c-F-1 / F-OR07-2 precedent): reviewed from source, pinned by test_chat_system_is_deliberate_v5 and the chat-turn test that reads the system message; the gate results are the real offline run (classification, root_cause, release_decision pass; duplicate_detection insufficient_samples as on main). No model choice, routing or watched source changed. The live-model check is the homelab re-test (at most 3 paid calls). Offline golden verdict as computed: insufficient_samples.",
+  "notes": "D-119 / D-145 / D-120 (product findings 2026-11-21, owner asked for this PR 2026-11-22): no prompt asks the model for a release verdict. summary_executive v2 -> v3 drops the release readiness signal; summary_incident_view v2 -> v3 drops release_impact; summary_renderer_manager v1 -> v2 drops release_recommendation and the release signal (the renderer fills the line from the stored decision, or leaves it out); mcp.release_readiness_report v1 -> v2 points at the stored gate verdict and offers GO / NO-GO / NOT EVALUATED. These prompts feed no scored task and are not gated in prompt_eval_recordings (the W11-REL-07 / W23c-F-1 / F-OR07-2 / D-0010 precedent): reviewed from source, pinned by test_no_summary_prompt_asks_the_model_for_a_release_verdict, test_summary_executive_is_deliberate_v3 and test_mcp_release_readiness_report_reads_the_gate_verdict. Gate results are the real offline run: classification, root_cause and release_decision pass; duplicate_detection insufficient_samples as on main. No model choice, routing or watched source changed. Offline golden verdict as computed: insufficient_samples. Recorded as a source-reviewed pass on the owner's approval (2026-11-22), as the W23c-F-1, F-OR07-2 and D-0010 prompt changes were.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",
@@ -116,10 +116,10 @@
     "run_compare_system": "v1:bbba41240c3f",
     "summary_action_plan": "v2:a554d240b844",
     "summary_evidence_pack": "v2:531118f798af",
-    "summary_executive": "v2:c2c9f1ea9b26",
-    "summary_incident_view": "v2:674423db4627",
+    "summary_executive": "v3:cf1ba2c86529",
+    "summary_incident_view": "v3:4cd5a618f203",
     "summary_renderer_developer": "v1:58d153d90e99",
-    "summary_renderer_manager": "v1:fb02a6a74429",
+    "summary_renderer_manager": "v2:40ccaf2bc2b4",
     "summary_renderer_system": "v1:42fc12956d2f",
     "summary_system": "v2:eec62087f55e",
     "test_case_coverage": "v1:16988c2ae516",

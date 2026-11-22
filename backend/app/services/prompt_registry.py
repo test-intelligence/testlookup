@@ -320,15 +320,19 @@ Evidence snapshot:
 # so on an inline invocation — whose data carries only failures the caller supplied, no pass rate for the build —
 # the live model still wrote "The pass rate ... is insufficient data" and "This failure indicates a risk to release
 # readiness" (reference K3s install re-walk, build-20261105-000236). The exception names what to write instead.
+# v3 (D-119, D-145; 2026-11-22): no release readiness signal. The summary runs before the release decision exists,
+# so the model guessed one from the pass rate, and the guess outlived the gate's real verdict and any override. The
+# release gate is the only place a run's verdict is decided; the summary names the next action instead.
 _register(
     "summary_executive",
-    2,
+    3,
     """\
 {system}
 
 Write EXACTLY 3 sentences summarising this test run for an engineering manager.
-Include: pass rate, most critical failure category, and release readiness signal.
-Exception: when the data names supplied failures sent by the caller instead of the run's results, it has no pass rate and no release readiness signal, so give neither. Then state how many failures were supplied, the most critical failure category, and the next action.
+Include: pass rate, most critical failure category, and the next action.
+Do not state a release verdict: the release gate decides it.
+Exception: when the data names supplied failures sent by the caller instead of the run's results, it has no pass rate, so give none. Then state how many failures were supplied, the most critical failure category, and the next action.
 
 Data:
 {context}
@@ -337,9 +341,11 @@ Return ONLY the 3-sentence paragraph. No bullet points, no headers.""",
 )
 
 # agents/summary_agent.py _INCIDENT_VIEW_PROMPT
+# v3 (D-145; 2026-11-22): no "release_impact". The model chose it freely, it changed on each regeneration and could
+# disagree with the gate; the field is now filled from the run's stored release decision, or left empty.
 _register(
     "summary_incident_view",
-    2,
+    3,
     """\
 {system}
 
@@ -351,7 +357,6 @@ Respond ONLY with a valid JSON object (no markdown fences):
   "likely_cause": "the most probable root cause (1 sentence)",
   "scope": "affected services / suites / environments",
   "criticality": "CRITICAL | HIGH | MEDIUM | LOW",
-  "release_impact": "GO | CONDITIONAL_GO | NO_GO",
   "evidence_ids": ["E1", "E3"],
   "failure_breakdown": {{
     "product_bugs": 0,
@@ -468,18 +473,20 @@ Data:
 )
 
 # services/summary_renderer.py _MANAGER_PROMPT
+# v2 (D-145; 2026-11-22): no release signal and no "release_recommendation". With no stored decision the model
+# invented one; with one it restated it in its own words. The renderer now fills the line from the stored decision.
 _register(
     "summary_renderer_manager",
-    1,
+    2,
     """\
 {system}
 
 You are summarising a test run for an engineering manager or release manager.
+Do not state a release verdict: the release gate decides it.
 Produce a manager-focused summary in JSON (no markdown fences):
 
 {{
-  "executive_summary": "2-3 sentences: business impact, release signal, next action",
-  "release_recommendation": "GO | CONDITIONAL_GO | NO_GO — and why in one sentence",
+  "executive_summary": "2-3 sentences: business impact and next action",
   "scope_of_impact": "which features/services are affected",
   "key_risks": ["top risk 1", "top risk 2"],
   "recommended_decisions": ["decision needed from manager 1", "decision needed 2"],

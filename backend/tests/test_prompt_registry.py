@@ -37,7 +37,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _ORIGINAL_HASHES = {
     "summary_renderer_system": "42fc12956d2f",
     "summary_renderer_developer": "58d153d90e99",
-    "summary_renderer_manager": "fb02a6a74429",
     "run_compare_system": "bbba41240c3f",
     "run_compare_report": "5272dd391090",
     "release_risk_reasoning": "a152fb254091",
@@ -56,7 +55,6 @@ _ORIGINAL_HASHES = {
 # ``{name}`` interpolations with no format specs).
 _ORIGINAL_MCP_HASHES = {
     "mcp.investigate_failure": "590cb27ee41f",
-    "mcp.release_readiness_report": "952071abb759",
     "mcp.weekly_quality_digest": "b96eda2d909a",
     "mcp.flakiness_investigation": "479ef097d997",
     "mcp.defect_triage_session": "670026c0afac",
@@ -104,13 +102,15 @@ def test_summary_layers_are_deliberate_v2():
     cannot quietly rewrite the layer's shape while adding citations.
     """
     anchors = {
-        "summary_incident_view": '"release_impact": "GO | CONDITIONAL_GO | NO_GO"',
+        "summary_incident_view": '"criticality": "CRITICAL | HIGH | MEDIUM | LOW"',
         "summary_evidence_pack": '"top_stack_traces"',
         "summary_action_plan": '"immediate_mitigation"',
     }
+    # summary_incident_view is v3: D-145 dropped "release_impact" (see below).
+    versions = {"summary_incident_view": 3, "summary_evidence_pack": 2, "summary_action_plan": 2}
     for pid, v1_hash in _SUMMARY_LAYER_V1_HASHES.items():
         p = pr.get_prompt(pid)
-        assert p.version == 2, f"{pid} version pin is stale"
+        assert p.version == versions[pid], f"{pid} version pin is stale"
         assert p.content_hash != v1_hash
         assert '"evidence_ids"' in p.text, f"{pid} lost the citation contract"
         assert "Never invent an id." in p.text
@@ -139,18 +139,64 @@ def test_summary_system_is_deliberate_v2():
     assert "{" not in p.text and "}" not in p.text  # inserted as {system}: no slots of its own
 
 
-def test_summary_executive_is_deliberate_v2():
-    """F-OR07-2: v2 adds one exception for supplied failures (the live model wrote a pass rate and a release
-    readiness conclusion about failures a caller supplied); v1's instruction is asserted to have survived."""
+def test_summary_executive_is_deliberate_v3():
+    """F-OR07-2 (v2) added an exception for supplied failures. D-119 / D-145 (v3) drop the release readiness
+    signal: the summary runs before the release decision exists, so the model guessed a verdict from the pass rate
+    and the guess outlived the gate's real verdict. v1's instruction and slots are asserted to have survived."""
     p = pr.get_prompt("summary_executive")
-    assert p.version == 2
+    assert p.version == 3
     assert p.content_hash != _SUMMARY_EXECUTIVE_V1_HASH
-    assert "it has no pass rate and no release readiness signal, so give neither" in p.text
+    assert "release readiness signal" not in p.text
+    assert "Do not state a release verdict: the release gate decides it." in p.text
+    assert "Include: pass rate, most critical failure category, and the next action." in p.text
+    assert "it has no pass rate, so give none" in p.text
     assert "state how many failures were supplied, the most critical failure category, and the next action" in p.text
     # v1's instruction and slots, unchanged.
     assert "Write EXACTLY 3 sentences summarising this test run for an engineering manager." in p.text
-    assert "Include: pass rate, most critical failure category, and release readiness signal." in p.text
     assert "{system}" in p.text and "{context}" in p.text
+
+
+_SUMMARY_RENDERER_MANAGER_V1_HASH = "fb02a6a74429"
+_MCP_RELEASE_READINESS_V1_HASH = "952071abb759"
+
+
+def test_no_summary_prompt_asks_the_model_for_a_release_verdict():
+    """D-145: a run's verdict is decided by the release gate alone. Each summary prompt asked the model for one
+    (``release_impact``, ``release_recommendation``, a "release readiness signal"), which changed on each
+    regeneration and could disagree with the gate. The fields are filled from the stored decision instead."""
+    for pid, version in (("summary_executive", 3), ("summary_incident_view", 3), ("summary_renderer_manager", 2)):
+        p = pr.get_prompt(pid)
+        assert p.version == version, f"{pid} version pin is stale"
+        for asked in ("release_impact", "release_recommendation", "release signal", "release readiness signal",
+                      "CONDITIONAL_GO"):
+            assert asked not in p.text, f"{pid} still asks for {asked!r}"
+    manager = pr.get_prompt("summary_renderer_manager")
+    assert manager.content_hash != _SUMMARY_RENDERER_MANAGER_V1_HASH
+    assert '"scope_of_impact"' in manager.text and '"key_risks"' in manager.text  # v1's shape survived
+
+
+def test_mcp_release_readiness_report_reads_the_gate_verdict():
+    """D-120: the template called project readiness "the primary signal" and offered a Conditional Go that the
+    release level never emits. v2 points at the stored gate verdict."""
+    mcp = pr._load_mcp_templates()
+    if not mcp:
+        pytest.skip("mcp/prompts/templates.py not present in this checkout")
+    entry = mcp["mcp.release_readiness_report"]
+    assert entry["version"] == 2
+    assert entry["content_hash"] != _MCP_RELEASE_READINESS_V1_HASH
+    import ast
+
+    source = (REPO_ROOT / "mcp" / "prompts" / "templates.py").read_text(encoding="utf-8")
+    templates = next(
+        ast.literal_eval(node.value)
+        for node in ast.parse(source).body
+        if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", "") == "PROMPT_TEMPLATES"
+    )
+    text = templates["mcp.release_readiness_report"]
+    assert "primary signal" not in text
+    assert "CONDITIONAL GO" not in text
+    assert "🟢 GO / 🔴 NO-GO / ⚪ NOT EVALUATED" in text
+    assert "{project_id}" in text and "{release_version}" in text
 
 
 def test_chat_system_is_deliberate_v5():

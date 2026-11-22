@@ -26,6 +26,29 @@ _DEVELOPER_PROMPT = get_prompt_text("summary_renderer_developer")
 _MANAGER_PROMPT = get_prompt_text("summary_renderer_manager")
 
 
+def _stored_release_recommendation(assembled: dict[str, Any]) -> str | None:
+    """The run's stored release decision as one line, or None when there is none.
+
+    D-145: the manager summary stated a release verdict of its own, the model's
+    choice or, in the fallback, CONDITIONAL_GO when no decision existed. The
+    release gate is the only place a run's verdict is decided.
+    """
+    rec = str((assembled.get("release_inputs") or {}).get("recommendation") or "").strip()
+    if not rec:
+        return None
+    return f"{rec} — the release gate's stored decision"
+
+
+def _with_stored_release_recommendation(
+    summary: dict[str, Any], assembled: dict[str, Any]
+) -> dict[str, Any]:
+    out = {k: v for k, v in summary.items() if k != "release_recommendation"}
+    stored = _stored_release_recommendation(assembled)
+    if stored:
+        out["release_recommendation"] = stored
+    return out
+
+
 async def render_developer_summary(
     assembled: dict[str, Any],
     fallback_reason: str | None = None,
@@ -84,7 +107,9 @@ async def render_manager_summary(
                     json.dumps(parsed),
                     assembled.get("evidence_snippets", []),
                 )
-                return {**parsed, "citations": citations, "fallback_used": False}
+                return _with_stored_release_recommendation(
+                    {**parsed, "citations": citations, "fallback_used": False}, assembled
+                )
         except Exception as exc:
             logger.warning("Manager summary LLM call failed: %s", exc)
             fallback_reason = str(exc)
@@ -134,19 +159,14 @@ def _fallback_manager(
 ) -> dict[str, Any]:
     facts = assembled.get("facts", {})
     ri = assembled.get("release_inputs", {})
-    rec = ri.get("recommendation", "CONDITIONAL_GO")
     pass_rate = float(facts.get("pass_rate", 0))
-    return {
+    summary = {
         "executive_summary": (
             f"Build {facts.get('build')} completed with "
             f"{facts.get('failed_tests', 0)} failures and "
             f"{pass_rate:.1f}% pass rate. "
             f"The dominant failure type is "
-            f"{str(facts.get('top_category', 'unknown')).replace('_', ' ').lower()}. "
-            f"Release recommendation: {rec.replace('_', ' ')}."
-        ),
-        "release_recommendation": (
-            f"{rec} — based on {pass_rate:.1f}% pass rate and failure analysis"
+            f"{str(facts.get('top_category', 'unknown')).replace('_', ' ').lower()}."
         ),
         "scope_of_impact": (
             f"{facts.get('cluster_count', 0)} failure clusters "
@@ -165,6 +185,7 @@ def _fallback_manager(
         "fallback_used": True,
         "fallback_reason": reason,
     }
+    return _with_stored_release_recommendation(summary, assembled)
 
 
 def _format_similar(similar: list[dict]) -> str:

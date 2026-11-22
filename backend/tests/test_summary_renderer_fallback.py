@@ -166,14 +166,14 @@ def test_fallback_manager_shape_and_values():
     assert result["fallback_used"] is True
     assert result["fallback_reason"] == "llm offline"
     assert result["citations"] == []
-    # underscores in category and recommendation become spaces; category lowercased.
+    # underscores in the category become spaces; category lowercased. No verdict
+    # in the prose (D-145): the release line is the stored decision, stated as such.
     assert result["executive_summary"] == (
         "Build build-4711 completed with 12 failures and 94.0% pass rate. "
-        "The dominant failure type is product bug. "
-        "Release recommendation: CONDITIONAL GO."
+        "The dominant failure type is product bug."
     )
     assert result["release_recommendation"] == (
-        "CONDITIONAL_GO — based on 94.0% pass rate and failure analysis"
+        f"{_assembled()['release_inputs']['recommendation']} — the release gate's stored decision"
     )
     assert result["scope_of_impact"] == "3 failure clusters across 12 tests"
     # key risks / decisions are the first two of each release-input list.
@@ -188,9 +188,9 @@ def test_fallback_manager_defaults_when_release_inputs_empty():
     a["facts"]["top_category"] = "UNKNOWN"
     result = _fallback_manager(a, reason=None)
 
-    # recommendation defaults to CONDITIONAL_GO when absent.
-    assert "Release recommendation: CONDITIONAL GO." in result["executive_summary"]
-    assert result["release_recommendation"].startswith("CONDITIONAL_GO — based on")
+    # D-145: no stored decision means no release line. It defaulted to CONDITIONAL_GO.
+    assert "release_recommendation" not in result
+    assert "recommendation" not in result["executive_summary"].lower()
     assert result["key_risks"] == ["Review failing tests before release"]
     assert result["recommended_decisions"] == ["Assess release readiness manually"]
 
@@ -314,3 +314,18 @@ async def test_render_manager_summary_parses_llm_json():
     assert result["fallback_used"] is False
     assert result["executive_summary"] == "All green"
     assert result["citations"] == []
+    # D-145: the model's own verdict is dropped; with no stored decision there is none.
+    assert "release_recommendation" not in result
+
+
+async def test_render_manager_summary_states_the_stored_decision_not_the_models():
+    payload = {"executive_summary": "Checkout is broken", "release_recommendation": "GO"}
+    llm = _mock_llm_returning(payload)
+    assembled = {
+        "facts": {"build": "b1", "pass_rate": 93.8},
+        "release_inputs": {"recommendation": "NO_GO", "risk_score": 62},
+    }
+    with patch("app.services.llm_factory.get_llm", AsyncMock(return_value=llm)):
+        result = await render_manager_summary(assembled)
+
+    assert result["release_recommendation"] == "NO_GO — the release gate's stored decision"

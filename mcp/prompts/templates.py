@@ -22,7 +22,7 @@ from __future__ import annotations
 # manifest + attestation (see backend/app/services/prompt_registry.py docstring).
 PROMPT_TEMPLATE_VERSIONS: dict[str, int] = {
     "mcp.investigate_failure": 1,
-    "mcp.release_readiness_report": 1,
+    "mcp.release_readiness_report": 2,
     "mcp.weekly_quality_digest": 1,
     "mcp.flakiness_investigation": 1,
     "mcp.defect_triage_session": 1,
@@ -57,7 +57,7 @@ Be concise and actionable. A developer should be able to read this in under 2 mi
 You are a QA lead preparing a release readiness report for version **{release_version}**.
 Run these steps in order, then compile the final report:
 
-1. Call `check_release_readiness` with project_id="{project_id}" — this is the primary signal.
+1. Call `check_release_readiness` with project_id="{project_id}". It leads with any active release's stored gate verdict, which is the decision; the project readiness below it is a signal, not a release verdict.
 2. Call `get_dashboard_metrics` with project_id="{project_id}", days=7.
 3. Call `get_test_trends` with project_id="{project_id}", days=14 — look for trend direction.
 4. Call `get_failure_categories` with project_id="{project_id}", days=7 — categorise risk.
@@ -69,7 +69,7 @@ Produce a release readiness report with this structure:
 
 ---
 # Release Readiness Report — {release_version}
-**Decision: 🟢 GO / 🟡 CONDITIONAL GO / 🔴 NO-GO**
+**Decision: 🟢 GO / 🔴 NO-GO / ⚪ NOT EVALUATED** (the release gate's stored verdict; never your own)
 
 ## Quality Signal
 [Pass rate, trend, execution volume]
