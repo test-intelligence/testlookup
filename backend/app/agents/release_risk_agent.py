@@ -237,6 +237,8 @@ class ReleaseRiskAgent(BaseAgent):
         # open P1 read GO.
         signals = await self._load_run_release_signals(state)
         by_severity = signals.get("open_defects_by_severity") or {}
+        blocking_failures = int(signals.get("blocking_failures") or 0)
+        blocking_defects = int(signals.get("blocking_defects") or 0)
 
         # ── Step 1: deterministic dimension scoring ───────────────────────────
         dim_scores = compute_dimension_scores(
@@ -260,8 +262,8 @@ class ReleaseRiskAgent(BaseAgent):
             "open_defects": open_defects,
             "open_defects_source": release_memory_context.get("source"),
             "regression_test_count": len(regression_tests),
-            "blocking_failures": int(signals.get("blocking_failures") or 0),
-            "blocking_defects": int(signals.get("blocking_defects") or 0),
+            "blocking_failures": blocking_failures,
+            "blocking_defects": blocking_defects,
             "open_defects_by_severity": dict(by_severity),
             "failure_kind_counts": self._failure_kind_counts(analyses),
             "failure_kind_confidences": self._failure_kind_confidences(analyses),
@@ -327,8 +329,8 @@ class ReleaseRiskAgent(BaseAgent):
                 recommendation = score_to_recommendation(composite, pass_rate, threshold)
                 recommendation, _reasons = apply_verdict_floor(
                     recommendation,
-                    blocking_failures=policy_context["blocking_failures"],
-                    blocking_defects=policy_context["blocking_defects"],
+                    blocking_failures=blocking_failures,
+                    blocking_defects=blocking_defects,
                 )
 
         # ── Step 2: LLM reasoning (non-blocking — failures gracefully degrade) ─
