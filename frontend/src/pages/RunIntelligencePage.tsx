@@ -1255,7 +1255,8 @@ function deriveVerdict(intelligence: RunIntelligence): Verdict {
     // Run-level dimensions approximated from the top cluster's scores.
     affectedSuite: terminalBacked ? undefined : affected_suites[0]?.suite,
     dimensions: terminalBacked ? [] : (failure_clusters[0]?.dimension_scores ?? []),
-    score: typeof rawScore === 'number' ? Math.round(rawScore) : null,
+    // Floor, not round (D-96): a composite of 19.6 was decided as "under 20" and must not read 20.
+    score: typeof rawScore === 'number' ? Math.floor(rawScore) : null,
   }
 }
 

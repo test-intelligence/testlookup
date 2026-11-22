@@ -176,6 +176,23 @@ Existing usernames that contain `@` keep working for sign-in.
 | `POST /deep-investigate/{run_id}` in Rules mode | accepted | 422 "requires LLM or Auto mode" |
 | `POST /analyze` for a test with a human correction | returns the correction | the engine's answer, replacing the correction |
 
+### Release verdicts (score model 2)
+
+- **A run with an open critical or high defect reads No-Go**, as its release
+  already did. The defect count is the project's open defects, so one open high
+  defect holds every run of the project until it is resolved or reclassified.
+- **A run with an unquarantined failure not classed flaky or infrastructure
+  reads at best Conditional Go.** Quarantine a known flaky test, or correct its
+  category, to clear it.
+- Open defects weigh by severity in `user_impact`; risk scores of runs with open
+  high or critical defects rise.
+- Decisions stored before the upgrade keep score model 1 and evaluator v2, and
+  their policy replay reports the version difference rather than re-judging
+  them. Run a deep investigation again to store a model 2 decision.
+- `POST /release-gate-policies/simulate` adds `release_readiness_band` and
+  `band_downgrades`; `original_recommendation` is now the verdict the gate shows
+  (with the active policy's bands), not the stored one.
+
 ### Outbound calls, MCP and the Fixer
 
 - **Custom LLM endpoint.** If `openai` or `openrouter` points at a gateway (a base URL that is not the provider's own) and the key is only in the environment, store the key in Settings > AI Configuration, or set `OPENAI_API_BASE` / `OPENROUTER_BASE_URL` in the environment to the gateway. Otherwise model calls to that endpoint are refused.

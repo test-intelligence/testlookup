@@ -546,11 +546,17 @@ async def simulate_policy(
     elif decision.input_snapshot:
         pass_rate = decision.input_snapshot.get("pass_rate", 0.0)
 
-    # Count context data from input_snapshot
     snapshot = decision.input_snapshot or {}
-    context = {
+    # D-135: the context the real evaluation used is frozen in the snapshot as
+    # ``policy_context`` (flaky count, open defects, the floor's blocking counts,
+    # kind counts). The simulator read ``open_defects_by_component``, a key no
+    # writer sets, so the Open Defect Limit rule always saw 0 (and ``len()``
+    # would have counted components, not defects). The old keys stay only as a
+    # fallback for decisions stored before ``policy_context`` existed.
+    frozen = snapshot.get("policy_context")
+    context = dict(frozen) if isinstance(frozen, dict) and frozen else {
         "flaky_count": snapshot.get("flaky_finding_count", 0),
-        "open_defects": len(snapshot.get("open_defects_by_component", [])),
+        "open_defects": snapshot.get("open_defects", 0),
         "regression_test_count": snapshot.get("regression_test_count", 0),
         # US-9.3 — kind breakdown frozen at decision time. Absent on
         # pre-feature snapshots, in which case kind_rules policies simulate
@@ -591,10 +597,32 @@ async def simulate_policy(
         policy_override=mock_policy,
     )
 
+    # D-133: the gate page applies the policy's pass-rate bands and hard caps
+    # at read time (``release_council_service._apply_band_floor``), outside
+    # ``evaluate_policy``. The simulator ran ``evaluate_policy`` only, so a
+    # publish that turned a run at 70.3 % from Conditional to No-Go was
+    # predicted as "No change". Both sides now go through the same floor:
+    # "original" is what the gate shows today, "simulated" what it will show.
+    from app.services.release_council_service import (  # noqa: PLC0415
+        _apply_band_floor,
+        apply_policy_band_floor,
+    )
+
+    original_rec, _band, _downgrades, _policy = await _apply_band_floor(
+        db, run_project_id, decision.recommendation, float(pass_rate),
+    )
+    document = payload.policy_document.model_dump()
+    sim_rec, sim_band, sim_downgrades = await apply_policy_band_floor(
+        db,
+        run_project_id,
+        sim_result.recommendation,
+        float(pass_rate),
+        bands=document.get("pass_rate_bands") or {},
+        hard_caps=document.get("hard_caps") or {},
+    )
+
     # Build diff summary
-    original_rec = decision.recommendation
     original_comp = decision.composite_risk or float(decision.risk_score)
-    sim_rec = sim_result.recommendation
     sim_comp = sim_result.effective_composite
 
     if original_rec == sim_rec:
@@ -606,6 +634,10 @@ async def simulate_policy(
         if failing_rules:
             names = ", ".join(f"'{r.rule_name}'" for r in failing_rules)
             diff_summary += f" due to rule(s): {names}"
+        if sim_band is not None and sim_rec != sim_result.recommendation:
+            diff_summary += f"; pass-rate band {sim_band}"
+            if sim_downgrades:
+                diff_summary += f" (caps: {', '.join(sim_downgrades)})"
 
     rule_evals = [
         RuleEvaluationResponse(
@@ -628,6 +660,8 @@ async def simulate_policy(
         simulated_composite=sim_comp,
         rule_evaluations=rule_evals,
         diff_summary=diff_summary,
+        release_readiness_band=sim_band,
+        band_downgrades=sim_downgrades,
     )
 
 

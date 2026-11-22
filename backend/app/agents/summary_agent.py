@@ -1581,15 +1581,13 @@ class SummaryAgent(BaseAgent):
             release_impact = "NO_GO"
             criticality = "CRITICAL"
 
-        # W23c F-1: an inline invocation's counts are the caller's supplied failures, not the build's -- no
-        # release signal is derived from them (the release_impact field keeps its vocabulary for the readers).
+        # W23c F-1: an inline invocation's counts are the caller's supplied failures, not the build's.
+        # D-119: no release verdict in the sentence. This stage runs before the release-risk stage, so it could
+        # only guess one from the pass rate, and the guess outlived the stored decision and any override.
         inline = run_data.get("status") == SEEDED_STATUS
-        release_clause = (
-            "" if inline else f", and the current release signal is {release_impact.replace('_', ' ')}"
-        )
         summary_sentence = (
             f"Build {build} on branch {branch} — {_format_results_line(run_data)} "
-            f"The dominant failure category was {top_category.replace('_', ' ').lower()}{release_clause}. "
+            f"The dominant failure category was {top_category.replace('_', ' ').lower()}. "
             "This summary was generated from stored pipeline evidence because the configured LLM was unavailable."
         )
 
@@ -1673,7 +1671,7 @@ class SummaryAgent(BaseAgent):
                         "These are failures supplied with the request, not this run's results: judge the release "
                         "from the run itself."
                         if inline
-                        else f"Treat this run as {release_impact.replace('_', ' ')} until the failures and AI model availability are resolved."
+                        else "Read this run's verdict on the release gate; resolve the failures before release."
                     ),
                 },
             },

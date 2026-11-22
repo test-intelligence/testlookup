@@ -38,6 +38,9 @@ class _Result:
     def first(self):
         return self._v
 
+    def all(self):
+        return self._v
+
 
 def _decision():
     # ``human_override`` set: the band floor is skipped (a human decided), so
@@ -91,7 +94,8 @@ async def test_a_synthesised_view_has_no_decision_time():
         execute=AsyncMock(side_effect=[
             _Result(None),   # no ReleaseDecision row
             _Result(run),
-            _Result(0),      # open defects
+            _Result([]),     # the run's failed tests
+            _Result([]),     # open defects by severity
             _Result(None),   # no project policy
             _Result(None),   # no system policy
         ])

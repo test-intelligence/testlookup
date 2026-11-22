@@ -9,6 +9,7 @@ recommendation can be reproduced from its recorded inputs.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Any, Optional
 import uuid
@@ -36,6 +37,7 @@ from app.models.schemas import (
 from app.services.criticality_service import (
     HARD_FLOOR_FACTOR as _HARD_FLOOR_FACTOR,
     SCORE_MODEL_VERSION,
+    apply_verdict_floor,
     compute_composite,
     compute_dimension_scores,
     score_cluster,
@@ -127,42 +129,65 @@ async def _apply_band_floor(
     # ReleaseGatePolicy, which release_council already touches via the
     # policy_id / policy_version fields. Both services live downstream of
     # the same data, so this is safe.
-    from app.services.metrics_service import (
-        _resolve_active_policy_for_project,
-        classify_with_policy,
-        count_open_critical_defects,
-    )
+    from app.services.metrics_service import _resolve_active_policy_for_project
 
     resolved = await _resolve_active_policy_for_project(db, str(project_id))
     if resolved is None:
         return recommendation, None, [], None
     policy_doc, band_policy_id, band_policy_version, band_policy_level = resolved
 
-    bands = policy_doc.get("pass_rate_bands") or {}
-    caps = policy_doc.get("hard_caps") or {}
-    # Count open CRITICAL defects for the P0 hard cap. flaky / new_failures
-    # stats aren't handy on the synth path, so pass 0 — those caps join the
-    # picture when a deep run lands. The band still reflects pass-rate + open
-    # CRITICAL defects, which is what the user asked the gate to honour.
-    active_p0 = await count_open_critical_defects(db, project_id)
+    final, band, downgrades = await apply_policy_band_floor(
+        db,
+        project_id,
+        recommendation,
+        pass_rate,
+        bands=policy_doc.get("pass_rate_bands") or {},
+        hard_caps=policy_doc.get("hard_caps") or {},
+    )
+    return final, band, downgrades, (band_policy_id, band_policy_version, band_policy_level)
+
+
+async def apply_policy_band_floor(
+    db: AsyncSession,
+    project_id: Optional[uuid.UUID],
+    recommendation: str,
+    pass_rate: float,
+    *,
+    bands: dict,
+    hard_caps: dict,
+) -> tuple[str, Optional[str], list[str]]:
+    """One policy document's pass-rate bands and hard caps over a verdict.
+
+    Shared by the gate (with the active policy) and the policy simulator (with
+    the draft), so a simulation predicts what publishing will show (D-133).
+    Returns ``(final_recommendation, band, downgrades)``. A document without
+    bands gets the classifier's default bands, as the gate always did.
+    """
+    from app.services.metrics_service import (  # noqa: PLC0415
+        classify_with_policy,
+        count_open_critical_defects,
+    )
+
+    # Open CRITICAL defects for the P0 hard cap. The run gate applies the
+    # pass-rate bands and this cap; the flaky and new-failure caps apply to the
+    # project readiness verdict on Home (D-136: the policy editor says so).
+    active_p0 = await count_open_critical_defects(db, project_id) if project_id else 0
     classified = classify_with_policy(
         pass_rate=pass_rate,
         active_defects_p0=active_p0,
         flaky_count=0,
         new_failures_24h=0,
         bands=bands,
-        hard_caps=caps,
+        hard_caps=hard_caps,
     )
     # Normalise the band verdict onto the recommendation vocabulary so
     # ``_worse_verdict`` compares like-with-like and the returned value stays
     # canonical (CONDITIONAL_GO, not the band's CONDITIONAL).
     band_verdict = _normalize_verdict(classified["verdict"])
-    final = _worse_verdict(recommendation, band_verdict)
     return (
-        final,
+        _worse_verdict(recommendation, band_verdict),
         classified["band"],
-        classified["downgrades"],
-        (band_policy_id, band_policy_version, band_policy_level),
+        list(classified["downgrades"]),
     )
 
 
@@ -382,17 +407,12 @@ async def _synthesize_release_council(
     if in_progress or run.pass_rate is None:
         return _unmeasured_quick_look(run_id, run, in_progress=in_progress)
 
-    # Count open defects scoped to the run's project — same input the
-    # real agent uses; cheap one-query lookup.
-    open_defects = 0
-    if run.project_id is not None:
-        open_defects = int(
-            (await db.execute(
-                select(sa_func.count(Defect.id))
-                .where(Defect.project_id == run.project_id)
-                .where(Defect.resolution_status.in_(ACTIVE_STATUSES))
-            )).scalar_one() or 0
-        )
+    # The run's unquarantined real failures and the project's open defects by
+    # severity: the same inputs the stored decision uses (D-04).
+    from app.services.run_release_signals import load_run_release_signals
+
+    signals = await load_run_release_signals(db, run_id, run.project_id)
+    open_defects = int(signals["open_defects"])
 
     pass_rate = float(run.pass_rate)
     threshold = float(settings.RELEASE_PASS_RATE_THRESHOLD)
@@ -411,7 +431,7 @@ async def _synthesize_release_council(
         is_regression=False,
         regression_tests=[],
         failure_clusters=[],
-        open_defects=open_defects,
+        open_defects=signals["open_defects_by_severity"] or open_defects,
     )
     composite = compute_composite(dim_scores)
     if pass_rate < threshold * _HARD_FLOOR_FACTOR:
@@ -421,6 +441,11 @@ async def _synthesize_release_council(
         # function reaches NO_GO via the standard mapping.
         composite = max(composite, 60.0)
     recommendation = score_to_recommendation(composite, pass_rate, threshold)
+    recommendation, floor_reasons = apply_verdict_floor(
+        recommendation,
+        blocking_failures=int(signals["blocking_failures"]),
+        blocking_defects=int(signals["blocking_defects"]),
+    )
 
     # Layer the active ReleaseGatePolicy's pass-rate bands over the composite
     # so /release-gate honours the same colours /overview renders. Fail-closed:
@@ -429,21 +454,26 @@ async def _synthesize_release_council(
         db, run.project_id, recommendation, pass_rate,
     )
 
+    defects_noun = "open defect" if open_defects == 1 else "open defects"
     reasoning = (
         "Quick-look decision derived from this run's aggregates "
-        f"(pass rate {pass_rate:.1f}%, {open_defects} open defects). "
-        "Run Deep Investigation for richer insights — failure "
+        f"(pass rate {pass_rate:.1f}%, {open_defects} {defects_noun}"
+        + (f"; held back by {', '.join(floor_reasons)}" if floor_reasons else "")
+        + "). Run Deep Investigation for richer insights — failure "
         "clusters, defect breakdown, and AI narrative."
     )
 
     conditions = _quick_look_conditions(recommendation, pass_rate, threshold)
+    conditions = [f"Resolve: {reason}" for reason in floor_reasons] + conditions
 
     return ReleaseCouncilResponse(
         run_id=str(run_id),
         recommendation=recommendation,
         release_readiness_band=band,
         band_downgrades=band_downgrades,
-        risk_score=int(round(composite)),
+        # Floor, not round (D-96): a composite of 19.6 decided as "under 20"
+        # must not be shown as 20.
+        risk_score=int(math.floor(composite)),
         composite_risk=composite,
         dimension_scores=_build_dimension_scores(dim_scores),
         blocking_issues=[],
@@ -454,6 +484,9 @@ async def _synthesize_release_council(
             "synthesized": True,
             "pass_rate": pass_rate,
             "open_defects": open_defects,
+            "open_defects_by_severity": signals["open_defects_by_severity"],
+            "blocking_failures": signals["blocking_failures"],
+            "blocking_defects": signals["blocking_defects"],
             # The CONFIGURED target (RELEASE_PASS_RATE_THRESHOLD). Reporting it
             # alone was actively misleading: a run at 83% sat next to
             # "threshold: 90.0" and a GO verdict, which reads as a contradiction.

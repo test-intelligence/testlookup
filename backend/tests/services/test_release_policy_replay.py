@@ -9,6 +9,7 @@ from app.services.policy_evaluator_service import (
     POLICY_EVALUATOR_VERSION,
     evaluate_policy,
 )
+from app.services.criticality_service import SCORE_MODEL_VERSION
 from app.services.release_policy_replay import replay_frozen_release_policy
 from app.services.release_policy_replay import compare_persisted_release_record
 
@@ -57,12 +58,12 @@ async def _snapshot(*, pass_rate=95.0, recommendation=None):
             "recommendation": recommendation or expected.recommendation,
             "risk_score": int(expected.effective_composite),
             "composite_risk": expected.effective_composite,
-            "score_model_version": 1,
+            "score_model_version": SCORE_MODEL_VERSION,
             "dimension_scores": dimensions,
             "policy_evaluation": expected_dict,
             "input_snapshot": {
                 "pass_rate": pass_rate,
-                "score_model_version": 1,
+                "score_model_version": SCORE_MODEL_VERSION,
                 "dimension_scores": dimensions,
                 "policy_context": {},
                 "policy_snapshot": expected.policy_snapshot,
@@ -109,12 +110,12 @@ async def test_real_synthetic_hardcoded_policy_snapshot_replays_without_string_n
             "recommendation": expected.recommendation,
             "risk_score": int(expected.effective_composite),
             "composite_risk": expected.effective_composite,
-            "score_model_version": 1,
+            "score_model_version": SCORE_MODEL_VERSION,
             "dimension_scores": {"user_impact": 10.0},
             "policy_evaluation": payload,
             "input_snapshot": {
                 "pass_rate": 95.0,
-                "score_model_version": 1,
+                "score_model_version": SCORE_MODEL_VERSION,
                 "dimension_scores": {"user_impact": 10.0},
                 "policy_context": {},
                 "policy_snapshot": payload["policy_snapshot"],

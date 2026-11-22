@@ -7740,6 +7740,10 @@ class PolicySimulateResponse(BaseModel):
     simulated_composite: float
     rule_evaluations: List[RuleEvaluationResponse] = []
     diff_summary: str
+    #: The simulated policy's pass-rate band and the hard caps it would trip,
+    #: applied the way the gate page applies them (D-133).
+    release_readiness_band: Optional[str] = None
+    band_downgrades: List[str] = []
 
 
 # ── Service Ownership Schemas (ENT-04) ───────────────────────────────────────

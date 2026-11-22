@@ -34,6 +34,15 @@ class _ScalarResult:
         return self._v
 
 
+class _Rows:
+    """An execute result read with ``.all()``."""
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
 def _run(pass_rate, *, project_id=None, build_number="b-1"):
     """Build a fake TestRun row with the columns the synthesiser reads."""
     return SimpleNamespace(
@@ -45,7 +54,10 @@ def _run(pass_rate, *, project_id=None, build_number="b-1"):
 
 
 def _db_with(run, *, open_defects=0):
-    """Mock async session: 1st execute → TestRun lookup, 2nd → open-defects COUNT.
+    """Mock async session: 1st execute → TestRun lookup, then the run's release
+    signals (``run_release_signals``): its failed tests, then the project's open
+    defects by severity. The defects are MEDIUM, below the verdict floor, so
+    these tests keep pinning the score's own verdict.
 
     A third execute is needed for the band-floor lookup added 2026-05-14
     (``_apply_band_floor`` resolves ``ReleaseGatePolicy.rules`` via
@@ -57,7 +69,8 @@ def _db_with(run, *, open_defects=0):
     return SimpleNamespace(
         execute=AsyncMock(side_effect=[
             _ScalarResult(run),
-            _ScalarResult(open_defects),
+            _Rows([]),                                              # no failed tests
+            _Rows([("MEDIUM", open_defects)] if open_defects else []),
             _PolicyResolveResult(None),    # no project policy → band-floor no-op
             _PolicyResolveResult(None),    # system-default fallback also empty
         ]),

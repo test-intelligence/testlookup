@@ -819,8 +819,9 @@ export default function PolicyEditorPage() {
           >
             <div className="space-y-3">
               <p className="text-2xs text-[var(--color-text-muted)]">
-                Each cap downgrades the resolved band one step when exceeded (green → yellow → orange → red).
-                Set to 0 to disable a cap, except the P0 cap where 0 means "no P0 defects allowed".
+                Exceeding any cap forces No-Go, whatever the pass rate. Set the flaky or new-failure cap to 0 to
+                turn it off; 0 for P0 defects means none allowed. A run&apos;s release gate applies the P0 cap and the
+                pass-rate bands; the flaky and new-failure caps apply to the project readiness verdict on Home.
               </p>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {([

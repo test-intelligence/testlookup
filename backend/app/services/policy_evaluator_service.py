@@ -19,12 +19,15 @@ from app.services.criticality_service import (
     _GO_THRESHOLD,
     _NO_GO_THRESHOLD,
     _weights,
+    apply_verdict_floor,
     compute_composite,
     score_to_recommendation,
 )
 
 logger = logging.getLogger("services.policy_evaluator")
-POLICY_EVALUATOR_VERSION = "policy-evaluator:v2"
+# v3: the verdict floor (``criticality_service.apply_verdict_floor``) runs after
+# the failure-kind budgets; ``verdict_floor`` records its inputs for replay.
+POLICY_EVALUATOR_VERSION = "policy-evaluator:v3"
 
 
 # ── Data classes ─────────────────────────────────────────────────────────────
@@ -62,6 +65,9 @@ class PolicyEvaluationResult:
     kind_counterfactual: str | None = None  # human-readable "would have been…"
     policy_snapshot: dict = field(default_factory=dict)
     evaluator_version: str = POLICY_EVALUATOR_VERSION
+    #: ``{blocking_failures, blocking_defects, reasons}``: the floor's inputs, so
+    #: the consistency check and replay apply exactly what the gate applied.
+    verdict_floor: dict | None = None
 
     def to_dict(self) -> dict:
         """Convert to a JSON-serializable dict for persistence."""
@@ -508,6 +514,23 @@ async def evaluate_policy(
             kind_counterfactual,
         ) = _apply_kind_rules(kind_rules, context, recommendation)
 
+    # The verdict floor (D-04): an open blocking defect or an unquarantined real
+    # failure caps the verdict. After the kind budgets, which judge failure
+    # kinds and must not soften a blocking defect; before the rules, which can
+    # only escalate.
+    blocking_failures = int(context.get("blocking_failures") or 0)
+    blocking_defects = int(context.get("blocking_defects") or 0)
+    recommendation, floor_reasons = apply_verdict_floor(
+        recommendation,
+        blocking_failures=blocking_failures,
+        blocking_defects=blocking_defects,
+    )
+    verdict_floor = {
+        "blocking_failures": blocking_failures,
+        "blocking_defects": blocking_defects,
+        "reasons": floor_reasons,
+    }
+
     # Evaluate each rule
     rule_evals: list[RuleEvaluation] = []
     for rule in rules:
@@ -554,6 +577,7 @@ async def evaluate_policy(
         kind_breakdown=kind_breakdown,
         kind_rule_applied=kind_rule_applied,
         kind_counterfactual=kind_counterfactual,
+        verdict_floor=verdict_floor,
         policy_snapshot={
             "schema_version": 1,
             "policy_id": str(policy.id) if policy and policy.id else None,
