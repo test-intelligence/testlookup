@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Scalability"
+  short_description: "Verify capacity, headroom, and growth failure modes"
+  default_prompt: "Use $testlookup-scalability to review a TestLookup capacity change and verify limits for the intended deployment profile."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Auditability"
+  short_description: "Verify durable audit trails and evidence provenance"
+  default_prompt: "Use $testlookup-auditability to review a TestLookup change that affects decisions or audit evidence and verify attributable history."

@@ -19,3 +19,25 @@ Use the applicable entry point in a TestLookup checkout. Name the skill or ask t
 | [Observability](testlookup-observability-quality/SKILL.md) | Metrics, logs, traces, health probes, alert rules, and fleet-wide signals |
 | [CI and release engineering](testlookup-release-engineering/SKILL.md) | CI triggers, pinned artifacts, release gates, and promotion evidence |
 | [Contracts and documentation](testlookup-contract-docs-quality/SKILL.md) | Generated references, shared contracts, diagrams, and guides |
+
+## Architecture quality attributes
+
+| Skill | Use it for |
+| --- | --- |
+| [Security](testlookup-security-quality/SKILL.md) | Trust boundaries, actor and resource scopes, protected data, and defensive regression evidence |
+| [Performance](testlookup-performance-quality/SKILL.md) | Timing, request and payload budgets, profiling, and comparable baseline measurements |
+| [Auditability](testlookup-auditability/SKILL.md) | Attributable event history, decision evidence, export integrity, and retention |
+| [Scalability](testlookup-scalability/SKILL.md) | Capacity, worker and pool headroom, skew, backpressure, and recovery |
+
+## Apply the skills together
+
+Start with the owning component and add the architecture skill for the changed constraint. Use E2E verification when the requirement crosses deployed boundaries.
+
+| Change | Skills to combine | Evidence to retain |
+| --- | --- | --- |
+| Project switching or access rules | Frontend, Backend, Security | Scoped readback, expected permission result, and cache behavior after a switch |
+| Live ingestion topology or worker concurrency | WebSocket, Ingestion and workers, Scalability, Observability | Resume result, durable test counts, queue recovery, and fleet headroom |
+| AI-assisted release decision or compliance export | AI and agents, Backend, Auditability, E2E quality | Policy and evidence versions, approval record, and verified report outcome |
+| Slow Runs page or ingestion processing | Frontend or Ingestion and workers, Backend, Performance | Comparable baseline and candidate, limiting stage, and a regression check |
+
+For each gap, record the observed evidence, impact, proposed change, owner and measurable acceptance check. When implementing a fix, repeat the original comparison and include any outstanding verification. For release work, link the exact candidate, runner results and affected obligations in the [coverage ledger template](testlookup-e2e-quality/assets/coverage-ledger.md) or the existing ledger. Refresh the guide when a test entry point or verification contract changes.

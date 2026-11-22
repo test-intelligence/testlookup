@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Security Quality"
+  short_description: "Review security controls and verify defensive fixes"
+  default_prompt: "Use $testlookup-security-quality to review a TestLookup architectural change for security controls and define defensive regression evidence."
