@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Cost Efficiency"
+  short_description: "Measure unit costs and verify TestLookup budgets"
+  default_prompt: "Use $testlookup-cost-efficiency to assess the cost per completed TestLookup outcome and verify the applicable budget."

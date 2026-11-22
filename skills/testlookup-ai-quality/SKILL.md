@@ -1,6 +1,6 @@
 ---
 name: testlookup-ai-quality
-description: Review and improve TestLookup AI and agent tests. Use for analysis pipelines, retrieval, model policy, agent workflows, action governance, review, evidence-backed reporting, and model evaluation.
+description: Review and improve TestLookup AI and agent quality and oversight. Use for analysis, retrieval, model evaluation, evidence-backed reporting, human review, action governance, and fallback behaviour.
 ---
 
 # TestLookup AI and Agent Quality
@@ -15,4 +15,5 @@ description: Review and improve TestLookup AI and agent tests. Use for analysis 
 
 - Select backend agent or service tests first. For durable proof choose the relevant `backend/tests/integration` case, such as `test_ai_config_snapshot_postgres.py`, `test_ai_eval_runner_postgres.py` or `test_agent_action_ledger_postgres.py`.
 - Verify applicable transitions with positive and withheld controls. For example, compare accepted and pending/rejected results through report composition, export and downstream delivery. Ensure source references and the final status have observable evidence. Add live candidate coverage using the appropriate `TL-AI-*` journey when the risk crosses services.
+- Include the documented response to insufficient or conflicting evidence. Check whether the user can identify why a result was held for review or fell back. Use a disposable receiver to verify the effective approval decision and delivered or withheld effect. Use [Safety](../testlookup-safety/SKILL.md) when the result can trigger a consequential release or external action.
 - Keep run provenance and sanitized evidence IDs with the verdict. Trace action proposals, the approving actor and final disposition through the ledger when an action is in scope. Record workflow and evaluation outcomes against their respective acceptance criteria. Update golden fixtures or coverage entries when the approved product contract changes.

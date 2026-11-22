@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Privacy and Data Governance"
+  short_description: "Verify TestLookup data lifecycle and privacy controls"
+  default_prompt: "Use $testlookup-privacy-governance to trace the privacy and lifecycle requirements of this TestLookup data flow."

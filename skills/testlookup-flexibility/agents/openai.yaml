@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Flexibility and Portability"
+  short_description: "Verify TestLookup deployment and configuration choices"
+  default_prompt: "Use $testlookup-flexibility to verify a TestLookup profile, configuration, or dependency replacement."
