@@ -76,6 +76,10 @@ class _RouteDB:
             return _Res(uuid.uuid4() if self.state.member else None)
         if "FROM review_requests" in sql:
             return _Res(rows=[])
+        if "FROM agent_pipeline_runs" in sql:
+            # D-45: with no review row the envelope asks whether the newest
+            # pipeline recorded that its report needs no review.
+            return _Res(rows=[])
         if "FROM projects" in sql:
             return _Res(self.state.allow_drafts)
         if "FROM test_runs" in sql:
