@@ -249,30 +249,37 @@ def _build_proposed_actions(
     claims: list[dict[str, Any]],
     evidence_sha: str,
 ) -> list[dict[str, Any]]:
-    actions: list[dict[str, Any]] = []
-    for index, text in enumerate((release.get("conditions_for_go") or [])[:5]):
-        actions.append(ProposedActionV1(
-            action_id=f"release.condition.{index + 1}",
-            title="Resolve release condition",
-            owner="release_owner",
-            rationale=str(text)[:500],
-            evidence=[{"type": "decision_evidence", "id": evidence_sha}],
-            risk="medium",
-            required_permission="release_review",
-            idempotency_key=f"release-condition:{evidence_sha}:{index + 1}",
-        ).model_dump())
-    for index, text in enumerate((release.get("blocking_issues") or [])[:5]):
-        actions.append(ProposedActionV1(
-            action_id=f"release.blocker.{index + 1}",
-            title="Investigate release blocker",
-            owner="release_owner",
-            rationale=str(text)[:500],
-            evidence=[{"type": "decision_evidence", "id": evidence_sha}],
-            risk="high",
-            required_permission="release_review",
-            idempotency_key=f"release-blocker:{evidence_sha}:{index + 1}",
-        ).model_dump())
-    return actions[:10]
+    """At most ONE review item per report (D-158).
+
+    Each model-written blocker and condition used to become its own approval
+    row (up to ten per deep run), so four blockers and one condition filled
+    the approvals queue with five acknowledgements nobody asked for. One
+    summary item now points the reviewer at the gate, which lists them all.
+    Whether it is filed at all depends on verification (see workflow.py).
+    """
+    blockers = [str(t).strip() for t in (release.get("blocking_issues") or []) if str(t).strip()]
+    conditions = [str(t).strip() for t in (release.get("conditions_for_go") or []) if str(t).strip()]
+    if not blockers and not conditions:
+        return []
+    if blockers:
+        title = f"Review release blockers ({len(blockers)})"
+    else:
+        title = f"Review release conditions ({len(conditions)})"
+    parts = []
+    if blockers:
+        parts.append("Blockers: " + "; ".join(blockers))
+    if conditions:
+        parts.append("Conditions for go: " + "; ".join(conditions))
+    return [ProposedActionV1(
+        action_id="release.review",
+        title=title,
+        owner="release_owner",
+        rationale=". ".join(parts)[:500],
+        evidence=[{"type": "decision_evidence", "id": evidence_sha}],
+        risk="high" if blockers else "medium",
+        required_permission="release_review",
+        idempotency_key=f"release-review:{evidence_sha}",
+    ).model_dump()]
 def build_decision_intelligence(state: dict[str, Any]) -> dict[str, Any]:
     """Build the deterministic terminal decision section from specialist state."""
     redacted_strings = 0
@@ -481,10 +488,10 @@ def render_decision_markdown(decision: dict[str, Any]) -> str:
     risk_score = release.get("risk_score")
     risk_text = f"{recommendation} (risk {risk_score}/100)" if risk_score is not None else recommendation
     missing = quality.get("missing_or_failed_specialists") or []
-    verification = _as_dict(decision.get("verification"))
-    verification_status = str(verification.get("status") or "pending").upper()
-    repairs = verification.get("repairs") or []
-    unresolved = verification.get("unresolved_failures") or []
+    # D-154: no verification status, repairs or unresolved failures here. This
+    # text is stored per attempt, so "Independent verification: PASSED" stayed
+    # in it after a later attempt failed and contradicted the panel. The panel
+    # renders verification from the verification records instead.
     return "\n\n".join([
         "## Final Decision Intelligence",
         f"**Report status:** {str(decision.get('status') or 'degraded').upper()}",
@@ -497,10 +504,6 @@ def render_decision_markdown(decision: dict[str, Any]) -> str:
         ),
         "**Missing or failed specialists:** " + (", ".join(map(str, missing)) if missing else "None"),
         _coverage_line(quality),
-        f"**Independent verification:** {verification_status}",
-        "**Verification repairs:** " + (", ".join(map(str, repairs)) if repairs else "None"),
-        "**Unresolved verification failures:** "
-        + (", ".join(map(str, unresolved)) if unresolved else "None"),
         f"**Evidence bundle:** `{decision.get('evidence_bundle_sha256')}`",
     ])
 

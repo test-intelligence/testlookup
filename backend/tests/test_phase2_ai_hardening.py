@@ -67,7 +67,8 @@ class TestIncidentViewSchema:
         raw = {"criticality": "SUPER_BAD", "release_impact": "MAYBE"}
         result = validate_llm_output(IncidentView, raw, context="test")
         assert result["criticality"] == "MEDIUM"
-        assert result["release_impact"] == "CONDITIONAL_GO"
+        # S-B-5: an unknown release impact is none, never CONDITIONAL_GO.
+        assert result["release_impact"] is None
 
     def test_empty_dict_returns_defaults(self):
         result = validate_llm_output(IncidentView, {}, context="test")

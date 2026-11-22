@@ -17,19 +17,42 @@ Rules, all inherited byte for byte from the email:
 * the output is ``f"{name} ({suite or 'no suite'}) is {status}"``;
 * a reason whose key does not resolve to a test of the release's project (a
   test name rather than a fingerprint, a fingerprint whose rows retention
-  deleted) passes through unchanged, as does every defect reason;
+  deleted) passes through unchanged;
 * a fingerprint is resolved within ONE project only: fingerprints are not
   globally unique (``sha256(class::name)[:16]``), so an unscoped read would
   name another tenant's test.
+
+A defect reason is stored as ``"{SEVERITY} defect open: {title}"`` with the raw
+column word (``CRITICAL``/``HIGH``/``MEDIUM``/``LOW``,
+``release_defect_service.verdict_contribution``), while the Defects page shows
+the same defect as ``P0``..``P3``. Display translates the word through the ONE
+severity-to-priority table (``defect_status``), so a release reads
+``"P1 defect open: Totals"`` (D-103); the stored text keeps the column word.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any, Mapping, Optional, Sequence
 
 from sqlalchemy import func, select, tuple_
 
 from app.models.postgres import Release, TestCase, TestRun
+from app.services.defect_status import _PRIORITY_FROM_SEVERITY
+
+_DEFECT_REASON_RE = re.compile(r"^(?P<severity>[A-Za-z]+) defect open: (?P<rest>.*)$", re.DOTALL)
+
+
+def defect_reason_display(reason: str) -> str:
+    """``"HIGH defect open: X"`` -> ``"P1 defect open: X"`` (the Defects page's
+    words). Anything else, including an unknown severity word, is unchanged."""
+    match = _DEFECT_REASON_RE.match(reason)
+    if not match:
+        return reason
+    level = _PRIORITY_FROM_SEVERITY.get(match.group("severity").upper())
+    if level is None:
+        return reason
+    return f"{level} defect open: {match.group('rest')}"
 
 
 def reason_key(reason: str) -> tuple[Optional[str], Optional[str], str]:
@@ -52,7 +75,7 @@ def _render(reasons: Sequence[str], names: Mapping[str, str]) -> list[str]:
         if fp and fp in names:
             out.append(f"{names[fp]} ({suite or 'no suite'}) is {status}")
         else:
-            out.append(reason)
+            out.append(defect_reason_display(reason))
     return out
 
 
@@ -133,6 +156,7 @@ async def display_reasons_for_release(
 
 
 __all__ = [
+    "defect_reason_display",
     "display_reasons_by_project",
     "display_reasons_for_release",
     "readable_reasons",

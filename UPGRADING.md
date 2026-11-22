@@ -176,6 +176,19 @@ Existing usernames that contain `@` keep working for sign-in.
 | `POST /deep-investigate/{run_id}` in Rules mode | accepted | 422 "requires LLM or Auto mode" |
 | `POST /analyze` for a test with a human correction | returns the correction | the engine's answer, replacing the correction |
 
+### Overrides, reports and approvals (batch 2b)
+
+- An override now queues a snapshot rebuild on the `default` queue; the Runs
+  list shows the override without opening the run.
+- `executive_panel.status_signal` and `layer2_incident.release_impact` are the
+  run's stored decision or `null`; they no longer default to `CONDITIONAL_GO`.
+- `ReleaseCouncilResponse` adds `project_id`. Phase gate results add
+  `release_blockers` and `exit_criteria_evaluated` (always `false`).
+- Compliance pack verify summaries name manifest.json and signature.json
+  beside the file count.
+- Pipelines in Rules mode stage no report review; existing "Offline Report"
+  review rows are left as they are.
+
 ### Release verdicts (score model 2)
 
 - **A run with an open critical or high defect reads No-Go**, as its release

@@ -33,6 +33,7 @@ import {
   validateRows,
   type DraftRow,
 } from './draftPhasesModel'
+import { EXIT_CRITERIA_NOTE } from './PhaseGateChip'
 
 function failureText(err: unknown, fallback: string): string {
   const e = err as { message?: string; response?: { data?: { detail?: unknown } } }
@@ -195,6 +196,10 @@ export default function DraftPhasesForm({ release, slot, onDone, onCancel }: Dra
             </ul>
           )}
           {rows.length === 0 && <p className="text-sm text-[var(--color-text-muted)]">{NO_PHASES_DRAFTED}</p>}
+          {/* S-B-2: a drafted "Exit criteria:" line is kept in the description; say plainly that nothing checks it. */}
+          {rows.some(r => /exit criteria:/i.test(r.description)) && (
+            <p data-exit-criteria-note="" className="text-xs text-[var(--color-text-muted)]">{EXIT_CRITERIA_NOTE}</p>
+          )}
           {rows.length > 0 && (
             <div className="space-y-2" data-draft-rows="">
               {/* One card a phase, stacked for the ~380 px pane: the Name on its own full-width line, then Type,

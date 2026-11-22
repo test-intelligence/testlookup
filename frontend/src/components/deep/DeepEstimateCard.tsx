@@ -58,6 +58,10 @@ export default function DeepEstimateCard({
         <button type="button" className="btn-secondary self-start text-xs" onClick={onRetry}>Retry</button>
       )}
       {cost?.note && <p data-cost-note="" className="m-0 text-xs text-[var(--color-text-secondary)]">{cost.note}</p>}
+      {/* D-158: say up front that a deep run can file a review item. */}
+      <p data-review-item-note="" className="m-0 text-xs text-[var(--color-text-secondary)]">
+        If the report passes its checks and lists release blockers or conditions, the run adds one item to Approvals for a reviewer.
+      </p>
 
       {stages.length > 0 && (
         <div className="flex flex-col gap-1.5 text-xs" data-estimate-stages="">

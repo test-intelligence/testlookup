@@ -36788,6 +36788,17 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Policy Version"
     },
+    "project_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Id"
+    },
     "reasoning": {
       "anyOf": [
         {

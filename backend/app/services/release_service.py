@@ -973,7 +973,7 @@ async def _enforce_phase_gate(
     phase: ReleasePhase,
     updates: dict,
     actor=None,
-) -> None:
+) -> bool:
     """Refuse to end a phase the gate has not approved, or record why not.
 
     The gate has been ANSWERABLE since W4 (`GET /releases/{id}/phases/gate`) and
@@ -988,22 +988,26 @@ async def _enforce_phase_gate(
       may not proceed.
     * an override reason is supplied -> completion proceeds and the override is
       AUDITED. A gate with no override is one people route around.
+
+    Returns True when it recorded a phase event of its own (a skip or an
+    override), so ``update_phase`` does not also write a generic
+    ``release.phase_updated`` row for the same act (D-112).
     """
     new_status = updates.get("status")
     if new_status not in GATE_BYPASSING_STATUSES:
-        return
+        return False
     if new_status == phase.status:
-        return  # not a transition; re-submitting the same status is not an act
+        return False  # not a transition; re-submitting the same status is not an act
 
     if not await _enforcement_enabled(any_scope=True):
         # The default path. No project lookup, no gate evaluation, no extra
         # query at all — a deployment that has not opted in pays nothing.
-        return
+        return False
 
     project_id = await _project_of_release(db, release_id)
     if not await _enforcement_enabled(project_id=project_id, user=actor):
         # On for other projects (or roles), not this release's.
-        return
+        return False
 
     if new_status == "skipped":
         if not (updates.get("skip_reason") or "").strip():
@@ -1022,7 +1026,7 @@ async def _enforce_phase_gate(
             db, actor, release_id, project_id, phase, "release.phase_skipped",
             {"phase": phase.name, "reason": updates["skip_reason"].strip()},
         )
-        return
+        return True
 
     # completed
     from app.services import release_phase_gate_service
@@ -1031,7 +1035,7 @@ async def _enforce_phase_gate(
         db, release_id, phase.id, record=False
     )
     if result.get("verdict") == "GO":
-        return
+        return False
 
     override = (updates.get("gate_override_reason") or "").strip()
     if not override:
@@ -1043,7 +1047,7 @@ async def _enforce_phase_gate(
             status_code=409,
             detail=(
                 f"This phase's gate says {result.get('verdict')}: {detail}. "
-                "Fix it, or supply gate_override_reason to complete it anyway."
+                "Fix it, or complete it anyway with a reason."
             ),
         )
 
@@ -1056,6 +1060,7 @@ async def _enforce_phase_gate(
         db, actor, release_id, project_id, phase, "release.phase_gate_overridden",
         {"phase": phase.name, "reason": override, "verdict": result.get("verdict")},
     )
+    return True
 
 
 async def _record_phase_event(
@@ -1148,6 +1153,38 @@ async def _project_of_release(db: AsyncSession, release_id: str):
     ).scalar_one_or_none()
 
 
+#: The phase fields in the order an activity row names them, with the label
+#: each takes in "Phase {phase} on release {release} changed: {changed}"
+#: (D-112: the row used to print raw column names, "actual_end, status").
+_PHASE_FIELD_LABELS: tuple[tuple[str, str], ...] = (
+    ("name", "name"),
+    ("phase_type", "type"),
+    ("status", "status"),
+    ("description", "description"),
+    ("order_index", "order"),
+    ("planned_start", "planned start"),
+    ("planned_end", "planned end"),
+    ("actual_start", "actual start"),
+    ("actual_end", "actual end"),
+    ("exit_criteria", "exit criteria"),
+    ("notes", "notes"),
+)
+_PHASE_FIELD_LABEL = dict(_PHASE_FIELD_LABELS)
+_PHASE_FIELD_ORDER = {field: i for i, (field, _) in enumerate(_PHASE_FIELD_LABELS)}
+
+#: Fields a status transition sets by itself: the status and the timestamp
+#: stamped with it. A skip / override / advance row already covers them.
+_STATUS_ACT_FIELDS = frozenset({"status", "actual_start", "actual_end"})
+
+
+def _phase_field_labels(fields: list[str]) -> str:
+    """``["actual_end", "status"]`` -> ``"status, actual end"``."""
+    ordered = sorted(
+        fields, key=lambda f: (_PHASE_FIELD_ORDER.get(f, len(_PHASE_FIELD_ORDER)), f)
+    )
+    return ", ".join(_PHASE_FIELD_LABEL.get(f, f.replace("_", " ")) for f in ordered)
+
+
 async def update_phase(
     db: AsyncSession, release_id: str, phase_id: str, body, actor=None
 ) -> tuple[ReleasePhase, bool]:
@@ -1187,7 +1224,7 @@ async def update_phase(
     # The gate, when enforcement is on. Placed after the phase is loaded (it
     # needs the current status to tell a transition from a re-submission) and
     # before any mutation, so a refusal leaves the row untouched.
-    await _enforce_phase_gate(db, release_id, phase, updates, actor=actor)
+    gate_recorded = await _enforce_phase_gate(db, release_id, phase, updates, actor=actor)
 
     # Check for duplicate name if renaming
     if "name" in updates:
@@ -1233,16 +1270,30 @@ async def update_phase(
             if "status" in changed
             else {}
         )
-        await _record_phase_crud(
-            db, actor, release_id, "release.phase_updated",
-            {"phase": phase.name, "changed": ", ".join(changed)},
-            changed_fields=changed, **status_diff,
+        advanced = "status" in changed and updates["status"] == "in_progress"
+        # D-112: a skip, an override or an advance already has its own row
+        # saying what happened; the status flip and the timestamp stamped with
+        # it are that same act, so the generic row names only what is left.
+        generic = (
+            [f for f in changed if f not in _STATUS_ACT_FIELDS]
+            if (gate_recorded or advanced)
+            else changed
         )
-        if "status" in changed and updates["status"] == "in_progress":
+        if generic:
+            await _record_phase_crud(
+                db, actor, release_id, "release.phase_updated",
+                {"phase": phase.name, "changed": _phase_field_labels(generic)},
+                changed_fields=generic,
+                **(status_diff if "status" in generic else {}),
+            )
+        if advanced:
             # The release moved INTO this phase: the lifecycle step the feed's
-            # "advanced to" filter is for.
+            # "advanced to" filter is for. It carries the status diff the
+            # generic row no longer repeats.
             await _record_phase_crud(
                 db, actor, release_id, "release.phase_advanced", {"phase": phase.name},
+                changed_fields=[f for f in changed if f in _STATUS_ACT_FIELDS],
+                **status_diff,
             )
 
     # Check if all phases of this release are now completed/skipped. Count the

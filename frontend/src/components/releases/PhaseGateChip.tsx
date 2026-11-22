@@ -22,17 +22,49 @@ const TONE: Record<string, { fg: string; bd: string }> = {
 }
 const MUTED = { fg: 'var(--color-text-muted)', bd: 'var(--color-border)' }
 
+/** S-B-2: a phase's exit criteria are stored with it but no verdict reads them. */
+export const EXIT_CRITERIA_NOTE = 'Exit criteria are notes; the phase gate does not check them yet.'
+
+/** D-113: "1 open release blocker" / "2 open release blockers". */
+function releaseBlockerLabel(count: number): string {
+  return `${count} open release blocker${count === 1 ? '' : 's'}`
+}
+
 export default function PhaseGateChip({ result }: { result: PhaseGateResult }) {
   const tone = TONE[mapVerdict(result.verdict)] ?? MUTED
+  const blockers = result.release_blockers ?? []
+  const title = [
+    result.blocking_reasons?.[0] || LIVE_PREVIEW,
+    result.exit_criteria_evaluated === false ? EXIT_CRITERIA_NOTE : null,
+  ].filter(Boolean).join('\n')
   return (
-    <span
-      data-testid="phase-gate-chip"
-      data-verdict={result.verdict}
-      title={result.blocking_reasons?.[0] || LIVE_PREVIEW}
-      className="text-2xs px-1.5 py-0.5 rounded border font-medium bg-[var(--color-bg-card)]"
-      style={{ color: tone.fg, borderColor: tone.bd }}
-    >
-      Gate: {verdictWord(result.verdict)}
-    </span>
+    <>
+      <span
+        data-testid="phase-gate-chip"
+        data-verdict={result.verdict}
+        title={title}
+        className="text-2xs px-1.5 py-0.5 rounded border font-medium bg-[var(--color-bg-card)]"
+        style={{ color: tone.fg, borderColor: tone.bd }}
+      >
+        Gate: {verdictWord(result.verdict)}
+      </span>
+      {blockers.length > 0 && (
+        // D-113: defects are release-scoped, so they do not change this
+        // phase's verdict; they sit beside it so a Go chip over an open
+        // CRITICAL is not the whole story.
+        <span
+          data-testid="phase-release-blockers"
+          title={blockers.map(b => `${b.severity ?? 'Unrated'} defect open: ${b.title || b.id}`).join('\n')}
+          className="text-2xs px-1.5 py-0.5 rounded border font-medium"
+          style={{
+            color: DECISION_TOKEN.no_go.ink,
+            borderColor: DECISION_TOKEN.no_go.border,
+            background: DECISION_TOKEN.no_go.tint,
+          }}
+        >
+          {releaseBlockerLabel(blockers.length)}
+        </span>
+      )}
+    </>
   )
 }

@@ -63,7 +63,16 @@ EXTRA = [
     # a NUL in some string (json holds the \u0000 escape, jsonb refuses it): still projected
     {"top_analyses": [{"error": "boom\u0000tail"}], "release_decision": {"recommendation": "NO_GO"}},
 ]
-PAYLOADS = [case["full"] for case in CASES] + EXTRA
+def _carries_a_human_override(payload: dict) -> bool:
+    decision = payload.get("release_decision")
+    return isinstance(decision, dict) and bool(decision.get("human_override"))
+
+
+# 0214's CASE is frozen history: it backfilled before a person's override won the
+# verdict (D-99). Rows with an override are re-projected by the live reducer on the
+# next snapshot save, and the live SQL twin is held to them by
+# test_run_ai_verdicts_postgres.py, so they are not replayed through the frozen CASE.
+PAYLOADS = [case["full"] for case in CASES if not _carries_a_human_override(case["full"])] + EXTRA
 
 
 def _dsn() -> str:

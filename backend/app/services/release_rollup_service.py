@@ -504,14 +504,25 @@ def _normalise(status: Any) -> str:
     return text if text in STATUSES else TestStatus.UNKNOWN.value
 
 
-def decide(rollup: ReleaseRollup, *, min_evidence: int = MIN_EVIDENCE) -> tuple[str, list[str]]:
+def decide(
+    rollup: ReleaseRollup, *, min_evidence: int = MIN_EVIDENCE, scope: str = "release"
+) -> tuple[str, list[str]]:
     """The verdict, and the reasons behind it.
 
     Returns ``NOT_EVALUATED`` below the evidence floor. That is the honest
     answer: with almost nothing exercised, GO would claim the release is sound
     on no evidence, and NO_GO would claim it is broken on the same absence.
+
+    ``scope`` ("release" or "phase") only names what the reason talks about.
     """
     if rollup.evidence_count < min_evidence:
+        if not rollup.denominator:
+            # D-106: "only 0 of 0 tests carry evidence" reads as a bug report;
+            # say what is actually missing.
+            return "NOT_EVALUATED", [
+                f"no test results are linked to this {scope} yet; "
+                f"{min_evidence} are needed for a verdict"
+            ]
         return "NOT_EVALUATED", [
             f"only {rollup.evidence_count} of {rollup.denominator} tests carry "
             f"evidence; {min_evidence} required before a verdict means anything"

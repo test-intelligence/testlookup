@@ -101,6 +101,7 @@ SELECT r.id AS run_id,
        jsonb_typeof({_RD}) AS rd_type,
        {truthy_sql(_RD)} AS rd_truthy,
        ({_RD} -> 'recommendation')::text AS rd_rec,
+       ({_RD} -> 'human_override')::text AS rd_override,
        {truthy_sql(_IA)} AS ia_truthy,
        jsonb_typeof({_TA}) AS ta_type,
        CASE jsonb_typeof({_TA})
@@ -160,6 +161,7 @@ def _verdict_inputs(row: Any) -> dict[str, Any]:
         "structured_summary": summary,
         "release_decision": _object(row["rd_type"], row["rd_truthy"], {
             "recommendation": _leaf(row["rd_rec"]),
+            "human_override": _leaf(row["rd_override"]),
         }),
         "intelligence_available": bool(row["ia_truthy"]),
         "top_analyses": _top_analyses(row["ta_type"], row["ta_length"]),

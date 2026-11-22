@@ -34,7 +34,7 @@ def build_summary_markdown(doc: dict[str, Any]) -> str:
             f"**Likely cause:** {layer2.get('likely_cause', '—')}\n"
             f"**Scope:** {layer2.get('scope', '—')}\n"
             f"**Criticality:** {layer2.get('criticality', '—')}\n"
-            f"**Release impact:** {layer2.get('release_impact', '—')}"
+            f"**Release impact:** {layer2.get('release_impact') or '—'}"
         )
 
     if layer3:
@@ -164,7 +164,8 @@ async def build_fallback_summary(db: AsyncSession, run_id: str) -> AgentRunSumma
             "pass_rate": run.pass_rate or 0.0,
         },
         category_counts=category_counts,
-        release_impact=_stringify_model_value(recommendation, "CONDITIONAL_GO"),
+        # The stored decision, or no signal (D-145): never a default verdict.
+        release_impact=release.recommendation if release else None,
         risk_score=risk_score,
         recommended_actions=top_findings[:3],
     )

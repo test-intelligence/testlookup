@@ -52,4 +52,29 @@ describe('PhaseGateChip', () => {
     rerender(<PhaseGateChip result={result('GO')} />)
     expect(screen.getByTestId('phase-gate-chip')).toHaveAttribute('title', 'Live preview — nothing is recorded')
   })
+
+  // D-113: the release's open blocking defects sit beside the phase verdict.
+  it('shows the release blockers beside a Go chip, without changing the verdict', () => {
+    render(<PhaseGateChip result={{
+      ...result('GO'),
+      release_blockers: [{ id: 'd1', title: 'Checkout double-charges', severity: 'HIGH' }],
+    }} />)
+    expect(screen.getByTestId('phase-gate-chip')).toHaveTextContent('Gate: Go')
+    const blockers = screen.getByTestId('phase-release-blockers')
+    expect(blockers).toHaveTextContent('1 open release blocker')
+    expect(blockers).toHaveAttribute('title', 'HIGH defect open: Checkout double-charges')
+  })
+
+  it('shows no blocker badge when the release has none', () => {
+    render(<PhaseGateChip result={{ ...result('GO'), release_blockers: [] }} />)
+    expect(screen.queryByTestId('phase-release-blockers')).toBeNull()
+  })
+
+  // S-B-2: the tooltip says exit criteria are notes, not checks.
+  it('says exit criteria are not checked when the gate reports so', () => {
+    render(<PhaseGateChip result={{ ...result('GO'), exit_criteria_evaluated: false }} />)
+    expect(screen.getByTestId('phase-gate-chip').getAttribute('title')).toBe(
+      'Live preview — nothing is recorded\nExit criteria are notes; the phase gate does not check them yet.',
+    )
+  })
 })

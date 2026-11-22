@@ -190,7 +190,9 @@ def test_readiness_states_the_server_verdict_and_its_downgrades(monkeypatch):
     tools, _ = _tools(monkeypatch, _summary())
     text = _run(tools, "check_release_readiness", "proj-1")
 
-    assert "Release Readiness: **RED** (policy band: red)" in text
+    # D-120: the windowed project signal is named as such, never "Release Readiness".
+    assert "Project readiness (last 7 days): **RED** (policy band: red)" in text
+    assert "Release Readiness" not in text
     assert "| Avg Pass Rate | **96.4%** |" in text
     assert "### ❌ Blockers (policy hard caps that fired)" in text
     blockers = text.split("### ❌ Blockers (policy hard caps that fired)")[1].split("###")[0]
@@ -206,7 +208,7 @@ def test_readiness_states_the_server_verdict_and_its_downgrades(monkeypatch):
 
 @pytest.mark.parametrize("readiness, band, words", [
     ("GREEN", "yellow", "**Go**"),
-    ("AMBER", "orange", "**Conditional Go**"),
+    ("AMBER", "orange", "**AMBER — review first.**"),
     ("GREEN", None, "**Go**"),
 ])
 def test_readiness_without_downgrades_lists_no_blockers(monkeypatch, readiness, band, words):
@@ -215,8 +217,10 @@ def test_readiness_without_downgrades_lists_no_blockers(monkeypatch, readiness, 
     tools, _ = _tools(monkeypatch, summary)
     text = _run(tools, "check_release_readiness", "proj-1")
 
-    assert f"Release Readiness: **{readiness}**" in text
+    assert f"Project readiness (last 7 days): **{readiness}**" in text
     assert words in text
+    # D-120: AMBER is not translated into a release recommendation.
+    assert "Conditional Go" not in text
     assert "Blockers" not in text
     if band is None:
         assert "No release-gate policy is active" in text
@@ -280,6 +284,81 @@ def test_a_release_gate_error_other_than_404_is_not_swallowed(monkeypatch):
     tools, _ = _tools(monkeypatch, _forbidden)
     with pytest.raises(httpx.HTTPStatusError):
         _run(tools, "check_release_readiness", "proj-1", release_id=RELEASE_ID)
+
+
+# ── D-120: an active release's stored gate leads the project signal ─────────
+
+
+def _amber_with_releases(releases):
+    summary = _summary()
+    summary.update(release_readiness="AMBER", release_readiness_band="orange", release_readiness_downgrades=[])
+
+    def _answer(path, params):
+        if path == "/api/v1/releases":
+            if isinstance(releases, Exception):
+                raise releases
+            return {"items": releases, "total": len(releases)}
+        return summary
+
+    return _answer
+
+
+def _no_go_release(name="2026.11"):
+    return {
+        "id": RELEASE_ID, "name": name, "status": "in_progress",
+        "gate": {
+            "verdict": "NO_GO", "decided_at": "2026-11-20T08:00:00+00:00",
+            "blocking_reasons": ["checkout::test_pay is FAILED", "CRITICAL defect open: Card declined"],
+            "blocking_total": 5,
+        },
+    }
+
+
+def test_an_amber_project_with_a_no_go_release_leads_with_the_release(monkeypatch):
+    tools, calls = _tools(monkeypatch, _amber_with_releases([_no_go_release()]))
+    text = _run(tools, "check_release_readiness", "proj-1")
+
+    assert ("/api/v1/releases", {"project_id": "proj-1", "status": "in_progress"}) in calls
+    first_heading = next(line for line in text.splitlines() if line.startswith("#"))
+    assert first_heading == "## 🔴 Active release 2026.11: **NO_GO**, 5 blockers"
+    assert "- CRITICAL defect open: Card declined" in text
+    assert "### 🟡 Project readiness (last 7 days): **AMBER** (policy band: orange)" in text
+    recommendation = text.split("### Recommendation")[1]
+    assert "**No-Go**" in recommendation and "2026.11" in recommendation
+    assert "Conditional Go" not in text
+
+
+def test_an_amber_project_with_a_go_release_lists_it_and_does_not_say_conditional_go(monkeypatch):
+    go = {"id": RELEASE_ID, "name": "2026.12", "gate": {"verdict": "GO", "blocking_reasons": [], "blocking_total": 0}}
+    never = {"id": "r2", "name": "2027.01", "gate": None}
+    tools, _ = _tools(monkeypatch, _amber_with_releases([go, never]))
+    text = _run(tools, "check_release_readiness", "proj-1")
+
+    assert text.splitlines()[0].startswith("## 🟡 Project readiness (last 7 days): **AMBER**")
+    active = text.split("### Active releases")[1].split("###")[0]
+    assert "- 2026.12: 🟢 **GO**" in active
+    assert "- 2027.01: gate not evaluated yet" in active
+    assert "Conditional Go" not in text
+
+
+def test_a_failed_release_read_is_reported_not_fatal(monkeypatch):
+    request = httpx.Request("GET", "http://api/api/v1/releases")
+    error = httpx.HTTPStatusError("500", request=request, response=httpx.Response(500, request=request))
+    tools, _ = _tools(monkeypatch, _amber_with_releases(error))
+    text = _run(tools, "check_release_readiness", "proj-1")
+
+    assert "Project readiness (last 7 days): **AMBER**" in text
+    assert "in-progress releases could not be read (HTTP 500)" in text
+
+
+def test_the_release_gate_docstring_lists_only_release_level_verdicts():
+    from tools import release
+
+    mcp = _FakeMCP()
+    release.register(mcp)
+    doc = mcp.tools["get_release_gate"].__doc__ or ""
+    assert "GO / NO_GO / NOT_EVALUATED" in doc
+    assert "CONDITIONAL_GO /" not in doc and "/ CONDITIONAL_GO" not in doc
 
 
 def test_a_release_id_that_is_not_a_uuid_is_refused_before_any_call(monkeypatch):

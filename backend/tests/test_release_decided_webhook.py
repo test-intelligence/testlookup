@@ -525,6 +525,7 @@ async def test_an_override_is_announced_after_the_route_commits(monkeypatch, wor
     monkeypatch.setattr(
         "app.services.intelligence_snapshot_service.mark_stale", AsyncMock(return_value=None)
     )
+    monkeypatch.setattr("app.worker.tasks._enqueue_snapshot_rebuild", lambda *a, **k: True)  # D-99: no broker here
 
     async def _unused(_statement):
         raise AssertionError("the route's own session runs no query here")

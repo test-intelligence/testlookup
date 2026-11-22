@@ -193,7 +193,14 @@ async def test_a_fresh_signed_pack_verifies(world):
     assert result["signing_key_id"] == world.key.key_id == row.signing_key_id
     assert result["files_checked"] == result["files_ok"] == LISTED
     assert set(_status(result).values()) == {"ok"}
-    assert result["summary"] == f"Verified · {LISTED} files · signed by key {world.key.key_id}"
+    assert result["summary"] == (
+        f"Verified · {LISTED} files match the manifest, plus manifest.json and signature.json"
+        f" · signed by key {world.key.key_id}"
+    )
+    # D-107: the sentence accounts for every ZIP member (the listed files, the
+    # manifest and the signature), so it reconciles with the row's count.
+    assert result["files_checked"] + 2 == len(_members(stored))
+    assert {"manifest.json", "signature.json"} <= set(dict(_members(stored)))
     assert world.key_calls == [True], "the first pack may create the key"
     assert row.metadata_snapshot["signing"] == {"state": "signed", "key_id": world.key.key_id}
     assert row.bytes == len(stored) == row.metadata_snapshot["bytes"]
@@ -316,7 +323,10 @@ async def test_a_pack_from_before_signing_verifies_as_unsigned(world):
 
     result = _check(row, stored, {})
     assert (result["result"], result["signature"]) == ("verified", "unsigned")
-    assert result["summary"] == f"Verified · {LISTED} files · unsigned (tamper-evident only)"
+    assert result["summary"] == (
+        f"Verified · {LISTED} files match the manifest, plus manifest.json · unsigned (tamper-evident only)"
+    )
+    assert result["files_checked"] + 1 == len(_members(stored))
 
 
 async def test_a_key_store_fault_still_generates_an_unsigned_pack(world, monkeypatch):

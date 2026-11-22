@@ -312,6 +312,49 @@ def test_decision_report_exposes_typed_claims_and_actions():
     assert actions[0]["required_permission"] == "release_review"
     assert actions[0]["idempotency_key"]
 
+
+def test_four_blockers_and_a_condition_file_one_review_item():
+    """D-158: one summary item per run, not one approval row per model line."""
+    state = _state()
+    state["release_decision"] = {
+        "recommendation": "NO_GO",
+        "blocking_issues": ["auth regression", "checkout 500s", "slow search", "flaky login"],
+        "conditions_for_go": ["rerun failed tests"],
+    }
+    actions = build_decision_intelligence(state)["proposed_actions"]
+
+    assert len(actions) == 1
+    action = actions[0]
+    assert action["title"] == "Review release blockers (4)"
+    assert action["action_id"] == "release.review"
+    assert action["risk"] == "high"
+    for text in ("auth regression", "flaky login", "rerun failed tests"):
+        assert text in action["rationale"]
+
+
+def test_conditions_alone_file_one_condition_review_and_nothing_files_none():
+    state = _state()
+    state["release_decision"] = {"recommendation": "CONDITIONAL_GO", "conditions_for_go": ["a", "b"]}
+    actions = build_decision_intelligence(state)["proposed_actions"]
+    assert [a["title"] for a in actions] == ["Review release conditions (2)"]
+    assert actions[0]["risk"] == "medium"
+
+    state["release_decision"] = {"recommendation": "GO", "blocking_issues": [], "conditions_for_go": []}
+    assert build_decision_intelligence(state)["proposed_actions"] == []
+
+
+def test_stored_markdown_does_not_bake_in_the_verification_status():
+    """D-154: the same report renders the same text whatever its verification."""
+    from app.agents.decision_report_agent import render_decision_markdown
+
+    base = build_decision_intelligence(_state())
+    passed = render_decision_markdown({**base, "verification": {"status": "passed"}})
+    failed = render_decision_markdown(
+        {**base, "verification": {"status": "failed", "unresolved_failures": ["x"]}}
+    )
+    assert passed == failed
+    assert "verification" not in passed.lower()
+
 def test_typed_claims_bind_to_authorized_artifact_and_metric_references():
     state = _state(pipeline_run_id="00000000-0000-0000-0000-000000000002")
     state["authorized_evidence_artifacts"] = [{

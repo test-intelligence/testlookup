@@ -257,6 +257,10 @@ async def test_a_refused_override_stages_no_row(gate):
     assert exc.value.status_code == 409
     assert _gate_rows(db) == [], "a refused completion reached the audit or the ledger"
     assert gate.phase.status == "in_progress"
+    # D-106: the detail is shown raw in the Complete dialog; it must not name
+    # an API field the user never sees.
+    assert "gate_override_reason" not in exc.value.detail
+    assert exc.value.detail.endswith("Fix it, or complete it anyway with a reason.")
 
 
 @pytest.mark.asyncio
@@ -268,6 +272,61 @@ async def test_a_refused_skip_stages_no_row(gate):
 
     assert exc.value.status_code == 409
     assert _gate_rows(db) == []
+
+
+# ── 2b. D-112: one act, one row, in words ────────────────────────────────────
+
+
+def _all_events(db):
+    return [row for row in db.added if isinstance(row, ProjectActivityEvent)]
+
+
+@pytest.mark.asyncio
+async def test_an_override_records_exactly_one_event_and_no_column_names(gate):
+    """Completing with an override used to stage the override row AND a generic
+    "Phase Regression on release 2026.11 changed: actual_end, status"."""
+    db = _Session()
+
+    await _update(db, gate.phase, _actor(), status="completed",
+                  gate_override_reason="Customer waiver CAB-142")
+
+    (event,) = _all_events(db)
+    assert event.event_type == "release.phase_gate_overridden"
+    assert "actual_end" not in event.summary
+
+
+@pytest.mark.asyncio
+async def test_a_skip_records_exactly_one_event(gate):
+    db = _Session()
+
+    await _update(db, gate.phase, _actor(), status="skipped", skip_reason="vendor environment down")
+
+    assert [row.event_type for row in _all_events(db)] == ["release.phase_skipped"]
+
+
+@pytest.mark.asyncio
+async def test_an_override_with_another_edit_names_only_that_edit(gate):
+    db = _Session()
+
+    await _update(db, gate.phase, _actor(), status="completed",
+                  gate_override_reason="Customer waiver CAB-142", notes="signed off by CAB")
+
+    by_type = {row.event_type: row for row in _all_events(db)}
+    assert set(by_type) == {"release.phase_gate_overridden", "release.phase_updated"}
+    assert by_type["release.phase_updated"].context["changed"] == "notes"
+    assert by_type["release.phase_updated"].diff["changed_fields"] == ["notes"]
+
+
+@pytest.mark.asyncio
+async def test_a_plain_completion_names_its_fields_as_labels(gate):
+    gate.verdict = "GO"
+    db = _Session()
+
+    await _update(db, gate.phase, _actor(), status="completed")
+
+    (event,) = _all_events(db)
+    assert event.event_type == "release.phase_updated"
+    assert event.summary == "Phase Regression on release 2026.11 changed: status, actual end"
 
 
 # ── 3. Outcome mode, through the router too ──────────────────────────────────

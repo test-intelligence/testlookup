@@ -46,7 +46,7 @@ def build_executive_panel(
     flaky_count: int = 0,
     anomaly_count: int = 0,
     cluster_count: int = 0,
-    release_impact: str = "CONDITIONAL_GO",
+    release_impact: str | None = None,
     risk_score: int | None = None,
     baseline_diff: dict[str, Any] | None = None,
     recommended_actions: list[str] | None = None,
@@ -60,7 +60,8 @@ def build_executive_panel(
         flaky_count: Number of tests flagged as flaky.
         anomaly_count: Number of detected anomalies.
         cluster_count: Number of failure clusters.
-        release_impact: GO | CONDITIONAL_GO | NO_GO.
+        release_impact: GO | CONDITIONAL_GO | NO_GO from a stored release
+            decision, or None (no signal; never a default verdict, D-145).
         risk_score: Composite risk score 0-100 (None if unavailable).
         baseline_diff: Dict with pass_rate_delta, new_failures, resolved_failures,
                        regression_classification (None if no baseline).

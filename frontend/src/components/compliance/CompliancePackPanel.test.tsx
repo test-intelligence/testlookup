@@ -128,7 +128,8 @@ const verifiedAnswer = {
   files_checked: 12,
   files_ok: 12,
   files: [{ name: 'decision.json', status: 'ok' }],
-  summary: 'Verified · 12 files · signed by key k-1a2b3c4d5e6f7a8b',
+  // D-107: the server's sentence accounts for every ZIP member (12 + manifest + signature).
+  summary: 'Verified · 12 files match the manifest, plus manifest.json and signature.json · signed by key k-1a2b3c4d5e6f7a8b',
   checked_at: '2026-10-23T10:00:00Z',
 }
 

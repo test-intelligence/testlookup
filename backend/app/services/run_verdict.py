@@ -110,7 +110,7 @@ def _slim_object(value: Any, leaves: tuple[tuple[str, ...], ...]) -> Any:
 _DI_LEAVES: Final = (("verification", "status"), ("release_decision", "recommendation"))
 _VER_LEAVES: Final = (("status",),)
 _ATT_LEAVES: Final = (("status",), ("verification_status",))
-_RD_LEAVES: Final = (("recommendation",),)
+_RD_LEAVES: Final = (("recommendation",), ("human_override",))
 
 
 def _top_analyses_slim(value: Any) -> list[bool] | None:
@@ -166,9 +166,17 @@ def ai_recommendation_of(payload: Mapping[str, Any] | None) -> str | None:
     attempt and verification agree on publishing or on rejecting it); when any
     report envelope exists but none of it is displayable there is NO verdict and
     no fallback; otherwise the persisted release decision.
+
+    A human override wins over all of it (D-99): when the release decision
+    carries a ``human_override``, its recommendation is the run's verdict, so
+    a person's GO -> NO_GO is not hidden behind the report's older answer.
     """
     if not isinstance(payload, Mapping):
         return None
+    if js_truthy(_dig(payload, "release_decision", "human_override")):
+        overridden = _recommendation(_dig(payload, "release_decision", "recommendation"))
+        if overridden:
+            return overridden
     ss = payload.get("structured_summary")
     if not isinstance(ss, dict):
         ss = {}

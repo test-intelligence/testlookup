@@ -5,7 +5,7 @@
  * route's SLIM `verdict_inputs` (the column), and how a batch item becomes a
  * cell's verdict.
  *
- * `VERDICT_CASES` is the parity table of contract §1.2: the SAME 16 rows, in
+ * `VERDICT_CASES` is the parity table of contract §1.2: the SAME 19 rows, in
  * the SAME order, are `CASES` in `backend/tests/test_run_verdict.py`, where
  * `verdict_inputs_of(full) == slim` and `ai_recommendation_of(...) ==
  * recommendation`. Here `aiVerdictOf(full)` and `aiVerdictOf(slim)` must both
@@ -65,7 +65,7 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: SLIM_PUBLISHED_VER,
         latest_decision_attempt: SLIM_PUBLISHED_ATT,
       },
-      release_decision: { recommendation: 'NO_GO' },
+      release_decision: { recommendation: 'NO_GO', human_override: null },
       intelligence_available: true,
       top_analyses: [true],
     },
@@ -94,7 +94,7 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: { status: 'failed' },
         latest_decision_attempt: { status: 'rejected', verification_status: 'failed' },
       },
-      release_decision: { recommendation: 'GO' },
+      release_decision: { recommendation: 'GO', human_override: null },
       intelligence_available: false,
       top_analyses: null,
     },
@@ -123,7 +123,7 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: { status: 'pending' },
         latest_decision_attempt: null,
       },
-      release_decision: { recommendation: 'GO' },
+      release_decision: { recommendation: 'GO', human_override: null },
       intelligence_available: true,
       top_analyses: null,
     },
@@ -140,7 +140,7 @@ const VERDICT_CASES: VerdictCase[] = [
     },
     slim: {
       structured_summary: null,
-      release_decision: { recommendation: 'NO_GO' },
+      release_decision: { recommendation: 'NO_GO', human_override: null },
       intelligence_available: true,
       top_analyses: [],
     },
@@ -159,7 +159,7 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: null,
         latest_decision_attempt: null,
       },
-      release_decision: { recommendation: 'MAYBE' },
+      release_decision: { recommendation: 'MAYBE', human_override: null },
       intelligence_available: false,
       top_analyses: null,
     },
@@ -181,7 +181,7 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: null,
         latest_decision_attempt: null,
       },
-      release_decision: { recommendation: 'GO' },
+      release_decision: { recommendation: 'GO', human_override: null },
       intelligence_available: false,
       top_analyses: null,
     },
@@ -200,7 +200,7 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: null,
         latest_decision_attempt: null,
       },
-      release_decision: { recommendation: 'GO' },
+      release_decision: { recommendation: 'GO', human_override: null },
       intelligence_available: false,
       top_analyses: null,
     },
@@ -219,7 +219,7 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: null,
         latest_decision_attempt: null,
       },
-      release_decision: { recommendation: 'GO' },
+      release_decision: { recommendation: 'GO', human_override: null },
       intelligence_available: false,
       top_analyses: null,
     },
@@ -238,7 +238,7 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: null,
         latest_decision_attempt: null,
       },
-      release_decision: { recommendation: 'CONDITIONAL_GO' },
+      release_decision: { recommendation: 'CONDITIONAL_GO', human_override: null },
       intelligence_available: false,
       top_analyses: null,
     },
@@ -257,7 +257,7 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: null,
         latest_decision_attempt: null,
       },
-      release_decision: { recommendation: 'NO_GO' },
+      release_decision: { recommendation: 'NO_GO', human_override: null },
       intelligence_available: false,
       top_analyses: null,
     },
@@ -286,7 +286,7 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: SLIM_PUBLISHED_VER,
         latest_decision_attempt: SLIM_PUBLISHED_ATT,
       },
-      release_decision: { recommendation: 'GO' },
+      release_decision: { recommendation: 'GO', human_override: null },
       intelligence_available: false,
       top_analyses: null,
     },
@@ -315,7 +315,7 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: SLIM_PUBLISHED_VER,
         latest_decision_attempt: SLIM_PUBLISHED_ATT,
       },
-      release_decision: { recommendation: 'GO' },
+      release_decision: { recommendation: 'GO', human_override: null },
       intelligence_available: false,
       top_analyses: null,
     },
@@ -381,21 +381,114 @@ const VERDICT_CASES: VerdictCase[] = [
         decision_report_verification: SLIM_PUBLISHED_VER,
         latest_decision_attempt: SLIM_PUBLISHED_ATT,
       },
-      release_decision: { recommendation: 'GO' },
+      release_decision: { recommendation: 'GO', human_override: null },
       intelligence_available: true,
       top_analyses: null,
     },
     verdict: none('not-verified'),
     recommendation: null,
   },
+  { // 17
+    name: 'a human override beats a verified published report',
+    full: {
+      intelligence_available: true,
+      release_decision: {
+        recommendation: 'NO_GO',
+        human_override: 'Payments regression found in manual check',
+      },
+      structured_summary: {
+        decision_intelligence: {
+          verification: { status: 'passed' },
+          release_decision: { recommendation: 'GO' },
+        },
+        decision_report_verification: PUBLISHED_VER,
+        latest_decision_attempt: PUBLISHED_ATT,
+      },
+    },
+    slim: {
+      structured_summary: {
+        decision_intelligence: {
+          verification: { status: 'passed' },
+          release_decision: { recommendation: 'GO' },
+        },
+        decision_report_verification: SLIM_PUBLISHED_VER,
+        latest_decision_attempt: SLIM_PUBLISHED_ATT,
+      },
+      release_decision: {
+        recommendation: 'NO_GO',
+        human_override: 'Payments regression found in manual check',
+      },
+      intelligence_available: true,
+      top_analyses: null,
+    },
+    verdict: verdict('NO_GO'),
+    recommendation: 'NO_GO',
+  },
+  { // 18
+    name: 'a human override answers even when the report is not verified',
+    full: {
+      release_decision: { recommendation: 'GO', human_override: 'Known flake, accepted' },
+      structured_summary: {
+        decision_intelligence: {
+          verification: { status: 'pending' },
+          release_decision: { recommendation: 'NO_GO' },
+        },
+        decision_report_verification: { status: 'pending' },
+      },
+    },
+    slim: {
+      structured_summary: {
+        decision_intelligence: {
+          verification: { status: 'pending' },
+          release_decision: { recommendation: 'NO_GO' },
+        },
+        decision_report_verification: { status: 'pending' },
+        latest_decision_attempt: null,
+      },
+      release_decision: { recommendation: 'GO', human_override: 'Known flake, accepted' },
+      intelligence_available: false,
+      top_analyses: null,
+    },
+    verdict: verdict('GO'),
+    recommendation: 'GO',
+  },
+  { // 19
+    name: 'an empty override reason is no override: the report still wins',
+    full: {
+      release_decision: { recommendation: 'NO_GO', human_override: '' },
+      structured_summary: {
+        decision_intelligence: {
+          verification: { status: 'passed' },
+          release_decision: { recommendation: 'GO' },
+        },
+        decision_report_verification: PUBLISHED_VER,
+        latest_decision_attempt: PUBLISHED_ATT,
+      },
+    },
+    slim: {
+      structured_summary: {
+        decision_intelligence: {
+          verification: { status: 'passed' },
+          release_decision: { recommendation: 'GO' },
+        },
+        decision_report_verification: SLIM_PUBLISHED_VER,
+        latest_decision_attempt: SLIM_PUBLISHED_ATT,
+      },
+      release_decision: { recommendation: 'NO_GO', human_override: '' },
+      intelligence_available: false,
+      top_analyses: null,
+    },
+    verdict: verdict('GO'),
+    recommendation: 'GO',
+  },
 ]
 
 const asIntel = (payload: Payload) => payload as Partial<RunIntelligence>
 
 describe('VERDICT_CASES — one reducer over the full payload and the slim one (contract §1.2)', () => {
-  it("has the contract's sixteen rows (the backend copy asserts the same count)", () => {
-    expect(VERDICT_CASES).toHaveLength(16)
-    expect(new Set(VERDICT_CASES.map((c) => c.name)).size).toBe(16)
+  it("has the contract's nineteen rows (the backend copy asserts the same count)", () => {
+    expect(VERDICT_CASES).toHaveLength(19)
+    expect(new Set(VERDICT_CASES.map((c) => c.name)).size).toBe(19)
   })
 
   it.each(VERDICT_CASES.map((c) => [c.name, c] as const))('%s', (_name, c) => {

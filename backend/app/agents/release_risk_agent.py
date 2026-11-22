@@ -57,6 +57,7 @@ from app.models.llm_schemas import ReleaseReasoning, validate_llm_output
 from app.services.llm_factory import get_llm
 from app.services.llm_json_parser import parse_llm_json
 from app.services.pipeline_ai_scope import effective_llm_timeout
+from app.services.pipeline_lease import LeaseLost, verify_lease
 from app.services.prompt_registry import get_prompt_text
 from app.services.redaction_service import redact_text
 
@@ -77,6 +78,9 @@ _EXTREME_NO_GO_THRESHOLD = 75      # Clearly blocked — skip LLM
 
 
 REASONING_FALLBACK = "fallback"
+# input_snapshot["verdict_driver"] when scoring raised and the stage stored its
+# substitute CONDITIONAL_GO at risk 50 (S-B-4).
+VERDICT_DRIVER_SCORER_FAILED = "scorer_failed"
 _FALLBACK_MARKER = "LLM reasoning unavailable"
 
 
@@ -108,9 +112,11 @@ class ReleaseRiskAgent(BaseAgent):
         await self.mark_stage_running(pipeline_run_id)
         await self.broadcast_progress(project_id, {"status": "running", "message": "Evaluating release readiness…"})
 
+        scorer_failed = False
         try:
             decision = await self._evaluate(state)
         except Exception as exc:
+            scorer_failed = True
             # structlog-on-stdlib-positional-args trap: pass via kwargs.
             logger.error(
                 "release_risk_evaluation_failed",
@@ -142,12 +148,18 @@ class ReleaseRiskAgent(BaseAgent):
         # Assemble input snapshot for audit/reproducibility
         state["release_memory_context"] = decision.get("memory_context")
         input_snapshot = await self._assemble_input_snapshot(state, decision)
+        if scorer_failed:
+            # S-B-4: the substitute verdict above is not a measured one. The
+            # gate page reads this exact key to say "not scored" instead of
+            # drawing a 50 ring the scorer never computed.
+            input_snapshot["verdict_driver"] = VERDICT_DRIVER_SCORER_FAILED
         decision["input_snapshot"] = input_snapshot
         await self._persist_decision(
             test_run_id,
             pipeline_run_id,
             decision,
             input_snapshot=input_snapshot,
+            fencing_token=state.get("_fencing_token"),
         )
 
         # The GO / CONDITIONAL_GO / NO_GO call is the pipeline's terminal
@@ -672,9 +684,21 @@ class ReleaseRiskAgent(BaseAgent):
         pipeline_run_id: str,
         decision: dict,
         input_snapshot: dict | None = None,
+        fencing_token: str | None = None,
     ) -> None:
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select
+            # D-147: a reaped attempt and its resumed successor both reach this
+            # write. The reaper rotates the pipeline's fencing token, so the
+            # attempt whose token is gone must not overwrite the decision the
+            # live attempt owns. ``None`` (an unfenced caller) passes through.
+            if not await verify_lease(db, pipeline_run_id, fencing_token):
+                logger.warning(
+                    "release_decision_write_fenced_out",
+                    pipeline_run_id=str(pipeline_run_id),
+                    test_run_id=str(test_run_id),
+                )
+                raise LeaseLost(pipeline_run_id, fencing_token)
             existing = await db.execute(
                 select(ReleaseDecision)
                 .where(ReleaseDecision.test_run_id == test_run_id)

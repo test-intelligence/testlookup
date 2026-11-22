@@ -122,7 +122,7 @@ def gate(monkeypatch):
         )
 
     monkeypatch.setattr(release_gate.rollup_svc, "build_rollup", build_rollup)
-    monkeypatch.setattr(release_gate.rollup_svc, "decide", lambda rollup: (state.verdict, list(state.reasons)))
+    monkeypatch.setattr(release_gate.rollup_svc, "decide", lambda rollup, **_kw: (state.verdict, list(state.reasons)))
     monkeypatch.setattr(release_gate.rollup_svc, "summarise", lambda rollup: {})
     monkeypatch.setattr(
         release_gate.defect_svc, "defects_for_release",
@@ -519,6 +519,7 @@ async def _override(monkeypatch, council, target):
     monkeypatch.setattr(release_readiness, "apply_override", AsyncMock(return_value=council))
     monkeypatch.setattr(release_readiness, "record_activity", AsyncMock(side_effect=lambda *a, **k: journal.append("activity")))
     monkeypatch.setattr("app.services.intelligence_snapshot_service.stage_invalidate", AsyncMock())
+    monkeypatch.setattr("app.worker.tasks._enqueue_snapshot_rebuild", lambda *a, **k: True)  # D-99: no broker here
     monkeypatch.setattr("app.services.release_decision_webhook.emit_release_decided", AsyncMock())
     staged = AsyncMock(side_effect=lambda *a, **k: journal.append("stage"))
     monkeypatch.setattr(gn.manager, "stage_scoped_preference_deliveries", staged)

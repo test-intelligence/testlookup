@@ -24,6 +24,7 @@ import {
   cloneSources,
   copiedToast,
   defaultFirstStart,
+  clampedDefaultNote,
   hasDatedPhases,
   shiftTo,
   shiftedPreview,
@@ -64,6 +65,8 @@ export default function ClonePhasesForm({ release, releases, slot, onDone, onCan
 
   const dated = source ? hasDatedPhases(source) : false
   const preview = useMemo(() => (source ? shiftedPreview(source, dated ? firstStart : null) : []), [source, dated, firstStart])
+  // D-110: the default never starts in the past; when that pushes the copy past the planned date, say so.
+  const note = source && dated ? clampedDefaultNote(release, source, new Date(now), firstStart) : null
   const idBase = `clone-phases-${release.id}`
 
   function chooseSource(id: string) {
@@ -143,6 +146,9 @@ export default function ClonePhasesForm({ release, releases, slot, onDone, onCan
                 onChange={e => setFirstStart(e.target.value)}
                 className="input w-full"
               />
+              {note && (
+                <p data-clone-phases-note="" className="mt-1 text-xs text-[var(--ui-warning-ink)]">{note}</p>
+              )}
             </div>
           )}
           {/* Two lines a phase: the FULL name (it wraps, never truncates: the pane is ~380 px) with its type and
