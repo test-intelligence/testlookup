@@ -885,6 +885,10 @@ class TestCase(Base):
 
     # Failure info
     failure_category: Mapped[Optional[FailureCategory]] = mapped_column(String(30))
+    # Migration 0258: who set ``failure_category``: "human" (a correction, the
+    # bulk Classify) or "analysis"; NULL reads as "analysis". The pipeline's
+    # mirror replaces an analysis's label and never a person's (D-85).
+    failure_category_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text)
 
     # Per-execution assignee — set by ``finalize_run`` for every FAILED/BROKEN

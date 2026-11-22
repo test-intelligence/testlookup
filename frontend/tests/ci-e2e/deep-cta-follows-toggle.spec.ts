@@ -7,7 +7,7 @@
  *    run's Analysis tab shows it in place of "Analyze failures"; the run's ⋯ menu has no "Deep
  *    investigation" (the standard "Trigger pipeline" stays);
  *  - switched back ON: all three are offered again;
- *  - Rules mode: the same three, with "Deep investigation needs LLM or Auto mode (current mode: Rules)."
+ *  - Rules mode: all three are offered (product finding D-03: every deep stage has a deterministic fallback).
  *
  * The toggle itself is G-D's spec (`settings-ai-toggles.spec.ts`); here the mode answer is switched between
  * loads, the way a save of Settings › AI changes it.
@@ -21,7 +21,6 @@ import { RUN_PAGE } from '../visual/production/fixtures-run'
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
 const OFF_NOTE = 'Deep investigation is turned off in Settings › AI.'
-const RULES_NOTE = 'Deep investigation needs LLM or Auto mode (current mode: Rules).'
 const verdict = (p: Page) => p.getByRole('region', { name: 'Investigation verdict' })
 const deepRegion = (p: Page) => p.getByRole('region', { name: 'Deep investigation' })
 const DEEP_PAGE = `/deep-investigate?run=${RUN_ID}`
@@ -77,10 +76,10 @@ test('switched off: the three deep triggers give way to the note; switched back 
   assertHermetic(api, errors)
 })
 
-test('Rules mode: the same three give way to "needs LLM or Auto mode"', async ({ page }) => {
+test('Rules mode: the three deep triggers are offered', async ({ page }) => {
   const { handlers, state } = deepHandlers({ mode: 'rules' })
   const { api, errors } = await openRollout(page, DEEP_PAGE, { handlers: [...handlers, ...RUN_PAGE], ready: verdict })
-  await expectOffered(page, false, RULES_NOTE)
+  await expectOffered(page, true, OFF_NOTE)
   await networkQuiet(page, api)
   expect(state.writes).toEqual([])
   assertHermetic(api, errors)

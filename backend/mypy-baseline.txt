@@ -17,7 +17,7 @@
 1 app/core/scim_errors.py
 1 app/db/mongo.py
 3 app/routers/agents.py
-27 app/routers/analyze.py
+15 app/routers/analyze.py
 1 app/routers/app_settings.py
 1 app/routers/commit_attribution.py
 1 app/routers/decision_trail.py

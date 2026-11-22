@@ -59,7 +59,91 @@ describe('AISuggestion', () => {
     const notice = screen.getByTestId('ai-fallback-notice')
     expect(notice).toHaveTextContent('The LLM was unavailable')
     expect(notice).toHaveTextContent('rules engine')
-    expect(notice).toHaveTextContent('Ollama timed out.')
+    // D-160: a reason that is not a known code is kept in the tooltip, not printed in the sentence
+    // (this assertion used to pin the reason inside the visible text).
+    expect(notice).not.toHaveTextContent('Ollama timed out.')
+    expect(notice).toHaveAttribute('title', 'Reason recorded: Ollama timed out.')
+  })
+
+  // ── D-149 / D-160 / S-A-1: the fallback sentence and the provenance line say true, plain things ──
+  it('D-149: renders no fallback notice when the engine "fell back" to itself', () => {
+    render(<AISuggestion provenance={{ modeUsed: 'llm', fallbackFrom: 'llm', fallbackReason: 'react_timeout' }} />)
+    expect(screen.queryByTestId('ai-fallback-notice')).not.toBeInTheDocument()
+    expect(screen.queryByText(/came from the LLM instead/)).not.toBeInTheDocument()
+  })
+
+  it('D-149: a ReAct timeout answered by the fast classifier reads as the full investigation running out of time', () => {
+    const reason = 'react_timeout: full investigation timed out after 120 s'
+    render(<AISuggestion provenance={{ modeUsed: 'llm', fallbackFrom: 'react_agent', fallbackReason: reason }} />)
+    const notice = screen.getByTestId('ai-fallback-notice')
+    expect(notice).toHaveTextContent('The full investigation ran out of time, so this came from the LLM instead.')
+    expect(notice.textContent).not.toMatch(/_|120 s/)
+    // The full raw "<code>: <detail>" string is kept in the tooltip only.
+    expect(notice).toHaveAttribute('title', `Reason recorded: ${reason}`)
+  })
+
+  it('a tier-3 timeout stub (no engine) says the model did not answer in time and that nothing else answered', () => {
+    render(<AISuggestion provenance={{ modeUsed: null, fallbackFrom: 'llm', fallbackReason: 'llm_timeout: LLM timed out after 120 s' }} />)
+    expect(screen.getByTestId('ai-provenance')).toHaveTextContent('No engine answered')
+    const notice = screen.getByTestId('ai-fallback-notice')
+    expect(notice).toHaveTextContent('The LLM did not answer in time, and no other engine answered.')
+    expect(notice.textContent).not.toMatch(/_|timed out after/)
+    expect(notice).toHaveAttribute('title', 'Reason recorded: llm_timeout: LLM timed out after 120 s')
+  })
+
+  it('D-160: the small-model fallback has no "slm" and no underscore in the sentence', () => {
+    render(<AISuggestion provenance={{ modeUsed: 'rules', fallbackFrom: 'slm', fallbackReason: 'slm_call_failed' }} />)
+    const notice = screen.getByTestId('ai-fallback-notice')
+    expect(notice).toHaveTextContent('The small model did not answer, so this came from the rules engine instead.')
+    expect(notice.textContent).not.toMatch(/slm/i)
+    expect(notice.textContent).not.toMatch(/_/)
+  })
+
+  it.each([
+    ['llm_unavailable', 'could not be reached'],
+    ['llm_error: LLMPolicyViolation: blocked', 'returned an error'],
+    ['llm_timeout', 'did not answer in time'],
+    ['budget', 'is over its usage budget'],
+    ['step_llm_budget', 'used up its allowed model calls'],
+    ['tier_pinned', 'is not used, because the AI settings fix the engine'],
+  ])('D-160: the reason code %s reads in plain words', (reason, words) => {
+    render(<AISuggestion provenance={{ modeUsed: 'rules', fallbackFrom: 'llm', fallbackReason: reason }} />)
+    const notice = screen.getByTestId('ai-fallback-notice')
+    expect(notice).toHaveTextContent(`The LLM ${words}, so this came from the rules engine instead.`)
+    expect(notice.textContent).not.toMatch(/_|LLMPolicyViolation/)
+    expect(notice).toHaveAttribute('title', `Reason recorded: ${reason}`)
+  })
+
+  it('D-160: an unknown reason code goes to the tooltip, never into the sentence', () => {
+    render(<AISuggestion provenance={{ modeUsed: 'rules', fallbackFrom: 'llm', fallbackReason: 'brand_new_code' }} />)
+    const notice = screen.getByTestId('ai-fallback-notice')
+    expect(notice.textContent).not.toMatch(/brand|_/)
+    expect(notice).toHaveAttribute('title', 'Reason recorded: brand_new_code')
+  })
+
+  it('S-A-1: a stub with no engine and an "unknown" provider/model reads "No engine answered"', () => {
+    const provenance = normalizeProvenance({
+      llm_provider: 'unknown',
+      llm_model: 'unknown',
+      provenance: { mode_used: null, mode_requested: 'auto', fallback_reason: 'llm_error' },
+    })
+    render(<AISuggestion provenance={provenance} />)
+    const line = screen.getByTestId('ai-provenance')
+    expect(line).toHaveTextContent('No engine answered')
+    expect(line).not.toHaveTextContent(/unknown|Produced by|LLM/)
+  })
+
+  it('S-A-1: a null engine after a fallback does not claim the rules engine answered', () => {
+    render(<AISuggestion provenance={{ modeUsed: null, fallbackFrom: 'llm', fallbackReason: 'llm_unavailable' }} />)
+    expect(screen.getByTestId('ai-provenance')).toHaveTextContent('No engine answered')
+    const notice = screen.getByTestId('ai-fallback-notice')
+    expect(notice).toHaveTextContent('The LLM could not be reached, and no other engine answered.')
+    expect(notice).not.toHaveTextContent('rules engine')
+  })
+
+  it('D-06: a human correction reads "Produced by human review"', () => {
+    render(<AISuggestion provenance={{ modeUsed: 'human_corrected' }} />)
+    expect(screen.getByTestId('ai-provenance')).toHaveTextContent('Produced by human review')
   })
 
   it('renders the low-confidence state only when flagged', () => {
@@ -165,6 +249,13 @@ describe('normalizeProvenance', () => {
     })
   })
 
+  it('S-A-1: drops the "unknown" filler the stored-analysis read puts in a missing provider / model', () => {
+    expect(normalizeProvenance({ llm_provider: 'unknown', llm_model: 'unknown' })).toBeNull()
+    expect(
+      normalizeProvenance({ llm_provider: 'unknown', llm_model: 'unknown', provenance: { fallback_reason: 'llm_error' } }),
+    ).toMatchObject({ modeUsed: null, llmProvider: null, llmModel: null, fallbackReason: 'llm_error' })
+  })
+
   it('tolerates a response that carries only the legacy flat fields', () => {
     expect(normalizeProvenance({ llm_provider: 'ollama', llm_model: 'phi3' })).toMatchObject({
       modeUsed: null,
@@ -180,6 +271,12 @@ describe('engineLabel', () => {
     expect(engineLabel('llm')).toBe('LLM')
     expect(engineLabel('some_new_engine')).toBe('some new engine')
     expect(engineLabel(null)).toBe('unknown engine')
+  })
+
+  it('D-149 / D-160 / D-06: names the small model, the full investigation and a human review', () => {
+    expect(engineLabel('slm')).toBe('small model')
+    expect(engineLabel('react_agent')).toBe('full investigation')
+    expect(engineLabel('human_corrected')).toBe('human review')
   })
 
   it('FAIL-10: the hint engine (`mode_used: hint`) reads "project hint"', () => {

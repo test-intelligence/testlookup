@@ -29,7 +29,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.agents.base import BaseAgent
@@ -45,7 +45,6 @@ from app.models.postgres import (
     AgentPipelineRun,
     AgentStageResult,
     TestCase,
-    TestStatus,
 )
 from app.services.agent import run_triage_agent
 from app.services.artifact_store import store_artifact
@@ -118,8 +117,33 @@ def _frozen_model_field(state: dict, key: str, default: Any) -> Any:
     return value if isinstance(value, str) and value else default
 
 
-def _metadata_cache_key(tc_ids: list[str]) -> str:
-    return _hash_json({"test_case_ids": sorted(str(tc_id) for tc_id in tc_ids)})
+def _is_failed_attempt(analysis: dict, routing_metadata: dict) -> bool:
+    """True for a stub no engine answered: an error, or an explicit null engine."""
+    if analysis.get("error"):
+        return True
+    return "analysis_mode" in routing_metadata and routing_metadata["analysis_mode"] is None
+
+
+def _only_replace_unknown(analysis: dict, routing_metadata: dict):
+    """The ``ON CONFLICT`` condition for one upsert.
+
+    A failed attempt may fill an empty or UNKNOWN row but never replaces a real
+    answer. In Auto mode with no reachable model the deep run stored
+    zero-confidence stubs over good rules results ("FLAKY -> UNKNOWN,
+    confidence 85 -> 0"), then reported a confident Go on top of them (D-84).
+    The attempt still reaches the version history.
+    """
+    if not _is_failed_attempt(analysis, routing_metadata):
+        return None
+    category = AIAnalysis.__table__.c.failure_category
+    return category.is_(None) | (category == AnalysisAgent.UNKNOWN_CATEGORY)
+
+
+def _metadata_cache_key(tc_ids: list[str], project_id=None) -> str:
+    return _hash_json({
+        "project_id": str(project_id) if project_id is not None else None,
+        "test_case_ids": sorted(str(tc_id) for tc_id in tc_ids),
+    })
 
 
 def _metadata_cache_get(cache_key: str) -> dict[str, dict] | None:
@@ -278,7 +302,7 @@ class AnalysisAgent(BaseAgent):
             )
 
         # Fetch enriched test metadata (error_message, severity, flakiness history)
-        test_meta = await self._fetch_test_metadata(failed_ids)
+        test_meta = await self._fetch_test_metadata(failed_ids, project_id)
 
         # Learning loop: fetch human corrections FRESH each run (not via the
         # cached metadata) so a just-submitted correction takes effect
@@ -885,6 +909,7 @@ class AnalysisAgent(BaseAgent):
                             run_id=str(state.get("test_run_id")) if state.get("test_run_id") else None,
                             project_id=str(state.get("project_id")) if state.get("project_id") else None,
                             test_fingerprint=meta.get("test_fingerprint"),
+                            history=meta.get("flakiness_data"),
                         )
                     else:
                         (
@@ -940,7 +965,13 @@ class AnalysisAgent(BaseAgent):
                         test_case_id=tc_id,
                         error=str(exc),
                     )
-                    analysis = self._build_error_analysis(exc)
+                    analysis = self._rules_after_model_error(
+                        exc,
+                        meta,
+                        {"run_id": state.get("test_run_id"), **run_data},
+                        mode_requested=state.get("analysis_mode_requested"),
+                        mode_resolved=mode,
+                    )
 
             # Attach flakiness data from historical enrichment for P2-6 validation
             if "flakiness_data" in meta:
@@ -1001,7 +1032,9 @@ class AnalysisAgent(BaseAgent):
                 "had_error_message": bool(meta.get("error_message")),
                 "had_stack_trace": bool(meta.get("stack_trace")),
                 "historical_failure_count": meta.get("historical_failure_count", 0),
-                "analysis_mode": routing.get("mode_used") or mode,
+                # An explicit None means no engine answered (a stub): never credit the
+                # frozen mode with it (S-A-1).
+                "analysis_mode": routing["mode_used"] if "mode_used" in routing else mode,
                 "mode_requested": state.get("analysis_mode_requested") or routing.get("mode_requested") or mode,
                 "mode_resolved_at_pipeline_start": state.get("analysis_mode_resolved"),
                 "mode_resolution": state.get("analysis_mode_resolution"),
@@ -1196,9 +1229,13 @@ class AnalysisAgent(BaseAgent):
         observed = int((get_pipeline_budget_context() or {}).get("observed_llm_calls") or 0)
         return resolved, remaining, max(0, max_calls - observed)
 
-    async def _fetch_test_metadata(self, tc_ids: list[str]) -> dict[str, dict]:
-        """Fetch enriched test metadata including error details and flakiness history."""
-        cache_key = _metadata_cache_key(tc_ids)
+    async def _fetch_test_metadata(self, tc_ids: list[str], project_id=None) -> dict[str, dict]:
+        """Fetch enriched test metadata including error details and flakiness history.
+
+        ``project_id`` scopes the history read: without it no history is attached
+        rather than one counted across every project (D-07).
+        """
+        cache_key = _metadata_cache_key(tc_ids, project_id)
         cached = _metadata_cache_get(cache_key)
         if cached is not None:
             logger.debug("analysis_metadata_cache_hit", test_count=len(tc_ids))
@@ -1241,7 +1278,7 @@ class AnalysisAgent(BaseAgent):
 
                 # Fetch historical failure counts for prioritization
                 if fingerprints:
-                    await self._enrich_historical_counts(db, meta, fingerprints)
+                    await self._enrich_historical_counts(db, meta, fingerprints, project_id)
 
                 # Fetch stack traces from MongoDB (best-effort)
                 await self._enrich_stack_traces(meta, tc_ids)
@@ -1292,33 +1329,25 @@ class AnalysisAgent(BaseAgent):
             return []
 
     async def _enrich_historical_counts(
-        self, db, meta: dict[str, dict], fingerprints: dict[str, str]
+        self, db, meta: dict[str, dict], fingerprints: dict[str, str], project_id=None
     ) -> None:
-        """Add historical failure counts and pass/fail breakdown for flakiness detection."""
-        try:
-            fp_values = list(set(fingerprints.values()))
-            # Fetch both failure and total counts per fingerprint for flakiness detection (P2-6)
-            result = await db.execute(
-                select(
-                    TestCase.test_fingerprint,
-                    TestCase.status,
-                    func.count(TestCase.id).label("count"),
-                )
-                .where(TestCase.test_fingerprint.in_(fp_values))
-                .group_by(TestCase.test_fingerprint, TestCase.status)
-            )
-            # Build pass/fail breakdown per fingerprint
-            fp_stats: dict[str, dict[str, int]] = {}
-            for row in result.all():
-                fp_stats.setdefault(row.test_fingerprint, {"pass_count": 0, "fail_count": 0})
-                if row.status in (TestStatus.FAILED.value, TestStatus.BROKEN.value):
-                    fp_stats[row.test_fingerprint]["fail_count"] += row.count
-                elif row.status == TestStatus.PASSED.value:
-                    fp_stats[row.test_fingerprint]["pass_count"] += row.count
+        """Attach this project's recent, ordered history of each failing test.
 
+        ``flakiness_data`` keeps ``pass_count`` / ``fail_count`` and adds the
+        streak lengths and the intermittency label, so the rules engine can tell
+        a test that broke from one that flips (D-02). The read is scoped to the
+        run's project and the last 30 days (D-07); it used to count every
+        project's rows with the same fingerprint, for all time.
+        """
+        if project_id is None:
+            return
+        try:
+            from app.services.test_history_service import load_test_history
+
+            history = await load_test_history(db, project_id, fingerprints.values())
             for tc_id, fp in fingerprints.items():
                 if tc_id in meta:
-                    stats = fp_stats.get(fp, {"pass_count": 0, "fail_count": 0})
+                    stats = history.get(fp) or {"pass_count": 0, "fail_count": 0}
                     meta[tc_id]["historical_failure_count"] = stats["fail_count"]
                     meta[tc_id]["flakiness_data"] = stats
         except Exception as exc:
@@ -1390,8 +1419,12 @@ class AnalysisAgent(BaseAgent):
         """
         3-tier progressive fallback when the full ReAct agent fails:
           Tier 1: Try FastClassifier (single LLM call, ~200ms)
-          Tier 2: Pattern-based heuristic from error message
+          Tier 2: The rules engine, with the test's history
           Tier 3: Generic unknown fallback
+
+        Tier 2 used to be a second keyword table of its own, with no history and
+        its own confidences, so one failure read Flaky 85 in Rules mode and
+        Product Bug 45 after a timeout (D-151). It is the rules engine now.
 
         ``timeout`` is the LLM timeout that just expired (W04 AIC-02); tier 1
         gets ``min(30, timeout // 2)`` of it.
@@ -1426,11 +1459,13 @@ class AnalysisAgent(BaseAgent):
                 error=str(exc),
             )
 
-        # Tier 2: Pattern-based heuristic
-        heuristic = self._pattern_based_analysis(error_msg, test_name)
-        if heuristic["failure_category"] != self.UNKNOWN_CATEGORY:
+        # Tier 2: the rules engine, the same one Rules mode runs
+        from app.services.analysis_router import _classify_rules
+
+        heuristic = _classify_rules(meta, meta.get("flakiness_data"), None)
+        if heuristic.get("failure_category") != self.UNKNOWN_CATEGORY:
             heuristic["fallback_tier"] = 2
-            heuristic["fallback_reason"] = "timeout_pattern_match"
+            heuristic["fallback_reason"] = "timeout_rules_engine"
             logger.info("progressive_fallback_tier2_ok", test_case_id=tc_id)
             return heuristic
 
@@ -1439,114 +1474,6 @@ class AnalysisAgent(BaseAgent):
         fallback["fallback_tier"] = 3
         fallback["fallback_reason"] = "timeout_generic"
         return fallback
-
-    def _pattern_based_analysis(self, error_message: str, test_name: str) -> dict:
-        """
-        Heuristic analysis based on error message patterns.
-        Returns a best-effort categorization without LLM.
-        """
-        error_lower = (error_message or "").lower()
-
-        patterns = [
-            # (keywords_list, category, summary_template, confidence)
-            (
-                ["oomkilled", "out of memory", "memory limit", "oom"],
-                "INFRASTRUCTURE",
-                "Pod/container ran out of memory (OOMKilled). Check resource limits.",
-                65,
-            ),
-            (
-                ["connection refused", "connection reset", "econnrefused", "econnreset"],
-                "INFRASTRUCTURE",
-                "Network connectivity issue: connection refused/reset. Check service health.",
-                60,
-            ),
-            (
-                ["timeout", "timed out", "deadline exceeded", "socket timeout"],
-                "INFRASTRUCTURE",
-                "Request or operation timed out. Check service latency and timeouts.",
-                55,
-            ),
-            (
-                ["502 bad gateway", "503 service unavailable", "504 gateway timeout"],
-                "INFRASTRUCTURE",
-                "HTTP server error (5xx). Check upstream service health.",
-                60,
-            ),
-            (
-                ["404 not found", "resource not found", "no such file"],
-                "TEST_DATA",
-                "Resource not found (404). Check test data setup and environment state.",
-                55,
-            ),
-            (
-                ["setup failed", "before method", "beforeeach", "beforeall", "fixture"],
-                "TEST_DATA",
-                "Test setup/fixture failed. Check test data prerequisites.",
-                50,
-            ),
-            (
-                ["nullpointerexception", "undefined is not", "cannot read propert", "typeerror"],
-                "AUTOMATION_DEFECT",
-                "Null/undefined reference in test code. Review test implementation.",
-                55,
-            ),
-            (
-                ["element not found", "no such element", "locator", "selector"],
-                "AUTOMATION_DEFECT",
-                "UI element locator failed. Check for UI changes or timing issues.",
-                55,
-            ),
-            (
-                ["flaky", "intermittent", "race condition", "eventually"],
-                "FLAKY",
-                "Failure matches flaky test patterns. Verify with re-run.",
-                45,
-            ),
-            (
-                ["assertion", "expected", "but was", "assertequals", "assertthat"],
-                "PRODUCT_BUG",
-                "Assertion failure detected. Likely a product bug or expected behavior change.",
-                45,
-            ),
-        ]
-
-        for keywords, category, summary, confidence in patterns:
-            if any(kw in error_lower for kw in keywords):
-                return {
-                    "root_cause_summary": summary,
-                    "failure_category": category,
-                    "backend_error_found": category == "INFRASTRUCTURE",
-                    "pod_issue_found": "oom" in error_lower or "pod" in error_lower,
-                    "is_flaky": category == "FLAKY",
-                    "confidence_score": confidence,
-                    "recommended_actions": [
-                        "Review the error message and stack trace",
-                        "Check recent code changes",
-                        "Re-run test to verify reproducibility",
-                    ],
-                    "evidence_references": [],
-                    "requires_human_review": True,
-                    "classified_by": "pattern_heuristic",
-                    "tools_used": [],
-                    "llm_provider": "none",
-                    "llm_model": "pattern_heuristic",
-                }
-
-        # No pattern matched — return UNKNOWN
-        return {
-            "root_cause_summary": "Pattern analysis inconclusive. Manual review required.",
-            "failure_category": self.UNKNOWN_CATEGORY,
-            "backend_error_found": False,
-            "pod_issue_found": False,
-            "is_flaky": False,
-            "confidence_score": 0,
-            "recommended_actions": ["Review stack trace manually"],
-            "evidence_references": [],
-            "requires_human_review": True,
-            "classified_by": "pattern_heuristic",
-            "tools_used": [],
-        }
 
     @staticmethod
     def _record_llm_timeout_routing(
@@ -1561,16 +1488,29 @@ class AnalysisAgent(BaseAgent):
         The progressive fallback's own ``fallback_reason`` (``timeout_*``) sits
         on the analysis dict, not in ``_routing``, so ``_audit.fallback_from``
         stayed null, the ``analysis_engine_fallback`` decision never fired and
-        the stage's ``fallback_count`` missed it. Tier 1 is still an LLM call
-        (``mode_used="llm"``); tiers 2-3 are deterministic (``"rules"``).
+        the stage's ``fallback_count`` missed it.
+
+        Tier 1 is still a model call: what timed out was the full investigation,
+        so it reads "react_agent" -> "llm". Recording "llm" -> "llm" printed "The
+        LLM was unavailable — this came from the LLM instead" (D-149). Tier 2 is
+        the rules engine. Tier 3 is a canned stub no engine wrote, so it names
+        none (S-A-1).
         """
+        tier = analysis.get("fallback_tier")
         routing = dict(analysis.get("_routing") or {})
+        used: str | None
+        if tier == 1:
+            used, source = "llm", "react_agent"
+            reason = f"react_timeout: full investigation timed out after {int(timeout)} s"
+        else:
+            used, source = ("rules" if tier == 2 else None), "llm"
+            reason = f"llm_timeout: LLM timed out after {int(timeout)} s"
         routing.update({
             "mode_requested": mode_requested,
             "mode_resolved": mode_resolved,
-            "mode_used": "llm" if analysis.get("fallback_tier") == 1 else "rules",
-            "fallback_from": "llm",
-            "fallback_reason": f"llm_timeout: LLM timed out after {int(timeout)} s",
+            "mode_used": used,
+            "fallback_from": source,
+            "fallback_reason": reason,
         })
         analysis["_routing"] = routing
         return analysis
@@ -1626,6 +1566,49 @@ class AnalysisAgent(BaseAgent):
             "budget_exhausted": True,
             "tools_used": [],
         }
+
+    def _rules_after_model_error(
+        self,
+        exc: Exception,
+        meta: dict,
+        run_context: dict,
+        *,
+        mode_requested: str | None,
+        mode_resolved: str | None,
+    ) -> dict:
+        """Classify with the rules engine when the model path raised.
+
+        Auto promises "falls back to ML then rules". This path stored the
+        "Analysis failed — manual review required" stub instead, so on an
+        install with no reachable model every failure read as a product
+        failure (D-01). The stub is kept only for a failure of the rules call
+        itself, and then names no engine (S-A-1).
+        """
+        from app.services.analysis_router import _classify_rules
+        from app.services.privacy_service import sanitize_for_persistence
+
+        reason = sanitize_for_persistence(f"llm_error: {type(exc).__name__}")[:200]
+        try:
+            analysis = _classify_rules(meta, meta.get("flakiness_data"), run_context)
+        except Exception as rules_exc:  # noqa: BLE001 — last resort below
+            logger.error("rules_fallback_failed", error_type=type(rules_exc).__name__)
+            analysis = self._build_error_analysis(exc)
+            analysis["_routing"] = {
+                "mode_requested": mode_requested,
+                "mode_resolved": mode_resolved,
+                "mode_used": None,
+                "fallback_from": mode_resolved,
+                "fallback_reason": reason,
+            }
+            return analysis
+        analysis["_routing"] = {
+            "mode_requested": mode_requested,
+            "mode_resolved": mode_resolved,
+            "mode_used": "rules",
+            "fallback_from": mode_resolved,
+            "fallback_reason": reason,
+        }
+        return analysis
 
     def _build_error_analysis(self, exc: Exception) -> dict:
         # This dict is persisted to AIAnalysis (root_cause_summary/error), so the
@@ -1738,6 +1721,7 @@ class AnalysisAgent(BaseAgent):
                                 "routing_metadata": routing_metadata,
                                 "created_at": now,
                             },
+                            where=_only_replace_unknown(analysis, routing_metadata),
                         )
                         await db.execute(stmt)
                         await _mirror_category_to_test_case(

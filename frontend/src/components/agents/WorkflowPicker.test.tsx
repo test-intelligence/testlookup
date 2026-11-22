@@ -96,11 +96,21 @@ describe('WorkflowPicker', () => {
     await waitFor(() => expect(optionLabels()[0]).toBe('Project default — wf.fast@3'))
   })
 
+  // D-03 (owner decision 2026-11-21): this test used Rules mode as the "not allowed" case; only the
+  // Settings › AI toggle refuses now.
   it('hides deep (built-in and deep-based forks) while Settings › AI does not allow it', async () => {
-    aiMode.current = { analysis_mode: 'rules', deep_investigation_enabled: true }
+    aiMode.current = { analysis_mode: 'auto', deep_investigation_enabled: false }
     renderPicker()
     await waitFor(() => expect(optionLabels()).toHaveLength(3))
     expect(optionLabels()).toEqual(['Project default — built-in offline', 'Built-in offline', 'Fast triage · wf.fast@3'])
+  })
+
+  it('D-03: offers deep in Rules mode with the toggle on', async () => {
+    aiMode.current = { analysis_mode: 'rules', deep_investigation_enabled: true }
+    renderPicker()
+    await waitFor(() => expect(optionLabels()).toHaveLength(5))
+    expect(optionLabels()).toContain('Built-in deep')
+    expect(optionLabels()).toContain('Deep fork · wf.deepfork@2')
   })
 
   it('Queue sends the run ALONE for the project default (the one-click body)', async () => {

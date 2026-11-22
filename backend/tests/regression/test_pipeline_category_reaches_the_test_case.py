@@ -25,7 +25,9 @@ def _sql(stmt) -> tuple[str, dict]:
 
 
 @pytest.mark.asyncio
-async def test_the_mirror_fills_only_an_unset_or_unknown_category():
+async def test_the_mirror_never_replaces_a_person_label():
+    """D-85: it replaces an earlier analysis's label (it used to fill only an
+    empty column, so the first analysis won for good) but never a person's."""
     from app.services.failure_category_sync import mirror_ai_category
 
     db = AsyncMock()
@@ -33,8 +35,9 @@ async def test_the_mirror_fills_only_an_unset_or_unknown_category():
     await mirror_ai_category(db, tc, "infrastructure")
     sql, params = _sql(db.execute.await_args.args[0])
     assert sql.startswith("UPDATE test_cases SET failure_category=")
-    assert "failure_category IS NULL OR test_cases.failure_category =" in sql
-    assert "INFRASTRUCTURE" in params.values() and "UNKNOWN" in params.values()
+    assert "failure_category_source IS NULL OR test_cases.failure_category_source !=" in sql
+    assert "INFRASTRUCTURE" in params.values() and "human" in params.values()
+    assert "analysis" in params.values()
 
 
 @pytest.mark.asyncio

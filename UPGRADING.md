@@ -34,8 +34,9 @@ backup taken in step 2 together with the previous version's images.
 ## After 0.1.0 (the next release)
 
 Security fixes in this release change what some roles may do and what some API
-calls answer. There is one migration (`0257`, a new column on SSO configurations);
-the release's migration step runs it.
+calls answer. There are two migrations (`0257`, a new column on SSO
+configurations; `0258`, a new column on test cases); the release's migration
+step runs them.
 
 ### Check `.env` if you installed the release images by hand
 
@@ -149,6 +150,31 @@ Members below QA_LEAD see a webhook's target URL as `https://host/...`.
 | MCP `create_share_link` without `confirm=true` | returns a notice, creates nothing | created the link |
 
 Existing usernames that contain `@` keep working for sign-in.
+
+### Failure classification without a model
+
+- **Auto mode classifies with rules when no model answers.** A model service
+  that does not resolve, refuses the connection or is refused by the provider
+  policy now counts as unavailable, and a model call that fails falls back to
+  the rules engine. Failures analysed before the upgrade keep their "Analysis
+  failed" text until they are analysed again.
+- **Deep investigation runs in Rules mode.** `POST /deep-investigate/{run_id}`,
+  the bulk deep trigger and the estimate's gate no longer refuse Rules mode
+  (`reason_code` `rules_mode` is gone); only the Settings › AI toggle refuses.
+- **History is read from the test's own project, last 30 days.** A test that
+  passed and then failed every run since one change reads Product Bug, not
+  Flaky. Categories, confidence and the flaky flag of re-analysed failures can
+  change.
+- **Migration `0258`** adds `test_cases.failure_category_source` and marks test
+  cases with a human correction as `human`. The pipeline now replaces an earlier
+  analysis's category on the test case but never one a person set. Categories
+  set with the bulk Classify before the upgrade are not marked and can be
+  replaced by a later analysis.
+
+| Call | Now | Before |
+|---|---|---|
+| `POST /deep-investigate/{run_id}` in Rules mode | accepted | 422 "requires LLM or Auto mode" |
+| `POST /analyze` for a test with a human correction | returns the correction | the engine's answer, replacing the correction |
 
 ### Outbound calls, MCP and the Fixer
 

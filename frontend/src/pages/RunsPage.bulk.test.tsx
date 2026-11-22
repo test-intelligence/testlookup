@@ -44,6 +44,12 @@ vi.mock('@/hooks/useFeatureFlags', async (importOriginal) => ({
 }))
 const perms = vi.hoisted(() => ({ isQaEngineer: true }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => perms }))
+// D-03: the deep controls read the AI mode (the Settings › AI toggle); answered here so no request
+// leaves the test (src/test/networkGuard.ts).
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),
+  useAIConfig: () => ({ data: undefined }),
+}))
 vi.mock('@/services/aiHistoryService', () => ({ aiHistoryService: { getPreviousRun: vi.fn() } }))
 vi.mock('@/services/agentService', () => ({
   default: {
@@ -147,7 +153,8 @@ describe('RunsPage — bulk deep goes through the server', () => {
   })
 
   it('a refused batch is the server\'s sentence in the panel\'s place — no toast, nothing else asked', async () => {
-    const sentence = 'Deep investigation requires LLM or Auto mode. Current mode: rules.'
+    // D-03: the server's only deep refusal now is the Settings › AI toggle.
+    const sentence = 'Deep investigation is disabled in Settings › AI. Ask an administrator to enable it.'
     vi.mocked(agentService.bulkTriggerPipelines).mockRejectedValue(
       Object.assign(new Error('422'), { response: { status: 422, data: { detail: sentence } } }),
     )

@@ -1,8 +1,9 @@
 """AI triage analysis endpoint."""
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -12,7 +13,7 @@ from app.core.deps import (
 )
 from app.db.mongo import get_mongo_db
 from app.db.postgres import get_db
-from app.models.postgres import AIAnalysis, FailureCategory, TestCase, User, UserRole
+from app.models.postgres import AIAnalysis, FailureCategory, User, UserRole
 from app.models.schemas import (
     AnalysisProvenance,
     AnalysisResponse,
@@ -24,8 +25,10 @@ from app.models.schemas import (
 from app.services import analysis_router
 from app.services.ai_history_service import snapshot_from_orm, stage_analysis_version
 from app.services.confidence_validation import validate_confidence
+from app.services.failure_category_sync import apply_human_category, mirror_ai_category
 
 router = APIRouter(prefix="/api/v1", tags=["AI Analysis"])
+logger = structlog.get_logger(__name__)
 
 # Keys that make a routing_metadata blob genuinely informative about which
 # engine ran. A blob carrying only unrelated keys (e.g. an old row that only
@@ -284,40 +287,19 @@ async def analyze_test_case(
 
     classification_hints = await load_enabled_hints(db, authorized.project_id)
 
-    # Run the AI agent
-    analysis = await analysis_router.classify_test(
-        test_case={
-            "test_case_id": str(tc.id),
-            "test_name": tc.test_name,
-            "suite_name": tc.suite_name,
-            # The failure text IS the input to classification — without it
-            # every tier has nothing to reason about and the router can only
-            # return UNKNOWN. Omitted here until 2026-08-16, which made this
-            # endpoint structurally incapable of ever classifying anything:
-            # `AssertionError: expected total 100 but was 97` came back as
-            # "Could not determine failure cause from available data" while
-            # RulesEngine.classify_test called directly on the same string
-            # returned PRODUCT_BUG at confidence 55.
-            "error_message": tc.error_message,
-            "stack_trace": tc.stack_trace,
-            "duration_ms": tc.duration_ms,
-            "severity": tc.severity,
-            "timestamp": (test_run.end_time or test_run.start_time).isoformat()
-            if (test_run.end_time or test_run.start_time) else None,
-            "ocp_pod_name": test_run.ocp_pod_name,
-            "ocp_namespace": test_run.ocp_namespace,
-            "run_id": str(authorized.run_id),
-            "project_id": str(authorized.project_id),
-            "test_fingerprint": tc.test_fingerprint,
-            # W07 FAIL-10: a project hint may match on the class.
-            "class_name": getattr(tc, "class_name", None),
-        },
-        run_context={
-            "run_id": str(authorized.run_id),
-            "project_id": str(authorized.project_id),
-            "classification_hints": classification_hints,
-        },
+    correction, history, mode = await _manual_analysis_context(
+        db, authorized.project_id, tc.test_fingerprint
     )
+    if correction is not None:
+        # S-A-5: a person corrected this test. Re-analysing used to overwrite
+        # the correction with whatever the engine said, in one click.
+        from app.services.analysis_corrections import build_corrected_analysis
+
+        analysis = build_corrected_analysis(correction)
+    else:
+        analysis = await _classify_for_manual_route(
+            tc, test_run, authorized, classification_hints, history, mode
+        )
 
     # Apply the confidence policy BEFORE anything is persisted or returned.
     # `classify_test` hands back the engine's raw self-assessment; the caps
@@ -405,12 +387,13 @@ async def analyze_test_case(
         )
         db.add(ai_row)
 
-    # Update test case failure category
-    await db.execute(
-        update(TestCase)
-        .where(TestCase.id == tc.id)
-        .values(failure_category=fc)
-    )
+    # Update the test case's category by provenance (D-85): a correction is a
+    # person's label; an engine answer replaces an earlier analysis's label
+    # but never a person's, and UNKNOWN is never written over a category.
+    if analysis.get("human_corrected"):
+        await apply_human_category(db, tc.id, fc)
+    else:
+        await mirror_ai_category(db, tc.id, fc)
     # AIH-01: keep this answer as an immutable version (skipped when it is
     # identical to the latest one, e.g. merely re-opening the finding). Flush
     # only, in this transaction; a history error never fails the analysis.
@@ -462,4 +445,76 @@ async def analyze_test_case(
         low_confidence=low_confidence,
         confidence_gate_status=gate_status_value,
         confidence_gate=gate,
+    )
+
+
+async def _manual_analysis_context(db, project_id, fingerprint):
+    """``(correction, history, mode)`` for a manual analysis.
+
+    The pipeline reads all three; this route read none of them, so the same
+    failure got a different answer here (D-151): no history (the regression
+    rule could not fire), the environment's mode rather than the stored one
+    (S-A-7), and no human correction (S-A-5). Each read is best-effort: a
+    failure means "none", never a failed analysis.
+    """
+    correction = None
+    history = None
+    mode = None
+    if fingerprint:
+        try:
+            from app.services.analysis_corrections import get_corrections_for_fingerprints
+
+            correction = (
+                await get_corrections_for_fingerprints(db, project_id, [fingerprint])
+            ).get(fingerprint)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("manual_analysis_corrections_failed", error_type=type(exc).__name__)
+        try:
+            from app.services.test_history_service import load_test_history
+
+            history = (await load_test_history(db, project_id, [fingerprint])).get(fingerprint)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("manual_analysis_history_failed", error_type=type(exc).__name__)
+    try:
+        mode = (await analysis_router.resolve_effective_analysis_mode(db))[0]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("manual_analysis_mode_failed", error_type=type(exc).__name__)
+    return correction, history, mode
+
+
+async def _classify_for_manual_route(tc, test_run, authorized, classification_hints, history, mode):
+    return await analysis_router.classify_test(
+        history=history,
+        mode=mode,
+        test_case={
+            "test_case_id": str(tc.id),
+            "test_name": tc.test_name,
+            "suite_name": tc.suite_name,
+            # The failure text IS the input to classification — without it
+            # every tier has nothing to reason about and the router can only
+            # return UNKNOWN. Omitted here until 2026-08-16, which made this
+            # endpoint structurally incapable of ever classifying anything:
+            # `AssertionError: expected total 100 but was 97` came back as
+            # "Could not determine failure cause from available data" while
+            # RulesEngine.classify_test called directly on the same string
+            # returned PRODUCT_BUG at confidence 55.
+            "error_message": tc.error_message,
+            "stack_trace": tc.stack_trace,
+            "duration_ms": tc.duration_ms,
+            "severity": tc.severity,
+            "timestamp": (test_run.end_time or test_run.start_time).isoformat()
+            if (test_run.end_time or test_run.start_time) else None,
+            "ocp_pod_name": test_run.ocp_pod_name,
+            "ocp_namespace": test_run.ocp_namespace,
+            "run_id": str(authorized.run_id),
+            "project_id": str(authorized.project_id),
+            "test_fingerprint": tc.test_fingerprint,
+            # W07 FAIL-10: a project hint may match on the class.
+            "class_name": getattr(tc, "class_name", None),
+        },
+        run_context={
+            "run_id": str(authorized.run_id),
+            "project_id": str(authorized.project_id),
+            "classification_hints": classification_hints,
+        },
     )

@@ -309,8 +309,8 @@ function SecondaryBtn({
 
 /**
  * W04 AIC-01: what replaces a deep-investigation trigger when Settings › AI
- * has deep investigation off, or the mode is Rules (the server would refuse
- * it with 422). Not a disabled button: the reader is told why.
+ * has deep investigation off (the server would refuse it with 422; D-03: Rules
+ * mode no longer refuses). Not a disabled button: the reader is told why.
  */
 function DeepDisabledNote({ message }: { message: string | null }) {
   return (
@@ -747,7 +747,7 @@ function VerdictCard({
   retry: DeepRetry
   /** The last deep run failed and has an id to retry: the CTA is the retry, not a fresh run. */
   offerRetry: boolean
-  /** W04 AIC-01: set when deep investigation is not offered (toggle off / Rules mode); W14 AGT-07: or when the
+  /** W04 AIC-01: set when deep investigation is not offered (toggle off); W14 AGT-07: or when the
    *  estimate's server-side gate refuses (a configured Auto that resolves to Rules). */
   unavailableMessage: string | null
   /** W14 AGT-07: the server's error-signature pre-scan (the Pre-scan facet). */
@@ -1351,7 +1351,7 @@ export function RunDeepClusters({ runId, run }: { runId: string; run: TestRun | 
   // W04 AGT-04: the deep status and "Retry from last successful stage".
   const retry = useDeepRetry(runId)
   const { pipelineStatus, refreshStatus } = retry
-  // W04 AIC-01: no "Analyze failures" while deep investigation is off or the mode is Rules.
+  // W04 AIC-01: no "Analyze failures" while deep investigation is off (D-03: Rules mode no longer refuses).
   const { data: aiMode } = useAIConfig()
   const availability = deepInvestigationAvailability(aiMode)
   const [queuing, setQueuing] = useState(false)

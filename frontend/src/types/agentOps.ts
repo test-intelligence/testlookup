@@ -350,7 +350,7 @@ export interface DeepHistory {
 
 export interface DeepGate {
   allowed: boolean
-  /** 'disabled' | 'rules_mode' | null */
+  /** 'disabled' | null (D-03: the server no longer refuses with 'rules_mode') */
   reason_code?: string | null
   message?: string | null
   /** The RESOLVED mode. */

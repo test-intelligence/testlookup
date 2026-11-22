@@ -34,7 +34,7 @@ export const CATEGORY_CHOICES = [
 export type CategoryChoiceId = (typeof CATEGORY_CHOICES)[number]['id']
 
 export default function CorrectClassificationModal({
-  projectId, fingerprint, testName, analysisId: analysisIdProp, currentCategory: currentCategoryProp, onClose, slot,
+  projectId, fingerprint, testName, analysisId: analysisIdProp, currentCategory: currentCategoryProp, onClose, onSaved, slot,
 }: {
   /** Omit together with `fingerprint` when `analysisId` is supplied. */
   projectId?: string | null
@@ -44,6 +44,8 @@ export default function CorrectClassificationModal({
   analysisId?: string | null
   currentCategory?: string | null
   onClose: () => void
+  /** Called after the correction is recorded, before `onClose` — the host refreshes what it shows. */
+  onSaved?: () => void
   /** The host section's one-form slot (W27a): typed input asks before another form replaces it. */
   slot?: InlineSlot
 }) {
@@ -69,6 +71,8 @@ export default function CorrectClassificationModal({
         ...(comment.trim() ? { comment: comment.trim() } : {}),
       })
       toast.success('Correction recorded — feeds the next training export.', { duration: 6000 })
+      // D-06: the host re-reads the stored analysis so its card shows the corrected category at once.
+      onSaved?.()
       onClose()
     } catch (err: unknown) {
       const detail =

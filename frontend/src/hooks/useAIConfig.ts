@@ -98,7 +98,7 @@ export function useMLStatus() {
   )
 }
 
-export type DeepUnavailableReason = 'disabled' | 'rules_mode'
+export type DeepUnavailableReason = 'disabled'
 
 export interface DeepInvestigationAvailability {
   available: boolean
@@ -107,13 +107,14 @@ export interface DeepInvestigationAvailability {
 }
 
 export const DEEP_DISABLED_MESSAGE = 'Deep investigation is turned off in Settings › AI.'
-export const DEEP_RULES_MODE_MESSAGE = 'Deep investigation needs LLM or Auto mode (current mode: Rules).'
 
 /**
  * Whether the deep-investigation CTAs are offered, and the note that replaces
  * them when they are not (W04 contract §4.5). Mirrors the server's gate
- * (`services/deep_investigation_gate.py`): the Settings › AI toggle wins over
- * the mode, and only Rules mode refuses (ML and Auto are allowed).
+ * (`services/deep_investigation_gate.py`): only the Settings › AI toggle
+ * refuses. D-03 (owner decision 2026-11-21): Rules mode no longer refuses —
+ * every deep stage has a deterministic fallback, so a model-free team gets
+ * deep investigation too.
  *
  * While the mode is loading it answers "available", so the CTAs render as they
  * always did. A missing `deep_investigation_enabled` (a pod of the previous
@@ -124,13 +125,10 @@ export function deepInvestigationAvailability(config?: AIModeRead): DeepInvestig
   if (config.deep_investigation_enabled === false) {
     return { available: false, reason: 'disabled', message: DEEP_DISABLED_MESSAGE }
   }
-  if (config.analysis_mode === 'rules') {
-    return { available: false, reason: 'rules_mode', message: DEEP_RULES_MODE_MESSAGE }
-  }
   return { available: true, reason: null, message: null }
 }
 
-/** True when deep investigation can be triggered (the toggle is on and the mode is not Rules). */
+/** True when deep investigation can be triggered (the Settings › AI toggle is on, in any mode). */
 export function isDeepEnabled(config?: AIModeRead): boolean {
   return deepInvestigationAvailability(config).available
 }

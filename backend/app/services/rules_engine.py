@@ -20,6 +20,7 @@ from app.services.confidence_bands import (
     get_band,
     historical_flakiness_confidence,
 )
+from app.services.flaky_signals import history_is_flaky, is_regression_history
 
 logger = structlog.get_logger("services.rules_engine")
 
@@ -193,13 +194,44 @@ class RulesEngine:
         run_context = run_context or {}
         error_lower = (error_message or "").lower()
 
-        # ── 1. Historical flakiness check (strongest signal) ────────────
+        # ── 0. Regression: a passing streak, then failing every run since ─
+        # Checked before flakiness. A test that passed 43 times and then
+        # failed 9 runs in a row with one error has a 17 % failure rate, which
+        # the rate rule below used to call flaky and advise quarantining:
+        # the regression the product exists to catch (D-02).
         hist_pass = history.get("pass_count", 0)
         hist_fail = history.get("fail_count", 0)
         hist_total = hist_pass + hist_fail
+        if is_regression_history(history):
+            streak = int(history.get("consecutive_failures") or 0)
+            before = int(history.get("consecutive_passes") or 0)
+            if streak == 1:
+                summary = (
+                    f"Test passed {before} consecutive times before this failure. "
+                    f"Likely a new regression introduced by recent code changes."
+                )
+            else:
+                summary = (
+                    f"Test failed the last {streak} runs in a row with the same error, "
+                    f"after passing {before} times. Looks like a regression introduced "
+                    f"by a recent change, not a flaky test."
+                )
+            return _build_result(
+                category="PRODUCT_BUG",
+                summary=summary,
+                rule_id="heuristic.regression_after_streak",
+                is_flaky=False,
+                actions=[
+                    "Check recent commits for the affected component",
+                    "Review the diff between last passing and current build",
+                    "Write a targeted unit test for the regression",
+                ],
+            )
+
+        # ── 1. Historical flakiness check ───────────────────────────────
         if hist_total >= 5:
             hist_failure_rate = hist_fail / hist_total
-            if 0.10 <= hist_failure_rate <= 0.90 and hist_pass > 0 and hist_fail > 0:
+            if history_is_flaky(history):
                 return _build_result(
                     category="FLAKY",
                     summary=f"Test has a {hist_failure_rate*100:.0f}% historical failure rate "

@@ -130,12 +130,53 @@ const ENGINE_LABELS: Record<string, string> = {
   local_llm: 'local LLM',
   hybrid: 'hybrid pipeline',
   hint: 'project hint',
+  // D-160: the analysis router's small-model tier.
+  slm: 'small model',
+  // D-149: the ReAct agent — the full investigation the fast classifier stands in for after a timeout.
+  react_agent: 'full investigation',
+  react: 'full investigation',
+  // D-06: a reviewer's correction (routing_metadata.analysis_mode = "human_corrected").
+  human_corrected: 'human review',
 }
 
 /** Human label for an engine id; unknown ids render as-is (underscores out). */
 export function engineLabel(mode: string | null | undefined): string {
   if (!mode) return 'unknown engine'
   return ENGINE_LABELS[mode.toLowerCase()] ?? mode.replace(/_/g, ' ')
+}
+
+/**
+ * D-149 / D-160: what happened to the engine that did not answer, as the middle of
+ * "The {engine} {clause}, so this came from …". Only these codes reach the sentence; any other
+ * code goes to the notice's tooltip, never into the visible text. `llm_error: <detail>` matches
+ * on the part before the colon.
+ */
+const FALLBACK_REASON_CLAUSES: Record<string, string> = {
+  slm_call_failed: 'did not answer',
+  llm_unavailable: 'could not be reached',
+  llm_error: 'returned an error',
+  llm_timeout: 'did not answer in time',
+  react_timeout: 'ran out of time',
+  budget: 'is over its usage budget',
+  step_llm_budget: 'used up its allowed model calls',
+  tier_pinned: 'is not used, because the AI settings fix the engine',
+}
+
+/** The plain-words clause for a known reason code, or null for an unknown one (or none). */
+export function fallbackReasonClause(reason: string | null | undefined): string | null {
+  if (!reason) return null
+  const code = reason.split(':')[0].trim().toLowerCase()
+  return FALLBACK_REASON_CLAUSES[code] ?? null
+}
+
+/**
+ * S-A-1: the stored-analysis read fills a missing provider / model with "unknown". Such a value
+ * names nothing, so it is treated as absent everywhere the trust chrome prints a model.
+ */
+export function isKnownValue(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const v = value.trim().toLowerCase()
+  return v !== '' && v !== 'unknown' && v !== 'none'
 }
 
 function str(value: unknown): string | null {
@@ -162,13 +203,22 @@ export function normalizeProvenance(raw: unknown): AIProvenance | null {
     }
     return null
   }
+  // S-A-1: "unknown" is the read's filler for a missing provider / model, not a name.
+  const pickKnown = (...keys: string[]): string | null => {
+    for (const k of keys) {
+      for (const v of [nested[k], r[k]]) {
+        if (isKnownValue(v)) return v.trim()
+      }
+    }
+    return null
+  }
   const out: AIProvenance = {
     modeUsed: pick('mode_used', 'modeUsed', 'engine'),
     modeRequested: pick('mode_requested', 'modeRequested'),
     fallbackFrom: pick('fallback_from', 'fallbackFrom'),
     fallbackReason: pick('fallback_reason', 'fallbackReason'),
-    llmProvider: pick('llm_provider', 'llmProvider'),
-    llmModel: pick('llm_model', 'llmModel'),
+    llmProvider: pickKnown('llm_provider', 'llmProvider'),
+    llmModel: pickKnown('llm_model', 'llmModel'),
   }
   const hasAny = Object.values(out).some(v => v != null)
   return hasAny ? out : null
@@ -273,10 +323,24 @@ export default function AISuggestion({
   const prov = provenance ?? null
   const provBits: string[] = []
   if (prov?.modeUsed) provBits.push(engineLabel(prov.modeUsed))
-  if (prov?.llmProvider || prov?.llmModel) {
-    provBits.push([prov.llmProvider, prov.llmModel].filter(Boolean).join(' · '))
-  }
-  const showFallback = Boolean(prov?.fallbackFrom)
+  const modelBits = [prov?.llmProvider, prov?.llmModel].filter(isKnownValue)
+  if (modelBits.length > 0) provBits.push(modelBits.join(' · '))
+  // S-A-1: a stub no engine wrote is stored with a null engine and a fallback reason. Say so, rather
+  // than "Produced by LLM · unknown · unknown".
+  const noEngineAnswered =
+    prov != null && !prov.modeUsed && modelBits.length === 0 &&
+    Boolean(prov.fallbackFrom || prov.fallbackReason || prov.modeRequested)
+  // D-149: "The LLM was unavailable — this came from the LLM instead" contradicts itself; an engine
+  // cannot fall back to itself, so no notice then.
+  const fromId = prov?.fallbackFrom?.toLowerCase() ?? null
+  const usedId = prov?.modeUsed?.toLowerCase() ?? null
+  const sameEngine = fromId !== null && fromId === usedId
+  const showFallback = fromId !== null && !sameEngine
+  const reasonClause = fallbackReasonClause(prov?.fallbackReason)
+  // D-160: the backend's reason is "<code>: <detail>" (e.g. "llm_timeout: LLM timed out after 120 s").
+  // The sentence carries only the plain words for a known code; the full raw string goes to the
+  // tooltip, never into the visible text.
+  const fallbackTitle = prov?.fallbackReason ? `Reason recorded: ${prov.fallbackReason}` : undefined
 
   return (
     <section
@@ -330,7 +394,15 @@ export default function AISuggestion({
       </div>
 
       {/* Routing provenance — which engine actually answered. */}
-      {provBits.length > 0 && (
+      {noEngineAnswered ? (
+        <p
+          data-testid="ai-provenance"
+          className="text-2xs text-[var(--color-text-muted)] m-0"
+          title="No rules, classifier or model produced this output; it is a placeholder for a human to review."
+        >
+          No engine answered
+        </p>
+      ) : provBits.length > 0 && (
         <p
           data-testid="ai-provenance"
           className="text-2xs text-[var(--color-text-muted)] m-0"
@@ -347,6 +419,7 @@ export default function AISuggestion({
       {showFallback && (
         <p
           data-testid="ai-fallback-notice"
+          title={fallbackTitle}
           className="flex items-start gap-1.5 text-2xs m-0 rounded-md px-2.5 py-1.5"
           style={{
             background: 'color-mix(in srgb, var(--gate-conditional) 10%, transparent)',
@@ -360,9 +433,10 @@ export default function AISuggestion({
             style={{ color: 'var(--gate-conditional)' }}
           />
           <span>
-            The {engineLabel(prov?.fallbackFrom)} was unavailable — this came from the{' '}
-            {engineLabel(prov?.modeUsed ?? 'rules')} instead.
-            {prov?.fallbackReason ? ` ${prov.fallbackReason}` : ''}
+            The {engineLabel(prov?.fallbackFrom)} {reasonClause ?? 'was unavailable'}
+            {prov?.modeUsed
+              ? <>, so this came from the {engineLabel(prov.modeUsed)} instead.</>
+              : <>, and no other engine answered.</>}
           </span>
         </p>
       )}

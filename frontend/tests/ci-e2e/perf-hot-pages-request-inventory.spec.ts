@@ -87,6 +87,9 @@ const PAGES: HotPage[] = [
     ready: (p) => p.locator('[data-status-banner]'),
     expected: [
       ...SHELL_BASE,
+      // The page's own AI mode (`RunsPage`), beside the shell's copy: the deep controls follow the
+      // Settings › AI toggle (product finding D-03).
+      'GET /api/v1/settings/ai/mode',
       `GET /api/v1/feature-flags/manual_upload/status?project_id=${P}`,
       // The table's page and the status banner's newest-first window: two reads, each once.
       `GET /api/v1/runs?project_id=${P}&page=1&size=100&days=30`,

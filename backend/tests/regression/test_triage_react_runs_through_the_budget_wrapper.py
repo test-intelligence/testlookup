@@ -150,8 +150,42 @@ async def test_a_construction_failure_is_a_recorded_fallback_not_an_exception(mo
     analysis = await _triage(monkeypatch, _wrapped(["unused"]))
 
     assert analysis["_routing"]["fallback_from"] == "llm"
-    assert analysis["_routing"]["fallback_reason"] == "llm_error"
-    assert "Expected a Runnable" in analysis["root_cause_summary"]
+    # Any model failure is classified by the rules engine (S-A-9); the raw
+    # exception stays in the routing reason, never in the text users read.
+    assert analysis["_routing"]["mode_used"] == "rules"
+    assert analysis["_routing"]["fallback_reason"] == "llm_error: TypeError"
+    assert analysis["failure_category"] == "PRODUCT_BUG"
+    assert "Expected a Runnable" not in analysis["root_cause_summary"]
+
+
+@pytest.mark.asyncio
+async def test_a_connection_failure_falls_back_to_rules_with_the_history(monkeypatch, gates):
+    class Refused(FakeListChatModel):
+        async def ainvoke(self, *args, **kwargs):
+            raise ConnectionError("connection refused")
+
+    async def get_llm(*_a, **_k):
+        return BudgetedLLM(Refused(responses=["x"]), provider="ollama", model="m")
+
+    monkeypatch.setattr(triage, "get_llm", get_llm)
+    history = {
+        "pass_count": 43, "fail_count": 9, "consecutive_failures": 9,
+        "consecutive_passes": 43, "intermittency_label": "persistent_regression",
+    }
+    analysis = await triage.run_triage_agent(
+        test_case_id="tc-1",
+        test_name="charges the discounted total",
+        error_message="AssertionError: expected 90.00 but was 100.00",
+        skip_fast_classifier=True,
+        skip_cache=True,
+        history=history,
+    )
+
+    assert analysis["_routing"]["mode_used"] == "rules"
+    assert analysis["_routing"]["fallback_reason"] == "llm_error: ConnectionError"
+    assert analysis["failure_category"] == "PRODUCT_BUG"
+    assert analysis["confidence_rule_id"] == "heuristic.regression_after_streak"
+    assert "connection refused" not in analysis["root_cause_summary"]
 
 
 @pytest.mark.asyncio

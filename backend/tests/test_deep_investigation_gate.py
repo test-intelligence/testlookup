@@ -23,13 +23,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.core.config import settings
 from app.services.deep_investigation_gate import (
     MESSAGE_DISABLED,
-    MESSAGE_RULES_MODE,
     deep_investigation_gate,
     require_deep_investigation,
 )
@@ -126,27 +125,26 @@ async def test_disabled_wins_over_rules_mode(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_rules_mode_refuses_with_the_unchanged_text(monkeypatch):
+async def test_rules_mode_is_allowed(monkeypatch):
+    """D-03 (owner decision): every deep stage has a deterministic fallback, so
+    a model-free install gets a stored verdict too."""
     install(monkeypatch, redis=RecordingRedis())
-    with pytest.raises(HTTPException) as exc:
-        await require_deep_investigation(
-            StoredConfigSession({"deep_investigation_enabled": True, "analysis_mode": "rules"})
-        )
-    assert exc.value.status_code == 422
-    assert exc.value.detail == MESSAGE_RULES_MODE == (
-        "Deep investigation requires LLM or Auto mode. Current mode: rules."
+    await require_deep_investigation(
+        StoredConfigSession({"deep_investigation_enabled": True, "analysis_mode": "rules"})
     )
 
 
 @pytest.mark.asyncio
-async def test_auto_resolving_to_rules_is_refused_as_rules(monkeypatch):
-    """``auto`` with no LLM provider and no model resolves to rules: the deep
-    pipeline would have nothing to investigate with."""
+async def test_auto_resolving_to_rules_is_allowed(monkeypatch):
+    """``auto`` with no reachable model resolves to rules (D-01). Refusing that
+    would switch deep investigation off on every default install."""
     install(monkeypatch, redis=RecordingRedis())
     decision = await deep_investigation_gate(
         StoredConfigSession({"analysis_mode": "auto", "llm_provider": "none"})
     )
-    assert decision.reason_code == "rules_mode"
+    assert decision.allowed is True
+    assert decision.reason_code is None
+    assert decision.analysis_mode == "rules"
 
 
 @pytest.mark.asyncio

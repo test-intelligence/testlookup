@@ -504,7 +504,8 @@ describe('Run page — one header', () => {
 
   it.each([
     ['deep investigation is off in Settings › AI', { analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_enabled: false }, 'Deep investigation is turned off in Settings › AI.'],
-    ['the mode is Rules', { analysis_mode: 'rules', ai_offline_mode: true, deep_investigation_enabled: true }, 'Deep investigation needs LLM or Auto mode (current mode: Rules).'],
+    // D-03 (owner decision 2026-11-21): a Rules-mode row with "needs LLM or Auto mode" used to sit here;
+    // Rules mode now keeps the item (next test).
   ])('W04 AIC-01: when %s, the ⋯ menu has no "Deep investigation" and the Analysis tab shows why instead of "Analyze failures"', (_why, mode, note) => {
     aiMode.current = mode
     renderAt('/runs/run-1?tab=analysis')
@@ -516,6 +517,16 @@ describe('Run page — one header', () => {
     const deep = screen.getByRole('region', { name: 'Deep investigation' })
     expect(within(deep).queryByRole('button', { name: /Analyze failures/ })).toBeNull()
     expect(within(deep).getByTestId('deep-disabled-note')).toHaveTextContent(note)
+  })
+
+  it('D-03: in Rules mode with the toggle on, the ⋯ menu offers "Deep investigation" and the Analysis tab keeps "Analyze failures"', () => {
+    aiMode.current = { analysis_mode: 'rules', ai_offline_mode: true, deep_investigation_enabled: true }
+    renderAt('/runs/run-1?tab=analysis')
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
+    expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toContain('Deep investigation')
+    const deep = screen.getByRole('region', { name: 'Deep investigation' })
+    expect(within(deep).getByRole('button', { name: /Analyze failures/ })).toBeInTheDocument()
+    expect(within(deep).queryByTestId('deep-disabled-note')).toBeNull()
   })
 
   it('W04 AIC-01: while the AI mode is loading the deep item is offered, as before', () => {

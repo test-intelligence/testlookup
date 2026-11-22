@@ -61,6 +61,12 @@ vi.mock('@/store/projectStore', async (importOriginal) => {
   }
 })
 vi.mock('react-hot-toast', () => ({ default: Object.assign(vi.fn(), { error: vi.fn(), success: vi.fn() }) }))
+// D-03: the deep controls read the AI mode (the Settings › AI toggle); answered here so no request
+// leaves the test (src/test/networkGuard.ts).
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),
+  useAIConfig: () => ({ data: undefined }),
+}))
 
 import { useMostRecentRun, useRuns } from '@/hooks/useRuns'
 import { useReleases } from '@/hooks/useReleases'

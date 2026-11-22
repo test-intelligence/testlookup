@@ -266,79 +266,43 @@ class TestCategorySanitization:
         assert result["failure_category"] == "FLAKY"
 
 
-# ── Pattern-based heuristic tests ─────────────────────────────────────────────
+# ── Tier 2 of the timeout fallback is the rules engine (D-151) ────────────────
 
 
-class TestPatternBasedAnalysis:
-    def test_oom_detected(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("Container OOMKilled", "test_something")
-        assert result["failure_category"] == "INFRASTRUCTURE"
-        assert result["pod_issue_found"] is True
-        assert result["classified_by"] == "pattern_heuristic"
+class TestTimeoutTierTwoIsTheRulesEngine:
+    """The second keyword table is gone; tier 2 answers what Rules mode answers."""
 
-    def test_connection_refused_detected(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("Connection refused to localhost:8080", "test_api")
-        assert result["failure_category"] == "INFRASTRUCTURE"
+    def test_the_duplicate_keyword_table_is_gone(self):
+        assert not hasattr(AnalysisAgent, "_pattern_based_analysis")
 
-    def test_timeout_detected(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("Request timed out after 30s", "test_slow")
-        assert result["failure_category"] == "INFRASTRUCTURE"
+    @pytest.mark.parametrize(
+        "error",
+        [
+            "Container OOMKilled",
+            "Connection refused to localhost:8080",
+            "AssertionError: expected 200 but was 500",
+            "Element not found: #login-button",
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_tier_two_matches_rules_mode(self, error, monkeypatch):
+        import sys
 
-    def test_404_detected(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("HTTP 404 Not Found for /api/resource", "test_api")
-        assert result["failure_category"] == "TEST_DATA"
+        from app.services.rules_engine import RulesEngine
 
-    def test_null_pointer_detected(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis(
-            "java.lang.NullPointerException at com.test.TestClass", "test_null"
+        fast = MagicMock()
+        fast.FastClassifier.classify = AsyncMock(return_value=None)
+        monkeypatch.setitem(sys.modules, "app.services.training.classifier", fast)
+        history = {"pass_count": 3, "fail_count": 1}
+
+        result = await AnalysisAgent()._build_progressive_fallback(
+            "tc", {"test_name": "t", "error_message": error, "flakiness_data": history}
         )
-        assert result["failure_category"] == "AUTOMATION_DEFECT"
+        expected = RulesEngine.classify_test(error_message=error, test_name="t", history=history)
 
-    def test_element_not_found_detected(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("Element not found: #login-button", "test_ui")
-        assert result["failure_category"] == "AUTOMATION_DEFECT"
-
-    def test_assertion_detected(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("AssertionError: expected 200 but was 500", "test_check")
-        assert result["failure_category"] == "PRODUCT_BUG"
-
-    def test_flaky_pattern_detected(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("Intermittent failure: race condition in worker", "test_race")
-        assert result["failure_category"] == "FLAKY"
-
-    def test_no_pattern_returns_unknown(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("Something completely unique happened", "test_mystery")
-        assert result["failure_category"] == "UNKNOWN"
-        assert result["confidence_score"] == 0
-
-    def test_empty_error_returns_unknown(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("", "test_empty")
-        assert result["failure_category"] == "UNKNOWN"
-
-    def test_none_error_returns_unknown(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis(None, "test_none")
-        assert result["failure_category"] == "UNKNOWN"
-
-    def test_setup_failed_detected(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("setup failed: fixture db_connection raised", "test_setup")
-        assert result["failure_category"] == "TEST_DATA"
-
-    def test_502_detected(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("HTTP 502 Bad Gateway", "test_gateway")
-        assert result["failure_category"] == "INFRASTRUCTURE"
+        assert result["fallback_tier"] == 2
+        assert result["failure_category"] == expected["failure_category"]
+        assert result["confidence_rule_id"] == expected["confidence_rule_id"]
 
 
 # ── Priority ordering tests ───────────────────────────────────────────────────
@@ -422,7 +386,9 @@ class TestAnalysisAgentAnalyzeOne:
         assert result["confidence_validated"] is True
 
     @pytest.mark.asyncio
-    async def test_analyse_one_returns_error_fallback_on_exception(self, monkeypatch):
+    async def test_analyse_one_falls_back_to_rules_on_exception(self, monkeypatch):
+        """A model failure is classified by the rules engine, not stored as
+        "Analysis failed — manual review required" (D-01)."""
         agent = AnalysisAgent()
 
         async def _raise_error(*_args, **_kwargs):
@@ -433,12 +399,18 @@ class TestAnalysisAgentAnalyzeOne:
         result = await agent._analyse_one(
             asyncio.Semaphore(1),
             "tc-2",
-            {"test_name": "test_checkout"},
+            {
+                "test_name": "test_checkout",
+                "error_message": "AssertionError: expected 90.00 but was 100.00",
+            },
             {"test_run_data": {}},
         )
 
-        assert result["failure_category"] == agent.UNKNOWN_CATEGORY
-        assert result["error"] == "provider failure"
+        assert result["failure_category"] == "PRODUCT_BUG"
+        assert "error" not in result
+        assert "Analysis failed" not in result["root_cause_summary"]
+        assert result["_audit"]["analysis_mode"] == "rules"
+        assert result["_audit"]["fallback_reason"] == "llm_error: RuntimeError"
         assert result["confidence_validated"] is True
 
     @pytest.mark.asyncio
@@ -905,11 +877,6 @@ class TestEdgeCases:
         result = agent._validate_confidence({})
         assert result["confidence_score"] == 0
         assert result["requires_human_review"] is True
-
-    def test_pattern_analysis_case_insensitive(self):
-        agent = AnalysisAgent()
-        result = agent._pattern_based_analysis("OOMKILLED in pod-xyz", "test_oom")
-        assert result["failure_category"] == "INFRASTRUCTURE"
 
     def test_priority_with_single_test(self):
         agent = AnalysisAgent()

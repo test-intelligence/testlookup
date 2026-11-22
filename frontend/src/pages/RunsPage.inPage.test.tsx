@@ -47,6 +47,12 @@ vi.mock('@/hooks/useFeatureFlags', async (importOriginal) => ({
   useFeatureEnabled: (key: string) => key === 'manual_upload',
 }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isQaEngineer: true }) }))
+// D-03: the deep controls read the AI mode (the Settings › AI toggle); answered here so no request
+// leaves the test (src/test/networkGuard.ts).
+vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useAIConfig')>()),
+  useAIConfig: () => ({ data: undefined }),
+}))
 // The upload form itself is real; it sends nothing in these tests.
 const upload = vi.hoisted(() => ({ upload: vi.fn(), getStatus: vi.fn() }))
 vi.mock('@/services/reportUploadService', async (importActual) => ({

@@ -63,7 +63,8 @@ const RUN = {
   id: 'run-1', project_id: 'proj-1', build_number: '42', status: 'FAILED', passed_tests: 5, failed_tests: 12, broken_tests: 0,
   skipped_tests: 0, total_tests: 17, pass_rate: 29, created_at: '2026-10-20T10:00:00Z', run_seq: 39,
 }
-const RULES = 'Deep investigation requires LLM or Auto mode. Current mode: rules.'
+// D-03: the server no longer refuses Rules mode; its one refusal reason is `disabled`.
+const GATE_DISABLED = 'Deep investigation is disabled in Settings › AI. Ask an administrator to enable it.'
 
 beforeEach(() => {
   for (const fn of Object.values(hooks)) fn.mockReset()
@@ -162,17 +163,17 @@ describe('/deep-investigate — the run configuration', () => {
     expect(await within(configCard()).findByText('Deep investigation already in progress')).toHaveAttribute('role', 'note')
   })
 
-  it('the estimate\'s gate refuses (Auto resolving to Rules): no Run CTA anywhere, the gate\'s sentence', () => {
+  it('the estimate\'s gate refuses (deep investigation disabled server-side): no Run CTA anywhere, the gate\'s sentence', () => {
     vi.mocked(useDeepEstimate).mockReturnValue(idleSwr({
-      data: { ...ESTIMATE_FIXTURE, gate: { allowed: false, reason_code: 'rules_mode', message: RULES, analysis_mode: 'rules', deep_investigation_enabled: true } },
+      data: { ...ESTIMATE_FIXTURE, gate: { allowed: false, reason_code: 'disabled', message: GATE_DISABLED, analysis_mode: 'auto', deep_investigation_enabled: false } },
     }))
     const verdict = renderPage()
     expect(screen.queryByRole('button', { name: /Run Deep Analysis/ })).toBeNull()
     expect(within(verdict).queryByRole('button', { name: /Run on all/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Run on selection' })).toBeNull()
     // The page's two notes (header + verdict), as for the toggle; the card states it too.
-    expect(screen.getAllByTestId('deep-disabled-note').map((n) => n.textContent)).toEqual([RULES, RULES])
-    expect(within(configCard()).getByTestId('deep-config-gate-note')).toHaveTextContent(RULES)
+    expect(screen.getAllByTestId('deep-disabled-note').map((n) => n.textContent)).toEqual([GATE_DISABLED, GATE_DISABLED])
+    expect(within(configCard()).getByTestId('deep-config-gate-note')).toHaveTextContent(GATE_DISABLED)
     // Estimating stays possible (a read).
     expect(within(configCard()).getByRole('button', { name: 'Estimate' })).toBeEnabled()
   })

@@ -80,9 +80,11 @@ vi.mock('@/hooks/useRunIntelligence', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useRunIntelligence')>(),
   useScoringModel: mockUseScoringModel,
 }))
+// D-129: one test turns deep investigation off; every other test reads "still loading" (undefined).
+const aiModeState = vi.hoisted(() => ({ current: undefined as undefined | Record<string, unknown> }))
 vi.mock('@/hooks/useAIConfig', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useAIConfig')>(),
-  useAIConfig: () => ({ data: undefined, error: undefined, isLoading: false }),
+  useAIConfig: () => ({ data: aiModeState.current, error: undefined, isLoading: false }),
 }))
 vi.mock('@/utils/errorReporting', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/utils/errorReporting')>(),
@@ -928,6 +930,7 @@ describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
     mockProjectState.activeProjectId = 'proj-1'
     mockProjectState.activeProject = { id: 'proj-1', name: 'Project One' }
     chartGet.mockReset()
+    aiModeState.current = undefined
   })
 
   it('the verdict card is the one primary element, before the tab bar and the pipeline disclosure', async () => {
@@ -994,6 +997,25 @@ describe('ReleaseGatePage — verdict first (P4 item 6)', () => {
     expect(within(primary()).queryByRole('heading', { name: 'QA Lead Override' })).toBeNull()
     expect(override).not.toHaveBeenCalled()
     override.mockRestore()
+  })
+
+  it('D-129: with deep investigation turned off, a quick-look decision does not say "Run deep investigation first"', async () => {
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
+    aiModeState.current = { analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_enabled: false }
+    await renderAt('/release-gate/run-1', flooredDecision({ synthesized: true }))
+    const sentence = 'There is no stored release decision to override, and deep investigation, which stores one, is turned off in Settings › AI.'
+    const button = within(primary()).getByRole('button', { name: 'Override decision' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', sentence)
+    expect(within(primary()).queryByText(/Run deep investigation first/)).toBeNull()
+  })
+
+  it('D-129 / D-03: in Rules mode with the toggle on, a quick-look decision still points at deep investigation', async () => {
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
+    aiModeState.current = { analysis_mode: 'rules', ai_offline_mode: true, deep_investigation_enabled: true }
+    await renderAt('/release-gate/run-1', flooredDecision({ synthesized: true }))
+    expect(within(primary()).getByRole('button', { name: 'Override decision' }))
+      .toHaveAttribute('title', 'Run deep investigation first: there is no stored release decision to override yet.')
   })
 
   it.each(['VIEWER', 'TESTER', 'QA_ENGINEER'])(

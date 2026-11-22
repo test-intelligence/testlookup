@@ -659,7 +659,7 @@ async def get_flaky_coach(
             1 for e in entries if history_is_intermittent(e.status_history)
         ),
         quarantine_candidates=sum(
-            1 for e in entries if getattr(e, "quarantine_recommended", False)
+            1 for e in entries if e.quarantine_recommendation == "QUARANTINE"
         ) if release_id is not None else quarantine_count,
         entries=entries,
         scope=FlakyCoachScope(
@@ -834,7 +834,11 @@ async def refresh_flaky_coach(
                 TestCase.test_name,
                 TestCase.suite_name,
             )
-            .where(TestCase.test_fingerprint.in_(fps))
+            .join(TestRun, TestRun.id == TestCase.test_run_id)
+            .where(
+                TestRun.project_id == project_id,
+                TestCase.test_fingerprint.in_(fps),
+            )
             .order_by(TestCase.test_fingerprint, TestCase.created_at.desc())
             .distinct(TestCase.test_fingerprint)
         )

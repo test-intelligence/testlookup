@@ -82,7 +82,8 @@ test('/agents: Trigger pipeline stays one click; Choose workflow opens the picke
   await expect(workflow.locator('option')).toHaveText([
     'Project default — built-in offline',
     'Built-in offline',
-    // Built-in deep is not offered: this project's mode is Rules (the deep gate).
+    // Built-in deep is offered in Rules mode too (D-03): only the Settings › AI toggle hides it.
+    'Built-in deep',
     `My fork · ${FORK_ID}@1`,
   ])
   await networkQuiet(page, api)
@@ -143,7 +144,8 @@ test('the Run page ⋯ Trigger pipeline opens the same strip under the header, q
   await page.getByRole('menuitem', { name: 'Trigger pipeline' }).click()
   const strip = page.getByRole('region', { name: 'Trigger a pipeline' })
   await expect(strip).toBeVisible()
-  await expect(strip.getByRole('combobox', { name: 'Workflow' }).locator('option')).toHaveCount(3)
+  // Project default, built-in offline, built-in deep (offered in Rules mode since D-03), the fork.
+  await expect(strip.getByRole('combobox', { name: 'Workflow' }).locator('option')).toHaveCount(4)
   // Under the header, above the page's tab content.
   const header = await page.locator('[data-page-header]').boundingBox()
   const box = await strip.boundingBox()

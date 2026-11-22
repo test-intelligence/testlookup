@@ -211,19 +211,21 @@ async def test_the_deep_guard_follows_the_stored_mode(monkeypatch):
     # `opened == []` keeps meaning "the mode read used no second session".
     recorded = AsyncMock()
     monkeypatch.setattr(deep_investigation, "record_activity", recorded)
-    db = StoredConfigSession({"analysis_mode": "rules"})  # env says auto
+    # Stored "off" (env says on). Rules mode no longer refuses (D-03), so the
+    # stored toggle is what the guard must follow.
+    db = StoredConfigSession({"analysis_mode": "rules", "deep_investigation_enabled": False})
     app = _deep_app(db)
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
         refused = await client.post(f"/api/v1/deep-investigate/{RUN_ID}", json={"mode": "deep"})
         assert refused.status_code == 422, refused.text
         assert refused.json()["detail"] == (
-            "Deep investigation requires LLM or Auto mode. Current mode: rules."
+            "Deep investigation is disabled in Settings › AI. Ask an administrator to enable it."
         )
         queue.assert_not_called()
 
-        # Switch to Auto (what PUT /settings/ai does: store, then invalidate).
-        db.row.value["analysis_mode"] = "auto"
+        # Switch it on (what PUT /settings/ai does: store, then invalidate).
+        db.row.value["deep_investigation_enabled"] = True
         await invalidate_ai_config_cache()
         accepted = await client.post(f"/api/v1/deep-investigate/{RUN_ID}", json={"mode": "deep"})
 

@@ -72,7 +72,6 @@ const OFF = { analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_
 const RULES = { analysis_mode: 'rules', ai_offline_mode: true, deep_investigation_enabled: true }
 const ON = { analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_enabled: true }
 const OFF_NOTE = 'Deep investigation is turned off in Settings › AI.'
-const RULES_NOTE = 'Deep investigation needs LLM or Auto mode (current mode: Rules).'
 
 beforeEach(() => {
   for (const fn of Object.values(hooks)) fn.mockReset()
@@ -99,8 +98,9 @@ async function renderPage() {
 
 describe('/deep-investigate', () => {
   it.each([
+    // D-03 (owner decision 2026-11-21): a Rules row used to sit here with "needs LLM or Auto mode";
+    // Rules mode now offers both triggers (below).
     ['deep investigation is off', OFF, OFF_NOTE],
-    ['the mode is Rules', RULES, RULES_NOTE],
   ])('when %s, both triggers are replaced by the note', async (_why, mode, note) => {
     aiMode.current = mode
     const verdict = await renderPage()
@@ -122,6 +122,7 @@ describe('/deep-investigate', () => {
 
   it.each([
     ['on, in Auto mode', ON],
+    ['on, in Rules mode (D-03)', RULES],
     ['still loading', undefined],
     ['from a server that does not send the toggle yet', { analysis_mode: 'llm', ai_offline_mode: false }],
   ])('offers both triggers when deep investigation is %s', async (_why, mode) => {
@@ -142,8 +143,8 @@ describe('RunDeepClusters (the run page\'s Analysis tab)', () => {
     )
 
   it.each([
+    // D-03: the Rules row ("needs LLM or Auto mode") moved to the test below.
     ['off', OFF, OFF_NOTE],
-    ['in Rules mode', RULES, RULES_NOTE],
   ])('"Analyze failures" is replaced by the note when deep investigation is %s', (_why, mode, note) => {
     aiMode.current = mode
     renderClusters()
@@ -152,8 +153,11 @@ describe('RunDeepClusters (the run page\'s Analysis tab)', () => {
     expect(within(section).getByTestId('deep-disabled-note')).toHaveTextContent(note)
   })
 
-  it('"Analyze failures" stays when deep investigation is on', () => {
-    aiMode.current = ON
+  it.each([
+    ['on, in Auto mode', ON],
+    ['on, in Rules mode (D-03)', RULES],
+  ])('"Analyze failures" stays when deep investigation is %s', (_why, mode) => {
+    aiMode.current = mode
     renderClusters()
     expect(screen.getByRole('button', { name: /Analyze failures/ })).toBeEnabled()
     expect(screen.queryByTestId('deep-disabled-note')).toBeNull()

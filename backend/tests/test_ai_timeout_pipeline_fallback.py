@@ -182,7 +182,8 @@ async def test_a_five_second_freeze_times_out_at_five_and_is_recorded_as_a_fallb
         audit = analysis["_audit"]  # persisted verbatim as AIAnalysis.routing_metadata
         assert audit["fallback_from"] == "llm"
         assert audit["fallback_reason"] == expected
-        assert audit["analysis_mode"] == "rules"   # tiers 2-3 are deterministic
+        # Tier 3 is a canned stub no engine wrote, so it names none (S-A-1).
+        assert audit["analysis_mode"] is None
         assert analysis["fallback_tier"] == 3
         assert analysis["fallback_reason"] == "timeout_generic"  # the dict's own reason stays
         assert "timed out after 5s" in analysis["root_cause_summary"]
@@ -237,7 +238,11 @@ async def test_an_explicit_project_override_tightens_the_frozen_global(stage):
 
 @pytest.mark.asyncio
 async def test_a_tier_one_answer_is_still_recorded_as_an_llm_engine(monkeypatch, stage):
-    """Tier 1 is an LLM call: ``mode_used="llm"``; the fallback is still recorded."""
+    """Tier 1 is an LLM call: ``mode_used="llm"``; the fallback is still recorded.
+
+    What fell back was the full investigation, so the record reads
+    react_agent -> llm, never llm -> llm (D-149).
+    """
     agent, _inner, _fast, _times = stage
     ids = ["tc-1"]
     agent._fetch_test_metadata = AsyncMock(return_value=_meta(ids))  # type: ignore[method-assign]
@@ -262,8 +267,10 @@ async def test_a_tier_one_answer_is_still_recorded_as_an_llm_engine(monkeypatch,
     analysis = result["analyses"]["tc-1"]
     assert analysis["fallback_tier"] == 1
     assert analysis["_audit"]["analysis_mode"] == "llm"
-    assert analysis["_audit"]["fallback_from"] == "llm"
-    assert analysis["_audit"]["fallback_reason"] == "llm_timeout: LLM timed out after 5 s"
+    assert analysis["_audit"]["fallback_from"] == "react_agent"
+    assert analysis["_audit"]["fallback_reason"] == (
+        "react_timeout: full investigation timed out after 5 s"
+    )
     assert [d["chosen"] for d in _fallback_decisions(agent)] == ["llm"]
 
 

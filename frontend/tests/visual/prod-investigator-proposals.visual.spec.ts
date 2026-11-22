@@ -23,7 +23,13 @@ const blur = (page: Page) => page.evaluate(() => (document.activeElement as HTML
 
 for (const theme of THEMES_WITH_PAPER) {
   test(`the cockpit's proposed actions for a suggest verdict — ${theme}`, async ({ page }) => {
-    const { handlers } = investigationWorld({ mode: 'suggest' })
+    const { handlers: world } = investigationWorld({ mode: 'suggest' })
+    // The baseline shows the card with deep investigation unavailable. Rules mode used to refuse it; since
+    // D-03 only the Settings › AI toggle does, so the toggle is what this region now answers off.
+    const handlers: typeof world = [
+      ['/api/v1/settings/ai/mode', () => ({ analysis_mode: 'rules', deep_investigation_enabled: false })],
+      ...world,
+    ]
     const { api, errors } = await openRollout(page, `/deep-investigate?run=${RUN_ID}`, { theme, handlers, ready })
     const card = page.getByTestId('investigation-verdict')
     const rows = card.getByTestId('cockpit-action-row')

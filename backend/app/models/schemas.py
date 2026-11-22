@@ -3724,8 +3724,8 @@ class DeepHistoryResponse(BaseModel):
 
 class DeepGateRead(BaseModel):                     # services/deep_investigation_gate.DeepGateDecision, as data
     allowed: bool
-    reason_code: Optional[str] = None              # "disabled" | "rules_mode" | None
-    message: Optional[str] = None                  # the gate's own sentence (MESSAGE_DISABLED / MESSAGE_RULES_MODE)
+    reason_code: Optional[str] = None              # "disabled" | None
+    message: Optional[str] = None                  # the gate's own sentence (MESSAGE_DISABLED)
     analysis_mode: str                             # the RESOLVED mode
     deep_investigation_enabled: bool
 

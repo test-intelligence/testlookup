@@ -183,15 +183,15 @@ async def test_ids_and_filter_are_exclusive_and_one_is_required(both):
 
 @pytest.mark.asyncio
 async def test_bulk_deep_refused_by_the_gate_queues_nothing_and_writes_no_job():
-    from app.services.deep_investigation_gate import MESSAGE_RULES_MODE
+    from app.services.deep_investigation_gate import MESSAGE_DISABLED
 
-    gate = AsyncMock(side_effect=HTTPException(422, detail=MESSAGE_RULES_MODE))
+    gate = AsyncMock(side_effect=HTTPException(422, detail=MESSAGE_DISABLED))
     redis = FakeRedis()
     db = _Session(_rows(3))
     with pytest.raises(HTTPException) as exc:
         await _bulk(agents_router.BulkTriggerRequest(run_ids=[r[0] for r in db.rows], workflow_type="deep"),
                     db, redis=redis, gate=gate)
-    assert exc.value.status_code == 422 and exc.value.detail == MESSAGE_RULES_MODE
+    assert exc.value.status_code == 422 and exc.value.detail == MESSAGE_DISABLED
     assert db.statements == [] and redis.hashes == {} and redis.strings == {}
 
 

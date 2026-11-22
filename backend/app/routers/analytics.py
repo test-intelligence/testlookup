@@ -960,10 +960,13 @@ async def classify_uncategorized_failures(
         )
 
     new_category = payload.category.value
+    # A person chose this label: a later pipeline run must not replace it (D-85).
+    from app.services.failure_category_sync import SOURCE_HUMAN
+
     await db.execute(
         update(TestCase)
         .where(TestCase.id.in_(tc_ids))
-        .values(failure_category=new_category)
+        .values(failure_category=new_category, failure_category_source=SOURCE_HUMAN)
     )
     await db.execute(
         update(AIAnalysis)

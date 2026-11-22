@@ -172,7 +172,7 @@ so the table view and CSV export need no transformation. Each point carries
 panel of the Explorer's small multiples; ``meta.definitions.facet`` states
 it.
 
-Source: [backend/app/routers/analytics.py:1044](../../../backend/app/routers/analytics.py#L1044).
+Source: [backend/app/routers/analytics.py:1047](../../../backend/app/routers/analytics.py#L1047).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
