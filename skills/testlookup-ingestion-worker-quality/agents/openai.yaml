@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Ingestion and Worker Quality"
+  short_description: "Verify report ingestion, queues, and job recovery"
+  default_prompt: "Use $testlookup-ingestion-worker-quality to review a TestLookup ingestion or worker change and verify its durable effects."

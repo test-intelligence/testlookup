@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Data and Storage Quality"
+  short_description: "Verify migrations, persistence, and recovery"
+  default_prompt: "Use $testlookup-data-storage-quality to review a TestLookup data or migration change and verify persistence and upgrade behavior."

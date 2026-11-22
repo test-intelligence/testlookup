@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup CLI Quality"
+  short_description: "Verify CLI commands, output, and CI exit codes"
+  default_prompt: "Use $testlookup-cli-quality to review a TestLookup CLI change and verify its supported automation contract."

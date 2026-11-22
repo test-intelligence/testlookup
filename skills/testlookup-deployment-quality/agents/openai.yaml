@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Deployment and Operations Quality"
+  short_description: "Verify deployment profiles, upgrades, and recovery"
+  default_prompt: "Use $testlookup-deployment-quality to review a TestLookup deployment change and verify its target profile and rollback evidence."

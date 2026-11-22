@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup CI and Release Engineering Quality"
+  short_description: "Verify CI gates, candidate provenance, and promotion"
+  default_prompt: "Use $testlookup-release-engineering to review the TestLookup CI and release gates for the intended candidate revision."

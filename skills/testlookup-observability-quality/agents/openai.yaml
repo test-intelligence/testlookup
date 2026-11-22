@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Observability Quality"
+  short_description: "Verify TestLookup metrics, alerts, and tracing"
+  default_prompt: "Use $testlookup-observability-quality to verify the telemetry and operator signals for this TestLookup change."

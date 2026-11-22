@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup Performance Quality"
+  short_description: "Measure latency, resource use, and regression impact"
+  default_prompt: "Use $testlookup-performance-quality to review a TestLookup performance change with a comparable baseline, workload and metric."

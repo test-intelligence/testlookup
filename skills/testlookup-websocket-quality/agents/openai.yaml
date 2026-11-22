@@ -1,0 +1,4 @@
+interface:
+  display_name: "TestLookup WebSocket and Realtime Quality"
+  short_description: "Verify WebSocket, SSE, and event delivery behavior"
+  default_prompt: "Use $testlookup-websocket-quality to review and verify a TestLookup realtime protocol or reconnect change."
