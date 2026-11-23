@@ -264,12 +264,13 @@ const ROUTES: SweepRoute[] = [
     handlers: () => testLibraryWorld().handlers,
     ready: tmReady,
     actions: [
-      form('New Plan', (p) => p.getByRole('button', { name: 'New Plan' }).first(), 'New Test Plan'),
-      form('Link Suite', (p) => p.getByRole('button', { name: 'Link Suite', exact: true }).first(), 'Link Test Suite to Plan', cancel,
+      // D-57: plan writes are TESTER and above on the API; a viewer is offered neither control.
+      only(ENGINEER_UP, form('New Plan', (p) => p.getByRole('button', { name: 'New Plan' }).first(), 'New Test Plan')),
+      only(ENGINEER_UP, form('Link Suite', (p) => p.getByRole('button', { name: 'Link Suite', exact: true }).first(), 'Link Test Suite to Plan', cancel,
         async (p) => {
           await p.getByRole('heading', { name: 'Sprint 42 regression' }).click()
           await expect(p.getByText('No test cases in this plan yet. Link a suite or add test cases.')).toBeVisible()
-        }),
+        })),
     ],
   },
   {
@@ -294,7 +295,8 @@ const ROUTES: SweepRoute[] = [
     roles: EVERY,
     handlers: () => testLibraryWorld().handlers,
     ready: tmReady,
-    actions: [form('Generate Strategy', (p) => p.getByRole('button', { name: 'Generate Strategy' }).first(), 'Generate Test Strategy with AI')],
+    // S-D-2: generating a strategy is QA_ENGINEER and above on the API.
+    actions: [only(ENGINEER_UP, form('Generate Strategy', (p) => p.getByRole('button', { name: 'Generate Strategy' }).first(), 'Generate Test Strategy with AI'))],
   },
   {
     route: '/test-management (evidence gaps)',

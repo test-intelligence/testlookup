@@ -1,6 +1,6 @@
 /**
  * NTF-01: the bell follows only the server's two allow-listed path shapes,
- * re-checked here, and `/releases/<id>` (every role reads releases, D-118).
+ * re-checked here, and `/releases/<id>` (a QA engineer and above reads releases, D-118).
  * Equality on the whole value, never a substring. W38: the two
  * exact strings `/users?tab=erasure-requests` (management only) and
  * `/settings/profile` (every role), and their near misses.
@@ -11,6 +11,7 @@ import { notificationChannelLabel, notificationHref } from './notificationHref'
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e'
 const LEAD = { canAccessManagement: true }
 const VIEWER = { canAccessManagement: false }
+const QA_ENGINEER = { canAccessManagement: false, canReadReleases: true }
 
 describe('notificationHref', () => {
   it('a run decision links for every role', () => {
@@ -23,10 +24,10 @@ describe('notificationHref', () => {
     expect(notificationHref({ link: `/test-management?case=${ID}` }, VIEWER)).toBe(`/test-management?case=${ID}`)
   })
 
-  it('a release links for every role (D-118)', () => {
+  it('a release links for a QA engineer and above; for a viewer or tester it stays text (D-118)', () => {
     expect(notificationHref({ link: `/releases/${ID}` }, LEAD)).toBe(`/releases/${ID}`)
-    // D-118: every role reads a release, so the entry links for a viewer too.
-    expect(notificationHref({ link: `/releases/${ID}` }, VIEWER)).toBe(`/releases/${ID}`)
+    expect(notificationHref({ link: `/releases/${ID}` }, QA_ENGINEER)).toBe(`/releases/${ID}`)
+    expect(notificationHref({ link: `/releases/${ID}` }, VIEWER)).toBeNull()
   })
 
   it('W38: the erasure-request queue links (exactly) for a QA lead or admin only — /users is a management route', () => {

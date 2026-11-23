@@ -13,11 +13,12 @@ import { owningNavItem } from './navConfig'
  */
 export default function SectionTabs() {
   const { pathname } = useLocation()
-  const { canAccessManagement } = usePermissions()
+  const { canAccessManagement, canReadReleases } = usePermissions()
   const item = owningNavItem(pathname)
   if (!item?.tabs || (item.requires === 'management' && !canAccessManagement)) return null
-  // A tab whose page redirects this user is not offered (D-118: a viewer reads
-  // Releases, not Gate policies); one tab left is no set of tabs.
+  if (item.requires === 'qa_engineer' && !canReadReleases) return null
+  // A tab whose page redirects this user is not offered (D-118: a QA engineer
+  // reads Releases, not Gate policies); one tab left is no set of tabs.
   const tabs = canAccessManagement
     ? item.tabs
     : item.tabs.filter((tab) => !item.managementTabs?.includes(tab.to))

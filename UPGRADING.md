@@ -191,9 +191,10 @@ Existing usernames that contain `@` keep working for sign-in.
 - **Lists in "All Projects"** (test plans, strategies, gate policies) show the
   rows of every project you belong to; they were empty for everyone but
   admins. Naming a project you are not a member of is still a 403.
-- **Releases opens read-only below QA lead.** Every member can open the
-  Releases page and a release; the write controls and the Gate policies tab
-  stay QA lead only.
+- **QA engineers can open Releases, read-only.** A QA engineer opens the
+  Releases page and a release, with no write controls; the Gate policies tab
+  stays QA lead only. Viewers and testers are still sent to the overview, and
+  a release notification stays plain text for them.
 - **An admin's default QA lead password reset re-enables the account**
   (after a restore, for example). A project QA lead's reset of a turned-off
   account is a 409 and changes nothing, so it cannot undo an admin's

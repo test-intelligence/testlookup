@@ -187,11 +187,6 @@ const appRoutes: AppRoute[] = [
   // writes them).
   // React Router ranks this static path above `releases/:releaseId`.
   { path: 'releases/attribution-rules', component: ReleaseAttributionRulesPage },
-  // D-118 (owner decision 4): every role READS releases (the API serves any
-  // member); the page hides its writes below QA lead. The run page's release
-  // chip, the gate strip and notifications all link here for every role.
-  { path: 'releases', component: ReleasesPage },
-  { path: 'releases/:releaseId', component: ReleasesPage },
   { path: 'flaky', component: FlakyTestsPage },
   { path: 'flaky-coach', component: FlakyCoachRedirect },
   { path: 'quarantine', component: QuarantineRedirect },
@@ -210,6 +205,15 @@ const appRoutes: AppRoute[] = [
   // W23a TRND-03: a project's expected runs. Every role READS them (the API's reads are any member's) and a
   // QA lead edits, so the route is here (the REL-09 precedent); the settings item is QA lead+ (settingsNav).
   { path: 'settings/expected-runs', component: ExpectedRunsPage },
+]
+
+/**
+ * D-118 (owner decision 4): QA engineers READ releases; the page hides its
+ * writes below QA lead. Viewers and testers are redirected, as before.
+ */
+const qaEngineerRoutes: AppRoute[] = [
+  { path: 'releases', component: ReleasesPage },
+  { path: 'releases/:releaseId', component: ReleasesPage },
 ]
 
 /** Routes restricted to QA_LEAD and ADMIN roles. */
@@ -339,6 +343,15 @@ function ManagementGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+/** Route guard for the pages a QA engineer reads (Releases): below that, the overview. */
+function QaEngineerGuard({ children }: { children: React.ReactNode }) {
+  const { canReadReleases } = usePermissions()
+  if (!canReadReleases) {
+    return <Navigate to="/overview" replace />
+  }
+  return <>{children}</>
+}
+
 /**
  * Invitation links handed out before W17b were `/register?token=…&email=…`. Never delete a route:
  * forward to the accept page with the token moved into the fragment (the email is dropped).
@@ -379,6 +392,13 @@ export default function App() {
           <Route index element={<Navigate to="/overview" replace />} />
           {appRoutes.map(({ path, component }) => (
             <Route key={path} path={path} element={renderLazyRoute(component)} />
+          ))}
+          {qaEngineerRoutes.map(({ path, component: Component }) => (
+            <Route
+              key={path}
+              path={path}
+              element={<QaEngineerGuard>{renderLazyRoute(Component)}</QaEngineerGuard>}
+            />
           ))}
           {managementRoutes.map(({ path, component: Component }) => (
             <Route

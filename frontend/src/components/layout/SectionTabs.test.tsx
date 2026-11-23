@@ -3,10 +3,11 @@ import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SectionTabs from './SectionTabs'
 
-const perms = vi.hoisted(() => ({ canAccessManagement: true }))
+const perms = vi.hoisted(() => ({ canAccessManagement: true, canReadReleases: true }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => perms }))
 beforeEach(() => {
   perms.canAccessManagement = true
+  perms.canReadReleases = true
 })
 
 function tabsAt(path: string): { labels: string[]; active: string | null } {
@@ -48,8 +49,15 @@ describe('SectionTabs (UX redesign P1)', () => {
     },
   )
 
-  it("a viewer reads Releases but is not offered Gate policies, so one tab is no tabs (D-118)", () => {
+  it("a QA engineer reads Releases but is not offered Gate policies, so one tab is no tabs (D-118)", () => {
     perms.canAccessManagement = false
     expect(tabsAt('/releases').labels).toEqual([])
+  })
+
+  it('a viewer or tester is shown no Releases tabs (D-118)', () => {
+    perms.canAccessManagement = false
+    perms.canReadReleases = false
+    expect(tabsAt('/releases').labels).toEqual([])
+    expect(tabsAt('/policies').labels).toEqual([])
   })
 })

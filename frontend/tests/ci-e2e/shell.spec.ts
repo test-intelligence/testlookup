@@ -2,8 +2,7 @@
  * The UX redesign P1 shell, on a real page (`/failures`), hermetic.
  *
  * - The sidebar is a list of places (`data-nav-id`): 12 for a QA lead (with
- *   Admin, without the flag-gated Ask AI), 11 for a viewer (Releases to read,
- *   D-118), and the place that
+ *   Admin, without the flag-gated Ask AI), 10 for a viewer, and the place that
  *   owns the page is the active one.
  * - A multi-page place shows its pages as tabs above the page.
  * - **?** opens the page's documentation topic beside it, without leaving it;
@@ -46,7 +45,7 @@ test('a QA lead: 12 places, Failures active, and the section tabs above the page
   expect(errors).toEqual([])
 })
 
-test('a viewer: 11 places with Releases to read (D-118), no Admin', async ({ page }) => {
+test('a viewer: 10 places, no Releases, no Admin', async ({ page }) => {
   const viewer = { ...USER, username: 'viewer', full_name: 'Viewer', role: 'VIEWER' }
   const { api, errors } = await openProductionPage(page, '/failures', {
     theme: 'signal',
@@ -59,7 +58,6 @@ test('a viewer: 11 places with Releases to read (D-118), no Admin', async ({ pag
   })
   expect(await navIds(page)).toEqual([
     'home', 'inbox', 'runs', 'failures', 'flaky', 'trends', 'suites', 'test-cases', 'reports', 'release-gate',
-    'releases',
   ])
   await networkQuiet(page, api)
   expect(api.unhandled).toEqual([])

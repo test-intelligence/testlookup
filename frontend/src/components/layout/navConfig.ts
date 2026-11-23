@@ -9,7 +9,8 @@
  *    links to the routes that already exist, so related pages read as one
  *    place without being merged.
  *
- * 12 items for a viewer, 13 for a QA lead or admin (Admin). The
+ * 11 items for a viewer or tester, 12 for a QA engineer (Releases), 13 for a
+ * QA lead or admin (Admin). The
  * routes that left the nav keep working: Documentation and Getting started
  * are in the Help menu, Search is the top bar, Upload is the primary button
  * on Runs, everything else is a section tab or under Admin.
@@ -34,7 +35,7 @@ export interface NavItem {
   /** The muted label above the item's group; `undefined` for the top items. */
   section?: NavSection
   /** `management`: QA lead and admin only (`usePermissions().canAccessManagement`). */
-  requires?: 'management'
+  requires?: 'management' | 'qa_engineer'
   /** Shown only when the Ask-AI chat can run (its flag on, and an LLM mode). */
   needsChat?: boolean
   /** The section's pages, as route tabs at the top of each of them. */
@@ -131,7 +132,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
     to: '/releases',
     section: 'RELEASE',
     owns: ['/releases', '/policies'],
-    // D-118: every role reads Releases; Gate policies stays a QA lead's page.
+    // D-118: a QA engineer reads Releases; Gate policies stays a QA lead's page.
+    requires: 'qa_engineer',
     managementTabs: ['/policies'],
     tabs: [
       { to: '/releases', label: 'Releases' },
@@ -156,6 +158,7 @@ export const PERSONAL_PATHS: readonly string[] = ['/settings/profile', '/setting
 
 export interface NavAccess {
   canAccessManagement: boolean
+  canReadReleases?: boolean
   chatEnabled: boolean
 }
 
@@ -163,7 +166,9 @@ export interface NavAccess {
 export function visibleNavItems(access: NavAccess): NavItem[] {
   return NAV_ITEMS.filter(
     (item) =>
-      (item.requires !== 'management' || access.canAccessManagement) && (!item.needsChat || access.chatEnabled),
+      (item.requires !== 'management' || access.canAccessManagement) &&
+      (item.requires !== 'qa_engineer' || access.canReadReleases === true || access.canAccessManagement) &&
+      (!item.needsChat || access.chatEnabled),
   )
 }
 

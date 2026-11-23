@@ -66,8 +66,10 @@ type RunTab = (typeof TAB_IDS)[number]
 const UNATTRIBUTED_TITLE =
   'No release claims this run: the attribution ladder did not link it. Set its release, or check the attribution rules.'
 
-function ReleaseTag({ releaseName, onSet, canEdit }: {
+function ReleaseTag({ releaseName, onSet, canEdit, canOpen = true }: {
   releaseName?: string
+  /** D-118: Releases opens for a QA engineer and above; below that the name is plain text. */
+  canOpen?: boolean
   onSet: (name: string) => Promise<void>
   /** D-08a: changing a run's release is QA lead on the API (`POST /runs/{id}/release`). */
   canEdit: boolean
@@ -115,13 +117,20 @@ function ReleaseTag({ releaseName, onSet, canEdit }: {
   if (releaseName) {
     return (
       <div className="flex items-center gap-2">
-        <button
-          onClick={() => navigate('/releases')}
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)] hover:bg-[var(--status-flaky-bg)]/50 transition-colors"
-        >
-          <Package className="h-3 w-3" />
-          {releaseName}
-        </button>
+        {canOpen ? (
+          <button
+            onClick={() => navigate('/releases')}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky)] hover:bg-[var(--status-flaky-bg)]/50 transition-colors"
+          >
+            <Package className="h-3 w-3" />
+            {releaseName}
+          </button>
+        ) : (
+          <span data-release-name="" className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[var(--status-flaky-bg)]/40 text-[var(--status-flaky-ink)]">
+            <Package className="h-3 w-3" />
+            {releaseName}
+          </span>
+        )}
         {canEdit && (
           <button onClick={() => setEditing(true)} title="Change release" aria-label="Change release" className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]">
             <PencilLine className="h-3.5 w-3.5" />
@@ -253,7 +262,7 @@ export default function RunDetailPage() {
     navigate(href)
   }
 
-  const { isQaEngineer, isQaLead } = usePermissions()
+  const { isQaEngineer, isQaLead, canReadReleases } = usePermissions()
   // The same gate as the sidebar's Ask AI entry (both reads are the shell's,
   // so this costs no request).
   const chatFlagEnabled = useFeatureEnabled('ask_ai_chat')
@@ -421,7 +430,7 @@ export default function RunDetailPage() {
             <div className="flex items-center gap-2 flex-wrap text-sm">
               <StatusBadge status={run.status} />
               <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
-              <ReleaseTag releaseName={run.release_name} onSet={handleSetRelease} canEdit={isQaLead} />
+              <ReleaseTag releaseName={run.release_name} onSet={handleSetRelease} canEdit={isQaLead} canOpen={canReadReleases} />
               {/* EXEC-04b: the run's two durations, labelled (the Timing tab has the breakdown). */}
               <RunTimingFigures run={run} />
             </div>

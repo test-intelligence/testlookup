@@ -121,7 +121,7 @@ export default function Sidebar({ drawer = null }: { drawer?: SidebarDrawer | nu
     if (event.target instanceof Element && event.target.closest('a[href]')) drawer?.onClose()
   }
   const { pathname } = useLocation()
-  const { canAccessManagement } = usePermissions()
+  const { canAccessManagement, canReadReleases } = usePermissions()
   const { data: aiConfig } = useAIConfig()
   // Ask-AI chat (US-2.1): flag-gated, and pointless without an LLM, so no
   // dead entry in rules mode. Direct navigation to /chat still works.
@@ -139,7 +139,7 @@ export default function Sidebar({ drawer = null }: { drawer?: SidebarDrawer | nu
     writeCollapsed(next)
   }
 
-  const items = visibleNavItems({ canAccessManagement, chatEnabled })
+  const items = visibleNavItems({ canAccessManagement, canReadReleases, chatEnabled })
   const activeId = owningNavItem(pathname)?.id ?? null
 
   return (

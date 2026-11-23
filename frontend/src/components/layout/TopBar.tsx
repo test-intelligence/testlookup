@@ -186,7 +186,7 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
   const [bellOpen, setBellOpen] = useState(false)
   const bellTriggerRef = useRef<HTMLButtonElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
-  const { isAdmin, canAccessManagement } = usePermissions()
+  const { isAdmin, canAccessManagement, canReadReleases } = usePermissions()
 
   const { data: unreadData } = useUnreadCount()
   const { data: recentLogs, mutate: refreshLogs } = useNotificationHistory(false)
@@ -418,7 +418,7 @@ export default function TopBar({ navToggle = null }: { navToggle?: TopBarNavTogg
                   {recentLogs.slice(0, 15).map(log => {
                     // NTF-01: an allow-listed in-app path (re-checked by shape
                     // and role), else the entry stays text.
-                    const href = notificationHref(log, { canAccessManagement })
+                    const href = notificationHref(log, { canAccessManagement, canReadReleases })
                     const title = (
                       <p className={`text-sm truncate ${!log.is_read ? 'text-[var(--color-text)] font-medium' : 'text-[var(--color-text-muted)]'}`}>
                         {log.title}

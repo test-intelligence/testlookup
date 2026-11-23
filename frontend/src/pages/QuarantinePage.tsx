@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import CreateJiraIssueModal, { jiraUnavailableCopy } from '@/components/defects/CreateJiraIssueModal'
-import { useJiraDefectMetadata } from '@/hooks/useJiraDefects'
+import { useAIConfig } from '@/hooks/useAIConfig'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
@@ -95,13 +95,11 @@ export function QuarantineBody({
     return requests.filter((r) => allowed.has(r.status))
   }, [requests, view])
 
-  // D-43: whether Jira can take an issue is known before the form opens (the
-  // Jira account and offline mode are deployment-wide, so one project's answer
-  // holds for every row). Read only when a row could offer the action.
-  const { metadata: jiraMeta } = useJiraDefectMetadata(
-    isQaEngineer && view !== 'history' ? (projectId ?? rows[0]?.project_id ?? null) : null,
-  )
-  const fileJira = fileJiraOffer(jiraMeta)
+  // D-43: offline mode is known before any form opens, from the setting every
+  // role may read (the shell already holds it, so this adds no request). It is
+  // deployment-wide, so it holds for every row, in every project.
+  const { data: aiMode } = useAIConfig()
+  const fileJira = fileJiraOffer(aiMode?.ai_offline_mode === true)
 
   return (
     <section
@@ -208,23 +206,19 @@ const DEFAULT_FILE_JIRA: FileJiraOffer = {
 }
 
 /**
- * D-43: the row action as the Jira availability probe allows it. Jira
- * unavailable (offline mode, turned off, not set up) with a webhook receiver:
- * "File defect", sent to the receiver. With no receiver either: disabled, the
- * reason as its tooltip. Unknown (still loading, or not asked): as before; the
- * form itself gates submission.
+ * D-43: in offline mode the row does not offer "File Jira": it reads "File
+ * defect", and its tooltip says why. The form then reads the project's own
+ * availability and either sends the defect to the webhook receiver or says why
+ * it cannot. Online: as before (the form still gates a Jira that is turned off
+ * or not set up).
  */
-function fileJiraOffer(meta: { available: boolean; webhook_available: boolean; reason?: string | null } | undefined): FileJiraOffer {
-  if (!meta || meta.available) return DEFAULT_FILE_JIRA
-  const reason = jiraUnavailableCopy(meta.reason)
-  if (meta.webhook_available) {
-    return {
-      label: 'File defect',
-      title: `${reason} The form sends the defect to your webhook receiver instead.`,
-      disabled: false,
-    }
+function fileJiraOffer(offline: boolean): FileJiraOffer {
+  if (!offline) return DEFAULT_FILE_JIRA
+  return {
+    label: 'File defect',
+    title: `${jiraUnavailableCopy('offline_mode')} The form sends the defect to your webhook receiver when one is set.`,
+    disabled: false,
   }
-  return { label: 'File Jira', title: reason, disabled: true }
 }
 
 type Decision = 'approve' | 'reject' | 'release'

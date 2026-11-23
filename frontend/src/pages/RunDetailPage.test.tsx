@@ -257,12 +257,20 @@ describe('RunDetailPage — the release chip', () => {
     expect(screen.queryByText('Unattributed')).toBeNull()
   })
 
-  it.each(['VIEWER', 'TESTER', 'QA_ENGINEER'])(
-    'a %s reads the release with no Change release pencil, and Unattributed as text (D-08a)',
+  it('a QA_ENGINEER opens the release from its chip, with no Change release pencil (D-08a, D-118)', async () => {
+    useAuthStore.setState({ user: { id: 'qe', role: 'QA_ENGINEER' } as never })
+    await renderRun('2026.11')
+    expect(screen.getByRole('button', { name: '2026.11' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Change release' })).toBeNull()
+  })
+
+  it.each(['VIEWER', 'TESTER'])(
+    'a %s reads the release name as text: Releases opens for a QA engineer and above (D-08a, D-118)',
     async (role) => {
       useAuthStore.setState({ user: { id: role, role } as never })
       await renderRun('2026.11')
-      expect(screen.getByRole('button', { name: '2026.11' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: '2026.11' })).toBeNull()
+      expect(screen.getByText('2026.11')).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: 'Change release' })).toBeNull()
     },
   )

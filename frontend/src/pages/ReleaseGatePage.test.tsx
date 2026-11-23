@@ -1263,6 +1263,25 @@ describe('ReleaseGatePage — the band policy and the top-bar release (W11)', ()
     expect(screen.getByRole('heading', { name: 'Recommendation' })).toBeInTheDocument()
   })
 
+  it('a viewer reads the release verdict but gets no "Open release" link (D-118: QA engineer and above)', async () => {
+    useAuthStore.setState({ user: { id: 'viewer', role: 'VIEWER' } as never })
+    releaseScope.releaseId = 'rel-11'
+    releaseGateRead.useReleaseGate.mockImplementation((id: string | null) => ({
+      data: id === 'rel-11'
+        ? { release_id: 'rel-11', verdict: 'NO_GO', decided_at: HOURS_AGO_2(), blocking_reasons: ['P0 open'] }
+        : undefined,
+      error: undefined,
+    }))
+    await renderGate(flooredDecision())
+    const strip = await waitFor(() => {
+      const found = document.querySelector('[data-release-verdict-strip]') as HTMLElement | null
+      if (!found) throw new Error('no strip')
+      return found
+    })
+    expect(strip).toHaveTextContent('release gate: No-Go')
+    expect(within(strip).queryByRole('link', { name: 'Open release →' })).toBeNull()
+  })
+
   it('a release never evaluated (the 404) reads "not evaluated yet", never a verdict', async () => {
     releaseScope.releaseId = 'rel-10'
     releaseGateRead.useReleaseGate.mockImplementation(() => ({ data: null, error: undefined }))
