@@ -1203,6 +1203,10 @@ export default function TrendsPage() {
   }, [chartsKey])
   const applyExtra = useCallback(
     (view: SavedView) => {
+      // D-18: a saved view states its window; applying one ends the page's
+      // 14-day hold even when that window equals the stored one (a default
+      // view of 30 days, with 30 already stored, changed nothing to notice).
+      setHoldDefault(false)
       const charts = (view.filters as { charts?: unknown } | null | undefined)?.charts ?? null
       chartConfigStore.applyView(charts, TRENDS_CHART_KEYS)
       // Compare's chosen suites / releases live in the URL: the view's go there.

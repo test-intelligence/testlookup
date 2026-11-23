@@ -1817,5 +1817,36 @@ describe('TrendsPage W08', () => {
       await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('cmp_suite=billing&cmp_suite=checkout'))
       expect(screen.getByTestId('location')).toHaveTextContent('tab=by-suite')
     })
+
+    it('a default view of 30 days opens at 30 days even when 30 is already stored (D-18)', async () => {
+      const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+      useTimeWindowStore.setState({ days: 30 })
+      // My default view opens only for its owner, once per tab.
+      const { useAuthStore } = await import('@/store/authStore')
+      useAuthStore.setState({ user: { id: 'u1' } as never })
+      window.sessionStorage.clear()
+      const views = await import('@/services/savedViewsService')
+      ;(views.listSavedViews as ReturnType<typeof vi.fn>).mockResolvedValue([
+        {
+          id: 'view-default',
+          user_id: 'u1',
+          project_id: 'proj-1',
+          name: 'My default',
+          description: null,
+          page: 'trends',
+          filters: { kind: 'report_view', page: 'trends', window: 30 },
+          is_shared: false,
+          is_default: true,
+          created_at: '2026-10-01T00:00:00Z',
+          updated_at: null,
+        },
+      ])
+      await renderPage()
+      // The view states 30 days; the page's own 14-day hold must not survive it.
+      await waitFor(() =>
+        expect(screen.getByRole('radio', { name: '30d' })).toHaveAttribute('aria-checked', 'true'),
+      )
+      expect(useTimeWindowStore.getState().days).toBe(30)
+    })
   })
 })
