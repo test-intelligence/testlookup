@@ -20,17 +20,17 @@ from app.services import integration_probe_service as svc
 RESOLVER_ERROR = socket.gaierror(-3, "Temporary failure in name resolution")
 
 
-def _client_raising(exc: BaseException) -> MagicMock:
+def _client_raising(exc: Exception) -> MagicMock:
     client = MagicMock()
     client.get = AsyncMock(side_effect=exc)
     return client
 
 
-def _httpx_connect_error_from(cause: BaseException) -> httpx.ConnectError:
+def _httpx_connect_error_from(cause: Exception) -> httpx.ConnectError:
     try:
         try:
             raise cause
-        except BaseException as inner:
+        except Exception as inner:
             raise httpx.ConnectError("[Errno -3] Temporary failure in name resolution") from inner
     except httpx.ConnectError as outer:
         return outer

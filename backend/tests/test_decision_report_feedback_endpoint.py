@@ -78,7 +78,7 @@ async def test_a_claim_correction_needs_qa_engineer_in_the_run_project(monkeypat
     report evaluation cycle reads. Same floor as every other correction."""
     service = AsyncMock()
     monkeypatch.setattr(feedback_router.feedback_service, "submit_decision_report_feedback", service)
-    monkeypatch.setattr(feedback_router, "get_mongo_db", lambda: object())
+    monkeypatch.setattr(feedback_router, "get_mongo_db", object)
     asked = []
 
     async def holds(_db, _user, project_id, min_role):
@@ -105,7 +105,7 @@ async def test_a_claim_correction_needs_qa_engineer_in_the_run_project(monkeypat
 async def test_a_qa_engineer_files_a_claim_correction(monkeypatch):
     service = AsyncMock(return_value={"status": "recorded"})
     monkeypatch.setattr(feedback_router.feedback_service, "submit_decision_report_feedback", service)
-    monkeypatch.setattr(feedback_router, "get_mongo_db", lambda: object())
+    monkeypatch.setattr(feedback_router, "get_mongo_db", object)
 
     async def holds(*_args):
         return True
