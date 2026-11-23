@@ -10,9 +10,9 @@
  *    NO_GO), the server stages the in-app entry in the same transaction, and the bell's next poll lists
  *    `Quality gate failed: 2026.11.1 — test_pay (checkout-e2e) is FAILED` as a link to `/releases/<id>`;
  *    clicking it closes the bell and opens the release, whose gate reads No-Go;
- *  - the bell follows only the two allow-listed shapes, re-checked by role: a viewer sees the release entry as
- *    text and the run decision's `/release-gate/<run>` as a link; a link of any other shape is text for
- *    everyone.
+ *  - the bell follows only the two allow-listed shapes: a viewer sees the release entry (D-118: every role
+ *    reads releases) and the run decision's `/release-gate/<run>` as links; a link of any other shape is text
+ *    for everyone.
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock: the spec moves the bell's 30 s poll with
  * `page.clock.runFor`). Fixtures: `gateNotifyWorld()` / `notificationsWorld()` (`fixtures-notify-flaky.ts`).
@@ -140,17 +140,16 @@ const MIXED_HISTORY = [
 const RUN_TITLE = runDecisionNotification('x').title
 const FOREIGN_TITLE = 'Quality gate failed: Payments build 7 — elsewhere'
 
-test('a viewer: the release entry is text, the run decision a link to its release gate, a foreign link text', async ({ page }) => {
+test('a viewer: the release entry and the run decision are links, a foreign link text (D-118)', async ({ page }) => {
   const world = notificationsWorld({ history: MIXED_HISTORY })
   const { api, errors } = await openRollout(page, '/settings/my-notifications', { handlers: world.handlers, ready, user: VIEWER })
   await bell(page).click()
-  await expect(page.getByText(GATE_TITLE)).toBeVisible()
-  await expect(page.getByRole('link', { name: GATE_TITLE }), '/releases is a QA lead\'s route').toHaveCount(0)
+  // D-118: every role reads releases, so the release entry links for a viewer as for a QA lead.
+  await expect(page.getByRole('link', { name: GATE_TITLE })).toHaveAttribute('href', `/releases/${RELEASE_HOTFIX_ID}`)
   await expect(page.getByRole('link', { name: RUN_TITLE })).toHaveAttribute('href', `/release-gate/${DECISION_RUN_ID}`)
   await expect(page.getByText(FOREIGN_TITLE)).toBeVisible()
   await expect(page.getByRole('link', { name: FOREIGN_TITLE })).toHaveCount(0)
-  // The whole list of hrefs: the run decision is the only entry that links anywhere.
-  expect(await bellHrefs(page)).toEqual([MY_NOTIFICATIONS, `/release-gate/${DECISION_RUN_ID}`, MY_NOTIFICATIONS])
+  expect(await bellHrefs(page)).toEqual([MY_NOTIFICATIONS, `/releases/${RELEASE_HOTFIX_ID}`, `/release-gate/${DECISION_RUN_ID}`, MY_NOTIFICATIONS])
   await networkQuiet(page, api)
   assertHermetic(api, errors)
 })

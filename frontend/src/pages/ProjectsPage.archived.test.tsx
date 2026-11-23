@@ -44,6 +44,9 @@ vi.mock('react-hot-toast', () => ({
   default: Object.assign(vi.fn(), { success: (...a: unknown[]) => svc.toastSuccess(...a), error: vi.fn() }),
 }))
 
+// D-81: the New Project form reads offline mode; online here.
+vi.mock('@/hooks/useAIConfig', () => ({ useAIConfig: () => ({ data: { ai_offline_mode: false } }) }))
+
 import ProjectsPage from './ProjectsPage'
 
 const base = { description: null, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }

@@ -47,6 +47,8 @@ vi.mock('@/services/releasesService', () => ({
   },
 }))
 vi.mock('@/utils/swrCacheMutate', () => ({ appMutate: vi.fn(() => Promise.resolve(undefined)) }))
+// D-114: the Sync releases form reads offline mode; online here.
+vi.mock('@/hooks/useAIConfig', () => ({ useAIConfig: () => ({ data: { ai_offline_mode: false } }) }))
 vi.mock('@/hooks/useRuns', () => ({ useRuns: vi.fn(() => ({ data: { items: [] } })) }))
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',

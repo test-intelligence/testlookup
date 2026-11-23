@@ -476,7 +476,7 @@ Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_curren
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+project_id: uuid.UUID, response: Response, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -484,6 +484,8 @@ Direct handler error branches (dependency/service errors can add others):
 ```python
 HTTPException(status_code=404, detail='Project not found')
 HTTPException(status_code=409, detail="This project's default QA lead is a personal account, not the shared QA-lead account, so its password cannot be reset here. The person changes it from their own profile or with the forgot-password link.")
+HTTPException(status_code=409, detail="This project's shared QA-lead account is turned off. Only an admin can turn it back on, by resetting its password here.")
+HTTPException(status_code=409, detail='This project is archived, so its shared QA-lead account stays turned off. Restore the project first, then reset the password.')
 ```
 
 ### Declared wire contract
@@ -552,7 +554,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-{'user_id': str(user.id), 'email': user.email, 'username': user.username, 'password': password, 'project_id': str(project.id), 'actor_id': str(current_user.id)}
+{'user_id': str(user.id), 'email': user.email, 'username': user.username, 'password': password, 'project_id': str(project.id), 'actor_id': str(current_user.id), 'is_active': bool(getattr(user, 'is_active', True))}
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.

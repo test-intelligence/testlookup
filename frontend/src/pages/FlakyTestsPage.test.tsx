@@ -66,6 +66,12 @@ vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ canAccessManagement: state.canAccessManagement, isQaEngineer: state.isQaEngineer }),
 }))
 
+// D-43: the quarantine tables read the Jira availability probe; unknown here.
+vi.mock('@/hooks/useJiraDefects', () => ({
+  useJiraDefectMetadata: () => ({ metadata: undefined, isLoading: true, isError: false }),
+  useJiraDefectPreview: () => ({ preview: undefined, isLoading: true, isError: false }),
+}))
+
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (s: Record<string, unknown>) => unknown) =>

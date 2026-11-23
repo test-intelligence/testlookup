@@ -38,6 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.integration_values import valid_splunk_index
+from app.core.sample_values import configured_value
 from app.models.postgres import AppSetting, Project
 from app.services.secret_service import read_secret
 
@@ -138,7 +139,8 @@ async def resolve_global_integrations(
     environment_fields: list[str] = []
     secrets: dict[str, Any] = {}
     for key, setting_name in _SECRET_ENV_SETTING.items():
-        default = getattr(settings, setting_name)
+        # D-76: a shipped placeholder (``your-jira-api-token``) is not configuration.
+        default = configured_value(getattr(settings, setting_name))
         stored = await read_secret(db, _SCOPE, key)
         inline = overrides.get(key)
         secrets[key] = stored or inline or default
@@ -154,7 +156,10 @@ async def resolve_global_integrations(
         "teams_enabled",
         "github_repo",
     ):
-        value, source = effective_value(overrides, key, getattr(settings, _ENV_SETTING[key]))
+        env_value = getattr(settings, _ENV_SETTING[key])
+        if key in INTEGRATION_TEXT_KEYS:
+            env_value = configured_value(env_value)  # D-76: ``yourcompany.atlassian.net`` is no domain
+        value, source = effective_value(overrides, key, env_value)
         resolved[key] = value
         if key in INTEGRATION_TEXT_KEYS and source == "environment" and _non_empty(value):
             environment_fields.append(key)

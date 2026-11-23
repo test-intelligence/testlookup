@@ -4,7 +4,7 @@ import uuid
 from typing import Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -169,18 +169,25 @@ async def list_policies(
     # project skipped it entirely — the guard fired only where there was
     # nothing to guard. Third recurrence of the class (F-033 digests, F-040
     # chat). ``resolve_project_scope`` 403s a non-admin naming a project they
-    # do not belong to; the empty return below preserves today's behaviour for
-    # a non-admin who names no project at all.
+    # do not belong to. A non-admin who names no project reads the policies
+    # of the projects they belong to plus the system default, which every
+    # signed-in user may read one by one (D-134: this used to answer an empty
+    # list, so a QA lead read "No policies configured" under an active policy).
     from app.core.deps import resolve_project_scope  # noqa: PLC0415
 
     scoped_project_id, allowed = await resolve_project_scope(
         db, current_user, str(project_id) if project_id else None
     )
-    if scoped_project_id is None and allowed is not None:
-        return []
     query = select(ReleaseGatePolicy).order_by(ReleaseGatePolicy.created_at.desc())
-    if project_id is not None:
-        query = query.where(ReleaseGatePolicy.project_id == project_id)
+    if scoped_project_id is not None:
+        query = query.where(ReleaseGatePolicy.project_id == scoped_project_id)
+    elif allowed is not None:
+        query = query.where(
+            or_(
+                ReleaseGatePolicy.project_id.in_(allowed),
+                ReleaseGatePolicy.project_id.is_(None),
+            )
+        )
     if is_active is not None:
         query = query.where(ReleaseGatePolicy.is_active == is_active)
     result = await db.execute(query)

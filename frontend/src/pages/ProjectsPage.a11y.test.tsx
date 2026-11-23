@@ -56,6 +56,10 @@ vi.mock('react-hot-toast', () => ({
   default: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }),
 }))
 
+// D-81: the New Project form reads the effective offline ceiling.
+const aiMode = vi.hoisted(() => ({ offline: false }))
+vi.mock('@/hooks/useAIConfig', () => ({ useAIConfig: () => ({ data: { ai_offline_mode: aiMode.offline } }) }))
+
 import ProjectsPage from './ProjectsPage'
 import { projectsService } from '@/services/projectsService'
 import { expectTemplateHeader } from '@/test/expectTemplateHeader'
@@ -123,6 +127,36 @@ describe('ProjectsPage accessibility', () => {
     fireEvent.keyDown(screen.getByLabelText(/project name/i), { key: 'Escape' })
     expect(screen.queryByRole('region', { name: 'New Project' })).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
+  })
+})
+
+describe('ProjectsPage — New Project says what is permanent and what is optional (D-81)', () => {
+  afterEach(() => { aiMode.offline = false })
+
+  it("says the slug cannot be changed later, as the slug field's description", async () => {
+    await openCreateDialog()
+    expect(screen.getByLabelText(/slug/i)).toHaveAccessibleDescription('Used in links and API calls. It cannot be changed later.')
+  })
+
+  it('puts Jira Project Key and OCP Namespace in a collapsed "Integrations (optional)" group', async () => {
+    await openCreateDialog()
+    const group = document.querySelector('[data-np-integrations]') as HTMLElement
+    expect(group).not.toBeNull()
+    const toggle = within(group).getByRole('button', { name: 'Integrations (optional)' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(group).toContainElement(screen.getByLabelText(/jira project key/i))
+    expect(group).toContainElement(screen.getByLabelText(/ocp namespace/i))
+    expect(screen.getByLabelText(/ocp namespace/i)).not.toBeVisible()
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByLabelText(/ocp namespace/i)).toBeVisible()
+    expect(document.querySelector('[data-np-offline]')).toBeNull()
+  })
+
+  it('offline, the group says the fields are not used', async () => {
+    aiMode.offline = true
+    await openCreateDialog()
+    expect(document.querySelector('[data-np-offline]')).toHaveTextContent('Not used while offline mode is on.')
   })
 })
 

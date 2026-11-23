@@ -61,6 +61,13 @@ export const SCHEDULE_OFF_SENTENCE = 'Scheduled purging is off for this project.
 export const PAUSE_LABEL = `Pause ${PAUSE_DAYS_DEFAULT} days`
 export const RESUME_LABEL = 'Resume'
 export const PAUSED_CHIP_LABEL = 'Paused'
+/**
+ * D-75: shown beside a pause on a project with no retention settings of its
+ * own. A project import writes that pause (90 days) so the imported history is
+ * not purged; without this the pause read as something an admin had set.
+ */
+export const IMPORT_PAUSE_HINT =
+  'This project has no retention settings of its own. Importing a project pauses purging for 90 days so the imported history is kept.'
 export const DIRTY_TITLE = 'Save or discard your changes first'
 export const SWITCH_ON_LABEL = 'On'
 export const SWITCH_OFF_LABEL = 'Off'

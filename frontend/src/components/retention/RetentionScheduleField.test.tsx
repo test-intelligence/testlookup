@@ -41,6 +41,27 @@ beforeEach(() => {
 })
 
 describe('RetentionScheduleField', () => {
+  // D-75: an import's pause on a project with no retention settings read as an admin's choice.
+  it('explains a pause on a project with no settings of its own', () => {
+    const until = new Date(Date.now() + 90 * 86_400_000).toISOString()
+    const { container } = render(
+      <RetentionScheduleField
+        projectId={EXPORT_PROJECT_ID}
+        policy={policyWithSources({ source: 'default', purge_paused_until: until })}
+        value="2" dirty={false} onChange={vi.fn()} onOverride={vi.fn()} onReset={vi.fn()} onSaved={vi.fn()}
+      />,
+    )
+    expect(container.querySelector('[data-retention-import-pause]')).toHaveTextContent(
+      'Importing a project pauses purging for 90 days so the imported history is kept.',
+    )
+  })
+
+  it('says nothing more for a pause on a customised policy', () => {
+    const until = new Date(Date.now() + 7 * 86_400_000).toISOString()
+    renderField(policyWithSources({ source: 'custom', purge_paused_until: until }))
+    expect(screen.queryByText(/Importing a project pauses purging/)).toBeNull()
+  })
+
   it('pauses for 7 days with its own PUT and hands the saved policy back', async () => {
     const paused = policyWithSources({ purge_paused_until: new Date(Date.now() + 7 * 86_400_000).toISOString() })
     hooks.updateRetentionPolicy.mockResolvedValue(paused)

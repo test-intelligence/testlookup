@@ -66,7 +66,7 @@ The two integration fields decide what the AI's log and cluster look-ups ask for
 
 A value that breaks its rule is refused with the reason under the field, and nothing is saved. To clear a field, empty it and **Save Changes**. **Jenkins Job Pattern** is no longer on the form: TestLookup never used it, and a value saved earlier is kept.
 
-**Archive** hides a project without deleting it, and revokes its credentials. **Archiving is a soft delete** — rows remain but the project disappears from listings and its runs stop appearing in run lists. There is no un-archive in the app.
+**Archive** hides a project without deleting it, and revokes its credentials. **Archiving is a soft delete** — rows remain but the project disappears from listings and its runs stop appearing in run lists. An administrator can bring an archived project back with **Restore** on the **Archived** tab of **Projects**. Members, runs and history come back as they were. Its API keys stay revoked, so create new ones; its shared QA-lead account stays off until a QA lead or administrator uses **Reset QA Lead password** under **Users** › **Project access**. While a project is archived, that reset is refused.
 
 > **Warning.** Archived projects are invisible but not gone. If historical runs "disappeared", check whether the project was archived before assuming data loss. To actually remove data, use **Retention & purge** or **Project data**.
 

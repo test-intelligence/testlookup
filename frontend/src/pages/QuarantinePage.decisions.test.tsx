@@ -40,8 +40,13 @@ vi.mock('@/hooks/usePermissions', () => ({
 }))
 
 // W27 PAN-04: File Jira's form (its reads stay loading here: nothing is filed in these tests).
+// D-43: the page reads the same availability probe before any form opens.
+const jira = vi.hoisted(() => ({ meta: undefined as unknown, keys: [] as unknown[] }))
 vi.mock('@/hooks/useJiraDefects', () => ({
-  useJiraDefectMetadata: () => ({ metadata: undefined, isLoading: true, isError: false }),
+  useJiraDefectMetadata: (projectId: unknown) => {
+    jira.keys.push(projectId)
+    return { metadata: jira.meta, isLoading: jira.meta === undefined, isError: false }
+  },
   useJiraDefectPreview: () => ({ preview: undefined, isLoading: true, isError: false }),
 }))
 
@@ -94,6 +99,8 @@ beforeEach(() => {
   hooks.stats = undefined
   hooks.policy = null
   hooks.policyCalls = []
+  jira.meta = undefined
+  jira.keys = []
 })
 
 afterEach(() => {
@@ -267,5 +274,43 @@ describe('File Jira opens under its row', () => {
     expect((forms[0].closest('tr') as HTMLElement).previousElementSibling).toBe(rowOf('b'))
     fireEvent.click(within(forms[0]).getByRole('button', { name: 'Cancel' }))
     expect(screen.queryByRole('region', { name: 'Create Jira issue' })).toBeNull()
+  })
+})
+
+// D-43: a proposal row offered "File Jira" while offline mode blocked Jira; the
+// refusal only appeared after the form opened.
+describe('File Jira knows whether Jira is available before the form opens (D-43)', () => {
+  beforeEach(() => {
+    perms.isQaEngineer = true
+    hooks.requests = [row('a', 'PROPOSED')]
+  })
+
+  const meta = (extra: Record<string, unknown>) => ({
+    available: false, reason: 'offline_mode', projects: [], issue_types: [], default_project_key: null,
+    webhook_available: false, ...extra,
+  })
+
+  it('offline with no webhook receiver: no enabled "File Jira"; the reason is its tooltip', () => {
+    jira.meta = meta({})
+    renderBody('proposals')
+    const button = screen.getByRole('button', { name: 'File Jira' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', expect.stringContaining('Offline mode is on, so nothing is sent to Jira'))
+    expect(jira.keys).toContain('p1')
+  })
+
+  it('offline with a webhook receiver: the action reads "File defect" and says where it goes', () => {
+    jira.meta = meta({ webhook_available: true })
+    renderBody('proposals')
+    expect(screen.queryByRole('button', { name: 'File Jira' })).toBeNull()
+    const button = screen.getByRole('button', { name: 'File defect' })
+    expect(button).toBeEnabled()
+    expect(button).toHaveAttribute('title', expect.stringContaining('webhook receiver'))
+  })
+
+  it('Jira available: "File Jira" as before', () => {
+    jira.meta = meta({ available: true, reason: null })
+    renderBody('proposals')
+    expect(screen.getByRole('button', { name: 'File Jira' })).toBeEnabled()
   })
 })

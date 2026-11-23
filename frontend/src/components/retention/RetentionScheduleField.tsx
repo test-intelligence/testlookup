@@ -23,6 +23,7 @@ import { toneStyle, WARNING_TONE } from './exportModel'
 import {
   DIRTY_TITLE,
   HOURS,
+  IMPORT_PAUSE_HINT,
   PAUSE_DAYS_DEFAULT,
   PAUSE_LABEL,
   PAUSED_CHIP_LABEL,
@@ -130,6 +131,11 @@ export default function RetentionScheduleField({
           {paused ? RESUME_LABEL : PAUSE_LABEL}
         </button>
       </div>
+      {paused && policy.source !== 'custom' && (
+        <p data-retention-import-pause="" className="text-xs text-[var(--color-text-muted)]">
+          {IMPORT_PAUSE_HINT}
+        </p>
+      )}
     </div>
   )
 }

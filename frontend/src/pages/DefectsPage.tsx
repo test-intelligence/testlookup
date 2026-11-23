@@ -81,6 +81,7 @@ import type { GaugeBands, GaugeTick, GaugeTone } from '@/components/charts/gauge
 import { refreshDefects, useDefects } from '@/hooks/useMetrics'
 import { refreshDefectInsights, useDefectEscapeRate, useDefectTrend } from '@/hooks/useDefectInsights'
 import { jiraBridgeState, useIntegrationsConfig, type JiraBridgeState } from '@/hooks/useIntegrationsConfig'
+import { usePermissions } from '@/hooks/usePermissions'
 import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { useReleaseScope } from '@/hooks/useReleaseScope'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
@@ -1155,7 +1156,10 @@ const BRIDGE_BADGE: Record<JiraBridgeState, { label: string; color: string }> = 
 }
 
 function JiraBridgeCard({ model }: { model: QueueModel }) {
-  const { config } = useIntegrationsConfig()
+  // D-40: integration settings are QA lead and above. Below that, ask nothing
+  // (no 403 toast) and link nowhere the role is sent back from.
+  const { canAccessManagement } = usePermissions()
+  const { config } = useIntegrationsConfig(canAccessManagement)
   const state = jiraBridgeState(config)
   const badge = BRIDGE_BADGE[state]
   // The host is whatever the workspace is pointed at. It used to be the
@@ -1186,7 +1190,9 @@ function JiraBridgeCard({ model }: { model: QueueModel }) {
         <p className="px-4 pt-3 pb-0 m-0 text-xs text-[var(--color-text-secondary)]">
           {state === 'not_configured'
             ? <>No Jira workspace is configured, so nothing here is syncing. The link columns below reflect ticket ids already stored on these defects. <Link to="/settings/integrations" style={{ color: 'var(--color-accent)' }}>Configure Jira →</Link></>
-            : <>Integration settings are readable by QA leads and admins only, so this view cannot confirm whether Jira is connected.</>}
+            : canAccessManagement
+              ? <>Could not read the integration settings, so this view cannot confirm whether Jira is connected.</>
+              : <>Only QA leads and admins can see whether Jira is connected. Ask a QA lead if you need to know.</>}
         </p>
       )}
       <div className="px-4 py-3 flex flex-col gap-1.5 text-xs">
@@ -1197,7 +1203,8 @@ function JiraBridgeCard({ model }: { model: QueueModel }) {
         className="flex items-center justify-between gap-2 px-4 py-2 text-xs text-[var(--color-text-muted)]"
         style={{ borderTop: '1px solid var(--color-border)' }}
       >
-        <span>{state === 'connected' ? `Project key ${config?.jira_default_project_key ?? '—'}` : 'Not syncing'}</span>
+        <span>{state === 'connected' ? `Project key ${config?.jira_default_project_key ?? '—'}` : canAccessManagement ? 'Not syncing' : 'Status not shown to your role'}</span>
+        {canAccessManagement && (
         <Link
           to="/settings/integrations"
           className="font-medium hover:underline"
@@ -1205,6 +1212,7 @@ function JiraBridgeCard({ model }: { model: QueueModel }) {
         >
           Bridge settings →
         </Link>
+        )}
       </div>
     </Panel>
   )

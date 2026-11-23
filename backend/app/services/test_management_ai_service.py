@@ -289,10 +289,17 @@ async def analyze_case_coverage(db: AsyncSession, payload: AICoverageAnalysisReq
     return await ai_analyze_coverage(payload.requirements, existing, project_id=payload.project_id)
 
 
-async def list_strategies(db: AsyncSession, project_id: Optional[uuid.UUID]) -> list[TestStrategy]:
+async def list_strategies(
+    db: AsyncSession,
+    project_id: Optional[uuid.UUID],
+    allowed_project_ids: Optional[set[uuid.UUID]] = None,
+) -> list[TestStrategy]:
     query = select(TestStrategy).order_by(TestStrategy.created_at.desc())
     if project_id:
         query = query.where(TestStrategy.project_id == project_id)
+    elif allowed_project_ids is not None:
+        # All Projects for a non-admin: the projects they belong to (S-D-4).
+        query = query.where(TestStrategy.project_id.in_(allowed_project_ids))
     result = await db.execute(query)
     return list(result.scalars().all())
 

@@ -3,6 +3,7 @@ import { BarChart2, CheckCircle2, ChevronRight, ChevronUp, Clock, Download, File
 import toast from 'react-hot-toast'
 import EmptyState from '@/components/ui/EmptyState'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
+import { usePermissions } from '@/hooks/usePermissions'
 import { useStrategies } from '@/hooks/useTestManagement'
 import { testManagementService } from '@/services/testManagementService'
 import type { TestStrategy } from '@/types/test-management'
@@ -125,6 +126,11 @@ export default function StrategyTab({ projectId }: StrategyTabProps) {
   const [updatingStatus, setUpdatingStatus] = useState(false)
   const [downloadingFormat, setDownloadingFormat] = useState<'word' | 'pdf' | null>(null)
   const { data: strategies, isLoading, mutate } = useStrategies()
+  // S-D-2: the API's floors (`test_management_strategies.py`): generating
+  // spends model budget (QA_ENGINEER); a status is a sign-off (QA_LEAD in the
+  // project; the instance role is the closest signal the client has).
+  const { hasRole, isQaLead } = usePermissions()
+  const canGenerate = Boolean(projectId) && hasRole('QA_ENGINEER')
 
   const strategy = strategies?.[0] as TestStrategy | undefined
 
@@ -161,7 +167,7 @@ export default function StrategyTab({ projectId }: StrategyTabProps) {
   return (
     <>
       <div className="space-y-4">
-        {projectId && (
+        {canGenerate && (
           <div className="flex items-center justify-end">
             <button onClick={() => setShowGenerate(true)} className="btn-primary flex items-center gap-2">
               <Sparkles className="h-4 w-4" /> Generate Strategy
@@ -170,7 +176,7 @@ export default function StrategyTab({ projectId }: StrategyTabProps) {
         )}
 
         {/* In the page (W27b PAN-05): under the header row, above the strategy. Every close re-reads. */}
-        {showGenerate && projectId && (
+        {showGenerate && projectId && canGenerate && (
           <GenerateStrategyModal
             projectId={projectId}
             onClose={() => { setShowGenerate(false); mutate() }}
@@ -184,7 +190,7 @@ export default function StrategyTab({ projectId }: StrategyTabProps) {
             icon={<BarChart2 className="h-10 w-10" />}
             title="No test strategy"
             description={projectId ? "Generate a comprehensive AI-powered test strategy for your project" : "No test strategies found across all projects"}
-            action={projectId ? (
+            action={canGenerate ? (
               <button onClick={() => setShowGenerate(true)} className="btn-primary flex items-center gap-2">
                 <Sparkles className="h-4 w-4" /> Generate Strategy
               </button>
@@ -198,16 +204,26 @@ export default function StrategyTab({ projectId }: StrategyTabProps) {
                 <div>
                   <h3 className="text-base font-semibold text-[var(--color-text)]">{strategy.name}</h3>
                   <div className="flex items-center gap-3 mt-1">
-                    <select
-                      value={strategy.status}
-                      onChange={e => handleStatusChange(e.target.value)}
-                      disabled={updatingStatus}
-                      className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--color-ring)]"
-                    >
-                      {['draft', 'active', 'suspended', 'closed', 'review', 'approved'].map(s => (
-                        <option key={s} value={s} className="capitalize">{s.charAt(0).toUpperCase() + s.slice(1)}</option>
-                      ))}
-                    </select>
+                    {isQaLead ? (
+                      <select
+                        value={strategy.status}
+                        onChange={e => handleStatusChange(e.target.value)}
+                        disabled={updatingStatus}
+                        aria-label="Strategy status"
+                        className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-xs rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-[var(--color-ring)]"
+                      >
+                        {['draft', 'active', 'suspended', 'closed', 'review', 'approved'].map(s => (
+                          <option key={s} value={s} className="capitalize">{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span
+                        data-testid="strategy-status-readonly"
+                        className="bg-[var(--color-bg-secondary)] border border-[var(--color-border)] text-[var(--color-text-secondary)] text-xs rounded-full px-2 py-0.5"
+                      >
+                        {strategy.status.charAt(0).toUpperCase() + strategy.status.slice(1)}
+                      </span>
+                    )}
                     <span className="text-xs text-[var(--color-text-muted)]">v{strategy.version_label}</span>
                     {strategy.ai_generated && (
                       <span className="text-xs text-[var(--color-purple)] flex items-center gap-1">

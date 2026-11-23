@@ -74,7 +74,6 @@ f4832734540644f9  # backend/app/routers/releases.py:709  in evaluate_release_gat
 7c54fd8f377d3557  # backend/app/routers/retention.py:275  in preview_criteria_deletion  @router.post(
 78de11a0dd52bd7c  # backend/app/routers/retention.py:382  in execute_criteria_deletion  @router.post(
 1c1fd060156d2184  # backend/app/routers/run_intelligence.py:378  in refresh_intelligence  @router.post("/{run_id}/intelligence/refresh")
-24141cff79eac1ea  # backend/app/routers/runs.py:664  in set_run_release  @router.post("/{run_id}/release")
 f271a69b484c9cee  # backend/app/routers/search.py:274  in trigger_reindex  @router.post("/reindex")
 87592c35eb87fc9f  # backend/app/routers/suites.py:213  in create_suite  @router.post(
 ffdba70149d701de  # backend/app/routers/suites.py:328  in delete_suite  @router.delete(
@@ -82,8 +81,6 @@ ffdba70149d701de  # backend/app/routers/suites.py:328  in delete_suite  @router.
 4a2e7b34003f9ffb  # backend/app/routers/suites.py:496  in promote_canonical_case  @router.post(
 e5f529516a47a5f9  # backend/app/routers/suites.py:526  in unlink_canonical_managed_case  @router.delete(
 110866c322cdcadd  # backend/app/routers/suites.py:547  in confirm_canonical_retirement  @router.post(
-e5be2debf1df3036  # backend/app/routers/suites.py:569  in link_canonical_to_suite  @router.post(
-7e8ab0ee7311ab78  # backend/app/routers/suites.py:597  in bulk_link_canonicals_to_suite  @router.post(
 1560f9810f2490f9  # backend/app/routers/test_execution_reviews.py:91  in upsert_test_case_review  @router.put("/{test_case_id}/review", response_model=TestExecutionReviewRead)
 043436197189c8d9  # backend/app/routers/test_execution_reviews.py:120  in clear_test_case_review  @router.delete("/{test_case_id}/review", status_code=204)
 e6a953d7fe8914a7  # backend/app/routers/test_health.py:98  in refresh_project_flaky_coach  @router.post("/projects/{project_id}/flaky-coach/refresh")

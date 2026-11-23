@@ -25,6 +25,8 @@ import toast from 'react-hot-toast'
 
 vi.mock('@/hooks/useReleases', () => ({ useReleases: vi.fn(), useRelease: vi.fn() }))
 vi.mock('@/hooks/useRuns', () => ({ useRuns: vi.fn(() => ({ data: { items: [] } })) }))
+// D-114: the Sync releases form reads offline mode; online here.
+vi.mock('@/hooks/useAIConfig', () => ({ useAIConfig: () => ({ data: { ai_offline_mode: false } }) }))
 vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: (selector: (state: object) => unknown) => selector({

@@ -1151,10 +1151,14 @@ async def list_test_plans(
     page: int,
     size: int,
     status: Optional[str] = None,
+    allowed_project_ids: Optional[set[uuid.UUID]] = None,
 ):
     query = select(TestPlan)
     if project_id:
         query = query.where(TestPlan.project_id == project_id)
+    elif allowed_project_ids is not None:
+        # All Projects for a non-admin: the projects they belong to (S-D-4).
+        query = query.where(TestPlan.project_id.in_(allowed_project_ids))
     if status:
         query = query.where(TestPlan.status == status)
     return await paginate_scalars(db, query.order_by(TestPlan.created_at.desc()), page, size)
@@ -1185,7 +1189,13 @@ async def update_test_plan(
 ) -> TestPlan:
     plan = await get_plan_or_404(db, plan_id, for_update=True)
     updates = payload.model_dump(exclude_unset=True)
-    apply_model_updates(plan, updates)
+    # ``apply_model_updates`` refuses ``status``: that guard is for the
+    # test-case lifecycle. A plan has no lifecycle service, so its status is
+    # a plain field validated by ``TestPlanUpdate`` (S-D-1: every plan status
+    # change used to end in a 500).
+    apply_model_updates(plan, {k: v for k, v in updates.items() if k != "status"})
+    if updates.get("status") is not None:
+        plan.status = updates["status"]
     await audit_event(
         db, "test_plan", plan.id, plan.project_id, "updated", current_user, new_values=_audit_values(updates),
     )

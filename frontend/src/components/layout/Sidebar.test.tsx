@@ -73,12 +73,13 @@ describe('Sidebar (UX redesign P1): flat items from navConfig', () => {
     window.localStorage.removeItem(SIDEBAR_COLLAPSED_KEY)
   })
 
-  it('a viewer sees 10 items (11 with Ask AI), no Releases and no Admin', () => {
+  it('a viewer sees 11 items (12 with Ask AI): Releases to read (D-118), no Admin', () => {
     mockPermissions.role = 'VIEWER'
     mockPermissions.canAccessManagement = false
     renderAt('/overview')
     expect(navIds()).toEqual([
       'home', 'inbox', 'runs', 'failures', 'flaky', 'trends', 'suites', 'test-cases', 'reports', 'release-gate',
+      'releases',
     ])
     expect(screen.queryByRole('link', { name: /Admin/ })).not.toBeInTheDocument()
   })

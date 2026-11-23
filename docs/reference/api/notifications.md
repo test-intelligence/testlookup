@@ -821,7 +821,7 @@ Send Test
 
 
 
-Source: [backend/app/routers/notifications.py:307](../../../backend/app/routers/notifications.py#L307).
+Source: [backend/app/routers/notifications.py:333](../../../backend/app/routers/notifications.py#L333).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -834,7 +834,7 @@ payload: TestNotificationRequest, current_user: User=Depends(get_current_active_
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
-HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f'Test notification failed: {error}')
+HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=notification_test_failure_sentence(error))
 ```
 
 ### Declared wire contract

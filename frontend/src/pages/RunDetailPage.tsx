@@ -66,9 +66,11 @@ type RunTab = (typeof TAB_IDS)[number]
 const UNATTRIBUTED_TITLE =
   'No release claims this run: the attribution ladder did not link it. Set its release, or check the attribution rules.'
 
-function ReleaseTag({ releaseName, onSet }: {
+function ReleaseTag({ releaseName, onSet, canEdit }: {
   releaseName?: string
   onSet: (name: string) => Promise<void>
+  /** D-08a: changing a run's release is QA lead on the API (`POST /runs/{id}/release`). */
+  canEdit: boolean
 }) {
   const navigate = useNavigate()
   const [editing, setEditing] = useState(false)
@@ -120,9 +122,11 @@ function ReleaseTag({ releaseName, onSet }: {
           <Package className="h-3 w-3" />
           {releaseName}
         </button>
-        <button onClick={() => setEditing(true)} title="Change release" aria-label="Change release" className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]">
-          <PencilLine className="h-3.5 w-3.5" />
-        </button>
+        {canEdit && (
+          <button onClick={() => setEditing(true)} title="Change release" aria-label="Change release" className="text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)]">
+            <PencilLine className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
     )
   }
@@ -131,6 +135,18 @@ function ReleaseTag({ releaseName, onSet }: {
   // link source — the run reads Unattributed (and still offers to set one). A
   // run no rule matches lands in the cutoff window or the active release, so in
   // a healthy system this chip is rare: the linker failed on this run.
+  // Below QA lead it is the same chip as text: nothing to press.
+  if (!canEdit) {
+    return (
+      <span
+        title={UNATTRIBUTED_TITLE}
+        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-dashed border-[var(--color-border-light)] text-[var(--color-text-muted)]"
+      >
+        <Package className="h-3 w-3" />
+        Unattributed
+      </span>
+    )
+  }
   return (
     <button
       onClick={() => setEditing(true)}
@@ -237,7 +253,7 @@ export default function RunDetailPage() {
     navigate(href)
   }
 
-  const { isQaEngineer } = usePermissions()
+  const { isQaEngineer, isQaLead } = usePermissions()
   // The same gate as the sidebar's Ask AI entry (both reads are the shell's,
   // so this costs no request).
   const chatFlagEnabled = useFeatureEnabled('ask_ai_chat')
@@ -405,7 +421,7 @@ export default function RunDetailPage() {
             <div className="flex items-center gap-2 flex-wrap text-sm">
               <StatusBadge status={run.status} />
               <SuiteBadge primary={run.primary_suite_name} all={run.suite_names} />
-              <ReleaseTag releaseName={run.release_name} onSet={handleSetRelease} />
+              <ReleaseTag releaseName={run.release_name} onSet={handleSetRelease} canEdit={isQaLead} />
               {/* EXEC-04b: the run's two durations, labelled (the Timing tab has the breakdown). */}
               <RunTimingFigures run={run} />
             </div>

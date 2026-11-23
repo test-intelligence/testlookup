@@ -48,7 +48,7 @@ describe('SectionTabs (UX redesign P1)', () => {
     },
   )
 
-  it("a section the user is not shown shows no tabs (a viewer's /releases redirects anyway)", () => {
+  it("a viewer reads Releases but is not offered Gate policies, so one tab is no tabs (D-118)", () => {
     perms.canAccessManagement = false
     expect(tabsAt('/releases').labels).toEqual([])
   })

@@ -4671,6 +4671,17 @@ class TestPlanUpdate(BaseModel):
     assigned_to_id: Optional[uuid.UUID] = None
     tags: Optional[List[str]] = None
 
+    # The plan row's status select sends one of these (S-D-1). A validator,
+    # not a Literal, so the published OpenAPI schema stays the same.
+    PLAN_STATUSES: ClassVar[tuple[str, ...]] = ("draft", "active", "in_progress", "completed", "archived")
+
+    @field_validator("status")
+    @classmethod
+    def _known_plan_status(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in cls.PLAN_STATUSES:
+            raise ValueError(f"status must be one of: {', '.join(cls.PLAN_STATUSES)}")
+        return value
+
 
 class TestPlanResponse(BaseModel):
     id: uuid.UUID

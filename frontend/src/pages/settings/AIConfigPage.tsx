@@ -202,16 +202,32 @@ function ChainRow({ entry, isActive }: { entry: FallbackChainEntry; isActive: bo
  *   3. Ollama up but a model is missing → model-pack import problem, with
  *      the exact remedy for this runtime.
  */
+/** The server's probe code (backend model_status_service.PROBE_*). */
+const OLLAMA_NOT_USED = 'not_used'
+const OLLAMA_PROBE_SENTENCES: Record<string, string> = {
+  refused_by_policy: 'This address is not allowed by the provider policy while offline mode is on.',
+  unreachable: 'No answer from the Ollama server (connection, time limit or TLS).',
+  unexpected_status: 'The server answered, but not as Ollama does.',
+  invalid_response: 'The server answered with something other than an Ollama model list.',
+}
+
+/** D-23: a sentence for the probe's code; never the code, nor an older server's raw error text. */
+function ollamaProbeSentence(code: string | null | undefined): string {
+  return (code && OLLAMA_PROBE_SENTENCES[code]) || 'No detail reported.'
+}
+
 function ModelStatusCard({
   status,
   loading,
   failed,
   onRefresh,
+  isAdmin,
 }: {
   status: AIModelStatusRead | undefined
   loading: boolean
   failed: boolean
   onRefresh: () => void
+  isAdmin: boolean
 }) {
   const active = activeTier(status)
 
@@ -260,23 +276,30 @@ function ModelStatusCard({
             </span>
           </div>
 
-          {/* Reachability — kept strictly separate from model presence. */}
+          {/* Reachability — kept strictly separate from model presence.
+              D-23: the server's code becomes a sentence; the internal address is shown to admins only. */}
           {status.ollama_reachable ? (
             <p className="text-xs text-[var(--color-text-muted)] flex items-start gap-1.5">
               <CheckCircle2 className="mt-px h-3.5 w-3.5 flex-shrink-0 text-[var(--status-passed)]" aria-hidden="true" />
               {/* One text run: in a half-width card (P5) bare flex text nodes wrapped as columns. */}
               <span className="min-w-0 break-words">
-                Ollama reachable at <code className="text-[var(--color-text)]">{status.ollama_base_url}</code> —{' '}
+                Ollama reachable{isAdmin && status.ollama_base_url ? <> at <code className="text-[var(--color-text)]">{status.ollama_base_url}</code></> : null} —{' '}
                 {status.installed_models.length} model{status.installed_models.length === 1 ? '' : 's'} installed
               </span>
+            </p>
+          ) : status.ollama_error === OLLAMA_NOT_USED ? (
+            <p className="text-xs text-[var(--color-text-muted)]" data-testid="ollama-not-used">
+              Ollama is not used: the provider is {status.llm_provider || 'not set'}.
             </p>
           ) : (
             <div className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-xs ${BAD_CLS}`}>
               <WifiOff className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
               <div>
-                <span className="font-medium">Ollama unreachable at {status.ollama_base_url}.</span>{' '}
+                <span className="font-medium">
+                  Ollama unreachable{isAdmin && status.ollama_base_url ? ` at ${status.ollama_base_url}` : ''}.
+                </span>{' '}
                 <span className="text-[var(--color-text-muted)]">
-                  {status.ollama_error ?? 'No detail reported.'} This is a connectivity problem —
+                  {ollamaProbeSentence(status.ollama_error)} This is a connectivity problem —
                   it does not tell you whether your models are installed.
                 </span>
               </div>
@@ -551,6 +574,7 @@ export default function AIConfigPage() {
             loading={modelStatusLoading}
             failed={Boolean(modelStatusError)}
             onRefresh={() => { void refreshModelStatus() }}
+            isAdmin={isAdmin}
           />
 
           {/* LLM Provider */}

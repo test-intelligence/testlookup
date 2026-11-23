@@ -47,8 +47,8 @@ describe('navConfig (UX redesign P1)', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('11 places for a viewer, 13 for a QA lead or admin (with Ask AI; from 31)', () => {
-    expect(visibleNavItems({ canAccessManagement: false, chatEnabled: true })).toHaveLength(11)
+  it('12 places for a viewer (Releases is read-only for them, D-118), 13 for a QA lead or admin (with Ask AI; from 31)', () => {
+    expect(visibleNavItems({ canAccessManagement: false, chatEnabled: true })).toHaveLength(12)
     expect(visibleNavItems({ canAccessManagement: true, chatEnabled: true }).length + 1).toBe(13)
   })
 

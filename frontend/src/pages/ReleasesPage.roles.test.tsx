@@ -141,6 +141,47 @@ describe('a QA lead', () => {
   })
 })
 
+/**
+ * D-118 (owner decision 4): every role opens Releases, read-only below QA lead.
+ * Every release write on the API is QA lead or admin (`routers/releases.py`), so
+ * a QA engineer or a viewer is offered none of them: no New release, Edit,
+ * Delete, Add Phase, Link Run, Unlink, Remove phase, phase status select or
+ * production-outcome form. They still read the release, its phases and runs.
+ */
+describe('below QA lead the page is read-only (D-118)', () => {
+  const WRITE_BUTTONS = [
+    /New release/, /^\s*Edit$/, /^\s*Delete$/, /Add Phase/, /Link Run/, /^Unlink run/, /^Remove phase/,
+    /Mark incident/, /Record rollback/,
+  ]
+
+  it.each(['QA_ENGINEER', 'VIEWER'])('a %s reads the list and the side panel with no write control', (role) => {
+    signInAs(role)
+    const panel = openPanel()
+    expect(within(panel).getByText('Smoke')).toBeInTheDocument()
+    expect(within(panel).getByRole('button', { name: 'b42' })).toBeInTheDocument()
+    expect(within(panel).getByTestId('phase-status-readonly')).toHaveTextContent('In Progress')
+    for (const name of WRITE_BUTTONS) expect(screen.queryByRole('button', { name })).toBeNull()
+    expect(within(panel).queryByRole('combobox', { name: 'Status of phase Smoke' })).toBeNull()
+    expect(within(panel).queryByLabelText('Reason')).toBeNull()
+  })
+
+  it.each(['QA_ENGINEER', 'VIEWER'])("a %s reads the release's own page with no write control", (role) => {
+    signInAs(role)
+    renderAt('/releases/release-1')
+    expect(screen.getByRole('button', { name: 'b42' })).toBeInTheDocument()
+    for (const name of WRITE_BUTTONS) expect(screen.queryByRole('button', { name })).toBeNull()
+  })
+
+  it('a QA lead keeps every one of them (the control)', () => {
+    signInAs('QA_LEAD')
+    const panel = openPanel()
+    for (const name of [/New release/, /^\s*Edit$/, /^\s*Delete$/, /Add Phase/, /Link Run/, /Mark incident/, /Record rollback/]) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument()
+    }
+    expect(within(panel).getByRole('combobox', { name: 'Status of phase Smoke' })).toBeInTheDocument()
+  })
+})
+
 describe('a linked run with no executed test (D-0005)', () => {
   beforeEach(() => signInAs('QA_LEAD'))
 

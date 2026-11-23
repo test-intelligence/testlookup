@@ -184,9 +184,14 @@ const appRoutes: AppRoute[] = [
   { path: 'release-gate', component: ReleaseGatePage },
   { path: 'release-gate/:runId', component: ReleaseGatePage },
   // W11 REL-09: every role READS a project's attribution rules (a QA lead also
-  // writes them), so the page is here rather than with /releases (QA lead+).
+  // writes them).
   // React Router ranks this static path above `releases/:releaseId`.
   { path: 'releases/attribution-rules', component: ReleaseAttributionRulesPage },
+  // D-118 (owner decision 4): every role READS releases (the API serves any
+  // member); the page hides its writes below QA lead. The run page's release
+  // chip, the gate strip and notifications all link here for every role.
+  { path: 'releases', component: ReleasesPage },
+  { path: 'releases/:releaseId', component: ReleasesPage },
   { path: 'flaky', component: FlakyTestsPage },
   { path: 'flaky-coach', component: FlakyCoachRedirect },
   { path: 'quarantine', component: QuarantineRedirect },
@@ -210,8 +215,6 @@ const appRoutes: AppRoute[] = [
 /** Routes restricted to QA_LEAD and ADMIN roles. */
 const managementRoutes: AppRoute[] = [
   { path: 'projects', component: ProjectsPage },
-  { path: 'releases', component: ReleasesPage },
-  { path: 'releases/:releaseId', component: ReleasesPage },
   { path: 'activity', component: ActivityPage },
   { path: 'users', component: UserManagementPage },
   { path: 'settings', component: SettingsPage },

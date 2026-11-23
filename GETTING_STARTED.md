@@ -57,7 +57,7 @@ Worth a look first:
 - **Release gate**: the GO / CONDITIONAL_GO / NO_GO recommendation and why.
 - **Ask AI**: questions about a run or project, answered from its stored evidence (needs a model; see step 5).
 
-The in-app guide at [localhost:3000/docs](http://localhost:3000/docs) explains every page. The API reference is at [localhost:8000/api-docs](http://localhost:8000/api-docs).
+The in-app guide at [localhost:3000/docs](http://localhost:3000/docs) explains every page. The API reference is at [localhost:3000/api-docs](http://localhost:3000/api-docs).
 
 ## 4. Import your own report
 

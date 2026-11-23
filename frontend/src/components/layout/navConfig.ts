@@ -9,7 +9,7 @@
  *    links to the routes that already exist, so related pages read as one
  *    place without being merged.
  *
- * 11 items for a viewer, 13 for a QA lead or admin (Releases and Admin). The
+ * 12 items for a viewer, 13 for a QA lead or admin (Admin). The
  * routes that left the nav keep working: Documentation and Getting started
  * are in the Help menu, Search is the top bar, Upload is the primary button
  * on Runs, everything else is a section tab or under Admin.
@@ -39,6 +39,8 @@ export interface NavItem {
   needsChat?: boolean
   /** The section's pages, as route tabs at the top of each of them. */
   tabs?: readonly RouteTabItem[]
+  /** Tabs (by `to`) shown to a QA lead or admin only: their routes redirect anyone else. */
+  managementTabs?: readonly string[]
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
@@ -129,7 +131,8 @@ export const NAV_ITEMS: readonly NavItem[] = [
     to: '/releases',
     section: 'RELEASE',
     owns: ['/releases', '/policies'],
-    requires: 'management',
+    // D-118: every role reads Releases; Gate policies stays a QA lead's page.
+    managementTabs: ['/policies'],
     tabs: [
       { to: '/releases', label: 'Releases' },
       { to: '/policies', label: 'Gate policies' },

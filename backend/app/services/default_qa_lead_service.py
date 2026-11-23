@@ -174,6 +174,28 @@ async def ensure_default_qa_lead(
     return found
 
 
+class DefaultQaLeadProjectArchived(Exception):
+    """S-D-3: the project is archived, so its shared QA-lead login stays off.
+
+    Archive disables the account on purpose
+    (``project_access_revocation_service``); a reset that handed out a password
+    for it would either re-open a login into an archived project or (before
+    this) answer 200 with a password that cannot sign in.
+    """
+
+
+class DefaultQaLeadTurnedOff(Exception):
+    """The shared account is turned off and the caller may not turn it back on.
+
+    ``is_active=False`` does not say who turned it off: archive does
+    (``project_access_revocation_service``), and so does an admin with
+    ``PATCH /users/{id}/status``, which is ADMIN only. A project QA lead's
+    reset must not undo an admin's decision, so only an admin's reset
+    re-enables the account (restore is ADMIN only too, so the restore path
+    still works).
+    """
+
+
 class DefaultQaLeadIsPersonalAccount(Exception):
     """The project's default QA lead is a person, not the shared account.
 
@@ -189,8 +211,14 @@ async def reset_default_qa_lead_password(
     db: AsyncSession,
     project: Project,
     new_password: Optional[str] = None,
+    *,
+    may_reactivate: bool = False,
 ) -> tuple[User, str]:
     """Reset the project's default QA-lead user password.
+
+    ``may_reactivate``: the caller is an admin, so a turned-off account comes
+    back on. Without it a turned-off account is refused
+    (``DefaultQaLeadTurnedOff``) and nothing changes.
 
     Returns ``(user, password_used)``. When ``new_password`` is omitted a
     fresh random secret is generated and returned, so the caller can still
@@ -219,6 +247,8 @@ async def reset_default_qa_lead_password(
     or not at all. Caller-owned transactions do not publish the cutoff to Redis
     before commit; PostgreSQL is the first authority on every cutoff read.
     """
+    if getattr(project, "is_active", True) is False:
+        raise DefaultQaLeadProjectArchived()
     user = await ensure_default_qa_lead(db, project)
     # Refused here, not in the router, so no second caller can skip it. ``is
     # not True`` on purpose: a row without the flag is treated as a person.
@@ -232,9 +262,22 @@ async def reset_default_qa_lead_password(
         raise DefaultQaLeadIsPersonalAccount()
     await db.execute(select(User.id).where(User.id == user.id).with_for_update())
     await db.refresh(user)
+    if getattr(user, "is_active", True) is False and not may_reactivate:
+        logger.warning(
+            "default_qa_lead_password_reset_refused",
+            project_id=str(project.id),
+            user_id=str(user.id),
+            reason="account_turned_off",
+        )
+        raise DefaultQaLeadTurnedOff()
     chosen = new_password if new_password else _unguessable_password()
     user.hashed_password = get_password_hash(chosen)
     user.must_change_password = False
+    # S-D-3: archive disabled the account; a restored project's QA lead comes
+    # back through an admin's reset (the restore route says so). Without this
+    # the reset answered 200 with a password that could not sign in. Reached
+    # with the account off only when ``may_reactivate`` (checked above).
+    user.is_active = True
     await _revoke_refresh_family(db, user.id, reason="password_reset")
     await db.flush()
     await revoke_all_user_tokens(user.id, db)

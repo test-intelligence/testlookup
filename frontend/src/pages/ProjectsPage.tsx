@@ -19,6 +19,7 @@ import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { projectsService } from '@/services/projectsService'
 import { useProjectStore } from '@/store/projectStore'
 import { usePermissions } from '@/hooks/usePermissions'
+import { useAIConfig } from '@/hooks/useAIConfig'
 import type { Project, ProjectUpdate } from '@/types/projects'
 import { formatDay, fromNow } from '@/utils/formatters'
 import { fieldErrorsFrom } from '@/utils/fieldErrors'
@@ -89,10 +90,16 @@ export default function ProjectsPage() {
   const [saving, setSaving] = useState(false)
   // W10: a field-level 422 on create, shown under its field.
   const [newErrors, setNewErrors] = useState<Record<string, string>>({})
+  // D-81: New Project's optional integration fields start collapsed; an error in one opens them.
+  const [showIntegrations, setShowIntegrations] = useState(false)
+  const integrationsShown = showIntegrations || Boolean(newErrors.jira_project_key || newErrors.ocp_namespace)
   const setActiveProject = useProjectStore(s => s.setActiveProject)
   const refreshProjects = useProjectStore(s => s.refreshProjects)
   const { isAdmin, isQaLead } = usePermissions()
   const canEdit = isAdmin || isQaLead
+  // D-81: every role may read the effective offline ceiling (GET /settings/ai/mode).
+  const { data: aiMode } = useAIConfig()
+  const offline = aiMode?.ai_offline_mode === true
 
   const load = useCallback(
     () => refreshProjects().then(setProjects).catch(() => {}),
@@ -197,7 +204,9 @@ export default function ProjectsPage() {
               <label htmlFor="np-slug" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Slug *</label>
               <input id="np-slug" type="text" className="input font-mono text-sm" placeholder="e.g. payment-gateway-api"
                 value={form.slug} onChange={e => { setForm(f => ({ ...f, slug: slugify(e.target.value) })); setNewErrors(x => withoutError(x, 'slug')) }} required
-                aria-describedby={describedBy(newErrors.slug && 'np-slug-error')} />
+                aria-describedby={describedBy('np-slug-hint', newErrors.slug && 'np-slug-error')} />
+              {/* D-81: the slug is fixed after creation (the guide says so; the form did not). */}
+              <p id="np-slug-hint" className="mt-1 text-xs text-[var(--color-text-muted)]">Used in links and API calls. It cannot be changed later.</p>
               <FieldError id="np-slug-error" field="slug" message={newErrors.slug} />
             </div>
             <div>
@@ -207,7 +216,18 @@ export default function ProjectsPage() {
                 aria-describedby={describedBy(newErrors.description && 'np-desc-error')} />
               <FieldError id="np-desc-error" field="description" message={newErrors.description} />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            {/* D-81: the two integration fields are optional, and unused while offline mode is on. */}
+            <div data-np-integrations="" data-open={integrationsShown ? '' : undefined}
+              className="rounded-md border border-[var(--color-border)] px-3 py-2">
+              <button type="button" aria-expanded={integrationsShown} aria-controls="np-integrations-fields"
+                onClick={() => setShowIntegrations(v => !v)}
+                className="text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]">
+                Integrations (optional)
+              </button>
+              {offline && (
+                <p data-np-offline="" className="mt-2 text-xs text-[var(--color-text-muted)]">Not used while offline mode is on.</p>
+              )}
+            <div id="np-integrations-fields" hidden={!integrationsShown} className="mt-3 grid grid-cols-2 gap-3">
               <div>
                 <label htmlFor="np-jira" className="block text-xs font-medium text-[var(--color-text-muted)] mb-1.5">Jira Project Key</label>
                 <input id="np-jira" type="text" className="input font-mono text-sm" placeholder="e.g. PAY"
@@ -223,6 +243,7 @@ export default function ProjectsPage() {
                   aria-describedby={describedBy(newErrors.ocp_namespace && 'np-ocp-error')} />
                 <FieldError id="np-ocp-error" field="ocp_namespace" message={newErrors.ocp_namespace} />
               </div>
+            </div>
             </div>
           </div>
         </InlineFormSection>

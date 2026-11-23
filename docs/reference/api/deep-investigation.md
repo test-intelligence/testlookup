@@ -25,7 +25,7 @@ same scope, not the page length, so the Inbox badge never reads
 ``min(n, page_size)``. ``project_id`` pins one project (400 malformed, 403
 not accessible); soft-deleted projects' defects never wait for anyone.
 
-Source: [backend/app/routers/deep_investigation.py:693](../../../backend/app/routers/deep_investigation.py#L693).
+Source: [backend/app/routers/deep_investigation.py:701](../../../backend/app/routers/deep_investigation.py#L701).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -151,7 +151,7 @@ webhook after the last commit.
 Reject (D-11): the defect is also closed as ``INVALID`` with the reason in
 the activity ledger, so a rejected suggestion stops blocking the gate.
 
-Source: [backend/app/routers/deep_investigation.py:505](../../../backend/app/routers/deep_investigation.py#L505).
+Source: [backend/app/routers/deep_investigation.py:513](../../../backend/app/routers/deep_investigation.py#L513).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -250,7 +250,7 @@ Get Deep History
 
 Per run of ONE project, its latest deep pipeline (VIEWER may read).
 
-Source: [backend/app/routers/deep_investigation.py:252](../../../backend/app/routers/deep_investigation.py#L252).
+Source: [backend/app/routers/deep_investigation.py:260](../../../backend/app/routers/deep_investigation.py#L260).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -383,7 +383,7 @@ Direct handler error branches (dependency/service errors can add others):
 ```python
 HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Test run not found')
 HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=RUN_CONFIG_DEEP_ONLY)
-HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc))
+HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='The analysis queue is unavailable, so the investigation was not started. Check that the worker and Redis are running.')
 ```
 
 ### Declared wire contract
@@ -467,7 +467,7 @@ Get Failure Clusters
 
 Return semantic failure clusters for a test run.
 
-Source: [backend/app/routers/deep_investigation.py:306](../../../backend/app/routers/deep_investigation.py#L306).
+Source: [backend/app/routers/deep_investigation.py:314](../../../backend/app/routers/deep_investigation.py#L314).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -552,7 +552,7 @@ Get Ranked Clusters
 
 Return failure clusters ranked by impact score for triage prioritization.
 
-Source: [backend/app/routers/deep_investigation.py:447](../../../backend/app/routers/deep_investigation.py#L447).
+Source: [backend/app/routers/deep_investigation.py:455](../../../backend/app/routers/deep_investigation.py#L455).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -640,7 +640,7 @@ Get Cluster Defect Candidate
 
 Get a pre-assembled defect candidate for a failure cluster.
 
-Source: [backend/app/routers/deep_investigation.py:370](../../../backend/app/routers/deep_investigation.py#L370).
+Source: [backend/app/routers/deep_investigation.py:378](../../../backend/app/routers/deep_investigation.py#L378).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -738,7 +738,7 @@ Check if a cluster likely duplicates an existing open defect.
 Returns duplicate info without creating anything.
 P3-9: Business logic extracted to cluster_service.
 
-Source: [backend/app/routers/deep_investigation.py:482](../../../backend/app/routers/deep_investigation.py#L482).
+Source: [backend/app/routers/deep_investigation.py:490](../../../backend/app/routers/deep_investigation.py#L490).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -840,7 +840,7 @@ Promote Cluster To Defect
 
 Promote a failure cluster to a defect record (optionally with Jira ticket).
 
-Source: [backend/app/routers/deep_investigation.py:388](../../../backend/app/routers/deep_investigation.py#L388).
+Source: [backend/app/routers/deep_investigation.py:396](../../../backend/app/routers/deep_investigation.py#L396).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -950,7 +950,7 @@ The measured time / cost of a deep run of this configuration, and the server's g
 The gate is DATA here (``gate.allowed``), never a 422: the page decides
 whether to offer Run from it.
 
-Source: [backend/app/routers/deep_investigation.py:281](../../../backend/app/routers/deep_investigation.py#L281).
+Source: [backend/app/routers/deep_investigation.py:289](../../../backend/app/routers/deep_investigation.py#L289).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1100,7 +1100,7 @@ Get Deep Findings
 
 Return deep investigation findings per failure cluster for a test run.
 
-Source: [backend/app/routers/deep_investigation.py:334](../../../backend/app/routers/deep_investigation.py#L334).
+Source: [backend/app/routers/deep_investigation.py:342](../../../backend/app/routers/deep_investigation.py#L342).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -1185,7 +1185,7 @@ Get Deep Pre Scan
 
 The run's failing results grouped by error signature (offline; no ChromaDB).
 
-Source: [backend/app/routers/deep_investigation.py:269](../../../backend/app/routers/deep_investigation.py#L269).
+Source: [backend/app/routers/deep_investigation.py:277](../../../backend/app/routers/deep_investigation.py#L277).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

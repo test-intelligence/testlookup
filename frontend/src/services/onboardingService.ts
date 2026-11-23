@@ -11,7 +11,10 @@ export interface OnboardingStep {
 export interface OnboardingStatus {
   project_id: string
   steps: OnboardingStep[]
+  /** Done steps only (D-127: a skipped step is not progress). */
   completed_count: number
+  /** Skipped steps; an older server omits it. */
+  skipped_count?: number
   total_count: number
   progress_pct: number
   is_complete: boolean

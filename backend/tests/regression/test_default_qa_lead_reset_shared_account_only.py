@@ -155,3 +155,19 @@ def test_route_records_who_reset_the_shared_account(client):
     assert row.actor_user_id == caller.id and row.target_user_id == target.id and row.project_id == PROJECT
     assert "new-shared-secret" not in repr((row.before_value, row.after_value))
     session.commit.assert_awaited_once()
+    # D-82: a one-time password must not be kept by any cache.
+    assert resp.headers.get("cache-control") == "no-store"
+
+
+def test_s_d_3_route_answers_409_for_an_archived_project(client):
+    from app.services.default_qa_lead_service import DefaultQaLeadProjectArchived
+
+    http, session, _ = client
+    refused = AsyncMock(side_effect=DefaultQaLeadProjectArchived())
+    with patch("app.services.default_qa_lead_service.reset_default_qa_lead_password", refused):
+        resp = http.post(f"/api/v1/projects/{PROJECT}/default-qa-lead/reset-password")
+
+    assert resp.status_code == 409, resp.text
+    assert "archived" in resp.json()["detail"]
+    assert "password" not in resp.json()
+    session.commit.assert_not_awaited()

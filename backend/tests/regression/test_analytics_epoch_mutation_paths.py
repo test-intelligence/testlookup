@@ -1433,6 +1433,9 @@ def _suite_routes(monkeypatch, *, canonical=None, target=None):
     from app.services import test_suite_service as svc
 
     monkeypatch.setattr(suites, "_enforce_project_access", AsyncMock())
+    # D-56: the move's activity row reads the old suite names first; these
+    # tests are about the epoch bump, so that read answers "nothing to name".
+    monkeypatch.setattr(suites, "_suite_move_sources", AsyncMock(return_value=[]))
     if canonical is not None:
         monkeypatch.setattr(svc, "get_canonical_or_404", AsyncMock(return_value=canonical))
     if target is not None:

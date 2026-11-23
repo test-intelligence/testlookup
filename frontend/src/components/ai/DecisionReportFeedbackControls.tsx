@@ -10,6 +10,7 @@ import type { FormEvent } from 'react'
 import type { DecisionClaim, DecisionReportVersion, DecisionReportCorrectionType, DecisionReportUtilityRating } from '@/services/runIntelligenceService'
 import { submitDecisionReportFeedback } from '@/services/runIntelligenceService'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
+import { usePermissions } from '@/hooks/usePermissions'
 
 type Props = {
   runId: string
@@ -43,6 +44,9 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
   const [evidenceId, setEvidenceId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // A claim correction feeds the report evaluation: QA engineer and above, as
+  // the server requires. Rating a report stays open to every member.
+  const { isQaEngineer } = usePermissions()
 
   const evidenceOptions = useMemo(() => {
     if (!selectedClaim) return []
@@ -111,7 +115,7 @@ export default function DecisionReportFeedbackControls({ runId, reportVersion, c
         ))}
         {utilityStatus && <span role="status" className="text-2xs text-[var(--color-text-secondary)]">{utilityStatus}</span>}
       </div>
-      {claims.length > 0 && (
+      {isQaEngineer && claims.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <span className="text-2xs text-[var(--color-text-muted)]">Correct a claim:</span>
           {claims.slice(0, 8).map(claim => (

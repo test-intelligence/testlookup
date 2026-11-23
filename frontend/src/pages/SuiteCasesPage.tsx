@@ -117,7 +117,9 @@ interface MoveModalProps {
 
 function MoveModal({ canonical, currentSuiteId, candidates, onClose, onMoved, slot }: MoveModalProps) {
   const targets = candidates.filter((s) => s.id !== currentSuiteId)
-  const [targetId, setTargetId] = useState(targets[0]?.id ?? '')
+  // D-56: no target is chosen for the user, so Enter alone cannot submit a move.
+  const [targetId, setTargetId] = useState('')
+  const targetName = targets.find((s) => s.id === targetId)?.name
   const [saving, setSaving] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
@@ -166,12 +168,15 @@ function MoveModal({ canonical, currentSuiteId, candidates, onClose, onMoved, sl
               {targets.length === 0 ? (
                 <option value="">No other suites available</option>
               ) : (
-                targets.map((s) => (
+                [
+                  <option key="" value="" disabled>Choose a suite</option>,
+                  ...targets.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
                     {s.is_default ? ' (default)' : ''}
                   </option>
-                ))
+                  )),
+                ]
               )}
             </select>
           </div>
@@ -188,7 +193,7 @@ function MoveModal({ canonical, currentSuiteId, candidates, onClose, onMoved, sl
               disabled={saving || !targetId}
               className="btn-primary"
             >
-              {saving ? 'Moving…' : 'Move'}
+              {saving ? 'Moving…' : targetName ? `Move to ${targetName}` : 'Move'}
             </button>
           </div>
         </form>
@@ -217,7 +222,9 @@ function BulkMoveModal({
   slot,
 }: BulkMoveModalProps) {
   const targets = candidates.filter((s) => s.id !== currentSuiteId)
-  const [targetId, setTargetId] = useState(targets[0]?.id ?? '')
+  // D-56: no target is chosen for the user, so Enter alone cannot submit a move.
+  const [targetId, setTargetId] = useState('')
+  const targetName = targets.find((s) => s.id === targetId)?.name
   const [saving, setSaving] = useState(false)
 
   async function handleSubmit(e: React.FormEvent) {
@@ -272,12 +279,15 @@ function BulkMoveModal({
               {targets.length === 0 ? (
                 <option value="">No other suites available</option>
               ) : (
-                targets.map((s) => (
+                [
+                  <option key="" value="" disabled>Choose a suite</option>,
+                  ...targets.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
                     {s.is_default ? ' (default)' : ''}
                   </option>
-                ))
+                  )),
+                ]
               )}
             </select>
           </div>
@@ -294,7 +304,7 @@ function BulkMoveModal({
               disabled={saving || !targetId}
               className="btn-primary"
             >
-              {saving ? 'Moving…' : `Move ${selectedCount}`}
+              {saving ? 'Moving…' : `Move ${selectedCount}${targetName ? ` to ${targetName}` : ''}`}
             </button>
           </div>
         </form>

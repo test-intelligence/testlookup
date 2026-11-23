@@ -2,6 +2,7 @@
 import uuid
 from typing import Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +26,7 @@ from app.services.jira_client import (
 )
 
 router = APIRouter(prefix="/api/v1/integrations", tags=["Integrations"])
+logger = structlog.get_logger(__name__)
 
 
 @router.post(
@@ -142,10 +144,22 @@ async def create_jira_defect(
         # Offline mode, a disabled / unconfigured integration or a refused
         # host: nothing was sent, and the sentence says which.
         raise HTTPException(status_code=503, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Jira API error: {str(e)}")
+        # S-D-5: Jira's reply or a socket error can name hosts, accounts and
+        # internals; the log keeps it, the user gets a plain sentence.
+        logger.warning(
+            "jira_issue_create_failed",
+            run_id=str(request.run_id),
+            error_type=type(e).__name__,
+            error=str(e),
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Jira did not create the issue. Check the Jira settings and try "
+                "again; the server log has the details."
+            ),
+        ) from e
 
 
 async def _stage_pending_jira_defect(

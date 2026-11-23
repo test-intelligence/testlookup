@@ -147,6 +147,29 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # The API reference and the health reads (D-116 / D-35). The Kubernetes
+    # Ingress routes these two prefixes to the backend itself
+    # (k8s/base/ingress.yaml); on Docker Compose the backend is published on
+    # loopback only, so without these blocks /api-docs and /health/version
+    # answered the SPA's "Page not found". /health/details still needs a
+    # signed-in user (the backend checks). /metrics is never proxied: it has
+    # no authentication. Pinned by backend/tests/regression/test_nginx_configs.py.
+    location ^~ /api-docs {
+        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ^~ /health/ {
+        proxy_pass http://${BACKEND_UPSTREAM};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # Gzip compression
     gzip on;
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml;

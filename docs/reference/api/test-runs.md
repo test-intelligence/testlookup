@@ -762,7 +762,7 @@ with ``Held: <reason>`` FIRST in ``blockers`` (the hold read lives in
 202 also lists the links the delete breaks (``references_broken``, a
 warning) and says the keep-last floor does not apply to explicit deletes.
 
-Source: [backend/app/routers/runs.py:982](../../../backend/app/routers/runs.py#L982).
+Source: [backend/app/routers/runs.py:1011](../../../backend/app/routers/runs.py#L1011).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 
@@ -1346,7 +1346,7 @@ re-checks whether work is already done before inserting.
 Returns 422 when the run isn't recoverable (already populated / not a
 live run / no buffer left in Redis).
 
-Source: [backend/app/routers/runs.py:800](../../../backend/app/routers/runs.py#L800).
+Source: [backend/app/routers/runs.py:829](../../../backend/app/routers/runs.py#L829).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`, `require_run_access.<locals>._check`.
 

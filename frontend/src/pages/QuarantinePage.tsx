@@ -11,7 +11,8 @@ import {
   X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import CreateJiraIssueModal from '@/components/defects/CreateJiraIssueModal'
+import CreateJiraIssueModal, { jiraUnavailableCopy } from '@/components/defects/CreateJiraIssueModal'
+import { useJiraDefectMetadata } from '@/hooks/useJiraDefects'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
@@ -94,6 +95,14 @@ export function QuarantineBody({
     return requests.filter((r) => allowed.has(r.status))
   }, [requests, view])
 
+  // D-43: whether Jira can take an issue is known before the form opens (the
+  // Jira account and offline mode are deployment-wide, so one project's answer
+  // holds for every row). Read only when a row could offer the action.
+  const { metadata: jiraMeta } = useJiraDefectMetadata(
+    isQaEngineer && view !== 'history' ? (projectId ?? rows[0]?.project_id ?? null) : null,
+  )
+  const fileJira = fileJiraOffer(jiraMeta)
+
   return (
     <section
       data-primary={primary ? '' : undefined}
@@ -156,6 +165,7 @@ export function QuarantineBody({
                     view={view}
                     canAct={hasQaLeadAccess}
                     canFileJira={isQaEngineer}
+                    fileJira={fileJira}
                     onFileJira={(r) => jiraSlot.open(`${r.id}:jira`)}
                     // The counts beside the table are a SEPARATE SWR key and are
                     // on screen at the same time, so approving a row updated the
@@ -185,6 +195,38 @@ export function QuarantineBody({
 
 // ── Rows ───────────────────────────────────────────────────────────────────
 
+interface FileJiraOffer {
+  label: string
+  title: string
+  disabled: boolean
+}
+
+const DEFAULT_FILE_JIRA: FileJiraOffer = {
+  label: 'File Jira',
+  title: 'File a pre-filled Jira issue for this flaky test',
+  disabled: false,
+}
+
+/**
+ * D-43: the row action as the Jira availability probe allows it. Jira
+ * unavailable (offline mode, turned off, not set up) with a webhook receiver:
+ * "File defect", sent to the receiver. With no receiver either: disabled, the
+ * reason as its tooltip. Unknown (still loading, or not asked): as before; the
+ * form itself gates submission.
+ */
+function fileJiraOffer(meta: { available: boolean; webhook_available: boolean; reason?: string | null } | undefined): FileJiraOffer {
+  if (!meta || meta.available) return DEFAULT_FILE_JIRA
+  const reason = jiraUnavailableCopy(meta.reason)
+  if (meta.webhook_available) {
+    return {
+      label: 'File defect',
+      title: `${reason} The form sends the defect to your webhook receiver instead.`,
+      disabled: false,
+    }
+  }
+  return { label: 'File Jira', title: reason, disabled: true }
+}
+
 type Decision = 'approve' | 'reject' | 'release'
 
 const DECISION: Record<Decision, { notesLabel: string; confirm: string; success: string }> = {
@@ -198,6 +240,7 @@ function QuarantineRow({
   view,
   canAct,
   canFileJira,
+  fileJira = DEFAULT_FILE_JIRA,
   onFileJira,
   onRefresh,
   below,
@@ -207,6 +250,8 @@ function QuarantineRow({
   canAct: boolean
   /** QA_ENGINEER+ — matches the backend guard on the one-click endpoint. */
   canFileJira: boolean
+  /** D-43: the action's label, tooltip and whether it can be used, from the Jira availability probe. */
+  fileJira?: FileJiraOffer
   onFileJira: (row: FlakyQuarantineRead) => void
   onRefresh: () => Promise<unknown>
   /** W27 PAN-04: this row's open form from the table (File Jira), in a full-width row under it. */
@@ -410,12 +455,12 @@ function QuarantineRow({
             // the backend dedups against open defects for the fingerprint.
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || fileJira.disabled}
               onClick={() => onFileJira(row)}
-              title="File a pre-filled Jira issue for this flaky test"
-              className="text-xs text-[var(--color-accent)] hover:underline inline-flex items-center gap-0.5 ml-2"
+              title={fileJira.title}
+              className="text-xs text-[var(--color-accent)] hover:underline inline-flex items-center gap-0.5 ml-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
             >
-              <Bug className="h-3 w-3" /> File Jira
+              <Bug className="h-3 w-3" /> {fileJira.label}
             </button>
           )}
           {view === 'history' && row.reviewer_notes && (

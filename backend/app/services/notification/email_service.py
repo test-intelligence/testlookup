@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import aiosmtplib
 
 from app.core.config import settings
+from app.core.sample_values import configured_value
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ async def _get_smtp_cfg() -> dict[str, Any]:
                 cfg = dict(row.value)
                 secret_value = await read_secret(db, "smtp_config", "password")
                 cfg["password"] = (
-                    secret_value or cfg.get("password") or settings.SMTP_PASSWORD
+                    secret_value or cfg.get("password") or configured_value(settings.SMTP_PASSWORD)
                 )
                 return cfg
     except RuntimeError:
@@ -71,10 +72,11 @@ def _env_smtp_cfg() -> dict[str, Any]:
     """The SMTP configuration the environment gives, when nothing is stored."""
     return {
         "enabled": settings.SMTP_ENABLED,
-        "host": settings.SMTP_HOST,
+        # D-76: a shipped placeholder (smtp.example.com, your-app-password) is not configuration.
+        "host": configured_value(settings.SMTP_HOST) or "localhost",
         "port": settings.SMTP_PORT,
-        "user": settings.SMTP_USER,
-        "password": settings.SMTP_PASSWORD,
+        "user": configured_value(settings.SMTP_USER),
+        "password": configured_value(settings.SMTP_PASSWORD),
         "from_address": settings.SMTP_FROM,
         "tls": settings.SMTP_TLS,
     }

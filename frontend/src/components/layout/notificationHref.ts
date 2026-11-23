@@ -6,9 +6,9 @@
  * release decision (`/release-gate/<uuid>`) and (W21d ACT-02, a comment
  * mention) a test case (`/test-management?case=<uuid>`). The SPA re-checks the
  * shape (a link is never built from text, and nothing else is followed) and the
- * role: `/releases` is a management route (QA lead and admin), so for anyone
- * else that entry stays text; `/release-gate/<run>` and `/test-management` are
- * open to every role.
+ * role where one matters. `/releases/<id>`, `/release-gate/<run>` and
+ * `/test-management` are open to every role (D-118: Releases is read-only below
+ * QA lead).
  *
  * W38 (W31 F-1, D-6): two EXACT strings join the list — `/users?tab=erasure-requests`
  * (the administrators' "An erasure request is waiting for review"; /users is a
@@ -36,7 +36,7 @@ export function notificationHref(
   if (typeof link !== 'string') return null
   if (RELEASE_GATE_PATH.test(link)) return link
   if (TEST_CASE_PATH.test(link)) return link
-  if (RELEASE_PATH.test(link)) return opts.canAccessManagement ? link : null
+  if (RELEASE_PATH.test(link)) return link
   if (link === PROFILE_PATH) return link
   if (link === ERASURE_REQUESTS_PATH) return opts.canAccessManagement ? link : null
   return null

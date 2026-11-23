@@ -1,7 +1,8 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { useAuthStore } from '@/store/authStore'
 import OnboardingPage from './OnboardingPage'
 
 const { mockProjectState } = vi.hoisted(() => ({
@@ -33,6 +34,10 @@ vi.mock('react-hot-toast', () => ({
 }))
 
 describe('OnboardingPage', () => {
+  afterEach(() => {
+    useAuthStore.setState({ user: null })
+  })
+
   it('renders the activation workflow and onboarding steps', async () => {
     const { onboardingService } = await import('@/services/onboardingService')
 
@@ -170,6 +175,8 @@ describe('OnboardingPage', () => {
     // so the skipped-step status below is what the page actually renders.
     mockProjectState.activeProjectId = 'proj-restore'
     mockProjectState.activeProject = { id: 'proj-restore', name: 'Restore Project' }
+    // Skip and Restore are QA-lead writes on the server (S-D-7).
+    useAuthStore.setState({ user: { id: 'u-lead', role: 'QA_LEAD' } as never })
 
     const { onboardingService } = await import('@/services/onboardingService')
 
@@ -221,6 +228,38 @@ describe('OnboardingPage', () => {
     await waitFor(() =>
       expect(restoreStep).toHaveBeenCalledWith('proj-restore', 'connect_jira'),
     )
+  })
+
+  it('gives a Viewer neither Skip nor Restore: the server takes them from a QA lead only (S-D-7)', async () => {
+    mockProjectState.activeProjectId = 'proj-viewer'
+    mockProjectState.activeProject = { id: 'proj-viewer', name: 'Viewer Project' }
+    useAuthStore.setState({ user: { id: 'u-viewer', role: 'VIEWER' } as never })
+
+    const { onboardingService } = await import('@/services/onboardingService')
+    ;(onboardingService.detectProgress as ReturnType<typeof vi.fn>).mockResolvedValue({
+      project_id: 'proj-viewer',
+      steps: [
+        { key: 'connect_jira', label: 'Connect Jira', description: 'Link Jira', status: 'skipped', completed_at: null },
+        { key: 'upload_run', label: 'Upload Run', description: 'Load a run', status: 'pending', completed_at: null },
+      ],
+      completed_count: 1,
+      total_count: 2,
+      progress_pct: 50,
+      is_complete: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/getting-started']}>
+        <Routes>
+          <Route path="/getting-started" element={<OnboardingPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Upload Run')).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Set Up' }).length).toBeGreaterThan(0)
+    expect(screen.queryByTitle('Skip this step')).toBeNull()
+    expect(screen.queryByRole('button', { name: /restore/i })).toBeNull()
   })
 
   it('shows workspace onboarding when All Projects is selected', async () => {

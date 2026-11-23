@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
     get_current_active_user,
+    holds_role_for_project_write,
     require_project_access,
     require_role,
     resolve_project_scope,
@@ -28,6 +29,10 @@ from app.services.onboarding_service import (
 logger = logging.getLogger("routers.onboarding")
 
 router = APIRouter(prefix="/api/v1/onboarding", tags=["Onboarding"])
+
+
+#: The one step a reader completes by reading (any member may report it).
+SELF_REPORTED_STEP = "view_intelligence"
 
 
 class StepAction(BaseModel):
@@ -84,7 +89,19 @@ async def mark_step_complete(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
 ):
-    """Mark an onboarding step as completed."""
+    """Mark an onboarding step as completed.
+
+    Any member may report ``view_intelligence`` (the run page sends it when a
+    reader opens Analysis). Any other step changes what the whole team's
+    checklist says, so it needs QA_ENGINEER in the project (S-D-7).
+    """
+    if body.step_key != SELF_REPORTED_STEP and not await holds_role_for_project_write(
+        db, current_user, project_id, UserRole.QA_ENGINEER
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Requires at least QA_ENGINEER role to mark this setup step complete.",
+        )
     try:
         result = await complete_step(project_id, body.step_key, current_user.id, db)
         await db.commit()
@@ -101,6 +118,8 @@ async def mark_step_skipped(
     project_id: uuid.UUID,
     body: StepAction,
     db: AsyncSession = Depends(get_db),
+    # Skipping hides a setup step for the whole team: QA lead (S-D-7).
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     _: User = Depends(require_project_access()),
 ):
     """Mark an onboarding step as skipped."""
@@ -120,6 +139,8 @@ async def mark_step_restored(
     project_id: uuid.UUID,
     body: StepAction,
     db: AsyncSession = Depends(get_db),
+    # The counterpart of skip, so the same floor (S-D-7).
+    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
     _: User = Depends(require_project_access()),
 ):
     """Un-skip an onboarding step, returning it to pending so it can be redone."""

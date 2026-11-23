@@ -6,7 +6,7 @@
  *    and `/settings/seed-data` by nobody): each draws its own state with no toast, no write at load, and none of the
  *    ADMIN-only reads the round's scan listed (`run/agents/GAP-D/guarded_gets.tsv`).
  * 2. A TESTER is sent to `/overview` from every path of `managementRoutes` (`frontend/src/App.tsx`): the redirect
- *    was asserted for 4 of the 33, and nothing pinned it for `/releases/:releaseId`, `/settings` and
+ *    was asserted for 4 of the 33, and nothing pinned it for `/settings` and
  *    `/policies/:policyId`. The page never mounts, so none of its reads is made.
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock) for part 1; for part 2 the same fail-closed router
@@ -129,8 +129,6 @@ test.describe('a QA lead opens the management pages no crawl loaded as a QA lead
  */
 const MANAGEMENT_PATHS = [
   '/projects',
-  '/releases',
-  '/releases/33333333-3333-4333-8333-0000000000r1',
   '/activity',
   '/users',
   '/settings',
@@ -163,9 +161,10 @@ const MANAGEMENT_PATHS = [
   '/ownership',
 ]
 
-test('the list above has the 33 management paths', () => {
-  expect(MANAGEMENT_PATHS).toHaveLength(33)
-  expect(new Set(MANAGEMENT_PATHS).size).toBe(33)
+test('the list above has the 31 management paths', () => {
+  // D-118: /releases and /releases/:releaseId left managementRoutes (every role reads them).
+  expect(MANAGEMENT_PATHS).toHaveLength(31)
+  expect(new Set(MANAGEMENT_PATHS).size).toBe(31)
 })
 
 test.describe('a TESTER is sent to /overview from every management path', () => {

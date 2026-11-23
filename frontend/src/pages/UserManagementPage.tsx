@@ -51,6 +51,10 @@ import type { Project } from '@/types/projects'
 
 const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
 
+/** D-79: why a shared project account is off, and how it comes back (S-D-3). */
+const SHARED_ACCOUNT_OFF_HINT =
+  "This shared account is turned off. Archiving its project turns it off, and so can an admin. An admin turns it back on with Reset QA Lead password on the project's Project access tab (restore an archived project first)."
+
 const ROLE_COLORS: Record<UserRole, string> = {
   VIEWER: 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]',
   TESTER: 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]',
@@ -338,6 +342,10 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                 <td className="px-4 py-3">
                   <div className="max-w-[185px] truncate font-medium text-[var(--color-text)]" title={name}>{name}</div>
                   <div className="max-w-[185px] truncate text-xs text-[var(--color-text-muted)]" title={secondLine}>{secondLine}</div>
+                  {/* D-79: the per-project "<Project> QA Lead" login is not a person; say so. */}
+                  {user.is_synthetic && (
+                    <div data-shared-account="" className="mt-0.5 text-2xs text-[var(--color-text-muted)]">Shared project account</div>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   {erased ? (
@@ -364,7 +372,9 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                       {ERASED_BADGE}
                     </span>
                   ) : (
-                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
+                  <span
+                    title={user.is_synthetic && !user.is_active ? SHARED_ACCOUNT_OFF_HINT : undefined}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
                     user.is_active ? 'bg-[var(--status-passed-bg)]/50 text-[var(--status-passed)]' : 'bg-[var(--color-bg-hover)] text-[var(--color-text-muted)]'
                   }`}>
                     {user.is_active ? <UserCheck className="h-3 w-3" /> : <UserX className="h-3 w-3" />}
@@ -400,6 +410,9 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                       )}
                       {/* W31 STRAT-12: not on a service / synthetic account, nor on the admin's own row. */}
                       {personalData}
+                      {/* D-79: an inactive shared project account comes back through its project's
+                          password reset (after a restore), not by switching it on here. */}
+                      {!(user.is_synthetic && !user.is_active) && (
                       <button
                         onClick={() => handleToggleStatus(user.id, user.is_active)}
                         className={`text-xs px-2 py-1 rounded transition-colors ${
@@ -410,6 +423,7 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                       >
                         {user.is_active ? 'Deactivate' : 'Activate'}
                       </button>
+                      )}
                     </div>
                   </td>
                 )}

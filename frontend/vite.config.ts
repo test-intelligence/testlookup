@@ -31,6 +31,8 @@ export default defineConfig({
       '/api': { target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000', changeOrigin: true, ws: true },
       '/webhooks': { target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000', changeOrigin: true },
       '/ws': { target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000', changeOrigin: true, ws: true },
+      // D-116: the health reads, as the production nginx serves them ('/api' above already covers /api-docs).
+      '/health/': { target: process.env.VITE_PROXY_TARGET || 'http://localhost:8000', changeOrigin: true },
     },
   },
   build: {

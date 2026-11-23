@@ -572,6 +572,52 @@ async def confirm_canonical_retirement(
     return _canonical_to_response(canonical)
 
 
+async def _suite_move_sources(db: AsyncSession, canonical_ids, target) -> list[tuple[str, str]]:
+    """(test name, current suite name) for each case a move will really move.
+
+    Read BEFORE the move (the service overwrites ``test_suite_id``), limited
+    to the target's project and to cases not already in the target.
+    """
+    if not canonical_ids:
+        return []
+    from sqlalchemy import select
+
+    from app.models.postgres import CanonicalTestCase, TestSuite
+
+    rows = await db.execute(
+        select(CanonicalTestCase.test_name, TestSuite.name)
+        .join(TestSuite, TestSuite.id == CanonicalTestCase.test_suite_id)
+        .where(
+            CanonicalTestCase.id.in_(list(dict.fromkeys(canonical_ids))),
+            CanonicalTestCase.project_id == target.project_id,
+            CanonicalTestCase.test_suite_id != target.id,
+        )
+    )
+    return [(str(test_name), str(suite_name)) for test_name, suite_name in rows.all()]
+
+
+async def _record_suite_move(db: AsyncSession, current_user, target, sources) -> None:
+    """D-56 / S-D-6: one ``suite.cases_moved`` row per move request (outcome)."""
+    if not sources:
+        return
+    from_suites = sorted({suite_name for _, suite_name in sources})
+    await record_activity(
+        db,
+        project_id=target.project_id,
+        event_type="suite.cases_moved",
+        actor=ActorRef.from_user(current_user),
+        entity_id=target.id,
+        entity_label=target.name,
+        before={"suites": from_suites},
+        after={"suite": target.name},
+        context={
+            "count": len(sources),
+            "from_suites": ", ".join(from_suites),
+            "tests": ", ".join(name for name, _ in sources[:5]),
+        },
+    )
+
+
 @router.post(
     "/api/v1/canonical-test-cases/{canonical_id}/link",
     response_model=CanonicalTestCaseResponse,
@@ -589,7 +635,9 @@ async def link_canonical_to_suite(
     canonical = await svc.get_canonical_or_404(db, canonical_id)
     await _enforce_project_access(db, current_user, canonical.project_id)
     target = await svc.get_suite_or_404(db, payload.test_suite_id)
+    sources = await _suite_move_sources(db, [canonical.id], target)
     await svc.link_canonical_to_suite(db, canonical, target)
+    await _record_suite_move(db, current_user, target, sources)
     await db.commit()
     # The coverage map places idle tests by canonical suite (VIZ-206): bump
     # the analytics epoch after the commit that made the move durable.
@@ -628,9 +676,16 @@ async def bulk_link_canonicals_to_suite(
     # there, so we can't be tricked into moving an inaccessible project's
     # cases via a target suite the caller does have access to.
     await _enforce_project_access(db, current_user, target.project_id)
+    sources = (
+        await _suite_move_sources(db, payload.canonical_ids, target)
+        if len(payload.canonical_ids) <= svc.BULK_LINK_MAX_IDS
+        else []
+    )
     result = await svc.bulk_link_canonicals_to_suite(
         db, target, payload.canonical_ids
     )
+    if result["moved"]:
+        await _record_suite_move(db, current_user, target, sources)
     await db.commit()
     if result["moved"]:
         # The coverage map places idle tests by canonical suite (VIZ-206).

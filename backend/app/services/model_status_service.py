@@ -90,6 +90,16 @@ PROBE_REFUSED = "refused_by_policy"        # the provider policy forbids this ba
 PROBE_UNREACHABLE = "unreachable"          # no answer (connection, timeout, TLS)
 PROBE_UNEXPECTED_STATUS = "unexpected_status"  # answered, but not 200
 PROBE_INVALID_RESPONSE = "invalid_response"    # 200, but not Ollama's /api/tags shape
+PROBE_NOT_USED = "not_used"                # neither the model nor the embeddings run on Ollama: not probed
+
+#: D-23: what a person reads for each word (the page and the fallback chain).
+PROBE_SENTENCES = {
+    PROBE_REFUSED: "This address is not allowed by the provider policy while offline mode is on.",
+    PROBE_UNREACHABLE: "No answer from the Ollama server (connection, time limit or TLS).",
+    PROBE_UNEXPECTED_STATUS: "The server answered, but not as Ollama does.",
+    PROBE_INVALID_RESPONSE: "The server answered with something other than an Ollama model list.",
+    PROBE_NOT_USED: "Ollama is not used: neither the model nor the embeddings run on it.",
+}
 
 # Bounds on what a probe hands back from the answer it got.
 _PROBE_MAX_MODELS = 500
@@ -250,10 +260,11 @@ def _llm_chain_entry(
             return {
                 "mode": "llm",
                 "available": False,
+                # D-23: a sentence, never the raw code or the internal address.
                 "reason": (
-                    f"Ollama is unreachable at {base_url}"
-                    + (f" ({probe.get('error')})" if probe.get("error") else "")
-                    + " — this is a connectivity problem, not a missing model."
+                    "Ollama is unreachable"
+                    + (f": {PROBE_SENTENCES[probe['error']]}" if probe.get("error") in PROBE_SENTENCES else ".")
+                    + " This is a connectivity problem, not a missing model."
                 ),
                 "reason_code": "unreachable",
             }
@@ -376,10 +387,8 @@ async def build_model_status(
         probe = {
             "reachable": False,
             "models": [],
-            "error": (
-                f"Ollama is not on the configured path (LLM provider '{provider or 'none'}', "
-                f"embedding provider '{embedding_provider or 'none'}') — not probed."
-            ),
+            # D-23: a word the page shows as "not used", not as a red "unreachable" box.
+            "error": PROBE_NOT_USED,
         }
 
     installed: list[str] = list(probe.get("models") or [])

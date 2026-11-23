@@ -16,9 +16,15 @@ export default function SectionTabs() {
   const { canAccessManagement } = usePermissions()
   const item = owningNavItem(pathname)
   if (!item?.tabs || (item.requires === 'management' && !canAccessManagement)) return null
+  // A tab whose page redirects this user is not offered (D-118: a viewer reads
+  // Releases, not Gate policies); one tab left is no set of tabs.
+  const tabs = canAccessManagement
+    ? item.tabs
+    : item.tabs.filter((tab) => !item.managementTabs?.includes(tab.to))
+  if (tabs.length < item.tabs.length && tabs.length < 2) return null
   return (
     <div data-section-tabs={item.id} className="mb-4">
-      <RouteTabs items={item.tabs} ariaLabel={`${item.label} pages`} />
+      <RouteTabs items={tabs} ariaLabel={`${item.label} pages`} />
     </div>
   )
 }

@@ -1,7 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useAuthStore } from '@/store/authStore'
 import RunDetailPage from './RunDetailPage'
 
 const { mockProjectState } = vi.hoisted(() => ({
@@ -195,6 +196,10 @@ describe('RunDetailPage', () => {
 
 // W11 REL-09 (D13): a run with no release after the ladder reads Unattributed.
 describe('RunDetailPage — the release chip', () => {
+  // D-08a: changing a run's release is QA lead on the API; the controls follow.
+  beforeEach(() => useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never }))
+  afterEach(() => useAuthStore.setState({ user: null }))
+
   async function renderRun(releaseName: string | null) {
     const { useRun, useRuns, useTestCases } = await import('@/hooks/useRuns')
     const useSWR = (await import('swr')).default as ReturnType<typeof vi.fn>
@@ -250,5 +255,27 @@ describe('RunDetailPage — the release chip', () => {
     expect(screen.getByRole('button', { name: '2026.11' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Change release' })).toBeInTheDocument()
     expect(screen.queryByText('Unattributed')).toBeNull()
+  })
+
+  it.each(['VIEWER', 'TESTER', 'QA_ENGINEER'])(
+    'a %s reads the release with no Change release pencil, and Unattributed as text (D-08a)',
+    async (role) => {
+      useAuthStore.setState({ user: { id: role, role } as never })
+      await renderRun('2026.11')
+      expect(screen.getByRole('button', { name: '2026.11' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Change release' })).toBeNull()
+    },
+  )
+
+  it('below QA lead, Unattributed keeps its explanation but opens nothing (D-08a)', async () => {
+    useAuthStore.setState({ user: { id: 'viewer', role: 'VIEWER' } as never })
+    await renderRun(null)
+    expect(screen.queryByRole('button', { name: 'Set release (Unattributed)' })).toBeNull()
+    const chip = screen.getByText('Unattributed')
+    expect(chip.closest('[title]')).toHaveAttribute(
+      'title',
+      'No release claims this run: the attribution ladder did not link it. Set its release, or check the attribution rules.',
+    )
+    expect(screen.queryByPlaceholderText('Release name (e.g. v2.5.0)')).toBeNull()
   })
 })

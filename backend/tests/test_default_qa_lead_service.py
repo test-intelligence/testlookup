@@ -191,3 +191,81 @@ async def test_reset_default_qa_lead_password_accepts_custom_value():
 
     assert password == "Hunter2!"
     assert user.hashed_password != "legacy"
+
+
+@pytest.mark.asyncio
+async def test_s_d_3_a_reset_re_enables_the_account_archive_turned_off():
+    """Restore says the QA lead comes back with a password reset; the reset
+    must therefore turn the account back on, or it hands out a password that
+    cannot sign in."""
+    from app.services.default_qa_lead_service import reset_default_qa_lead_password
+
+    existing_user_id = uuid.uuid4()
+    existing_user = SimpleNamespace(
+        id=existing_user_id,
+        role=UserRole.QA_LEAD.value,
+        hashed_password="legacy",
+        is_synthetic=True,
+        must_change_password=False,
+        is_active=False,  # what archive left behind
+    )
+    project = _project(default_qa_lead_user_id=existing_user_id)
+    project.is_active = True  # restored
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=existing_user)
+    db.flush = AsyncMock()
+
+    user, _ = await reset_default_qa_lead_password(db, project, may_reactivate=True)
+
+    assert user.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_a_reset_without_admin_rights_leaves_a_turned_off_account_off():
+    """An admin may have turned the account off (PATCH /users/{id}/status is
+    ADMIN only); a project QA lead's reset must not undo that or hand out a
+    working password."""
+    from app.services.default_qa_lead_service import (
+        DefaultQaLeadTurnedOff,
+        reset_default_qa_lead_password,
+    )
+
+    existing_user_id = uuid.uuid4()
+    existing_user = SimpleNamespace(
+        id=existing_user_id, role=UserRole.QA_LEAD.value, hashed_password="legacy",
+        is_synthetic=True, must_change_password=False, is_active=False,
+    )
+    project = _project(default_qa_lead_user_id=existing_user_id)
+    project.is_active = True
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=existing_user)
+    db.flush = AsyncMock()
+
+    with pytest.raises(DefaultQaLeadTurnedOff):
+        await reset_default_qa_lead_password(db, project)
+
+    assert existing_user.is_active is False
+    assert existing_user.hashed_password == "legacy"
+
+
+@pytest.mark.asyncio
+async def test_s_d_3_a_reset_on_an_archived_project_is_refused_and_changes_nothing():
+    from app.services.default_qa_lead_service import (
+        DefaultQaLeadProjectArchived,
+        reset_default_qa_lead_password,
+    )
+
+    existing_user_id = uuid.uuid4()
+    existing_user = SimpleNamespace(
+        id=existing_user_id, role=UserRole.QA_LEAD.value, hashed_password="legacy",
+        is_synthetic=True, must_change_password=False, is_active=False,
+    )
+    project = _project(default_qa_lead_user_id=existing_user_id)
+    project.is_active = False
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=existing_user)
+
+    with pytest.raises(DefaultQaLeadProjectArchived):
+        await reset_default_qa_lead_password(db, project)
+    assert existing_user.is_active is False
+    assert existing_user.hashed_password == "legacy"

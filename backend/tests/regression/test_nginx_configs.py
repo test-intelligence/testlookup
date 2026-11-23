@@ -425,3 +425,52 @@ def test_nginx_picks_the_ticket_download_location_for_a_download(name: str) -> N
                 modifier, pattern = loc.split(" ", 1)
                 flags = re.I if modifier == "~*" else 0
                 assert not re.search(pattern, TICKET_DOWNLOAD_SAMPLE, flags), (name, loc)
+
+
+# ── D-116 / D-35: the Compose front end serves the API reference and health ─
+#
+# On Docker Compose the backend is published on loopback only, so the front
+# end is the one address users have. It proxies /api-docs and /health/ the way
+# the Kubernetes Ingress routes them (k8s/base/ingress.yaml); /metrics stays
+# off the public port (no authentication).
+
+COMPOSE_FRONT_END = "frontend/nginx.conf.template"
+
+
+@pytest.mark.parametrize("prefix", ["/api-docs", "/health/"])
+def test_the_compose_front_end_proxies_the_api_reference_and_health(prefix: str) -> None:
+    for server in _servers(parse(CONFIGS[COMPOSE_FRONT_END])):
+        locations = _locations(server)
+        block = locations.get(f"^~ {prefix}")
+        assert block is not None, f"{COMPOSE_FRONT_END}: no `location ^~ {prefix}`"
+        settings = {n: args for n, args, _ in block}
+        assert settings.get("proxy_pass") == ["http://envsubst-BACKEND_UPSTREAM"], settings.get("proxy_pass")
+        assert _proxying(block) == _proxying(locations["^~ /api/"]), f"{prefix}: proxies unlike /api/"
+        assert _headers(block) == {}, f"{prefix}: an add_header here would drop the server's headers"
+
+
+def test_the_compose_front_end_never_proxies_metrics() -> None:
+    for server in _servers(parse(CONFIGS[COMPOSE_FRONT_END])):
+        for location, children in _locations(server).items():
+            if any(n == "proxy_pass" for n, _, _ in children):
+                assert "metrics" not in location, location
+
+
+def test_every_backend_prefix_the_ingress_routes_is_proxied_by_the_front_end() -> None:
+    """The Ingress and the Compose front end must not drift apart again."""
+    docs = yaml.safe_load_all((REPO_ROOT / "k8s" / "base" / "ingress.yaml").read_text(encoding="utf-8"))
+    paths = {
+        path["path"]
+        for ingress in docs if ingress and ingress.get("kind") == "Ingress"
+        for rule in ingress["spec"]["rules"]
+        for path in rule["http"]["paths"]
+        if path["backend"]["service"]["name"].startswith("testlookup-backend")
+    }
+    assert {"/api/", "/api-docs", "/health/"} <= paths, paths
+    for server in _servers(parse(CONFIGS[COMPOSE_FRONT_END])):
+        proxied = {
+            loc.removeprefix("^~ ") for loc, children in _locations(server).items()
+            if any(n == "proxy_pass" for n, _, _ in children)
+        }
+        missing = sorted(paths - proxied)
+        assert not missing, f"the Ingress routes {missing} to the backend; the front end does not"

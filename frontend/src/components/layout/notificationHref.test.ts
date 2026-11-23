@@ -1,7 +1,7 @@
 /**
  * NTF-01: the bell follows only the server's two allow-listed path shapes,
- * re-checked here, and `/releases/<id>` (a management route) only for a QA
- * lead or admin. Equality on the whole value, never a substring. W38: the two
+ * re-checked here, and `/releases/<id>` (every role reads releases, D-118).
+ * Equality on the whole value, never a substring. W38: the two
  * exact strings `/users?tab=erasure-requests` (management only) and
  * `/settings/profile` (every role), and their near misses.
  */
@@ -23,9 +23,10 @@ describe('notificationHref', () => {
     expect(notificationHref({ link: `/test-management?case=${ID}` }, VIEWER)).toBe(`/test-management?case=${ID}`)
   })
 
-  it('a release links for a QA lead or admin only', () => {
+  it('a release links for every role (D-118)', () => {
     expect(notificationHref({ link: `/releases/${ID}` }, LEAD)).toBe(`/releases/${ID}`)
-    expect(notificationHref({ link: `/releases/${ID}` }, VIEWER)).toBeNull()
+    // D-118: every role reads a release, so the entry links for a viewer too.
+    expect(notificationHref({ link: `/releases/${ID}` }, VIEWER)).toBe(`/releases/${ID}`)
   })
 
   it('W38: the erasure-request queue links (exactly) for a QA lead or admin only — /users is a management route', () => {

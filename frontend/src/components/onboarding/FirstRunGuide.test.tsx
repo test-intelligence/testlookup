@@ -1,6 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import FirstRunGuide from './FirstRunGuide'
 import {
@@ -14,10 +14,13 @@ import {
   dismissFirstRunGuide,
   SUPPORTED_FORMAT_SUMMARY,
   INGEST_FORMAT_LABELS,
+  DEMO_INSTALL_COMMAND,
+  buildSteps,
 } from './firstRunSteps'
 import { SUPPORTED_FORMATS } from '@/services/reportUploadService'
 import { backendUrl } from '@/services/api'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
+import { useAuthStore } from '@/store/authStore'
 
 const copyMock = vi.fn(async (_value: string) => true)
 // W17 DEV-02: the guide asks the deployment for its CLI wheel; tests choose the answer.
@@ -34,6 +37,11 @@ function renderGuide(props = {}) {
     </MemoryRouter>,
   )
 }
+
+// The key hint follows the role (D-68); the default reader here is a QA lead.
+const signInAs = (role: string) => useAuthStore.setState({ user: { id: role, role } as never })
+beforeEach(() => signInAs('QA_LEAD'))
+afterEach(() => useAuthStore.setState({ user: null }))
 
 describe('FirstRunGuide', () => {
   describe('links to pages that need one project', () => {
@@ -83,11 +91,37 @@ describe('FirstRunGuide', () => {
     renderGuide()
     expect(screen.getByText(/Load the demo dataset/i)).toBeInTheDocument()
     expect(screen.getByText('make quickstart')).toBeInTheDocument()
-    expect(screen.getByText(/ingest your own test results/i)).toBeInTheDocument()
+    expect(screen.getByText(/bring in your own test results/i)).toBeInTheDocument()
     expect(
       screen.getByText('testlookup upload file results.xml -p <project-id> -b <build>'),
     ).toBeInTheDocument()
     expect(screen.getByText(/explore the intelligence/i)).toBeInTheDocument()
+  })
+
+  // D-09: the one-command install has no Makefile, so step 1 cannot offer only `make quickstart`.
+  it('step 1 gives the one-command install its demo command first, a source clone make quickstart second', () => {
+    renderGuide()
+    const demo = screen.getByText(DEMO_INSTALL_COMMAND)
+    const make = screen.getByText('make quickstart')
+    expect(DEMO_INSTALL_COMMAND).toContain('TL_PROFILE=demo')
+    expect(demo.compareDocumentPosition(make) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getByText('From a source clone instead:')).toBeInTheDocument()
+    expect(buildSteps()[0].command).toBe(DEMO_INSTALL_COMMAND)
+  })
+
+  // D-126: step 2 named only the CLI and the API.
+  it('step 2 links the Upload report form for a QA engineer', () => {
+    signInAs('QA_ENGINEER')
+    renderGuide()
+    const link = screen.getByRole('link', { name: 'Upload a report' })
+    expect(link.getAttribute('href')).toMatch(/^\/runs\?upload=1/)
+  })
+
+  it('step 2 shows no upload link to a viewer, who cannot upload', () => {
+    signInAs('VIEWER')
+    renderGuide()
+    expect(screen.queryByRole('link', { name: 'Upload a report' })).toBeNull()
+    expect(screen.queryByTestId('first-run-upload')).toBeNull()
   })
 
   it('links to the key first-insight destinations', () => {
@@ -490,5 +524,32 @@ describe('FirstRunGuide', () => {
       }
       expect(wrote).toBe(false)
     })
+  })
+})
+
+/**
+ * D-68: the empty-project Home sent every role to `/settings/api-keys`, a QA
+ * lead's page that redirects anyone else home. A QA engineer owns keys of their
+ * own (`/settings/my-api-keys`); a viewer or a tester can own none.
+ */
+describe('FirstRunGuide key hint by role (D-68)', () => {
+  it('a QA lead keeps the project keys page', () => {
+    signInAs('QA_LEAD')
+    renderGuide()
+    expect(screen.getByRole('link', { name: /Settings → API Keys/ })).toHaveAttribute('href', '/settings/api-keys')
+  })
+
+  it('a QA engineer is sent to their own keys', () => {
+    signInAs('QA_ENGINEER')
+    renderGuide()
+    expect(screen.getByRole('link', { name: /Settings → My API keys/ })).toHaveAttribute('href', '/settings/my-api-keys')
+    expect(screen.queryByRole('link', { name: /Settings → API Keys/ })).toBeNull()
+  })
+
+  it.each(['VIEWER', 'TESTER'])('a %s gets no key link, and is told who can upload', (role) => {
+    signInAs(role)
+    renderGuide()
+    expect(screen.queryByRole('link', { name: /API Keys/i })).toBeNull()
+    expect(screen.getByText(/Ask a QA engineer or a QA lead to upload the first report/)).toBeInTheDocument()
   })
 })

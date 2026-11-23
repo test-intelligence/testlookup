@@ -2396,9 +2396,15 @@ function EmptyStateBlock({
 
 // ─── Plan Items Expanded View ─────────────────────────────────────────────────
 
-interface PlanItemsViewProps { planId: string; onMutate: () => void; projectId?: string | null }
+interface PlanItemsViewProps {
+  planId: string
+  onMutate: () => void
+  projectId?: string | null
+  /** D-57: linking a suite and recording an execution are TESTER on the API. */
+  canWrite?: boolean
+}
 
-function PlanItemsView({ planId, onMutate, projectId = null }: PlanItemsViewProps) {
+function PlanItemsView({ planId, onMutate, projectId = null, canWrite = false }: PlanItemsViewProps) {
   const { data: items, isLoading, mutate } = usePlanItems(planId)
   const [executing, setExecuting] = useState<string | null>(null)
   const [showLinkSuite, setShowLinkSuite] = useState(false)
@@ -2432,15 +2438,17 @@ function PlanItemsView({ planId, onMutate, projectId = null }: PlanItemsViewProp
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-end">
-        <button
-          onClick={() => setShowLinkSuite(true)}
-          className="btn-secondary flex items-center gap-1.5 text-xs"
-        >
-          <Layers className="h-3.5 w-3.5" /> Link Suite
-        </button>
-      </div>
-      {showLinkSuite && (
+      {canWrite && (
+        <div className="flex items-center justify-end">
+          <button
+            onClick={() => setShowLinkSuite(true)}
+            className="btn-secondary flex items-center gap-1.5 text-xs"
+          >
+            <Layers className="h-3.5 w-3.5" /> Link Suite
+          </button>
+        </div>
+      )}
+      {canWrite && showLinkSuite && (
         <LinkSuiteModal
           planId={planId}
           projectId={projectId}
@@ -2483,7 +2491,7 @@ function PlanItemsView({ planId, onMutate, projectId = null }: PlanItemsViewProp
               </td>
               <td className="td text-right">
                 <div className="flex items-center justify-end gap-1">
-                  {['passed','failed','blocked'].map(s => (
+                  {canWrite && ['passed','failed','blocked'].map(s => (
                     <button
                       key={s}
                       disabled={executing === item.id}
@@ -2655,6 +2663,11 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
   const [downloadingPlan, setDownloadingPlan] = useState<{ id: string; format: 'word' | 'pdf' } | null>(null)
 
   const { data, isLoading, mutate } = useTestPlans({ page, size: 10 })
+  // D-57: the API's plan floors (`test_management_plans.py`): writes TESTER,
+  // the AI plan QA_ENGINEER. A control a role cannot use is not offered.
+  const { hasRole } = usePermissions()
+  const canWritePlans = hasRole('TESTER')
+  const canUseAi = hasRole('QA_ENGINEER')
 
   const handleAiCreatePlan = async () => {
     setAiLoading(true)
@@ -2707,16 +2720,18 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
   return (
     <>
       <div className="space-y-4">
-        {projectId && (
+        {projectId && canWritePlans && (
           <div className="flex items-center justify-end gap-3">
-            <button
-              onClick={handleAiCreatePlan}
-              disabled={aiLoading}
-              className="btn-secondary flex items-center gap-2"
-            >
-              {aiLoading ? <LoadingSpinner size="sm" /> : <Sparkles className="h-4 w-4" />}
-              AI Create Plan
-            </button>
+            {canUseAi && (
+              <button
+                onClick={handleAiCreatePlan}
+                disabled={aiLoading}
+                className="btn-secondary flex items-center gap-2"
+              >
+                {aiLoading ? <LoadingSpinner size="sm" /> : <Sparkles className="h-4 w-4" />}
+                AI Create Plan
+              </button>
+            )}
             <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
               <Plus className="h-4 w-4" /> New Plan
             </button>
@@ -2724,7 +2739,7 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
         )}
 
         {/* New Plan (the toolbar and the empty state): in the page, under the toolbar row (W27b PAN-05). */}
-        {showCreate && projectId && (
+        {showCreate && projectId && canWritePlans && (
           <CreatePlanModal
             projectId={projectId}
             onClose={() => setShowCreate(false)}
@@ -2739,7 +2754,7 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
             icon={<BookOpen className="h-10 w-10" />}
             title="No test plans"
             description={projectId ? "Create a test plan to organize and track test execution" : "No test plans found across all projects"}
-            action={projectId ? (
+            action={projectId && canWritePlans ? (
               <button onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2">
                 <Plus className="h-4 w-4" /> New Plan
               </button>
@@ -2758,6 +2773,17 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
                       <div className="flex items-center gap-3 mb-1">
                         <h3 className="text-sm font-semibold text-[var(--color-text)] truncate">{plan.name}</h3>
                         {/* Status selector — click stops propagation so it doesn't toggle expand */}
+                        {!canWritePlans ? (
+                          <span
+                            data-testid="plan-status-readonly"
+                            className={clsx(
+                              'text-xs font-medium rounded-full px-2 py-0.5 border',
+                              PLAN_STATUS_COLORS[plan.status] ?? 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] border-[var(--color-border-light)]',
+                            )}
+                          >
+                            {plan.status.replace(/_/g, ' ')}
+                          </span>
+                        ) : (
                         <div onClick={e => e.stopPropagation()}>
                           <select
                             value={plan.status}
@@ -2782,6 +2808,7 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
                             ))}
                           </select>
                         </div>
+                        )}
                         {plan.ai_generated && <Sparkles className="h-3.5 w-3.5 text-[var(--color-purple)]" aria-label="AI generated" />}
                       </div>
                       {plan.description && <p className="text-xs text-[var(--color-text-muted)] mb-2 truncate">{plan.description}</p>}
@@ -2830,7 +2857,7 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
                         {downloadingPlan?.id === plan.id && downloadingPlan.format === 'pdf' ? 'Exporting…' : 'PDF'}
                       </button>
                     </div>
-                    <PlanItemsView planId={plan.id} onMutate={mutate} projectId={projectId} />
+                    <PlanItemsView planId={plan.id} onMutate={mutate} projectId={projectId} canWrite={canWritePlans} />
                   </div>
                 )}
               </div>

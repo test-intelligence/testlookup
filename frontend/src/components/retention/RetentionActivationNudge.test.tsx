@@ -100,6 +100,14 @@ describe('RetentionActivationNudge', () => {
     expect(screen.getByTestId('retention-activation-nudge')).toBeInTheDocument()
   })
 
+  // D-75: the title said "configured" on projects where nobody configured anything.
+  it('titles the prompt "Retention is off", never "configured"', () => {
+    mockDismissals([])
+    renderNudge(POLICY(false))
+    expect(screen.getByRole('heading', { name: 'Retention is off' })).toBeInTheDocument()
+    expect(screen.queryByText(/configured but not running/)).toBeNull()
+  })
+
   it('stays silent once retention is enabled', () => {
     mockDismissals([])
     renderNudge(POLICY(true))

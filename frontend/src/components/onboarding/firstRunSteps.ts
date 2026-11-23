@@ -58,6 +58,10 @@ export interface Step {
   title: string
   body: ReactNode
   command?: string
+  /** A second way to do the same step, with the label shown above it (D-09: a source clone's `make quickstart`). */
+  altCommand?: { label: string; command: string }
+  /** D-126: show a link to the Runs page's Upload report form (for roles that can upload). */
+  uploadLink?: boolean
   /**
    * An optional second copy-paste command showing the raw ingest API, for CI
    * runners that `curl` the endpoint directly rather than installing the CLI.
@@ -114,6 +118,10 @@ export function uploadCommand(projectId?: string): string {
  * deployment's URL via {@link buildSteps}, so this only surfaces in local dev.
  */
 export const DEFAULT_INGEST_URL = 'http://localhost:8000/api/v1/ingest/file'
+
+/** D-09: the one-command install's demo path (README "Option A", install.sh TL_PROFILE=demo). */
+export const DEMO_INSTALL_COMMAND =
+  'curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | TL_PROFILE=demo bash'
 
 /**
  * The raw ingest-API equivalent of {@link uploadCommand}, for CI runners that
@@ -208,15 +216,20 @@ export function buildSteps(
 ): Step[] {
   return [
     {
+      // D-09: the one-command (Docker Compose) install has no Makefile; its demo
+      // path is the installer's demo profile. A source clone keeps `make quickstart`.
       n: 1,
       title: 'Load the demo dataset',
-      body: 'Spin up a fully populated instance — sample runs, failures, flaky tests, trends, and a release gate — in a few minutes.',
-      command: 'make quickstart',
+      body: 'Add demo projects with sample runs, failures, flaky tests, trends and a release gate. On the one-command install, run the installer again with the demo profile:',
+      command: DEMO_INSTALL_COMMAND,
+      altCommand: { label: 'From a source clone instead:', command: 'make quickstart' },
     },
     {
       n: 2,
-      title: 'Or ingest your own test results',
+      title: 'Or bring in your own test results',
       body: `Point your CI at the ingest API (${SUPPORTED_FORMAT_SUMMARY}), or upload a file from the CLI.`,
+      // D-126: the Upload report form on Runs is the shortest path; the guide links it for roles that can upload.
+      uploadLink: true,
       command: uploadCommand(projectId),
       cliInstall: cliInstallCommand(cliWheelUrl),
       cliFromDeployment: Boolean(cliWheelUrl),

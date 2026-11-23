@@ -83,6 +83,7 @@ import { formatCompactDateTime } from '@/utils/formatCompactDateTime'
 import ReviewBanner from '@/components/reviews/ReviewBanner'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { onboardingService } from '@/services/onboardingService'
+import { firstReportInTab } from '@/utils/reportOnce'
 import type {
   DimensionScore,
   FailureClusterIntel,
@@ -1467,14 +1468,15 @@ export function RunIntelligenceBody({
   // `auto_detect_progress` to key off (opening a page leaves no row) and no
   // other caller of `completeStep`, so without this it stays `pending` for
   // ever and a self-hoster's setup wizard never reaches 100%. Idempotent and
-  // fire-and-forget server-side; keyed on the loaded flag + project so it runs
-  // once per open, not on every refresh, and never with the synthetic "All
+  // fire-and-forget server-side; sent once per project per browser tab (D-32:
+  // it went out on every page open), and never with the synthetic "All
   // Projects" id. (It lives in the body: opening the Run page's Analysis tab
   // is what "viewing Run Intelligence" is now.)
   const intelligenceViewed = !isLoading && !isError && !!intelligence
   useEffect(() => {
     if (!intelligenceViewed) return
     if (!activeProjectId || activeProjectId === ALL_PROJECTS_ID) return
+    if (!firstReportInTab(`onboarding:view_intelligence:${activeProjectId}`)) return
     // Background bookkeeping: a refusal (the read-only demo) must not toast at a reader who did nothing.
     void onboardingService.completeStep(activeProjectId, 'view_intelligence', { suppressToast: true }).catch(() => {})
   }, [intelligenceViewed, activeProjectId])
