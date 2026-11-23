@@ -148,7 +148,8 @@ test("a row's Suspects asks for the run of that test's own last failure", async 
   await table.getByRole('button', { name: 'Suspects for checkout total includes tax' }).click()
   const panel = page.getByRole('complementary', { name: 'Suspects: checkout total includes tax' })
   await expect(panel.getByTestId('suspects-run')).toContainText('in run build-127')
-  await expect(panel.getByRole('link', { name: 'build-127' })).toHaveAttribute('href', '/runs/run-older')
+  // The panel also shows the narrowing's first-failure link (#build-127, D-11): read the Suspects run line's own.
+  await expect(panel.getByTestId('suspects-run').getByRole('link', { name: 'build-127' })).toHaveAttribute('href', '/runs/run-older')
   await expect.poll(() => requestsTo(api, SUSPECTS)).toEqual([
     'GET /api/v1/runs/run-older/suspects?fingerprint=fp-hon05-1',
   ])
