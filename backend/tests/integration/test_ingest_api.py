@@ -28,12 +28,14 @@ def mock_celery_dispatch():
     Stub the two Celery entry points the ingest router calls so tests don't
     need a running broker. Returns the mocks so callers can assert on them.
     """
+    def _queued(*, kwargs, task_id):
+        """Stand-in for ``apply_async``: the router reads only ``.id``."""
+        return type("T", (), {"id": task_id})()
+
     batch_task = AsyncMock()
-    batch_task.apply_async = lambda *, kwargs, task_id: type("T", (), {"id": task_id})()
+    batch_task.apply_async = _queued
     file_task = AsyncMock()
-    file_task.apply_async = (
-        lambda *, kwargs, task_id: type("T", (), {"id": task_id})()
-    )
+    file_task.apply_async = _queued
 
     with patch("app.worker.tasks.ingest_uploaded_results", batch_task), \
          patch("app.worker.tasks.ingest_uploaded_file", file_task):
