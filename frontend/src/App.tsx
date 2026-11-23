@@ -142,6 +142,8 @@ const UxPrimitivesPage = import.meta.env.DEV
 type AppRoute = {
   path: string
   component: ComponentType
+  /** A management route a QA engineer may read too (D-118: Releases). */
+  releases?: true
 }
 
 const appRoutes: AppRoute[] = [
@@ -208,16 +210,13 @@ const appRoutes: AppRoute[] = [
 ]
 
 /**
- * D-118 (owner decision 4): QA engineers READ releases; the page hides its
- * writes below QA lead. Viewers and testers are redirected, as before.
+ * Routes restricted to QA_LEAD and ADMIN roles. D-118 (owner decision 4):
+ * QA engineers READ releases too (the page hides its writes below QA lead);
+ * viewers and testers are redirected, as before.
  */
-const qaEngineerRoutes: AppRoute[] = [
-  { path: 'releases', component: ReleasesPage },
-  { path: 'releases/:releaseId', component: ReleasesPage },
-]
-
-/** Routes restricted to QA_LEAD and ADMIN roles. */
 const managementRoutes: AppRoute[] = [
+  { path: 'releases', component: ReleasesPage, releases: true },
+  { path: 'releases/:releaseId', component: ReleasesPage, releases: true },
   { path: 'projects', component: ProjectsPage },
   { path: 'activity', component: ActivityPage },
   { path: 'users', component: UserManagementPage },
@@ -330,26 +329,12 @@ function renderLazyRoute(Component: ComponentType) {
 }
 
 /**
- * Route guard for management pages (Projects, Releases, Users).
- * Redirects users without QA_LEAD or ADMIN role to the overview page.
+ * Route guard: management pages (Projects, Users, Settings) need QA_LEAD or
+ * ADMIN; `releases` (D-118) needs QA_ENGINEER. Anyone else goes to the overview.
  */
-function ManagementGuard({ children }: { children: React.ReactNode }) {
-  const { canAccessManagement } = usePermissions()
-
-  if (!canAccessManagement) {
-    return <Navigate to="/overview" replace />
-  }
-
-  return <>{children}</>
-}
-
-/** Route guard for the pages a QA engineer reads (Releases): below that, the overview. */
-function QaEngineerGuard({ children }: { children: React.ReactNode }) {
-  const { canReadReleases } = usePermissions()
-  if (!canReadReleases) {
-    return <Navigate to="/overview" replace />
-  }
-  return <>{children}</>
+function RoleGuard({ children, releases }: { children: React.ReactNode; releases?: boolean }) {
+  const { canAccessManagement, canReadReleases } = usePermissions()
+  return (releases ? canReadReleases : canAccessManagement) ? <>{children}</> : <Navigate to="/overview" replace />
 }
 
 /**
@@ -393,21 +378,14 @@ export default function App() {
           {appRoutes.map(({ path, component }) => (
             <Route key={path} path={path} element={renderLazyRoute(component)} />
           ))}
-          {qaEngineerRoutes.map(({ path, component: Component }) => (
-            <Route
-              key={path}
-              path={path}
-              element={<QaEngineerGuard>{renderLazyRoute(Component)}</QaEngineerGuard>}
-            />
-          ))}
-          {managementRoutes.map(({ path, component: Component }) => (
+          {managementRoutes.map(({ path, component: Component, releases }) => (
             <Route
               key={path}
               path={path}
               element={
-                <ManagementGuard>
+                <RoleGuard releases={releases}>
                   {renderLazyRoute(Component)}
-                </ManagementGuard>
+                </RoleGuard>
               }
             />
           ))}

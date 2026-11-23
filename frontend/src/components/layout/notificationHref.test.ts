@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 import { notificationChannelLabel, notificationHref } from './notificationHref'
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e'
-const LEAD = { canAccessManagement: true }
+const LEAD = { canAccessManagement: true, canReadReleases: true }
 const VIEWER = { canAccessManagement: false }
 const QA_ENGINEER = { canAccessManagement: false, canReadReleases: true }
 

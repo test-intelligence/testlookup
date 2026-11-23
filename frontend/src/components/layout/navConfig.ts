@@ -40,8 +40,6 @@ export interface NavItem {
   needsChat?: boolean
   /** The section's pages, as route tabs at the top of each of them. */
   tabs?: readonly RouteTabItem[]
-  /** Tabs (by `to`) shown to a QA lead or admin only: their routes redirect anyone else. */
-  managementTabs?: readonly string[]
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
@@ -134,7 +132,6 @@ export const NAV_ITEMS: readonly NavItem[] = [
     owns: ['/releases', '/policies'],
     // D-118: a QA engineer reads Releases; Gate policies stays a QA lead's page.
     requires: 'qa_engineer',
-    managementTabs: ['/policies'],
     tabs: [
       { to: '/releases', label: 'Releases' },
       { to: '/policies', label: 'Gate policies' },
@@ -167,7 +164,7 @@ export function visibleNavItems(access: NavAccess): NavItem[] {
   return NAV_ITEMS.filter(
     (item) =>
       (item.requires !== 'management' || access.canAccessManagement) &&
-      (item.requires !== 'qa_engineer' || access.canReadReleases === true || access.canAccessManagement) &&
+      (item.requires !== 'qa_engineer' || access.canReadReleases) &&
       (!item.needsChat || access.chatEnabled),
   )
 }

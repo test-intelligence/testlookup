@@ -36,7 +36,7 @@ export function notificationHref(
   if (typeof link !== 'string') return null
   if (RELEASE_GATE_PATH.test(link)) return link
   if (TEST_CASE_PATH.test(link)) return link
-  if (RELEASE_PATH.test(link)) return opts.canReadReleases || opts.canAccessManagement ? link : null
+  if (RELEASE_PATH.test(link)) return opts.canReadReleases ? link : null
   if (link === PROFILE_PATH) return link
   if (link === ERASURE_REQUESTS_PATH) return opts.canAccessManagement ? link : null
   return null

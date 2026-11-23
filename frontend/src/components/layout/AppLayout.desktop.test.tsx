@@ -39,7 +39,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AppLayout from './AppLayout'
 
 vi.mock('@/hooks/usePermissions', () => ({
-  usePermissions: () => ({ isAdmin: true, canAccessManagement: true }),
+  usePermissions: () => ({ isAdmin: true, canAccessManagement: true, canReadReleases: true }),
 }))
 vi.mock('@/hooks/useFeatureFlags', () => ({
   useFeatureEnabled: () => false,

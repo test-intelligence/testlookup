@@ -13,19 +13,15 @@ import { owningNavItem } from './navConfig'
  */
 export default function SectionTabs() {
   const { pathname } = useLocation()
-  const { canAccessManagement, canReadReleases } = usePermissions()
+  const { canAccessManagement } = usePermissions()
   const item = owningNavItem(pathname)
-  if (!item?.tabs || (item.requires === 'management' && !canAccessManagement)) return null
-  if (item.requires === 'qa_engineer' && !canReadReleases) return null
-  // A tab whose page redirects this user is not offered (D-118: a QA engineer
-  // reads Releases, not Gate policies); one tab left is no set of tabs.
-  const tabs = canAccessManagement
-    ? item.tabs
-    : item.tabs.filter((tab) => !item.managementTabs?.includes(tab.to))
-  if (tabs.length < item.tabs.length && tabs.length < 2) return null
+  // Below QA lead, a section with a role floor has no tabs: Admin is not shown,
+  // and a QA engineer reads Releases but not Gate policies (D-118), which
+  // leaves one tab, and one tab is no set of tabs.
+  if (!item?.tabs || (item.requires && !canAccessManagement)) return null
   return (
     <div data-section-tabs={item.id} className="mb-4">
-      <RouteTabs items={tabs} ariaLabel={`${item.label} pages`} />
+      <RouteTabs items={item.tabs} ariaLabel={`${item.label} pages`} />
     </div>
   )
 }
