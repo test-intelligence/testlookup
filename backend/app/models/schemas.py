@@ -2671,6 +2671,23 @@ class QualityGateEvaluationResult(BaseModel):
 LEGACY_EVENT_ALIASES: Dict[str, str] = {"flaky_test_detected": "test.newly_flaky"}
 
 
+def reject_unknown_notification_events(values: List[str]) -> List[str]:
+    """``values`` unchanged, or a ValueError naming the entries that are not events.
+
+    A preference for ``run.failed`` (a typo of ``run_failed``) was stored and
+    then never fired, with nothing to say why.
+    """
+    from app.models.postgres import NotificationEventType
+
+    known = {event.value for event in NotificationEventType} | set(LEGACY_EVENT_ALIASES)
+    unknown = sorted({str(value) for value in values if value not in known})
+    if unknown:
+        raise ValueError(
+            "unknown notification event(s): " + ", ".join(unknown) + ". Valid: " + ", ".join(sorted(known)) + "."
+        )
+    return values
+
+
 def normalise_notification_events(values: List[str]) -> List[str]:
     """Map retired aliases to their event and drop duplicates, first occurrence kept, order kept.
 
@@ -2718,7 +2735,7 @@ class NotificationPreferenceCreate(BaseModel):
     @classmethod
     def _normalise_events(cls, v: List[str]) -> List[str]:
         # "flaky_test_detected" is stored as "test.newly_flaky"; duplicates dropped.
-        return normalise_notification_events(v)
+        return normalise_notification_events(reject_unknown_notification_events(v))
 
 
 class NotificationPreferenceResponse(BaseModel):
@@ -3967,7 +3984,15 @@ class DefectCandidateResponse(BaseModel):
 class DefectPromotionRequest(BaseModel):
     """User-editable fields submitted from the promotion modal."""
     title: str
-    severity: str = "HIGH"
+    # A closed set, upper-cased on the way in: the release gate upper-cases
+    # before comparing and the P0 count does not, so "critical" blocked a
+    # release without counting as a critical defect, and "P0" did neither.
+    severity: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"] = "HIGH"
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def _upper_severity(cls, value: Any) -> Any:
+        return value.strip().upper() if isinstance(value, str) else value
     component: str = ""
     owner_team: str = ""
     labels: List[str] = []

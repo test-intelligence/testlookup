@@ -12583,6 +12583,12 @@
           },
           "severity": {
             "default": "HIGH",
+            "enum": [
+              "CRITICAL",
+              "HIGH",
+              "MEDIUM",
+              "LOW"
+            ],
             "title": "Severity",
             "type": "string"
           },
@@ -29510,6 +29516,8 @@
           },
           "phase_type": {
             "default": "qa_testing",
+            "maxLength": 50,
+            "minLength": 1,
             "title": "Phase Type",
             "type": "string"
           },
@@ -29539,6 +29547,8 @@
           },
           "status": {
             "default": "pending",
+            "maxLength": 30,
+            "minLength": 1,
             "title": "Status",
             "type": "string"
           }
@@ -29647,6 +29657,8 @@
           "phase_type": {
             "anyOf": [
               {
+                "maxLength": 50,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -29695,6 +29707,8 @@
           "status": {
             "anyOf": [
               {
+                "maxLength": 30,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -32949,6 +32963,11 @@
             "type": "string"
           },
           "track": {
+            "enum": [
+              "classifier",
+              "reasoning",
+              "embedding"
+            ],
             "title": "Track",
             "type": "string"
           }
@@ -34739,6 +34758,8 @@
           },
           "status": {
             "default": "planning",
+            "maxLength": 30,
+            "minLength": 1,
             "title": "Status",
             "type": "string"
           },
@@ -35315,6 +35336,8 @@
           "status": {
             "anyOf": [
               {
+                "maxLength": 30,
+                "minLength": 1,
                 "type": "string"
               },
               {
@@ -59514,7 +59537,7 @@
     },
     "/api/v1/analytics/defects": {
       "get": {
-        "description": "Return defects for a project with optional resolution status filter.\n\nVIZ-202: ``release_id`` / ``suite_name`` (repeatable) keep the defects\nwhose originating execution ran in one of the releases (the run's primary\nrelease) and suites (effective suite). A defect with no linked execution\ncannot be placed and is left out while either filter is set. The list has\nno time window (``meta.ignored_filters``): open defects of any age.\n\nW06: ``resolution_status=ACTIVE`` lists every live defect (OPEN and\nIN_PROGRESS). ``release_match=affects`` places a defect in a release by\nthe release gate's own rule instead (asserted impact, else where it was\nfound), so the page and the gate count the same set; the suite filter\nstill places it through its execution.",
+        "description": "Return defects for a project with optional resolution status filter.\n\n``resolution_status`` is OPEN, IN_PROGRESS, RESOLVED, INVALID, the alias\nACTIVE, or the legacy CLOSED (any case). Another word is a 422: it used\nto answer an empty page, which read as \"no such defects\".\n\nVIZ-202: ``release_id`` / ``suite_name`` (repeatable) keep the defects\nwhose originating execution ran in one of the releases (the run's primary\nrelease) and suites (effective suite). A defect with no linked execution\ncannot be placed and is left out while either filter is set. The list has\nno time window (``meta.ignored_filters``): open defects of any age.\n\nW06: ``resolution_status=ACTIVE`` lists every live defect (OPEN and\nIN_PROGRESS). ``release_match=affects`` places a defect in a release by\nthe release gate's own rule instead (asserted impact, else where it was\nfound), so the page and the gate count the same set; the suite filter\nstill places it through its execution.",
         "operationId": "list_defects_api_v1_analytics_defects_get",
         "parameters": [
           {

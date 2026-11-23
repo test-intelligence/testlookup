@@ -92,5 +92,13 @@ def register(mcp) -> None:  # noqa: ANN001
                 data = await api.public_health()
             except Exception as public_exc:
                 return f"Backend unreachable at {settings.api_url}: {public_exc}"
+            if settings.username and settings.password and api._request_access_token() is None:
+                # O-16: with credentials configured, a 401 here means they were
+                # refused. The probes below are public and say nothing about that.
+                return (
+                    f"{_render_health(data)}\n**API URL:** {settings.api_url}\n"
+                    "**Sign-in:** the configured TestLookup credentials were not accepted (HTTP 401). "
+                    "Only the public health probes are shown; other tools will fail until the credentials are corrected."
+                )
 
         return f"{_render_health(data)}\n**API URL:** {settings.api_url}"

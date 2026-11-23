@@ -20,6 +20,7 @@ import client as api  # type: ignore[import]
 from tools.metrics import DEFAULT_WINDOW_DAYS  # type: ignore[import]
 from release_resolver import UnresolvedName, resolve_project, resolve_releases, unresolved_payload  # type: ignore[import]
 import execution_format  # type: ignore[import]
+import untrusted  # type: ignore[import]
 
 _CATEGORY_ICON = {
     "PRODUCT_BUG": "🐛",
@@ -52,6 +53,15 @@ def _rate_cell(value: Any, digits: int = 1) -> str:
         return "not measured"
     filled = max(0, min(10, int(rate / 10)))
     return f"`{'█' * filled}{'░' * (10 - filled)}` {rate:.{digits}f}%"
+
+
+def _safe_link(url: Any) -> bool:
+    """Whether a stored ticket URL can sit in a markdown link: http(s), one token, no closing bracket."""
+    return (
+        isinstance(url, str)
+        and url.startswith(("https://", "http://"))
+        and not any(ch in url for ch in " \t\r\n()<>`")
+    )
 
 
 def _pass_rate_text(value: Any) -> str:
@@ -180,9 +190,9 @@ def register(mcp) -> None:  # noqa: ANN001
             else:
                 rate_cell = _rate_cell(t.get("failure_rate_pct"), digits=0)
             lines.append(
-                f"| {i} | {(t.get('test_name') or 'N/A')[:45]} "
-                f"| {(t.get('suite_name') or 'N/A')[:25]} "
-                f"| `{t.get('test_fingerprint') or 'N/A'}` "
+                f"| {i} | {untrusted.inline(t.get('test_name'), limit=80)} "
+                f"| {untrusted.inline(t.get('suite_name'), limit=40)} "
+                f"| `{untrusted.short(t.get('test_fingerprint'), limit=64)}` "
                 f"| {rate_cell} "
                 f"| {t.get('total_runs', 0)} "
                 f"| {t.get('fail_count', 0)} "
@@ -193,7 +203,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if total > len(items):
             lines.append(f"\n*{total - len(items)} more not shown; raise `limit` (max 100).*")
 
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def get_failure_categories(project_id: str, days: int = DEFAULT_WINDOW_DAYS) -> str:
@@ -234,7 +244,7 @@ def register(mcp) -> None:  # noqa: ANN001
             pct = (count / total * 100) if total else 0
             bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
             icon = _CATEGORY_ICON.get(cat, "❓")
-            lines.append(f"{icon} **{cat}**: {count} ({pct:.1f}%)  `{bar}`")
+            lines.append(f"{icon} **{untrusted.short(cat)}**: {count} ({pct:.1f}%)  `{bar}`")
 
         lines += [
             "",
@@ -248,7 +258,7 @@ def register(mcp) -> None:  # noqa: ANN001
             "🎲 FLAKY — Non-deterministic failures",
             "❓ UNKNOWN — Not yet triaged by AI",
         ]
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def get_top_failing_tests(
@@ -290,14 +300,14 @@ def register(mcp) -> None:  # noqa: ANN001
             cat = t.get("failure_category") or "UNKNOWN"
             icon = _CATEGORY_ICON.get(cat, "❓")
             lines.append(
-                f"| {i} | {t.get('test_name', 'N/A')[:45]} "
-                f"| {(t.get('suite_name') or 'N/A')[:25]} "
-                f"| {icon} {cat} "
+                f"| {i} | {untrusted.inline(t.get('test_name'), limit=80)} "
+                f"| {untrusted.inline(t.get('suite_name'), limit=40)} "
+                f"| {icon} {untrusted.short(cat)} "
                 f"| {t.get('fail_count', 0)} "
                 f"| {(t.get('last_failed') or 'N/A')[:10]} |"
             )
 
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def get_coverage_report(project_id: str, days: int = DEFAULT_WINDOW_DAYS) -> str:
@@ -346,7 +356,7 @@ def register(mcp) -> None:  # noqa: ANN001
 
         for s in sorted(suites, key=worst_first):
             lines.append(
-                f"| {(s.get('suite_name') or 'N/A')[:40]} "
+                f"| {untrusted.inline(s.get('suite_name'), limit=60)} "
                 f"| {s.get('unique_tests', 0)} "
                 f"| {s.get('passed', 0)} "
                 f"| {s.get('failed', 0)} "
@@ -358,7 +368,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if suite_count is not None and suite_count > len(suites):
             lines.append(f"\n*{len(suites)} of {int(suite_count)} suites shown; the list is capped.*")
 
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def get_defects(
@@ -405,21 +415,21 @@ def register(mcp) -> None:  # noqa: ANN001
             cat = d.get("failure_category") or "UNKNOWN"
             res = d.get("resolution_status") or "OPEN"
             res_icon = _RESOLUTION_ICON.get(res, "❓")
-            jira_id = d.get("jira_ticket_id") or "N/A"
+            jira_id = untrusted.short(d.get("jira_ticket_id"))
             jira_url = d.get("jira_ticket_url")
-            jira_cell = f"[{jira_id}]({jira_url})" if jira_url else jira_id
+            jira_cell = f"[{jira_id}]({jira_url})" if _safe_link(jira_url) and untrusted.OPEN not in jira_id else jira_id
             conf = d.get("ai_confidence_score")
             conf_str = f"{conf}%" if conf is not None else "N/A"
             lines.append(
                 f"| {jira_cell} "
-                f"| {(d.get('test_name') or 'N/A')[:35]} "
-                f"| {_CATEGORY_ICON.get(cat, '❓')} {cat} "
-                f"| {res_icon} {res} "
+                f"| {untrusted.inline(d.get('test_name'), limit=80)} "
+                f"| {_CATEGORY_ICON.get(cat, '❓')} {untrusted.short(cat)} "
+                f"| {res_icon} {untrusted.short(res)} "
                 f"| {conf_str} "
                 f"| {(d.get('created_at') or 'N/A')[:10]} |"
             )
 
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def get_ai_analysis_summary(project_id: str, days: int = DEFAULT_WINDOW_DAYS) -> str:
@@ -463,7 +473,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if total == 0:
             lines.append("\n*No AI analyses recorded yet. Use `trigger_ai_analysis` on failing tests.*")
 
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def get_chart_data(

@@ -30,18 +30,41 @@ def register(mcp) -> None:  # noqa: ANN001
         GO/NO_GO/CONDITIONAL_GO recommendation on every ReleaseDecision.
 
         Args:
-            project_id: Optional — scope to a single project. Omit to
-                include the workspace default policies.
+            project_id: Optional — the project's own policies, and the policy
+                in force for it when it has none of its own (the workspace
+                default). Without a project only an administrator sees the
+                workspace policies.
         """
         params = {"project_id": project_id} if project_id else None
         data = await api.get(api.path("/api/v1/release-gate-policies"), params=params)
-        if not data:
-            return "No release gate policies configured."
+        effective = None
+        if project_id and not any(isinstance(p, dict) and p.get("is_active") for p in data or []):
+            # O-09: a project on the workspace default has no row of its own,
+            # and the list hides workspace rows from non-admins. The policy in
+            # force is still an answer.
+            try:
+                effective = await api.get(
+                    api.path("/api/v1/release-gate-policies/effective/{project_id}", project_id=api.uuid_id(project_id))
+                )
+            except Exception:  # noqa: BLE001 - the list below still answers
+                effective = None
+        if not data and not effective:
+            return (
+                "No release gate policy is in force for this project: the server's built-in readiness rule decides."
+                if project_id else "No release gate policies configured (or none visible without a project_id)."
+            )
 
         lines = ["## Release gate policies\n"]
-        for p in data:
+        if isinstance(effective, dict):
+            origin = "workspace default" if not effective.get("project_id") else "project policy"
+            lines.append(
+                f"- **In force for this project:** {effective.get('name', 'Unnamed')} "
+                f"v{effective.get('version', '?')} ({origin})"
+            )
+        for p in data or []:
             scope = "workspace default" if not p.get("project_id") else f"project `{p['project_id']}`"
-            active = "✅ active" if p.get("is_active") else "draft"
+            # Three states: a retired version is neither active nor a draft.
+            active = "✅ active" if p.get("is_active") else ("draft" if p.get("is_draft") else "retired")
             lines.append(
                 f"- **{p.get('name', 'Unnamed')}** v{p.get('version', '?')} "
                 f"· {scope} · {active}"
@@ -64,7 +87,9 @@ def register(mcp) -> None:  # noqa: ANN001
 
         Args:
             project_id: Optional — scope to a single project.
-            page: Optional — restrict to a specific dashboard page.
+            page: Optional — restrict to one page. One of: dashboard, trends,
+                coverage, defects, failures, summary_report, explore, search,
+                test_management (any other value is refused).
         """
         params: dict = {}
         if project_id:
@@ -179,7 +204,7 @@ def register(mcp) -> None:  # noqa: ANN001
                     "❌ Admin role required to list feature flags. "
                     "Ask an administrator to run this tool."
                 )
-            return f"❌ Failed to fetch flags: {exc}"
+            return f"❌ Failed to fetch flags: {api.error_text(exc)}"
 
         if not data:
             return "No feature flags configured."
@@ -217,6 +242,11 @@ def register(mcp) -> None:  # noqa: ANN001
         try:
             data = await api.get(api.path("/api/v1/feature-flags/{key}/status", key=key), params=params)
         except Exception as exc:
-            return f"❌ Failed to check flag `{key}`: {exc}"
-        state = "enabled" if data.get("enabled") else "disabled"
-        return f"Feature flag `{key}` is **{state}** for this caller."
+            return f"❌ Failed to check flag `{key}`: {api.error_text(exc)}"
+        if data.get("enabled"):
+            return f"Feature flag `{key}` is **enabled** for this caller."
+        # O-10: the status route answers "off" for a key that does not exist too.
+        return (
+            f"Feature flag `{key}` is **not enabled** for this caller: it is off, "
+            "or no flag has that key (check the spelling with `list_feature_flags`)."
+        )

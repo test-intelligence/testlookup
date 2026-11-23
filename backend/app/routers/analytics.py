@@ -261,7 +261,8 @@ async def flaky_scores(
             }
             for row in rows
         ],
-        "total": len(rows),
+        # The matches, not the page: a list cut at ``limit`` used to report its own length.
+        "total": max(matched, len(rows)),
         "suppression": decision.to_dict(),
         # A filtered list LOOKS release-scoped, and here only half of it is:
         # membership is release-scoped, the score is not. Saying so in the
@@ -628,6 +629,10 @@ async def suite_detail(
 
 # ── Defects List ───────────────────────────────────────────────────────────
 
+#: ``resolution_status`` values the defects list answers: the stored statuses,
+#: the ACTIVE alias (OPEN and IN_PROGRESS) and the legacy CLOSED rows.
+_DEFECT_STATUS_FILTERS: tuple[str, ...] = ("OPEN", "IN_PROGRESS", "RESOLVED", "INVALID", "ACTIVE", "CLOSED")
+
 @router.get("/defects")
 @analytics_error_contract
 async def list_defects(
@@ -639,6 +644,10 @@ async def list_defects(
     db: AsyncSession = Depends(get_db),
 ):
     """Return defects for a project with optional resolution status filter.
+
+    ``resolution_status`` is OPEN, IN_PROGRESS, RESOLVED, INVALID, the alias
+    ACTIVE, or the legacy CLOSED (any case). Another word is a 422: it used
+    to answer an empty page, which read as "no such defects".
 
     VIZ-202: ``release_id`` / ``suite_name`` (repeatable) keep the defects
     whose originating execution ran in one of the releases (the run's primary
@@ -652,6 +661,12 @@ async def list_defects(
     found), so the page and the gate count the same set; the suite filter
     still places it through its execution.
     """
+    wanted_status = (resolution_status or "").strip().upper()
+    if wanted_status and wanted_status not in _DEFECT_STATUS_FILTERS:
+        raise HTTPException(
+            status_code=422,
+            detail="resolution_status must be one of " + ", ".join(_DEFECT_STATUS_FILTERS) + ".",
+        )
     payload = await analytics_service.list_defects(
         db,
         scope.project,

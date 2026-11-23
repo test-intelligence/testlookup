@@ -67,6 +67,9 @@ logger = logging.getLogger("routers.deep_investigation")
 
 router = APIRouter(prefix="/api/v1/deep-investigate", tags=["Deep Investigation"])
 
+#: ``GET /{run_id}/clusters/ranked``: the largest clusters ranked per call.
+RANKED_CLUSTER_LIMIT = 20
+
 
 class TriggerDeepRequest(BaseModel):
     # TL-QA-01: the two workflows this route dispatches. Any other value is a
@@ -465,11 +468,11 @@ async def get_ranked_clusters(
         select(FailureCluster)
         .where(FailureCluster.test_run_id == run_id, is_current_snapshot())
         .order_by(FailureCluster.size.desc())
-        .limit(20)
+        .limit(RANKED_CLUSTER_LIMIT)
     )
     clusters = result.scalars().all()
     if not clusters:
-        return {"items": [], "total": 0}
+        return {"items": [], "total": 0, "truncated": False}
 
     cluster_dicts = [
         {
@@ -486,7 +489,20 @@ async def get_ranked_clusters(
     ]
 
     ranked = rank_clusters(cluster_dicts)
-    return {"items": ranked, "total": len(ranked)}
+    total = len(ranked)
+    if len(clusters) >= RANKED_CLUSTER_LIMIT:
+        # The list is cut at the limit: count the run's clusters so ``total`` is not the page length.
+        total = int(
+            (
+                await db.execute(
+                    select(func.count())
+                    .select_from(FailureCluster)
+                    .where(FailureCluster.test_run_id == run_id, is_current_snapshot())
+                )
+            ).scalar()
+            or total
+        )
+    return {"items": ranked, "total": total, "truncated": total > len(ranked)}
 
 
 @router.get("/{run_id}/clusters/{cluster_id}/duplicate-check")

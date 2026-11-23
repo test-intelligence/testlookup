@@ -13,9 +13,16 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import client as api  # type: ignore[import]
+import untrusted  # type: ignore[import]
 
 # Bulk-release safety cap for promote_ready_quarantines (US-14.1).
 PROMOTE_BATCH_CAP = 10
+#: Live requests read per call (the list route's own cap).
+PROMOTE_SCAN_LIMIT = 500
+
+
+def _fingerprint(row: dict) -> str:
+    return untrusted.short(row.get("test_fingerprint"), limit=64, missing="?")
 
 
 def _select_ready_to_promote(rows: list[dict], cap: int = PROMOTE_BATCH_CAP) -> list[dict]:
@@ -65,23 +72,28 @@ def register(mcp) -> None:  # noqa: ANN001
         if not data:
             return "No quarantine requests found for this filter."
 
-        lines = [f"## Quarantine requests ({len(data)})\n"]
+        # The route returns a list cut at ``limit`` and no total, so a full
+        # page is "at least this many", not a count.
+        shown = len(data)
+        heading = f"{shown}" if shown < max(1, int(limit)) else f"showing {shown}; the limit was reached, more may exist"
+        lines = [f"## Quarantine requests ({heading})\n"]
         for row in data:
             flip = row.get("flip_rate")
             flip_str = f"{flip * 100:.0f}%" if flip is not None else "—"
             window = row.get("flip_window_size") or "—"
             lines.append(
-                f"- **{row.get('test_name') or row.get('test_fingerprint', '?')[:16]}** "
+                f"- **{untrusted.inline(row.get('test_name'), limit=80, missing=_fingerprint(row))}** "
                 f"· `{row['status']}` · flip {flip_str} over {window} runs"
             )
             if row.get("suite_name"):
-                lines.append(f"  - Suite: {row['suite_name']}")
+                lines.append(f"  - Suite: {untrusted.inline(row['suite_name'], limit=60)}")
+            lines.append(f"  - Fingerprint: `{_fingerprint(row)}`")
             lines.append(f"  - Request id: `{row['id']}`")
             if row.get("quarantine_expires_at"):
                 lines.append(
                     f"  - Window ends: {(row['quarantine_expires_at'] or '')[:10]}"
                 )
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def get_quarantine_stats(project_id: Optional[str] = None) -> str:
@@ -140,9 +152,9 @@ def register(mcp) -> None:  # noqa: ANN001
                 json_body=body,
             )
         except Exception as exc:
-            return f"❌ Failed to approve: {exc}"
+            return f"❌ Failed to approve: {api.error_text(exc)}"
         return (
-            f"✅ Quarantine approved for `{row.get('test_name') or request_id}`\n"
+            f"✅ Quarantine approved for {untrusted.inline(row.get('test_name'), limit=80, missing=request_id)}\n"
             f"- Status: **{row['status']}**\n"
             f"- Window ends: {(row.get('quarantine_expires_at') or '')[:10]}\n"
             f"- Recheck scheduled: {(row.get('recheck_at') or '')[:10]}"
@@ -174,8 +186,8 @@ def register(mcp) -> None:  # noqa: ANN001
                 json_body=body,
             )
         except Exception as exc:
-            return f"❌ Failed to reject: {exc}"
-        return f"Quarantine rejected for `{row.get('test_name') or request_id}`."
+            return f"❌ Failed to reject: {api.error_text(exc)}"
+        return f"Quarantine rejected for {untrusted.inline(row.get('test_name'), limit=80, missing=request_id)}."
 
     # ── Write path (PMF US-14.1) ───────────────────────────────────────────
 
@@ -189,7 +201,11 @@ def register(mcp) -> None:  # noqa: ANN001
         quarantine_duration_days: int = 14,
     ) -> dict:
         """
-        SIDE EFFECT: creates (or refreshes) a PROPOSED quarantine request.
+        SIDE EFFECT: creates a PROPOSED quarantine request, or adds this
+        reason to the live request the test already has. The result's
+        ``action`` says which: "proposed" (awaiting review) or
+        "already_live" (the test is already quarantined or under recheck;
+        nothing is awaiting approval).
 
         This is a *proposal*, not a quarantine — the test stays in normal
         rotation until a QA Lead (human or agent-assisted) approves it via
@@ -227,9 +243,13 @@ def register(mcp) -> None:  # noqa: ANN001
             row = await api.post(api.path("/api/v1/quarantine"), json_body=body)
         except Exception as exc:
             return api.error_payload(exc)
+        # O-01: the route answers with the test's live request, which may be
+        # one that was approved long ago. Only a PROPOSED row awaits review.
+        status = str(row.get("status") or "")
+        awaiting = status in ("PROPOSED", "DETECTED")
         return {
             "ok": True,
-            "action": "proposed",
+            "action": "proposed" if awaiting else "already_live",
             "request_id": row.get("id"),
             "status": row.get("status"),
             "test_name": row.get("test_name"),
@@ -237,6 +257,9 @@ def register(mcp) -> None:  # noqa: ANN001
             "next_step": (
                 "Awaiting QA Lead review — approve with approve_quarantine("
                 f"request_id='{row.get('id')}') or reject with reject_quarantine."
+                if awaiting else
+                f"This test already has a live quarantine request in status {status or 'unknown'}; "
+                "your reason was added to it and nothing awaits approval. Use release_quarantine to end it early."
             ),
         }
 
@@ -299,12 +322,15 @@ def register(mcp) -> None:  # noqa: ANN001
         try:
             rows = await api.get(
                 api.path("/api/v1/quarantine"),
-                params={"project_id": project_id, "live_only": True, "limit": 500},
+                params={"project_id": project_id, "live_only": True, "limit": PROMOTE_SCAN_LIMIT},
             )
         except Exception as exc:
             return api.error_payload(exc)
 
-        candidates = _select_ready_to_promote(rows or [])
+        rows = rows if isinstance(rows, list) else []
+        total_ready = sum(1 for r in rows if isinstance(r, dict) and r.get("ready_to_promote"))
+        scan_limit_reached = len(rows) >= PROMOTE_SCAN_LIMIT
+        candidates = _select_ready_to_promote(rows)
         listing = [
             {
                 "request_id": r.get("id"),
@@ -321,9 +347,17 @@ def register(mcp) -> None:  # noqa: ANN001
                 "dry_run": True,
                 "ready_to_promote": listing,
                 "count": len(listing),
+                # O-11: ``count`` is this call's batch; ``total_ready`` is every ready test seen.
+                "total_ready": total_ready,
+                "truncated": total_ready > len(listing),
+                "scan_limit_reached": scan_limit_reached,
                 "note": (
                     "No changes made. Re-run with dry_run=False to release "
                     f"these (max {PROMOTE_BATCH_CAP} per call) after the user confirms."
+                    + (f" {total_ready - len(listing)} more are ready and need further calls."
+                       if total_ready > len(listing) else "")
+                    + (f" Only the newest {PROMOTE_SCAN_LIMIT} live requests were scanned; older ones may be ready too."
+                       if scan_limit_reached else "")
                 ),
             }
 
@@ -349,5 +383,6 @@ def register(mcp) -> None:  # noqa: ANN001
             "ok": all(r.get("released") for r in results) if results else True,
             "dry_run": False,
             "released_count": sum(1 for r in results if r.get("released")),
+            "remaining_ready": max(0, total_ready - len(listing)),
             "results": results,
         }

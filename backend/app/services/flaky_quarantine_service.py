@@ -822,8 +822,13 @@ async def propose_quarantine(
                 before = _snapshot(existing)
                 # Merge new signal. Keep the later detection timestamps and
                 # let the new flip_rate win — detection runs on latest data.
-                existing.flip_rate = flip_rate
-                existing.flip_window_size = flip_window_size
+                # A manual proposal measures nothing (O-01): it sends no flip
+                # figures, and writing its ``None`` over the detector's
+                # measurement erased the evidence the reviewer decides on.
+                if flip_rate is not None or source_label != "manual":
+                    existing.flip_rate = flip_rate
+                if flip_window_size is not None or source_label != "manual":
+                    existing.flip_window_size = flip_window_size
                 if pass_count is not None:
                     existing.pass_count = pass_count
                 if fail_count is not None:
@@ -834,7 +839,12 @@ async def propose_quarantine(
                 if suite_name:
                     existing.suite_name = suite_name
                 if rationale:
-                    existing.rationale = rationale
+                    kept = existing.rationale if isinstance(existing.rationale, dict) else None
+                    if source_label == "manual" and kept and kept.get("source") != rationale.get("source"):
+                        # A person's reason joins the detector's rationale; it does not replace it.
+                        existing.rationale = {**kept, "manual_proposal": rationale}
+                    else:
+                        existing.rationale = rationale
                 # Escalate DETECTED → PROPOSED on the first signal strong
                 # enough to involve humans.
                 if existing.status == FlakyQuarantineStatus.DETECTED.value:

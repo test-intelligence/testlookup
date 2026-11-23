@@ -202,7 +202,7 @@ resource still reads the last 7 days, as its description says.
 | `get_coverage_report` | `project_id`, `days?` | Suite coverage: unique tests, per-suite pass rates |
 | `get_defects` | `project_id`, `resolution_status?`, `page?`, `size?` | Defects with Jira links (paginated). Statuses: `OPEN`, `IN_PROGRESS`, `RESOLVED`, `INVALID`, or `ACTIVE` for open + in progress |
 | `list_defects` | `project_id`, `resolution_status?`, `limit?` | Defect list (lightweight, limit-based) |
-| `create_defect` | `project_id`, `fingerprint?` or `cluster_id?`, `target?`, `issue_type?`, `jira_project_key?`, `assignee?`, `extra_comment?`, `dry_run?` | **Write.** One-click Jira issue (or `target="webhook"` event) for a failure signature; `dry_run=true` returns the server preview without creating anything (default `false`); dedup-first (QA_ENGINEER+) |
+| `create_defect` | `project_id`, `fingerprint?` or `cluster_id?`, `target?`, `issue_type?`, `jira_project_key?`, `assignee?`, `extra_comment?`, `dry_run?`, `confirm_not_filed?` | **Write.** One-click Jira issue (or `target="webhook"` event) for a failure signature; `dry_run=true` returns the server preview without creating anything (default `false`); dedup-first (QA_ENGINEER+). `confirm_not_filed=true` files again after a 409 `jira_outcome_unknown`, once the user has checked Jira. A webhook nobody received answers `ok: false` |
 | `get_ai_analysis_summary` | `project_id`, `days?` | AI triage coverage and confidence distribution |
 | `get_chart_data` | `group_by`, `metric?`, `project_id?`, `release_id?`, `suite_name?`, `days?`, `top_n?` | A metric over 1-2 dimensions, the same series the REST API and UI charts draw, returned verbatim with `meta`. Release- and suite-scoped; without `project_id` it covers every project you can read. `wall_clock_total`/`_p50`/`_p95` are run-level only (refused under a suite filter or a row-level `group_by`). Errors carry `code`/`param`/`allowed` |
 | `get_execution_metrics` | `project_id`, `days?`, `suite_name?`, `release_id?`, `branch?`, `top?` | How long a project's runs and suites take and what got slower: wall clock and test time p50/p95 per suite against the previous window, suite and test duration regressions, the slowest tests, a duration histogram. Compact markdown plus the REST body (`/analytics/execution-metrics`). Release- and suite-scoped. A null figure is "not reported", never 0 |
@@ -321,7 +321,7 @@ workbook is a file, so `testlookup cases export` writes it (see the [CLI](../cli
 | `get_quarantine_stats` | `project_id?` | Count per status |
 | `approve_quarantine` | `request_id`, `notes?`, `quarantine_duration_days?` | Approve and activate a quarantine |
 | `reject_quarantine` | `request_id`, `notes?` | Reject a proposal |
-| `propose_quarantine` | `project_id`, `fingerprint`, `reason`, `test_name?`, `suite_name?`, `quarantine_duration_days?` | **Write.** File a PROPOSED request for QA Lead review; never quarantines directly (QA_LEAD+) |
+| `propose_quarantine` | `project_id`, `fingerprint`, `reason`, `test_name?`, `suite_name?`, `quarantine_duration_days?` | **Write.** File a PROPOSED request for QA Lead review; never quarantines directly (QA_LEAD+). `action` is `already_live` when the test already has a quarantine in force |
 | `release_quarantine` | `request_id`, `reason` | **Write.** End an active quarantine early; the test counts against gates again (QA_LEAD+) |
 | `promote_ready_quarantines` | `project_id`, `dry_run?` | **Write (bulk).** `dry_run=true` (the default) lists `ready_to_promote` entries; `dry_run=false` releases them, at most 10 per call, each reported (QA_LEAD+) |
 
@@ -342,7 +342,7 @@ workbook is a file, so `testlookup cases export` writes it (see the [CLI](../cli
 | `list_digest_subscriptions` | `project_id?` | Scheduled quality report subscriptions |
 | `list_ownership_rules` | `project_id` | Ownership rules for a project: match type and pattern, team, service, contact |
 | `list_feature_flags` | none | All feature flags (admin only) |
-| `check_feature_flag` | `key`, `project_id?` | Evaluate a flag for the caller's context |
+| `check_feature_flag` | `key`, `project_id?` | Evaluate a flag for the caller's context (a key that does not exist reads as not enabled) |
 
 ### Classification feedback (write path)
 

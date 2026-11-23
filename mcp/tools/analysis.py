@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 import client as api  # type: ignore[import]
+import untrusted  # type: ignore[import]
 from tools.metrics import DEFAULT_WINDOW_DAYS  # type: ignore[import]
 
 _CATEGORY_ICON = {
@@ -16,19 +17,23 @@ _CATEGORY_ICON = {
     "UNKNOWN": "❓",
 }
 
-_CONFIDENCE_LABEL = {
-    range(0, 40): "⚠️ Low — human review strongly recommended",
-    range(40, 70): "🟡 Medium — review recommended",
-    range(70, 85): "🟢 Good — reliable",
-    range(85, 101): "✅ High — fully automated",
+#: The server's confidence gate (``AnalysisResponse.confidence_gate_status``), in words.
+_GATE_TEXT = {
+    "above_threshold": "✅ meets the configured confidence threshold",
+    "below_threshold": "⚠️ below the configured confidence threshold — needs human review",
+    "not_evaluated": "⚪ the confidence gate was not evaluated",
 }
 
 
-def _confidence_label(score: int) -> str:
-    for r, label in _CONFIDENCE_LABEL.items():
-        if score in r:
-            return label
-    return "Unknown"
+def _confidence_label(data: dict) -> str:
+    """The server's verdict on the confidence score, never one worked out here.
+
+    The threshold is an operator setting. Fixed bands in this tool called a
+    score of 86 "High — fully automated" under a threshold of 90.
+    """
+    if data.get("low_confidence"):
+        return _GATE_TEXT["below_threshold"]
+    return _GATE_TEXT.get(str(data.get("confidence_gate_status") or "not_evaluated"), _GATE_TEXT["not_evaluated"])
 
 
 def _flatten_steps(nodes: list) -> list:
@@ -105,14 +110,15 @@ def register(mcp) -> None:  # noqa: ANN001
         lines = [
             f"## AI Root-Cause Analysis",
             f"- **Test Case ID:** `{data.get('test_case_id', test_case_id)}`",
-            f"- **LLM:** {data.get('llm_provider', 'N/A')} / `{data.get('llm_model', 'N/A')}`",
+            f"- **LLM:** {untrusted.short(data.get('llm_provider'))} / `{untrusted.short(data.get('llm_model'), limit=80)}`",
             "",
-            f"### {icon} Failure Category: **{cat}**",
-            f"### Confidence Score: **{score}%** — {_confidence_label(score)}",
+            f"### {icon} Failure Category: **{untrusted.short(cat)}**",
+            f"### Confidence Score: **{score}%** — {_confidence_label(data)}",
             f"### Requires Human Review: {'⚠️ YES' if data.get('requires_human_review') else '✅ No'}",
             "",
             "### Root Cause Summary",
-            data.get("root_cause_summary", "No summary available."),
+            # AI text written from test output: it can repeat what a report said.
+            *(untrusted.block(data.get("root_cause_summary"), limit=3000) or ["No summary available."]),
             "",
             "### Findings",
             f"- **Backend Error Found:** {'✅ Yes' if data.get('backend_error_found') else 'No'}",
@@ -124,7 +130,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if actions:
             lines += ["", "### Recommended Actions"]
             for i, action in enumerate(actions, 1):
-                lines.append(f"{i}. {action}")
+                lines.append(f"{i}. {untrusted.inline(action, limit=400, missing='(empty)')}")
 
         # Best-effort: surface the first failing granular step as an extra
         # evidence reference. Requires run_id (the analyze response carries only
@@ -144,14 +150,15 @@ def register(mcp) -> None:  # noqa: ANN001
         if refs or step_evidence:
             lines += ["", "### Evidence References"]
             if step_evidence:
-                lines.append(f"- **steps** `{test_case_id}`: {step_evidence}")
+                lines.append(f"- **steps** `{untrusted.short(test_case_id, limit=64)}`: {untrusted.inline(step_evidence)}")
             for ref in refs:
                 lines.append(
-                    f"- **{ref.get('source', 'unknown')}** `{ref.get('reference_id', '')}`: "
-                    f"{ref.get('excerpt', '')[:200]}"
+                    f"- **{untrusted.short(ref.get('source'), missing='unknown')}** "
+                    f"`{untrusted.short(ref.get('reference_id'), limit=80, missing='')}`: "
+                    f"{untrusted.inline(ref.get('excerpt'), limit=200, missing='')}"
                 )
 
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()
     async def search_tests(
@@ -163,7 +170,8 @@ def register(mcp) -> None:  # noqa: ANN001
         size: int = 20,
     ) -> str:
         """
-        Full-text search across all test cases by name, suite, class, or error message.
+        Full-text search across all test cases by name, suite, error message or step text
+        (step names and assertion messages). Class names are not searched.
         Returns matching tests with their run context.
 
         Args:
@@ -196,21 +204,25 @@ def register(mcp) -> None:  # noqa: ANN001
 
         lines = [
             f'## Search Results for "{query}" ({search_type}) — {total} matches in the last {days} days\n',
-            f"| Test Name | Suite | Status | Failures | Last Run |",
-            f"|-----------|-------|--------|----------|----------|",
+            # The count is not windowed: every FAILED result the test ever had (BROKEN not counted).
+            f"| Test Name | Suite | Status | Failures (all time, FAILED only) | Last Run |",
+            f"|-----------|-------|--------|----------------------------------|----------|",
         ]
         for t in items:
             status_str = t.get("status", "UNKNOWN")
             lines.append(
-                f"| {t.get('test_name', 'N/A')[:50]} "
-                f"| {(t.get('suite_name') or 'N/A')[:30]} "
-                f"| {status_str} "
+                f"| {untrusted.inline(t.get('test_name'), limit=80)} "
+                f"| {untrusted.inline(t.get('suite_name'), limit=40)} "
+                f"| {untrusted.short(status_str)} "
                 f"| {t.get('failure_count', 0)} "
                 f"| {(t.get('last_run_date') or 'N/A')[:10]} |"
             )
-            lines.append(f"> test_id: `{t.get('test_case_id', 'N/A')}` | run_id: `{t.get('test_run_id', 'N/A')}`")
+            lines.append(
+                f"> test_id: `{untrusted.short(t.get('test_case_id'), limit=64)}` "
+                f"| run_id: `{untrusted.short(t.get('test_run_id'), limit=64)}`"
+            )
 
         if pages > 1:
             lines.append(f"\n*Page {page}/{pages} — use page parameter for more results.*")
 
-        return "\n".join(lines)
+        return "\n".join(untrusted.with_notice(lines))

@@ -12,6 +12,11 @@ from typing import Optional
 import client as api  # type: ignore[import]
 
 
+def _has_cap(value) -> bool:  # noqa: ANN001
+    """Whether a hard cap is set. The server treats 0 (the default) and below as "no cap"."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
 def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.tool()
@@ -49,11 +54,7 @@ def register(mcp) -> None:  # noqa: ANN001
             for p in capped + warn:
                 util = p.get("utilization_pct")
                 util_str = f"{util:.0f}%" if util is not None else "—"
-                cap_str = (
-                    f"${p['hard_cap_usd']:.2f}"
-                    if p.get("hard_cap_usd") is not None
-                    else "no cap"
-                )
+                cap_str = f"${p['hard_cap_usd']:.2f}" if _has_cap(p.get("hard_cap_usd")) else "no cap"
                 lines.append(
                     f"- **{p['project_name']}** · `{p['status']}` · "
                     f"${p['current_cost_usd']:.4f} of {cap_str} ({util_str}) · "
@@ -67,11 +68,7 @@ def register(mcp) -> None:  # noqa: ANN001
         if ok:
             lines.append("\n### All projects\n")
             for p in ok[:20]:
-                cap_str = (
-                    f" / ${p['hard_cap_usd']:.2f}"
-                    if p.get("hard_cap_usd") is not None
-                    else " (unlimited)"
-                )
+                cap_str = f" / ${p['hard_cap_usd']:.2f}" if _has_cap(p.get("hard_cap_usd")) else " (no cap)"
                 lines.append(
                     f"- **{p['project_name']}** · "
                     f"${p['current_cost_usd']:.4f}{cap_str} · `{p['status']}`"
@@ -102,8 +99,9 @@ def register(mcp) -> None:  # noqa: ANN001
         ]
         if data.get("included_usd") is not None:
             lines.append(f"**Included:** ${data['included_usd']:.2f}")
-        if data.get("hard_cap_usd") is not None:
-            lines.append(f"**Hard cap:** ${data['hard_cap_usd']:.2f}")
+        lines.append(
+            f"**Hard cap:** ${data['hard_cap_usd']:.2f}" if _has_cap(data.get("hard_cap_usd")) else "**Hard cap:** none"
+        )
         if data.get("utilization_pct") is not None:
             lines.append(f"**Utilization:** {data['utilization_pct']:.1f}%")
         lines.append(f"**Input tokens:** {int(data.get('total_input_tokens') or 0):,}")
@@ -128,19 +126,22 @@ def register(mcp) -> None:  # noqa: ANN001
             data = await api.get(api.path("/api/v1/projects/{project_id}/llm-quota", project_id=api.uuid_id(project_id)))
         except Exception as exc:
             # 404 is expected when no quota exists — render a clean message.
-            if "404" in str(exc):
+            # O-13: read the status, not the text: the URL in ``str(exc)``
+            # holds the project id, and an id containing "404" matched.
+            if getattr(getattr(exc, "response", None), "status_code", None) == 404:
                 return (
                     f"No LLM cost budget configured for project `{project_id}`. "
                     f"Use Settings > LLM Cost Budget to set one."
                 )
-            return f"❌ Failed to fetch quota: {exc}"
+            return f"❌ Failed to fetch quota: {api.error_text(exc)}"
 
         return "\n".join([
             f"## LLM quota — project `{project_id}`",
             f"- **Enabled:** {data.get('enabled', False)}",
             f"- **Included:** ${data.get('included_usd', 0):.2f} / "
             f"{data.get('period_type', 'MONTHLY').lower()}",
-            f"- **Hard cap:** ${data.get('hard_cap_usd', 0):.2f}",
+            "- **Hard cap:** "
+            + (f"${data['hard_cap_usd']:.2f}" if _has_cap(data.get("hard_cap_usd")) else "none (0 means no cap)"),
             f"- **Overage rate:** ${data.get('overage_rate_usd', 0):.2f}/$ over included",
             f"- **Soft-warn threshold:** {data.get('soft_warn_threshold_pct', 100)}%",
             f"- **At-cap action:** `{data.get('at_cap_action', '?')}`",

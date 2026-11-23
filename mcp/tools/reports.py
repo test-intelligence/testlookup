@@ -92,9 +92,14 @@ def register(mcp) -> None:  # noqa: ANN001
             api.path("/api/v1/reports/runs/{run_id}/share", run_id=api.uuid_id(run_id)),
             json_body={"expiry_days": expires_days, "layout": layout},
         )
-        return (
-            f"Share link created for run {run_id}.\n"
-            f"**Token:** {data.get('token', '?')}\n"
-            f"**Expires:** {data.get('expires_at', '?')}\n"
-            f"**Layout:** {layout}"
-        )
+        lines = [
+            f"Share link created for run {run_id}.",
+            f"**Token:** {data.get('token', '?')}",
+        ]
+        if data.get("share_url"):
+            lines.append(f"**URL:** {data['share_url']}")
+        lines += [f"**Expires:** {data.get('expires_at', '?')}", f"**Layout:** {layout}"]
+        if data.get("warning"):
+            # The server's own caveat, e.g. the link answers 404 until a snapshot exists.
+            lines.append(f"**Warning:** {data['warning']}")
+        return "\n".join(lines)

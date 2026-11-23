@@ -148,6 +148,16 @@ Members below QA_LEAD see a webhook's target URL as `https://host/...`.
 | `GET /ai-eval/runs/{id}` for another project's run, as QA_LEAD | 404 | 200 |
 | A second project's `run_start` on `/ws/events` with a run id another project uses (project-bound keys) | 202 | 409 |
 | MCP `create_share_link` without `confirm=true` | returns a notice, creates nothing | created the link |
+| `POST /deep-investigate/{run_id}` with a `mode` other than `deep` or `offline` | 422 | queued as `deep` |
+| `GET /runs?status=`, `GET /runs/{id}/tests?status=`, `GET /quarantine?status_filter=`, `GET /analytics/defects?resolution_status=` with a value that is not a status | 422 | 200 with an empty list |
+| The same four filters with a status in lower case | the matching rows | 200 with an empty list (runs, quarantine) |
+| `GET /runs/{id}/summary` or `/export` with a `mode` other than executive, developer or manager | 422 | the executive summary |
+| `GET /agents/pipelines?status=` with an unknown status | 422 | the failed pipelines |
+| `GET /digests/preview?period=` other than `daily` or `weekly` | 422 | a one-day digest |
+| `POST /training/promote` with a `track` other than classifier, reasoning or embedding | 422 | recorded as promoted |
+| Promote a cluster to a defect with a `severity` other than CRITICAL, HIGH, MEDIUM or LOW (any case) | 422 | stored as sent |
+| Create or update a notification preference with an event name that does not exist | 422 | stored, never fired |
+| Create or update a release or phase with a `status` in mixed case | stored lower-case | stored as sent |
 
 Existing usernames that contain `@` keep working for sign-in.
 

@@ -265,15 +265,28 @@ def test_a_release_id_reads_the_stored_gate_decision(monkeypatch):
     assert "decided 2026-10-12T09:30:00+00:00" in text
 
 
-def test_a_release_never_evaluated_says_so(monkeypatch):
+def _gate_404(detail):
     def _missing(path, params):
         request = httpx.Request("GET", f"http://api{path}")
-        raise httpx.HTTPStatusError("404", request=request, response=httpx.Response(404, request=request))
+        response = httpx.Response(404, request=request, json={"detail": detail})
+        raise httpx.HTTPStatusError("404", request=request, response=response)
 
-    tools, _ = _tools(monkeypatch, _missing)
+    return _missing
+
+
+def test_a_release_never_evaluated_says_so(monkeypatch):
+    # The gate route's own 404 body (routers/releases.py).
+    tools, _ = _tools(monkeypatch, _gate_404("This release has not been evaluated yet"))
     text = _run(tools, "check_release_readiness", "proj-1", release_id=RELEASE_ID)
     assert "never evaluated" in text
     assert "NO_GO" not in text
+
+
+def test_a_release_that_does_not_exist_is_not_called_unevaluated(monkeypatch):
+    """O-07: "Release not found" is a 404 too, and is not a release awaiting its first verdict."""
+    tools, _ = _tools(monkeypatch, _gate_404("Release not found"))
+    text = _run(tools, "check_release_readiness", "proj-1", release_id=RELEASE_ID)
+    assert "was not found" in text and "never evaluated" not in text
 
 
 def test_a_release_gate_error_other_than_404_is_not_swallowed(monkeypatch):

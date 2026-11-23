@@ -410,6 +410,13 @@ async def list_test_cases(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_run_access()),
 ):
+    unknown = sorted(set(runs_service.test_case_status_filter(status)) - {s.value for s in TestStatus})
+    if unknown:
+        # An unknown status used to answer an empty list, which read as "no such tests".
+        raise HTTPException(
+            status_code=422,
+            detail="status must be one of " + ", ".join(s.value for s in TestStatus) + ".",
+        )
     items, total, pages = await list_run_test_cases(db, run_id, page, size, status, suite)
     return {"items": items, "total": total, "page": page, "size": size, "pages": pages}
 
